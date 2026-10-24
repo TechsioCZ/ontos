@@ -58,11 +58,17 @@ it.layer(NodeFileSystem.layer)('SpiceDB bootstrap sources', (suite) => {
       expect(extractSchema(development)).toBe(ONTOS_SPICEDB_SCHEMA);
       expect(extractSchema(stage)).toBe(ONTOS_SPICEDB_SCHEMA);
       expect(stage).not.toMatch(/relationships:|assertions:/u);
-      expect(development).toMatch(/#executor@tenant:test-tenant#member/u);
-      expect(development).toMatch(/#executor@principal:allowed-principal/u);
+      expect(development).toMatch(/#role@scoped_role:test-executor#member/u);
+      expect(development).toMatch(/scoped_role:test-executor#member@principal:allowed-principal/u);
+      expect(development).not.toMatch(/#executor@|#restriction@|is_restricted/u);
       expect(development).toMatch(/relation containing_catalog: business_permission/u);
       expect(development).toMatch(/relation self_service_grantee: principal/u);
-      expect(development).toMatch(/permission direct_use = grantee & \(tenant->access \+ legal_entity->access\)/u);
+      expect(development).toMatch(/relation role_grantee: scoped_role#member/u);
+      expect(development).toMatch(/relation read_scope: tenant \| legal_entity/u);
+      expect(development).toMatch(/relation write_scope: tenant \| legal_entity/u);
+      expect(development).toMatch(
+        /permission direct_use = \(grantee \+ role_use \+ read_scope->read_all \+ write_scope->write_all\) & \(tenant->access \+ legal_entity->access\)/u,
+      );
       expect(development).toMatch(
         /permission use = self_service_grantee \+ direct_use \+ \(tenant->access & containing_catalog->direct_use\)/u,
       );

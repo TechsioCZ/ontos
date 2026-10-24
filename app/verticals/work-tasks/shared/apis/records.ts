@@ -19,20 +19,19 @@ export const TaskStateSchema = Schema.Literals(['NEW', 'IN_PROGRESS', 'WAITING',
 export type TaskState = typeof TaskStateSchema.Type;
 export const TaskPrioritySchema = Schema.Literals(['LOW', 'NORMAL', 'HIGH']);
 // Opaque cross-module IDs: this vertical stores and filters them but never reads the owning module's rows.
-export const EmployeeIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('EmployeeId'));
 export const PartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PartyId'));
 export const OpportunityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('OpportunityId'));
 export const PlannedHoursSchema = Schema.Finite.check(
   Schema.isGreaterThanOrEqualTo(0),
-  Schema.isLessThanOrEqualTo(10000),
+  Schema.isLessThanOrEqualTo(10_000),
 );
 export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 export const ProjectStateSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'PAUSED', 'DONE']);
 /** One changed field of a task or project: raw saved values, so the editor can name ids with its own lookups. */
 export const ChangeSchema = Schema.Struct({
-  field: Schema.String,
-  before: Schema.optionalKey(Schema.String),
   after: Schema.optionalKey(Schema.String),
+  before: Schema.optionalKey(Schema.String),
+  field: Schema.String,
 });
 export type Change = typeof ChangeSchema.Type;
 /** Who changed what and when. Written by the server for every governed command that changes a field. */
@@ -46,12 +45,12 @@ export const HistoryEntrySchema = Schema.Struct({
 });
 export type HistoryEntry = typeof HistoryEntrySchema.Type;
 export const ProjectSchema = Schema.Struct({
+  assignmentNeedsReassignment: Schema.optionalKey(Schema.Boolean),
+  /** Historical work assigned to an employee who had no linked login. Never an assignment target. */
+  assignmentWithoutLogin: Schema.optionalKey(Schema.Boolean),
+  createdAt: Schema.DateTimeUtcFromString,
+  history: Schema.optionalKey(Schema.Array(HistoryEntrySchema)),
   id: ProjectIdSchema,
-  title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  plannedStart: CalendarDateSchema,
-  plannedEnd: CalendarDateSchema,
-  responsibleEmployeeId: EmployeeIdSchema,
-  state: ProjectStateSchema,
   milestones: Schema.Array(
     Schema.Struct({
       title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -59,40 +58,43 @@ export const ProjectSchema = Schema.Struct({
       completed: Schema.Boolean,
     }),
   ).check(Schema.isMaxLength(50)),
-  createdAt: Schema.DateTimeUtcFromString,
-  history: Schema.optionalKey(Schema.Array(HistoryEntrySchema)),
+  plannedEnd: CalendarDateSchema,
+  plannedStart: CalendarDateSchema,
+  responsiblePrincipalRef: Schema.optionalKey(PrincipalRefSchema),
+  state: ProjectStateSchema,
+  title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type WorkProject = typeof ProjectSchema.Type;
 export const TaskCommentSchema = Schema.Struct({
-  id: Schema.String,
   authorDisplayName: Schema.optionalKey(Schema.String),
   authorPrincipalRef: PrincipalRefSchema,
   createdAt: Schema.DateTimeUtcFromString,
+  id: Schema.String,
   text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
 });
 /** Customer-authored contact inquiry retained with its actionable staff task. Not a marketing consent or claim case. */
 export const StorefrontInquirySchema = Schema.Struct({
-  requestId: Schema.String.check(Schema.isUUID()),
-  kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
-  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
   email: Schema.Trim.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u)),
-  subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
+  kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
   message: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1500)),
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
   productId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
-  productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   productName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  requestId: Schema.String.check(Schema.isUUID()),
+  subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
 });
 export type StorefrontInquiry = typeof StorefrontInquirySchema.Type;
 export const TaskSchema = Schema.Struct({
+  assignmentNeedsReassignment: Schema.optionalKey(Schema.Boolean),
+  /** Historical work assigned to an employee who had no linked login. Never an assignment target. */
+  assignmentWithoutLogin: Schema.optionalKey(Schema.Boolean),
   storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
   /** Hidden from task lists (still opened by a direct link); only a completed or cancelled task can be hidden. */
   archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
-  comments: Schema.optionalKey(Schema.Array(TaskCommentSchema)),
-  plannedHours: Schema.optionalKey(PlannedHoursSchema),
-  projectId: Schema.optionalKey(ProjectIdSchema),
-  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   collectionRef: TaskCollectionRefSchema,
+  comments: Schema.optionalKey(Schema.Array(TaskCommentSchema)),
   contextRefs: Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12)),
   createdAt: Schema.DateTimeUtcFromString,
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
@@ -101,7 +103,9 @@ export const TaskSchema = Schema.Struct({
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   partyId: Schema.optionalKey(PartyIdSchema),
+  plannedHours: Schema.optionalKey(PlannedHoursSchema),
   priority: TaskPrioritySchema,
+  projectId: Schema.optionalKey(ProjectIdSchema),
   ref: TaskRefSchema,
   state: TaskStateSchema,
   title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -124,12 +128,11 @@ export const TaskCollectionSchema = Schema.Struct({
 });
 export const WorkStateSchema = Schema.Struct({
   collection: TaskCollectionSchema,
-  tasks: Schema.Array(TaskSchema),
   projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
+  tasks: Schema.Array(TaskSchema),
 });
 export type WorkState = typeof WorkStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
-  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   contextResourceId: Schema.optionalKey(PropertyRefSchema.fields.resourceId),
   /** Also list hidden (archived) tasks. A request for one resourceId always includes it. */
   includeArchived: Schema.optionalKey(Schema.Boolean),
@@ -142,31 +145,39 @@ export const RecordsRequestSchema = Schema.Struct({
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const LookupAccessSchema = Schema.Struct({
+  contracts: Schema.Literals(['allowed', 'denied', 'unavailable']),
   customers: Schema.Literals(['allowed', 'denied', 'unavailable']),
-  employees: Schema.Literals(['allowed', 'denied', 'unavailable']),
   opportunities: Schema.Literals(['allowed', 'denied', 'unavailable']),
   properties: Schema.Literals(['allowed', 'denied', 'unavailable']),
-  contracts: Schema.Literals(['allowed', 'denied', 'unavailable']),
 });
 export type LookupAccess = typeof LookupAccessSchema.Type;
 
+/** Presentation projection of Core's governed directory; never an independent eligibility decision. */
+export const AssignmentPrincipalSchema = Schema.Struct({
+  displayName: Schema.String,
+  principalRef: PrincipalRefSchema,
+});
+export type AssignmentPrincipal = typeof AssignmentPrincipalSchema.Type;
+
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
-  lookupAccess: Schema.optionalKey(LookupAccessSchema),
-  projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
+  assignablePrincipals: Schema.Array(AssignmentPrincipalSchema),
+  principalNames: Schema.Array(AssignmentPrincipalSchema),
   canWrite: Schema.Boolean,
   collection: TaskCollectionSchema,
   indicators: Schema.Struct({
     open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     openByAssignee: Schema.Array(
       Schema.Struct({
-        assigneeEmployeeId: EmployeeIdSchema,
+        ownerPrincipalRef: PrincipalRefSchema,
         open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
       }),
     ),
     overdue: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   items: Schema.Array(TaskSchema),
+  lookupAccess: Schema.optionalKey(LookupAccessSchema),
+  projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
   referenceDate: CalendarDateSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });

@@ -22,15 +22,6 @@ export interface LiveRights {
   readonly write: ReadonlySet<string>;
 }
 
-/** Agent: SpiceDB module access ∩ agent profile modules; write only where the profile says write. */
-export const agentLiveRights = (spice: LiveRights, profileModules: readonly AgentModuleGrant[]): LiveRights => {
-  const read = new Set(profileModules.filter((m) => spice.read.has(m.moduleId)).map((m) => m.moduleId));
-  return {
-    read,
-    write: new Set(profileModules.filter((m) => m.access === 'write' && read.has(m.moduleId)).map((m) => m.moduleId)),
-  };
-};
-
 export interface EffectiveAuthority {
   readonly modules: readonly ConnectionModule[];
   readonly writePolicy: ConnectionWritePolicy;
@@ -67,7 +58,12 @@ export const effectiveAuthority = (input: {
       seen.add(entry.moduleId);
       return true;
     })
-    .map((entry) => ({ label: input.labelOf(entry.moduleId), moduleId: entry.moduleId, read: true, write: entry.write }))
+    .map((entry) => ({
+      label: input.labelOf(entry.moduleId),
+      moduleId: entry.moduleId,
+      read: true,
+      write: entry.write,
+    }))
     .sort((a, b) => a.label.localeCompare(b.label, 'cs'));
   return { modules, writePolicy };
 };

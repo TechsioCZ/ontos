@@ -1,3 +1,4 @@
+import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { CoreSearchProjectionDocumentSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PropertyStateSchema } from '@app/property-portfolio/contracts/records';
@@ -6,6 +7,8 @@ import { AgreementsStateSchema } from '@app/legal-agreements/contracts/records';
 import { WorkStateSchema } from '@app/work-tasks/contracts/records';
 import { RelationshipsStateSchema } from '@app/crm-activities/contracts/records';
 import { FinanceStateSchema } from '@app/finance-billing/contracts/records';
+
+const operationsDisplayName = 'Provoz Siampark';
 
 /** Public operator inputs. Owners validate and persist their own fixture independently. */
 export const demoTenantId = '70000000-0000-4000-8000-000000000020';
@@ -49,49 +52,49 @@ const fixture20261015 = '2026-10-15';
 const fixtureCrmActivities = 'crm.activities';
 const fixtureFinancialPlanEntry = 'financial-plan-entry';
 const fixtureIds = {
-  [fixturePropertyParkova]: '76000000-0000-4000-8000-000000000001',
-  [fixturePropertyRiverside]: '76000000-0000-4000-8000-000000000002',
-  'unit.parkova.a101': '76000000-0000-4000-8000-000000000003',
-  [fixtureUnitParkovaA102]: '76000000-0000-4000-8000-000000000004',
-  [fixtureUnitParkovaA103]: '76000000-0000-4000-8000-000000000005',
-  [fixtureUnitRiversideB201]: '76000000-0000-4000-8000-000000000006',
-  'unit.riverside.b202': '76000000-0000-4000-8000-000000000007',
+  'activity.completed': '76000000-0000-4000-8000-000000000036',
+  'activity.external': '76000000-0000-4000-8000-000000000038',
+  'counterparty.golden': '76000000-0000-4000-8000-000000000017',
+  'document.b201.lease': '76000000-0000-4000-8000-000000000026',
+  [fixtureActivityFollowup]: '76000000-0000-4000-8000-000000000037',
   [fixtureAssetParkovaHvac01]: '76000000-0000-4000-8000-000000000008',
+  [fixtureContractA102Lease]: '76000000-0000-4000-8000-000000000023',
+  [fixtureContractB201Lease]: '76000000-0000-4000-8000-000000000024',
+  [fixtureCounterpartyA102]: '76000000-0000-4000-8000-000000000015',
+  [fixtureCounterpartyB201]: '76000000-0000-4000-8000-000000000016',
+  [fixtureCounterpartyMaintenance]: '76000000-0000-4000-8000-000000000018',
+  [fixtureCounterpartyUtilities]: '76000000-0000-4000-8000-000000000019',
   [fixtureCustomerA102Tenant]: '76000000-0000-4000-8000-000000000009',
   [fixtureCustomerB201Tenant]: '76000000-0000-4000-8000-000000000010',
   [fixtureCustomerGoldenA101]: '76000000-0000-4000-8000-000000000011',
+  [fixtureDocumentA102Lease]: '76000000-0000-4000-8000-000000000025',
   [fixtureGuestA103Shortstay]: '76000000-0000-4000-8000-000000000012',
-  [fixtureSupplierMaintenance]: '76000000-0000-4000-8000-000000000013',
-  [fixtureSupplierUtilities]: '76000000-0000-4000-8000-000000000014',
-  [fixtureCounterpartyA102]: '76000000-0000-4000-8000-000000000015',
-  [fixtureCounterpartyB201]: '76000000-0000-4000-8000-000000000016',
-  'counterparty.golden': '76000000-0000-4000-8000-000000000017',
-  [fixtureCounterpartyMaintenance]: '76000000-0000-4000-8000-000000000018',
-  [fixtureCounterpartyUtilities]: '76000000-0000-4000-8000-000000000019',
+  [fixtureInvoiceA102Paid]: '76000000-0000-4000-8000-000000000027',
   [fixtureOccupancyA102]: '76000000-0000-4000-8000-000000000020',
   [fixtureOccupancyA103]: '76000000-0000-4000-8000-000000000021',
   [fixtureOccupancyB201]: '76000000-0000-4000-8000-000000000022',
-  [fixtureContractA102Lease]: '76000000-0000-4000-8000-000000000023',
-  [fixtureContractB201Lease]: '76000000-0000-4000-8000-000000000024',
-  [fixtureDocumentA102Lease]: '76000000-0000-4000-8000-000000000025',
-  'document.b201.lease': '76000000-0000-4000-8000-000000000026',
-  [fixtureInvoiceA102Paid]: '76000000-0000-4000-8000-000000000027',
+  [fixturePropertyParkova]: '76000000-0000-4000-8000-000000000001',
+  [fixturePropertyRiverside]: '76000000-0000-4000-8000-000000000002',
+  [fixtureSupplierMaintenance]: '76000000-0000-4000-8000-000000000013',
+  [fixtureSupplierUtilities]: '76000000-0000-4000-8000-000000000014',
+  [fixtureTaskB201Renewal]: '76000000-0000-4000-8000-000000000033',
+  [fixtureTaskExternalAgentAssigned]: '76000000-0000-4000-8000-000000000035',
+  [fixtureTaskHvacMaintenance]: '76000000-0000-4000-8000-000000000032',
+  [fixtureUnitParkovaA102]: '76000000-0000-4000-8000-000000000004',
+  [fixtureUnitParkovaA103]: '76000000-0000-4000-8000-000000000005',
+  [fixtureUnitRiversideB201]: '76000000-0000-4000-8000-000000000006',
   'invoice.b201.overdue': '76000000-0000-4000-8000-000000000028',
   'invoice.parkova.supplier': '76000000-0000-4000-8000-000000000029',
   'invoice.riverside.supplier': '76000000-0000-4000-8000-000000000030',
-  'task-collection.operations': '76000000-0000-4000-8000-000000000031',
-  [fixtureTaskHvacMaintenance]: '76000000-0000-4000-8000-000000000032',
-  [fixtureTaskB201Renewal]: '76000000-0000-4000-8000-000000000033',
-  'task.operations-followup': '76000000-0000-4000-8000-000000000034',
-  [fixtureTaskExternalAgentAssigned]: '76000000-0000-4000-8000-000000000035',
-  'activity.completed': '76000000-0000-4000-8000-000000000036',
-  [fixtureActivityFollowup]: '76000000-0000-4000-8000-000000000037',
-  'activity.external': '76000000-0000-4000-8000-000000000038',
-  'plan.parkova.revenue': '76000000-0000-4000-8000-000000000041',
   'plan.parkova.cost': '76000000-0000-4000-8000-000000000042',
-  'plan.riverside.revenue': '76000000-0000-4000-8000-000000000043',
+  'plan.parkova.revenue': '76000000-0000-4000-8000-000000000041',
   'plan.riverside.cost': '76000000-0000-4000-8000-000000000044',
+  'plan.riverside.revenue': '76000000-0000-4000-8000-000000000043',
   'seed.invocation': '76000000-0000-4000-8000-000000000045',
+  'task-collection.operations': '76000000-0000-4000-8000-000000000031',
+  'task.operations-followup': '76000000-0000-4000-8000-000000000034',
+  'unit.parkova.a101': '76000000-0000-4000-8000-000000000003',
+  'unit.riverside.b202': '76000000-0000-4000-8000-000000000007',
 } as const;
 export type DemoAlias = keyof typeof fixtureIds;
 export const demoId = (alias: DemoAlias): string => fixtureIds[alias];
@@ -112,7 +115,7 @@ export const demoAccounts = [
   {
     authBindingId: '73000000-0000-4000-8000-000000000022',
     authUserId: 'siampark-operations',
-    displayName: 'Provoz Siampark',
+    displayName: operationsDisplayName,
     email: 'operations@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000022',
   },
@@ -234,7 +237,7 @@ const propertyState = {
       note: null,
       propertyRef: property(fixturePropertyParkova),
       propertyType: 'Bytový dům',
-      responsiblePerson: 'Provoz Siampark',
+      responsiblePerson: operationsDisplayName,
       ...timestamps,
     },
     {
@@ -251,7 +254,7 @@ const propertyState = {
       note: null,
       propertyRef: property(fixturePropertyRiverside),
       propertyType: 'Apartmánový dům',
-      responsiblePerson: 'Provoz Siampark',
+      responsiblePerson: operationsDisplayName,
       ...timestamps,
     },
   ],
@@ -677,11 +680,13 @@ export const RelationshipSchema = Schema.Struct({
   resourceId: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('AuthorizationResourceId'))),
   resourceType: SeedTextSchema,
   subjectId: Schema.toEncoded(SeedTextSchema.pipe(Schema.brand('AuthorizationSubjectId'))),
+  subjectRelation: Schema.optionalKey(SeedTextSchema),
   subjectType: SeedTextSchema,
 });
 export type Relationship = typeof RelationshipSchema.Type;
 export const ContextFixtureSchema = Schema.Struct({
   accounts: SeedAccountsSchema,
+  companyMemberships: Schema.optionalKey(Schema.Array(Schema.toEncoded(BootstrapCompanyMembershipSchema))),
   legalEntity: Schema.Struct({
     legalEntityId: Schema.Literal(demoLegalEntityId),
     legalName: SeedTextSchema,

@@ -1,5 +1,6 @@
 import { EmptyState, SectionCard, SidePanel, surfaceTileClassName } from '@app/admin-ui';
-import type { Employee } from '@app/workforce/contracts/records';
+import { assignmentLabel, principalKey } from '../../../../shared/assignment.ts';
+import { assignmentOptions, selectedPrincipal } from './assignment-options.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -9,60 +10,72 @@ import { Schema } from 'effect';
 import { useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
-import type { RecordsResponse, WorkProject } from '../../../../shared/apis/records.ts';
+import type { AssignmentPrincipal, RecordsResponse, WorkProject } from '../../../../shared/apis/records.ts';
 import { formatDueDate, isOpenTask, selectOption, todayIsoDate } from './tasks-model.ts';
 import { ChangeHistory } from './change-history.tsx';
 
-const states = { PLANNED: 'Plánovaný', ACTIVE: 'Aktivní', PAUSED: 'Pozastavený', DONE: 'Dokončený' } as const;
-type Draft = {
+const states = { ACTIVE: 'Aktivní', DONE: 'Dokončený', PAUSED: 'Pozastavený', PLANNED: 'Plánovaný' } as const;
+interface Draft {
   title: string;
   plannedStart: string;
   plannedEnd: string;
-  responsibleEmployeeId: string;
+  responsiblePrincipalRef: string;
   state: WorkProject['state'];
   milestones: { title: string; dueDate: string; completed: boolean }[];
-};
-type Outcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
+}
+type Outcome = { readonly ok: true } | { readonly message: string; readonly ok: false };
 type Apply = (command: WorkCommand, onDone: (outcome: Outcome) => void) => void;
 
 const initial = (project: WorkProject | undefined): Draft => ({
-  title: project?.title ?? '',
-  plannedStart: project?.plannedStart ?? todayIsoDate(),
-  plannedEnd: project?.plannedEnd ?? todayIsoDate(),
-  responsibleEmployeeId: project?.responsibleEmployeeId ?? '',
-  state: project?.state ?? 'PLANNED',
   milestones: (project?.milestones ?? []).map((milestone) => ({ ...milestone })),
+  plannedEnd: project?.plannedEnd ?? todayIsoDate(),
+  plannedStart: project?.plannedStart ?? todayIsoDate(),
+  responsiblePrincipalRef:
+    project?.responsiblePrincipalRef === undefined ? '' : principalKey(project.responsiblePrincipalRef),
+  state: project?.state ?? 'PLANNED',
+  title: project?.title ?? '',
 });
 
 const projectFieldLabels: Record<string, string> = {
   milestones: 'Milníky',
   plannedEnd: 'Plánovaný konec',
   plannedStart: 'Plánovaný začátek',
-  responsibleEmployeeId: 'Odpovědná osoba',
+  responsiblePrincipalRef: 'Odpovědná osoba',
   state: 'Stav',
   title: 'Název projektu',
 };
 
 const ProjectEditor = ({
-  project,
-  employees,
-  apply,
   actorName,
+  apply,
   close,
+  principalNames,
+  principals,
+  project,
 }: {
-  readonly project: WorkProject | undefined;
-  readonly employees: readonly Employee[];
-  readonly apply: Apply;
   readonly actorName: (principalId: string, displayName?: string) => string;
+  readonly apply: Apply;
   readonly close: () => void;
+  readonly principalNames: ReadonlyMap<string, string>;
+  readonly principals: readonly AssignmentPrincipal[];
+  readonly project: WorkProject | undefined;
 }) => {
   const historyValue = (field: string, value: string | undefined): string => {
-    if (value === undefined) return '—';
-    if (field === 'state') return Object.entries(states).find(([state]) => state === value)?.[1] ?? value;
-    if (field === 'plannedStart' || field === 'plannedEnd') return formatDueDate(value);
-    if (field === 'responsibleEmployeeId')
-      return employees.find((person) => person.id === value)?.fullName ?? 'zaměstnanec mimo seznam';
-    if (field === 'milestones') return value.replace(/(\d{4}-\d{2}-\d{2})/g, (date) => formatDueDate(date));
+    if (value === undefined) {
+      return '—';
+    }
+    if (field === 'state') {
+      return Object.entries(states).find(([state]) => state === value)?.[1] ?? value;
+    }
+    if (field === 'plannedStart' || field === 'plannedEnd') {
+      return formatDueDate(value);
+    }
+    if (field === 'responsiblePrincipalRef') {
+      return principalNames.get(value) ?? 'Účet mimo seznam';
+    }
+    if (field === 'milestones') {
+      return value.replaceAll(/\d{4}-\d{2}-\d{2}/gu, (date) => formatDueDate(date));
+    }
     return value;
   };
   const [draft, setDraft] = useState(() => initial(project));
@@ -73,6 +86,12 @@ const ProjectEditor = ({
     const command = Schema.decodeUnknownOption(PlanningCommandSchema)({
       _tag: project === undefined ? 'CreateProject' : 'UpdateProject',
       ...draft,
+      responsiblePrincipalRef:
+        selectedPrincipal(principals, draft.responsiblePrincipalRef) ??
+        (project?.responsiblePrincipalRef !== undefined &&
+        principalKey(project.responsiblePrincipalRef) === draft.responsiblePrincipalRef
+          ? project.responsiblePrincipalRef
+          : undefined),
       ...(project === undefined ? {} : { id: project.id }),
     });
     if (
@@ -89,20 +108,15 @@ const ProjectEditor = ({
     setError(undefined);
     apply(command.value, (outcome) => {
       setBusy(false);
-      if (outcome.ok) close();
-      else setError(outcome.message);
+      if (outcome.ok) {
+        close();
+      } else {
+        setError(outcome.message);
+      }
     });
   };
   return (
     <SidePanel
-      open
-      title={project === undefined ? 'Nový projekt' : 'Upravit projekt'}
-      size="lg"
-      resizeLabel="Změnit šířku panelu"
-      closeOnInteractOutside={false}
-      onOpenChange={(open) => {
-        if (!open && !busy) close();
-      }}
       actions={
         <>
           <Button disabled={busy} onClick={close} theme="outlined" variant="secondary">
@@ -113,62 +127,82 @@ const ProjectEditor = ({
           </Button>
         </>
       }
+      closeOnInteractOutside={false}
+      onOpenChange={(open) => {
+        if (!open && !busy) {
+          close();
+        }
+      }}
+      open
+      resizeLabel="Změnit šířku panelu"
+      size="lg"
+      title={project === undefined ? 'Nový projekt' : 'Upravit projekt'}
     >
       <div className="flex flex-col gap-200 py-200">
         {error !== undefined && <StatusText status="error">{error}</StatusText>}
         <FormInput
+          disabled={busy}
           id="project-title"
           label="Název projektu"
-          required
           maxLength={200}
-          value={draft.title}
           onChange={(event) => patch({ title: event.target.value })}
-          disabled={busy}
+          required
+          value={draft.title}
         />
         <FormInput
+          disabled={busy}
           id="project-start"
           label="Plánovaný začátek"
-          type="date"
-          required
-          value={draft.plannedStart}
           onChange={(event) => patch({ plannedStart: event.target.value })}
-          disabled={busy}
+          required
+          type="date"
+          value={draft.plannedStart}
         />
         <FormInput
+          disabled={busy}
           id="project-end"
           label="Plánovaný konec"
-          type="date"
-          required
-          value={draft.plannedEnd}
           onChange={(event) => patch({ plannedEnd: event.target.value })}
-          disabled={busy}
+          required
+          type="date"
+          value={draft.plannedEnd}
         />
+        {project !== undefined && (
+          <p className="text-sm text-fg-secondary">
+            {assignmentLabel(
+              project.responsiblePrincipalRef,
+              principalNames,
+              project.assignmentNeedsReassignment,
+              project.assignmentWithoutLogin,
+            )}
+          </p>
+        )}
         <Select
+          disabled={busy}
+          items={assignmentOptions(principals)}
           label="Odpovědná osoba"
-          items={employees.filter((person) => person.active).map((person) => selectOption(person.fullName, person.id))}
-          value={draft.responsibleEmployeeId === '' ? [] : [draft.responsibleEmployeeId]}
-          disabled={busy}
-          onValueChange={({ value }) => patch({ responsibleEmployeeId: value[0] ?? '' })}
+          onValueChange={({ value }) => patch({ responsiblePrincipalRef: value[0] ?? '' })}
+          value={draft.responsiblePrincipalRef === '' ? [] : [draft.responsiblePrincipalRef]}
         />
         <Select
-          label="Stav"
-          items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
-          value={[draft.state]}
           disabled={busy}
+          items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
+          label="Stav"
           onValueChange={({ value }) => {
             const next = value[0];
             if (next !== undefined && next in states) patch({ state: next as Draft['state'] });
           }}
+          value={[draft.state]}
         />
         <div className="flex items-center justify-between gap-100">
           <h3 className="font-semibold">Milníky</h3>
           <Button
             disabled={busy || draft.milestones.length >= 50}
-            size="sm"
-            variant="secondary"
             onClick={() =>
               patch({ milestones: [...draft.milestones, { title: '', dueDate: draft.plannedEnd, completed: false }] })
             }
+            size="sm"
+            variant="secondary"
           >
             Přidat milník
           </Button>
@@ -177,11 +211,10 @@ const ProjectEditor = ({
           <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
         )}
         {draft.milestones.map((milestone, index) => (
-          <div key={index} className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
+          <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={index}>
             <FormInput
-              label="Název milníku"
-              value={milestone.title}
               disabled={busy}
+              label="Název milníku"
               maxLength={200}
               onChange={(event) =>
                 patch({
@@ -190,12 +223,11 @@ const ProjectEditor = ({
                   ),
                 })
               }
+              value={milestone.title}
             />
             <FormInput
-              label="Termín milníku"
-              type="date"
-              value={milestone.dueDate}
               disabled={busy}
+              label="Termín milníku"
               onChange={(event) =>
                 patch({
                   milestones: draft.milestones.map((item, i) =>
@@ -203,10 +235,11 @@ const ProjectEditor = ({
                   ),
                 })
               }
+              type="date"
+              value={milestone.dueDate}
             />
             <label className="flex items-center gap-100">
               <input
-                type="checkbox"
                 checked={milestone.completed}
                 disabled={busy}
                 onChange={(event) =>
@@ -216,14 +249,15 @@ const ProjectEditor = ({
                     ),
                   })
                 }
+                type="checkbox"
               />
               Dokončeno
             </label>
             <Button
-              size="sm"
-              variant="secondary"
               disabled={busy}
               onClick={() => patch({ milestones: draft.milestones.filter((_, i) => i !== index) })}
+              size="sm"
+              variant="secondary"
             >
               Odebrat milník
             </Button>
@@ -248,43 +282,48 @@ const ProjectEditor = ({
 };
 
 export const WorkPlanning = ({
-  records,
-  employees,
-  apply,
   actorName,
+  apply,
   openTask,
+  principalNames,
+  principals,
+  records,
 }: {
-  readonly records: RecordsResponse;
-  readonly employees: readonly Employee[];
-  readonly apply: Apply;
   readonly actorName: (principalId: string, displayName?: string) => string;
+  readonly apply: Apply;
   readonly openTask: (task: RecordsResponse['items'][number]) => void;
+  readonly principalNames: ReadonlyMap<string, string>;
+  readonly principals: readonly AssignmentPrincipal[];
+  readonly records: RecordsResponse;
 }) => {
   const [editor, setEditor] = useState<{ project: WorkProject | undefined }>();
   const [from, setFrom] = useState(`${todayIsoDate().slice(0, 7)}-01`);
   const [to, setTo] = useState(`${todayIsoDate().slice(0, 7)}-31`);
   const projects = records.projects ?? [];
-  const name = (id: string) => employees.find((person) => person.id === id)?.fullName ?? 'Neznámý řešitel';
+  const name = (id: string) => principalNames.get(id) ?? 'Účet mimo seznam';
   const inPeriod = records.items.filter(
     (task) => isOpenTask(task) && task.dueDate !== undefined && task.dueDate >= from && task.dueDate <= to,
   );
   const ids = [
-    ...new Set(inPeriod.flatMap((task) => (task.assigneeEmployeeId === undefined ? [] : [task.assigneeEmployeeId]))),
+    ...new Set(
+      inPeriod.flatMap((task) => (task.ownerPrincipalRef === undefined ? [] : [principalKey(task.ownerPrincipalRef)])),
+    ),
   ];
   const rows = ids.map((id) => {
-    const tasks = inPeriod.filter((task) => task.assigneeEmployeeId === id);
+    const tasks = inPeriod.filter(
+      (task) => task.ownerPrincipalRef !== undefined && principalKey(task.ownerPrincipalRef) === id,
+    );
     return {
-      id,
-      name: name(id),
       count: tasks.length,
       hours: tasks.reduce((sum, task) => sum + (task.plannedHours ?? 0), 0),
+      id,
+      name: name(id),
       unknown: tasks.filter((task) => task.plannedHours === undefined).length,
     };
   });
   return (
     <div className="flex flex-col gap-250">
       <SectionCard
-        title="Projekty"
         actions={
           records.canWrite && (
             <Button size="sm" variant="primary" onClick={() => setEditor({ project: undefined })}>
@@ -292,29 +331,35 @@ export const WorkPlanning = ({
             </Button>
           )
         }
+        title="Projekty"
       >
         <p className="text-sm text-fg-secondary">
           Od přípravy po dokončení: odpovědná osoba, plánované období a milníky na jednom místě.
         </p>
         {projects.length === 0 ? (
-          <EmptyState title="Zatím žádné projekty" description="Založte projekt a přiřaďte k němu související úkoly." />
+          <EmptyState description="Založte projekt a přiřaďte k němu související úkoly." title="Zatím žádné projekty" />
         ) : (
           projects.map((project) => {
             const tasks = records.items.filter((task) => task.projectId === project.id);
             return (
-              <article key={project.id} className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+              <article className={`${surfaceTileClassName} flex flex-col gap-150 p-200`} key={project.id}>
                 <div className="flex flex-wrap items-start justify-between gap-150">
                   <div>
                     <h3 className="font-semibold">{project.title}</h3>
                     <p className="text-sm text-fg-secondary">
-                      {name(project.responsibleEmployeeId)} · {formatDueDate(project.plannedStart)} –{' '}
-                      {formatDueDate(project.plannedEnd)}
+                      {assignmentLabel(
+                        project.responsiblePrincipalRef,
+                        principalNames,
+                        project.assignmentNeedsReassignment,
+                        project.assignmentWithoutLogin,
+                      )}{' '}
+                      · {formatDueDate(project.plannedStart)} – {formatDueDate(project.plannedEnd)}
                     </p>
                   </div>
                   <div className="flex items-center gap-150">
                     <span>{states[project.state]}</span>
                     {records.canWrite && (
-                      <Button size="sm" variant="secondary" theme="outlined" onClick={() => setEditor({ project })}>
+                      <Button onClick={() => setEditor({ project })} size="sm" theme="outlined" variant="secondary">
                         Upravit projekt
                       </Button>
                     )}
@@ -338,7 +383,7 @@ export const WorkPlanning = ({
                     <ul>
                       {tasks.map((task) => (
                         <li key={task.ref.resourceId}>
-                          <button type="button" className="text-left underline" onClick={() => openTask(task)}>
+                          <button className="text-left underline" onClick={() => openTask(task)} type="button">
                             {task.title}
                           </button>
                         </li>
@@ -359,25 +404,23 @@ export const WorkPlanning = ({
         <div className="flex flex-wrap gap-150">
           <FormInput
             id="capacity-from"
-            type="date"
             label="Od"
-            value={from}
             onChange={(event) => setFrom(event.target.value)}
+            type="date"
+            value={from}
           />
           <FormInput
             id="capacity-to"
-            type="date"
             label="Do"
-            value={to}
             onChange={(event) => setTo(event.target.value)}
+            type="date"
+            value={to}
           />
         </div>
         {from > to ? (
           <StatusText status="error">Konec období musí být po jeho začátku.</StatusText>
         ) : (
           <DataTable
-            data={rows}
-            getRowId={(row) => row.id}
             columns={[
               { accessorKey: 'name', header: 'Řešitel' },
               { accessorKey: 'count', header: 'Otevřené úkoly' },
@@ -391,10 +434,12 @@ export const WorkPlanning = ({
               },
               { accessorKey: 'unknown', header: 'Úkoly bez odhadu' },
             ]}
+            data={rows}
+            getRowId={(row) => row.id}
             renderEmpty={() => (
               <EmptyState
-                title="V tomto období nejsou přiřazené úkoly"
                 description="Vyberte jiné období nebo doplňte řešitele a termín v detailu úkolu."
+                title="V tomto období nejsou přiřazené úkoly"
               />
             )}
           />
@@ -402,12 +447,13 @@ export const WorkPlanning = ({
       </SectionCard>
       {editor !== undefined && (
         <ProjectEditor
-          key={editor.project?.id ?? 'new'}
-          project={editor.project}
-          employees={employees}
-          apply={apply}
           actorName={actorName}
+          apply={apply}
           close={() => setEditor(undefined)}
+          key={editor.project?.id ?? 'new'}
+          principalNames={principalNames}
+          principals={principals}
+          project={editor.project}
         />
       )}
     </div>

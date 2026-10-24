@@ -19,7 +19,12 @@ const taskValues = (task: Task): FieldValues =>
     ['state', task.state],
     ['priority', task.priority],
     ['dueDate', task.dueDate],
-    ['assigneeEmployeeId', task.assigneeEmployeeId],
+    [
+      'ownerPrincipalRef',
+      task.ownerPrincipalRef === undefined
+        ? undefined
+        : `${task.ownerPrincipalRef.tenantId}:${task.ownerPrincipalRef.principalId}`,
+    ],
     ['partyId', task.partyId],
     ['opportunityId', task.opportunityId],
     ['projectId', task.projectId],
@@ -37,7 +42,12 @@ const projectValues = (project: WorkProject): FieldValues =>
     ['title', project.title],
     ['plannedStart', project.plannedStart],
     ['plannedEnd', project.plannedEnd],
-    ['responsibleEmployeeId', project.responsibleEmployeeId],
+    [
+      'responsiblePrincipalRef',
+      project.responsiblePrincipalRef === undefined
+        ? undefined
+        : `${project.responsiblePrincipalRef.tenantId}:${project.responsiblePrincipalRef.principalId}`,
+    ],
     ['state', project.state],
     [
       'milestones',
@@ -52,10 +62,16 @@ const projectValues = (project: WorkProject): FieldValues =>
 const diff = (before: FieldValues | undefined, after: FieldValues): Change[] =>
   [...after].flatMap(([field, value]) => {
     const previous = before?.get(field);
-    if (previous === value) return [];
-    const change: { field: string; before?: string; after?: string } = { field };
-    if (previous !== undefined) change.before = previous;
-    if (value !== undefined) change.after = value;
+    if (previous === value) {
+      return [];
+    }
+    let change: Change = { field };
+    if (previous !== undefined) {
+      change = { ...change, before: previous };
+    }
+    if (value !== undefined) {
+      change = { ...change, after: value };
+    }
     return [change];
   });
 
@@ -73,14 +89,19 @@ export const withHistory = (
   now: DateTime.Utc,
   actorDisplayName?: string,
 ): WorkState => {
-  const who = actorDisplayName === undefined ? { actorPrincipalRef: actor } : { actorDisplayName, actorPrincipalRef: actor };
+  const who =
+    actorDisplayName === undefined ? { actorPrincipalRef: actor } : { actorDisplayName, actorPrincipalRef: actor };
   const previousTasks = new Map(before.tasks.map((task) => [task.ref.resourceId, task] as const));
   const tasks = after.tasks.map((task): Task => {
     const previous = previousTasks.get(task.ref.resourceId);
-    if (previous === task) return task;
+    if (previous === task) {
+      return task;
+    }
     const changes = diff(previous === undefined ? undefined : taskValues(previous), taskValues(task));
     const archivedChanged = (previous?.archivedAt === undefined) !== (task.archivedAt === undefined);
-    if (previous !== undefined && changes.length === 0 && !archivedChanged) return task;
+    if (previous !== undefined && changes.length === 0 && !archivedChanged) {
+      return task;
+    }
     const action =
       previous === undefined
         ? ('created' as const)
@@ -94,10 +115,13 @@ export const withHistory = (
   const previousProjects = new Map((before.projects ?? []).map((project) => [project.id, project] as const));
   const projects = after.projects?.map((project): WorkProject => {
     const previous = previousProjects.get(project.id);
-    if (previous === project) return project;
+    if (previous === project) {
+      return project;
+    }
     const changes = diff(previous === undefined ? undefined : projectValues(previous), projectValues(project));
-    if (previous !== undefined && changes.length === 0)
+    if (previous !== undefined && changes.length === 0) {
       return previous.history === undefined ? project : { ...project, history: previous.history };
+    }
     return {
       ...project,
       history: append(previous?.history, {

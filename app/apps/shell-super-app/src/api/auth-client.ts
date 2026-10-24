@@ -28,6 +28,7 @@ import type {
   SwitchLegalEntityResponse,
   SwitchTenantPayload,
   SwitchTenantResponse,
+  SwitchToTenantContextResponse,
   TenantAccessForbiddenProblem,
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
@@ -58,6 +59,7 @@ import type {
   IdentityListPayload,
   IssueApiKeyPayload,
   IssueManagedApiKeyPayload,
+  ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
   RotateApiKeyPayload,
@@ -224,6 +226,11 @@ export const availableLegalEntities = (
 ): AvailableLegalEntitiesClientEffect =>
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.availableLegalEntities({}));
 
+export const switchToTenantContext = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<SwitchToTenantContextResponse, SwitchTenantClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchToTenantContext({}));
+
 export const switchLegalEntity = (
   payload: SwitchLegalEntityPayload,
   options: ShellAuthenticationClientOptions = {},
@@ -344,10 +351,14 @@ export const issueManagedApiKey = (
   );
 
 export const listManagedApiKeys = (
-  payload: IdentityListPayload,
+  payload: ManagedApiKeyListPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
+  invokeShellAuthenticationClient(options, (client) =>
+    payload.scope === 'company-agent'
+      ? client.identity.listManagedApiKeys({ payload })
+      : client.identity.listManagedApiKeys({ payload }),
+  );
 
 export const setSelfApiKeyStatus = (
   payload: SetApiKeyStatusPayload,

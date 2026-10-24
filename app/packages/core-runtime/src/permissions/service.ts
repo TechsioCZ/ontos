@@ -1,15 +1,10 @@
 import { ObjectReference, SubjectReference } from '@authzed/authzed-node/v1/core';
 import { CheckPermissionRequest, CheckPermissionResponse_Permissionship } from '@authzed/authzed-node/v1/permissions';
-import { Context, Effect, Layer, Predicate, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
 import type { ActionTransportMetadata } from '../actions/context.ts';
 import { ActionPermissionCheckError } from '../actions/errors.ts';
-import { decideAuthorizationRollout } from '../authorization/rollout-decision.ts';
-import type {
-  AuthorizationRolloutDecisionOptions,
-  AuthorizationWouldDenyEvent,
-} from '../authorization/rollout-decision.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   acquireSpiceDbClientResource,
@@ -25,18 +20,32 @@ export { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 
 export const SPICEDB_ACTION_OBJECT_TYPE = 'action';
 export const SPICEDB_PRINCIPAL_OBJECT_TYPE = 'principal';
-export const SPICEDB_RESTRICTION_PERMISSION = 'is_restricted';
 export const SPICEDB_EXECUTE_PERMISSION = 'execute';
+export const SPICEDB_PROPOSE_PERMISSION = 'propose';
 
-/** Losslessly maps dotted Action keys into SpiceDB's restricted object-id alphabet. */
-export const toSpiceDbActionObjectId = (actionKey: string): string =>
-  `ak_${Buffer.from(actionKey, 'utf-8').toString('base64url')}`;
+/** Only the trusted operational scope may select an Action authorization object. */
+export interface ScopedActionIdentity {
+  readonly actionKey: string;
+  readonly legalEntityId?: string;
+  readonly tenantId: string;
+}
+
+const encodeScopedActionIdentity = Schema.encodeResult(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.OptionFromNullOr(Schema.String), Schema.String])),
+);
+
+/** Exact tuple encoding: no global identity, scope fallback, or dual authorization check. */
+export const toSpiceDbActionObjectId = ({ actionKey, legalEntityId, tenantId }: ScopedActionIdentity): string =>
+  `ak_${Buffer.from(Result.getOrThrow(encodeScopedActionIdentity([tenantId, Option.fromUndefinedOr(legalEntityId), actionKey])), 'utf-8').toString('base64url')}`;
+
+/** Grant policy survives module uninstall; only the installed Action's links are reconciled. */
+export const toSpiceDbActionGrantObjectId = ({ actionKey, legalEntityId, tenantId }: ScopedActionIdentity): string =>
+  `ag_${Buffer.from(Result.getOrThrow(encodeScopedActionIdentity([tenantId, Option.fromUndefinedOr(legalEntityId), actionKey])), 'utf-8').toString('base64url')}`;
 
 const ActionPermissionDecisionSchema = Schema.Literals(['allowed', 'denied']);
 export type ActionPermissionDecision = typeof ActionPermissionDecisionSchema.Type;
 
-interface ActionPermissionTargetInput {
-  readonly actionKey: string;
+export interface ActionPermissionTargetInput extends ScopedActionIdentity {
   readonly principalId: string;
 }
 
@@ -60,7 +69,7 @@ export type PermissionClientFactory = (
 const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
   cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
 
-const checkFailure = (cause?: unknown): ActionPermissionCheckError =>
+export const checkFailure = (cause?: unknown): ActionPermissionCheckError =>
   attachCause(
     new ActionPermissionCheckError({
       code: 'action_permission_check_failed',
@@ -77,13 +86,13 @@ export const acquirePermissionClientResource = (
 ): Effect.Effect<PermissionCheckClient, ActionPermissionCheckError, Scope.Scope> =>
   acquireSpiceDbClientResource(acquire, checkFailure);
 
-const actionReference = (actionKey: string) =>
+export const actionReference = (identity: ScopedActionIdentity) =>
   ObjectReference.create({
-    objectId: toSpiceDbActionObjectId(actionKey),
+    objectId: toSpiceDbActionObjectId(identity),
     objectType: SPICEDB_ACTION_OBJECT_TYPE,
   });
 
-const principalReference = (principalId: string) =>
+export const principalReference = (principalId: string) =>
   SubjectReference.create({
     object: ObjectReference.create({
       objectId: principalId,
@@ -91,23 +100,15 @@ const principalReference = (principalId: string) =>
     }),
   });
 
-const executionRequest = (actionKey: string, principalId: string) =>
+const executionRequest = (input: CheckActionPermissionInput) =>
   CheckPermissionRequest.create({
     consistency: fullyConsistent,
     permission: SPICEDB_EXECUTE_PERMISSION,
-    resource: actionReference(actionKey),
-    subject: principalReference(principalId),
+    resource: actionReference(input),
+    subject: principalReference(input.principalId),
   });
 
-const restrictionRequest = (actionKey: string, principalId: string) =>
-  CheckPermissionRequest.create({
-    consistency: fullyConsistent,
-    permission: SPICEDB_RESTRICTION_PERMISSION,
-    resource: actionReference(actionKey),
-    subject: principalReference(principalId),
-  });
-
-const classifyPermissionship = <Response>(
+export const classifyPermissionship = <Response>(
   response: Response,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> => {
   if (!Predicate.isObjectKeyword(response) || response === null || !('permissionship' in response)) {
@@ -124,59 +125,21 @@ const classifyPermissionship = <Response>(
   return Effect.fail(checkFailure());
 };
 
-const runCheck = (
+export const runCheck = (
   client: PermissionCheckClient,
   request: CheckPermissionRequest,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
   client.checkPermission(request).pipe(Effect.mapError(checkFailure), Effect.flatMap(classifyPermissionship));
 
-interface ActionPermissionRolloutOptions {
-  readonly emit: (event: AuthorizationWouldDenyEvent) => void;
-  readonly nowEpochMs: () => number;
-  readonly rollout: AuthorizationRolloutDecisionOptions['contract'];
-}
-
-type PermissionRollout = ActionPermissionRolloutOptions;
-
-const actionPermissionService = (
-  client: PermissionCheckClient,
-  rolloutOptions?: PermissionRollout,
-): ActionPermissionService =>
+export const makeActionPermissionService = (client: PermissionCheckClient): ActionPermissionService =>
   Object.freeze({
     checkActionPermission: Effect.fn('ActionPermission.checkActionPermission')(function* checkActionPermissionEffect(
       input: CheckActionPermissionInput,
     ) {
-      const execution = yield* runCheck(client, executionRequest(input.actionKey, input.principalId));
-      if (execution === 'has') {
-        return 'allowed' as const;
-      }
-      if (rolloutOptions === undefined) {
-        return 'denied' as const;
-      }
-      const restricted = yield* runCheck(client, restrictionRequest(input.actionKey, input.principalId));
-      if (restricted === 'has') {
-        return 'denied' as const;
-      }
-      return yield* Effect.try({
-        catch: (cause) => checkFailure(cause),
-        try: () =>
-          decideAuthorizationRollout(
-            {
-              candidate: 'denied',
-              current: 'allowed',
-              denialReason: 'missing_policy',
-              entrypointKey: input.actionKey,
-              nowEpochMs: rolloutOptions.nowEpochMs(),
-              policyClass: 'action_execution',
-              surface: 'action',
-            },
-            { contract: rolloutOptions.rollout, emit: rolloutOptions.emit },
-          ),
-      });
+      const execution = yield* runCheck(client, executionRequest(input));
+      return execution === 'has' ? ('allowed' as const) : ('denied' as const);
     }),
   });
-
-export const makeActionPermissionService = actionPermissionService;
 
 const unavailablePermissionService = (cause?: unknown): ActionPermissionService =>
   Object.freeze({

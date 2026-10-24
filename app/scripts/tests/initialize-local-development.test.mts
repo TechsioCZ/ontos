@@ -7,6 +7,7 @@ import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { makeModuleContractFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { SPICEDB_TEST_CERTIFICATE } from '../../packages/core-runtime/tests/support/spicedb-test-certificate.ts';
@@ -192,6 +193,8 @@ it.effect('derives the fixed local commerce launch modules through generated own
       'sales-pipeline',
       'merchandise',
       'sales-insights',
+      'facility-operations',
+      'crm',
     ]);
   }),
 );
@@ -290,19 +293,54 @@ it.effect('generates stable module state IDs and complete access relationships',
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).toBe(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID));
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
     const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
-    expect(relationships.length).toBe(8);
-    expect(relationships.filter(({ relation }) => relation === 'accessor').length).toBe(2);
-    expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(2);
-    // Party Registry's governed reads need the tenant read permission, not only module access.
+    expect(relationships.length).toBe(12);
     expect(relationships).toContainEqual({
-      relation: 'party_identity_reader',
+      relation: 'company_member',
       resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
       resourceType: 'tenant',
       subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
       subjectType: 'principal',
     });
-    const withoutPartyRegistry = yield* buildLocalDevelopmentRelationships([INVENTORY_MODULE_ID]);
-    expect(withoutPartyRegistry.some(({ relation }) => relation === 'party_identity_reader')).toBe(false);
+    expect(relationships.some((row) => row.resourceType === 'tenant' && row.relation === 'member')).toBe(false);
+    expect(relationships.filter(({ resourceType }) => resourceType === 'principal')).toEqual([
+      {
+        relation: 'tenant',
+        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        resourceType: 'principal',
+        subjectId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'self',
+        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        resourceType: 'principal',
+        subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        subjectType: 'principal',
+      },
+    ]);
+    expect(relationships.filter(({ relation }) => relation === 'accessor')).toEqual([]);
+    expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(3);
+    const localSuperadminRole = toScopedRoleObjectId({
+      roleKey: 'superadmin',
+      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+    });
+    expect(relationships).toContainEqual({
+      relation: 'superadmin',
+      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+      resourceType: 'tenant',
+      subjectId: localSuperadminRole,
+      subjectRelation: 'member',
+      subjectType: 'scoped_role',
+    });
+    expect(relationships).toContainEqual({
+      relation: 'member',
+      resourceId: localSuperadminRole,
+      resourceType: 'scoped_role',
+      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+      subjectType: 'principal',
+    });
+    expect(relationships.some(({ relation }) => relation === 'party_identity_reader')).toBe(false);
+    expect(relationships.some(({ resourceId }) => resourceId === '70000000-0000-4000-8000-000000000020')).toBe(false);
   }),
 );
 
@@ -339,7 +377,15 @@ it.effect('native commit failure becomes a typed bootstrap error', () =>
               }),
             }),
           )
-        : Effect.succeed([]),
+        : Effect.sync(() => {
+            if (sql.includes('inner join "core"."tenants"')) {
+              return [{ companyStatus: 'active', kind: 'human', principalStatus: 'active', tenantStatus: 'active' }];
+            }
+            if (sql.includes('from "core"."principal_company_memberships"')) {
+              return [{ affiliation: 'employee', status: 'active' }];
+            }
+            return [];
+          }),
     );
 
     const error = yield* reconcileCoreContext(database, LOCAL_AUTH_USER_ID, []).pipe(Effect.flip);

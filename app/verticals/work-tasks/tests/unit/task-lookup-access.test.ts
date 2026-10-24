@@ -17,15 +17,15 @@ const fakeAccess = (
   decision: ContextAccessDecision,
   customerDecision: ContextAccessDecision = decision,
 ): ContextAccessService => ({
+  legalEntities: ({ legalEntityIds, permission }) => {
+    expect(permission).toBe('read_counterparty');
+    return Effect.succeed(legalEntityIds.map((key) => ({ decision: customerDecision, key })));
+  },
   modules: (input) => {
     expect(input.legalEntityId).toBe(scope.legalEntityId);
     expect(input.principalId).toBe(scope.principalId);
     expect(input.tenantId).toBe(scope.tenantId);
     return Effect.succeed(input.moduleIds.map((key) => ({ key, decision })));
-  },
-  legalEntities: ({ legalEntityIds, permission }) => {
-    expect(permission).toBe('read_counterparty');
-    return Effect.succeed(legalEntityIds.map((key) => ({ key, decision: customerDecision })));
   },
   resources: () => Effect.succeed([]),
   tenants: () => Effect.succeed([]),
@@ -34,13 +34,13 @@ const fakeAccess = (
 it.effect('preserves scoped permitted lookups for manager and salesperson', () =>
   Effect.gen(function* () {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('allowed')));
-    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed', 'allowed']);
+    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
   }),
 );
 it.effect('marks inaccessible optional directories denied rather than failed', () =>
   Effect.gen(function* () {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('denied')));
-    expect(Object.values(result)).toEqual(['denied', 'denied', 'denied', 'denied', 'denied']);
+    expect(Object.values(result)).toEqual(['denied', 'denied', 'denied', 'denied']);
   }),
 );
 it.effect('requires customer legal-entity permission in addition to module access', () =>
@@ -49,13 +49,12 @@ it.effect('requires customer legal-entity permission in addition to module acces
       Effect.provideService(ContextAccess, fakeAccess('allowed', 'denied')),
     );
     expect(result.customers).toBe('denied');
-    expect(result.employees).toBe('allowed');
   }),
 );
 it.effect('keeps real authorization unavailability distinguishable from intentional denial', () =>
   Effect.gen(function* () {
     const result = yield* taskLookupAccess(scope).pipe(Effect.provideService(ContextAccess, fakeAccess('unavailable')));
-    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable', 'unavailable']);
+    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
   }),
 );
 it.effect('fails closed for absent or mismatched permission results', () =>
@@ -63,10 +62,10 @@ it.effect('fails closed for absent or mismatched permission results', () =>
     const result = yield* taskLookupAccess(scope).pipe(
       Effect.provideService(ContextAccess, {
         ...fakeAccess('allowed'),
-        modules: () => Effect.succeed([{ key: 'another-module', decision: 'allowed' }]),
+        modules: () => Effect.succeed([{ decision: 'allowed', key: 'another-module' }]),
       }),
     );
-    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable', 'unavailable']);
+    expect(Object.values(result)).toEqual(['unavailable', 'unavailable', 'unavailable', 'unavailable']);
   }),
 );
 it.effect('uses the Core module.access alias, never an unrelated named permission', () =>
@@ -77,6 +76,6 @@ it.effect('uses the Core module.access alias, never an unrelated named permissio
         contextPermissions: () => Effect.die('module.access must use modules()'),
       }),
     );
-    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed', 'allowed']);
+    expect(Object.values(result)).toEqual(['allowed', 'allowed', 'allowed', 'allowed']);
   }),
 );

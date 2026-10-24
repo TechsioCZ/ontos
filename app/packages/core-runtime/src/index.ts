@@ -1,3 +1,4 @@
+export { withPostgresSessionAdvisoryLock } from './db/session-advisory-lock.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -93,6 +94,20 @@ export {
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
+export {
+  PeopleDirectoryInputSchema,
+  PeopleDirectoryResultSchema,
+  peopleDirectoryRead,
+} from './auth/people-directory-read.ts';
+export { RoleCatalogResultSchema, roleCatalogRead } from './auth/role-catalog-read.ts';
+export { PersonInvitationIdentityProvider } from './auth/person-invitation-identity-provider.ts';
+export type {
+  PersonInvitationIdentityInput,
+  PersonInvitationIdentityWriter,
+} from './auth/person-invitation-identity-provider.ts';
+export { InvitePersonPayloadSchema, InvitePersonResultSchema } from './auth/person-invitation.ts';
+export type { InvitePersonPayload, InvitePersonResult } from './auth/person-invitation.ts';
+export { invitePersonAction } from './modules/actions/invite-person.action.ts';
 export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 // @ontos-codesmith-core-read-exports:start
 
@@ -283,6 +298,23 @@ export type {
   PrincipalRef,
 } from './permissions/principal-ref.ts';
 export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
+export {
+  activeAssignmentMember,
+  AssigneeIneligible,
+  AssignablePrincipals,
+  AssignablePrincipalsUnavailable,
+  loadAssignablePrincipalDirectory,
+  loadAssignmentPreflightSnapshot,
+  makeAssignablePrincipals,
+  readAssignablePrincipals,
+  resolveAssignee,
+} from './auth/assignable-principals.ts';
+export type {
+  AssignablePrincipal,
+  AssignablePrincipalDirectory,
+  AssignmentCompanyScope,
+  AssignmentDirectoryMember,
+} from './auth/assignable-principals.ts';
 export {
   AUTHORIZATION_MUTATION_STATES,
   AUTHORIZATION_MUTATION_TRANSITIONS,
@@ -885,7 +917,6 @@ export type { DemoAccountRelationship } from './install/demo-account-administrat
 export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
 export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
-  actionKeyOfObjectId,
   agentGrantRelationships,
   agentModuleAccessOf,
   isReadPermission,
@@ -895,7 +926,9 @@ export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from '
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
+export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
+export { setScopedRoleMembershipAction } from './modules/actions/set-scoped-role-membership.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
@@ -966,3 +999,19 @@ export type {
 
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>
+
+export {
+  configureAgentAction,
+  ConfigureAgentPayloadSchema,
+  ConfigureAgentResultSchema,
+  ConfigureAgentAuditEvidenceSchema,
+  AgentProfileSchema,
+} from './modules/actions/configure-agent.action.ts';
+export type { ConfigureAgentPayload } from './modules/actions/configure-agent.action.ts';
+export {
+  manageAgentStatusAction,
+  ManageAgentStatusPayloadSchema,
+  ManageAgentStatusResultSchema,
+  ManageAgentStatusAuditEvidenceSchema,
+} from './modules/actions/manage-agent-status.action.ts';
+export type { ManageAgentStatusPayload } from './modules/actions/manage-agent-status.action.ts';

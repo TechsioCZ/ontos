@@ -23,7 +23,7 @@ it.effect('reads all six company role templates with at most two principals in f
     let peak = 0;
     const read: string[] = [];
     const catalog = yield* companyCatalog('company', roles, {
-      relationshipsOf: (principalId) =>
+      rolePolicyOf: (principalId) =>
         Effect.gen(function* readRole() {
           active += 1;
           peak = Math.max(peak, active);
@@ -50,7 +50,7 @@ it.effect('fails the catalog read rather than returning partial role authority',
       reason: 'Authorization grants are temporarily unavailable',
     });
     const error = yield* companyCatalog('company', roles, {
-      relationshipsOf: () => Effect.fail(failure),
+      rolePolicyOf: () => Effect.fail(failure),
     }).pipe(Effect.provide(makeInstalledModuleCatalogLayer(Effect.succeed(snapshot))), Effect.flip);
     expect(error).toBeInstanceOf(ConnectionsUnavailable);
     expect(error.cause).toBe(failure);

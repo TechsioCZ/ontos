@@ -47,6 +47,8 @@
         }
       },
       "legalEntity": {
+        "tenantContext": "Organizace (bez firmy)",
+        "tenantContextActive": "Pracujete v rozsahu organizace. Pro práci ve firemních modulech vyberte firmu.",
         "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
         "accessibleLabel": "Aktuální právní subjekt",
         "failed": "Přepnutí právního subjektu selhalo. Zkuste to znovu.",
@@ -76,7 +78,7 @@
         "label": "Postranní panel přehledu"
       },
       "tenant": {
-        "accessibleLabel": "Aktuální tenant",
+        "accessibleLabel": "Organizace",
         "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
         "pending": "Přepínám tenant…",
         "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
@@ -410,6 +412,216 @@
           "step3": "V novém chatu Agent požádejte o ověření připojené firmy a modulů voláním nástrojů ontos pouze pro čtení. Zkontrolujte skutečný výsledek volání."
         }
       }
+    },
+    "agents": {
+      "connections": {
+        "policy": {
+          "read_only": "Jen čtení",
+          "approval": "Ke schválení",
+          "direct": "Přímo"
+        },
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Deaktivovaný",
+          "archived": "Archivovaný"
+        },
+        "operators": {
+          "title": "Kdo smí agenta připojit",
+          "hint": "Vybrat lze jen lidi z firmy {{company}}.",
+          "empty": "Agenta zatím nesmí připojit nikdo.",
+          "save": "Uložit",
+          "saving": "Ukládám…",
+          "saved": "Seznam lidí pro {{name}} je uložený",
+          "revoked": "Odpojená připojení: {{count}}",
+          "confirmTitle": "Odebrat a odpojit?",
+          "confirmDescription": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirm": "Uložit a odpojit",
+          "cancel": "Zrušit"
+        },
+        "list": {
+          "title": "Připojení agenta",
+          "empty": "Agent zatím není připojený k žádné aplikaci.",
+          "connectedBy": "připojil(a) {{name}}",
+          "lastUsed": "Naposledy použito {{date}}",
+          "neverUsed": "Zatím nepoužito",
+          "revoke": "Odpojit",
+          "dialogTitle": "Odpojit {{client}}?",
+          "dialogDescription": "Aplikace ztratí přístup za agenta hned při dalším požadavku. Důvod se zapíše do auditu.",
+          "reason": "Důvod odpojení",
+          "reasonRequired": "Uveďte důvod.",
+          "confirm": "Odpojit",
+          "cancel": "Zrušit",
+          "revoked": "{{client}} je odpojený"
+        }
+      },
+      "keys": {
+        "title": "API klíče",
+        "description": "Nativní přihlašovací údaje tohoto agenta ve vybrané firmě. Klíč nepřidává oprávnění; nadále platí auditovaný profil a role ve zvoleném rozsahu.",
+        "requiresProfile": "Nejprve uložte auditovaný profil a aktivujte agenta. Poté můžete spravovat jeho klíče.",
+        "show": "Zobrazit klíče",
+        "refresh": "Obnovit klíče",
+        "issue": "Vydat klíč",
+        "working": "Zpracovává se…",
+        "failed": "Výsledek se nepodařilo potvrdit. Před další změnou obnovte seznam klíčů. Jednorázové tajemství nelze znovu získat.",
+        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Obnovte seznam; příkaz neopakujte.",
+        "cleanupPending": "Dokončení odebrání přihlašovacích údajů čeká na zpracování. Původní klíč může stále fungovat; nepovažujte jej ještě za zrušený.",
+        "updated": "Příkaz byl přijat a aktuální seznam potvrdil očekávaný stav klíče.",
+        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Obnovte seznam nebo načtěte další klíče; příkaz neopakujte.",
+        "refreshRequired": "Před dalším příkazem obnovte seznam. Žádný příkaz se automaticky neopakuje.",
+        "oneTime": "Tajemství se zobrazí pouze jednou. Označte a zkopírujte jej do bezpečného správce přihlašovacích údajů, ne do chatu. Zavřením panelu nebo skrytím z tohoto pohledu zmizí.",
+        "secret": "Jednorázové tajemství",
+        "selectSecret": "Označit tajemství",
+        "hideSecret": "Mám uloženo — skrýt",
+        "empty": "Agent v této firmě nemá žádné nezrušené API klíče.",
+        "unnamed": "Klíč bez názvu",
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Pozastavený"
+        },
+        "noExpiry": "Poskytovatel přihlašovacích údajů neuvádí konec platnosti",
+        "expires": "Platnost do: {{date}}",
+        "rotate": "Obměnit klíč",
+        "disable": "Pozastavit klíč",
+        "enable": "Aktivovat klíč",
+        "revoke": "Zrušit klíč",
+        "more": "Další klíče",
+        "cancel": "Zrušit",
+        "confirm": "Jednou potvrdit",
+        "confirmDescription": "Změníte skutečné přihlašovací údaje tohoto agenta ve vybrané firmě. Obměna nahradí původní klíč; zrušení je trvalé. Příkaz je auditovaný a nikdy se automaticky neopakuje.",
+        "name": "Název klíče",
+        "reason": "Důvod"
+      },
+      "editor": {
+        "createTitle": "Nový agent",
+        "editTitle": "Upravit agenta {{name}}",
+        "createDescription": "Agent jedná jen v modulech a s oprávněními, které mu tu dáte. Připojit ho smí jen lidé, které vyberete.",
+        "name": "Název agenta",
+        "description": "K čemu agent slouží",
+        "owner": "Kdo za agenta odpovídá",
+        "modulesTitle": "Oprávnění v modulech",
+        "modulesHint": "Stejná oprávnění jako u lidí: čtení, nebo čtení a zápis.",
+        "preset": "Převzít oprávnění z role",
+        "choice": {
+          "none": "Bez přístupu",
+          "read": "Čtení",
+          "write": "Čtení a zápis"
+        },
+        "policyTitle": "Jak smí agent zapisovat",
+        "policy": {
+          "read_only": {
+            "label": "Jen čtení",
+            "description": "Agent nic nemění, jen čte."
+          },
+          "approval": {
+            "label": "Přes schválení",
+            "description": "Změny agent jen navrhuje; provede je až člověk v Nastavení › Ke schválení."
+          },
+          "direct": {
+            "label": "Přímo",
+            "description": "Agent zapisuje sám v modulech se zápisem. Každá změna je v auditu."
+          }
+        },
+        "readOnlyIgnoresWrite": "V režimu Jen čtení agent nic nezapíše, ani v modulech se zápisem.",
+        "operatorsTitle": "Kdo smí agenta připojit",
+        "operatorsHint": "Tito lidé ho mohou připojit k ChatGPT nebo Claude volbou „Za agenta“. Žádné klíče se nekopírují.",
+        "errors": {
+          "nameRequired": "Vyplňte název agenta.",
+          "nameTooLong": "Název může mít nejvýš 200 znaků.",
+          "descriptionTooLong": "Popis může mít nejvýš 500 znaků.",
+          "ownerRequired": "Vyberte, kdo za agenta odpovídá.",
+          "modulesRequired": "Vyberte aspoň jeden modul."
+        },
+        "cancel": "Zrušit",
+        "create": "Vytvořit agenta",
+        "save": "Uložit změny",
+        "saving": "Ukládám…",
+        "toast": {
+          "created": "Agent {{name}} je vytvořený",
+          "saved": "Změny agenta {{name}} jsou uložené"
+        }
+      },
+      "section": {
+        "title": "Agentní entity",
+        "description": "Agent je samostatná identita firmy s vlastními oprávněními. K ChatGPT nebo Claude jej připojíte přes OntOS volbou „Jako agent“. API klíče pro automatizaci spravujete v detailu agenta.",
+        "create": "Nový agent",
+        "loading": "Načítám agenty…",
+        "retry": "Zkusit znovu",
+        "empty": "Firma zatím nemá žádného agenta.",
+        "emptyHint": "Vytvořte agenta tlačítkem Nový agent a nastavte mu oprávnění.",
+        "owner": "Odpovídá: {{name}}",
+        "noOwner": "Odpovídá: nikdo",
+        "reads": "Čte: {{modules}}",
+        "writes": "Zapisuje přímo: {{modules}}",
+        "proposes": "Navrhuje ke schválení: {{modules}}",
+        "noProfile": "Bez profilu",
+        "noProfileDescription": "Agent dosud nemá auditovaný profil oprávnění. Nastavte jej pomocí Upravit.",
+        "noWrites": "Nic nezapisuje",
+        "disabledNotice": "Agent je deaktivovaný. Jeho připojení byla odpojena; po aktivaci ho je potřeba připojit znovu.",
+        "edit": "Upravit",
+        "deactivate": "Deaktivovat",
+        "activate": "Aktivovat",
+        "delete": "Smazat",
+        "dialog": {
+          "deactivateTitle": "Deaktivovat agenta {{name}}?",
+          "deactivateDescription": "Agent okamžitě ztratí přístup a všechna jeho připojení se odpojí. Důvod se zapíše do auditu.",
+          "deactivateReason": "Důvod deaktivace",
+          "deactivateConfirm": "Deaktivovat",
+          "activateTitle": "Aktivovat agenta {{name}}?",
+          "activateDescription": "Agent znovu dostane svá oprávnění. Připojit ho bude potřeba znovu.",
+          "activateConfirm": "Aktivovat",
+          "deleteTitle": "Smazat agenta {{name}}?",
+          "deleteDescription": "Agent přijde o všechna oprávnění, připojení i seznam lidí, kteří ho smí připojit, a zmizí ze seznamu. Záznamy v auditu zůstanou.",
+          "deleteReason": "Důvod smazání",
+          "deleteConfirm": "Smazat agenta",
+          "cancel": "Zrušit",
+          "reasonRequired": "Uveďte důvod."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} je deaktivovaný",
+          "activated": "Agent {{name}} je znovu aktivní",
+          "deleted": "Agent {{name}} je smazaný",
+          "revoked": "Odpojená připojení: {{count}}"
+        },
+        "audit": {
+          "title": "Historie změn agentů",
+          "empty": "Zatím žádné změny.",
+          "created": "vytvořil(a) agenta {{target}}",
+          "configured": "upravil(a) agenta {{target}}",
+          "deactivated": "deaktivoval(a) agenta {{target}}",
+          "activated": "aktivoval(a) agenta {{target}}",
+          "deleted": "smazal(a) agenta {{target}}",
+          "operators": "změnil(a), kdo smí připojit agenta {{target}}",
+          "denied": "zkusil(a) {{action}}, ale agenty spravuje jen správce firmy",
+          "reason": "Důvod: {{reason}}",
+          "system": "Systém",
+          "unknownAgent": "agenta",
+          "operatorsRevoked": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsCreated": "určil(a), kdo smí připojit agenta {{target}}",
+          "deniedAction": {
+            "create": "vytvořit agenta",
+            "configure": "upravit agenta {{target}}",
+            "change-status": "změnit stav agenta {{target}}",
+            "delete": "smazat agenta {{target}}",
+            "other": "změnit agenta {{target}}"
+          },
+          "succeeded": "Provedeno",
+          "deniedStatus": "Zamítnuto"
+        },
+        "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
+      },
+      "errors": {
+        "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",
+        "conflict": "Konflikt: e-mail je obsazený nebo se účet mezitím změnil. Obnovte seznam.",
+        "invalid": "Požadavek nelze provést (např. změna vlastního účtu).",
+        "error": "Uložení se nepodařilo. Zkuste to znovu.",
+        "signedOut": "Relace vypršela, přihlaste se znovu."
+      },
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku.",
+      "selectPlaceholder": "Vyberte…"
+    },
+    "invitation": {
+      "title": "Nastavení hesla",
+      "description": "Jednorázové nastavení hesla z pozvánky."
     }
   }
 }

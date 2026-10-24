@@ -19,13 +19,16 @@ const validEnvironment = {
 } as const;
 
 const validAccountsFile = {
+  actionAuthorization: { actionAssertions: [], roleGrants: [] },
   retiredAccountEmails: ['retired-fixture@example.invalid'],
   retiredTenants: [],
-  schemaVersion: 2,
+  schemaVersion: 4,
+  scopedRoles: [],
   tenants: [
     {
       accounts: [
         {
+          affiliation: 'employee',
           authBindingId: '30000000-0000-4000-8000-0000000000a1',
           displayName: 'Tenant A account',
           email: 'account-a@example.invalid',
@@ -68,7 +71,7 @@ it.effect('builds the stage configuration from the operator accounts file', () =
   Effect.gen(function* buildsTheStageConfiguration() {
     const configuration = yield* parseStageAccountsBootstrapConfig(validEnvironment, readerFor(VALID_SOURCE));
     expect(configuration).toMatchObject({
-      accountsFile: { retiredAccountEmails: validAccountsFile.retiredAccountEmails, schemaVersion: 2 },
+      accountsFile: { retiredAccountEmails: validAccountsFile.retiredAccountEmails, schemaVersion: 4 },
       authBaseUrl: 'https://shell.stage.example.test',
       authSecret: 'stage-auth-secret-with-at-least-32-characters',
       databaseAdminUrl: 'postgresql://db:password@db:5432/db',

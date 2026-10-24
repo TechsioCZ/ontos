@@ -11,6 +11,8 @@ import { linkTargetClientId } from '../../shared/domain/imports.ts';
 import { salespersonOfPrincipal } from '../../shared/domain/team.ts';
 import { contactsCsv } from '../../src/routes/[lang]/crm/klienti/clients-model.ts';
 import { partyLinksOf, verifiedPartyOf, viewerFor } from '../../src/services/persistence.service.ts';
+import { assignableSalespeople, salespersonName } from '../../src/crm/records.ts';
+import { assignmentPrincipalIds, crmAssignmentPermission } from '../../src/services/assignment-policy.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
 const client = (id: string, owner?: string) => ({
@@ -221,7 +223,14 @@ describe('contacts export and Party-based customer links', () => {
 
   it('S15-02: the CSV of a salesperson contains only entrusted clients and their contacts', () => {
     const projected = projectCrmState(withContacts, repA);
-    const records = { now: at, revision: 1, state: projected, viewer: repA };
+    const records = {
+      assignmentCandidates: [],
+      departedPrincipalIds: [],
+      now: at,
+      revision: 1,
+      state: projected,
+      viewer: repA,
+    };
     const csv = contactsCsv(records, projected.clients.items);
     expect(csv).toContain('Eva Mlynářová');
     expect(csv).not.toContain('Skrytý Kontakt');
@@ -283,4 +292,84 @@ describe('customer inputs register (CRM.md §6)', () => {
       'CrmPermissionDenied',
     );
   });
+});
+
+describe('Core-governed CRM assignment targets', () => {
+  it('uses CRM native module permission, not a kind, affiliation or role name', () => {
+    expect(crmAssignmentPermission).toEqual({ moduleId: 'demo.crm', permission: 'module.access' });
+  });
+  it('validates registration, reactivation and each deliberate new owner', () => {
+    expect(
+      assignmentPrincipalIds({ _tag: 'RegisterSalesperson', name: 'Eva', principalId: 'p-eva' }, base, 'actor'),
+    ).toEqual(['p-eva']);
+    expect(
+      assignmentPrincipalIds({ _tag: 'SetSalespersonActive', active: true, salespersonId: 'a' }, base, 'actor'),
+    ).toEqual(['p-a']);
+    expect(
+      assignmentPrincipalIds({ _tag: 'SetSalespersonActive', active: false, salespersonId: 'a' }, base, 'actor'),
+    ).toEqual([]);
+    expect(
+      assignmentPrincipalIds({ _tag: 'AssignClient', clientId: 'z', toSalespersonId: 'a' }, base, 'actor'),
+    ).toEqual(['p-a']);
+  });
+  it('preserves unchanged historical owners but fails closed for a new unbound target', () => {
+    expect(
+      assignmentPrincipalIds({ _tag: 'AssignClient', clientId: 'x', toSalespersonId: 'a' }, base, 'actor'),
+    ).toEqual([]);
+    const unbound = { ...base, salespeople: [{ active: true, id: 'legacy', name: 'Historický obchodník' }] };
+    expect(
+      assignmentPrincipalIds({ _tag: 'AssignClient', clientId: 'z', toSalespersonId: 'legacy' }, unbound, 'actor'),
+    ).toEqual(['']);
+  });
+  it('resolves explicit, actor-default and historical client owners for new work', () => {
+    expect(assignmentPrincipalIds({ _tag: 'CreateClient', kind: 'organization', name: 'Firma' }, base, 'p-a')).toEqual([
+      'p-a',
+    ]);
+    expect(
+      assignmentPrincipalIds({ _tag: 'PlanContact', clientId: 'x', dueDate: '2026-11-01' }, base, 'manager'),
+    ).toEqual(['p-a']);
+    expect(
+      assignmentPrincipalIds({ _tag: 'CreateClient', kind: 'organization', name: 'Firma' }, base, 'manager'),
+    ).toEqual([]);
+  });
+  it('checks nested AI proposals and rechecks selected stored operations on approval', () => {
+    const command = {
+      _tag: 'AiProposeChanges',
+      changes: [{ operation: { _tag: 'AssignClient', clientId: 'z', toSalespersonId: 'a' }, reason: 'Zastoupení' }],
+      instruction: 'Převést klienta',
+    } as const;
+    expect(assignmentPrincipalIds(command, base, 'manager')).toEqual(['p-a']);
+    const proposed = ok(base, command, lead).state;
+    const changeIds = proposed.aiChanges?.changes.map((change) => change.id) ?? [];
+    expect(
+      assignmentPrincipalIds({ _tag: 'AiDecideChanges', changeIds, decision: 'approve' }, proposed, 'manager'),
+    ).toEqual(['p-a']);
+    expect(
+      assignmentPrincipalIds({ _tag: 'AiDecideChanges', changeIds, decision: 'reject' }, proposed, 'manager'),
+    ).toEqual([]);
+  });
+});
+
+it('excludes departed, unauthorized, unbound and locally inactive people from every CRM picker while retaining history', () => {
+  const records = {
+    assignmentCandidates: [{ displayName: 'Jan', principalRef: { principalId: 'p-a', tenantId: 'tenant' } }],
+    departedPrincipalIds: ['p-old'],
+    now: at,
+    revision: 1,
+    state: {
+      ...base,
+      salespeople: [
+        ...base.salespeople,
+        { active: true, id: 'old', name: 'Bývalý kolega', principalId: 'p-old' },
+        { active: true, id: 'denied', name: 'Bez přístupu', principalId: 'p-denied' },
+        { active: true, id: 'unbound', name: 'Historický záznam' },
+        { active: false, id: 'inactive', name: 'Vyřazený obchodník', principalId: 'p-a' },
+      ],
+    },
+    viewer: lead,
+  };
+  expect(assignableSalespeople(records).map((person) => person.id)).toEqual(['a']);
+  expect(salespersonName(records, 'old')).toBe('Bývalý kolega · Odešel – přeřadit');
+  expect(salespersonName(records, 'a')).toBe('Jan Novák');
+  expect(salespersonName(records, records.viewer.salespersonId)).toBeUndefined();
 });

@@ -92,7 +92,7 @@ const fixture = (): Fixture => ({
       modules: [{ access: 'read', moduleId: 'warehouse' }],
       ownerPrincipalId: null,
       principalId: 'agent-1',
-      seeded: false,
+      hasProfile: false,
       status: 'active',
       writePolicy: 'approval',
     },
@@ -103,7 +103,7 @@ const fixture = (): Fixture => ({
       modules: [{ access: 'read', moduleId: 'finance' }],
       ownerPrincipalId: null,
       principalId: 'agent-2',
-      seeded: true,
+      hasProfile: false,
       status: 'active',
       writePolicy: 'direct',
     },
@@ -114,7 +114,7 @@ const fixture = (): Fixture => ({
       modules: [],
       ownerPrincipalId: null,
       principalId: 'agent-b',
-      seeded: false,
+      hasProfile: false,
       status: 'active',
       writePolicy: 'read_only',
     },
@@ -151,7 +151,8 @@ const makeDeps = (state: Fixture) => {
     updates: [] as Parameters<GrantAdminPort<never>['update']>[0][],
   };
   const directory: CompanyDirectoryPort<never> = {
-    agents: (_tenant, members) => Effect.succeed(state.agents.filter((agent) => members.includes(agent.principalId))),
+    agents: (_tenant, _company, members) =>
+      Effect.succeed(state.agents.filter((agent) => members.includes(agent.principalId))),
     members: (_tenant, legalEntityId) =>
       Effect.succeed(
         [...state.agents, ...state.people]

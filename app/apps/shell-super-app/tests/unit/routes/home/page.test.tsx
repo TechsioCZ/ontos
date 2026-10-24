@@ -37,6 +37,7 @@ const {
   signOutMock,
   switchLegalEntityMock,
   switchTenantMock,
+  switchToTenantContextMock,
 } = rstest.hoisted(() => {
   const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
@@ -49,6 +50,7 @@ const {
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
     switchTenantMock: rstest.fn(),
+    switchToTenantContextMock: rstest.fn(),
   };
 });
 
@@ -74,6 +76,8 @@ const translations = new Map(
     'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
     'shell.dashboard.legalEntity.failed': 'Legal entity switching failed',
     'shell.dashboard.legalEntity.pending': 'Switching legal entity',
+    'shell.dashboard.legalEntity.tenantContext': 'Organization (no company)',
+    'shell.dashboard.legalEntity.tenantContextActive': 'Organization scope is active',
     'shell.dashboard.legalEntity.unavailable': 'Legal entities unavailable',
     'shell.dashboard.navigation.home': 'Home',
     'shell.dashboard.navigation.label': 'Dashboard navigation',
@@ -122,6 +126,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   signOut: signOutMock,
   switchLegalEntity: switchLegalEntityMock,
   switchTenant: switchTenantMock,
+  switchToTenantContext: switchToTenantContextMock,
 }));
 
 rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
@@ -199,6 +204,7 @@ beforeEach(() => {
   signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
   switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: tenantId2 }));
   switchLegalEntityMock.mockReturnValue(Effect.succeed({ selectedLegalEntityId: legalEntityId2 }));
+  switchToTenantContextMock.mockReturnValue(Effect.succeed({ selectedContext: 'tenant' }));
 });
 
 afterEach(() => {
@@ -538,4 +544,59 @@ it('uses the document-admitted Home target in its first render without another r
   expect(resolveModuleTargetMock).not.toHaveBeenCalled();
   expect(resolvedTargetMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: { state: 'resolved', target } });
   expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
+});
+
+it.live('offers explicit tenant scope only when admitted and reloads after selection', () =>
+  Effect.gen(function* selectTenantScope() {
+    const model = authenticatedModel();
+    if (model.state !== 'authenticated' || model.legalEntities.state !== 'available') {
+      throw new Error('Expected authenticated fixture');
+    }
+    const user = userEvent.setup();
+    render(
+      <HomeView initialModel={{ ...model, legalEntities: { ...model.legalEntities, tenantContextAvailable: true } }} />,
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('option', { name: 'Organization (no company)' })));
+    yield* Effect.promise(() =>
+      waitFor(() => expect(switchToTenantContextMock).toHaveBeenCalledWith({ locale: 'en' })),
+    );
+    expect(switchLegalEntityMock).not.toHaveBeenCalled();
+    yield* Effect.promise(() =>
+      waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
+    );
+  }),
+);
+
+it.live('does not expose tenant scope from company access alone', () =>
+  Effect.gen(function* companyOnlyScope() {
+    const user = userEvent.setup();
+    render(<HomeView initialModel={authenticatedModel()} />);
+    yield* Effect.promise(() => user.click(screen.getByRole('combobox', { name: 'Current legal entity' })));
+    expect(screen.queryByRole('option', { name: 'Organization (no company)' })).toBeNull();
+    expect(switchToTenantContextMock).not.toHaveBeenCalled();
+  }),
+);
+
+it('renders persisted tenant scope without a selected company', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated' || model.legalEntities.state !== 'available') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const { selectedLegalEntityId, ...tenantModel } = model;
+  void selectedLegalEntityId;
+  render(
+    <HomeView
+      initialModel={{
+        ...tenantModel,
+        contextState: 'tenant_authenticated',
+        legalEntities: { ...model.legalEntities, tenantContextAvailable: true },
+      }}
+    />,
+  );
+  expect(screen.getByRole('combobox', { name: 'Current legal entity' }).textContent).toContain(
+    'Organization (no company)',
+  );
+  expect(screen.getByText('Organization scope is active')).toBeDefined();
+  expect(switchToTenantContextMock).not.toHaveBeenCalled();
 });

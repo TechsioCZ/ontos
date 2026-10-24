@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
@@ -23,7 +23,7 @@ import {
   lockApplicationCompositionAuthority,
 } from '../modules/application-composition-authority.ts';
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRetryPolicy } from './definition.ts';
-import { retryBackoffMs } from './definition.ts';
+import { isCoreSystemOutboxSubscription, retryBackoffMs } from './definition.ts';
 import { PersistenceFailure } from '../database/persistence-failure.ts';
 import { OutboxClaimLostError, sanitizeOutboxErrorMessage } from './errors.ts';
 
@@ -193,6 +193,9 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
       return Effect.succeedNone;
     }
     const byWorkerKey = new Map(registrations.map((registration) => [registration.descriptor.workerKey, registration]));
+    const systemWorkerKeys = registrations
+      .filter(({ descriptor }) => isCoreSystemOutboxSubscription(descriptor))
+      .map(({ descriptor }) => descriptor.workerKey);
     return executor
       .transaction(
         Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
@@ -216,17 +219,21 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
             .from(outboxDeliveries)
             .innerJoin(outboxMessages, eq(outboxMessages.outboxMessageId, outboxDeliveries.outboxMessageId))
             .innerJoin(domainEvents, eq(domainEvents.domainEventId, outboxMessages.domainEventId))
-            .innerJoin(
-              tenantModuleStates,
-              and(
-                eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-                eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-                inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
-              ),
-            )
             .where(
               and(
                 inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
+                or(
+                  inArray(outboxDeliveries.workerKey, systemWorkerKeys),
+                  exists(
+                    transaction.select({ tenantId: tenantModuleStates.tenantId }).from(tenantModuleStates).where(
+                      and(
+                        eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
+                        eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
+                        inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
+                      ),
+                    ),
+                  ),
+                ),
                 or(
                   and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
                   and(eq(outboxDeliveries.status, 'processing'), lte(outboxDeliveries.claimExpiresAt, now)),

@@ -9,8 +9,17 @@ import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect
 import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
-import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
-import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import {
+  readOutboxWorkerHost,
+  renderCoreSystemOutboxWorkerEntry,
+  renderOutboxWorkerHostEntry,
+} from './generate-outbox-worker-deployment.mjs';
+import {
+  CORE_SYSTEM_OUTBOX_WORKER,
+  OUTBOX_WORKER_BUNDLE,
+  OUTBOX_WORKER_HOST,
+  outboxWorkerDelivery,
+} from './outbox-worker-delivery.mjs';
 
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
@@ -18,6 +27,17 @@ const BuildConstantSchema = Schema.fromJsonString(Schema.String);
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
+    shell: Schema.Struct({
+      deliveryUnit: Schema.Struct({
+        buildMarker: Schema.String,
+        packageName: Schema.String,
+        sourceRevision: Schema.String,
+        unitId: UnitIdSchema,
+      }),
+      id: Schema.String,
+      package: Schema.String,
+      path: Schema.String,
+    }),
     verticals: Schema.Array(
       Schema.Struct({
         deliveryUnit: Schema.optionalKey(
@@ -310,7 +330,7 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
   Effect.gen(function* resolveWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    if (appId === OUTBOX_WORKER_HOST.id) {
+    if (appId === OUTBOX_WORKER_HOST.id || appId === CORE_SYSTEM_OUTBOX_WORKER.id) {
       const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
         yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
       );
@@ -321,14 +341,23 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
       if (host === undefined) {
         return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
       }
-      const hostEntryPath = path.join(workspaceRoot, host.entry);
+      const dedicatedCore = appId === CORE_SYSTEM_OUTBOX_WORKER.id;
+      const entryPoint = dedicatedCore ? CORE_SYSTEM_OUTBOX_WORKER.entry : host.entry;
+      const hostEntryPath = path.join(workspaceRoot, entryPoint);
       const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
-      if (hostEntry !== renderOutboxWorkerHostEntry(host)) {
+      const expectedEntry = dedicatedCore
+        ? renderCoreSystemOutboxWorkerEntry(host.coreOwner)
+        : renderOutboxWorkerHostEntry(host);
+      if (hostEntry !== expectedEntry) {
         return yield* Effect.fail(
           failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
         );
       }
-      return { entryPoint: host.entry, owners: host.owners, serviceId: host.id };
+      return {
+        entryPoint,
+        owners: dedicatedCore ? [host.coreOwner] : [host.coreOwner, ...host.owners],
+        serviceId: appId,
+      };
     }
     const topologySource = yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
@@ -347,7 +376,7 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
 
 /**
  * @param {WorkerIdentity} identity Materialization identity.
- * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerDelivery[], serviceId: string }>} The worker's bundle entry, hosted owners, and service id.
+ * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner[], serviceId: string }>} The worker's bundle entry, hosted owners, and service id.
  */
 export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
 
@@ -370,7 +399,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     /** @type {Map<string, { identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }>} */
     const markers = new Map();
     for (const owner of delivery.owners) {
-      const vertical = topology.verticals.find((candidate) => candidate.id === owner.ownerId);
+      const vertical = [topology.shell, ...topology.verticals].find((candidate) => candidate.id === owner.ownerId);
       const declared = vertical?.deliveryUnit;
       const declaredMarkerPath = path.resolve(workspaceRoot, owner.path, 'shared/ultramodern-build.ts');
       if (!(yield* fs.exists(declaredMarkerPath))) {

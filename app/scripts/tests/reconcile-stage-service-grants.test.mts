@@ -12,7 +12,26 @@ import {
 } from '../demo/reconcile-stage-service-grants.mts';
 import type { ServiceGrantRpc } from '../demo/reconcile-stage-service-grants.mts';
 
-const desired = desiredServiceGrants([{ actionKey: 'work.tasks.apply-command', provisioning: 'explicit' }]);
+const desired = desiredServiceGrants([
+  {
+    actionKey: 'work.tasks.apply-command',
+    legalEntityScope: 'required',
+    owningModuleKey: 'work.tasks',
+    provisioning: 'explicit',
+  },
+  {
+    actionKey: 'core.identity.reserve-principal-binding',
+    legalEntityScope: 'forbidden',
+    owningModuleKey: 'core.identity',
+    provisioning: 'explicit',
+  },
+  {
+    actionKey: 'commerce.customer-context.ensure-retail-customer-profile',
+    legalEntityScope: 'required',
+    owningModuleKey: 'commerce.customer-context',
+    provisioning: 'explicit',
+  },
+]);
 const memoryRelationships = (initial: readonly v1.Relationship[]) => {
   const stored = new Map(initial.map((relationship) => [v1.Relationship.toJsonString(relationship), relationship]));
   const writes: v1.WriteRelationshipsRequest[] = [];
@@ -154,3 +173,23 @@ it.effect(
       expect(conditional.writes).toHaveLength(0);
     }),
 );
+
+it('preserves scoped-role member usersets for service modules and exact Action grants', () => {
+  const capabilities = desired.filter((row) => row.subject?.object?.objectType === 'scoped_role');
+  expect(capabilities.length).toBeGreaterThan(0);
+  expect(capabilities.every((row) => row.subject?.optionalRelation === 'member')).toBe(true);
+  expect(capabilities.some((row) => row.resource?.objectType === 'action_grant' && row.relation === 'role')).toBe(true);
+  expect(
+    capabilities.some((row) => row.resource?.objectType === 'module_access' && row.relation === 'accessor_role'),
+  ).toBe(true);
+  expect(
+    desired.some(
+      (row) =>
+        row.relation === 'executor' ||
+        row.relation === 'restriction' ||
+        row.relation === 'superadmin' ||
+        row.relation === 'admin',
+    ),
+  ).toBe(false);
+  expect(new Set(desired.map((row) => v1.Relationship.toJsonString(row))).size).toBe(desired.length);
+});

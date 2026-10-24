@@ -90,9 +90,16 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
   const moduleIds: string[] = [];
   const routineCalls: string[] = [];
   const database = {
-    executor: yield* makeTestDatabase((text) => {
+    executor: yield* makeTestDatabase((text, values) => {
       if (text.includes('transaction_timestamp')) {
-        return Effect.succeed([{ operation_at: new Date(at) }]);
+        // The governed Read installs scope and reads trusted time in the same native statement.
+        return Effect.succeed([
+          {
+            legal_entity_id: values[1],
+            operation_at: new Date(at),
+            tenant_id: values[0],
+          },
+        ]);
       }
       if (text.includes('data_access_events')) {
         return Effect.succeed([]);

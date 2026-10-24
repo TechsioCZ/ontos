@@ -7,7 +7,7 @@ import {
   isConnectionWriteAllowed,
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Struct } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { decodeFinanceState, persistenceService } from '../services/finance-state-repository.ts';
 import { projectFinanceRecords } from '../services/persistence.service.ts';
@@ -28,7 +28,7 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
 
 /** Connection policy ∩ live Action permission. */
 export const financeWriteCapability = Effect.fn('Finance.writeCapability')(function* financeWriteCapability(
-  scope: Pick<OperationalScope, 'principalId' | 'correlationId'> &
+  scope: Pick<OperationalScope, 'principalId' | 'correlationId' | 'tenantId' | 'legalEntityId'> &
     Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
 ) {
   if (!isConnectionWriteAllowed(scope, financeModuleKey)) {
@@ -38,8 +38,7 @@ export const financeWriteCapability = Effect.fn('Finance.writeCapability')(funct
   const decision = yield* permission
     .checkActionPermission({
       actionKey: 'finance.billing.apply-command',
-      correlationId: scope.correlationId,
-      principalId: scope.principalId,
+      ...Struct.pick(scope, ['correlationId', 'legalEntityId', 'principalId', 'tenantId']),
     })
     .pipe(
       Effect.mapError((failure) =>

@@ -275,3 +275,34 @@ it.effect('audits cached-credential disabled admission without a session request
     expect(attempts).toEqual(['cached-bearer-mutation']);
   }),
 );
+
+it.effect('binds agent API key admission to its audited issuing company, not the principal’s other roles', () =>
+  Effect.gen(function* companyAgentKeyAdmission() {
+    const apiPrincipal = { ...principal, authMethod: 'api_key' as const };
+    const record = {
+      ...active,
+      bindingIssuingLegalEntityId: principal.legalEntityId ?? null,
+      bindingSubjectType: 'api_key',
+      principalKind: 'agent',
+    };
+    const resolve = (
+      persisted: Omit<typeof record, 'bindingIssuingLegalEntityId'> & { bindingIssuingLegalEntityId: string | null },
+      target: typeof principal = apiPrincipal,
+    ) =>
+      makeOperationalScopeResolver({ load: () => Effect.succeed(persisted) }, access('allowed')).resolve({
+        correlationId: 'agent-key-admission',
+        legalEntityScope: 'optional',
+        principal: target,
+      });
+    yield* resolve(record);
+    const wrongCompany = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: 'other-company' }));
+    expect(Schema.is(OperationContextDenied)(wrongCompany)).toBe(true);
+    const missingAudit = yield* Effect.flip(resolve({ ...record, bindingIssuingLegalEntityId: null }));
+    expect(Schema.is(OperationContextDenied)(missingAudit)).toBe(true);
+    const { legalEntityId: _company, ...tenantPrincipal } = apiPrincipal;
+    const tenantContext = yield* Effect.flip(resolve(record, tenantPrincipal));
+    expect(Schema.is(OperationContextDenied)(tenantContext)).toBe(true);
+    // Native tenant-managed workloads retain their existing scope rules.
+    yield* resolve({ ...record, bindingIssuingLegalEntityId: null, principalKind: 'service' }, tenantPrincipal);
+  }),
+);

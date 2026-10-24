@@ -9,16 +9,53 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { toContextPermissionAccessObjectId } from '@app/core-runtime';
-import { Console, Effect } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Layer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import type { DemoAction } from './permissions.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
-const program = Effect.gen(function* () {
+export const opsOperationalRelationships = (actions: readonly DemoAction[]) =>
+  siamparkRentalPersonas
+    .filter((persona) => persona.email === 'external@siampark.demo')
+    .flatMap((persona) =>
+      principalRelationships(
+        persona.principalId,
+        persona.role,
+        actions.filter((action) => action.actionKey === 'facility.operations.apply-command'),
+        rentalDemoLegalEntityId,
+        demoTenantId,
+        'operational-repair-external',
+      ),
+    );
+
+const environmentLive = ConfigProvider.layer(
+  Effect.gen(function* loadOperatorConfiguration() {
+    const path = yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+      Config.withDefault(new URL('../../.env', import.meta.url).pathname),
+    );
+    return ConfigProvider.orElse(ConfigProvider.fromEnv(), yield* ConfigProvider.fromDotEnv({ path }));
+  }),
+);
+const compositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(ActiveApplicationCompositionSourceLive),
+  Layer.provide(FetchHttpClient.layer),
+);
+const program = Effect.gen(function* repairPublishedRolePermissions() {
   const configuration = yield* loadSpiceDbConfig({
-    envPath: process.env.ONTOS_DEMO_ENV_FILE ?? new URL('../../.env', import.meta.url).pathname,
+    envPath: yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+      Config.withDefault(new URL('../../.env', import.meta.url).pathname),
+    ),
   });
   if (
     configuration.deploymentEnvironment !== 'development' ||
@@ -26,14 +63,18 @@ const program = Effect.gen(function* () {
   ) {
     return yield* Effect.fail(new Error('This demo grant helper requires local development SpiceDB'));
   }
-  const persona = siamparkRentalPersonas.find((entry) => entry.email === 'external@siampark.demo');
-  if (persona === undefined) return yield* Effect.fail(new Error('External demo persona is missing'));
-  const relationships = principalRelationships(
-    persona.principalId,
-    persona.role,
-    [{ actionKey: 'facility.operations.apply-command', provisioning: 'explicit' }],
-    rentalDemoLegalEntityId,
+  const source = yield* ActiveApplicationCompositionService;
+  const actions = (yield* discoverCurrentActions(yield* source.load)).filter(
+    (action) => action.actionKey === 'facility.operations.apply-command',
   );
+  if (actions.length !== 1) {
+    return yield* Effect.fail(new Error('Required published Action is missing'));
+  }
+  const persona = siamparkRentalPersonas.find((entry) => entry.email === 'external@siampark.demo');
+  if (persona === undefined) {
+    return yield* Effect.fail(new Error('External demo persona is missing'));
+  }
+  const relationships = yield* Effect.try(() => opsOperationalRelationships(actions));
   const client = yield* Effect.acquireRelease(
     Effect.try(() => openSpiceDbGrpcRpc(configuration, 5000)),
     (value) => Effect.sync(() => value.close()),
@@ -43,7 +84,7 @@ const program = Effect.gen(function* () {
     v1.RelationshipUpdate.create({
       operation: v1.RelationshipUpdate_Operation.DELETE,
       relationship: v1.Relationship.create({
-        relation: 'grantee',
+        relation: 'role_grantee',
         resource: v1.ObjectReference.create({
           objectId:
             toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
@@ -53,7 +94,15 @@ const program = Effect.gen(function* () {
           objectType: 'context_permission',
         }),
         subject: v1.SubjectReference.create({
-          object: v1.ObjectReference.create({ objectId: persona.principalId, objectType: 'principal' }),
+          object: v1.ObjectReference.create({
+            objectId: toScopedRoleObjectId({
+              legalEntityId: rentalDemoLegalEntityId,
+              roleKey: 'operational-repair-external',
+              tenantId: demoTenantId,
+            }),
+            objectType: 'scoped_role',
+          }),
+          optionalRelation: 'member',
         }),
       }),
     }),
@@ -62,6 +111,14 @@ const program = Effect.gen(function* () {
   yield* Console.log(
     `External Siampark operational grants applied (${relationships.length} relationships); restricted agendas unchanged.`,
   );
-}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  return yield* Effect.void;
+}).pipe(
+  Effect.scoped,
+  Effect.provide(compositionLive),
+  Effect.provide(environmentLive),
+  Effect.provide(NodeServices.layer),
+);
 
-await Effect.runPromise(program);
+if (import.meta.main) {
+  await Effect.runPromise(program);
+}

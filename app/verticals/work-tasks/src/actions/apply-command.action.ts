@@ -12,6 +12,7 @@ import {
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService } from '../services/persistence.service.ts';
+import { assignmentPolicy } from '../services/assignment-policy.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const handleApplyCommand = (
@@ -44,7 +45,7 @@ export const applyCommandAction = defineAction(
     legalEntityScope: 'required',
     owningModuleKey: 'work.tasks',
     payloadSchema: ApplyCommandPayloadSchema,
-    policies: [],
+    policies: [assignmentPolicy],
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },

@@ -67,6 +67,7 @@ import type {
 import type { LegalEntitySelectionForbiddenError } from './legal-entity-selection.ts';
 import {
   LegalEntitySelectionUnavailableError,
+  canSelectTenantContext,
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
 } from './legal-entity-selection.ts';
@@ -79,6 +80,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
+const SelectedContextKindSchema = Schema.Literals(['company', 'tenant']);
 const FORBIDDEN_IDENTITY_CODE = 'ONTOS_IDENTITY_FORBIDDEN';
 const IDENTITY_UNAVAILABLE_CODE = 'ONTOS_IDENTITY_UNAVAILABLE';
 const unavailable = (reason: AuthenticationUnavailableReason) => new AuthenticationUnavailableError({ reason });
@@ -152,6 +154,7 @@ interface AuthenticatedResolvedSession {
   readonly identity: SafeTenantIdentity;
   readonly principal: TrustedPrincipalContext;
   readonly savedLegalEntityId?: string;
+  readonly selectedContextKind: typeof SelectedContextKindSchema.Type;
   readonly selectedTenantId: string;
   readonly setCookieHeaders: readonly string[];
   readonly state: 'authenticated';
@@ -201,6 +204,13 @@ type ResolveAuthenticatedContext = (
 >;
 
 export type ShellContextResult =
+  | {
+      readonly availableLegalEntities: readonly { readonly legalEntityId: string; readonly legalName: string }[];
+      readonly identity: SafeTenantIdentity;
+      readonly principal: TrustedPrincipalContext;
+      readonly setCookieHeaders: readonly string[];
+      readonly state: 'tenant_authenticated';
+    }
   | {
       readonly setCookieHeaders: readonly string[];
       readonly state: 'anonymous';
@@ -278,6 +288,13 @@ export interface AuthenticationServiceContract {
     tenantId: string,
     requestHeaders: Headers,
   ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError, ContextAccess>;
+  readonly switchToTenantContext: (
+    requestHeaders: Headers,
+  ) => Effect.Effect<
+    { readonly setCookieHeaders: readonly string[] },
+    AuthenticationRuntimeError | TenantAccessForbiddenFailure,
+    ContextAccess
+  >;
 }
 
 export class AuthenticationService extends Context.Service<AuthenticationService, AuthenticationServiceContract>()(
@@ -465,7 +482,13 @@ interface AuthenticationAssemblyOptions {
 
 type ShellSessionCreateHook = <Session extends { readonly userId: string }>(
   session: Session,
-) => Promise<{ readonly data: Session & { readonly activeLegalEntityId: null; readonly activeTenantId: string } }>;
+) => Promise<{
+  readonly data: Session & {
+    readonly activeContextKind: 'company';
+    readonly activeLegalEntityId: null;
+    readonly activeTenantId: string;
+  };
+}>;
 
 /**
  * What one request lends the isolate's Better Auth instance. A Worker builds the BFF runtime per request (workerd binds
@@ -604,6 +627,12 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
     secret: configuration.secret,
     session: {
       additionalFields: {
+        activeContextKind: {
+          defaultValue: 'company',
+          input: true,
+          required: true,
+          type: 'string',
+        },
         activeLegalEntityId: {
           input: true,
           required: false,
@@ -727,6 +756,7 @@ const assembleAuthenticationService = (
       Effect.map((principal) => ({
         data: {
           ...session,
+          activeContextKind: 'company' as const,
           activeLegalEntityId: null,
           activeTenantId: principal.tenantId,
         },
@@ -904,6 +934,10 @@ const assembleAuthenticationService = (
           return Effect.fail(new OntosIdentityForbiddenError());
         }
         if (Predicate.isString(selectedTenantId)) {
+          const selectedContextKind = response.session.activeContextKind;
+          if (!Schema.is(SelectedContextKindSchema)(selectedContextKind)) {
+            return Effect.fail(new OntosIdentityForbiddenError());
+          }
           const resolvedIdentity = (() => {
             if (!Predicate.isString(impersonatedBy)) {
               return resolveIdentity(response.user, selectedTenantId, response.session.id);
@@ -946,6 +980,7 @@ const assembleAuthenticationService = (
                 'savedLegalEntityId',
                 response.session.activeLegalEntityId,
                 {
+                  selectedContextKind,
                   selectedTenantId,
                   setCookieHeaders: setCookieHeaders(result.headers),
                   state: 'authenticated' as const,
@@ -964,7 +999,7 @@ const assembleAuthenticationService = (
               runSessionUpdate(
                 requestHeaders,
                 getAuth().api.updateSession({
-                  body: { activeTenantId: identity.tenantId },
+                  body: { activeContextKind: 'company', activeLegalEntityId: null, activeTenantId: identity.tenantId },
                   headers: requestHeaders,
                   returnHeaders: true,
                 }),
@@ -973,6 +1008,7 @@ const assembleAuthenticationService = (
               Effect.map((updated) => ({
                 identity,
                 principal,
+                selectedContextKind: 'company' as const,
                 selectedTenantId: identity.tenantId,
                 setCookieHeaders: [...setCookieHeaders(result.headers), ...setCookieHeaders(updated.headers)],
                 state: 'authenticated' as const,
@@ -996,6 +1032,39 @@ const assembleAuthenticationService = (
 
   const resolveContext: ResolveAuthenticatedContext = Effect.fn('AuthenticationService.resolveContext')(
     function* resolveContextEffect(resolved: AuthenticatedResolvedSession, requestHeaders: Headers) {
+      if (resolved.selectedContextKind === 'tenant') {
+        const allowed = yield* canSelectTenantContext({
+          principalId: resolved.identity.principalId,
+          tenantId: resolved.identity.tenantId,
+        }).pipe(
+          Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
+            Effect.fail(unavailable('legal_entity_selection_unavailable')),
+          ),
+        );
+        if (!allowed) {
+          return {
+            availableLegalEntities: [],
+            identity: resolved.identity,
+            principal: resolved.principal,
+            setCookieHeaders: resolved.setCookieHeaders,
+            state: 'access_blocked',
+          };
+        }
+        return {
+          // Company choices are navigation data, never a prerequisite for tenant authorization.
+          availableLegalEntities: yield* resolveAuthorizedLegalEntities({
+            principalId: resolved.identity.principalId,
+            tenantId: resolved.identity.tenantId,
+          }).pipe(
+            Effect.map((choices) => choices.available),
+            Effect.orElseSucceed(() => []),
+          ),
+          identity: resolved.identity,
+          principal: resolved.principal,
+          setCookieHeaders: resolved.setCookieHeaders,
+          state: 'tenant_authenticated',
+        };
+      }
       const selection = yield* resolveAuthorizedLegalEntities(
         withOptionalProperty(
           {
@@ -1072,7 +1141,7 @@ const assembleAuthenticationService = (
         runSessionUpdate(
           requestHeaders,
           getAuth().api.updateSession({
-            body: { activeLegalEntityId: selection.selected.legalEntityId },
+            body: { activeContextKind: 'company', activeLegalEntityId: selection.selected.legalEntityId },
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -1263,7 +1332,7 @@ const assembleAuthenticationService = (
                     runSessionUpdate(
                       requestHeaders,
                       getAuth().api.updateSession({
-                        body: { activeLegalEntityId: selected.legalEntityId },
+                        body: { activeContextKind: 'company', activeLegalEntityId: selected.legalEntityId },
                         headers: requestHeaders,
                         returnHeaders: true,
                       }),
@@ -1295,6 +1364,7 @@ const assembleAuthenticationService = (
                       requestHeaders,
                       getAuth().api.updateSession({
                         body: {
+                          activeContextKind: 'company',
                           activeLegalEntityId: null,
                           activeTenantId: tenantId,
                         },
@@ -1312,6 +1382,33 @@ const assembleAuthenticationService = (
           ),
         ),
       ),
+    switchToTenantContext: Effect.fn('AuthenticationService.switchToTenantContext')(
+      function* switchToTenantContextEffect(requestHeaders: Headers) {
+        const resolved = yield* authenticatedSession(requestHeaders);
+        const allowed = yield* canSelectTenantContext({
+          principalId: resolved.identity.principalId,
+          tenantId: resolved.identity.tenantId,
+        }).pipe(
+          Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
+            Effect.fail(unavailable('legal_entity_selection_unavailable')),
+          ),
+        );
+        if (!allowed) {
+          return yield* new TenantAccessForbiddenError();
+        }
+        const updated = yield* Effect.suspend(() =>
+          runSessionUpdate(
+            requestHeaders,
+            getAuth().api.updateSession({
+              body: { activeContextKind: 'tenant', activeLegalEntityId: null },
+              headers: requestHeaders,
+              returnHeaders: true,
+            }),
+          ),
+        );
+        return { setCookieHeaders: [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)] };
+      },
+    ),
   };
 };
 

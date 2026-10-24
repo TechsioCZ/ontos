@@ -12,9 +12,13 @@ import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../permissions/config.ts';
 import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
+import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
+import type { ScopedRoleIdentity } from '../permissions/scoped-role.ts';
 import {
   bootstrapPrincipalRecord,
   bootstrapRelationshipRequest,
+  BootstrapCompanyMembershipSchema,
+  installBootstrapCompanyMemberships,
   selectBootstrapLegalEntities,
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
@@ -27,6 +31,7 @@ type ExactRecord = Readonly<Record<string, Comparable>>;
 
 /** One stage account resolved from the operator accounts file, with the grants it holds as data. */
 export interface StageContext {
+  readonly affiliation: StageAccountsFile['tenants'][number]['accounts'][number]['affiliation'];
   readonly authBindingId: string;
   readonly defaultLocale: string;
   readonly legalEntityId: string;
@@ -37,6 +42,7 @@ export interface StageContext {
   readonly principalId: string;
   readonly registrationCountry: string;
   readonly registrationNumber: string;
+  readonly scopedRoles: readonly ScopedRoleIdentity[];
   readonly tenantId: string;
   readonly tenantName: string;
   /** Principal relations on the own Tenant, copied verbatim from the account's grant data. */
@@ -48,6 +54,7 @@ export interface StageContext {
 export const stageContextsFromAccountsFile = (file: StageAccountsFile): readonly StageContext[] =>
   file.tenants.flatMap((tenant) =>
     tenant.accounts.map((account) => ({
+      affiliation: account.affiliation,
       authBindingId: account.authBindingId,
       defaultLocale: tenant.defaultLocale,
       legalEntityId: tenant.legalEntity.legalEntityId,
@@ -58,6 +65,11 @@ export const stageContextsFromAccountsFile = (file: StageAccountsFile): readonly
       principalId: account.principalId,
       registrationCountry: tenant.legalEntity.registrationCountry,
       registrationNumber: tenant.legalEntity.registrationNumber,
+      scopedRoles: file.scopedRoles.flatMap(({ legalEntityId, principalIds, roleKey, tenantId }) =>
+        tenantId !== tenant.tenantId || !principalIds.includes(account.principalId)
+          ? []
+          : [legalEntityId === undefined ? { roleKey, tenantId } : { legalEntityId, roleKey, tenantId }],
+      ),
       tenantId: tenant.tenantId,
       tenantName: tenant.displayName,
       tenantRelations: account.grants.tenantRelations,
@@ -263,6 +275,15 @@ const reconcilePostgresTransaction = Effect.fn('StageContextBootstrap.reconcileP
       yield* transaction.insert(principals).values(expectedPrincipal).pipe(Effect.mapError(bootstrapFailureFromCause));
     }
 
+    const membership = yield* Schema.decodeEffect(BootstrapCompanyMembershipSchema)({
+      affiliation: context.affiliation,
+      legalEntityId: context.legalEntityId,
+      principalId: context.principalId,
+    }).pipe(Effect.mapError(bootstrapFailureFromCause));
+    yield* installBootstrapCompanyMemberships(transaction, context.tenantId, [membership]).pipe(
+      Effect.mapError(bootstrapFailureFromCause),
+    );
+
     const bindingCandidates = yield* selectBootstrapAuthBindings(
       transaction,
       context,
@@ -324,7 +345,7 @@ const reconcilePostgresTransaction = Effect.fn('StageContextBootstrap.reconcileP
   },
 );
 
-const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostgresContext')(
+export const reconcilePostgresContext = Effect.fn('StageContextBootstrap.reconcilePostgresContext')(
   function* reconcileStagePostgresContext(
     database: CoreDatabaseExecutor,
     context: StageContext,
@@ -349,9 +370,39 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
     if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
       return yield* failure('The stage authorization object IDs are invalid');
     }
+    if (
+      context.scopedRoles.some(
+        (role) =>
+          role.tenantId !== context.tenantId ||
+          (role.legalEntityId !== undefined && role.legalEntityId !== context.legalEntityId),
+      )
+    ) {
+      return yield* failure('Stage roles must belong to the explicit account tenant/company');
+    }
     return [
-      {
+      ...context.scopedRoles.map((role) => ({
         relation: 'member',
+        resourceId: toScopedRoleObjectId(role),
+        resourceType: 'scoped_role',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      })),
+      {
+        relation: 'tenant',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
+        relation: 'company_member',
         resourceId: context.tenantId,
         resourceType: 'tenant',
         subjectId: context.principalId,
@@ -426,7 +477,21 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
         subjectType: 'legal_entity',
       },
       ...context.principalIds.flatMap((principalId) => [
-        ...['member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
+        {
+          relation: 'tenant',
+          resourceId: principalId,
+          resourceType: 'principal',
+          subjectId: context.tenantId,
+          subjectType: 'tenant',
+        },
+        {
+          relation: 'self',
+          resourceId: principalId,
+          resourceType: 'principal',
+          subjectId: principalId,
+          subjectType: 'principal',
+        },
+        ...['member', 'company_member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
           relation,
           resourceId: context.tenantId,
           resourceType: 'tenant',

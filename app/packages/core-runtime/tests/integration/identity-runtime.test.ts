@@ -28,6 +28,8 @@ import {
   auditEvents,
   coreRelations,
   dataAccessEvents,
+  domainEvents,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenants,
@@ -44,7 +46,12 @@ import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../s
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
-import { makeActionPermissionService, toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import { makeActionPermissionService } from '../../src/permissions/service.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
@@ -165,19 +172,24 @@ it.live('runs identity mutations and tenant-isolated administration through live
       'core.identity.set-managed-api-key-binding-status',
       'core.identity.set-self-api-key-binding-status',
     ] as const;
+    const identityActions = identityActionKeys.map((actionKey) => ({ actionKey, tenantId }));
+    const identityRole = { roleKey: 'identity-runtime-administrator', tenantId };
     const spiceDbRelationships = [
       relationship('tenant', tenantId, 'member', 'principal', administratorPrincipalId),
       relationship('tenant', tenantId, 'identity_admin', 'principal', administratorPrincipalId),
       relationship('tenant', tenantId, 'support', 'principal', administratorPrincipalId),
-      ...identityActionKeys.flatMap((actionKey) => {
-        const objectId = toSpiceDbActionObjectId(actionKey);
-        return [
-          relationship('action', objectId, 'executor', 'principal', administratorPrincipalId),
-          relationship('action', objectId, 'executor', 'principal', systemPrincipalId),
-        ];
-      }),
+      ...buildActionAuthorizationRelationships(identityActions),
+      ...buildActionAuthorizationRoleGrantRelationships(
+        identityActions.map((action) => ({ ...action, roleKey: identityRole.roleKey })),
+        [{ moduleKeys: ['core.identity'], tenantId }],
+      ),
+      ...[administratorPrincipalId, systemPrincipalId].map((memberId) =>
+        relationship('scoped_role', toScopedRoleObjectId(identityRole), 'member', 'principal', memberId),
+      ),
     ];
     const cleanup = Effect.gen(function* cleanIdentityRuntimeFixtures() {
+      yield* admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
+      yield* admin.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
       yield* admin.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, [tenantId]));
       yield* admin.delete(auditEvents).where(inArray(auditEvents.tenantId, [tenantId]));
       yield* admin.delete(actionInvocations).where(inArray(actionInvocations.tenantId, [tenantId]));
@@ -286,6 +298,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
           payload: {
             principalId: created.principalId,
             providerSubjectId: providerKeyId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: bindManagedApiKeyAction,
@@ -302,6 +315,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
             expectedStatus: 'active',
             newStatus: 'disabled',
             principalId: created.principalId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: setManagedApiKeyBindingStatusAction,
@@ -318,6 +332,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
             expectedStatus: 'disabled',
             newStatus: 'active',
             principalId: created.principalId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: setManagedApiKeyBindingStatusAction,
@@ -401,7 +416,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       );
       const listed = yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal,
           registration: managedPrincipalsRead,
           transport: { correlationId: randomUUID() },
@@ -422,7 +437,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       ]);
       yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal: {
             authBindingId: selfBinding.authBindingId,
             authContextRef: `better-auth-api-key:${selfProviderKeyId}`,
@@ -525,7 +540,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       expect(systemCreated.status).toBe('active');
       const systemRead = yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal: systemPrincipal,
           registration: managedPrincipalsRead,
           transport: { correlationId: randomUUID() },

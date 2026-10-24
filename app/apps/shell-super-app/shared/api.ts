@@ -29,6 +29,18 @@ import {
 } from '@app/shared-contracts/agent-access';
 import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
+import {
+  PEOPLE_PATHS,
+  PeopleRoleCatalogSchema,
+  InvitePeopleRequestSchema,
+  InvitePeopleResponseSchema,
+  PeopleListRequestSchema,
+  PeopleListResponseSchema,
+  SetPeopleCompanyMembershipRequestSchema,
+  SetPeopleCompanyMembershipResponseSchema,
+  SetPeopleRoleRequestSchema,
+  SetPeopleRoleResponseSchema,
+} from './people-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -49,6 +61,7 @@ export type SwitchTenantResponse = typeof SwitchTenantResponseSchema.Type;
 export type AvailableLegalEntitiesResponse = typeof AvailableLegalEntitiesResponseSchema.Type;
 export type SwitchLegalEntityPayload = typeof SwitchLegalEntityPayloadSchema.Type;
 export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.Type;
+export type SwitchToTenantContextResponse = typeof SwitchToTenantContextResponseSchema.Type;
 export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
 export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
@@ -98,75 +111,8 @@ export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
   ),
 });
 
-/** Sales-demo people administration of the current company (accounts-admin lane). */
-const demoAccountText = (maximum: number) => Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
-const DemoAccountStatusSchema = Schema.Literals(['active', 'disabled']);
 export const DemoAccountListPayloadSchema = Schema.Struct({});
-export const ManageDemoAccountRequestSchema = Schema.Union([
-  Schema.Struct({
-    displayName: demoAccountText(200),
-    email: demoAccountText(320).check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u)),
-    operation: Schema.Literal('create'),
-    roleKey: demoAccountText(64),
-  }),
-  Schema.Struct({
-    operation: Schema.Literal('change-role'),
-    principalId: Schema.String.check(Schema.isUUID()),
-    roleKey: demoAccountText(64),
-  }),
-  Schema.Struct({
-    expectedStatus: DemoAccountStatusSchema,
-    newStatus: DemoAccountStatusSchema,
-    operation: Schema.Literal('change-status'),
-    principalId: Schema.String.check(Schema.isUUID()),
-    reason: Schema.optionalKey(demoAccountText(500)),
-  }),
-]);
-export const DemoAccountRoleSchema = Schema.Struct({
-  administrator: Schema.Boolean,
-  description: Schema.String,
-  key: Schema.String,
-  label: Schema.String,
-});
-export const DemoAccountSchema = Schema.Struct({
-  displayName: Schema.String,
-  editable: Schema.Boolean,
-  email: Schema.NullOr(Schema.String),
-  otherCompanies: Schema.Array(Schema.String),
-  principalId: Schema.String,
-  roleKey: Schema.NullOr(Schema.String),
-  roleLabel: Schema.NullOr(Schema.String),
-  self: Schema.Boolean,
-  status: Schema.Literals(['active', 'disabled', 'archived']),
-});
-export const DemoAccountAuditEntrySchema = Schema.Struct({
-  actorName: Schema.NullOr(Schema.String),
-  auditEventId: Schema.String,
-  details: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
-  eventType: Schema.String,
-  occurredAt: Schema.String,
-  outcome: Schema.String,
-  outcomeCode: Schema.String,
-  targetName: Schema.NullOr(Schema.String),
-});
 export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boolean });
-export const DemoAccountListResponseSchema = Schema.Struct({
-  accounts: Schema.Array(DemoAccountSchema),
-  audit: Schema.Array(DemoAccountAuditEntrySchema),
-  canManage: Schema.Boolean,
-  company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
-  roles: Schema.Array(DemoAccountRoleSchema),
-});
-export const ManageDemoAccountResponseSchema = Schema.Struct({
-  grantsCopied: Schema.Int,
-  grantsRevoked: Schema.Int,
-  operation: Schema.String,
-  principalId: Schema.String,
-  status: DemoAccountStatusSchema,
-});
-export type DemoAccountListResponse = typeof DemoAccountListResponseSchema.Type;
-export type ManageDemoAccountRequest = typeof ManageDemoAccountRequestSchema.Type;
-export type ManageDemoAccountResponse = typeof ManageDemoAccountResponseSchema.Type;
 
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -191,7 +137,9 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
+export const ManagedApiKeyScopeSchema = Schema.Literals(['company-agent', 'tenant-managed']);
 export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...IssueApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -217,12 +165,14 @@ export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
     ...apiKeyStatusFields,
     newStatus: MutableApiKeyBindingStatusSchema,
     principalId: PrincipalIdSchema,
+    scope: ManagedApiKeyScopeSchema,
     reason: Schema.optionalKey(identityReason),
   }),
   Schema.Struct({
     ...apiKeyStatusFields,
     newStatus: Schema.Literal('revoked'),
     principalId: PrincipalIdSchema,
+    scope: ManagedApiKeyScopeSchema,
     reason: identityReason,
   }),
 ]);
@@ -232,6 +182,7 @@ export const RotateApiKeyPayloadSchema = Schema.Struct({
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
 export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...RotateApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -256,10 +207,27 @@ export const SelfApiKeyListResponseSchema = Schema.Struct({
   items: Schema.Array(ApiKeyLifecycleResponseSchema),
   nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
+export const ManagedApiKeyListPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    scope: Schema.Literal('tenant-managed'),
+  }),
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+    scope: Schema.Literal('company-agent'),
+  }),
+]);
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.String,
-  key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
-  kind: Schema.Literals(['service', 'integration']),
+  key: Schema.Union([
+    Schema.Null,
+    Schema.Struct({
+      ...ApiKeyLifecycleResponseSchema.fields,
+      bindingStatus: MutableApiKeyBindingStatusSchema,
+    }),
+  ]),
+  kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus,
 });
@@ -293,6 +261,7 @@ export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleR
 export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
 export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
 export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
+export type ManagedApiKeyListPayload = Schema.Schema.Type<typeof ManagedApiKeyListPayloadSchema>;
 export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
 export type StartSupportImpersonationPayload = Schema.Schema.Type<typeof StartSupportImpersonationPayloadSchema>;
 export type SupportImpersonationResponse = Schema.Schema.Type<typeof SupportImpersonationResponseSchema>;
@@ -379,6 +348,12 @@ export const AuthenticatedSessionSchema = Schema.Struct({
   state: Schema.Literal('authenticated'),
 });
 
+export const TenantAuthenticatedSessionSchema = Schema.Struct({
+  availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
+  identity: SafeTenantIdentitySchema,
+  state: Schema.Literal('tenant_authenticated'),
+});
+
 export const SelectionRequiredSessionSchema = Schema.Struct({
   availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
   identity: SafeTenantIdentitySchema,
@@ -393,6 +368,7 @@ export const AccessBlockedSessionSchema = Schema.Struct({
 export const CurrentSessionSchema = Schema.Union([
   AnonymousSessionSchema,
   AuthenticatedSessionSchema,
+  TenantAuthenticatedSessionSchema,
   SelectionRequiredSessionSchema,
   AccessBlockedSessionSchema,
 ]);
@@ -430,11 +406,16 @@ export const SwitchTenantResponseSchema = Schema.Struct({
 export const AvailableLegalEntitiesResponseSchema = Schema.Struct({
   legalEntities: Schema.Array(LegalEntityChoiceSchema),
   selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
+  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required', 'tenant_authenticated']),
+  tenantContextAvailable: Schema.Boolean,
 });
 
 export const SwitchLegalEntityPayloadSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
+});
+
+export const SwitchToTenantContextResponseSchema = Schema.Struct({
+  selectedContext: Schema.Literal('tenant'),
 });
 
 export const SwitchLegalEntityResponseSchema = Schema.Struct({
@@ -849,21 +830,6 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       )
       .add(
-        HttpApiEndpoint.post('listDemoAccounts', '/auth/identity/demo-accounts/list', {
-          error: identityErrors,
-          payload: DemoAccountListPayloadSchema,
-          success: DemoAccountListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('manageDemoAccount', '/auth/identity/demo-accounts', {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: ManageDemoAccountRequestSchema,
-          success: ManageDemoAccountResponseSchema,
-        }),
-      )
-      .add(
         HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
@@ -905,7 +871,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('listManagedApiKeys', '/auth/identity/api-keys/managed/list', {
           error: identityErrors,
-          payload: IdentityListPayloadSchema,
+          payload: ManagedApiKeyListPayloadSchema,
           success: ManagedApiKeyListResponseSchema,
         }),
       )
@@ -1002,6 +968,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             TenantInternalProblemSchema,
           ],
           success: AvailableLegalEntitiesResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('switchToTenantContext', '/auth/context/tenant', {
+          error: [
+            TenantAuthenticationRequiredProblemSchema,
+            TenantAccessForbiddenProblemSchema,
+            TenantCapabilityUnavailableProblemSchema,
+            TenantInternalProblemSchema,
+          ],
+          success: SwitchToTenantContextResponseSchema,
         }),
       )
       .add(
@@ -1155,6 +1132,69 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       ),
   )
+  .add(
+    HttpApiGroup.make('peopleAdministration')
+      .add(
+        HttpApiEndpoint.post('listCompanyRoleCatalog', PEOPLE_PATHS.companyRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantRoleCatalog', PEOPLE_PATHS.tenantRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: InvitePeopleRequestSchema,
+          success: InvitePeopleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyPeople', PEOPLE_PATHS.companyList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantPeople', PEOPLE_PATHS.tenantList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyMembership', PEOPLE_PATHS.companyMembership, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleCompanyMembershipRequestSchema,
+          success: SetPeopleCompanyMembershipResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyRole', PEOPLE_PATHS.companyRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleTenantRole', PEOPLE_PATHS.tenantRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
+        }),
+      ),
+  )
   // "Připojené aplikace" and Agentní entity management (paths equal CONNECTION_MANAGEMENT_PATHS and AGENT_ACCESS_PATHS).
   .add(
     HttpApiGroup.make('oauthConnectionsAdmin')
@@ -1222,4 +1262,7 @@ export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
   signInPath: authenticationEndpointPath(ShellAuthenticationApi.groups.authentication.endpoints.signIn),
   switchTenantPath: authenticationEndpointPath(ShellAuthenticationApi.groups.tenants.endpoints.switchTenant),
+  switchToTenantContextPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.legalEntities.endpoints.switchToTenantContext,
+  ),
 } as const;

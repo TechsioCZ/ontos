@@ -20,7 +20,9 @@ const review = (
   });
 
 it('a new task lists its fields in Czech', () => {
-  expect(taskDiff({ _tag: 'CreateTask', dueDate: '2026-10-30', priority: 'HIGH', title: 'Zavolat' }, undefined)).toEqual([
+  expect(
+    taskDiff({ _tag: 'CreateTask', dueDate: '2026-10-30', priority: 'HIGH', title: 'Zavolat' }, undefined),
+  ).toEqual([
     { after: '30. 10. 2026', field: 'dueDate', label: 'Termín' },
     { after: 'Vysoká', field: 'priority', label: 'Priorita' },
     { after: 'Zavolat', field: 'title', label: 'Název úkolu' },
@@ -59,9 +61,9 @@ it('state changes are undone only along allowed transitions', () => {
     kind: 'none',
     reason: 'Úkol nelze vrátit do původního stavu.',
   });
-  expect(taskRevert({ _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' }, tenantId)).toEqual(
-    { commands: [{ _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef }], kind: 'commands' },
-  );
+  expect(
+    taskRevert({ _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' }, tenantId),
+  ).toEqual({ commands: [{ _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef }], kind: 'commands' });
 });
 
 it('task updates compare only the fields the command set', () => {
@@ -108,15 +110,20 @@ it('an approved change names the proposing agent in a task comment', () => {
       },
     ],
     createdIdPath: 'task.ref.resourceId',
-    referenceAudiences: ['workforce'],
+    referenceAudiences: [],
   });
-  expect(review({ command: { _tag: 'UpdateTask', taskRef, title: 'Y' }, proposal }, { title: 'X' }).followUp)
-    .toMatchObject({ commands: [{ _tag: 'AddTaskComment', taskRef }] });
+  expect(
+    review({ command: { _tag: 'UpdateTask', taskRef, title: 'Y' }, proposal }, { title: 'X' }).followUp,
+  ).toMatchObject({ commands: [{ _tag: 'AddTaskComment', taskRef }] });
 });
 
 it('undo leaves a change alone when the task was edited since or cannot be read', () => {
   const command = { _tag: 'UpdateTask', taskRef, title: 'Nový' };
-  expect(review({ command, stage: 'undo' }, { title: 'Nový' })).toEqual({ key: 'k', stillInPlace: true, visible: true });
+  expect(review({ command, stage: 'undo' }, { title: 'Nový' })).toEqual({
+    key: 'k',
+    stillInPlace: true,
+    visible: true,
+  });
   expect(review({ command, stage: 'undo' }, { title: 'Jiný' }).stillInPlace).toBe(false);
   expect(review({ command, stage: 'undo' }).visible).toBe(false);
 });

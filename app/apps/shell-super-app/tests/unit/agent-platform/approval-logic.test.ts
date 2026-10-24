@@ -1,39 +1,13 @@
-import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '@app/core-runtime';
 import { expect, test } from 'effect-rstest';
 
 import {
   approverCheck,
   czechModuleFailure,
   hiddenByReview,
-  moduleAccessSets,
   parseCoreKey,
   revertResultMessage,
 } from '../../../api/agent-platform/approval-logic.ts';
 import type { ModuleReview } from '../../../api/agent-platform/module-review.ts';
-
-const tenant = '70000000-0000-4000-8000-000000000020';
-const company = '71000000-0000-4000-8000-000000000020';
-const moduleAccess = (moduleId: string) => ({
-  relation: 'accessor',
-  resourceId: toModuleAccessObjectId(tenant, company, moduleId) ?? '',
-  resourceType: 'module_access',
-});
-const permission = (moduleId: string, value: string) => ({
-  relation: 'grantee',
-  resourceId: toContextPermissionAccessObjectId(tenant, company, { moduleId, permission: value }) ?? '',
-  resourceType: 'context_permission',
-});
-
-test('moduleAccessSets separates open access from write permission', () => {
-  const sets = moduleAccessSets(
-    [moduleAccess('demo.crm'), moduleAccess('work.tasks'), permission('demo.crm', 'demo.crm.write_all')],
-    company,
-  );
-  expect(sets.access.has('demo.crm')).toBe(true);
-  expect(sets.access.has('work.tasks')).toBe(true);
-  expect(sets.write.has('demo.crm')).toBe(true);
-  expect(sets.write.has('work.tasks')).toBe(false);
-});
 
 test('parseCoreKey strips the core prefix and rejects other keys', () => {
   expect(parseCoreKey('core:66666666-6666-4666-8666-66666666666A')).toBe('66666666-6666-4666-8666-66666666666a');

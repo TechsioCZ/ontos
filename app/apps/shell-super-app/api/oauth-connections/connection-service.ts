@@ -19,9 +19,7 @@ import {
 } from '@app/shared-contracts/oauth-connections';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
-import { moduleAccessSets } from '../agent-platform/approval-logic.ts';
-import { loadAgentProfiles } from '../auth/agent-store.ts';
-import { DEFAULT_AGENT_PROFILE } from '../auth/agent-store-model.ts';
+import { callerModuleAccess } from '../agent-platform/caller.ts';
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -35,7 +33,6 @@ import {
 import { OAuthFlow } from './oauth-flow.ts';
 import {
   type LiveRights,
-  agentLiveRights,
   effectiveAuthority,
   isModulesRequestWithin,
   isPolicyWithin,
@@ -124,37 +121,26 @@ type PrincipalNames = ReadonlyMap<
   { readonly displayName: string; readonly kind: string; readonly status: string }
 >;
 
-/** What the acting principal may do right now (SpiceDB rights, narrowed for agents by their profile). */
+/** Current graph authority; connection consent can narrow these rights but profiles cannot grant them. */
 export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingAuthority')(function* (input: {
   readonly actingKind: ConnectionActingKind;
   readonly actingPrincipalId: string;
   readonly legalEntityId: string;
   readonly tenantId: string;
 }) {
-  const relationships = yield* Effect.scoped(
-    Effect.flatMap(openDemoAccountGrants, (grants) => grants.relationshipsOf(input.actingPrincipalId)),
-  );
-  const sets = moduleAccessSets(relationships, input.legalEntityId);
-  // SpiceDB can still hold rights on modules that are no longer installed; a connection only offers live modules.
+  const sets = yield* callerModuleAccess({
+    principal: {
+      legalEntityId: input.legalEntityId,
+      principalId: input.actingPrincipalId,
+      tenantId: input.tenantId,
+    },
+  });
   const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
-  const installed = new Set<string>(catalog.moduleIds);
   const labelOf = composedModulesOf(mcpModulesOf(catalog.composition)).labelOf;
-  const spice: LiveRights = {
-    read: new Set([...sets.access].filter((moduleId) => installed.has(moduleId))),
-    write: new Set([...sets.write].filter((moduleId) => installed.has(moduleId))),
-  };
-  if (input.actingKind === 'human') {
-    return {
-      labelOf,
-      live: spice,
-      offered: offeredModules(spice, 'direct', labelOf),
-      policyCap: 'direct' as ConnectionWritePolicy,
-    };
-  }
-  const profiles = yield* loadAgentProfiles(input.tenantId, [input.actingPrincipalId]);
-  const profile = profiles.get(input.actingPrincipalId) ?? DEFAULT_AGENT_PROFILE;
-  const live = agentLiveRights(spice, profile.modules);
-  return { labelOf, live, offered: offeredModules(live, profile.writePolicy, labelOf), policyCap: profile.writePolicy };
+  const live: LiveRights = { read: sets.access, write: sets.propose };
+  const policyCap: ConnectionWritePolicy =
+    input.actingKind === 'human' || sets.write.size > 0 ? 'direct' : sets.propose.size > 0 ? 'approval' : 'read_only';
+  return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
 }, Effect.mapError(toUnavailable));
 
 export interface LiveConnection {

@@ -258,14 +258,14 @@ export const AgentEntitySchema = Schema.Struct({
   /** What the agent is for (administrator's text); null when left empty. */
   description: Schema.NullOr(Schema.String),
   displayName: Schema.String,
+  /** Whether an audited agent profile has been configured. */
+  hasProfile: Schema.Boolean,
   modules: Schema.Array(AgentModuleGrantSchema),
   /** People allowed to connect the agent (SpiceDB `principal:{agent}#operator`). */
   operators: Schema.Array(PrincipalRefSchema),
-  /** Person of the company responsible for the agent; null when none was chosen (older seeded agents). */
+  /** Person of the company responsible for the agent; null when no audited profile owner was chosen. */
   owner: Schema.NullOr(PrincipalRefSchema),
   principalId: Schema.String,
-  /** True while the profile still comes from the demo seed (no change made in the app yet). */
-  seeded: Schema.Boolean,
   status: AgentStatusSchema,
   writePolicy: AgentWritePolicySchema,
 });

@@ -1,3 +1,4 @@
+import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
@@ -16,8 +17,13 @@ import {
   searchProjectionGenerations,
   searchProjectionRebuilds,
 } from '../src/db/schema.ts';
-import { bootstrapRelationshipRequest } from '../src/install/context-bootstrap-shared.ts';
+import {
+  BootstrapCompanyMembershipSchema,
+  bootstrapRelationshipRequest,
+  installBootstrapCompanyMemberships,
+} from '../src/install/context-bootstrap-shared.ts';
 import { loadSpiceDbConfig } from '../src/permissions/config.ts';
+import { buildPrincipalSelfCredentialUpdates } from '../src/permissions/action-authorization-lifecycle.ts';
 import { openSpiceDbGrpcRpc } from '../src/permissions/spicedb-grpc-rpc.ts';
 
 import {
@@ -53,6 +59,7 @@ const FixtureSchema = Schema.Struct({
       principalId: PrincipalIdSchema,
     }),
   ),
+  companyMemberships: Schema.optionalKey(Schema.Array(BootstrapCompanyMembershipSchema)),
   legalEntity: Schema.Struct({
     legalEntityId: LegalEntityIdSchema,
     legalName: Text,
@@ -66,6 +73,7 @@ const FixtureSchema = Schema.Struct({
       resourceId: ResourceIdSchema,
       resourceType: Text,
       subjectId: SubjectIdSchema,
+      subjectRelation: Schema.optionalKey(Text),
       subjectType: Text,
     }),
   ),
@@ -254,7 +262,8 @@ const bootstrapSearchDocuments = Effect.fn('DevelopmentBootstrap.searchDocuments
 const main = (input: typeof FixtureSchema.Type) =>
   Effect.gen(function* bootstrapDevelopmentContext() {
     const { executor } = yield* CoreDatabase;
-    yield* executor.transaction((transaction) =>
+    const accountPrincipalIds = input.accounts.map((account) => account.principalId);
+    const currentPrincipals = yield* executor.transaction((transaction) =>
       Effect.gen(function* bootstrapContextRows() {
         yield* transaction
           .insert(tenants)
@@ -289,6 +298,7 @@ const main = (input: typeof FixtureSchema.Type) =>
             })
             .onConflictDoNothing();
         }
+        yield* installBootstrapCompanyMemberships(transaction, input.tenant.tenantId, input.companyMemberships ?? []);
         for (const module of input.modules) {
           yield* transaction
             .insert(tenantModuleStates)
@@ -303,6 +313,19 @@ const main = (input: typeof FixtureSchema.Type) =>
         if (input.searchDocuments !== undefined) {
           yield* bootstrapSearchDocuments(transaction, input.searchDocuments, input.tenant.tenantId);
         }
+        return yield* transaction
+          .select({
+            kind: principals.kind,
+            principalId: principals.principalId,
+            status: principals.status,
+            tenantId: principals.tenantId,
+            tenantStatus: tenants.status,
+          })
+          .from(principals)
+          .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
+          .where(
+            and(eq(principals.tenantId, input.tenant.tenantId), inArray(principals.principalId, accountPrincipalIds)),
+          );
       }),
     );
     const configuration = yield* loadSpiceDbConfig();
@@ -322,6 +345,23 @@ const main = (input: typeof FixtureSchema.Type) =>
         .pipe(
           Effect.mapError(
             (cause) => new DevelopmentBootstrapError({ cause, reason: 'Development authorization bootstrap failed' }),
+          ),
+        );
+    }
+    // The identity transaction has committed. Project current SQL state, never a role or fixture's requested kind.
+    for (const actor of currentPrincipals) {
+      yield* client
+        .writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: [
+              ...buildPrincipalSelfCredentialUpdates({ ...actor, tenantActive: actor.tenantStatus === 'active' }),
+            ],
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DevelopmentBootstrapError({ cause, reason: 'Development principal structure bootstrap failed' }),
           ),
         );
     }

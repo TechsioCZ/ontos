@@ -1,18 +1,11 @@
-import {
-  toContextPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '@app/core-runtime';
-import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
-import { Effect, Schema } from 'effect';
-
-class VerificationContextInvalid extends Schema.TaggedError<VerificationContextInvalid>()(
-  'VerificationContextInvalid',
-  { reason: Schema.String },
-) {}
+import { Effect } from 'effect';
+import { companyMembershipAdmissionRelationships } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { principalRelationships } from './permissions.mts';
+import type { DemoAction } from './permissions.mts';
 
 const verificationName = 'Ověření připojení';
 const taskModule = 'work.tasks';
+export const verificationTaskWriterRoleKey = 'verification:task-writer';
 
 /** Isolated infrastructure identity: no memberships or grants in any customer demo tenant. */
 export const verificationAccount = {
@@ -25,91 +18,27 @@ export const verificationAccount = {
 export const verificationTenantId = '70000000-0000-4000-8000-000000000090';
 export const verificationLegalEntityId = '71000000-0000-4000-8000-000000000090';
 
-export const verificationContext = Effect.fn('Demo.verificationContext')(function* verificationContext() {
+export const verificationContext = Effect.fn('Demo.verificationContext')(function* verificationContext(
+  actions: readonly DemoAction[] = [],
+) {
   const { authBindingId, authUserId, displayName, principalId } = verificationAccount;
-  const legal = toLegalEntityAccessObjectId(verificationTenantId, verificationLegalEntityId);
-  if (legal === undefined) {
-    return yield* new VerificationContextInvalid({ reason: 'Invalid verification company identity' });
-  }
-  const relationships = [
-    {
-      relation: 'member',
-      resourceId: verificationTenantId,
-      resourceType: 'tenant',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'tenant',
-      resourceId: legal,
-      resourceType: 'legal_entity',
-      subjectId: verificationTenantId,
-      subjectType: 'tenant',
-    },
-    {
-      relation: 'member',
-      resourceId: legal,
-      resourceType: 'legal_entity',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-  ];
-  for (const moduleId of ['core.shell', taskModule]) {
-    const resourceId = toModuleAccessObjectId(verificationTenantId, verificationLegalEntityId, moduleId);
-    if (resourceId === undefined) {
-      return yield* new VerificationContextInvalid({ reason: 'Invalid verification module identity' });
-    }
-    relationships.push(
+  const relationships = yield* Effect.try(() =>
+    principalRelationships(
+      principalId,
       {
-        relation: 'legal_entity',
-        resourceId,
-        resourceType: 'module_access',
-        subjectId: legal,
-        subjectType: 'legal_entity',
+        actionKeys: { 'work.tasks': ['work.tasks.apply-command'] },
+        label: verificationName,
+        modules: { 'work.tasks': 'write' },
       },
-      {
-        relation: 'accessor',
-        resourceId,
-        resourceType: 'module_access',
-        subjectId: principalId,
-        subjectType: 'principal',
-      },
-    );
-  }
-  for (const permission of ['work.tasks.read_all', 'work.tasks.write_all']) {
-    const resourceId = toContextPermissionAccessObjectId(verificationTenantId, verificationLegalEntityId, {
-      moduleId: taskModule,
-      permission,
-    });
-    if (resourceId === undefined) {
-      return yield* new VerificationContextInvalid({ reason: 'Invalid verification permission identity' });
-    }
-    relationships.push(
-      {
-        relation: 'tenant',
-        resourceId,
-        resourceType: 'context_permission',
-        subjectId: verificationTenantId,
-        subjectType: 'tenant',
-      },
-      {
-        relation: 'grantee',
-        resourceId,
-        resourceType: 'context_permission',
-        subjectId: principalId,
-        subjectType: 'principal',
-      },
-    );
-  }
-  relationships.push({
-    relation: 'executor',
-    resourceId: toSpiceDbActionObjectId('work.tasks.apply-command'),
-    resourceType: 'action',
-    subjectId: principalId,
-    subjectType: 'principal',
-  });
+      actions,
+      verificationLegalEntityId,
+      verificationTenantId,
+      verificationTaskWriterRoleKey,
+    ),
+  );
   return {
     accounts: [{ authBindingId, authUserId, displayName, principalId }],
+    companyMemberships: [{ affiliation: 'external' as const, legalEntityId: verificationLegalEntityId, principalId }],
     legalEntity: {
       legalEntityId: verificationLegalEntityId,
       legalName: verificationName,
@@ -117,7 +46,9 @@ export const verificationContext = Effect.fn('Demo.verificationContext')(functio
       registrationNumber: 'CI-VERIFICATION',
     },
     modules: [{ moduleId: taskModule, stateId: '78000000-0000-4000-8000-000000000090' }],
-    relationships,
+    relationships: companyMembershipAdmissionRelationships(relationships, [
+      { principalId, tenantId: verificationTenantId },
+    ]),
     tenant: {
       defaultLocale: 'cs',
       displayName: verificationName,

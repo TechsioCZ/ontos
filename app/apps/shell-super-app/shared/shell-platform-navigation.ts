@@ -62,16 +62,22 @@ export const hasModuleAiApprovals = (navigation: readonly ShellNavigationItem[])
 export const withoutModuleAiApprovals = (navigation: readonly ShellNavigationItem[]): readonly ShellNavigationItem[] =>
   navigation.filter(({ groupKey }) => groupKey !== moduleAgentApprovalsGroupKey);
 
-/** True when a module offers a destination that needs the Shell's people administration. */
-export const offersPeopleAdministration = (navigation: readonly ShellNavigationItem[]): boolean =>
-  navigation.some(({ requiresCapability }) => requiresCapability === 'people_administration');
+const peopleItem = platformItem(
+  'people',
+  '/sprava/lide-a-role',
+  'icon-[mdi--account-key-outline]',
+  { cs: 'Lidé a role', en: 'People and roles' },
+  710,
+);
 
-/** Destinations needing people administration are listed only to people who may administer people. */
+/** People administration belongs to the Shell, independent of any installed workforce module. */
 export const withPeopleAdministration = (
   navigation: readonly ShellNavigationItem[],
   canManagePeople: boolean,
-): readonly ShellNavigationItem[] =>
-  canManagePeople ? navigation : navigation.filter(({ requiresCapability }) => requiresCapability === undefined);
+): readonly ShellNavigationItem[] => {
+  const items = navigation.filter(({ requiresCapability }) => requiresCapability === undefined);
+  return canManagePeople ? [...items, peopleItem] : items;
+};
 
 /**
  * Platform pages of the approval layer: shown to company administrators and to people who can open an in-module AI

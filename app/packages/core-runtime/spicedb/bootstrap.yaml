@@ -2,108 +2,139 @@ schema: |-
   definition principal {
     relation tenant: tenant
     relation operator: principal
+    relation self: principal
+    permission manage_own_credentials = self & tenant->access
     permission operate = operator & tenant->access
+  }
+
+  // Membership is assigned explicitly. A role never creates a company membership.
+  // Object identity encodes the exact tenant, optional company, and role key.
+  definition scoped_role {
+    relation member: principal
   }
 
   definition tenant {
     relation member: principal
-    relation identity_admin: principal
-    relation party_identity_manager: principal
-    relation party_identity_merger: principal
-    relation party_identity_reader: principal
-    relation party_identity_reviewer: principal
-    relation party_relationship_manager: principal
-    relation support: principal
-    permission access = member
-    permission manage_identity = identity_admin & access
-    permission manage_party_identity = party_identity_manager & access
-    permission manage_party_relationships = party_relationship_manager & access
-    permission merge_party_identity = party_identity_merger & access
-    permission read_party_identity = party_identity_reader & access
-    permission review_party_identity = party_identity_reviewer & access
-    permission impersonate = support & access
+    // Owned only by the current SQL company-membership projection.
+    relation company_member: principal
+    relation context_role: scoped_role#member
+    relation superadmin: scoped_role#member
+    relation auditor: scoped_role#member
+    relation identity_admin: principal | scoped_role#member
+    relation party_identity_manager: principal | scoped_role#member
+    relation party_identity_merger: principal | scoped_role#member
+    relation party_identity_reader: principal | scoped_role#member
+    relation party_identity_reviewer: principal | scoped_role#member
+    relation party_relationship_manager: principal | scoped_role#member
+    relation support: principal | scoped_role#member
+    permission access = member + company_member
+    permission select_context = (context_role + superadmin + auditor) & access
+    permission manage_own_credentials = (member->manage_own_credentials + company_member->manage_own_credentials) & access
+    permission read_all = (superadmin + auditor) & access
+    permission write_all = superadmin & access
+    permission manage_identity = (identity_admin + superadmin) & access
+    permission read_people = (identity_admin + superadmin + auditor) & access
+    permission manage_party_identity = (party_identity_manager + superadmin) & access
+    permission manage_party_relationships = (party_relationship_manager + superadmin) & access
+    permission merge_party_identity = (party_identity_merger + superadmin) & access
+    permission read_party_identity = (party_identity_reader + superadmin + auditor) & access
+    permission review_party_identity = (party_identity_reviewer + superadmin) & access
+    permission impersonate = (support + superadmin) & access
   }
 
   // Namespace-qualified identity provisioning is granted to an exact Tenant and
   // authentication namespace. It does not imply administrative lifecycle access.
   definition identity_namespace {
     relation tenant: tenant
-    relation provisioner: principal
+    relation provisioner: principal | scoped_role#member
     permission provision = provisioner & tenant->access
   }
 
   definition legal_entity {
     relation tenant: tenant
     relation member: principal
-    relation counterparty_manager: principal
-    relation counterparty_reader: principal
-    permission access = member & tenant->access
-    permission manage_counterparty = counterparty_manager & access
-    permission read_counterparty = counterparty_reader & access
+    relation admin: scoped_role#member
+    relation auditor: scoped_role#member
+    relation counterparty_manager: principal | scoped_role#member
+    relation counterparty_reader: principal | scoped_role#member
+    permission access = (member + tenant->read_all) & tenant->access
+    permission read_all = (admin + auditor + tenant->read_all) & access
+    permission write_all = (admin + tenant->write_all) & access
+    permission manage_people = write_all
+    permission read_people = read_all
+    permission manage_counterparty = (counterparty_manager + write_all) & access
+    permission read_counterparty = (counterparty_reader + read_all) & access
   }
 
   definition module_access {
     relation legal_entity: legal_entity
     relation accessor: principal
-    permission access = accessor & legal_entity->access
+    relation accessor_role: scoped_role#member
+    relation reader_role: scoped_role#member
+    relation writer_role: scoped_role#member
+    permission access = (accessor + accessor_role + reader_role + writer_role + legal_entity->read_all) & legal_entity->access
+    permission read_all = (reader_role + writer_role + legal_entity->read_all) & access
+    permission write_all = (writer_role + legal_entity->write_all) & access
   }
 
   definition resource {
     relation module: module_access
-    relation reader: principal
-    relation writer: principal
-    permission read = reader & module->access
-    permission write = writer & module->access
+    relation reader: principal | scoped_role#member
+    relation writer: principal | scoped_role#member
+    permission read = (reader + module->read_all) & module->access
+    permission write = (writer + module->write_all) & module->access
   }
 
-  // Each object ID encodes the stable permission code and exact tenant/business scope.
-  // Customer self-service grants name one exact profile; business grants retain independent scope admission.
-  // A Price Group may inherit the same permission from its exact containing catalog through an explicit relation.
+  // Named permissions explicitly declare their read/write scope; auditor rights
+  // never depend on guessing a permission name or copying another person's grants.
+  // Customer self-service grants name one exact profile without conferring company membership.
+  // A Price Group may inherit the same permission from its exact containing catalog.
   definition business_permission {
     relation tenant: tenant
     relation legal_entity: legal_entity
     relation containing_catalog: business_permission
     relation grantee: principal
+    relation role_grantee: scoped_role#member
+    relation read_scope: tenant | legal_entity
+    relation write_scope: tenant | legal_entity
     // Written only for exact customer-profile grants; it does not confer tenant/company membership.
     relation self_service_grantee: principal
-    permission direct_use = grantee & (tenant->access + legal_entity->access)
+    permission role_use = role_grantee & (tenant->access + legal_entity->access)
+    permission direct_use = (grantee + role_use + read_scope->read_all + write_scope->write_all) & (tenant->access + legal_entity->access)
     permission use = self_service_grantee + direct_use + (tenant->access & containing_catalog->direct_use)
   }
 
-  // Named entrypoint permissions are exact to one Tenant, optional Legal Entity, and owning module.
-  // The object identity carries that scope; tenant membership remains an independent gate.
+  // Direct grants are retired at each owner's role cutover. Role grants always
+  // carry an exact business scope, including the company membership gate.
   definition context_permission {
     relation tenant: tenant
+    relation legal_entity: legal_entity
+    relation tenant_scope: tenant
     relation grantee: principal
-    permission access = grantee & tenant->access
+    relation role_grantee: scoped_role#member
+    relation read_scope: tenant | legal_entity
+    relation write_scope: tenant | legal_entity
+    permission role_access = role_grantee & (legal_entity->access + tenant_scope->access)
+    permission access = (grantee + role_access + read_scope->read_all + write_scope->write_all) & tenant->access
+  }
+
+  // Role policy is durable even when the owning module is uninstalled.
+  definition action_grant {
+    relation role: scoped_role#member
+    relation proposer_role: scoped_role#member
   }
 
   definition action {
-    relation restriction: action
-    relation executor: principal | tenant#member
+    relation company_scope: legal_entity
+    relation tenant_scope: tenant
+    relation grant: action_grant
+    relation self_credentials: tenant
 
-    permission is_restricted = restriction
-    permission execute = executor
+    permission scope_access = company_scope->access + tenant_scope->access
+    permission execute = ((grant->role + self_credentials->manage_own_credentials) & scope_access) + company_scope->write_all + tenant_scope->write_all
+    permission propose = (grant->proposer_role & scope_access) + execute
   }
-
 relationships: |-
-  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
-  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
-  action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#executor@tenant:test-tenant#member
-  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#restriction@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
-  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#restriction@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
-  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
-  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
-  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#restriction@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
-  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#executor@principal:allowed-principal
   tenant:test-tenant#member@principal:allowed-principal
   legal_entity:test-tenant--entity-one#tenant@tenant:test-tenant
   legal_entity:test-tenant--entity-one#member@principal:allowed-principal
@@ -132,26 +163,199 @@ relationships: |-
   legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:60000000-0000-4000-8000-000000000002
   module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjb250YWN0cy5jb3JlIl0#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
   module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjb250YWN0cy5jb3JlIl0#accessor@principal:60000000-0000-4000-8000-000000000002
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#role@scoped_role:test-executor#member
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0#tenant_scope@tenant:test-tenant
+  action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0#grant@action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0
+  action_grant:ag_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0#role@scoped_role:test-executor#member
+  scoped_role:test-executor#member@principal:allowed-principal
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:rep
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:company-admin
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:company-auditor
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:tenant-superadmin
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:tenant-auditor
+  tenant:10000000-0000-4000-8000-000000000001#member@principal:offboarded
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#tenant@tenant:10000000-0000-4000-8000-000000000001
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:rep
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:company-admin
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:company-auditor
+  module_access:people-11000000-0000-4000-8000-000000000001#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  resource:people-sensitive-11000000-0000-4000-8000-000000000001#module@module_access:people-11000000-0000-4000-8000-000000000001
+  context_permission:people-read-11000000-0000-4000-8000-000000000001#tenant@tenant:10000000-0000-4000-8000-000000000001
+  context_permission:people-read-11000000-0000-4000-8000-000000000001#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  context_permission:people-read-11000000-0000-4000-8000-000000000001#read_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#read_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000001#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000001#write_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#company_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#grant@action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#company_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#grant@action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ
+  action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#role@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ0YXNrLXdyaXRlciJd#member
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#tenant@tenant:10000000-0000-4000-8000-000000000001
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:rep
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:company-admin
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:company-auditor
+  module_access:people-11000000-0000-4000-8000-000000000002#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  resource:people-sensitive-11000000-0000-4000-8000-000000000002#module@module_access:people-11000000-0000-4000-8000-000000000002
+  context_permission:people-read-11000000-0000-4000-8000-000000000002#tenant@tenant:10000000-0000-4000-8000-000000000001
+  context_permission:people-read-11000000-0000-4000-8000-000000000002#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  context_permission:people-read-11000000-0000-4000-8000-000000000002#read_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000002#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000002#read_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000002#legal_entity@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000002#write_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#company_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#grant@action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#company_scope@legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#grant@action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ
+  action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#role@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ0YXNrLXdyaXRlciJd#member
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ0YXNrLXdyaXRlciJd#member@principal:rep
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ0YXNrLXdyaXRlciJd#member@principal:offboarded
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJhZG1pbmlzdHJhdG9yIl0#member@principal:company-admin
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#admin@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJhZG1pbmlzdHJhdG9yIl0#member
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJhdWRpdCJd#member@principal:company-auditor
+  legal_entity:ctx_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#auditor@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJhdWRpdCJd#member
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsInN1cGVyYWRtaW4iXQ#member@principal:tenant-superadmin
+  tenant:10000000-0000-4000-8000-000000000001#superadmin@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsInN1cGVyYWRtaW4iXQ#member
+  scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImF1ZGl0Il0#member@principal:tenant-auditor
+  tenant:10000000-0000-4000-8000-000000000001#auditor@scoped_role:sr_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImF1ZGl0Il0#member
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImNvcmUuaWRlbnRpdHkubWFuYWdlIl0#tenant_scope@tenant:10000000-0000-4000-8000-000000000001
+  action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImNvcmUuaWRlbnRpdHkubWFuYWdlIl0#grant@action_grant:ag_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImNvcmUuaWRlbnRpdHkubWFuYWdlIl0
 
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0#tenant@tenant:proposal-tenant
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Il0#tenant@tenant:proposal-tenant
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#legal_entity@legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0
+  scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6YXBwcm92YWwtYWdlbnQiXQ#member@principal:approval-agent
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#reader_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6YXBwcm92YWwtYWdlbnQiXQ#member
+  tenant:proposal-tenant#member@principal:approval-agent
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0#member@principal:approval-agent
+  action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#proposer_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6YXBwcm92YWwtYWdlbnQiXQ#member
+  scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6ZGlyZWN0LWFnZW50Il0#member@principal:direct-agent
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#reader_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6ZGlyZWN0LWFnZW50Il0#member
+  tenant:proposal-tenant#member@principal:direct-agent
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0#member@principal:direct-agent
+  action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6ZGlyZWN0LWFnZW50Il0#member
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#writer_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6ZGlyZWN0LWFnZW50Il0#member
+  scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6cmVhZC1vbmx5LWFnZW50Il0#member@principal:read-only-agent
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#reader_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6cmVhZC1vbmx5LWFnZW50Il0#member
+  tenant:proposal-tenant#member@principal:read-only-agent
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0#member@principal:read-only-agent
+  scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6b2ZmYm9hcmRlZC1hZ2VudCJd#member@principal:offboarded-agent
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#reader_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6b2ZmYm9hcmRlZC1hZ2VudCJd#member
+  tenant:proposal-tenant#member@principal:offboarded-agent
+  action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#proposer_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6b2ZmYm9hcmRlZC1hZ2VudCJd#member
+  scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6dGVuYW50LXJldm9rZWQtYWdlbnQiXQ#member@principal:tenant-revoked-agent
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#reader_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6dGVuYW50LXJldm9rZWQtYWdlbnQiXQ#member
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0#member@principal:tenant-revoked-agent
+  action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#proposer_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6dGVuYW50LXJldm9rZWQtYWdlbnQiXQ#member
+  legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Il0#member@principal:approval-agent
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#company_scope@legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#grant@action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#company_scope@legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Il0
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#grant@action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5kZWxldGUiXQ#company_scope@legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0
+  action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5kZWxldGUiXQ#grant@action_grant:ag_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5kZWxldGUiXQ
+
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd#legal_entity@legal_entity:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Il0
+  module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd#accessor_role@scoped_role:sr_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiYWdlbnQ6YXBwcm92YWwtYWdlbnQiXQ#member
+  resource:proposal-shell-sensitive#module@module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd
+
+  // Intrinsic human own-key authority is not an assignable business role.
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#tenant@tenant:credentials-tenant
+  scoped_role:sr_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiYXVkaXRvciJd#member@principal:credential-human-a
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#auditor@scoped_role:sr_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiYXVkaXRvciJd#member
+  tenant:credentials-tenant#member@principal:credential-human-a
+  principal:credential-human-a#tenant@tenant:credentials-tenant
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#member@principal:credential-human-a
+  principal:credential-human-a#self@principal:credential-human-a
+  tenant:credentials-tenant#member@principal:credential-human-b
+  principal:credential-human-b#tenant@tenant:credentials-tenant
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#member@principal:credential-human-b
+  principal:credential-human-b#self@principal:credential-human-b
+  tenant:credentials-tenant#member@principal:credential-agent
+  principal:credential-agent#tenant@tenant:credentials-tenant
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#member@principal:credential-agent
+  tenant:credentials-tenant#member@principal:credential-no-company
+  principal:credential-no-company#tenant@tenant:credentials-tenant
+  principal:credential-no-company#self@principal:credential-no-company
+  principal:credential-revoked#tenant@tenant:credentials-tenant
+  principal:credential-revoked#self@principal:credential-revoked
+  legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#member@principal:credential-revoked
+  action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#company_scope@legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0
+  action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#self_credentials@tenant:credentials-tenant
+  action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#company_scope@legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0
+  action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#self_credentials@tenant:credentials-tenant
+  action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwicGFydHkucmVnaXN0cnkuY3JlYXRlLXBhcnR5Il0#company_scope@legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0
+
+  tenant:context-selection-tenant#member@principal:context-tenant-role
+  tenant:context-selection-tenant#member@principal:context-company-admin
+  tenant:context-selection-tenant#member@principal:context-company-auditor
+  tenant:context-selection-tenant#member@principal:context-member
+  tenant:context-selection-tenant#member@principal:context-foreign-role
+  scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLG51bGwsIm9yZGluYXJ5LXJvbGUiXQ#member@principal:context-tenant-role
+  scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLG51bGwsIm9yZGluYXJ5LXJvbGUiXQ#member@principal:context-no-membership
+  tenant:context-selection-tenant#context_role@scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLG51bGwsIm9yZGluYXJ5LXJvbGUiXQ#member
+  legal_entity:ctx_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55Il0#tenant@tenant:context-selection-tenant
+  legal_entity:ctx_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55Il0#member@principal:context-company-admin
+  legal_entity:ctx_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55Il0#member@principal:context-company-auditor
+  scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55IiwiYWRtaW4iXQ#member@principal:context-company-admin
+  scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55IiwiYXVkaXRvciJd#member@principal:context-company-auditor
+  legal_entity:ctx_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55Il0#admin@scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55IiwiYWRtaW4iXQ#member
+  legal_entity:ctx_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55Il0#auditor@scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLCJjb250ZXh0LXNlbGVjdGlvbi1jb21wYW55IiwiYXVkaXRvciJd#member
+  scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi1vdGhlciIsbnVsbCwib3JkaW5hcnktcm9sZSJd#member@principal:context-foreign-role
+  tenant:context-selection-other#context_role@scoped_role:sr_WyJjb250ZXh0LXNlbGVjdGlvbi1vdGhlciIsbnVsbCwib3JkaW5hcnktcm9sZSJd#member
+  action:ak_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLG51bGwsIndvcmsudGFza3Mud3JpdGUiXQ#tenant_scope@tenant:context-selection-tenant
 assertions:
   assertTrue:
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
-    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:allowed-principal
+    - tenant:context-selection-tenant#select_context@principal:context-tenant-role
+    - tenant:10000000-0000-4000-8000-000000000001#select_context@principal:tenant-superadmin
+    - tenant:10000000-0000-4000-8000-000000000001#select_context@principal:tenant-auditor
+    - principal:credential-human-a#manage_own_credentials@principal:credential-human-a
+    - principal:credential-human-b#manage_own_credentials@principal:credential-human-b
+    - tenant:credentials-tenant#manage_own_credentials@principal:credential-human-a
+    - legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#read_all@principal:credential-human-a
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:credential-human-a
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:credential-human-b
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:credential-human-a
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:credential-human-b
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd#access@principal:approval-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:approval-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#execute@principal:direct-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:direct-agent
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#read_all@principal:read-only-agent
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:allowed-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0#execute@principal:allowed-principal
     - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
     - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
     - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
@@ -166,18 +370,99 @@ assertions:
     - module_access:test-tenant--entity-one--property-registry#access@principal:allowed-principal
     - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:allowed-principal
     - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:allowed-principal
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:rep
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:company-admin
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImNvcmUuaWRlbnRpdHkubWFuYWdlIl0#execute@principal:tenant-superadmin
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#read@principal:tenant-superadmin
+    - context_permission:people-read-11000000-0000-4000-8000-000000000001#access@principal:tenant-superadmin
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#use@principal:tenant-superadmin
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#read@principal:tenant-auditor
+    - context_permission:people-read-11000000-0000-4000-8000-000000000001#access@principal:tenant-auditor
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#use@principal:tenant-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#read@principal:company-auditor
+    - context_permission:people-read-11000000-0000-4000-8000-000000000001#access@principal:company-auditor
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#use@principal:company-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#read@principal:company-admin
+    - context_permission:people-read-11000000-0000-4000-8000-000000000001#access@principal:company-admin
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000001#use@principal:company-admin
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:tenant-superadmin
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000002#read@principal:tenant-superadmin
+    - context_permission:people-read-11000000-0000-4000-8000-000000000002#access@principal:tenant-superadmin
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000002#use@principal:tenant-superadmin
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000002#read@principal:tenant-auditor
+    - context_permission:people-read-11000000-0000-4000-8000-000000000002#access@principal:tenant-auditor
+    - business_permission:people-sensitive-read-11000000-0000-4000-8000-000000000002#use@principal:tenant-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:tenant-superadmin
   assertFalse:
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
-    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal
-    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
-    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:denied-principal
+    - tenant:context-selection-tenant#select_context@principal:context-company-admin
+    - tenant:context-selection-tenant#select_context@principal:context-company-auditor
+    - tenant:context-selection-tenant#select_context@principal:context-member
+    - tenant:context-selection-tenant#select_context@principal:context-foreign-role
+    - tenant:context-selection-tenant#select_context@principal:context-no-membership
+    - tenant:context-selection-other#select_context@principal:context-tenant-role
+    - action:ak_WyJjb250ZXh0LXNlbGVjdGlvbi10ZW5hbnQiLG51bGwsIndvcmsudGFza3Mud3JpdGUiXQ#execute@principal:context-tenant-role
+    - principal:credential-human-b#manage_own_credentials@principal:credential-human-a
+    - principal:credential-human-a#manage_own_credentials@principal:credential-human-b
+    - principal:credential-agent#manage_own_credentials@principal:credential-agent
+    - principal:credential-human-a#manage_own_credentials@principal:credential-agent
+    - principal:credential-revoked#manage_own_credentials@principal:credential-revoked
+    - tenant:credentials-tenant#manage_own_credentials@principal:credential-agent
+    - legal_entity:ctx_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55Il0#write_all@principal:credential-human-a
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwicGFydHkucmVnaXN0cnkuY3JlYXRlLXBhcnR5Il0#execute@principal:credential-human-a
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:credential-agent
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:credential-revoked
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:credential-no-company
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:credential-agent
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:credential-revoked
+    - action:ak_WyJjcmVkZW50aWFscy10ZW5hbnQiLCJjcmVkZW50aWFscy1jb21wYW55IiwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:credential-no-company
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd#read_all@principal:approval-agent
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55IiwiY29yZS5zaGVsbCJd#write_all@principal:approval-agent
+    - resource:proposal-shell-sensitive#read@principal:approval-agent
+    - resource:proposal-shell-sensitive#write@principal:approval-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#execute@principal:approval-agent
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#write_all@principal:approval-agent
+    - module_access:ctx_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcyJd#write_all@principal:read-only-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#execute@principal:read-only-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:read-only-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#execute@principal:offboarded-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:offboarded-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#execute@principal:tenant-revoked-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:tenant-revoked-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1vdGhlci1jb21wYW55Iiwid29yay50YXNrcy5hcHBseS1jb21tYW5kIl0#propose@principal:approval-agent
+    - action:ak_WyJwcm9wb3NhbC10ZW5hbnQiLCJwcm9wb3NhbC1jb21wYW55Iiwid29yay50YXNrcy5kZWxldGUiXQ#propose@principal:approval-agent
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLnJlc2VydmUiXQ#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiaW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZlIl0#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbCJd#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cyJd#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleSJd#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleSJd#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVzIl0#execute@principal:denied-principal
+    - action:ak_WyJ0ZXN0LXRlbmFudCIsbnVsbCwiY29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9uIl0#execute@principal:denied-principal
     - legal_entity:test-tenant--entity-one#access@principal:denied-principal
     - module_access:test-tenant--entity-one--property-registry#access@principal:denied-principal
     - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:denied-principal
     - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:denied-principal
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:rep
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:offboarded
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLG51bGwsImNvcmUuaWRlbnRpdHkubWFuYWdlIl0#execute@principal:company-admin
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:company-admin
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#write@principal:tenant-auditor
+    - business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000001#use@principal:tenant-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:tenant-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:tenant-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000001#write@principal:company-auditor
+    - business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000001#use@principal:company-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:company-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:company-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000002#write@principal:tenant-auditor
+    - business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000002#use@principal:tenant-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:tenant-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:tenant-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000002#write@principal:company-auditor
+    - business_permission:people-sensitive-write-11000000-0000-4000-8000-000000000002#use@principal:company-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFzc2lnbiJd#execute@principal:company-auditor
+    - action:ak_WyIxMDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCIxMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJ3b3JrLnRhc2tzLmFwcHJvdmUiXQ#execute@principal:company-auditor
+    - resource:people-sensitive-11000000-0000-4000-8000-000000000002#read@principal:company-auditor
+    - context_permission:people-read-11000000-0000-4000-8000-000000000002#access@principal:company-auditor
+    - tenant:10000000-0000-4000-8000-000000000001#manage_identity@principal:tenant-auditor

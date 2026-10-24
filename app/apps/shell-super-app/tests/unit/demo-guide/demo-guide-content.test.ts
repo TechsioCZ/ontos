@@ -46,7 +46,7 @@ it('selects the guide of the current company only', () => {
   for (const [id, legalEntityId] of Object.entries(legalEntities)) {
     expect(demoGuideFor(legalEntityId)?.id).toBe(id);
   }
-  expect(demoGuideFor(undefined)).toBeUndefined();
+  expect(demoGuideFor()).toBeUndefined();
   // Kavárna Doma (legacy) has no guide.
   expect(demoGuideFor('71000000-0000-4000-8000-000000000023')).toBeUndefined();
 });
@@ -95,7 +95,9 @@ it('has a Připojení ChatGPT / Claude chapter for every company', () => {
   }
   for (const legalEntityId of [legalEntities.obchod, legalEntities.hanak]) {
     const chapter = demoGuideFor(legalEntityId)?.chapters.find((item) => item.id === 'pripojeni-ai');
-    expect(chapter?.steps.some((step) => step.target.kind === 'app' && step.target.path === '/sprava/lide')).toBe(true);
+    expect(
+      chapter?.steps.some((step) => step.target.kind === 'app' && step.target.path === '/sprava/lide-a-role'),
+    ).toBe(true);
   }
 });
 

@@ -1,0 +1,3 @@
+ALTER TABLE "auth"."session" ADD COLUMN "active_context_kind" text DEFAULT 'company' NOT NULL;--> statement-breakpoint
+ALTER TABLE "auth"."session" ADD CONSTRAINT "auth_session_context_kind_check" CHECK ("active_context_kind" in ('company', 'tenant'));--> statement-breakpoint
+ALTER TABLE "auth"."session" ADD CONSTRAINT "auth_session_tenant_context_check" CHECK ("active_context_kind" <> 'tenant' or ("active_tenant_id" is not null and "active_legal_entity_id" is null));

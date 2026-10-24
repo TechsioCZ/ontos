@@ -1,6 +1,10 @@
 import { Result, Schema } from 'effect';
 
-export const ACTION_PROVISIONING_INTENTS = ['tenant_membership_default', 'explicit'] as const;
+export const ACTION_PROVISIONING_INTENTS = [
+  'tenant_membership_default',
+  'explicit',
+  'principal_self_credentials',
+] as const;
 
 export const ActionProvisioningIntentSchema = Schema.Literals(ACTION_PROVISIONING_INTENTS);
 export type ActionProvisioningIntent = Schema.Schema.Type<typeof ActionProvisioningIntentSchema>;

@@ -1,0 +1,192 @@
+import { and, eq } from 'drizzle-orm';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { DateTime, Effect, Schema } from 'effect';
+
+import type { ActionHandlerContext } from '../../actions/context.ts';
+import { defineAction } from '../../actions/definition.ts';
+import {
+  IdentityLifecycleConflictError,
+  IdentityPersistenceUnavailableError,
+  IdentityTargetInvalidError,
+  PrincipalManagementErrorSchema,
+} from '../../auth/principal-management-errors.ts';
+import { principalCompanyMemberships, principals } from '../../db/schema.ts';
+import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
+
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AgentStatusPrincipalId'),
+  Schema.decodeTo(Schema.String),
+);
+const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AgentStatusLegalEntityId'),
+  Schema.decodeTo(Schema.String),
+);
+const status = Schema.Literals(['active', 'disabled']);
+const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isPattern(/\S/u));
+export const ManageAgentStatusPayloadSchema = Schema.Union([
+  Schema.Struct({
+    expectedStatus: status,
+    newStatus: status,
+    operation: Schema.Literal('change-status'),
+    principalId: PrincipalIdSchema,
+    reason: Schema.optionalKey(reason),
+  }),
+  Schema.Struct({
+    expectedStatus: status,
+    operation: Schema.Literal('archive-agent'),
+    principalId: PrincipalIdSchema,
+    reason,
+  }),
+]);
+export type ManageAgentStatusPayload = typeof ManageAgentStatusPayloadSchema.Type;
+export const ManageAgentStatusResultSchema = Schema.Struct({
+  operation: Schema.Literals(['change-status', 'archive-agent']),
+  principalId: PrincipalIdSchema,
+  status: Schema.Literals(['active', 'disabled', 'archived']),
+});
+export const ManageAgentStatusAuditEvidenceSchema = Schema.Struct({
+  displayName: Schema.String,
+  legalEntityId: LegalEntityIdSchema,
+  newStatus: ManageAgentStatusResultSchema.fields.status,
+  operation: ManageAgentStatusResultSchema.fields.operation,
+  previousStatus: status,
+  principalKind: Schema.Literal('agent'),
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- Reactivation may have no reason; the audit preserves that absence explicitly.
+  reason: Schema.NullOr(reason),
+  targetPrincipalId: PrincipalIdSchema,
+});
+const actionKey = 'core.identity.manage-agent-status';
+const invalid = (message: string) =>
+  new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason: message });
+const conflict = () =>
+  new IdentityLifecycleConflictError({
+    code: 'identity_lifecycle_conflict',
+    reason: 'The agent status changed concurrently',
+  });
+const persistenceFailure = (cause: EffectDrizzleQueryError) =>
+  Object.defineProperty(
+    new IdentityPersistenceUnavailableError({
+      code: 'identity_persistence_unavailable',
+      reason: 'The agent status could not be persisted',
+    }),
+    'cause',
+    { value: cause },
+  );
+interface Services {
+  readonly transaction: Pick<ScopedTransactionExecutor, 'select' | 'update'>;
+}
+
+const handle = Effect.fn('ManageAgentStatusAction.handle')(function* manageAgentStatus(
+  payload: ManageAgentStatusPayload,
+  context: ActionHandlerContext<typeof principalLifecycleDomainEvents, Services>,
+) {
+  const { legalEntityId, principalId: actorPrincipalId, tenantId } = context.scope;
+  if (legalEntityId === undefined) {
+    return yield* invalid('An exact company context is required');
+  }
+  if (payload.principalId === actorPrincipalId) {
+    return yield* invalid('An administrator cannot change their own account');
+  }
+  const { transaction } = context.services;
+  const [target] = yield* transaction
+    .select({ displayName: principals.displayName, kind: principals.kind, status: principals.status })
+    .from(principals)
+    .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(persistenceFailure));
+  if (target === undefined || target.kind !== 'agent' || target.status === 'archived') {
+    return yield* invalid('The target must be an existing, non-archived agent');
+  }
+  const [membership] = yield* transaction
+    .select({ affiliation: principalCompanyMemberships.affiliation, status: principalCompanyMemberships.status })
+    .from(principalCompanyMemberships)
+    .where(
+      and(
+        eq(principalCompanyMemberships.tenantId, tenantId),
+        eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+        eq(principalCompanyMemberships.principalId, payload.principalId),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(persistenceFailure));
+  if (membership?.status !== 'active' || membership.affiliation !== null) {
+    return yield* invalid('The agent must have an active membership of this exact company');
+  }
+  if (target.status !== payload.expectedStatus) {
+    return yield* conflict();
+  }
+  const newStatus: typeof ManageAgentStatusResultSchema.Type.status =
+    payload.operation === 'archive-agent' ? 'archived' : payload.newStatus;
+  if (newStatus === 'disabled' && payload.reason === undefined) {
+    return yield* invalid('A reason is required to deactivate an agent');
+  }
+  if (newStatus !== target.status) {
+    const now = yield* DateTime.nowAsDate;
+    yield* transaction
+      .update(principals)
+      .set({ disabledAt: newStatus === 'active' ? null : now, status: newStatus })
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+      .pipe(Effect.mapError(persistenceFailure));
+  }
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `agent-status-prior:${legalEntityId}:${payload.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.principalId,
+    targetResourceType: 'principal',
+  });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `agent-status-membership:${legalEntityId}:${payload.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.principalId,
+    targetResourceType: 'principal_company_membership',
+  });
+  yield* context.recordAuditEvidence({
+    displayName: target.displayName,
+    legalEntityId,
+    newStatus,
+    operation: payload.operation,
+    previousStatus: target.status,
+    principalKind: 'agent',
+    reason: payload.reason ?? null,
+    targetPrincipalId: payload.principalId,
+  });
+  yield* recordPrincipalLifecycleChange(context, payload.principalId);
+  return { operation: payload.operation, principalId: payload.principalId, status: newStatus };
+});
+
+export const manageAgentStatusAction = defineAction(
+  {
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.manage-agent-status.access.v1' },
+    actionKey,
+    auditEvidenceSchema: ManageAgentStatusAuditEvidenceSchema,
+    auditProfile: 'sensitive',
+    domainErrorSchema: PrincipalManagementErrorSchema,
+    domainEvents: principalLifecycleDomainEvents,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: actionKey,
+      moduleKey: 'core.identity',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.identity',
+    payloadSchema: ManageAgentStatusPayloadSchema,
+    policies: [],
+    resultSchema: ManageAgentStatusResultSchema,
+    schemaVersion: '1',
+  },
+  handle,
+  (transaction) => Effect.succeed({ transaction }),
+);

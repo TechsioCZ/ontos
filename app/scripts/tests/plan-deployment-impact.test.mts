@@ -28,6 +28,7 @@ const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.w
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
 const SHELL_FRAME_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
+const CORE_SYSTEM_WORKER_SETUP = 'core-system-worker';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
@@ -256,7 +257,9 @@ const makeFixture = (options: FixtureOptions = {}) =>
       'spicedb',
       verticalId,
       ...(options.extraVerticalId === undefined ? [] : [options.extraVerticalId]),
-      ...(options.includeWorker === true ? [`${verticalId}-worker`, OUTBOX_WORKER_HOST_SETUP] : []),
+      ...(options.includeWorker === true
+        ? [`${verticalId}-worker`, CORE_SYSTEM_WORKER_SETUP, OUTBOX_WORKER_HOST_SETUP]
+        : []),
       'shellsuperapp',
     ];
     const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
@@ -327,16 +330,24 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers in the 
             stageSetup: OUTBOX_WORKER_HOST_SETUP,
           });
           // The dedicated workers of a former dedicated mode stop in the run that deploys the host.
-          expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
-          // No hosted owner is impacted, so the host keeps running its current artifact.
+          expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP]);
+          // Core's hosted entry shares Shell admission, so a Shell-only release replaces the host.
           const shellChange = yield* planDeploymentImpact({
             changedPaths: [SHELL_FRAME_SOURCE],
             outboxWorkerMode: 'host',
             rootDirectory: root,
           });
-          expect(shellChange.units.providers).toEqual([]);
-          // Nothing replaces the running workers, so nothing is stopped.
-          expect(shellChange.units.stoppedWorkers).toEqual([]);
+          expect(shellChange.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          expect(shellChange.units.workers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          expect(shellChange.phases.map(({ id }) => id)).toEqual([OUTBOX_WORKER_HOST_SETUP, SHELL_ID]);
+          expect(shellChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP]);
+          const documentationChange = yield* planDeploymentImpact({
+            changedPaths: [DOCUMENTATION_PATH],
+            outboxWorkerMode: 'host',
+            rootDirectory: root,
+          });
+          expect(documentationChange.units.workers).toEqual([]);
+          expect(documentationChange.units.stoppedWorkers).toEqual([]);
           // A regenerated host entry replans every unit, the host included.
           const hostChange = yield* planDeploymentImpact({
             changedPaths: ['scripts/outbox-worker-host.generated.mts'],
@@ -364,7 +375,7 @@ it.live('reconciles every worker of the Outbox Worker mode after a switch in eit
             reconcileWorkers: true,
             rootDirectory: root,
           });
-          expect(toDedicated.units.providers).toEqual([CONTACTS_WORKER_SETUP]);
+          expect(toDedicated.units.providers).toEqual([CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP]);
           expect(toDedicated.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
           // dedicated -> host: the host deploys and the dedicated workers stop.
           const toHost = yield* planDeploymentImpact({
@@ -374,18 +385,24 @@ it.live('reconciles every worker of the Outbox Worker mode after a switch in eit
             rootDirectory: root,
           });
           expect(toHost.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-          expect(toHost.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
+          expect(toHost.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP]);
           // The mode alone decides: the edge units the plan ships are the same in both modes.
           expect(toHost.units.cloudflare).toEqual(toDedicated.units.cloudflare);
-          // Without a switch the Shell-only change deploys and stops no worker in either mode.
+          // Both modes replace Core with the new Shell identity, without rebuilding an unchanged module worker.
           for (const outboxWorkerMode of ['dedicated', 'host'] as const) {
             const steady = yield* planDeploymentImpact({
               changedPaths: shellChange,
               outboxWorkerMode,
               rootDirectory: root,
             });
-            expect(steady.units.workers).toEqual([]);
-            expect(steady.units.stoppedWorkers).toEqual([]);
+            expect(steady.units.workers).toEqual(
+              outboxWorkerMode === 'host' ? [OUTBOX_WORKER_HOST_SETUP] : [CORE_SYSTEM_WORKER_SETUP],
+            );
+            expect(steady.units.stoppedWorkers).toEqual(
+              outboxWorkerMode === 'host'
+                ? [CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP]
+                : [OUTBOX_WORKER_HOST_SETUP],
+            );
           }
         }),
       { includeWorker: true },
@@ -408,7 +425,7 @@ it.live('fails closed when a generated worker has no Outbox Worker host setup', 
         }),
       {
         includeWorker: true,
-        setupIds: ['migrator', 'spicedb', 'contacts', CONTACTS_WORKER_SETUP, 'shellsuperapp'],
+        setupIds: ['migrator', 'spicedb', 'contacts', CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP, 'shellsuperapp'],
       },
     );
   }),
@@ -436,7 +453,7 @@ for (const [scenario, changedPaths, expected] of [
     undefined,
     {
       cloudflare: { edge: ['contacts', SHELL_ID], zerops: ['migrator', 'spicedb', OUTBOX_WORKER_HOST_SETUP] },
-      zerops: ['migrator', 'spicedb', 'contacts', CONTACTS_WORKER_SETUP, SHELL_ID],
+      zerops: ['migrator', 'spicedb', 'contacts', CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP, SHELL_ID],
     },
   ],
   [
@@ -444,10 +461,17 @@ for (const [scenario, changedPaths, expected] of [
     [SHARED_CONTRACT_PATH],
     {
       cloudflare: { edge: ['contacts', SHELL_ID], zerops: [OUTBOX_WORKER_HOST_SETUP] },
-      zerops: ['contacts', CONTACTS_WORKER_SETUP, SHELL_ID],
+      zerops: ['contacts', CONTACTS_WORKER_SETUP, CORE_SYSTEM_WORKER_SETUP, SHELL_ID],
     },
   ],
-  ['a Shell-only change', [SHELL_FRAME_SOURCE], { cloudflare: { edge: [SHELL_ID], zerops: [] }, zerops: [SHELL_ID] }],
+  [
+    'a Shell-only change',
+    [SHELL_FRAME_SOURCE],
+    {
+      cloudflare: { edge: [SHELL_ID], zerops: [OUTBOX_WORKER_HOST_SETUP] },
+      zerops: [CORE_SYSTEM_WORKER_SETUP, SHELL_ID],
+    },
+  ],
 ] as const) {
   it.live(`plans both deploy targets from one topology for ${scenario}`, () =>
     Effect.gen(function* plansBothTargets() {

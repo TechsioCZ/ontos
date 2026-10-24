@@ -32,23 +32,6 @@ const isAiChangesCommand = Schema.is(AiChangesCommandSchema);
 const isTeamCommand = Schema.is(TeamCommandSchema);
 const isCustomerInputsCommand = Schema.is(CustomerInputsCommandSchema);
 
-/** Commands a non-human principal (API key, agent bot) may not run. Lanes may extend via their own lists. */
-export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
-  'ArchiveClient',
-  'AssignClient',
-  // AI level C: only people decide on and revert AI proposals.
-  'AiDecideChanges',
-  'AiRevertBatch',
-  // Team and identity links are people's decisions.
-  'LinkClientParty',
-  'SyncClientParties',
-  'RegisterSalesperson',
-  'SetSalespersonActive',
-  'UpdateCustomerInput',
-]);
-/** AI level C: an API key may run ONLY these commands in demo.crm (everything else is a proposal). */
-export { nonHumanAllowedCrmCommands } from './ai-changes.ts';
-
 /** Party Registry links a command asks to store; each one is verified before the reducer runs (CRM.md §3). */
 export const partyLinksOf = (command: CrmCommand): readonly PartyLinkInput[] => {
   if (command._tag === 'CreateClient') {

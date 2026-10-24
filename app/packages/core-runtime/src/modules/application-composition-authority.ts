@@ -13,9 +13,10 @@ import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
+import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../outbox/core-system-subscriptions.ts';
 import type { ActiveApplicationCompositionSnapshot } from './active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from './application-composition-catalog.ts';
-import { OntosOutboxSubscriptionContractSchema } from './manifest.ts';
+import { OutboxSubscriptionAuthoritySchema } from './manifest.ts';
 
 export class ApplicationCompositionAuthorityError extends Schema.TaggedError<ApplicationCompositionAuthorityError>()(
   'ApplicationCompositionAuthorityError',
@@ -106,7 +107,7 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
       return Object.freeze([]);
     }
     const decodedSubscriptions = yield* Schema.decodeUnknownEffect(
-      Schema.Array(OntosOutboxSubscriptionContractSchema),
+      Schema.Array(OutboxSubscriptionAuthoritySchema),
       { onExcessProperty: 'error' },
     )(subscriptionsJson).pipe(
       Effect.mapError((cause) => unavailable('The approved Outbox subscription authority is invalid', cause)),
@@ -404,7 +405,10 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
     if (current !== undefined && DateTime.toEpochMillis(snapshot.validUntil) < current.validUntil.getTime()) {
       return yield* unavailable('Application Composition freshness cannot regress');
     }
-    const subscriptionsJson: readonly OutboxWorkerSubscription[] = catalog.outboxSubscriptions;
+    const subscriptionsJson: readonly OutboxWorkerSubscription[] = validateOutboxWorkerSubscriptions([
+      ...catalog.outboxSubscriptions,
+      ...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
+    ]);
     yield* transaction
       .insert(applicationCompositionAuthority)
       .values({

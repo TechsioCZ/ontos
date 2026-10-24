@@ -855,7 +855,8 @@ it.live(
               | 'manage_party_relationships'
               | 'merge_party_identity'
               | 'read_party_identity'
-              | 'review_party_identity';
+              | 'review_party_identity'
+              | 'select_context';
             readonly tenantIds: readonly string[];
           }) =>
             Effect.succeed(
@@ -1115,6 +1116,127 @@ it.live(
       contextAccessLayer,
     ).createHandler();
     handlers.push(issuingHandler);
+    // Native Better Auth and PostgreSQL own the selected scope. Graph semantics are
+    // covered separately against real SpiceDB; these decisions exercise session transitions.
+    const tenantSwitch = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/context/tenant`, {
+          headers: authenticatedHeaders,
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(tenantSwitch.status).toBe(200);
+    expect(yield* Effect.tryPromise(() => tenantSwitch.json())).toEqual({ selectedContext: 'tenant' });
+    const persistedTenantScope = yield* authDatabase
+      .select({
+        activeContextKind: session.activeContextKind,
+        activeLegalEntityId: session.activeLegalEntityId,
+        activeTenantId: session.activeTenantId,
+      })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    expect(persistedTenantScope).toEqual([
+      {
+        activeContextKind: 'tenant',
+        activeLegalEntityId: null,
+        activeTenantId: tenantId,
+      },
+    ]);
+    let selectionAllowed = true;
+    let selectionChecks = 0;
+    const selectedScopeLayer = Layer.mergeAll(
+      Layer.succeed(LegalEntityContext, legalEntitySelectionOptions.legalEntityContext),
+      Layer.succeed(ContextAccess, {
+        ...legalEntitySelectionOptions.contextAccess,
+        tenants: ({
+          permission,
+          principalId: checkedPrincipal,
+          tenantIds,
+        }: {
+          readonly permission: string;
+          readonly principalId: string;
+          readonly tenantIds: readonly string[];
+        }) =>
+          Effect.sync(() => {
+            expect(permission).toBe('select_context');
+            expect(checkedPrincipal).toBe(principalId);
+            expect(tenantIds).toEqual([tenantId]);
+            selectionChecks += 1;
+            return tenantIds.map((key) => ({
+              decision: selectionAllowed ? ('allowed' as const) : ('denied' as const),
+              key,
+            }));
+          }),
+      }),
+    );
+    for (let reload = 0; reload < 2; reload += 1) {
+      const selected = yield* authentication
+        .resolveShellContext(authenticatedHeaders)
+        .pipe(Effect.provide(selectedScopeLayer));
+      expect(selected.state).toBe('tenant_authenticated');
+      if (selected.state === 'tenant_authenticated') {
+        expect(selected.principal.tenantId).toBe(tenantId);
+        expect(selected.principal.legalEntityId).toBeUndefined();
+      }
+    }
+    expect(selectionChecks).toBe(2);
+    const tenantGateway = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+          body: JSON.stringify({ audience: 'inventory-stock', compositionRevision: testRevision }),
+          headers: {
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          },
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(tenantGateway.status).toBe(200);
+    const tenantAssertion = yield* verifiedGatewayAssertion(tenantGateway, pair.publicKey, testRevision);
+    expect(tenantAssertion.principal.tenantId).toBe(tenantId);
+    expect(tenantAssertion.principal.legalEntityId).toBeUndefined();
+    const companyFromTenantScope = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+          body: JSON.stringify({
+            audience: 'inventory-stock',
+            compositionRevision: testRevision,
+            legalEntityId: fixtureLegalEntityId,
+          }),
+          headers: {
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          },
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(companyFromTenantScope.status).toBe(403);
+    selectionAllowed = false;
+    const revoked = yield* authentication
+      .resolveShellContext(authenticatedHeaders)
+      .pipe(Effect.provide(selectedScopeLayer));
+    expect(revoked.state).toBe('access_blocked');
+    expect(selectionChecks).toBe(3);
+    const deniedSelection = yield* authentication
+      .switchToTenantContext(authenticatedHeaders)
+      .pipe(Effect.provide(selectedScopeLayer), Effect.flip);
+    expect(Predicate.isTagged(deniedSelection, 'TenantAccessForbiddenError')).toBe(true);
+    yield* authentication
+      .switchLegalEntity(fixtureLegalEntityId, authenticatedHeaders)
+      .pipe(Effect.provide(authenticationContextLayer));
+    const restoredCompanyScope = yield* authDatabase
+      .select({
+        activeContextKind: session.activeContextKind,
+        activeLegalEntityId: session.activeLegalEntityId,
+      })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    expect(restoredCompanyScope).toEqual([{ activeContextKind: 'company', activeLegalEntityId: fixtureLegalEntityId }]);
     const assertionResponse = yield* Effect.tryPromise(() =>
       issuingHandler.handler(
         new Request(`${configuration.baseUrl}/auth/gateway-context`, {

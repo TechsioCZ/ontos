@@ -7,6 +7,7 @@ import { expect, it } from 'effect-rstest';
 import { GatewayTimings } from '../../api/auth/gateway-timing.ts';
 import type { GatewayPhase } from '../../api/auth/gateway-timing.ts';
 import {
+  canSelectTenantContext,
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
 } from '../../api/auth/legal-entity-selection.ts';
@@ -139,6 +140,50 @@ it.effect('starts the shared demo tenant in a stable authorized company without 
       access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
     );
     expect(selected).toEqual({ available: [beta, alpha], selected: alpha, state: 'selected' });
+  }),
+);
+
+it.effect('selects tenant context only through its exact graph capability, never company access', () =>
+  Effect.gen(function* verifyTenantContextCapability() {
+    const calls: unknown[] = [];
+    const contextAccess: ContextAccessService = {
+      ...access({ [alpha.legalEntityId]: 'allowed' }),
+      tenants: (input) => {
+        calls.push(input);
+        return Effect.succeed([{ decision: 'allowed', key: tenantId }]);
+      },
+    };
+    expect(
+      yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, contextAccess),
+      ),
+    ).toBe(true);
+    expect(calls).toEqual([{ permission: 'select_context', principalId, tenantIds: [tenantId] }]);
+    expect(
+      yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, access({ [alpha.legalEntityId]: 'allowed' })),
+      ),
+    ).toBe(false);
+  }),
+);
+
+it.effect('rejects missing, foreign, duplicate or unavailable tenant context decisions', () =>
+  Effect.gen(function* verifyTenantContextDecisions() {
+    for (const decisions of [
+      [],
+      [{ decision: 'allowed' as const, key: 'another-tenant' }],
+      [{ decision: 'unavailable' as const, key: tenantId }],
+      [
+        { decision: 'allowed' as const, key: tenantId },
+        { decision: 'allowed' as const, key: tenantId },
+      ],
+    ]) {
+      const error = yield* canSelectTenantContext({ principalId, tenantId }).pipe(
+        Effect.provideService(ContextAccess, { ...access({}), tenants: () => Effect.succeed(decisions) }),
+        Effect.flip,
+      );
+      expect(Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')).toBe(true);
+    }
   }),
 );
 

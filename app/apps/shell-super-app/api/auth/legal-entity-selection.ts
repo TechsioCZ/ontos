@@ -33,6 +33,30 @@ export type LegalEntitySelectionResolution =
       readonly state: 'access_blocked';
     };
 
+/** Context selection is a graph capability, not a grant of any tenant Action. */
+export const canSelectTenantContext = Effect.fn('ContextSelection.canSelectTenantContext')(
+  function* canSelectTenantContextEffect(input: {
+    readonly principalId: string;
+    readonly tenantId: string;
+  }): Effect.fn.Return<boolean, LegalEntitySelectionUnavailableError, ContextAccess> {
+    const access = yield* ContextAccess;
+    const [decision, ...unexpected] = yield* access.tenants({
+      permission: 'select_context',
+      principalId: input.principalId,
+      tenantIds: [input.tenantId],
+    });
+    if (
+      unexpected.length > 0 ||
+      decision === undefined ||
+      decision.key !== input.tenantId ||
+      decision.decision === 'unavailable'
+    ) {
+      return yield* new LegalEntitySelectionUnavailableErrorValue();
+    }
+    return decision.decision === 'allowed';
+  },
+);
+
 export const resolveAuthorizedLegalEntities = Effect.fn('LegalEntitySelection.resolveAuthorizedLegalEntities')(
   function* resolveAuthorizedLegalEntitiesEffect(input: {
     readonly principalId: string;

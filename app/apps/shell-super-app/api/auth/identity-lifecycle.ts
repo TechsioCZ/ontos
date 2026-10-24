@@ -61,6 +61,8 @@ export interface ApiKeyLifecycleResult extends SafeApiKeyMetadata {
 }
 export type ApiKeyIssueResult = ApiKeyLifecycleResult & Readonly<Record<'secret', Redacted.Redacted>>;
 
+type ManagedKeyScope = Schema.Schema.Type<typeof bindManagedApiKeyAction.descriptor.payloadSchema>['scope'] | undefined;
+
 type RequestIdentity = Readonly<Record<'correlationId' | 'idempotencyKey', string>>;
 
 const lifecycleFailure = (cause: unknown = 'identity lifecycle reconciliation remained pending') =>
@@ -137,6 +139,7 @@ export const makeIdentityLifecycleService = (
     input: RequestIdentity & {
       readonly issued: IssuedApiKey;
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly principal: TrustedPrincipalContext;
     },
   ): Effect.Effect<ApiKeyIssueResult, IdentityLifecycleError> => {
@@ -152,6 +155,7 @@ export const makeIdentityLifecycleService = (
             payload: {
               principalId: input.managedPrincipalId,
               providerSubjectId: input.issued.providerKeyId,
+              scope: input.managedScope,
             },
             principal: input.principal,
             registration: bindManagedApiKeyAction,
@@ -184,6 +188,7 @@ export const makeIdentityLifecycleService = (
   const issue = (
     input: RequestIdentity & {
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly name?: string;
       readonly principal: TrustedPrincipalContext;
       readonly requestHeaders: Headers;
@@ -221,6 +226,7 @@ export const makeIdentityLifecycleService = (
             'managedPrincipalId',
             input.managedPrincipalId,
             {
+              managedScope: input.managedScope,
               principal: input.principal,
             },
           ),
@@ -232,6 +238,7 @@ export const makeIdentityLifecycleService = (
       readonly authBindingId: string;
       readonly expectedStatus: 'active' | 'disabled';
       readonly managedPrincipalId?: string;
+      readonly managedScope?: ManagedKeyScope;
       readonly newStatus: 'active' | 'disabled' | 'revoked';
       readonly principal: TrustedPrincipalContext;
       readonly reason?: string;
@@ -271,6 +278,7 @@ export const makeIdentityLifecycleService = (
                       expectedStatus: input.expectedStatus,
                       newStatus: input.newStatus,
                       principalId: input.managedPrincipalId,
+                      scope: input.managedScope,
                     },
                     input.reason !== undefined,
                     'reason',
@@ -294,10 +302,14 @@ export const makeIdentityLifecycleService = (
               }),
             );
           }
-          const transition = currentStatus === input.newStatus ? Effect.void : core().pipe(Effect.asVoid);
+          // Even provider reconciliation must cross native authorization; an already-matching binding is not permission.
+          const transition = core().pipe(
+            Effect.asVoid,
+            Effect.catchTag('ActionAlreadyCommitted', () => Effect.void),
+          );
           if (input.newStatus === 'active') {
-            return keys.setEnabled(keyId, true).pipe(
-              Effect.flatMap(() => transition),
+            return transition.pipe(
+              Effect.flatMap(() => keys.setEnabled(keyId, true)),
               Effect.flatMap(() => keys.metadata(keyId)),
               Effect.map(result),
             );
@@ -375,6 +387,7 @@ export const makeIdentityLifecycleService = (
               'managedPrincipalId',
               input.oldManagedPrincipalId,
               {
+                managedScope: input.managedScope,
                 newStatus: 'revoked' as const,
                 principal: input.principal,
                 reason: input.reason,
@@ -414,6 +427,7 @@ export const makeIdentityLifecycleService = (
                                   'managedPrincipalId',
                                   input.managedPrincipalId,
                                   {
+                                    managedScope: input.managedScope,
                                     newStatus: 'revoked' as const,
                                     principal: input.principal,
                                     reason: 'Replacement rollback after old binding closure failed',

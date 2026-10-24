@@ -1,13 +1,13 @@
 import { Effect, DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { BulkWorkCommandSchema, SingleWorkCommandSchema } from '../../shared/actions/apply-command.ts';
-import { EmployeeIdSchema, WorkStateSchema } from '../../shared/apis/records.ts';
+import { WorkStateSchema } from '../../shared/apis/records.ts';
 import { evolveBulkWorkState, evolveWorkState, openByAssignee } from '../../src/services/persistence.service.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const now = DateTime.makeUnsafe('2026-10-05T10:00:00Z');
-const employeeA = '40000000-0000-4000-8000-000000000001';
-const employeeB = '40000000-0000-4000-8000-000000000002';
+const principalA = { principalId: '40000000-0000-4000-8000-000000000001', tenantId };
+const principalB = { principalId: '40000000-0000-4000-8000-000000000002', tenantId };
 const partyId = '50000000-0000-4000-8000-000000000001';
 const opportunityId = '60000000-0000-4000-8000-000000000001';
 const seed = {
@@ -81,14 +81,14 @@ it.effect(
         state,
         yield* single({
           _tag: 'CreateTask',
-          assigneeEmployeeId: employeeB,
           opportunityId,
+          ownerPrincipalRef: principalB,
           partyId,
           title: 'Send contract',
         }),
         { now, resourceId: 'task-a', tenantId },
       );
-      expect(withA.task.assigneeEmployeeId).toBe(employeeB);
+      expect(withA.task.ownerPrincipalRef).toEqual(principalB);
       expect(withA.task.partyId).toBe(partyId);
       expect(withA.task.opportunityId).toBe(opportunityId);
 
@@ -110,7 +110,7 @@ it.effect(
 
       const assigned = yield* evolveBulkWorkState(
         closed.state,
-        yield* bulk({ _tag: 'BulkAssignTasks', assigneeEmployeeId: employeeA, ids: ['task-a', 'task-b'] }),
+        yield* bulk({ _tag: 'BulkAssignTasks', ids: ['task-a', 'task-b'], ownerPrincipalRef: principalA }),
         { now, tenantId },
       );
       expect(assigned.results).toEqual([
@@ -118,27 +118,31 @@ it.effect(
         { outcome: 'skipped', reason: 'closed', resourceId: 'task-b' },
       ]);
       const reassigned = assigned.state.tasks.find((task) => task.ref.resourceId === 'task-a');
-      expect(reassigned?.assigneeEmployeeId).toBe(employeeA);
+      expect(reassigned?.ownerPrincipalRef).toEqual(principalA);
       expect(reassigned?.partyId).toBe(partyId);
-      expect(openByAssignee(assigned.state.tasks)).toEqual([{ assigneeEmployeeId: employeeA, open: 1 }]);
+      expect(openByAssignee(assigned.state.tasks)).toEqual([{ open: 1, ownerPrincipalRef: principalA }]);
 
       const cleared = yield* evolveBulkWorkState(
         assigned.state,
-        yield* bulk({ _tag: 'BulkAssignTasks', assigneeEmployeeId: null, ids: ['task-a'] }),
+        yield* bulk({ _tag: 'BulkAssignTasks', ids: ['task-a'], ownerPrincipalRef: null }),
         { now, tenantId },
       );
       const unassigned = cleared.state.tasks.find((task) => task.ref.resourceId === 'task-a');
       expect(unassigned).toBeDefined();
-      expect(unassigned?.assigneeEmployeeId).toBeUndefined();
-      expect(Object.keys(unassigned ?? {})).not.toContain('assigneeEmployeeId');
+      expect(unassigned?.ownerPrincipalRef).toBeUndefined();
+      expect(Object.keys(unassigned ?? {})).not.toContain('ownerPrincipalRef');
       expect(openByAssignee(cleared.state.tasks)).toEqual([]);
     }),
 );
 
-it.effect('assignee ids must be UUIDs and bulk commands need at least one id', () =>
+it.effect('assignment requires a complete principal reference and bulk commands need at least one id', () =>
   Effect.gen(function* case3() {
-    expect(yield* Schema.decodeUnknownEffect(EmployeeIdSchema)('not-a-uuid').pipe(Effect.isFailure)).toBe(true);
-    expect(yield* bulk({ _tag: 'BulkAssignTasks', assigneeEmployeeId: null, ids: [] }).pipe(Effect.isFailure)).toBe(
+    expect(
+      yield* bulk({ _tag: 'BulkAssignTasks', ids: ['task-a'], ownerPrincipalRef: 'not-a-principal-ref' }).pipe(
+        Effect.isFailure,
+      ),
+    ).toBe(true);
+    expect(yield* bulk({ _tag: 'BulkAssignTasks', ids: [], ownerPrincipalRef: null }).pipe(Effect.isFailure)).toBe(
       true,
     );
   }),

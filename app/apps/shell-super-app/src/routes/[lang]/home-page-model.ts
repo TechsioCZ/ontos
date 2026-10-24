@@ -23,10 +23,7 @@ import {
 } from '../../api/auth-client.ts';
 import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
-import {
-  offersPeopleAdministration,
-  presentedShellNavigationItems,
-} from '../../../shared/shell-platform-navigation.ts';
+import { presentedShellNavigationItems } from '../../../shared/shell-platform-navigation.ts';
 import { homeContributionCandidates, isHomeRequest, resolveHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
@@ -63,7 +60,7 @@ export interface AuthenticatedHomePageModel {
   /** The company's own Home text (Core tenant data); read only for the Shell's welcome page. */
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
-  readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required' | 'tenant_authenticated';
   /**
    * Server rendering only, when the batch answered in time: the document's gateway assertions, one per module audience,
    * so the browser's first module reads need no assertion round trip. Kept in memory (document-gateway-assertions.ts).
@@ -77,6 +74,7 @@ export interface AuthenticatedHomePageModel {
     | {
         readonly items: readonly LegalEntityChoice[];
         readonly state: 'available';
+        readonly tenantContextAvailable?: boolean;
       }
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
@@ -259,7 +257,9 @@ const companyWelcomeFor = (identity: HomeCompanyContext, options: ShellAuthentic
     options,
   ).pipe(
     Effect.map(({ welcome }) => welcome),
-    Effect.orElseSucceed(() => undefined),
+    Effect.orElseSucceed(() => {
+      // Optional welcome copy must not block the governed Home route.
+    }),
   );
 
 export interface ResolvedHomeContribution {
@@ -299,10 +299,10 @@ const homeFields = (resolved: Option.Option<ResolvedHomeContribution>): HomeFiel
 
 const requestedCompositionRevision = (request: Request) =>
   getDocumentCompositionRevision().pipe(
-    Effect.catchTag('DocumentCompositionRevisionError', (error) =>
-      error.reason === 'uninitialized' || error.reason === 'document-unavailable'
+    Effect.catchTag('DocumentCompositionRevisionError', (failure) =>
+      failure.reason === 'uninitialized' || failure.reason === 'document-unavailable'
         ? Effect.succeed(request.headers.get('x-ontos-composition-revision') ?? undefined)
-        : Effect.fail(error),
+        : Effect.fail(failure),
     ),
   );
 
@@ -332,7 +332,10 @@ const navigationModuleIds = (navigation: ComposedNavigation) =>
   new Set(navigation.items.map(({ moduleId }) => String(moduleId)));
 
 const legalEntitiesWithoutSelection = (session: Exclude<CurrentSession, { readonly state: 'anonymous' }>) => ({
-  items: session.state === 'selection_required' ? session.availableLegalEntities : ([] as const),
+  items:
+    session.state === 'selection_required' || session.state === 'tenant_authenticated'
+      ? session.availableLegalEntities
+      : ([] as const),
   state: 'available' as const,
 });
 
@@ -363,16 +366,25 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
         ? { items: context.tenants.tenants, state: 'available' as const }
         : unavailableTenants(session.identity.tenantId);
     if (session.state !== 'authenticated') {
-      return context.tenants?.state === 'authentication_required'
-        ? sessionEndedModel
-        : {
-            contextState: session.state,
-            identity: session.identity,
-            legalEntities: legalEntitiesWithoutSelection(session),
-            navigation: emptyNavigation,
-            state: 'authenticated' as const,
-            tenants,
-          };
+      if (context.tenants?.state === 'authentication_required') {
+        return sessionEndedModel;
+      }
+      const model: AuthenticatedHomePageModel = {
+        contextState: session.state,
+        identity: session.identity,
+        legalEntities:
+          context.legalEntities === undefined
+            ? legalEntitiesWithoutSelection(session)
+            : {
+                items: context.legalEntities.legalEntities,
+                state: 'available',
+                tenantContextAvailable: context.legalEntities.tenantContextAvailable,
+              },
+        navigation: emptyNavigation,
+        state: 'authenticated',
+        tenants,
+      };
+      return model;
     }
     const composition = context.composition ?? { state: 'unavailable' as const };
     if (composition.state === 'reload_required') {
@@ -394,7 +406,11 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       legalEntities:
         context.legalEntities === undefined
           ? unavailableLegalEntities
-          : { items: context.legalEntities.legalEntities, state: 'available' },
+          : {
+              items: context.legalEntities.legalEntities,
+              state: 'available',
+              tenantContextAvailable: context.legalEntities.tenantContextAvailable,
+            },
       navigation,
       selectedLegalEntityId: session.identity.legalEntityId,
       state: 'authenticated',
@@ -421,19 +437,33 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
       return anonymousModel;
     }
     if (session.state !== 'authenticated') {
-      return yield* tenantsFor(session.identity, options).pipe(
-        Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
-        Effect.matchEffect({
-          onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
-          onSuccess: Effect.succeed,
-        }),
-        Effect.map((tenants): HomePageModel =>
+      return yield* Effect.all(
+        {
+          legalEntities: legalEntitiesFor(session.identity, options).pipe(
+            Effect.map((response) => ({
+              items: response.legalEntities,
+              state: 'available' as const,
+              tenantContextAvailable: response.tenantContextAvailable,
+            })),
+            Effect.orElseSucceed(() => legalEntitiesWithoutSelection(session)),
+          ),
+          tenants: tenantsFor(session.identity, options).pipe(
+            Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+            Effect.matchEffect({
+              onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
+              onSuccess: Effect.succeed,
+            }),
+          ),
+        },
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(({ legalEntities, tenants }): HomePageModel =>
           tenants.state === 'stale'
             ? sessionEndedModel
             : {
                 contextState: session.state,
                 identity: session.identity,
-                legalEntities: legalEntitiesWithoutSelection(session),
+                legalEntities,
                 navigation: emptyNavigation,
                 state: 'authenticated',
                 tenants,
@@ -451,9 +481,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
     if ('document' in globalThis) {
       yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
     }
-    const canManagePeople = offersPeopleAdministration(composition.navigation)
-      ? yield* peopleCapabilityFor(session.identity, options)
-      : false;
+    const canManagePeople = yield* peopleCapabilityFor(session.identity, options);
     const navigation = presentedNavigation(composition, canManagePeople);
     const homeCandidates = homeContributionCandidates(
       request,
@@ -469,7 +497,11 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
                 Effect.asSome,
               ),
         legalEntities: legalEntitiesFor(session.identity, options).pipe(
-          Effect.map((response) => ({ items: response.legalEntities, state: 'available' as const })),
+          Effect.map((response) => ({
+            items: response.legalEntities,
+            state: 'available' as const,
+            tenantContextAvailable: response.tenantContextAvailable,
+          })),
           Effect.orElseSucceed(() => unavailableLegalEntities),
         ),
         tenants: tenantsFor(session.identity, options).pipe(
@@ -565,5 +597,6 @@ export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel>
     .runPromise(loadHomePageModel(request).pipe(Effect.tap((model) => prepareHomeContribution(model, request))), {
       signal: request.signal,
     })
-    // Without a live session the dashboard has nothing to show: go to sign-in (with the reason when it died).
+    // The router must receive its redirect directly, not an Effect defect wrapping it.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- TanStack's Promise loader boundary requires the original thrown redirect; remove-when: native loader adapters preserve redirects without Promise callbacks.
     .then((model) => (model.state === 'anonymous' ? redirectToSignIn(request, model.reason) : model));

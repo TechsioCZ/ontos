@@ -2,7 +2,6 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const workforceMcpContribution = defineOntosMcpContribution({
-  agentAdministrationPage: '/sprava/lide',
   approvals: true,
   commandFieldLabels: {
     email: 'E-mail',
@@ -14,14 +13,14 @@ export const workforceMcpContribution = defineOntosMcpContribution({
     UpdateEmployee: { title: { cs: 'Upravit zaměstnance', en: 'Update an employee' } },
   },
   description: {
-    cs: 'Zaměstnanci, jejich role a oddělení.',
-    en: 'Employees, their roles and departments.',
+    cs: 'Organizační struktura, zaměstnanci a oddělení. Bez přidělování oprávnění.',
+    en: 'Organization chart, employees and departments. Does not grant access.',
   },
-  keywords: 'zaměstnanec zaměstnanci lidé role oddělení tým employee staff people role department team',
-  label: { cs: 'Lidé a role', en: 'People and roles' },
+  keywords: 'zaměstnanec zaměstnanci oddělení tým employee staff department team',
+  label: { cs: 'Zaměstnanci', en: 'Employees' },
   page: '/prodej/zamestnanci',
   reads: {
-    records: { title: { cs: 'Přehled zaměstnanců, rolí a oddělení', en: 'Employees, roles and departments overview' } },
+    records: { title: { cs: 'Přehled zaměstnanců a oddělení', en: 'Employees and departments overview' } },
   },
   revision: { read: 'records' },
 });

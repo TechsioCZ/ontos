@@ -160,6 +160,7 @@ export const makeSupportAuthProvider = (
     secret: configuration.secret,
     session: {
       additionalFields: {
+        activeContextKind: { defaultValue: 'company', input: true, required: true, type: 'string' },
         activeLegalEntityId: { input: true, required: false, type: 'string' },
         activeTenantId: { input: true, required: false, type: 'string' },
         impersonationActionId: {
@@ -271,6 +272,7 @@ export const makeSupportImpersonationStore = (database: AuthDatabaseExecutor): S
       database
         .update(session)
         .set({
+          activeContextKind: 'company',
           activeLegalEntityId: null,
           activeTenantId: metadata.tenantId,
           impersonationActionId: metadata.actionId,

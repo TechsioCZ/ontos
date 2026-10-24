@@ -62,6 +62,8 @@ services:
     type: nodejs@24
   - hostname: privacyworker
     type: nodejs@24
+  - hostname: coresystemworker
+    type: nodejs@24
   # Stage-only services carry hard autoscaling ceilings, so a runaway container cannot grow the bill.
   - hostname: outboxworkerhost
     type: nodejs@24
@@ -96,6 +98,45 @@ services:
     type: nodejs@24
     enableSubdomainAccess: true
   - hostname: privacy
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: propertyportfolio
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: propertyleasing
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: legalagreements
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: worktasks
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: workforce
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: tagging
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: salespipeline
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: merchandise
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: facilityoperations
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: salesinsights
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: financebilling
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: crmactivities
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: crm
     type: nodejs@24
     enableSubdomainAccess: true
   # </generated-vertical-provider-imports>

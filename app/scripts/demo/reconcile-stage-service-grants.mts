@@ -7,6 +7,11 @@ import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Redacted,
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -21,9 +26,12 @@ import {
   commercePortalRelationships,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
-} from './commerce-portal.mts';
+  akrosStorefrontPrincipal,
+  eshopDemoRoles,
+  principalRelationships,
+} from './permissions.mts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { akrosStorefrontPrincipal, eshopDemoRoles, principalRelationships } from './permissions.mts';
+
 import type { DemoAction } from './permissions.mts';
 import { ensureStageVerification } from './ensure-stage-verification.mts';
 import { verificationContext } from './verification-context.mts';
@@ -125,11 +133,12 @@ const relationshipFrom = (
   relation: string,
   subjectType: string,
   subjectId: string,
+  subjectRelation?: string,
 ) =>
   v1.Relationship.create({
     relation,
     resource: { objectId: resourceId, objectType: resourceType },
-    subject: { object: { objectId: subjectId, objectType: subjectType } },
+    subject: { object: { objectId: subjectId, objectType: subjectType }, optionalRelation: subjectRelation ?? '' },
   });
 const requestFor = (relationship: v1.Relationship) => {
   const { resource } = relationship;
@@ -222,6 +231,7 @@ export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v
           item.relation,
           item.subjectType,
           item.subjectId,
+          item.subjectRelation,
         );
         return [tupleKey(relationship), relationship];
       }),
@@ -315,6 +325,7 @@ const environmentConfiguration = Effect.gen(function* environmentConfigurationEf
   });
 });
 type ReconciliationFailure =
+  | Effect.Error<(typeof ActiveApplicationCompositionService)['Service']['load']>
   | Effect.Error<ReturnType<typeof reconcileServiceGrants>>
   | Effect.Error<typeof zeropsConfiguration>
   | Effect.Error<typeof environmentConfiguration>
@@ -355,7 +366,8 @@ const command = Command.make(
           }),
           (client) => Effect.sync(() => client.close()),
         );
-        const actions = yield* discoverCurrentActions(new URL('../..', import.meta.url).pathname);
+        const source = yield* ActiveApplicationCompositionService;
+        const actions = yield* discoverCurrentActions(yield* source.load);
         let mode: ServiceGrantMode = 'check';
         if (apply) {
           mode = 'apply';
@@ -376,20 +388,32 @@ const command = Command.make(
           yield* reconcileStageServicePrincipals(stageServicePrincipals(), provider);
           yield* ensureStageVerification(configuration);
         }
-        const verification = yield* verificationContext();
+        const verification = yield* verificationContext(actions);
         const verificationGrants = verification.relationships.map((item) =>
-          relationshipFrom(item.resourceType, item.resourceId, item.relation, item.subjectType, item.subjectId),
+          relationshipFrom(
+            item.resourceType,
+            item.resourceId,
+            item.relation,
+            item.subjectType,
+            item.subjectId,
+            item.subjectRelation,
+          ),
         );
-        return yield* reconcileServiceGrants(rpc, [...desiredServiceGrants(actions), ...verificationGrants], mode);
+        const desired = yield* Effect.try({
+          catch: () => new ServiceGrantError({ reason: 'Published scoped service policy is invalid' }),
+          try: () => desiredServiceGrants(actions),
+        });
+        return yield* reconcileServiceGrants(rpc, [...desired, ...verificationGrants], mode);
       }),
     ).pipe(Effect.tapError(reportFailure)),
 );
 
 if (import.meta.main) {
-  const services = Layer.mergeAll(OpsShellLive, ZeropsPublicApiLive).pipe(
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(NodeServices.layer),
-  );
+  const services = Layer.mergeAll(
+    OpsShellLive,
+    ZeropsPublicApiLive,
+    ActiveApplicationCompositionConfigLive.pipe(Layer.provide(ActiveApplicationCompositionSourceLive)),
+  ).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(NodeServices.layer));
   const exit = await Effect.runPromiseExit(
     Layer.build(
       Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(

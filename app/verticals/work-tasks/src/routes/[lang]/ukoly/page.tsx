@@ -5,14 +5,12 @@ import { executeRecords as propertyRecords } from '@app/property-portfolio/clien
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
-import { listEmployees } from '@app/workforce/clients/records';
-import type { Employee } from '@app/workforce/contracts/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Random, Schedule, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Random, Schedule, Schema } from 'effect';
 import type { Types } from 'effect';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -27,7 +25,7 @@ import type {
   WorkCommand,
 } from '../../../../shared/actions/apply-command.ts';
 import { canTransition, isClosedTaskState } from '../../../../shared/actions/task-transitions.ts';
-import { EmployeeIdSchema, PartyIdSchema } from '../../../../shared/apis/records.ts';
+import { PartyIdSchema } from '../../../../shared/apis/records.ts';
 import type { LookupAccess, RecordsResponse, Task, TaskState } from '../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { buildTaskColumns } from './tasks-columns.tsx';
@@ -35,13 +33,14 @@ import type { LookupState } from './tasks-columns.tsx';
 import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
 import { TaskFormDialog } from './task-form-dialog.tsx';
 import { WorkPlanning } from './work-planning.tsx';
+import { principalKey } from '../../../../shared/assignment.ts';
+import { selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
 import {
   TaskTabSchema,
   commonTransitionTargets,
   doneThisWeek,
   defaultTaskTab,
-  employeeIdOf,
   filterTasks,
   initialTaskFilters,
   overdueCount,
@@ -72,12 +71,11 @@ const BULK_TOAST_DURATION_MS = 6000;
 // zag's 2 s default for success toasts ends before the eye returns from the closing panel.
 const SUCCESS_TOAST_DURATION_MS = 5000;
 const count = new Intl.NumberFormat('cs-CZ');
-const decodeEmployeeId = Schema.decodeUnknownOption(EmployeeIdSchema);
 
 type EditFields = Types.Mutable<
   Pick<
     Extract<WorkCommand, { readonly _tag: 'CreateTask' }>,
-    | 'assigneeEmployeeId'
+    | 'ownerPrincipalRef'
     | 'contextRefs'
     | 'description'
     | 'dueDate'
@@ -87,7 +85,6 @@ type EditFields = Types.Mutable<
     | 'title'
     | 'plannedHours'
     | 'projectId'
-    | 'ownerPrincipalRef'
   >
 >;
 const LoadStateSchema = Schema.Literals(['loading', 'ready', 'error', 'forbidden']);
@@ -163,18 +160,7 @@ const taskRecords = definePageData({
   runtime: browserRuntime,
 });
 
-// Names for the table and the pickers, one entry per legal entity. Each is read only when the task list allows that
-// directory, so a denied one never sends a doomed BFF read. A failed load leaves the ids visible as muted placeholders.
-const employeeDirectory = definePageData({
-  key: (legalEntityId: string) => legalEntityId,
-  load: () =>
-    listEmployees().pipe(
-      retryTransient,
-      Effect.tapError((failure) => Effect.logWarning('Employee list unavailable.', failure)),
-    ),
-  runtime: browserRuntime,
-});
-
+// Optional business-reference names load only when the work-tasks read allows their owner.
 const customerDirectory = definePageData({
   key: (legalEntityId: string) => legalEntityId,
   load: () =>
@@ -209,11 +195,10 @@ const lookupFailed = <E extends { readonly _tag: string }>(snapshot: PageDataSna
 const preloadDirectories = (legalEntityId: string, access: LookupAccess | undefined) =>
   Effect.all(
     [
-      access?.employees === 'allowed' ? employeeDirectory.preload(legalEntityId) : Effect.void,
       access?.customers === 'allowed' ? customerDirectory.preload(legalEntityId) : Effect.void,
       access?.opportunities === 'allowed' ? opportunityDirectory.preload(legalEntityId) : Effect.void,
     ],
-    { concurrency: 3, discard: true },
+    { concurrency: 2, discard: true },
   );
 
 /** The task list, then the name directories it allows, so the table shows names in its first commit. */
@@ -259,7 +244,6 @@ const useDirectory = <A, E>(directory: PageData<string, A, E>, legalEntityId: st
   return snapshot;
 };
 
-const noEmployees: readonly Employee[] = [];
 const noCustomers: readonly CustomerOption[] = [];
 const noOpportunities: readonly OpportunityOption[] = [];
 
@@ -400,18 +384,13 @@ const useTasksPage = (
   const records = recordsSnapshot.state === 'ready' ? recordsSnapshot.value : undefined;
   const loadState = loadStateOf(recordsSnapshot);
   const lookupAccess = records?.lookupAccess;
-  const employeesAllowed = lookupAccess?.employees === 'allowed';
   const customersAllowed = lookupAccess?.customers === 'allowed';
   const opportunitiesAllowed = lookupAccess?.opportunities === 'allowed';
-  const employeesSnapshot = useDirectory(employeeDirectory, legalEntityId, employeesAllowed);
   const customersSnapshot = useDirectory(customerDirectory, legalEntityId, customersAllowed);
   const opportunitiesSnapshot = useDirectory(opportunityDirectory, legalEntityId, opportunitiesAllowed);
-  const employees = employeesAllowed && employeesSnapshot.state === 'ready' ? employeesSnapshot.value : noEmployees;
   const customers = customersAllowed && customersSnapshot.state === 'ready' ? customersSnapshot.value : noCustomers;
   const opportunities =
     opportunitiesAllowed && opportunitiesSnapshot.state === 'ready' ? opportunitiesSnapshot.value : noOpportunities;
-  const employeesFailed =
-    lookupAccess?.employees === 'unavailable' || (employeesAllowed && employeesSnapshot.state === 'failed');
   const referenceFailed =
     lookupAccess?.customers === 'unavailable' ||
     lookupAccess?.opportunities === 'unavailable' ||
@@ -420,13 +399,13 @@ const useTasksPage = (
   // A directory the list does not allow is settled at once; an allowed one once it loaded or failed.
   const lookups: LookupState = {
     customers: !customersAllowed || customersSnapshot.state !== 'pending',
-    employees: !employeesAllowed || employeesSnapshot.state !== 'pending',
+    principals: records !== undefined,
     opportunities: !opportunitiesAllowed || opportunitiesSnapshot.state !== 'pending',
   };
   const [loadedObjects, setLoadedObjects] = useState<readonly ObjectOption[]>();
   const { filters: storedFilters, setFilters, setTab, tab: preferredTab } = useTaskView(partyId, invalidFilter);
   // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
-  const filters = records?.lookupAccess?.employees === 'allowed' ? storedFilters : { ...storedFilters, assignee: ALL };
+  const filters = storedFilters;
   // Default order: the nearest due date first. Tasks without a date sort last (column option).
   const [sorting, setSorting] = useState<{ desc: boolean; id: string }[]>([{ desc: false, id: 'dueDate' }]);
   const [selection, setSelection] = useState<Record<string, true>>({});
@@ -472,7 +451,9 @@ const useTasksPage = (
   const linkedTaskOpened = useRef(false);
   useEffect(() => {
     const id = new URL(globalThis.location.href).searchParams.get('resourceId');
-    if (id === null || records === undefined || linkedTaskOpened.current) return;
+    if (id === null || records === undefined || linkedTaskOpened.current) {
+      return;
+    }
     linkedTaskOpened.current = true;
     const openLinked = (linked: Task) => {
       setTab('all');
@@ -492,15 +473,21 @@ const useTasksPage = (
           onFailure: () => setActionError(t(`${key}.forbidden`)),
           onSuccess: (result) => {
             const linked = result.items.find((task) => task.ref.resourceId === id);
-            if (linked === undefined) setActionError(t(`${key}.forbidden`));
-            else openLinked(linked);
+            if (linked === undefined) {
+              setActionError(t(`${key}.forbidden`));
+            } else {
+              openLinked(linked);
+            }
           },
         }),
       ),
     );
   }, [records, t]);
   const today = todayIsoDate();
-  const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
+  const principals = records?.assignablePrincipals ?? [];
+  const principalNames = new Map<string, string>(
+    (records?.principalNames ?? []).map(({ displayName, principalRef }) => [principalKey(principalRef), displayName]),
+  );
   const customerNames = new Map<string, string>(
     customers.flatMap((customer) =>
       customer.displayName === null ? [] : [[customer.partyId, customer.displayName] as const],
@@ -514,35 +501,22 @@ const useTasksPage = (
     (objects ?? []).flatMap((item) => (item.propertyId === undefined ? [] : [[item.id, item.propertyId] as const])),
   );
   const contextLabels = new Map<string, string>((objects ?? []).map((item) => [item.id, item.label] as const));
-  // Employees by name; other accounts (AI agents, service accounts) by their Core display name from the server.
   const actorName = (principalId: string, displayName?: string) =>
-    employees.find((employee) => employee.principalRef?.principalId === principalId)?.fullName ??
-    displayName ??
-    (principalId === records?.actorPrincipalRef.principalId ? 'Vy' : 'Účet mimo seznam zaměstnanců');
-  const mineEmployeeId =
-    records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
-  // "Mine" narrows by the employee linked to this login; until the employees settle the table stays in its loading
-  // state instead of flashing every task.
-  const tab =
-    preferredTab ?? defaultTaskTab(records?.items ?? [], mineEmployeeId, records?.actorPrincipalRef.principalId);
-  const mineResolving = tab === 'mine' && !lookups.employees;
+    displayName ?? (principalId === records?.actorPrincipalRef.principalId ? 'Vy' : 'Účet mimo seznam');
+  const tab = preferredTab ?? defaultTaskTab(records?.items ?? [], records?.actorPrincipalRef);
   const visibleTasks =
-    records === undefined || mineResolving
+    records === undefined
       ? []
       : filterTasks(records.items, {
           customerNames,
-          employeeNames,
           filters,
-          mineEmployeeId,
-          minePrincipalId: records.actorPrincipalRef.principalId,
+          minePrincipalRef: records.actorPrincipalRef,
+          principalNames,
           tab,
           today,
           unitProperty,
         });
-  // The header shows the role only, so the "mine" tab names the employee it narrows to.
-  const mineName = mineEmployeeId === undefined ? undefined : employeeNames.get(mineEmployeeId);
-  // A login without an employee binding still sees tasks explicitly owned by its principal.
-  const mineUnlinked = tab === 'mine' && records !== undefined && mineEmployeeId === undefined && employees.length > 0;
+  const mineName = records === undefined ? undefined : principalNames.get(principalKey(records.actorPrincipalRef));
   // A row selected before it closed drops out here, so a bulk command never carries a closed task.
   const selectedTasks = visibleTasks.filter(
     (task) => selection[task.ref.resourceId] === true && !isClosedTaskState(task.state),
@@ -593,21 +567,13 @@ const useTasksPage = (
       Effect.all(
         {
           id: requestId,
-          referenceCredentials: makeReferenceGatewayCredentials([
-            ...(command._tag === 'CreateProject' ||
-            command._tag === 'UpdateProject' ||
-            command._tag === 'AddTaskComment' ||
-            ((command._tag === 'CreateTask' || command._tag === 'UpdateTask') &&
-              command.assigneeEmployeeId !== undefined) ||
-            (command._tag === 'BulkAssignTasks' && Option.isSome(command.assigneeEmployeeId))
-              ? ['workforce']
-              : []),
-            ...(command._tag === 'CreateTask' || command._tag === 'UpdateTask'
+          referenceCredentials: makeReferenceGatewayCredentials(
+            Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)
               ? (command.contextRefs ?? []).map((ref) =>
                   ref.moduleId === 'legal.agreements' ? 'legal-agreements' : 'property-portfolio',
                 )
-              : []),
-          ]),
+              : [],
+          ),
         },
         { concurrency: 1 },
       ).pipe(
@@ -648,13 +614,20 @@ const useTasksPage = (
       priority: submission.priority,
       title: submission.title,
     };
-    if (lookupAccess?.employees === 'allowed' && submission.assigneeEmployeeId !== undefined) {
-      fields.assigneeEmployeeId = submission.assigneeEmployeeId;
-      const owner = employees.find((employee) => employee.id === submission.assigneeEmployeeId)?.principalRef;
-      if (owner !== undefined) fields.ownerPrincipalRef = owner;
+    if (
+      submission.ownerPrincipalRef !== undefined &&
+      (editor.mode === 'create' ||
+        editor.task.ownerPrincipalRef === undefined ||
+        principalKey(submission.ownerPrincipalRef) !== principalKey(editor.task.ownerPrincipalRef))
+    ) {
+      fields.ownerPrincipalRef = submission.ownerPrincipalRef;
     }
-    if (submission.plannedHours !== undefined) fields.plannedHours = submission.plannedHours;
-    if (submission.projectId !== undefined) fields.projectId = submission.projectId;
+    if (submission.plannedHours !== undefined) {
+      fields.plannedHours = submission.plannedHours;
+    }
+    if (submission.projectId !== undefined) {
+      fields.projectId = submission.projectId;
+    }
     if (submission.dueDate !== undefined) {
       fields.dueDate = submission.dueDate;
     }
@@ -738,15 +711,16 @@ const useTasksPage = (
     if (records === undefined || selectedIds.length === 0) {
       return;
     }
-    // Wire `null` (Option none) clears the assignee; any other value must decode as an employee id.
-    const assigneeEmployeeId = value === NONE ? Option.none() : decodeEmployeeId(value);
-    if (value !== NONE && Option.isNone(assigneeEmployeeId)) {
+    // Wire `null` clears the assignment; other values must be a governed candidate.
+    const ownerPrincipalRef =
+      value === NONE ? Option.none() : Option.fromUndefinedOr(selectedPrincipal(principals, value));
+    if (value !== NONE && Option.isNone(ownerPrincipalRef)) {
       setActionError(t(`${key}.invalid`));
       return;
     }
     setBulkBusy(true);
     setActionError(undefined);
-    runCommand({ _tag: 'BulkAssignTasks', assigneeEmployeeId, ids: selectedIds }, records.revision, (outcome) =>
+    runCommand({ _tag: 'BulkAssignTasks', ids: selectedIds, ownerPrincipalRef }, records.revision, (outcome) =>
       finishBulk(outcome, 'assigned'),
     );
   };
@@ -809,32 +783,19 @@ const useTasksPage = (
 
   return {
     actionError,
+    actorName,
     bulkBusy,
     canWrite,
     closedRowsShown,
+    contextLabels,
     customerNames,
     customers,
     editor,
-    employeeNames,
-    employees,
-    employeesFailed,
+    principalNames,
+    principals,
     filters,
     filtersActive,
     formError,
-    handleBulkAssign,
-    handleBulkChangeState,
-    handleChangeRowState,
-    handleChangeTab,
-    handleClearFilters: () => handleFiltersChange(initialTaskFilters),
-    handleCloseEditor,
-    handleFiltersChange,
-    handleOpenCreate,
-    handleOpenEdit,
-    handleReload,
-    handleSave: save,
-    handlePlanning: (command: WorkCommand, onDone: (outcome: CommandOutcome) => void) => {
-      if (records !== undefined) runCommand(command, records.revision, onDone);
-    },
     handleArchive: (archived: boolean) => {
       if (editor?.mode !== 'edit' || records === undefined) return;
       setSaving(true);
@@ -850,11 +811,12 @@ const useTasksPage = (
         } else setFormError(outcome.message);
       });
     },
-    actorName,
-    contextLabels,
-    objects,
-    showHidden,
-    setShowHidden,
+    handleBulkAssign,
+    handleBulkChangeState,
+    handleChangeRowState,
+    handleChangeTab,
+    handleClearFilters: () => handleFiltersChange(initialTaskFilters),
+    handleCloseEditor,
     handleComment: (text: string) => {
       if (editor?.mode !== 'edit' || records === undefined) return;
       setSaving(true);
@@ -863,14 +825,23 @@ const useTasksPage = (
         if (!outcome.ok) setFormError(outcome.message);
       });
     },
+    handleFiltersChange,
+    handleOpenCreate,
+    handleOpenEdit,
+    handlePlanning: (command: WorkCommand, onDone: (outcome: CommandOutcome) => void) => {
+      if (records !== undefined) {
+        runCommand(command, records.revision, onDone);
+      }
+    },
+    handleReload,
+    handleSave: save,
     handleSelectionChange: setSelection,
     handleSortingChange: setSorting,
     loadState,
-    lookups,
     lookupAccess,
+    lookups,
     mineName,
-    mineResolving,
-    mineUnlinked,
+    objects,
     opportunities,
     opportunityTitles,
     records,
@@ -879,6 +850,8 @@ const useTasksPage = (
     saving,
     selectedIds,
     selection,
+    setShowHidden,
+    showHidden,
     sorting,
     stateTargets,
     t,
@@ -905,9 +878,9 @@ const TasksPageContent = ({
   const { records } = model;
   const columns = buildTaskColumns({
     customerNames: model.customerNames,
-    employeeNames: model.employeeNames,
-    lookups: model.lookups,
+    principalNames: model.principalNames,
     lookupAccess: model.lookupAccess,
+    lookups: model.lookups,
     opportunityTitles: model.opportunityTitles,
     t,
     today: model.today,
@@ -927,8 +900,8 @@ const TasksPageContent = ({
         actions={
           model.canWrite ? (
             <div className="flex flex-wrap gap-100">
-              {model.lookupAccess?.employees === 'allowed' && (
-                <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" variant="secondary" theme="outlined">
+              {records !== undefined && (
+                <Button onClick={() => setPlanningOpen((open) => !open)} size="sm" theme="outlined" variant="secondary">
                   {planningOpen ? 'Skrýt plánování' : 'Projekty a kapacity'}
                 </Button>
               )}
@@ -944,11 +917,12 @@ const TasksPageContent = ({
 
       {planningOpen && records !== undefined && (
         <WorkPlanning
-          records={records}
-          employees={model.employees}
-          apply={model.handlePlanning}
           actorName={model.actorName}
+          apply={model.handlePlanning}
           openTask={model.handleOpenEdit}
+          principalNames={model.principalNames}
+          principals={model.principals}
+          records={records}
         />
       )}
 
@@ -989,12 +963,10 @@ const TasksPageContent = ({
         </Tabs.List>
       </Tabs>
 
-      {model.mineUnlinked && <p className="text-fg-secondary text-sm">{t(`${key}.mineUnlinked`)}</p>}
-
       <TaskFilterBar
         active={model.filtersActive}
-        employees={model.employees}
-        canAssign={model.lookupAccess?.employees === 'allowed'}
+        canAssign={records !== undefined}
+        principals={model.principals}
         filters={model.filters}
         objects={model.objects}
         onChange={model.handleFiltersChange}
@@ -1006,9 +978,9 @@ const TasksPageContent = ({
       {model.canWrite && (
         <TaskBulkBar
           busy={model.bulkBusy}
+          canAssign={records !== undefined}
           count={selectedCount}
-          employees={model.employees}
-          canAssign={model.lookupAccess?.employees === 'allowed'}
+          principals={model.principals}
           onAssign={model.handleBulkAssign}
           onChangeState={model.handleBulkChangeState}
           onClear={() => model.handleSelectionChange({})}
@@ -1023,11 +995,6 @@ const TasksPageContent = ({
       )}
       {model.lookupAccess !== undefined && Object.values(model.lookupAccess).includes('denied') && (
         <p className="text-fg-secondary text-sm">{t(`${key}.restrictedLookups`)}</p>
-      )}
-      {model.employeesFailed && (
-        <StatusText showIcon status="error">
-          {t(`${key}.employeesUnavailable`)}
-        </StatusText>
       )}
       {model.referenceFailed && (
         <StatusText showIcon status="error">
@@ -1055,7 +1022,7 @@ const TasksPageContent = ({
         enableSorting
         getRowId={(row) => row.ref.resourceId}
         getRowLabel={(row) => row.original.title}
-        loading={(model.loadState === 'loading' && records === undefined) || model.mineResolving}
+        loading={model.loadState === 'loading' && records === undefined}
         loadingRowCount={8}
         maxHeight="calc(100dvh - 15rem)"
         onRowClick={(row) => {
@@ -1134,22 +1101,24 @@ const TasksPageContent = ({
 
       {model.editor !== undefined && (
         <TaskFormDialog
+          actorName={model.actorName}
+          assignmentAvailable={records !== undefined}
           busy={model.saving}
+          contextLabels={model.contextLabels}
           customers={model.customers}
           customersLoading={!model.lookups.customers}
-          employees={model.employees}
-          lookupAccess={model.lookupAccess}
           error={model.formError}
-          onClose={model.handleCloseEditor}
-          onSubmit={model.handleSave}
-          readOnly={!model.canWrite}
-          onComment={model.handleComment}
+          lookupAccess={model.lookupAccess}
           onArchive={model.canWrite ? model.handleArchive : undefined}
-          actorName={model.actorName}
-          contextLabels={model.contextLabels}
-          projects={records?.projects ?? []}
+          onClose={model.handleCloseEditor}
+          onComment={model.handleComment}
+          onSubmit={model.handleSave}
           opportunities={model.opportunities}
           opportunitiesLoading={!model.lookups.opportunities}
+          principalNames={model.principalNames}
+          principals={model.principals}
+          projects={records?.projects ?? []}
+          readOnly={!model.canWrite}
           task={model.editor.mode === 'edit' ? model.editor.task : undefined}
         />
       )}

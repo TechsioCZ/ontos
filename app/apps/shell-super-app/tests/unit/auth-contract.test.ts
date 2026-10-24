@@ -77,10 +77,8 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'demoAccountCapability',
     'issueManagedApiKey',
     'issueSelfApiKey',
-    'listDemoAccounts',
     'listManagedApiKeys',
     'listSelfApiKeys',
-    'manageDemoAccount',
     'rotateManagedApiKey',
     'rotateSelfApiKey',
     'setManagedApiKeyStatus',
@@ -88,7 +86,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'startSupportImpersonation',
     'stopSupportImpersonation',
   ]);
-  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
+  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity', 'switchToTenantContext']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
   expect(externalIdentityEndpoints).toEqual([
@@ -127,6 +125,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     demoAccountCapability: '/auth/identity/demo-accounts/capability',
     documentContext: '/shell/document-context',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
+    invitePerson: '/auth/identity/people/invite',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
     issueDocumentGatewayContexts: '/auth/gateway-contexts',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
@@ -135,25 +134,30 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     issueSelfApiKey: '/auth/identity/api-keys/self',
     listAgentEntities: '/auth/identity/agent-entities/list',
     listCompanyConnections: '/auth/oauth-connections/admin-list',
-    listDemoAccounts: '/auth/identity/demo-accounts/list',
+    listCompanyPeople: '/auth/identity/people/list',
+    listCompanyRoleCatalog: '/auth/identity/people/role-catalog',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
     listMyConnections: '/auth/oauth-connections/mine',
     listOwnAgentProposals: '/agent-platform/proposals/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    listTenantPeople: '/auth/identity/people/tenant-list',
+    listTenantRoleCatalog: '/auth/identity/people/tenant-role-catalog',
     manageAgentEntity: '/auth/identity/agent-entities',
-    manageDemoAccount: '/auth/identity/demo-accounts',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
     replaceAgentOperators: '/auth/identity/agent-entities/operators',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
-    revokeConnection: '/auth/oauth-connections/revoke',
     resolveModuleTarget: '/shell/module-target',
     resourceDetail: '/shell/resource',
+    revokeConnection: '/auth/oauth-connections/revoke',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
     rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
     search: '/shell/search',
     setManagedApiKeyStatus: '/auth/identity/api-keys/managed/status',
+    setPeopleCompanyMembership: '/auth/identity/people/company-membership',
+    setPeopleCompanyRole: '/auth/identity/people/company-role',
+    setPeopleTenantRole: '/auth/identity/people/tenant-role',
     setSelfApiKeyStatus: '/auth/identity/api-keys/self/status',
     shellComposition: '/shell/composition',
     signIn: '/auth/sign-in',
@@ -163,12 +167,14 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     submitAgentProposals: '/agent-platform/proposals',
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
+    switchToTenantContext: '/auth/context/tenant',
     updateConnectionAccess: '/auth/oauth-connections/update',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
+    switchToTenantContextPath: '/shell-super-app-api/auth/context/tenant',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
 });
@@ -234,7 +240,12 @@ it.effect('decodes a missing identity idempotency header so handlers can return 
 
 it.effect('publishes exact legal-entity endpoints with an ID-only switch payload', () =>
   Effect.gen(function* testProgram2() {
-    const { availableLegalEntities, switchLegalEntity } = ShellAuthenticationApi.groups.legalEntities.endpoints;
+    const { availableLegalEntities, switchLegalEntity, switchToTenantContext } =
+      ShellAuthenticationApi.groups.legalEntities.endpoints;
+    expect({ method: switchToTenantContext.method, path: switchToTenantContext.path }).toEqual({
+      method: 'POST',
+      path: '/auth/context/tenant',
+    });
     expect({
       method: availableLegalEntities.method,
       path: availableLegalEntities.path,
@@ -262,11 +273,13 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
         legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
         state: 'authenticated',
+        tenantContextAvailable: false,
       }),
     ).toEqual({
       legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
       selectedLegalEntityId: legalEntityId,
       state: 'authenticated',
+      tenantContextAvailable: false,
     });
   }),
 );

@@ -1,8 +1,5 @@
-import { taskContextHref } from '../../src/routes/[lang]/ukoly/tasks-model.ts';
-import { Option, Schema } from 'effect';
-import { expect, it, rstest } from 'effect-rstest';
-import { isClosedTaskState } from '../../shared/actions/task-transitions.ts';
 import {
+  taskContextHref,
   commonTransitionTargets,
   czechCollator,
   filterTasks,
@@ -17,11 +14,15 @@ import {
   withBulkResult,
   withSavedTask,
 } from '../../src/routes/[lang]/ukoly/tasks-model.ts';
-import { EmployeeIdSchema, TaskSchema } from '../../shared/apis/records.ts';
+import { Option, Schema } from 'effect';
+import { expect, it, rstest } from 'effect-rstest';
+import { isClosedTaskState } from '../../shared/actions/task-transitions.ts';
+import { TaskSchema } from '../../shared/apis/records.ts';
 import type { TaskState } from '../../shared/apis/records.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
-const employeeId = Schema.decodeUnknownSync(EmployeeIdSchema)('40000000-0000-4000-8000-000000000001');
+const principalRef = { principalId: '40000000-0000-4000-8000-000000000001', tenantId };
+const principalId = `${tenantId}:${principalRef.principalId}`;
 
 const makeTask = (overrides: { readonly dueDate?: string; readonly state?: TaskState; readonly title?: string }) => {
   const encoded = {
@@ -47,12 +48,12 @@ const makeTask = (overrides: { readonly dueDate?: string; readonly state?: TaskS
 const today = '2026-10-05';
 
 it('finds a task by its assignee name, folded the same way as titles', () => {
-  const assigned = { ...makeTask({}), assigneeEmployeeId: employeeId };
-  const employeeNames = new Map([[employeeId, 'Jana Nováková']]);
+  const assigned = { ...makeTask({}), ownerPrincipalRef: principalRef };
+  const principalNames = new Map([[principalId, 'Jana Nováková']]);
   const byAssignee = (text: string) =>
     filterTasks([assigned], {
-      employeeNames,
       filters: { ...initialTaskFilters, search: text },
+      principalNames,
       tab: 'all',
     });
   expect(byAssignee('Novák')).toHaveLength(1);
@@ -139,7 +140,7 @@ it('puts a saved task in place or appends a new one', () => {
 
 it('applies only the changed rows of a bulk command, as the server did', () => {
   const second = Schema.decodeUnknownSync(TaskSchema)({
-    ...Schema.encodeSync(TaskSchema)({ ...makeTask({ title: 'druhý' }), assigneeEmployeeId: employeeId }),
+    ...Schema.encodeSync(TaskSchema)({ ...makeTask({ title: 'druhý' }), ownerPrincipalRef: principalRef }),
     ref: { moduleId: 'work.tasks', resourceId: 'task-2', resourceType: 'work.tasks.task', tenantId },
   });
   const first = makeTask({});
@@ -159,18 +160,18 @@ it('applies only the changed rows of a bulk command, as the server did', () => {
   expect(moved.items.map((task) => task.state)).toEqual(['IN_PROGRESS', 'NEW']);
   const cleared = withBulkResult(
     list,
-    { _tag: 'BulkAssignTasks', assigneeEmployeeId: Option.none(), ids: [secondId] },
+    { _tag: 'BulkAssignTasks', ids: [secondId], ownerPrincipalRef: Option.none() },
     [{ outcome: 'changed', resourceId: secondId }],
     4,
   );
-  expect(cleared.items[1]).not.toHaveProperty('assigneeEmployeeId');
+  expect(cleared.items[1]).not.toHaveProperty('ownerPrincipalRef');
   const assigned = withBulkResult(
     list,
-    { _tag: 'BulkAssignTasks', assigneeEmployeeId: Option.some(employeeId), ids: [firstId] },
+    { _tag: 'BulkAssignTasks', ids: [firstId], ownerPrincipalRef: Option.some(principalRef) },
     [{ outcome: 'changed', resourceId: firstId }],
     4,
   );
-  expect(assigned.items[0]?.assigneeEmployeeId).toBe(employeeId);
+  expect(assigned.items[0]?.ownerPrincipalRef).toEqual(principalRef);
 });
 
 it('hydrates the saved task view from stable external snapshots and unsubscribes from changes', () => {
@@ -226,16 +227,16 @@ it('context deep links use the registered property and agreement owner routes', 
   expect(
     taskContextHref({
       moduleId: 'legal.agreements',
-      resourceType: 'legal.agreements.contract',
       resourceId: 'contract-id',
+      resourceType: 'legal.agreements.contract',
       tenantId,
     }),
   ).toBe('/cs/smlouvy?resourceId=contract-id');
   expect(
     taskContextHref({
       moduleId: 'property.portfolio',
-      resourceType: 'property.portfolio.unit',
       resourceId: 'unit-id',
+      resourceType: 'property.portfolio.unit',
       tenantId,
     }),
   ).toBe('/cs/nemovitosti?resourceId=unit-id');

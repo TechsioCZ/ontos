@@ -14,6 +14,8 @@ import { loadModulePageModel, prepareModuleTarget } from './modules/[moduleId]/m
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
 import { requireSignedIn } from '../sign-in-return.ts';
+import { PEOPLE_ADMIN_PATH, loadPeoplePageModel } from '../people/people-page-model.ts';
+import type { PeoplePageModel } from '../people/people-page-model.ts';
 
 interface CanonicalPageLoaderArguments {
   readonly params: { readonly lang: string };
@@ -61,7 +63,7 @@ export const loader = ({
   params,
   request,
 }: CanonicalPageLoaderArguments): Promise<
-  ModuleTargetPageModel | AgentPlatformPageModel | ConnectionsAdminPageModel | NotFoundError
+  ModuleTargetPageModel | AgentPlatformPageModel | ConnectionsAdminPageModel | PeoplePageModel | NotFoundError
 > => {
   const canonicalPath = canonicalPathFromRequest(request, params.lang);
   if (canonicalPath === undefined) {
@@ -75,6 +77,12 @@ export const loader = ({
   const platformPage = agentPlatformPageByPath.get(canonicalPath);
   if (platformPage !== undefined) {
     return loadAgentPlatformPageModel(request, platformPage);
+  }
+  if (canonicalPath === PEOPLE_ADMIN_PATH) {
+    return browserRuntime.runPromise(
+      loadPeoplePageModel(request).pipe(Effect.map((model) => requireSignedIn(request, model))),
+      { signal: request.signal },
+    );
   }
   if (canonicalPath === CONNECTIONS_ADMIN_PATH) {
     return loadConnectionsAdminPageModel(request);

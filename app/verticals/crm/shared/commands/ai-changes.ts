@@ -1,12 +1,12 @@
 // AREA: AI level C (specs AGENT.md) — owned by the ai-level-c lane. Command schemas + reducer.
 //
-//   AiProposeChanges  agent (API key): one pending batch of proposals. Every item waits for human approval. Every proposal is dry-run against the current state first, so the agent learns at
-//                     once when it is outside its scope (e.g. reassigning a client needs demo.crm.assign).
-//   AiDecideChanges   human with write_all: approve (applies the stored operation as the approver) or reject.
-//   AiRevertBatch     human with write_all: restores every applied change of one batch from its snapshots
+//   AiProposeChanges  one pending batch of proposals. Every item waits for approval. Every proposal is dry-run
+//                     against the current state first (e.g. reassigning a client needs demo.crm.assign).
+//   AiDecideChanges   principal with write_all: approve (applies the stored operation as the approver) or reject.
+//   AiRevertBatch     principal with write_all: restores every applied change of one batch from its snapshots
 //                     (only when nobody changed the entity since); pending proposals of the batch are rejected.
 //
-// The command guard lets API keys run ONLY AiProposeChanges in demo.crm; decisions and reverts are human-only.
+// Native Action grants authorize execution; the reducer retains its write_all and proposal state checks.
 import { Effect, Match, Schema } from 'effect';
 import type {
   AiBatch,
@@ -56,11 +56,6 @@ export const aiChangesCommandSchemas = [
 ] as const;
 export const AiChangesCommandSchema = Schema.Union(aiChangesCommandSchemas);
 export type AiChangesCommand = typeof AiChangesCommandSchema.Type;
-
-/** Commands an API key may run in demo.crm (the command guard enforces it). */
-export const nonHumanAllowedCrmCommands: ReadonlySet<string> = new Set(['AiProposeChanges']);
-/** Commands reserved for people. */
-export const aiHumanOnlyCommands: readonly string[] = ['AiDecideChanges', 'AiRevertBatch'];
 
 // ------------------------------------------------------------------------------------------------ operations
 

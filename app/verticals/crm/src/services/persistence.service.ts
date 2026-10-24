@@ -1,3 +1,5 @@
+import { activeAssignmentMember, loadAssignablePrincipalDirectory } from '@app/core-runtime/auth/assignable-principals';
+import { assignmentPrincipalIds } from './assignment-policy.ts';
 import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 // CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
 // revision. The viewer (principal + context permissions + salesperson record) is computed here for every read
@@ -295,6 +297,23 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           reason: 'CRM changed; refresh before another operation',
         });
       }
+      const targets = assignmentPrincipalIds(command, snapshot.state, scope.principalId);
+      if (targets.length > 0) {
+        const directory = yield* loadAssignablePrincipalDirectory(transaction, {
+          legalEntityId,
+          tenantId: scope.tenantId,
+        }).pipe(Effect.mapError(referenceUnavailable));
+        yield* Effect.forEach(
+          new Set(targets),
+          (principalId) =>
+            activeAssignmentMember(directory, { principalId, tenantId: scope.tenantId }).pipe(
+              Effect.mapError((cause) =>
+                withCause(partyIneligible('Vybraný obchodník již nemá aktivní členství ve firmě.'), cause),
+              ),
+            ),
+          { concurrency: 1, discard: true },
+        );
+      }
       const links = partyLinksOf(command);
       const verifiedParties = links.length === 0 ? undefined : yield* verifyParties(links);
       const now = DateTime.formatIso(yield* DateTime.now);
@@ -341,7 +360,11 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           .limit(1)
           .pipe(Effect.map(([row]): LoadedCrmRecords => row));
       }).pipe(Effect.mapError(unavailable));
-    return { apply, loadRecords };
+    const loadAssignmentDirectory = () =>
+      loadAssignablePrincipalDirectory(transaction, { legalEntityId, tenantId: scope.tenantId }).pipe(
+        Effect.mapError(unavailable),
+      );
+    return { apply, loadAssignmentDirectory, loadRecords };
   },
   Effect.mapError((cause) =>
     withCause(
@@ -398,5 +421,5 @@ export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishC
     revision: snapshot.revision,
     state: narrowed,
     viewer: reportedViewer(viewer, scope),
-  } satisfies RecordsResponse;
+  } satisfies Omit<RecordsResponse, 'assignmentCandidates' | 'departedPrincipalIds'>;
 });

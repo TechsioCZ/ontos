@@ -149,6 +149,25 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   workerKey: OntosModuleIdSchema,
 });
 
+/** Internal matching authority also carries Core-owned workers; public module contracts stay tenant-only. */
+export const OutboxSubscriptionAuthoritySchema = Schema.Union([
+  OntosOutboxSubscriptionContractSchema,
+  Schema.Struct({
+    consumerModuleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+    entrypoint: Schema.Struct({
+      access: Schema.Literal('background'),
+      authorization: Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
+      entrypointKey: OntosModuleIdSchema,
+      moduleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+      role: Schema.Literal('worker'),
+      scope: Schema.Literal('system'),
+    }),
+    producerModuleKey: OntosModuleIdSchema.check(Schema.isPattern(/^core\./u)),
+    topic: OntosModuleIdSchema,
+    workerKey: OntosModuleIdSchema,
+  }),
+]);
+
 const reservedAuthenticationCookieRealms = new Set(['better-auth', 'shell', 'staff', 'ontos']);
 const unprefixedCookieName = (name: string): string => name.replace(/^__(?:Secure|Host)-/u, '');
 

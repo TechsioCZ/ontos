@@ -1,9 +1,10 @@
 import { StageAccountsFileSchema } from '@app/core-runtime/install/stage-accounts-file';
+import { ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { Config, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
-import { verificationAccount, verificationContext } from './verification-context.mts';
+import { verificationAccount, verificationContext, verificationTaskWriterRoleKey } from './verification-context.mts';
 
 export class StageVerificationBootstrapError extends Schema.TaggedError<StageVerificationBootstrapError>()(
   'StageVerificationBootstrapError',
@@ -16,21 +17,45 @@ export const stageVerificationAccounts = Effect.fn('Stage.verificationAccounts')
 ) {
   const context = yield* verificationContext();
   const [module] = context.modules;
-  if (module === undefined) {
-    return yield* new StageVerificationBootstrapError({ reason: 'Verification module is required' });
+  const membership = context.companyMemberships.find(
+    (row) =>
+      row.principalId === verificationAccount.principalId && row.legalEntityId === context.legalEntity.legalEntityId,
+  );
+  if (module === undefined || membership === undefined) {
+    return yield* new StageVerificationBootstrapError({
+      reason: 'Verification module and explicit membership are required',
+    });
   }
+  const scope = { legalEntityId: context.legalEntity.legalEntityId, tenantId: context.tenant.tenantId };
+  const actionKey = 'work.tasks.apply-command';
+  const roleKey = verificationTaskWriterRoleKey;
   return {
+    actionAuthorization: {
+      actionAssertions: [
+        {
+          ...scope,
+          actionKey,
+          assertions: [
+            { expected: 'allowed', principalId: verificationAccount.principalId },
+            { expected: 'denied', principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
+          ],
+        },
+      ],
+      roleGrants: [{ ...scope, actionKey, roleKey }],
+    },
     retiredAccountEmails: [],
     retiredTenants: [],
-    schemaVersion: 2 as const,
+    schemaVersion: 4 as const,
+    scopedRoles: [{ ...scope, principalIds: [verificationAccount.principalId], roleKey }],
     tenants: [
       {
         accounts: [
           {
+            affiliation: membership.affiliation,
             authBindingId: verificationAccount.authBindingId,
             displayName: verificationAccount.displayName,
             email: verificationAccount.email,
-            grants: { explicitActions: ['work.tasks.apply-command'], tenantRelations: [] },
+            grants: { explicitActions: [], tenantRelations: [] },
             password: Redacted.value(password),
             principalId: verificationAccount.principalId,
           },

@@ -1,3 +1,4 @@
+import { assignmentLabel } from '../../../../shared/assignment.ts';
 import { StatusBadge } from '@app/admin-ui';
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -11,8 +12,8 @@ type Translate = ReturnType<typeof useModernI18n>['t'];
 /** Which reference lists have settled (loaded or failed). Until then their cells show a loading label. */
 export interface LookupState {
   readonly customers: boolean;
-  readonly employees: boolean;
   readonly opportunities: boolean;
+  readonly principals: boolean;
 }
 
 /** Czech text order for the name columns. Every text accessor below returns a string. */
@@ -40,18 +41,18 @@ const nameCell = (
 
 export const buildTaskColumns = ({
   customerNames,
-  employeeNames,
-  lookups,
   lookupAccess,
+  lookups,
   opportunityTitles,
+  principalNames,
   t,
   today,
 }: {
   readonly customerNames: ReadonlyMap<string, string>;
-  readonly employeeNames: ReadonlyMap<string, string>;
-  readonly lookups: LookupState;
   readonly lookupAccess: LookupAccess | undefined;
+  readonly lookups: LookupState;
   readonly opportunityTitles: ReadonlyMap<string, string>;
+  readonly principalNames: ReadonlyMap<string, string>;
   readonly t: Translate;
   readonly today: string;
 }): ColumnDef<Task>[] => {
@@ -80,16 +81,29 @@ export const buildTaskColumns = ({
     },
     {
       accessorFn: (task) =>
-        task.assigneeEmployeeId === undefined ? '' : (employeeNames.get(task.assigneeEmployeeId) ?? ''),
+        assignmentLabel(
+          task.ownerPrincipalRef,
+          principalNames,
+          task.assignmentNeedsReassignment,
+          task.assignmentWithoutLogin,
+        ),
       cell: (info) => {
-        const { assigneeEmployeeId } = info.row.original;
-        if (assigneeEmployeeId === undefined) {
+        const { assignmentNeedsReassignment, assignmentWithoutLogin, ownerPrincipalRef } = info.row.original;
+        if (
+          ownerPrincipalRef === undefined &&
+          assignmentNeedsReassignment !== true &&
+          assignmentWithoutLogin !== true
+        ) {
           return <span className="text-fg-secondary">{t(`${key}.unassigned`)}</span>;
         }
-        if (!lookups.employees) {
+        if (!lookups.principals) {
           return loadingCell(t);
         }
-        return <span className="block truncate">{employeeNames.get(assigneeEmployeeId) ?? '—'}</span>;
+        return (
+          <span className="block truncate">
+            {assignmentLabel(ownerPrincipalRef, principalNames, assignmentNeedsReassignment, assignmentWithoutLogin)}
+          </span>
+        );
       },
       header: t(`${key}.columns.assignee`),
       id: 'assignee',
@@ -139,9 +153,5 @@ export const buildTaskColumns = ({
       meta: { width: 120 },
     },
   ];
-  return columns.filter(
-    (column) =>
-      (column.id !== 'assignee' || lookupAccess?.employees === 'allowed') &&
-      (column.id !== 'party' || lookupAccess?.customers === 'allowed'),
-  );
+  return columns.filter((column) => column.id !== 'party' || lookupAccess?.customers === 'allowed');
 };

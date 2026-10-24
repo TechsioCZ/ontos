@@ -23,12 +23,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
-import {
-  toContextPermissionAccessObjectId,
-  toLegalEntityAccessObjectId,
-  toModuleAccessObjectId,
-} from '@app/core-runtime';
-import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { eq } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
@@ -41,80 +35,14 @@ import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
-import { writeAiRelationships } from './ai-profiles.mts';
-import type { AiRelationship } from './ai-profiles.mts';
-import { crmDemoLegalEntityId, demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-
-export const crmPartyIntakePrincipal = {
-  apiKeyName: 'crm-party-intake',
-  displayName: 'CRM · zakládání klientů v Party Registry',
-  envVar: 'ONTOS_CRM_PARTY_INTAKE_API_KEY',
-  principalId: demoId('core.principal', 'crm-party-intake'),
-} as const;
-
-/** Companies whose CRM writes clients into the registry. */
-export const crmIntakeLegalEntityIds: readonly string[] = [rentalDemoLegalEntityId, crmDemoLegalEntityId];
-
-/**
- * The only Actions the intake runs: four registry Actions and the CRM apply-command, where the CRM command guard
- * lets this principal run `LinkClientParty` only (it reads the clients through demo.crm.read_all).
- */
-export const crmIntakeActionKeys: readonly string[] = [
-  'party.registry.create-party',
-  'party.registry.resolve-duplicate-candidate-create',
-  'party.registry.counterparty-customer-onboard',
-  'party.registry.add-contact-point',
-  'demo.crm.apply-command',
-];
-const crmIntakePermissions = ['demo.crm.read_all', 'demo.crm.write_all'] as const;
-
-interface DiscoveredAction {
-  readonly actionKey: string;
-  readonly provisioning: 'explicit' | 'tenant_membership_default';
-}
-
-export const crmIntakeRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] => {
-  const result = new Map<string, AiRelationship>();
-  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) =>
-    result.set([resourceType, resourceId, relation, subjectType, subjectId].join('|'), {
-      relation,
-      resourceId,
-      resourceType,
-      subjectId,
-      subjectType,
-    });
-  const { principalId } = crmPartyIntakePrincipal;
-  add('tenant', demoTenantId, 'member', 'principal', principalId);
-  for (const relation of ['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer']) {
-    add('tenant', demoTenantId, relation, 'principal', principalId);
-  }
-  for (const legalEntityId of crmIntakeLegalEntityIds) {
-    const legal = toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '';
-    add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
-    add('legal_entity', legal, 'member', 'principal', principalId);
-    add('legal_entity', legal, 'counterparty_manager', 'principal', principalId);
-    add('legal_entity', legal, 'counterparty_reader', 'principal', principalId);
-    for (const moduleId of ['core.shell', 'party.registry', 'demo.crm']) {
-      const moduleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, moduleId) ?? '';
-      add('module_access', moduleAccess, 'legal_entity', 'legal_entity', legal);
-      add('module_access', moduleAccess, 'accessor', 'principal', principalId);
-    }
-    for (const permission of crmIntakePermissions) {
-      const objectId =
-        toContextPermissionAccessObjectId(demoTenantId, legalEntityId, { moduleId: 'demo.crm', permission }) ?? '';
-      add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
-      add('context_permission', objectId, 'grantee', 'principal', principalId);
-    }
-  }
-  for (const { actionKey, provisioning } of actions.filter((action) => crmIntakeActionKeys.includes(action.actionKey))) {
-    const action = toSpiceDbActionObjectId(actionKey);
-    if (provisioning === 'explicit') {
-      add('action', action, 'restriction', 'action', action);
-    }
-    add('action', action, 'executor', 'principal', principalId);
-  }
-  return [...result.values()];
-};
+import { writeBootstrapRelationships } from './bootstrap-relationships.mts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { crmPartyIntakePrincipal, crmIntakeActionKeys, crmIntakeRelationships } from './permissions.mts';
+import { crmDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 
 class CrmIntakeError extends Schema.TaggedError<CrmIntakeError>()('CrmIntakeError', { reason: Schema.String }) {}
 const fail = (reason: string) => new CrmIntakeError({ reason });
@@ -129,7 +57,7 @@ const shellConfig = Config.all({
   shellUrl: Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020')),
 });
 
-const post = (url: string, body: unknown, headers: Readonly<Record<string, string>>) =>
+const post = (url: string, body: Schema.Json, headers: Readonly<Record<string, string>>) =>
   Effect.gen(function* postJson() {
     const client = yield* HttpClient.HttpClient;
     return yield* client.execute(
@@ -141,7 +69,7 @@ const post = (url: string, body: unknown, headers: Readonly<Record<string, strin
   }).pipe(Effect.timeout('20 seconds'));
 
 const CompositionSchema = Schema.Struct({ composition: Schema.Struct({ revision: Schema.String }) });
-const IssuedKeySchema = Schema.Struct({ secret: Schema.String.check(Schema.isMinLength(1)) });
+const IssuedKeySchema = Schema.Struct({ secret: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))) });
 const SECURE_COOKIE_PREFIX = '__Secure-';
 
 /** Issues (or reuses a working) managed API key and stores it in app/.env.demo.local (other lines kept). */
@@ -195,7 +123,11 @@ const ensureKey = Effect.fn('CrmPartyIntake.key')(function* ensureKey(root: stri
   const cookie = Cookies.toCookieHeader(Cookies.setAllUnsafe(signIn.cookies, aliases));
   const issued = yield* post(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
-    { name: crmPartyIntakePrincipal.apiKeyName, principalId: crmPartyIntakePrincipal.principalId },
+    {
+      name: crmPartyIntakePrincipal.apiKeyName,
+      principalId: crmPartyIntakePrincipal.principalId,
+      scope: 'tenant-managed',
+    },
     {
       'content-type': 'application/json',
       cookie,
@@ -210,7 +142,7 @@ const ensureKey = Effect.fn('CrmPartyIntake.key')(function* ensureKey(root: stri
   const { secret } = yield* HttpClientResponse.schemaBodyJson(IssuedKeySchema)(issued);
   const next = [
     ...lines.filter((line) => !line.startsWith(`${crmPartyIntakePrincipal.envVar}=`)),
-    `${crmPartyIntakePrincipal.envVar}=${secret}`,
+    `${crmPartyIntakePrincipal.envVar}=${Redacted.value(secret)}`,
     '',
   ].join('\n');
   yield* fs.writeFileString(envFile, next, { mode: 0o600 });
@@ -246,19 +178,23 @@ export const setupCrmPartyIntake = Effect.fn('CrmPartyIntake.setup')(function* s
       set: { displayName: crmPartyIntakePrincipal.displayName, status: 'active' },
       target: principals.principalId,
     });
-  const actions = yield* discoverCurrentActions(root);
-  const relationships = crmIntakeRelationships(actions);
+  const source = yield* ActiveApplicationCompositionService;
+  const actions = yield* discoverCurrentActions(yield* source.load);
+  const relationships = yield* Effect.try(() => crmIntakeRelationships(actions));
   const granted = actions.filter((action) => crmIntakeActionKeys.includes(action.actionKey)).length;
   if (granted !== crmIntakeActionKeys.length) {
     return yield* fail(`expected ${crmIntakeActionKeys.length} party.registry Actions, discovered ${granted}`);
   }
-  yield* writeAiRelationships(root, environment, relationships);
-  yield* Console.log(`crm-party-intake: principal ${crmPartyIntakePrincipal.principalId}, ${relationships.length} relationships`);
+  yield* writeBootstrapRelationships(root, environment, relationships);
+  yield* Console.log(
+    `crm-party-intake: principal ${crmPartyIntakePrincipal.principalId}, ${relationships.length} relationships`,
+  );
   if (!options.skipKeys) {
     yield* liftKeyRateLimit;
     yield* ensureKey(root);
     yield* liftKeyRateLimit;
   }
+  return yield* Effect.void;
 });
 
 const workspaceRoot = new URL('../..', import.meta.url);
@@ -279,6 +215,10 @@ const adminDatabaseConfigLive = Layer.effect(
 const servicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
+  ActiveApplicationCompositionConfigLive.pipe(
+    Layer.provide(ActiveApplicationCompositionSourceLive),
+    Layer.provide(FetchHttpClient.layer),
+  ),
 );
 
 const main = (skipKeys: boolean) =>
@@ -291,7 +231,7 @@ const main = (skipKeys: boolean) =>
   });
 
 const command = Command.make(
-  'crm-party-intake',
+  crmPartyIntakePrincipal.apiKeyName,
   { skipKeys: Flag.Boolean('skip-keys').pipe(Flag.withDefault(false)) },
   ({ skipKeys }) =>
     Layer.build(Layer.effectDiscard(main(skipKeys).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive))).pipe(
@@ -301,7 +241,7 @@ const command = Command.make(
         Console.error(
           Schema.is(CrmIntakeError)(failure)
             ? `CRM party intake failed: ${failure.reason}`
-            : `CRM party intake failed (${String((failure as { readonly _tag?: unknown })._tag)})`,
+            : 'CRM party intake failed; inspect the typed cause',
         ),
       ),
     ),

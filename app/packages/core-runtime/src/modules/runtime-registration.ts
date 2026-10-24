@@ -10,7 +10,7 @@ import type {
   OntosModuleManifest,
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
-import { OntosActionContractSchema } from './manifest.ts';
+import { OntosActionContractSchema, OntosOutboxSubscriptionContractSchema } from './manifest.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
 const runtimeRegistrationBrand: unique symbol = Symbol('@app/core-runtime/modules/runtime-registration');
@@ -130,8 +130,11 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   validateRuntimeActions(input);
   const workers = validateOutboxWorkerRegistrations(input.outboxWorkers);
   for (const worker of workers) {
-    if (worker.descriptor.consumerModuleKey !== input.manifest.module.id) {
-      failRuntimeRegistration('runtime Outbox Worker owner must match the manifest module ID');
+    if (
+      worker.descriptor.consumerModuleKey !== input.manifest.module.id ||
+      worker.descriptor.entrypoint.scope !== 'tenant'
+    ) {
+      failRuntimeRegistration('runtime Outbox Workers must be tenant-scoped and owned by the manifest module ID');
     }
   }
   const entrypoints = input.entrypoints ?? emptyEntrypoints();
@@ -208,20 +211,24 @@ export const extractVerticalRuntimeSafeDescriptors = (
     moduleId: registration.moduleId,
     outboxSubscriptions: Object.freeze(
       runtime.outboxWorkers
-        .map(({ descriptor }) =>
-          Object.freeze({
-            consumerModuleKey: descriptor.consumerModuleKey,
-            entrypoint: Object.freeze({
-              ...descriptor.entrypoint,
-              authorization: Object.freeze({
-                kind: 'owner_local_background' as const,
-              }),
+        .map(({ descriptor }) => {
+          const decoded = Result.getOrThrow(
+            Schema.decodeUnknownResult(OntosOutboxSubscriptionContractSchema)({
+              consumerModuleKey: descriptor.consumerModuleKey,
+              entrypoint: descriptor.entrypoint,
+              producerModuleKey: descriptor.producerModuleKey,
+              topic: descriptor.topic,
+              workerKey: descriptor.workerKey,
             }),
-            producerModuleKey: descriptor.producerModuleKey,
-            topic: descriptor.topic,
-            workerKey: descriptor.workerKey,
-          }),
-        )
+          );
+          return Object.freeze({
+            ...decoded,
+            entrypoint: Object.freeze({
+              ...decoded.entrypoint,
+              authorization: Object.freeze(decoded.entrypoint.authorization),
+            }),
+          });
+        })
         .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
     ),
     shellContributions: runtime.shellContributions,

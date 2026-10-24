@@ -1,35 +1,33 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 
-import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import {
-  Array as EffectArray,
-  Cause,
-  Config,
-  Console,
-  Duration,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Order,
-  Path,
-  Schema,
-} from 'effect';
+import { v1 } from '@authzed/authzed-node';
+import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node';
+import { eq, inArray, sql } from 'drizzle-orm';
+import type { FileSystem } from 'effect';
+import { Array as EffectArray, Cause, Config, Console, Duration, Effect, Layer, Option, Order, Schema } from 'effect';
 import { Command } from 'effect/unstable/cli';
 
-import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
+import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
+import {
+  applicationCompositionAuthority,
+  legalEntities,
+  tenantModuleStates,
+} from '../packages/core-runtime/src/db/schema.ts';
 import {
   ActionAuthorizationProvisioningError,
-  deriveExplicitActionAuthorization,
+  deriveScopedActionAuthorization,
+  planActionAuthorizationProvisioning,
   provisionActionAuthorization,
+  verifyActionAuthorizationProvisioning,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
-  ActionAuthorizationExplicitAccountGrant,
+  ActionAuthorizationInstalledModuleScope,
   ActionAuthorizationProvisioningAction,
   ActionAuthorizationProvisioningClient,
-  ActionAuthorizationProvisioningResult,
+  ActionAuthorizationProvisioningInput,
+  ActionAuthorizationProvisioningPlan,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
@@ -37,47 +35,37 @@ import {
   readStageAccountsFileContents,
 } from '../packages/core-runtime/src/install/stage-accounts-file.ts';
 import type { StageAccountsFile } from '../packages/core-runtime/src/install/stage-accounts-file.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../packages/core-runtime/src/modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { buildApplicationCompositionCatalog } from '../packages/core-runtime/src/modules/application-composition-catalog.ts';
+import { coreActionCatalog } from '../packages/core-runtime/src/modules/actions/catalog.ts';
 import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
-import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
-import { LOCAL_DEVELOPMENT_CONTEXT } from './initialize-local-development.mts';
+import { toSpiceDbActionObjectId } from '../packages/core-runtime/src/permissions/service.ts';
+import {
+  ApplicationCompositionAuthorityAdminDatabaseLive,
+  withApplicationCompositionPublicationLock,
+} from './application-composition-authority-publication.mts';
 
-const TopologySchema = Schema.Struct({
-  verticals: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      package: Schema.String,
-      path: Schema.String,
-    }),
-  ),
-});
-
-const OwnershipSchema = Schema.Struct({
-  owners: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      package: Schema.String,
-      path: Schema.String,
-    }),
-  ),
-});
-
-type DeriveContract = typeof deriveOntosModuleDeploymentContract;
-
-export interface ActionAuthorizationProvisioningTarget {
-  readonly configuration: SpiceDbConfigValue;
-  readonly contexts: readonly ActionAuthorizationContext[];
-  readonly environment: 'development' | 'stage';
-  /** Per-account explicit Action grant data; empty outside stage. */
-  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
-}
-
-/** The authorization slice of the operator stage accounts file: who exists and what each holds. */
 export interface StageAccountsAuthorization {
+  readonly actionAssertions: ActionAuthorizationProvisioningInput['actionAssertions'];
   readonly contexts: readonly ActionAuthorizationContext[];
-  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
+  readonly managedRoles: ActionAuthorizationProvisioningInput['managedRoles'];
+  readonly roleGrants: ActionAuthorizationProvisioningInput['roleGrants'];
 }
+
+export interface ActionAuthorizationProvisioningTarget extends StageAccountsAuthorization {
+  readonly configuration: SpiceDbConfigValue;
+  readonly environment: 'development' | 'stage';
+}
+
+const ProvisioningModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 
 const failure = (
   code: ActionAuthorizationProvisioningError['code'],
@@ -97,26 +85,21 @@ const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
   }
 };
 
-/** Projects the operator stage accounts file onto Action authorization inputs; passwords are dropped. */
-export const stageAccountsAuthorization = (file: StageAccountsFile): StageAccountsAuthorization => {
-  const accounts = file.tenants.flatMap(({ accounts: tenantAccounts, tenantId }) =>
-    tenantAccounts.map(({ grants, principalId }) => ({
-      explicitActions: grants.explicitActions,
-      principalId,
-      tenantId,
-    })),
-  );
-  return {
-    contexts: EffectArray.sortWith(
-      accounts.map(({ principalId, tenantId }) => ({ principalId, tenantId })),
-      ({ principalId }) => principalId,
-      Order.String,
-    ),
-    explicitAccountGrants: accounts.map(({ explicitActions, principalId }) => ({ explicitActions, principalId })),
-  };
-};
+/** Operator data is exact policy evidence, never permissions inferred from emails or role labels. */
+export const stageAccountsAuthorization = (file: StageAccountsFile): StageAccountsAuthorization => ({
+  actionAssertions: file.actionAuthorization.actionAssertions,
+  contexts: file.tenants.flatMap(({ accounts, legalEntity, tenantId }) =>
+    accounts.flatMap(({ principalId }) => [
+      { principalId, tenantId },
+      { legalEntityId: legalEntity.legalEntityId, principalId, tenantId },
+    ]),
+  ),
+  // Bootstrap installs these explicit principal memberships before provisioning the role's Action policy.
+  managedRoles: file.scopedRoles,
+  roleGrants: file.actionAuthorization.roleGrants,
+});
 
-/** Loads the operator stage accounts file named by {@link STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY}. */
+/** Both environments require explicit operator policy; local development has no implicit blanket grant. */
 export const loadStageAccountsAuthorization = (): Effect.Effect<
   StageAccountsAuthorization,
   ActionAuthorizationProvisioningError,
@@ -137,165 +120,184 @@ export const loadStageAccountsAuthorization = (): Effect.Effect<
 
 export const selectActionAuthorizationProvisioningTarget = (
   configuration: SpiceDbConfigValue,
-  stageAuthorization?: StageAccountsAuthorization,
+  authorization: StageAccountsAuthorization,
 ): Effect.Effect<ActionAuthorizationProvisioningTarget, ActionAuthorizationProvisioningError> => {
   if (
     (configuration.deploymentEnvironment === undefined || configuration.deploymentEnvironment === 'development') &&
     isLoopbackSpiceDb(configuration)
   ) {
-    return Effect.succeed({
-      configuration,
-      contexts: [
-        {
-          principalId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
-          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
-        },
-      ],
-      environment: 'development',
-      explicitAccountGrants: [],
-    });
+    return Effect.succeed({ configuration, environment: 'development', ...authorization });
   }
-  if (
-    configuration.deploymentEnvironment === 'stage' &&
-    configuration.endpoint === 'spicedb:50051' &&
-    stageAuthorization !== undefined
-  ) {
-    return Effect.succeed({ configuration, environment: 'stage', ...stageAuthorization });
+  if (configuration.deploymentEnvironment === 'stage' && configuration.endpoint === 'spicedb:50051') {
+    return Effect.succeed({ configuration, environment: 'stage', ...authorization });
   }
   return Effect.fail(
     failure(
       'action_authorization_configuration_invalid',
-      'Current Action authorization can run only against fixed development or stage SpiceDB',
+      'Current Action authorization can run only against development loopback or fixed stage SpiceDB',
     ),
   );
 };
 
 const discoveryFailure = (): ActionAuthorizationProvisioningError =>
-  failure('action_authorization_discovery_failed', 'The complete current Action set could not be derived safely');
+  failure(
+    'action_authorization_discovery_failed',
+    'The complete published Action set and installation scopes could not be derived safely',
+  );
 
-const decodeRepositoryInventory = (workspaceRoot: string) =>
-  Effect.gen(function* decodeRepositoryInventoryEffect() {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const [topologySource, ownershipSource] = yield* Effect.all(
-      [
-        fileSystem.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json'), 'utf-8'),
-        fileSystem.readFileString(path.join(workspaceRoot, 'topology/ownership.json'), 'utf-8'),
-      ],
-      { concurrency: 'unbounded' },
-    ).pipe(Effect.mapError(discoveryFailure));
-    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema))(ownershipSource).pipe(
-      Effect.mapError(discoveryFailure),
-    );
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
-      Effect.mapError(discoveryFailure),
-    );
-    return { ownership, topology };
-  });
-
+/** Contracts come only from the published, validated composition, never the local repository inventory. */
 export const discoverCurrentActions = (
-  workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
-): Effect.Effect<
-  readonly ActionAuthorizationProvisioningAction[],
-  ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
-> =>
-  Effect.gen(function* discoverCurrentActionsEffectGenerator() {
-    const path = yield* Path.Path;
-    const { ownership, topology } = yield* decodeRepositoryInventory(workspaceRoot);
-    if (topology.verticals.length === 0 || coreActionCatalog.length === 0) {
-      return yield* discoveryFailure();
-    }
-    const ownerKeys = new Set(
-      ownership.owners.map(
-        ({ id, package: packageName, path: ownerPath }) => `${id}\u0000${packageName}\u0000${ownerPath}`,
-      ),
+  snapshot: ActiveApplicationCompositionSnapshot,
+): Effect.Effect<readonly ActionAuthorizationProvisioningAction[], ActionAuthorizationProvisioningError> =>
+  Effect.gen(function* discoverCurrentActionsEffect() {
+    const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot).pipe(
+      Effect.mapError(discoveryFailure),
     );
-    const verticals = EffectArray.sortWith(topology.verticals, ({ id }) => id, Order.String);
-    if (
-      new Set(verticals.map(({ id }) => id)).size !== verticals.length ||
-      verticals.some(
-        ({ id, package: packageName, path: ownerPath }) =>
-          !ownerKeys.has(`${id}\u0000${packageName}\u0000${ownerPath}`) ||
-          path.dirname(ownerPath) !== 'verticals' ||
-          path.basename(ownerPath) !== id,
-      )
-    ) {
-      return yield* discoveryFailure();
-    }
-    const contracts = yield* Effect.forEach(
-      verticals,
-      ({ id }) =>
-        deriveContract({ vertical: id, workspaceRoot }).pipe(
-          Effect.mapError(discoveryFailure),
-          Effect.map((contract) => ({ contract, id })),
-        ),
-      { concurrency: 'unbounded' },
+    const catalog = yield* buildApplicationCompositionCatalog(approved.composition).pipe(
+      Effect.mapError(discoveryFailure),
     );
-    const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
-      const verticalActions: ActionAuthorizationProvisioningAction[] = [];
-      for (const { contract, id } of contracts) {
-        // A validated foundation/read-only vertical can publish no Actions. Its deployment
-        // identity and every Action it does publish still have to match the governed contract.
-        if (contract.deployment.appId !== id) {
-          return yield* discoveryFailure();
-        }
-        for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {
-          if (entrypoint?.authorization.kind !== 'action_execution') {
-            return yield* discoveryFailure();
-          }
-          verticalActions.push({
-            actionKey,
-            provisioning: entrypoint.authorization.provisioning,
-          });
-        }
-      }
-
-      return { verticalActions };
-    });
-    const { verticalActions } = yield* collectVerticalActions;
-    const coreActions: ActionAuthorizationProvisioningAction[] = [];
-    for (const { actionKey, entrypoint } of coreActionCatalog) {
-      if (entrypoint.authorization.kind !== 'action_execution') {
+    const actions: ActionAuthorizationProvisioningAction[] = [];
+    for (const descriptor of coreActionCatalog) {
+      if (descriptor.entrypoint.authorization.kind !== 'action_execution') {
         return yield* discoveryFailure();
       }
-      coreActions.push({
-        actionKey,
-        provisioning: entrypoint.authorization.provisioning,
+      actions.push({
+        actionKey: descriptor.actionKey,
+        legalEntityScope: descriptor.legalEntityScope,
+        owningModuleKey: descriptor.owningModuleKey,
+        provisioning: descriptor.entrypoint.authorization.provisioning,
       });
     }
-    const actions = EffectArray.sortWith(
-      [...coreActions, ...verticalActions],
-      ({ actionKey }) => actionKey,
-      Order.String,
-    );
-    const actionKeys = actions.map(({ actionKey }) => actionKey);
-    if (actionKeys.length === 0 || new Set(actionKeys).size !== actionKeys.length) {
+    for (const contract of catalog.contracts) {
+      for (const action of contract.manifest.publicSurface.actions) {
+        if (action.entrypoint.authorization.kind !== 'action_execution') {
+          return yield* discoveryFailure();
+        }
+        actions.push({
+          actionKey: action.actionKey,
+          legalEntityScope: action.legalEntityScope,
+          owningModuleKey: action.owningModuleId,
+          provisioning: action.entrypoint.authorization.provisioning,
+        });
+      }
+    }
+    if (actions.length === 0 || new Set(actions.map(({ actionKey }) => actionKey)).size !== actions.length) {
       return yield* discoveryFailure();
     }
-    return actions;
-  }).pipe(Effect.catchDefect(discoveryFailure));
+    return EffectArray.sortWith(actions, ({ actionKey }) => actionKey, Order.String);
+  });
 
-export const discoverCurrentActionKeys = (
-  workspaceRoot: string,
-  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
-): Effect.Effect<readonly string[], ActionAuthorizationProvisioningError, NodeServices.NodeServices> =>
-  discoverCurrentActions(workspaceRoot, deriveContract).pipe(
-    Effect.map((actions) => actions.map(({ actionKey }) => actionKey)),
-  );
+/** Active tenant installs apply to its companies; graph role grants decide who may use them. */
+export const deriveActionAuthorizationInstalledModuleScopes = (
+  publishedModuleKeys: readonly string[],
+  tenantIds: readonly string[],
+  moduleStates: readonly { readonly moduleKey: string; readonly state: string; readonly tenantId: string }[],
+  companies: readonly { readonly legalEntityId: string; readonly status: string; readonly tenantId: string }[],
+): readonly ActionAuthorizationInstalledModuleScope[] => {
+  const published = new Set(publishedModuleKeys);
+  const coreModuleKeys = [...new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))];
+  return EffectArray.sort([...new Set(tenantIds)], Order.String).flatMap((tenantId) => {
+    const moduleKeys = EffectArray.sort(
+      [
+        ...new Set([
+          ...coreModuleKeys,
+          ...moduleStates.flatMap((row) =>
+            row.tenantId === tenantId && row.state === 'active' && published.has(row.moduleKey) ? [row.moduleKey] : [],
+          ),
+        ]),
+      ],
+      Order.String,
+    );
+    const tenantCompanies = EffectArray.sortWith(
+      companies.filter((company) => company.tenantId === tenantId),
+      ({ legalEntityId }) => legalEntityId,
+      Order.String,
+    );
+    return [
+      { moduleKeys, tenantId },
+      ...tenantCompanies.map((company) => ({
+        legalEntityId: company.legalEntityId,
+        moduleKeys: company.status === 'active' ? moduleKeys : [],
+        tenantId,
+      })),
+    ];
+  });
+};
+
+export const loadCurrentActionAuthorizationComposition = (
+  tenantIds: readonly string[],
+  mode: 'dry-run' | 'apply' | 'verify',
+) =>
+  Effect.gen(function* loadComposition() {
+    if (tenantIds.length === 0) {
+      return yield* discoveryFailure();
+    }
+    const source = yield* ActiveApplicationCompositionService;
+    const snapshot = yield* source.load.pipe(Effect.mapError(discoveryFailure));
+    const database = yield* CoreDatabase;
+    const [authority] = yield* database.executor
+      .select({
+        phase: applicationCompositionAuthority.phase,
+        revision: applicationCompositionAuthority.revision,
+        unexpired: sql<boolean>`${applicationCompositionAuthority.validUntil} > clock_timestamp()`,
+      })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'))
+      .pipe(Effect.mapError(discoveryFailure));
+    if (
+      authority === undefined ||
+      authority.revision !== snapshot.composition.revision ||
+      !authority.unexpired ||
+      (mode === 'apply'
+        ? !['sealed', 'migrated'].includes(authority.phase)
+        : !['active', 'sealed', 'migrated'].includes(authority.phase))
+    ) {
+      return yield* failure(
+        'action_authorization_discovery_failed',
+        'Provisioning requires the exact current composition; apply additionally requires sealed admission',
+      );
+    }
+    const actions = yield* discoverCurrentActions(snapshot);
+    const moduleStates = yield* database.executor
+      .select({
+        moduleKey: tenantModuleStates.moduleKey,
+        state: tenantModuleStates.state,
+        tenantId: tenantModuleStates.tenantId,
+      })
+      .from(tenantModuleStates)
+      .where(inArray(tenantModuleStates.tenantId, [...tenantIds]))
+      .pipe(Effect.mapError(discoveryFailure));
+    const companies = yield* database.executor
+      .select({
+        legalEntityId: legalEntities.legalEntityId,
+        status: legalEntities.status,
+        tenantId: legalEntities.tenantId,
+      })
+      .from(legalEntities)
+      .where(inArray(legalEntities.tenantId, [...tenantIds]))
+      .pipe(Effect.mapError(discoveryFailure));
+    return {
+      actions,
+      authorityPhase: authority.phase,
+      installedModuleScopes: deriveActionAuthorizationInstalledModuleScopes(
+        snapshot.composition.modules.map(({ moduleId }) => moduleId),
+        tenantIds,
+        moduleStates,
+        companies,
+      ),
+      snapshot,
+    };
+  });
 
 interface CloseableProvisioningClient extends ActionAuthorizationProvisioningClient {
   readonly close: () => void;
 }
-
 const provisioningServiceFailure = (cause?: unknown): ActionAuthorizationProvisioningError =>
   failure(
     'action_authorization_service_unavailable',
     'The authorization service could not provision current Action rules safely',
     cause,
   );
-
 const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
   Effect.tryPromise({ catch: provisioningServiceFailure, try: operation }).pipe(
     Effect.timeoutOrElse({
@@ -306,7 +308,6 @@ const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
         ),
     }),
   );
-
 const createProvisioningClient = (configuration: SpiceDbConfigValue): CloseableProvisioningClient => {
   const client = newSpiceDbGrpcClient(configuration);
   return {
@@ -315,36 +316,36 @@ const createProvisioningClient = (configuration: SpiceDbConfigValue): CloseableP
         Effect.map(Option.fromNullishOr),
       ),
     close: () => client.close(),
+    diffSchema: (request) => callProvisioningClient(client.promises.diffSchema.bind(client.promises, request)),
+    readRelationships: (request) =>
+      callProvisioningClient(client.promises.readRelationships.bind(client.promises, request)),
+    readSchema: (request) => callProvisioningClient(client.promises.readSchema.bind(client.promises, request)),
     writeRelationships: (request) =>
       callProvisioningClient(client.promises.writeRelationships.bind(client.promises, request)),
-    writeSchema: (request) => callProvisioningClient(client.promises.writeSchema.bind(client.promises, request)),
   };
 };
-
 const acquireProvisioningClient = (configuration: SpiceDbConfigValue) =>
   Effect.acquireRelease(
-    Effect.try({
-      catch: () =>
-        failure(
-          'action_authorization_service_unavailable',
-          'The authorization provisioning client could not be created',
-        ),
-      try: () => createProvisioningClient(configuration),
-    }),
+    Effect.try({ catch: provisioningServiceFailure, try: () => createProvisioningClient(configuration) }),
     (client) => Effect.sync(() => client.close()),
   );
 
-const runCurrentActionAuthorizationProvisioningWithServices = (
-  workspaceRoot: string,
+const ProvisioningCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(ActiveApplicationCompositionSourceLive),
+  Layer.provide(NodeHttpClient.layerUndici),
+);
+
+export const runCurrentActionAuthorizationProvisioning = (
   commandArguments: readonly string[] = [],
 ): Effect.Effect<
-  ActionAuthorizationProvisioningResult & {
+  ActionAuthorizationProvisioningPlan & {
     readonly environment: 'development' | 'stage';
+    readonly mode: 'dry-run' | 'apply' | 'verify';
   },
   ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
+  ActiveApplicationCompositionService | CoreDatabase | FileSystem.FileSystem
 > =>
-  Effect.gen(function* runCurrentActionAuthorizationProvisioningEffect() {
+  Effect.gen(function* runProvisioning() {
     if (commandArguments.length > 0) {
       return yield* failure(
         'action_authorization_configuration_invalid',
@@ -356,68 +357,107 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
         failure('action_authorization_configuration_invalid', 'The SpiceDB provisioning configuration is invalid'),
       ),
     );
-    const stageAuthorization =
-      configuration.deploymentEnvironment === 'stage' ? yield* loadStageAccountsAuthorization() : undefined;
-    const target = yield* selectActionAuthorizationProvisioningTarget(configuration, stageAuthorization);
-    const actions = yield* discoverCurrentActions(workspaceRoot);
-    const explicitAuthorization =
-      target.environment === 'stage'
-        ? yield* deriveExplicitActionAuthorization(actions, target.contexts, target.explicitAccountGrants)
-        : {};
-    const client = yield* acquireProvisioningClient(target.configuration);
-    const result = yield* provisionActionAuthorization(client, {
-      actions,
-      contexts: target.contexts,
-      ...explicitAuthorization,
-    });
-    return { ...result, environment: target.environment };
+    const mode = yield* Config.schema(ProvisioningModeSchema, 'ONTOS_AUTHORIZATION_MODE').pipe(
+      Config.withDefault('dry-run'),
+      Effect.mapError(() =>
+        failure(
+          'action_authorization_configuration_invalid',
+          'ONTOS_AUTHORIZATION_MODE must be dry-run, apply or verify',
+        ),
+      ),
+    );
+    const authorization = yield* loadStageAccountsAuthorization();
+    const target = yield* selectActionAuthorizationProvisioningTarget(configuration, authorization);
+    return yield* withApplicationCompositionPublicationLock(
+      Effect.gen(function* provisionPublishedComposition() {
+        const composition = yield* loadCurrentActionAuthorizationComposition(
+          [...new Set(target.contexts.map(({ tenantId }) => tenantId))],
+          mode,
+        );
+        const currentActions = yield* Effect.try({
+          catch: discoveryFailure,
+          try: () =>
+            new Set(
+              deriveScopedActionAuthorization(composition.actions, composition.installedModuleScopes).map(
+                toSpiceDbActionObjectId,
+              ),
+            ),
+        });
+        const client = yield* acquireProvisioningClient(target.configuration);
+        const input = {
+          ...composition,
+          actionAssertions: target.actionAssertions.filter((assertion) =>
+            currentActions.has(toSpiceDbActionObjectId(assertion)),
+          ),
+          contexts: target.contexts,
+          managedRoles: target.managedRoles,
+          roleGrants: target.roleGrants,
+        };
+        let result: ActionAuthorizationProvisioningPlan;
+        if (mode === 'apply') {
+          const fingerprint = yield* Config.schema(
+            Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+            'ONTOS_AUTHORIZATION_PLAN_SHA256',
+          ).pipe(
+            Effect.mapError(() =>
+              failure(
+                'action_authorization_configuration_invalid',
+                'Apply requires the reviewed dry-run ONTOS_AUTHORIZATION_PLAN_SHA256',
+              ),
+            ),
+          );
+          result = yield* provisionActionAuthorization(client, input, fingerprint);
+        } else {
+          result = yield* mode === 'verify'
+            ? verifyActionAuthorizationProvisioning(client, input)
+            : planActionAuthorizationProvisioning(client, input);
+        }
+        return { ...result, environment: target.environment, mode };
+      }),
+    ).pipe(
+      Effect.mapError((error) =>
+        Schema.is(ActionAuthorizationProvisioningError)(error) ? error : provisioningServiceFailure(error),
+      ),
+    );
   }).pipe(Effect.scoped);
-
-export function runCurrentActionAuthorizationProvisioning(
-  workspaceRoot: string,
-  commandArguments: readonly [string, ...string[]],
-): Effect.Effect<
-  ActionAuthorizationProvisioningResult & {
-    readonly environment: 'development' | 'stage';
-  },
-  ActionAuthorizationProvisioningError
->;
-export function runCurrentActionAuthorizationProvisioning(workspaceRoot: string): Effect.Effect<
-  ActionAuthorizationProvisioningResult & {
-    readonly environment: 'development' | 'stage';
-  },
-  ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
->;
-export function runCurrentActionAuthorizationProvisioning(
-  workspaceRoot: string,
-  commandArguments: readonly string[] = [],
-): Effect.Effect<
-  ActionAuthorizationProvisioningResult & {
-    readonly environment: 'development' | 'stage';
-  },
-  ActionAuthorizationProvisioningError,
-  NodeServices.NodeServices
-> {
-  return runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot, commandArguments);
-}
 
 export const formatActionAuthorizationProvisioningFailure = (cause: unknown): string =>
   Schema.is(ActionAuthorizationProvisioningError)(cause)
     ? `${cause.code}: ${cause.reason}`
     : 'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
 
+const PlanReportSchema = Schema.Struct({
+  actionCount: Schema.Number,
+  environment: Schema.Literals(['development', 'stage']),
+  fingerprint: Schema.String,
+  grantCount: Schema.Number,
+  mode: ProvisioningModeSchema,
+  tenantCount: Schema.Number,
+  updates: Schema.Array(Schema.String),
+});
+
 const command = Command.make('authorization-provision-current-actions', {}, () =>
-  Effect.gen(function* provisionCurrentActionsCommand() {
-    const path = yield* Path.Path;
-    const workspaceRoot = path.resolve(import.meta.dirname, '..');
-    const result = yield* runCurrentActionAuthorizationProvisioningWithServices(workspaceRoot).pipe(
-      Effect.tapError((cause) => Console.error(formatActionAuthorizationProvisioningFailure(cause))),
-    );
-    yield* Console.log(
-      `Provisioned ${result.grantCount} Action executor grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
-    );
-  }),
+  Layer.build(
+    Layer.effectDiscard(
+      Effect.gen(function* provisionCommand() {
+        const result = yield* runCurrentActionAuthorizationProvisioning().pipe(
+          Effect.tapError((cause) => Console.error(formatActionAuthorizationProvisioningFailure(cause))),
+        );
+        const report = yield* Schema.encodeEffect(Schema.fromJsonString(PlanReportSchema))({
+          actionCount: result.actionCount,
+          environment: result.environment,
+          fingerprint: result.fingerprint,
+          grantCount: result.grantCount,
+          mode: result.mode,
+          tenantCount: result.tenantCount,
+          updates: result.updates.map((update) => v1.RelationshipUpdate.toJsonString(update)),
+        });
+        yield* Console.log(report);
+      }),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(ProvisioningCompositionLive, ApplicationCompositionAuthorityAdminDatabaseLive)),
+    ),
+  ).pipe(Effect.scoped, Effect.asVoid),
 );
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -425,8 +465,6 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
     Layer.build(
       Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(Layer.provide(NodeServices.layer)),
     ).pipe(Effect.scoped),
-    {
-      disableErrorReporting: true,
-    },
+    { disableErrorReporting: true },
   );
 }

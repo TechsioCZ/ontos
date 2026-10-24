@@ -24,7 +24,12 @@ import { companyDirectoryLive } from '../oauth-connections-admin/company-directo
 import { commandRecordReference, resolveActivityLinks } from './activity-links.ts';
 
 import { approverCheck, hiddenByReview } from './approval-logic.ts';
-import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
+import {
+  AgentPlatformForbidden,
+  AgentPlatformInvalid,
+  assertAgentProposalsAuthorized,
+  callerModuleAccess,
+} from './caller.ts';
 import { loadComposedModules } from './composed-modules.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
@@ -99,10 +104,13 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
   request: AgentProposalSubmitRequest,
 ) {
   const { legalEntityId, principalId, tenantId } = agent.principal;
+  yield* assertAgentProposalsAuthorized(agent, request.proposals);
   if (request.runId !== undefined) {
-    const existing = yield* findRunProposals(tenantId, principalId, request.runId);
+    const existing = yield* findRunProposals(tenantId, legalEntityId, principalId, request.runId);
     const first = existing[0];
     if (first !== undefined) {
+      // A run ID does not authorize the stored Actions if the request has changed or rights were revoked.
+      yield* assertAgentProposalsAuthorized(agent, existing);
       return {
         batchId: first.batchId,
         proposalIds: existing.map((row) => row.proposalId),
@@ -352,7 +360,7 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   }
   const { legalEntityId, tenantId } = caller.principal;
   const agentIds = yield* listCompanyAgentIds(tenantId);
-  const profiles = yield* loadAgentProfiles(tenantId, agentIds).pipe(
+  const profiles = yield* loadAgentProfiles(tenantId, legalEntityId, agentIds).pipe(
     Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
   );
   const proposalOnlyAgents = new Set(
@@ -424,9 +432,15 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const visiblePrincipals = canManage
     ? yield* companyDirectoryLive.members(tenantId, legalEntityId).pipe(
         Effect.flatMap((members) =>
-          Effect.all([companyDirectoryLive.agents(tenantId, members), companyDirectoryLive.people(tenantId, members)], {
-            concurrency: 1,
-          }),
+          Effect.all(
+            [
+              companyDirectoryLive.agents(tenantId, legalEntityId, members),
+              companyDirectoryLive.people(tenantId, members),
+            ],
+            {
+              concurrency: 1,
+            },
+          ),
         ),
         Effect.map(([agents, people]) => ({
           agents: new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
@@ -436,10 +450,8 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
       )
     : { agents: new Set<string>(), people: new Set<string>() };
   const grants = canManage ? yield* listGrants({ tenantId, legalEntityId }).pipe(Effect.orElseSucceed(() => [])) : [];
-  const identityPage = canManage
-    ? composed.all.find((module) => module.agentAdministrationPage !== undefined && modules.access.has(module.moduleId))
-        ?.agentAdministrationPage
-    : undefined;
+  // Identity management belongs to the Shell, independent of installed workforce modules.
+  const identityPage = canManage ? '/sprava/lide-a-role' : undefined;
   return {
     ...combined,
     agents: [...new Map([...activity.agents, ...combined.agents].map((agent) => [agent.principalId, agent])).values()],

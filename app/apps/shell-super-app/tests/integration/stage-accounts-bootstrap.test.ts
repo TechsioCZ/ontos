@@ -21,13 +21,16 @@ import { loadUserAccount } from '../../api/oauth-connections/grant-store.ts';
 /** A one-account stage accounts file with fresh identifiers, as the operator would write it. */
 const oneAccountFileSource = (): string =>
   JSON.stringify({
+    actionAuthorization: { actionAssertions: [], roleGrants: [] },
     retiredAccountEmails: [],
     retiredTenants: [],
-    schemaVersion: 2,
+    schemaVersion: 4,
+    scopedRoles: [],
     tenants: [
       {
         accounts: [
           {
+            affiliation: 'employee',
             authBindingId: randomUUID(),
             displayName: 'First',
             email: `stage-first-${randomUUID()}@example.test`,

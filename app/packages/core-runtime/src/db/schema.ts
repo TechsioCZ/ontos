@@ -17,6 +17,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
+import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
 
 export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
 
@@ -29,6 +30,8 @@ export const CORE_TABLE_INVENTORY = [
   'legal_entities',
   'principals',
   'principal_auth_bindings',
+  'principal_company_memberships',
+  'person_invitations',
   'tenant_module_states',
   'action_invocations',
   'tenant_module_state_changes',
@@ -281,6 +284,87 @@ export const principalAuthBindings = coreSchema.table(
       sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
     ),
   ],
+);
+
+/** Core-owned directory membership. Departures retain identity and company history; rows are never deleted. */
+export const principalCompanyMemberships = coreSchema.table.withRLS(
+  'principal_company_memberships',
+  {
+    tenantId: tenantId(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    principalId: principalId(),
+    affiliation: text('affiliation').$type<CompanyAffiliation>(),
+    status: text('status').$type<CompanyMembershipStatus>().notNull(),
+    revision: integer('revision').default(1).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => {
+    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+    return [
+      primaryKey({
+        name: 'core_principal_company_memberships_pk',
+        columns: [table.tenantId, table.legalEntityId, table.principalId],
+      }),
+      foreignKey({
+        name: 'core_company_memberships_principal_fk',
+        columns: [table.tenantId, table.principalId],
+        foreignColumns: [principals.tenantId, principals.principalId],
+      }).onDelete('restrict'),
+      foreignKey({
+        name: 'core_company_memberships_legal_entity_fk',
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      }).onDelete('restrict'),
+      index('core_company_memberships_principal_idx').on(table.tenantId, table.principalId),
+      check('core_company_memberships_affiliation_ck', sql`${table.affiliation} in ('employee', 'external')`),
+      check(
+        'core_company_memberships_status_ck',
+        sql`${table.status} in ('invited', 'active', 'disabled', 'departed')`,
+      ),
+      check('core_company_memberships_revision_ck', sql`${table.revision} >= 1`),
+      pgPolicy('core_company_memberships_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+      pgPolicy('core_company_memberships_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+      pgPolicy('core_company_memberships_update', {
+        for: 'update',
+        to: 'ontos_runtime',
+        using: scope,
+        withCheck: scope,
+      }),
+    ];
+  },
+);
+
+/** Immutable invitation intent. The one-use secret belongs only to the authentication provider's verification row. */
+export const personInvitations = coreSchema.table.withRLS(
+  'person_invitations',
+  {
+    invitationId: uuid('invitation_id').primaryKey(),
+    tenantId: tenantId(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    principalId: principalId(),
+    providerSubjectId: text('provider_subject_id').notNull(),
+    verificationId: text('verification_id').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => {
+    const scope = sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid and ${table.legalEntityId} = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
+    return [
+      foreignKey({
+        name: 'core_person_invitations_membership_fk',
+        columns: [table.tenantId, table.legalEntityId, table.principalId],
+        foreignColumns: [principalCompanyMemberships.tenantId, principalCompanyMemberships.legalEntityId, principalCompanyMemberships.principalId],
+      }).onDelete('restrict'),
+      uniqueIndex('core_person_invitations_verification_uk').on(table.verificationId),
+      uniqueIndex('core_person_invitations_principal_uk').on(table.tenantId, table.principalId),
+      check('core_person_invitations_provider_subject_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+      check('core_person_invitations_verification_ck', sql`length(${table.verificationId}) between 1 and 500`),
+      check('core_person_invitations_expiry_ck', sql`${table.expiresAt} > ${table.createdAt}`),
+      pgPolicy('core_person_invitations_select', { for: 'select', to: 'ontos_runtime', using: scope }),
+      pgPolicy('core_person_invitations_insert', { for: 'insert', to: 'ontos_runtime', withCheck: scope }),
+    ];
+  },
 );
 
 const legalEntityId = () => uuid('legal_entity_id');
@@ -1178,7 +1262,9 @@ export const coreDatabaseSchema = {
   outboxAttempts,
   outboxDeliveries,
   outboxMessages,
+  personInvitations,
   principalAuthBindings,
+  principalCompanyMemberships,
   principals,
   searchIndexEntries,
   searchProjectionGenerations,
@@ -1196,6 +1282,8 @@ export const CORE_TABLES = [
   legalEntities,
   principals,
   principalAuthBindings,
+  principalCompanyMemberships,
+  personInvitations,
   tenantModuleStates,
   actionInvocations,
   tenantModuleStateChanges,

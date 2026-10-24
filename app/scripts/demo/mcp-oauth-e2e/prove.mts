@@ -22,7 +22,7 @@ import { connectMcp, callJson, rawLegacyInitialize, rawMcpStatus, MODERN_PROTOCO
 import { openSharedTab, approveConnection, sessionPost } from './browser.mts';
 import type { ActAs, E2eTab } from './browser.mts';
 
-// Seeded agent (scripts/demo/ai-profiles.mts level B, operator = company administrator via mcp-agent-operators.mts):
+// Seeded agent (scripts/demo/ai-profiles.mts level B, operator = company administrator via setup-agent-operators.mts):
 // direct writes on work.tasks only, every other module read-only.
 const AGENT_NAME = 'AI agent B · čtení + úkoly (Obchodní firma)';
 const PROOF_TASK_PREFIX = 'Důkaz MCP OAuth (agent)';

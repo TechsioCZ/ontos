@@ -1,8 +1,110 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
+import { Effect, Option, Schema } from 'effect';
+import { CompanyAffiliationSchema, isCompanyAffiliationValid } from '../permissions/company-membership.ts';
 
-import { legalEntities, principalAuthBindings, principals } from '../db/schema.ts';
+import {
+  legalEntities,
+  principalAuthBindings,
+  principalCompanyMemberships,
+  principals,
+  tenants,
+} from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import {
+  ActionAuthorizationProvisioningError,
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+  deriveScopedActionAuthorization,
+} from './action-authorization-provisioning.ts';
+import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
+import type { ScopedRoleIdentity } from '../permissions/scoped-role.ts';
+
+/** Explicit seed selection only. Account creation and role grants never imply a membership. */
+export const BootstrapCompanyMembershipSchema = Schema.Struct({
+  affiliation: Schema.OptionFromNullOr(CompanyAffiliationSchema),
+  legalEntityId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('BootstrapCompanyMembershipLegalEntityId')),
+  principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('BootstrapCompanyMembershipPrincipalId')),
+});
+
+export class BootstrapCompanyMembershipConflict extends Schema.TaggedError<BootstrapCompanyMembershipConflict>()(
+  'BootstrapCompanyMembershipConflict',
+  { reason: Schema.String },
+) {}
+
+/** Initial development fixtures are insert-only; a rerun may never reactivate or reclassify an actor. */
+export const installBootstrapCompanyMemberships = Effect.fn('DevelopmentBootstrap.explicitCompanyMemberships')(
+  function* installMemberships(
+    transaction: CoreTransaction,
+    tenantId: string,
+    memberships: readonly (typeof BootstrapCompanyMembershipSchema.Type)[],
+  ) {
+    const keys = memberships.map((member) => `${member.principalId}:${member.legalEntityId}`);
+    if (new Set(keys).size !== keys.length) {
+      return yield* new BootstrapCompanyMembershipConflict({
+        reason: 'Development membership selections must be unique',
+      });
+    }
+    return yield* Effect.forEach(
+      memberships,
+      Effect.fn('DevelopmentBootstrap.installMembership')(function* installMembership(membership) {
+        const affiliation = Option.getOrNull(membership.affiliation);
+        const [target] = yield* transaction
+          .select({
+            companyStatus: legalEntities.status,
+            kind: principals.kind,
+            principalStatus: principals.status,
+            tenantStatus: tenants.status,
+          })
+          .from(principals)
+          .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
+          .innerJoin(
+            legalEntities,
+            and(
+              eq(legalEntities.tenantId, principals.tenantId),
+              eq(legalEntities.legalEntityId, membership.legalEntityId),
+            ),
+          )
+          .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, membership.principalId)));
+        if (
+          target === undefined ||
+          target.tenantStatus !== 'active' ||
+          target.companyStatus !== 'active' ||
+          target.principalStatus !== 'active' ||
+          !isCompanyAffiliationValid(target.kind, affiliation)
+        ) {
+          return yield* new BootstrapCompanyMembershipConflict({
+            reason:
+              'Development membership requires an existing active tenant-local company actor and explicit valid affiliation',
+          });
+        }
+        const identity = { legalEntityId: membership.legalEntityId, principalId: membership.principalId, tenantId };
+        yield* transaction
+          .insert(principalCompanyMemberships)
+          .values({ ...identity, affiliation, status: 'active' })
+          .onConflictDoNothing();
+        const [current] = yield* transaction
+          .select({ affiliation: principalCompanyMemberships.affiliation, status: principalCompanyMemberships.status })
+          .from(principalCompanyMemberships)
+          .where(
+            and(
+              eq(principalCompanyMemberships.tenantId, tenantId),
+              eq(principalCompanyMemberships.legalEntityId, membership.legalEntityId),
+              eq(principalCompanyMemberships.principalId, membership.principalId),
+            ),
+          );
+        if (current === undefined || current.status !== 'active' || current.affiliation !== affiliation) {
+          return yield* new BootstrapCompanyMembershipConflict({
+            reason:
+              'Existing company membership differs from the initial fixture; use the governed membership Action instead',
+          });
+        }
+        return yield* Effect.void;
+      }),
+      { concurrency: 1, discard: true },
+    );
+  },
+);
 
 interface BootstrapIdentity {
   readonly authBindingId: string;
@@ -94,13 +196,85 @@ export const bootstrapPrincipalRecord = (context: BootstrapIdentity) =>
     tenantId: context.tenantId,
   }) as const;
 
-interface BootstrapRelationship {
+export interface BootstrapRelationship {
   readonly relation: string;
   readonly resourceId: string;
   readonly resourceType: string;
   readonly subjectId: string;
+  readonly subjectRelation?: string;
   readonly subjectType: string;
 }
+
+/** Project only explicitly selected company actors onto SQL-owned tenant admission, never workloads. */
+export const companyMembershipAdmissionRelationships = (
+  relationships: readonly BootstrapRelationship[],
+  members: readonly { readonly principalId: string; readonly tenantId: string }[],
+): readonly BootstrapRelationship[] => {
+  const selected = new Map<string, Set<string>>();
+  for (const member of members) {
+    const actorIds = selected.get(member.tenantId) ?? new Set<string>();
+    actorIds.add(member.principalId);
+    selected.set(member.tenantId, actorIds);
+  }
+  return relationships.map((row) =>
+    row.resourceType === 'tenant' &&
+    row.relation === 'member' &&
+    row.subjectType === 'principal' &&
+    (selected.get(row.resourceId)?.has(row.subjectId) ?? false)
+      ? { ...row, relation: 'company_member' }
+      : row,
+  );
+};
+
+/** Exact wire projection, including usersets; conditional evidence must never be silently weakened. */
+export const bootstrapRelationshipsFromNative = (
+  relationships: readonly v1.Relationship[],
+): readonly BootstrapRelationship[] =>
+  relationships.map((item) => {
+    if (
+      item.resource === undefined ||
+      item.subject?.object === undefined ||
+      item.optionalCaveat !== undefined ||
+      item.optionalExpiresAt !== undefined
+    ) {
+      throw new ActionAuthorizationProvisioningError({
+        code: 'action_authorization_input_invalid',
+        reason: 'Bootstrap relationships require complete unconditional native authorization evidence',
+      });
+    }
+    return {
+      relation: item.relation,
+      resourceId: item.resource.objectId,
+      resourceType: item.resource.objectType,
+      subjectId: item.subject.object.objectId,
+      subjectRelation: item.subject.optionalRelation,
+      subjectType: item.subject.object.objectType,
+    };
+  });
+
+/** Explicit role policy in exactly one valid descriptor scope; never creates membership or guesses ownership. */
+export const scopedActionRoleBootstrapRelationships = (
+  input: ScopedRoleIdentity & {
+    readonly action: ActionAuthorizationProvisioningAction;
+  },
+): readonly BootstrapRelationship[] => {
+  const { action, ...scope } = input;
+  const installed = [{ ...scope, moduleKeys: [action.owningModuleKey] }];
+  const actions = deriveScopedActionAuthorization([action], installed);
+  if (actions.length !== 1) {
+    throw new ActionAuthorizationProvisioningError({
+      code: 'action_authorization_input_invalid',
+      reason: 'The selected bootstrap Action does not exist in the explicit role scope',
+    });
+  }
+  return bootstrapRelationshipsFromNative([
+    ...buildActionAuthorizationRelationships(actions),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((item) => ({ ...item, roleKey: scope.roleKey })),
+      installed,
+    ),
+  ]);
+};
 
 export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRelationship[]) =>
   v1.WriteRelationshipsRequest.create({
@@ -118,6 +292,7 @@ export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRe
               objectId: item.subjectId,
               objectType: item.subjectType,
             }),
+            optionalRelation: item.subjectRelation ?? '',
           }),
         }),
       }),

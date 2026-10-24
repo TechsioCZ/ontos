@@ -39,7 +39,7 @@ const access: ActivityLinkAccess = {
   canManageAgents: true,
   canOpenModule: true,
   canReviewProposals: true,
-  identityPage: '/people',
+  identityPage: '/sprava/lide-a-role',
   module: { ...module, page: '/notes', recordLinks: [link] },
   personExists: false,
   records: { state: { notes: [{ id: 'a /&?', title: 'Poznámka zákazníka' }] } },
@@ -68,7 +68,7 @@ it('links the exact proposal, record, module home, agent identity and each real 
   expect(resolved.actionPath).toBe('/sprava/ke-schvaleni?davka=core%3Abatch&navrh=core%3Aproposal');
   expect(resolved.modulePath).toBe('/notes');
   expect(resolved.record).toEqual({ label: 'Poznámka zákazníka', path: '/notes?note=a+%2F%26%3F' });
-  expect(resolved.agentPath).toBe('/people?agent=agent-1');
+  expect(resolved.agentPath).toBe('/sprava/lide-a-role?agent=agent-1');
   expect(resolved.grants?.[0]?.path).toBe('/sprava/pripojene-aplikace?grant=grant%20%2F1');
 });
 
@@ -117,7 +117,7 @@ it('links human-delegated OAuth activity to its real person identity, not a fabr
     grants: access.grants.map((grant) => ({ ...grant, actingKind: 'human' })),
     personExists: true,
   });
-  expect(resolved.agentPath).toBe('/people?person=agent-1');
+  expect(resolved.agentPath).toBe('/sprava/lide-a-role?person=agent-1');
   expect(resolved.grants?.[0]?.path).toBe('/sprava/pripojene-aplikace?grant=grant%20%2F1');
   expect(
     resolveActivityLinks(entry, { ...access, canManageAgents: false, personExists: true }).agentPath,

@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
@@ -8,11 +8,15 @@ import {
   buildRetiredStageContextRelationships,
   buildStageContextRelationships,
   stageContextsFromAccountsFile,
+  reconcilePostgresContext,
 } from '../../src/install/stage-context-bootstrap.ts';
+import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const fixturePassword = (account: string): string => `fixture-${account}-password`;
 
 const accountsFileSource = JSON.stringify({
+  actionAuthorization: { actionAssertions: [], roleGrants: [] },
   retiredAccountEmails: [],
   retiredTenants: [
     {
@@ -22,11 +26,25 @@ const accountsFileSource = JSON.stringify({
       tenantId: '10000000-0000-4000-8000-0000000000b0',
     },
   ],
-  schemaVersion: 2,
+  schemaVersion: 4,
+  scopedRoles: [
+    {
+      legalEntityId: '11000000-0000-4000-8000-0000000000a0',
+      principalIds: ['20000000-0000-4000-8000-0000000000a2'],
+      roleKey: 'stage:writer',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
+    },
+    {
+      principalIds: ['20000000-0000-4000-8000-0000000000a1'],
+      roleKey: 'stage:tenant-reader',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
+    },
+  ],
   tenants: [
     {
       accounts: [
         {
+          affiliation: 'employee',
           authBindingId: '30000000-0000-4000-8000-0000000000a1',
           displayName: 'Tenant A account 1',
           email: 'account-a-1@example.invalid',
@@ -35,6 +53,7 @@ const accountsFileSource = JSON.stringify({
           principalId: '20000000-0000-4000-8000-0000000000a1',
         },
         {
+          affiliation: 'employee',
           authBindingId: '30000000-0000-4000-8000-0000000000a2',
           displayName: 'Tenant A account 2',
           email: 'account-a-2@example.invalid',
@@ -84,9 +103,23 @@ it.effect('writes exactly the Tenant relations listed in grant data, only inside
   Effect.gen(function* writesListedRelations() {
     for (const context of stageContextsFromAccountsFile(yield* loadAccountsFile)) {
       const relationships = yield* buildStageContextRelationships(context);
+      expect(relationships).toContainEqual({
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      });
+      expect(relationships).toContainEqual({
+        relation: 'tenant',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      });
       expect(
         relationships
-          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
+          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'company_member')
           .map(({ relation }) => relation),
       ).toEqual([...context.tenantRelations]);
       expect(
@@ -106,7 +139,14 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
       return;
     }
     const relationships = yield* buildRetiredStageContextRelationships(retired);
-    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 3));
+    expect(relationships).toContainEqual({
+      relation: 'self',
+      resourceId: retired.principalIds[0],
+      resourceType: 'principal',
+      subjectId: retired.principalIds[0],
+      subjectType: 'principal',
+    });
+    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 6));
     expect(relationships).toContainEqual({
       relation: 'member',
       resourceId: retired.tenantId,
@@ -116,7 +156,7 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
     });
     expect(
       relationships.filter(({ resourceType }) => resourceType === 'tenant').map(({ relation }) => relation),
-    ).toEqual(['member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
+    ).toEqual(['member', 'company_member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
   }),
 );
 
@@ -169,4 +209,79 @@ it.effect('requires distinct service IDs and the native stage guard before openi
       'only in stage',
     );
   }),
+);
+
+it.effect('installs exactly the file-selected role members without assigning a peer or widening a company role', () =>
+  Effect.gen(function* explicitScopedMembers() {
+    const file = yield* loadAccountsFile;
+    for (const context of stageContextsFromAccountsFile(file)) {
+      const selected = file.scopedRoles.filter((role) => role.principalIds.some((id) => id === context.principalId));
+      const relationships = yield* buildStageContextRelationships(context);
+      expect(relationships.filter((row) => row.resourceType === 'scoped_role')).toEqual(
+        selected.map((role) => ({
+          relation: 'member',
+          resourceId: toScopedRoleObjectId(role),
+          resourceType: 'scoped_role',
+          subjectId: context.principalId,
+          subjectType: 'principal',
+        })),
+      );
+      const rejected = yield* Effect.result(
+        buildStageContextRelationships({
+          ...context,
+          scopedRoles: [{ legalEntityId: 'foreign-company', roleKey: 'writer', tenantId: context.tenantId }],
+        }),
+      );
+      expect(rejected._tag).toBe('Failure');
+    }
+  }),
+);
+
+it.effect(
+  'creates the explicit active SQL membership in the same stage identity transaction and never reactivates it',
+  () =>
+    Effect.gen(function* explicitSqlMembership() {
+      const [first] = stageContextsFromAccountsFile(yield* loadAccountsFile);
+      if (first === undefined) {
+        throw new Error('Missing stage fixture');
+      }
+      for (const affiliation of ['employee', 'external'] as const) {
+        const context = { ...first, affiliation };
+        for (const status of ['active', 'offboarded'] as const) {
+          const statements: { readonly parameters: readonly unknown[]; readonly query: string }[] = [];
+          const database = yield* makeTestDatabase((query, parameters) =>
+            Effect.sync(() => {
+              statements.push({ parameters, query });
+              if (query.includes('inner join "core"."tenants"')) {
+                return [{ companyStatus: 'active', kind: 'human', principalStatus: 'active', tenantStatus: 'active' }];
+              }
+              if (query.startsWith('select') && query.includes('"core"."principal_company_memberships"')) {
+                return [{ affiliation, status }];
+              }
+              return [];
+            }),
+          );
+          const result = yield* Effect.result(
+            reconcilePostgresContext(database, context, 'stage-provider-user', 'staff'),
+          );
+          expect(Result.isSuccess(result)).toBe(status === 'active');
+          const inserts = statements.filter(({ query }) =>
+            query.startsWith('insert into "core"."principal_company_memberships"'),
+          );
+          expect(inserts).toHaveLength(1);
+          expect(inserts[0]?.parameters).toEqual(
+            expect.arrayContaining([
+              context.tenantId,
+              context.principalId,
+              context.legalEntityId,
+              affiliation,
+              'active',
+            ]),
+          );
+          expect(inserts[0]?.query).toContain('on conflict do nothing');
+          expect(statements.some(({ query }) => query.startsWith('update'))).toBe(false);
+          expect(statements.at(-1)?.query).toBe(status === 'active' ? 'COMMIT' : 'ROLLBACK');
+        }
+      }
+    }),
 );

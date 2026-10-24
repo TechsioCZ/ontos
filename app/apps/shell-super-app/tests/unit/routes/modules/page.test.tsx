@@ -502,6 +502,7 @@ it.live('rejects an approved remote name that collides with the native Shell hos
 
 const expectedPageProps = (model: ResolvedPageModel): ModulePageProps => ({
   context: {
+    displayName: 'Ada Lovelace',
     legalEntityId: '20000000-0000-4000-8000-000000000001',
     principalId: 'principal-1',
     tenantId: 'tenant-1',

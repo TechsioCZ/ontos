@@ -25,7 +25,11 @@ import {
   tenantModuleStates,
   tenants,
 } from '../db/schema.ts';
-import { buildActionAuthorizationRelationships } from '../install/action-authorization-provisioning.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
@@ -168,31 +172,54 @@ const fixtureAuthorizationRelationships = (input: {
   readonly actionKeys: readonly string[];
   readonly actors: readonly FixtureActor[];
   readonly entityObject: string;
+  readonly legalEntityId: string;
   readonly legalEntityOnly: FixtureActor;
   readonly manager: FixtureActor;
+  readonly moduleKey: string;
   readonly moduleObject: string;
   readonly tenantId: string;
-}) => [
-  ...input.actors.map((principal) =>
-    relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
-  ),
-  ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
-    (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
-  ),
-  relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
-  ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
-    ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
-      relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+}) => {
+  // Acceptance fixtures exercise both tenant and company Actions. Neither scope
+  // inherits the other's grant, and only the manager joins the explicit roles.
+  const scopes = [
+    { moduleKeys: [input.moduleKey], tenantId: input.tenantId },
+    { legalEntityId: input.legalEntityId, moduleKeys: [input.moduleKey], tenantId: input.tenantId },
+  ];
+  const actions = scopes.flatMap((scope) => input.actionKeys.map((actionKey) => ({ ...scope, actionKey })));
+  const roleKey = 'live-fixture-manager';
+  return [
+    ...input.actors.map((principal) =>
+      relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
     ),
-  ),
-  relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
-  ...[input.manager, input.legalEntityOnly].map((principal) =>
-    relationship('module_access', input.moduleObject, 'accessor', 'principal', principal.principalId),
-  ),
-  ...buildActionAuthorizationRelationships(input.actionKeys, [
-    { principalId: input.manager.principalId, tenantId: input.tenantId },
-  ]),
-];
+    ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
+      (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
+    ),
+    relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
+    ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
+      ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
+        relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
+      ),
+    ),
+    relationship('module_access', input.moduleObject, 'legal_entity', 'legal_entity', input.entityObject),
+    ...[input.manager, input.legalEntityOnly].map((principal) =>
+      relationship('module_access', input.moduleObject, 'accessor', 'principal', principal.principalId),
+    ),
+    ...buildActionAuthorizationRelationships(actions),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((action) => ({ ...action, roleKey })),
+      scopes,
+    ),
+    ...scopes.map((scope) =>
+      relationship(
+        'scoped_role',
+        toScopedRoleObjectId({ ...scope, roleKey }),
+        'member',
+        'principal',
+        input.manager.principalId,
+      ),
+    ),
+  ];
+};
 
 const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFixture')(
   function* setupLiveOperationFixtureEffect(input: {
@@ -253,8 +280,10 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       actionKeys: input.actionKeys,
       actors: input.actors,
       entityObject,
+      legalEntityId: input.legalEntityId,
       legalEntityOnly: input.legalEntityOnly,
       manager: input.manager,
+      moduleKey: input.moduleKey,
       moduleObject,
       tenantId: input.tenantId,
     });

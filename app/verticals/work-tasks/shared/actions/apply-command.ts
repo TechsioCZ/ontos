@@ -12,7 +12,6 @@ import {
   CalendarDateSchema,
   StorefrontInquirySchema,
   ContextRefSchema,
-  EmployeeIdSchema,
   OpportunityIdSchema,
   PlannedHoursSchema,
   ProjectIdSchema,
@@ -37,15 +36,14 @@ const DueDateSchema = CalendarDateSchema.check(
   }),
 );
 const editableFields = {
-  plannedHours: Schema.optionalKey(PlannedHoursSchema),
-  projectId: Schema.optionalKey(ProjectIdSchema),
-  assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   dueDate: Schema.optionalKey(DueDateSchema),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   partyId: Schema.optionalKey(PartyIdSchema),
+  plannedHours: Schema.optionalKey(PlannedHoursSchema),
   priority: Schema.optionalKey(TaskPrioritySchema),
+  projectId: Schema.optionalKey(ProjectIdSchema),
 };
 const bulkTaskIdsSchema = Schema.Array(TaskRefSchema.fields.resourceId).check(
   Schema.isMinLength(1),
@@ -78,17 +76,23 @@ export const SingleWorkCommandSchema = Schema.Union([
 export const BulkWorkCommandSchema = Schema.Union([
   Schema.TaggedStruct('BulkAssignTasks', {
     // Wire `null` clears the assignee (None in the decoded model).
-    assigneeEmployeeId: Schema.OptionFromNullOr(EmployeeIdSchema),
     ids: bulkTaskIdsSchema,
+    ownerPrincipalRef: Schema.OptionFromNullOr(PrincipalRefSchema),
   }),
   Schema.TaggedStruct('BulkChangeTaskState', { ids: bulkTaskIdsSchema, toState: TaskStateSchema }),
 ]);
 export const PlanningCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProject', {
-    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['id', 'createdAt', 'history', 'updatedAt'])).fields,
+    ...Schema.Struct(
+      Struct.omit(ProjectSchema.fields, ['id', 'createdAt', 'history', 'updatedAt', 'assignmentNeedsReassignment']),
+    ).fields,
+    responsiblePrincipalRef: PrincipalRefSchema,
   }),
   Schema.TaggedStruct('UpdateProject', {
-    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['createdAt', 'history', 'updatedAt'])).fields,
+    ...Schema.Struct(
+      Struct.omit(ProjectSchema.fields, ['createdAt', 'history', 'updatedAt', 'assignmentNeedsReassignment']),
+    ).fields,
+    responsiblePrincipalRef: PrincipalRefSchema,
   }),
   Schema.TaggedStruct('AddTaskComment', {
     taskRef: TaskRefSchema,
@@ -114,9 +118,9 @@ export const BulkTaskResultSchema = Schema.Struct({
 });
 export type BulkTaskResult = typeof BulkTaskResultSchema.Type;
 export const ApplyCommandResultSchema = Schema.Struct({
+  project: Schema.optionalKey(ProjectSchema),
   results: Schema.optionalKey(Schema.Array(BulkTaskResultSchema)),
   revision: Schema.Int,
-  project: Schema.optionalKey(ProjectSchema),
   task: Schema.optionalKey(TaskSchema),
 });
 export const WorkErrorSchema = Schema.Union([

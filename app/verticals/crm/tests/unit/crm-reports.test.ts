@@ -354,10 +354,12 @@ describe('CRM shell Home summary', () => {
       },
     };
     const result = buildCrmHomeSummary({
-      state: projectCrmState(state, repA),
-      viewer: repA,
+      assignmentCandidates: [],
+      departedPrincipalIds: [],
       now: '2026-10-20T09:00:00.000Z',
       revision: 1,
+      state: projectCrmState(state, repA),
+      viewer: repA,
     });
     expect(result.clients).toBe(1);
     expect(result.dueToday).toBe(1);

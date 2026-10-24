@@ -1,3 +1,4 @@
+export { ActionAuthority, ActionAuthorityLive } from '../permissions/action-authority.ts';
 export { ModuleEntrypointGatewayLive } from '../modules/module-entrypoint-gateway.ts';
 export { ModuleStateGateLive } from '../modules/module-state-gate.ts';
 export { OperationalScopeResolverLive } from '../operations/context.ts';

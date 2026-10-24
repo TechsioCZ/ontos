@@ -41,7 +41,12 @@ const headers = new Headers({ cookie: 'session=test-session', origin: 'http://lo
 const sessionResponse = () => ({
   headers: new Headers({ 'set-cookie': 'session=renewed; HttpOnly' }),
   response: {
-    session: { activeLegalEntityId: legalEntityId, activeTenantId: tenantId, id: 'document-session' },
+    session: {
+      activeContextKind: 'company',
+      activeLegalEntityId: legalEntityId,
+      activeTenantId: tenantId,
+      id: 'document-session',
+    },
     user: { email: 'document@example.test', id: userId },
   },
 });

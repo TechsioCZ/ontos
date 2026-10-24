@@ -274,6 +274,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:verticals/privacy
+      '@app/shell-super-app':
+        specifier: workspace:*
+        version: link:apps/shell-super-app
       '@app/property-leasing':
         specifier: workspace:*
         version: link:verticals/property-leasing
@@ -492,6 +495,9 @@ importers:
 
   apps/shell-super-app:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/assortment':
         specifier: workspace:*
         version: link:../../verticals/assortment

@@ -41,11 +41,16 @@ import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
+import { toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
+import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../src/install/action-authorization-provisioning.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
   createPermissionCheckClient,
   makeActionPermissionService,
-  toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
@@ -98,6 +103,10 @@ const testOperationalScopeResolver: OperationalScopeResolverService = {
 };
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
+const companyObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
+if (companyObjectId === undefined) {
+  throw new Error('Invalid permission fixture company identity');
+}
 const principalId = randomUUID();
 const principalAuthBindingId = randomUUID();
 const nonMemberPrincipalId = randomUUID();
@@ -168,49 +177,43 @@ const withDatabase = <Value, Error, Requirements>(
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const relationshipActionKeys = new Set<string>();
-
-type ExecutorSubject =
-  | { readonly objectId: string; readonly objectType: 'principal' }
-  | {
-      readonly objectId: string;
-      readonly objectType: 'tenant';
-      readonly optionalRelation: 'member';
-    };
-
-const defaultExecutorSubject: ExecutorSubject = {
-  objectId: principalId,
-  objectType: 'principal',
+const fixtureGraphObjects = new Map<string, v1.ObjectReference>();
+const rememberRelationships = (relationships: readonly v1.Relationship[]) => {
+  for (const item of relationships) {
+    if (item.resource !== undefined) {
+      fixtureGraphObjects.set(`${item.resource.objectType}:${item.resource.objectId}`, item.resource);
+    }
+  }
+  return relationships;
 };
 
-const relationship = (
-  actionKey: string,
-  relation: 'executor' | 'restriction',
-  executorSubject: ExecutorSubject = defaultExecutorSubject,
-) => {
-  relationshipActionKeys.add(actionKey);
-  return v1.Relationship.create({
-    relation,
-    resource: v1.ObjectReference.create({
-      objectId: toSpiceDbActionObjectId(actionKey),
-      objectType: 'action',
-    }),
-    subject: v1.SubjectReference.create({
-      object:
-        relation === 'restriction'
-          ? v1.ObjectReference.create({
-              objectId: toSpiceDbActionObjectId(actionKey),
-              objectType: 'action',
-            })
-          : v1.ObjectReference.create({
-              objectId: executorSubject.objectId,
-              objectType: executorSubject.objectType,
-            }),
-      optionalRelation:
-        relation === 'executor' && executorSubject.objectType === 'tenant' ? executorSubject.optionalRelation : '',
-    }),
-  });
-};
+const installedScopes = [
+  { moduleKeys: ['core.shell'], tenantId },
+  { legalEntityId, moduleKeys: ['core.shell'], tenantId },
+  { moduleKeys: ['core.shell'], tenantId: otherTenantId },
+];
+const policyScopes = installedScopes.filter((scope) => scope.tenantId === tenantId);
+const installedActionRelationships = (actionKey: string) =>
+  rememberRelationships(
+    buildActionAuthorizationRelationships(installedScopes.map((scope) => ({ ...scope, actionKey }))),
+  );
+const actionRoleRelationships = (actionKey: string, roleKey: string) =>
+  buildActionAuthorizationRoleGrantRelationships(
+    policyScopes.map((scope) => ({ ...scope, actionKey, roleKey })),
+    installedScopes,
+  );
+const roleMembershipRelationships = (roleKey: string) =>
+  policyScopes.flatMap((scope) =>
+    // Deliberately grant the role to non-members too: only actual scope membership
+    // admits execution. The role itself must never create tenant/company access.
+    [principalId, nonMemberPrincipalId, otherTenantPrincipalId].map((memberId) =>
+      v1.Relationship.create({
+        relation: 'member',
+        resource: { objectId: toScopedRoleObjectId({ ...scope, roleKey }), objectType: 'scoped_role' },
+        subject: { object: { objectId: memberId, objectType: 'principal' } },
+      }),
+    ),
+  );
 
 const tenantMembership = (membershipTenantId: string, membershipPrincipalId: string) =>
   v1.Relationship.create({
@@ -371,29 +374,39 @@ const PermissionFixture = Layer.effect(
       yield* Effect.promise(() =>
         adminClient.promises.writeRelationships(
           v1.WriteRelationshipsRequest.create({
-            updates: [
-              relationship(actionKeys.allowed, 'restriction'),
-              relationship(actionKeys.allowed, 'executor'),
-              relationship(actionKeys.membershipAllowed, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.crossTenantDenied, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.nonMemberDenied, 'executor', {
-                objectId: tenantId,
-                objectType: 'tenant',
-                optionalRelation: 'member',
-              }),
-              relationship(actionKeys.denied, 'restriction'),
-              relationship(actionKeys.concurrentDenied, 'restriction'),
+            updates: rememberRelationships([
+              ...[
+                actionKeys.allowed,
+                actionKeys.membershipAllowed,
+                actionKeys.crossTenantDenied,
+                actionKeys.nonMemberDenied,
+                actionKeys.denied,
+                actionKeys.concurrentDenied,
+              ].flatMap(installedActionRelationships),
+              ...actionRoleRelationships(actionKeys.allowed, 'fixture-executor'),
+              ...actionRoleRelationships(actionKeys.membershipAllowed, 'fixture-module-writer'),
+              ...actionRoleRelationships(actionKeys.crossTenantDenied, 'fixture-executor'),
+              ...actionRoleRelationships(actionKeys.nonMemberDenied, 'fixture-executor'),
+              ...['fixture-executor', 'fixture-module-writer'].flatMap(roleMembershipRelationships),
               tenantMembership(tenantId, principalId),
               tenantMembership(otherTenantId, otherTenantPrincipalId),
-            ].map((item) =>
+              v1.Relationship.create({
+                relation: 'tenant',
+                resource: {
+                  objectId: companyObjectId,
+                  objectType: 'legal_entity',
+                },
+                subject: { object: { objectId: tenantId, objectType: 'tenant' } },
+              }),
+              v1.Relationship.create({
+                relation: 'member',
+                resource: {
+                  objectId: companyObjectId,
+                  objectType: 'legal_entity',
+                },
+                subject: { object: { objectId: principalId, objectType: 'principal' } },
+              }),
+            ]).map((item) =>
               v1.RelationshipUpdate.create({
                 operation: v1.RelationshipUpdate_Operation.TOUCH,
                 relationship: item,
@@ -407,39 +420,20 @@ const PermissionFixture = Layer.effect(
     const cleanup = Effect.gen(function* cleanPermissionFixture() {
       const relationshipCleanupExit = yield* Effect.exit(
         Effect.forEach(
-          [...relationshipActionKeys],
-          (actionKey) =>
+          [...fixtureGraphObjects.values()],
+          (resource) =>
             Effect.promise(() =>
               adminClient.promises.deleteRelationships(
                 v1.DeleteRelationshipsRequest.create({
                   relationshipFilter: v1.RelationshipFilter.create({
-                    optionalResourceId: toSpiceDbActionObjectId(actionKey),
-                    resourceType: 'action',
+                    optionalResourceId: resource.objectId,
+                    resourceType: resource.objectType,
                   }),
                 }),
               ),
             ),
           { discard: true },
-        ).pipe(
-          Effect.andThen(
-            Effect.forEach(
-              [tenantId, otherTenantId],
-              (membershipTenantId) =>
-                Effect.promise(() =>
-                  adminClient.promises.deleteRelationships(
-                    v1.DeleteRelationshipsRequest.create({
-                      relationshipFilter: v1.RelationshipFilter.create({
-                        optionalResourceId: membershipTenantId,
-                        resourceType: 'tenant',
-                      }),
-                    }),
-                  ),
-                ),
-              { discard: true },
-            ),
-          ),
-          Effect.ensuring(Effect.sync(() => adminClient.close())),
-        ),
+        ).pipe(Effect.ensuring(Effect.sync(() => adminClient.close()))),
       );
 
       yield* withDatabase((database) =>
@@ -564,8 +558,8 @@ const testProgram1 = () =>
   withDatabase((database) =>
     Effect.forEach(
       [
-        ['direct', actionKeys.allowed],
-        ['membership', actionKeys.membershipAllowed],
+        ['assigned-role', actionKeys.allowed],
+        ['module-writer-role', actionKeys.membershipAllowed],
       ] as const,
       Effect.fn(function* verifyAllowedAction([kind, actionKey]) {
         const executions: ExecutionCounter = { value: 0 };
@@ -655,7 +649,7 @@ const testProgram3 = () =>
   withDatabase((database) =>
     Effect.forEach(
       [
-        ['legacy-marker', actionKeys.denied, principal],
+        ['installed-without-grant', actionKeys.denied, principal],
         ['other-tenant', actionKeys.crossTenantDenied, otherTenantPrincipal],
         ['non-member', actionKeys.nonMemberDenied, nonMemberPrincipal],
       ] as const,
@@ -789,12 +783,12 @@ const testProgram5 = () =>
         yield* Effect.promise(() =>
           adminClient.promises.writeRelationships(
             v1.WriteRelationshipsRequest.create({
-              updates: [
+              updates: installedActionRelationships(actionKey).map((item) =>
                 v1.RelationshipUpdate.create({
                   operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: relationship(actionKey, 'restriction'),
+                  relationship: item,
                 }),
-              ],
+              ),
             }),
           ),
         );
@@ -875,11 +869,11 @@ it.layer(
     excludeTestServices: true,
   },
 )('Action permissions', (suite) => {
-  suite.effect('allows direct Principal and Tenant-membership executor grants', testProgram1);
+  suite.effect('allows assigned scoped roles with active company and tenant membership', testProgram1);
 
   suite.effect('persists one normalized terminal denial and no business or collected evidence', testProgram2);
 
-  suite.effect('denies a legacy marker without an executor and membership-set outsiders', testProgram3);
+  suite.effect('denies installed Actions without grants and role holders outside the exact scope', testProgram3);
 
   suite.effect('returns the recorded permission denial to a same-key retry', testProgram4);
   suite.effect('serializes concurrent denials into one Audit Event without executing the handler', testProgram4b);

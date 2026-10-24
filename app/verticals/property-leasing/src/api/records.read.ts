@@ -10,7 +10,7 @@ import {
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Struct } from 'effect';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { persistenceService, filterOccupancyRecords } from '../services/persistence.service.ts';
 
@@ -23,13 +23,14 @@ export type Services = Effect.Success<ReturnType<typeof persistenceService>>;
  * SpiceDB round trip, so the reads run it in `prepare`, before their transaction opens. A read-only or
  * approval-only MCP connection never offers direct changes.
  */
-const occupancyActionPermission = (scope: Pick<OperationalScope, 'principalId' | 'correlationId'>) =>
+const occupancyActionPermission = (
+  scope: Pick<OperationalScope, 'principalId' | 'correlationId' | 'tenantId' | 'legalEntityId'>,
+) =>
   ActionPermission.pipe(
     Effect.flatMap((permission) =>
       permission.checkActionPermission({
         actionKey: 'property.leasing.apply-command',
-        correlationId: scope.correlationId,
-        principalId: scope.principalId,
+        ...Struct.pick(scope, ['correlationId', 'legalEntityId', 'principalId', 'tenantId']),
       }),
     ),
     Effect.map((decision) => decision === 'allowed'),

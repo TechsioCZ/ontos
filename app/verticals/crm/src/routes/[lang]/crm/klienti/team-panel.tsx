@@ -1,54 +1,16 @@
-// Obchodníci (CRM.md §8, C00): správce / vedoucí see the CRM salespeople, register company accounts with the
-// Obchodník role as salespeople and retire them. Accounts themselves (sign-in, role, deactivation) are managed in
-// Nastavení › Lidé a role; the list of accounts comes from that page's shell endpoint (company administrators only).
+// Explicit CRM assignment, independent of kind, affiliation or role names. The governed people directory
+// supplies existing principals; account access remains in Lidé a role.
 import { SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { useEffect, useState } from 'react';
+import { Effect } from 'effect';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
-const AccountSchema = Schema.Struct({
-  displayName: Schema.String,
-  email: Schema.NullOr(Schema.String),
-  principalId: Schema.String,
-  roleKey: Schema.NullOr(Schema.String),
-  roleLabel: Schema.NullOr(Schema.String),
-  status: Schema.String,
-});
-const AccountListSchema = Schema.Struct({ accounts: Schema.Array(AccountSchema) });
-type Account = typeof AccountSchema.Type;
-
-type Accounts =
-  | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable'; readonly forbidden: boolean }
-  | { readonly accounts: readonly Account[]; readonly kind: 'ready' };
-
-/** Roles whose holders work as salespeople (Hanák „Obchodník“, Siampark „Externí partner“ / obchod). */
-const salesRole = (account: Account) =>
-  account.roleKey === 'crmRep' || /obchodn|extern/iu.test(account.roleLabel ?? '');
-
-const loadAccounts = Effect.gen(function* loadAccounts() {
-  const client = yield* HttpClient.HttpClient;
-  const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post('/shell-super-app-api/auth/identity/demo-accounts/list').pipe(
-      HttpClientRequest.setHeader('accept', 'application/json'),
-    ),
-    {},
-  );
-  const response = yield* client.execute(request);
-  if (response.status !== 200) {
-    return { forbidden: response.status === 403, kind: 'unavailable' } satisfies Accounts;
-  }
-  const list = yield* Schema.decodeUnknownEffect(AccountListSchema)(yield* response.json);
-  return { accounts: list.accounts, kind: 'ready' } satisfies Accounts;
-}).pipe(Effect.orElseSucceed((): Accounts => ({ forbidden: false, kind: 'unavailable' })));
+const REQUEST_TIMEOUT = '30 seconds';
 
 export const TeamPanel = ({
   busy,
@@ -59,28 +21,32 @@ export const TeamPanel = ({
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- React panel receives the existing parent event adapter; remove-when: CRM parent exposes Effect commands.
   readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
 }) => {
   const toaster = useToast();
-  const [accounts, setAccounts] = useState<Accounts>({ kind: 'loading' });
-  useEffect(() => {
-    void browserRuntime.runPromise(loadAccounts).then(setAccounts);
-  }, []);
-  const run = (command: CrmCommand, success: string) =>
-    void submit(command).then((outcome) =>
-      toaster.create(
-        outcome.ok
-          ? { title: success, type: 'success' }
-          : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+  const run = (command: CrmCommand, success: string) => {
+    browserRuntime.runFork(
+      // oxlint-disable-next-line typescript/promise-function-async -- Native parent React event adapter is already Promise-based; remove-when: parent exposes an Effect command.
+      Effect.promise(() => submit(command)).pipe(
+        Effect.timeout(REQUEST_TIMEOUT),
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            toaster.create(
+              outcome.ok
+                ? { title: success, type: 'success' }
+                : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+            );
+          }),
+        ),
       ),
     );
+  };
   const registered = new Set(records.state.salespeople.map((person) => person.principalId));
-  const candidates =
-    accounts.kind === 'ready'
-      ? accounts.accounts.filter(
-          (account) => account.status === 'active' && salesRole(account) && !registered.has(account.principalId),
-        )
-      : [];
+  const candidates = records.assignmentCandidates.filter(
+    (account) => !registered.has(account.principalRef.principalId),
+  );
+  const departed = new Set(records.departedPrincipalIds);
   const clientCount = (id: string) =>
     records.state.clients.items.filter((client) => client.status === 'active' && client.ownerSalespersonId === id)
       .length;
@@ -93,7 +59,7 @@ export const TeamPanel = ({
         </Button>
       }
       closeLabel={dialogCloseLabel}
-      description="Jen zařazení obchodníci mohou mít přidělené klienty. Účty, role a deaktivaci přihlášení spravuje správce v Nastavení › Lidé a role."
+      description="Zařaďte člověka nebo agenta s aktivním přístupem do CRM této firmy. Odchod z firmy zachovává historii; klienty převeďte jinému obchodníkovi."
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -108,6 +74,8 @@ export const TeamPanel = ({
         <ul className="flex flex-col gap-100">
           {records.state.salespeople.map((person) => {
             const owned = clientCount(person.id);
+            const hasDeparted = person.principalId !== undefined && departed.has(person.principalId);
+            const activeLabel = person.active ? 'Aktivní' : 'Vyřazen';
             return (
               <li
                 className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-100 p-150`}
@@ -117,7 +85,7 @@ export const TeamPanel = ({
                   <span className="flex items-center gap-100 font-medium">
                     {person.name}
                     <Badge size="sm" variant={person.active ? 'success' : 'outline'}>
-                      {person.active ? 'Aktivní' : 'Vyřazen'}
+                      {hasDeparted ? 'Odešel – přeřadit' : activeLabel}
                     </Badge>
                   </span>
                   <span className="text-fg-secondary text-xs">
@@ -131,7 +99,7 @@ export const TeamPanel = ({
                   </span>
                 </span>
                 <Button
-                  disabled={busy || (person.active && owned > 0)}
+                  disabled={busy || (person.active && owned > 0) || (!person.active && hasDeparted)}
                   onClick={() =>
                     run(
                       { _tag: 'SetSalespersonActive', active: !person.active, salespersonId: person.id },
@@ -150,30 +118,20 @@ export const TeamPanel = ({
           })}
         </ul>
         <section className="flex flex-col gap-100">
-          <h3 className="font-semibold text-sm">Účty s rolí obchodníka, které ještě nejsou zařazené</h3>
-          {accounts.kind === 'loading' && <p className="text-fg-secondary text-sm">Načítám účty firmy…</p>}
-          {accounts.kind === 'unavailable' && (
-            <StatusText showIcon status="warning">
-              {accounts.forbidden
-                ? 'Seznam účtů firmy vidí jen správce. Nového obchodníka zařadí správce.'
-                : 'Seznam účtů se nepodařilo načíst. Zkuste to prosím znovu.'}
-            </StatusText>
-          )}
-          {accounts.kind === 'ready' && candidates.length === 0 && (
+          <h3 className="font-semibold text-sm">Aktivní lidé a agenti, kteří ještě nejsou zařazení</h3>
+          {candidates.length === 0 ? (
             <p className="text-fg-secondary text-sm">
-              Všechny aktivní účty s rolí obchodníka jsou zařazené. Nový účet založíte v Nastavení › Lidé a role.
+              Všichni dostupní obchodníci už jsou zařazení. Přístup do CRM spravuje správce v Nastavení › Lidé a role.
             </p>
-          )}
+          ) : null}
           {candidates.map((account) => (
             <div
               className="flex flex-wrap items-center justify-between gap-100 rounded-lg border border-border-primary border-dashed p-150"
-              key={account.principalId}
+              key={account.principalRef.principalId}
             >
               <span className="flex min-w-0 flex-col">
                 <span className="font-medium">{account.displayName}</span>
-                <span className="text-fg-secondary text-xs">
-                  {[account.email, account.roleLabel].filter((part) => part !== null).join(' · ')}
-                </span>
+                <span className="text-fg-secondary text-xs">Přístup do CRM ověřen</span>
               </span>
               <Button
                 disabled={busy}
@@ -183,8 +141,7 @@ export const TeamPanel = ({
                     {
                       _tag: 'RegisterSalesperson',
                       name: account.displayName,
-                      principalId: account.principalId,
-                      ...(account.email === null ? {} : { email: account.email }),
+                      principalId: account.principalRef.principalId,
                     },
                     `${account.displayName} zařazen mezi obchodníky`,
                   )

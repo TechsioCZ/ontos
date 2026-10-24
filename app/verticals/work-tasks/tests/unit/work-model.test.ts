@@ -8,10 +8,12 @@ import {
 import { Effect, DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ContextAccess } from '@app/core-runtime';
+import { AssignablePrincipals, AssigneeIneligible } from '@app/core-runtime/auth/assignable-principals';
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
 import { type StorefrontInquiry, WorkStateSchema, CalendarDateSchema } from '../../shared/apis/records.ts';
 import {
   evolveWorkState,
+  finishWorkRecords,
   taskIsOverdue,
   taskStatusGroup,
   visibleWorkTasks,
@@ -19,7 +21,7 @@ import {
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const now = DateTime.makeUnsafe('2026-10-05T10:00:00Z');
-const scope: OperationalScope = {
+const scope = {
   authBindingId: '20000000-0000-4000-8000-000000000003',
   authContextRef: 'session:test',
   authMethod: 'session',
@@ -27,7 +29,7 @@ const scope: OperationalScope = {
   legalEntityId: '20000000-0000-4000-8000-000000000004',
   principalId: '20000000-0000-4000-8000-000000000002',
   tenantId,
-};
+} satisfies OperationalScope;
 const seed = {
   collection: {
     properties: {
@@ -92,6 +94,183 @@ it.effect('a restricted persona sees its own tasks, never another principal’s 
       Effect.provideService(ContextAccess, fakeAccess([])),
     );
     expect(visible.map((task) => task.title)).toEqual(['Vlastní úkol']);
+  }),
+);
+
+it.effect('personal visibility compares the full tenant and principal identity', () =>
+  Effect.gen(function* fullPrincipalIdentity() {
+    const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      state,
+      {
+        _tag: 'CreateTask',
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        title: 'Owned work',
+      },
+      { now, resourceId: 'identity', tenantId },
+    );
+    const foreign = {
+      ...created.task,
+      ownerPrincipalRef: { principalId: scope.principalId, tenantId: scope.authBindingId },
+    };
+    expect(
+      yield* visibleWorkTasks([foreign], scope, false).pipe(Effect.provideService(ContextAccess, fakeAccess([]))),
+    ).toEqual([]);
+  }),
+);
+
+it.effect('unrelated task edits preserve a historical assignment and its reassignment marker', () =>
+  Effect.gen(function* preserveHistoricalAssignment() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      {
+        _tag: 'CreateTask',
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        title: 'Departed owner work',
+      },
+      { now, resourceId: 'departed', tenantId },
+    );
+    const task = { ...created.task, assignmentNeedsReassignment: true };
+    const changed = yield* evolveWorkState(
+      { ...created.state, tasks: [task] },
+      {
+        _tag: 'UpdateTask',
+        taskRef: task.ref,
+        title: 'Updated title',
+      },
+      { now, resourceId: 'departed', tenantId },
+    );
+    expect(changed.task.ownerPrincipalRef).toEqual(task.ownerPrincipalRef);
+    expect(changed.task).toMatchObject({ assignmentNeedsReassignment: true });
+    const retainedOwner = yield* evolveWorkState(
+      changed.state,
+      {
+        _tag: 'UpdateTask',
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        taskRef: task.ref,
+      },
+      { now, resourceId: 'departed', tenantId },
+    );
+    expect(retainedOwner.task).toMatchObject({ assignmentNeedsReassignment: true });
+  }),
+);
+
+it.effect('projects departed task and project owners without rewriting their stored references', () =>
+  Effect.gen(function* departedProjection() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      {
+        _tag: 'CreateTask',
+        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        title: 'Historical work',
+      },
+      { now, resourceId: 'historical', tenantId },
+    );
+    const state = yield* Schema.encodeEffect(WorkStateSchema)({
+      ...created.state,
+      projects: [
+        {
+          createdAt: now,
+          id: 'historical-project',
+          milestones: [],
+          plannedEnd: '2026-10-31',
+          plannedStart: '2026-10-01',
+          responsiblePrincipalRef: created.task.ownerPrincipalRef,
+          state: 'ACTIVE',
+          title: 'Historical project',
+          updatedAt: now,
+        },
+      ],
+    });
+    const available = { displayName: 'Available agent', principalRef: { principalId: scope.authBindingId, tenantId } };
+    const records = yield* finishWorkRecords(
+      {},
+      {
+        assignmentDirectory: {
+          legalEntityId: '20000000-0000-4000-8000-000000000004',
+          members: [
+            { ...available, membershipStatus: 'active', principalStatus: 'active' },
+            {
+              displayName: 'Former colleague',
+              membershipStatus: 'departed',
+              principalRef: { principalId: scope.principalId, tenantId },
+              principalStatus: 'active',
+            },
+          ],
+          tenantId,
+        },
+        names: new Map([
+          [scope.principalId, 'Former colleague'],
+          [scope.authBindingId, available.displayName],
+        ]),
+        revision: 7,
+        state,
+      },
+      {
+        lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        readAll: true,
+        writeAll: true,
+      },
+      scope,
+    ).pipe(
+      Effect.provideService(ContextAccess, fakeAccess([])),
+      Effect.provideService(AssignablePrincipals, {
+        read: () => Effect.succeed([available]),
+        resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
+      }),
+    );
+    expect(records.items[0]?.ownerPrincipalRef).toEqual(created.task.ownerPrincipalRef);
+    expect(records.items[0]?.assignmentNeedsReassignment).toBe(true);
+    expect(records.projects[0]?.responsiblePrincipalRef).toEqual(created.task.ownerPrincipalRef);
+    expect(records.projects[0]?.assignmentNeedsReassignment).toBe(true);
+    expect(records.assignablePrincipals).toEqual([available]);
+    expect(created.task).not.toHaveProperty('assignmentNeedsReassignment');
+  }),
+);
+
+it.effect('closed unlinked records keep historical provenance but never advertise reassignment', () =>
+  Effect.gen(function* closedUnlinkedProjection() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      { _tag: 'CreateTask', title: 'Unlinked history' },
+      { now, resourceId: 'unlinked', tenantId },
+    );
+    const state = yield* Schema.encodeEffect(WorkStateSchema)({
+      ...created.state,
+      tasks: (['DONE', 'CANCELLED', 'NEW'] as const).map((taskState) => ({
+        ...created.task,
+        assignmentNeedsReassignment: true,
+        assignmentWithoutLogin: true,
+        ref: { ...created.task.ref, resourceId: Schema.decodeUnknownSync(TaskRefSchema.fields.resourceId)(taskState) },
+        state: taskState,
+      })),
+    });
+    const records = yield* finishWorkRecords(
+      {},
+      {
+        assignmentDirectory: { legalEntityId: scope.legalEntityId, members: [], tenantId },
+        names: new Map(),
+        revision: 1,
+        state,
+      },
+      {
+        lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        readAll: true,
+        writeAll: true,
+      },
+      scope,
+    ).pipe(
+      Effect.provideService(ContextAccess, fakeAccess([])),
+      Effect.provideService(AssignablePrincipals, {
+        read: () => Effect.succeed([]),
+        resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
+      }),
+    );
+    expect(records.items.map((task) => task.assignmentNeedsReassignment === true)).toEqual([false, false, true]);
+    expect(records.items.every((task) => task.assignmentWithoutLogin === true)).toBe(true);
   }),
 );
 

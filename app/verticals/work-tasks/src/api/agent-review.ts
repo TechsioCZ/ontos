@@ -41,7 +41,6 @@ const VALUE_OPTIONS = {
 
 const TASK_LABELS: Readonly<Record<string, string>> = {
   archived: 'Archivováno',
-  assigneeEmployeeId: 'Zaměstnanec',
   contextRefs: 'Souvislosti',
   description: 'Popis',
   dueDate: 'Termín',
@@ -86,7 +85,7 @@ export const taskDiff = (command: AgentCommand, before: Rec | undefined): AgentD
 };
 
 export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenantId: string): AgentRevertPlan => {
-  const taskRef = command['taskRef'];
+  const { taskRef } = command;
   switch (command['_tag']) {
     case 'CreateTask': {
       const createdRef = taskRefOfCreated(tenantId);
@@ -99,10 +98,14 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
       );
     }
     case 'UpdateTask': {
-      if (before === undefined) return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
+      if (before === undefined) {
+        return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
+      }
       const fields: Record<string, unknown> = {};
       for (const key of Object.keys(command)) {
-        if (key === '_tag' || key === 'taskRef') continue;
+        if (key === '_tag' || key === 'taskRef') {
+          continue;
+        }
         const previous = before[key];
         if (previous !== undefined) {
           fields[key] = previous;
@@ -148,7 +151,7 @@ export const taskStillInPlace = (command: AgentCommand, current: Rec | undefined
 
 /**
  * Task history only knows the approving person, so a comment on the task names the agent that proposed the change.
- * Work Tasks names the comment author from Workforce.
+ * Work Tasks snapshots the comment author's Core principal display name.
  */
 export const provenanceComment = (
   command: AgentCommand,
@@ -169,7 +172,7 @@ export const provenanceComment = (
       },
     ],
     ...(created ? { createdIdPath: 'task.ref.resourceId' } : {}),
-    referenceAudiences: ['workforce'],
+    referenceAudiences: [],
   };
 };
 
@@ -183,7 +186,13 @@ export interface TaskReviewInput {
   readonly tenantId: string;
 }
 
-export const reviewTaskProposal = ({ canWrite, request, task, taskRead, tenantId }: TaskReviewInput): AgentReviewItem => {
+export const reviewTaskProposal = ({
+  canWrite,
+  request,
+  task,
+  taskRead,
+  tenantId,
+}: TaskReviewInput): AgentReviewItem => {
   const { command, key, proposal, stage } = request;
   const targeted = targetTaskId(command) !== undefined;
   if (stage === 'history') {
@@ -193,7 +202,11 @@ export const reviewTaskProposal = ({ canWrite, request, task, taskRead, tenantId
   if (stage === 'undo') {
     // Undo only over a task read just now; a failed read leaves the change alone.
     const inPlace = taskStillInPlace(command, task);
-    return { key, visible: !targeted || task !== undefined, ...(inPlace === undefined ? {} : { stillInPlace: inPlace }) };
+    return {
+      key,
+      visible: !targeted || task !== undefined,
+      ...(inPlace === undefined ? {} : { stillInPlace: inPlace }),
+    };
   }
   const missing = targeted && taskRead && task === undefined;
   const lines = taskDiff(command, task);

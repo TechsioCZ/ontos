@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { Context, Effect, Layer, Option } from 'effect';
 
@@ -91,9 +91,11 @@ export const makeOperationalScopeRepository = (database: {
   load: (principal) =>
     Effect.suspend(() => {
       const impersonators = alias(principals, 'impersonators');
+      const bindingAudit = alias(auditEvents, 'binding_creation_audit');
       return database.executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
+          bindingIssuingLegalEntityId: bindingAudit.legalEntityId,
           bindingPrincipalId: principalAuthBindings.principalId,
           bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
@@ -104,6 +106,7 @@ export const makeOperationalScopeRepository = (database: {
           impersonatorTenantId: impersonators.tenantId,
           legalEntityStatus: legalEntities.status,
           legalEntityTenantId: legalEntities.tenantId,
+          principalKind: principals.kind,
           principalStatus: principals.status,
           principalTenantId: principals.tenantId,
           tenantStatus: tenants.status,
@@ -132,6 +135,16 @@ export const makeOperationalScopeRepository = (database: {
               ),
         )
         .leftJoin(
+          bindingAudit,
+          and(
+            eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
+            eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
+            eq(bindingAudit.eventType, 'action.executed'),
+            eq(bindingAudit.outcome, 'succeeded'),
+            sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
+          ),
+        )
+        .leftJoin(
           legalEntities,
           principal.legalEntityId === undefined
             ? eq(legalEntities.legalEntityId, '00000000-0000-0000-0000-000000000000')
@@ -148,6 +161,7 @@ export const makeOperationalScopeRepository = (database: {
         ([record]) =>
           record ?? {
             bindingAuthenticationNamespaceId: null,
+            bindingIssuingLegalEntityId: null,
             bindingPrincipalId: null,
             bindingRevision: null,
             bindingRevokedAt: null,
@@ -158,6 +172,7 @@ export const makeOperationalScopeRepository = (database: {
             impersonatorTenantId: null,
             legalEntityStatus: null,
             legalEntityTenantId: null,
+            principalKind: null,
             principalStatus: null,
             principalTenantId: null,
             tenantStatus: null,
@@ -221,7 +236,9 @@ const hasInvalidPersistedBinding = (
   );
 };
 
-const subjectTypeForPrincipal = (principal: TrustedPrincipalContext): 'user' | 'api_key' | 'oauth_grant' | undefined => {
+const subjectTypeForPrincipal = (
+  principal: TrustedPrincipalContext,
+): 'user' | 'api_key' | 'oauth_grant' | undefined => {
   if (principal.authMethod === 'api_key') {
     return 'api_key';
   }
@@ -253,6 +270,20 @@ const validatePersistedPrincipal = (
     return new OperationAuthenticationRequired({
       code: 'operation_authentication_required',
       reason: 'The authenticated principal binding is no longer valid',
+    });
+  }
+  // The binding's successful creation audit, never the caller's requested scope or
+  // the principal's other roles, owns a company-issued agent key's boundary.
+  if (
+    principal.authMethod === 'api_key' &&
+    persisted.principalKind === 'agent' &&
+    (persisted.bindingIssuingLegalEntityId === null ||
+      persisted.bindingIssuingLegalEntityId === undefined ||
+      principal.legalEntityId !== persisted.bindingIssuingLegalEntityId)
+  ) {
+    return new OperationContextDenied({
+      code: 'operation_context_denied',
+      reason: 'The agent key requires its issuing company context',
     });
   }
   const expectedSubjectType = subjectTypeForPrincipal(principal);
@@ -533,10 +564,10 @@ const inactiveOperationDenial =
         authMethod: input.principal.authMethod,
         eventType: 'authn.rejected',
         evidenceJson: {
+          audience: input.audience ?? null,
+          correlationId: input.correlationId,
           reason: 'principal_disabled',
           source: 'operational_scope',
-          correlationId: input.correlationId,
-          audience: input.audience ?? null,
         },
         legalEntityId: input.principal.legalEntityId,
         outcome: 'denied',
