@@ -80,6 +80,8 @@ const reads = Layer.effect(
 const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase)));
 const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
 export const AgentProfileOperatorLive = Layer.mergeAll(
+  // Core revalidates the staff namespace when Actions run, not only while the authentication service is built.
+  StaffAuthenticationNamespaceRegistryLive,
   identityLifecycle,
   ActionAuthorityLive,
   OAuthFlowLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase))),

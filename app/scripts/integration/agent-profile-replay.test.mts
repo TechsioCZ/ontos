@@ -1,9 +1,24 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { NodeServices } from '@effect/platform-node';
+import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Config, ConfigProvider, DateTime, Effect, FileSystem, Option, Predicate, Redacted } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
+import { HttpServer, HttpServerResponse } from 'effect/unstable/http';
+import { NetAddress } from 'effect/unstable/net';
+import { ActiveApplicationCompositionSnapshotSchema } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 
 import {
   ActionRuntime,
@@ -68,7 +83,7 @@ import { makeIdentityLifecycleService } from '../../apps/shell-super-app/api/aut
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import { makeInstalledModuleCatalogLayer } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { runAgentOperatorSetup } from '../demo/setup-agent-operators.mts';
-import { authenticateAgentProfileOperator } from '../demo/agent-profile-operator.mts';
+import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from '../demo/agent-profile-operator.mts';
 import {
   AgentProfileReadDatabase,
   AgentProfileSetupError,
@@ -747,7 +762,55 @@ it.live(
           ),
         ),
       );
-      return yield* proof;
+      yield* proof;
+      // Exercise the exported CLI composition, without the handcrafted proof's registry/runtime injections.
+      const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+      const snapshotDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(snapshot);
+      yield* server.serve(
+        Effect.succeed(HttpServerResponse.text(snapshotDocument, { contentType: 'application/json' })),
+      );
+      if (!NetAddress.isInetAddress(server.address)) {
+        return yield* Effect.die('Native operator proof requires an owned loopback composition server');
+      }
+      const compositionUrl = `http://127.0.0.1:${server.address.port}/active`;
+      yield* Effect.gen(function* exportedOperatorComposition() {
+        const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
+          session.close.pipe(Effect.ignore),
+        );
+        const nativeRuntime = yield* ActionRuntime;
+        const configured = yield* nativeRuntime.runAction({
+          payload: {
+            description: null,
+            displayName: 'Exported operator composition proof',
+            modules: first.modules,
+            operation: 'configure-agent',
+            ownerPrincipalId: null,
+            principalId: first.principalId,
+            writePolicy: first.writePolicy,
+          },
+          principal: { ...operator.principal, legalEntityId: first.legalEntityId },
+          registration: configureAgentAction,
+          transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
+        });
+        expect(configured.principalId).toBe(first.principalId);
+      }).pipe(
+        Effect.provide(AgentProfileOperatorLive),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.orElse(
+              ConfigProvider.fromUnknown({
+                ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionUrl,
+                ONTOS_AGENT_SETUP_EMAIL: email,
+                ONTOS_AGENT_SETUP_PASSWORD: secret,
+              }),
+              ConfigProvider.fromEnv(),
+            ),
+          ),
+        ),
+      );
+      return yield* Effect.void;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   120_000,
 );
