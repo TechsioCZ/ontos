@@ -1,52 +1,155 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Layer, Predicate } from 'effect';
+import { HttpServerRequest } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
-import { assertCommandAllowed, principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { FinanceRejected } from '../../shared/actions/errors/finance-rejected.ts';
+import {
+  ActiveApplicationCompositionService,
+  ContextAccess,
+  agentGrantRelationships,
+  ReadRuntime,
+} from '@app/core-runtime';
+import type { AgentGrantWritePolicy } from '@app/core-runtime';
+import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
+import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import type { FinanceState } from '../../shared/apis/records.ts';
+import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
-const deniedCommands = ['ConfirmInvoice', 'VoidInvoice', 'CreateInvoiceDraft'] as const;
-const isRejection = Schema.is(FinanceRejected);
+const principal = {
+  authBindingId: '10000000-0000-4000-8000-000000000001',
+  authContextRef: 'api-key:finance-command-test',
+  authMethod: 'api_key',
+  legalEntityId: '30000000-0000-4000-8000-000000000001',
+  principalId: '20000000-0000-4000-8000-000000000001',
+  tenantId: '40000000-0000-4000-8000-000000000001',
+} as const;
+const payload: ApplyCommandPayload = {
+  command: {
+    _tag: 'CreateInvoiceDraft',
+    counterpartyRef: {
+      moduleId: 'party.registry',
+      resourceId: '50000000-0000-4000-8000-000000000001',
+      resourceType: 'party.registry.counterparty',
+      tenantId: principal.tenantId,
+    },
+    currency: 'CZK',
+    direction: 'INCOMING',
+    documentNumber: 'NATIVE-EXECUTE-001',
+    dueDate: '2026-11-07',
+    issueDate: '2026-10-24',
+    totalMinor: 420_000,
+  },
+  expectedRevision: 0,
+};
+const request = {
+  payload,
+  principal,
+  registration: applyCommandAction,
+  transport: { correlationId: 'finance-command-test', idempotencyKey: 'finance-command-once' },
+};
 
-it('treats sessions as human and API keys or system jobs as non-human', () => {
-  expect(principalKindOf('session')).toBe('human');
-  expect(principalKindOf('support_impersonation')).toBe('human');
-  expect(principalKindOf('api_key')).toBe('non_human');
-  expect(principalKindOf('system')).toBe('non_human');
-});
-
-it.effect('lets humans run every command', () =>
-  Effect.forEach(deniedCommands, (tag) => assertCommandAllowed('human', tag), { discard: true }),
-);
-
-it.effect('rejects reserved commands for non-human principals', () =>
-  Effect.forEach(
-    deniedCommands,
-    (tag) =>
-      assertCommandAllowed('non_human', tag).pipe(
-        Effect.flip,
-        Effect.map((failure) => expect(isRejection(failure)).toBe(true)),
-      ),
-    { discard: true },
-  ),
-);
-
-it.effect('guards the wrapped handler before it runs', () =>
-  Effect.gen(function* guardedHandler() {
-    let ran = false;
-    const guarded = withCommandGuard(
-      (
-        _payload: { readonly command: { readonly _tag: string } },
-        _context: { readonly scope: { readonly authMethod: 'api_key' | 'session' } },
-      ) =>
-        Effect.sync(() => {
-          ran = true;
-        }),
-    );
-    const failure = yield* guarded({ command: { _tag: 'ConfirmInvoice' } }, { scope: { authMethod: 'api_key' } }).pipe(
-      Effect.flip,
-    );
-    expect(isRejection(failure)).toBe(true);
-    expect(ran).toBe(false);
-    yield* guarded({ command: { _tag: 'ConfirmInvoice' } }, { scope: { authMethod: 'session' } });
-    expect(ran).toBe(true);
+// Owner services are bound below. These production-factory requirements must never be used;
+// the real Action runtime has its own authorization and transaction boundaries in the harness.
+const unused = () => Effect.die('Unexpected production-factory dependency');
+const unusedProductionServices = Layer.mergeAll(
+  Layer.succeed(ActiveApplicationCompositionService, { load: unused() }),
+  Layer.succeed(ContextAccess, {
+    legalEntities: unused,
+    modules: unused,
+    resources: unused,
+    tenants: unused,
   }),
+  Layer.succeed(GatewayPrincipalVerifierConfiguration, { configuration: unused() }),
+  Layer.succeed(
+    HttpServerRequest.HttpServerRequest,
+    HttpServerRequest.fromWeb(new Request('https://ontos.test/actions')),
+  ),
+  Layer.succeed(ReadRuntime, { runRead: unused }),
+);
+const profileActionGrants = (writePolicy: AgentGrantWritePolicy) =>
+  agentGrantRelationships({
+    actions: [applyCommandAction.descriptor],
+    legalEntityId: principal.legalEntityId,
+    legalEntityWriteRelations: new Map(),
+    modules: [{ access: 'write', moduleId: 'finance.billing' }],
+    principalId: principal.principalId,
+    template: [],
+    tenantId: principal.tenantId,
+    writePolicy,
+  }).filter((relationship) => relationship.resource?.objectType === 'action_grant');
+
+it.effect('executes an API-key principal through the real Action when native execute is allowed', () =>
+  Effect.gen(function* apiKeyCommand() {
+    const saved: FinanceState[] = [];
+    expect(profileActionGrants('direct').map(({ relation }) => relation)).toEqual(['role']);
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      services: [
+        bindActionTestServices(applyCommandAction, {
+          load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
+          loadDocument: unused,
+          loadStateRow: unused,
+          save: (state, revision) =>
+            Effect.sync(() => {
+              saved.push(state);
+              return revision + 1;
+            }),
+          validators: { invoice: () => Effect.void },
+          writeDocument: () => Effect.void,
+        }),
+      ],
+    });
+
+    expect(yield* harness.runtime.runAction(request)).toMatchObject({
+      changed: true,
+      invoice: { businessState: 'DRAFT', documentNumber: 'NATIVE-EXECUTE-001', totalMinor: 420_000 },
+      revision: 1,
+    });
+    const snapshot = harness.snapshot();
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.invoices).toHaveLength(1);
+    expect(applyCommandAction.descriptor.entrypoint.authorization).toEqual({
+      kind: 'action_execution',
+      provisioning: 'explicit',
+    });
+    expect(snapshot.invocations[0]?.principalId).toBe(principal.principalId);
+    expect(snapshot.invocations[0]?.status).toBe('succeeded');
+    expect(snapshot.transactionCount).toBe(1);
+    expect(snapshot.committed).toHaveLength(1);
+    expect(snapshot.stages).toContain('handler_executed');
+  }).pipe(Effect.provide(unusedProductionServices)),
+);
+
+for (const authMethod of ['api_key', 'session'] as const) {
+  it.effect(`native Action denial blocks an authenticated ${authMethod} principal before owner services`, () =>
+    Effect.gen(function* nativeDenial() {
+      const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+      const failure = yield* harness.runtime
+        .runAction({ ...request, principal: { ...principal, authMethod } })
+        .pipe(Effect.flip);
+      const snapshot = harness.snapshot();
+
+      expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+      expect(snapshot.permissionDenials).toHaveLength(1);
+      expect(snapshot.invocations[0]?.status).toBe('rejected');
+      expect(snapshot.transactionCount).toBe(0);
+      expect(snapshot.committed).toHaveLength(0);
+      expect(snapshot.stages).not.toContain('handler_executed');
+    }).pipe(Effect.provide(unusedProductionServices)),
+  );
+}
+
+it.effect('a proposal-only approval profile cannot execute billing commands with an API key', () =>
+  Effect.gen(function* approvalProfile() {
+    // The actual profile materializer grants propose only, never execute. The harness scripts
+    // the native execute denial; this unit test does not evaluate the SpiceDB schema itself.
+    expect(profileActionGrants('approval').map(({ relation }) => relation)).toEqual(['proposer_role']);
+    const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+    const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
+    const snapshot = harness.snapshot();
+
+    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+    expect(snapshot.transactionCount).toBe(0);
+    expect(snapshot.committed).toHaveLength(0);
+    expect(snapshot.stages).not.toContain('handler_executed');
+  }).pipe(Effect.provide(unusedProductionServices)),
 );

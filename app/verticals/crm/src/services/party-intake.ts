@@ -40,7 +40,6 @@ import type { Client } from '../../shared/domain/clients.ts';
 const REGISTRY = 'party-registry';
 const CRM = 'crm';
 const KEY_VARIABLE = 'ONTOS_CRM_PARTY_INTAKE_API_KEY';
-const PRINCIPAL_VARIABLE = 'ONTOS_CRM_PARTY_INTAKE_PRINCIPAL_ID';
 /** At most this many clients per reconciliation (one request stays short). */
 const BATCH = 20;
 const PROVENANCE_SOURCE = 'demo.crm.client-intake';
@@ -290,10 +289,6 @@ const localSetting = (name: string) =>
     const value = line?.slice(name.length + 1).trim() ?? '';
     return value === '' ? Option.none<string>() : Option.some(value);
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
-
-/** True for the intake principal: the CRM command guard lets it run `LinkClientParty` (and nothing else). */
-export const isCrmIntakePrincipal = (principalId: string) =>
-  localSetting(PRINCIPAL_VARIABLE).pipe(Effect.map((id) => Option.isSome(id) && id.value === principalId));
 
 const CrmClientSchema = Schema.Struct({
   address: Schema.optionalKey(Schema.String),

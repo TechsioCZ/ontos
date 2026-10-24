@@ -3,15 +3,13 @@
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import type { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
   CrmErrorSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
-import { principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { isCrmIntakePrincipal } from '../services/party-intake.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -23,8 +21,6 @@ const handleApplyCommand = (
   Effect.Error<ReturnType<Services['apply']>>,
   Effect.Services<ReturnType<typeof persistenceService>>
 > => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
-
-const guardedApplyCommand = withCommandGuard(handleApplyCommand);
 
 export const applyCommandAction = defineAction(
   {
@@ -51,18 +47,7 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  // CRM.md §3: the Party Registry intake principal (an API key) may store the identity links it verified; every
-  // other non-human principal stays restricted by the command guard.
-  (payload, context) =>
-    payload.command._tag === 'LinkClientParty' &&
-    principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag) ===
-      'non_human'
-      ? isCrmIntakePrincipal(context.scope.principalId).pipe(
-          Effect.flatMap((intake) =>
-            intake ? handleApplyCommand(payload, context) : guardedApplyCommand(payload, context),
-          ),
-        )
-      : guardedApplyCommand(payload, context),
+  handleApplyCommand,
   persistenceService,
 );
 
