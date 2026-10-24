@@ -210,9 +210,17 @@ it('assigns one explicit tenant superadmin and keeps named company administrator
     relationships
       .filter((row) => row.subjectType === 'principal')
       .every(
-        (row) => row.relation === 'member' && ['tenant', 'legal_entity', 'scoped_role'].includes(row.resourceType),
+        (row) =>
+          (row.relation === 'member' && ['tenant', 'legal_entity', 'scoped_role'].includes(row.resourceType)) ||
+          (row.resourceType === 'tenant' && row.relation === 'company_member'),
       ),
   ).toBe(true);
+  const selectedActors = new Set(demoCompanyMemberships.map(({ principalId }) => principalId));
+  for (const row of relationships.filter(
+    (item) => item.resourceType === 'tenant' && item.subjectType === 'principal',
+  )) {
+    expect(row.relation).toBe(selectedActors.has(row.subjectId) ? 'company_member' : 'member');
+  }
   expect(new Set(relationships.map((row) => JSON.stringify(row))).size).toBe(relationships.length);
 });
 

@@ -140,8 +140,8 @@ const TENANT_DEFINITION_PATTERN = /definition tenant \{(?<body>[^}]*)\}/u;
 const PRINCIPAL_RELATION_PATTERN = /relation (?<name>[a-z_]+): principal\b/gu;
 
 /**
- * Principal relations the SpiceDB schema defines on `tenant`, except `member`, which the bootstrap
- * writes for every account. Grant data may name only these relations.
+ * Grantable principal authority excludes both independent and company-derived admission.
+ * Company admission comes only from explicit SQL membership selections.
  */
 export const STAGE_GRANTABLE_TENANT_RELATIONS: readonly string[] = Object.freeze(
   [
@@ -150,7 +150,7 @@ export const STAGE_GRANTABLE_TENANT_RELATIONS: readonly string[] = Object.freeze
     ),
   ].flatMap((match) => {
     const relation = match.groups?.['name'];
-    return relation === undefined || relation === 'member' ? [] : [relation];
+    return relation === undefined || ['member', 'company_member'].includes(relation) ? [] : [relation];
   }),
 );
 const GRANTABLE_TENANT_RELATION_SET: ReadonlySet<string> = new Set(STAGE_GRANTABLE_TENANT_RELATIONS);

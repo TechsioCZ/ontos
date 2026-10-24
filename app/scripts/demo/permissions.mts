@@ -10,7 +10,10 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '@app/core-runtime';
-import { scopedActionRoleBootstrapRelationships } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import {
+  companyMembershipAdmissionRelationships,
+  scopedActionRoleBootstrapRelationships,
+} from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { Schema } from 'effect';
@@ -718,19 +721,6 @@ export const companyPermissionRelationships = (actions: readonly DemoAction[]): 
   ),
 ];
 
-/** Relationships for the four demo accounts and the bot, deduplicated. */
-export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const all = [
-    ...demoHumanAccounts.flatMap((account) =>
-      principalRelationships(account.principalId, demoRoles[account.role], actions),
-    ),
-    ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
-    ...rentalPermissionRelationships(actions),
-    ...companyPermissionRelationships(actions),
-  ];
-  return [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()];
-};
-
 /** Deliberate human affiliations only; role assignment never creates an SQL membership. */
 export const demoCompanyMemberships = [
   ...demoHumanAccounts.map(({ principalId }) => ({
@@ -769,3 +759,19 @@ export const demoCompanyMemberships = [
     principalId: '72000000-0000-4000-8000-000000000024',
   },
 ] as const;
+
+/** Relationships for the four demo accounts and the bot, deduplicated. */
+export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const all = [
+    ...demoHumanAccounts.flatMap((account) =>
+      principalRelationships(account.principalId, demoRoles[account.role], actions),
+    ),
+    ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
+    ...rentalPermissionRelationships(actions),
+    ...companyPermissionRelationships(actions),
+  ];
+  return companyMembershipAdmissionRelationships(
+    [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()],
+    demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
+  );
+};

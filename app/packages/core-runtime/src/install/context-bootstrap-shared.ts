@@ -205,6 +205,27 @@ export interface BootstrapRelationship {
   readonly subjectType: string;
 }
 
+/** Project only explicitly selected company actors onto SQL-owned tenant admission, never workloads. */
+export const companyMembershipAdmissionRelationships = (
+  relationships: readonly BootstrapRelationship[],
+  members: readonly { readonly principalId: string; readonly tenantId: string }[],
+): readonly BootstrapRelationship[] => {
+  const selected = new Map<string, Set<string>>();
+  for (const member of members) {
+    const actorIds = selected.get(member.tenantId) ?? new Set<string>();
+    actorIds.add(member.principalId);
+    selected.set(member.tenantId, actorIds);
+  }
+  return relationships.map((row) =>
+    row.resourceType === 'tenant' &&
+    row.relation === 'member' &&
+    row.subjectType === 'principal' &&
+    (selected.get(row.resourceId)?.has(row.subjectId) ?? false)
+      ? { ...row, relation: 'company_member' }
+      : row,
+  );
+};
+
 /** Exact wire projection, including usersets; conditional evidence must never be silently weakened. */
 export const bootstrapRelationshipsFromNative = (
   relationships: readonly v1.Relationship[],

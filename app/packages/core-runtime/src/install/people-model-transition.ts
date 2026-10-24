@@ -5,7 +5,10 @@ import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 
 import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
-import { toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
+import { toContextPermissionAccessObjectId, toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
+import { demoAccountObjectIdParts } from './demo-account-administration.ts';
+import type { DemoAccountRelationship } from './demo-account-administration.ts';
+import type { BootstrapRelationship } from './context-bootstrap-shared.ts';
 import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import type { ScopedRoleIdentity } from '../permissions/scoped-role.ts';
 
@@ -57,6 +60,46 @@ export class PeopleModelTransitionError extends Schema.TaggedError<PeopleModelTr
 const invalid = (reason: string): never => {
   throw new PeopleModelTransitionError({ reason });
 };
+/** One-time legacy cutover metadata comes only from reviewed target structural links, never persona grants. */
+export const reviewedTransitionAgentNamedPermissions = (
+  relationships: readonly BootstrapRelationship[],
+  scope: { readonly legalEntityId: string; readonly tenantId: string },
+): readonly DemoAccountRelationship[] => {
+  const companyId = toLegalEntityAccessObjectId(scope.tenantId, scope.legalEntityId);
+  if (companyId === undefined) {
+    return invalid('Reviewed agent named-permission company scope is invalid');
+  }
+  const permissions = new Map<string, DemoAccountRelationship>();
+  const structural = relationships.filter(
+    (row) => row.resourceType === 'context_permission' && row.relation === 'legal_entity',
+  );
+  for (const row of structural) {
+    const [tenantId, kind, legalEntityId, moduleId, permission] = demoAccountObjectIdParts(row.resourceId);
+    const resourceInScope =
+      tenantId === scope.tenantId && kind === 'legal_entity' && legalEntityId === scope.legalEntityId;
+    if (!resourceInScope && row.subjectId !== companyId) {
+      continue;
+    }
+    if (
+      !resourceInScope ||
+      row.subjectType !== 'legal_entity' ||
+      row.subjectId !== companyId ||
+      (row.subjectRelation ?? '') !== '' ||
+      moduleId === undefined ||
+      permission === undefined ||
+      row.resourceId !==
+        toContextPermissionAccessObjectId(scope.tenantId, scope.legalEntityId, { moduleId, permission })
+    ) {
+      return invalid('Reviewed agent named-permission structural link crosses or ambiguously encodes its company');
+    }
+    permissions.set(row.resourceId, {
+      relation: 'role_grantee',
+      resourceId: row.resourceId,
+      resourceType: 'context_permission',
+    });
+  }
+  return [...permissions.values()];
+};
 const identity = (r: v1.Relationship): string =>
   [
     r.resource?.objectType ?? '',
@@ -90,7 +133,8 @@ const directPolicyTypes: ReadonlySet<string> = new Set([
 const legacyAction = (r: v1.Relationship): boolean =>
   r.resource?.objectType === 'action' && ['executor', 'restriction'].includes(r.relation);
 const admission = (r: v1.Relationship): boolean =>
-  ['tenant', 'legal_entity'].includes(r.resource?.objectType ?? '') && r.relation === 'member';
+  (r.resource?.objectType === 'tenant' && ['member', 'company_member'].includes(r.relation)) ||
+  (r.resource?.objectType === 'legal_entity' && r.relation === 'member');
 
 const validateReviewedRole = (
   m: PeopleModelTransitionMembership,
@@ -148,6 +192,23 @@ const validateReviewedMembership = (
     validateReviewedRole(m, role, desired);
   }
 };
+const validateActorAdmission = (r: v1.Relationship, memberships: readonly PeopleModelTransitionMembership[]): void => {
+  const { resource } = r;
+  const allowed = memberships.some(
+    (m) =>
+      m.principalId === r.subject?.object?.objectId &&
+      (resource?.objectType === 'tenant'
+        ? resource.objectId === m.tenantId
+        : resource?.objectId === toLegalEntityAccessObjectId(m.tenantId, m.legalEntityId)),
+  );
+  if (
+    !allowed ||
+    r.subject?.optionalRelation !== '' ||
+    (resource?.objectType === 'tenant' && r.relation !== 'company_member')
+  ) {
+    return invalid('Target grants unreviewed tenant/company admission');
+  }
+};
 const validateDesiredActorPolicy = (
   input: PeopleModelTransitionInput,
   desired: ReadonlyMap<string, v1.Relationship>,
@@ -170,16 +231,7 @@ const validateDesiredActorPolicy = (
         return invalid('Target grants an actor an unreviewed role');
       }
     } else if (admission(r)) {
-      const allowed = input.memberships.some(
-        (m) =>
-          m.principalId === actor.objectId &&
-          (r.resource?.objectType === 'tenant'
-            ? r.resource.objectId === m.tenantId
-            : r.resource?.objectId === toLegalEntityAccessObjectId(m.tenantId, m.legalEntityId)),
-      );
-      if (!allowed || r.subject?.optionalRelation !== '') {
-        return invalid('Target grants unreviewed tenant/company admission');
-      }
+      validateActorAdmission(r, input.memberships);
     } else if (directPolicyTypes.has(r.resource?.objectType ?? '') && r.relation !== 'self_service_grantee') {
       return invalid('Target replaces role policy with direct principal authority');
     }

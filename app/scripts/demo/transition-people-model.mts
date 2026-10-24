@@ -24,7 +24,6 @@ import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import type { CoreTransaction } from '../../packages/core-runtime/src/db/types.ts';
-import { companyRoleTemplates } from '../../apps/shell-super-app/api/auth/demo-accounts.ts';
 import { PrincipalRefSchema } from '../../packages/core-runtime/src/permissions/principal-ref.ts';
 import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { withPostgresSessionAdvisoryLock } from '../../packages/core-runtime/src/db/session-advisory-lock.ts';
@@ -36,15 +35,18 @@ import {
 } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   BootstrapCompanyMembershipSchema,
+  companyMembershipAdmissionRelationships,
   installBootstrapCompanyMemberships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { agentGrantRelationships } from '../../packages/core-runtime/src/install/agent-entity-grants.ts';
+import { currentAgentProfileRelationships } from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
+import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { agentNamedPermissionScopeRelationships } from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
 import { foldAgentActionMigrationProfiles } from '../../packages/core-runtime/src/install/agent-action-policy-migration.ts';
 import {
   applyPeopleModelTransitionSealedGraph,
   PeopleModelTransitionError,
   planPeopleModelTransition,
+  reviewedTransitionAgentNamedPermissions,
   verifyPeopleModelTransitionGraph,
 } from '../../packages/core-runtime/src/install/people-model-transition.ts';
 import type {
@@ -68,7 +70,6 @@ import {
   runApplicationCompositionMigration,
   withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
-import { legalEntityWriteRelationsOf } from '../../apps/shell-super-app/api/auth/agent-write-relations.ts';
 import {
   demoPermissionRelationships,
   localDevelopmentAdministratorFixture,
@@ -476,21 +477,6 @@ const validateFixture = (
     }
     return yield* Effect.void;
   });
-const templateRoleIds = (
-  fixture: readonly (typeof RelationshipSchema.Type)[],
-  templatePrincipals: ReadonlySet<string>,
-) =>
-  new Set(
-    fixture
-      .filter(
-        (r) =>
-          r.resourceType === 'scoped_role' &&
-          r.relation === 'member' &&
-          r.subjectType === 'principal' &&
-          templatePrincipals.has(r.subjectId),
-      )
-      .map((r) => r.resourceId),
-  );
 const provisioningModeOf = (mode: TransitionMode) => {
   if (mode === applyCutoverMode) {
     return 'apply';
@@ -511,10 +497,19 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
   const tenantIds = [...new Set(document.rows.map((row) => row.tenantId))];
   const composition = yield* loadCurrentActionAuthorizationComposition(tenantIds, provisioningMode);
   const local = localDevelopmentAdministratorFixture;
-  const fixture = [
-    ...demoPermissionRelationships(composition.actions),
-    ...principalRelationships(local.principalId, local.role, composition.actions, local.legalEntityId, local.tenantId),
-  ];
+  const fixture = companyMembershipAdmissionRelationships(
+    [
+      ...demoPermissionRelationships(composition.actions),
+      ...principalRelationships(
+        local.principalId,
+        local.role,
+        composition.actions,
+        local.legalEntityId,
+        local.tenantId,
+      ),
+    ],
+    document.rows,
+  );
   yield* validateFixture(
     document,
     fixture,
@@ -522,22 +517,29 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
       ? composition.snapshot.composition.revision
       : document.compositionRevision,
   );
-  const writerRelations = legalEntityWriteRelationsOf(composition.snapshot.composition);
+  const configuration = yield* loadSpiceDbConfig();
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(`http://${configuration.endpoint}`).hostname)) {
+    return yield* fail('Only loopback graph cutover is allowed');
+  }
+  const catalog = yield* buildApplicationCompositionCatalog(composition.snapshot.composition);
   const agentRelationships = yield* Effect.forEach(
     profiles,
     (profile) =>
       Effect.gen(function* companyAgentPolicy() {
-        const templates = yield* companyRoleTemplates(profile.tenantId, profile.legalEntityId);
-        if (templates.length === 0) {
-          return yield* fail('No native company role templates exist for a reviewed agent');
+        const scope = composition.installedModuleScopes.find(
+          (item) => item.tenantId === profile.tenantId && item.legalEntityId === profile.legalEntityId,
+        );
+        if (scope === undefined) {
+          return yield* fail('Reviewed agent company has no active installed composition scope');
         }
-        const roleIds = templateRoleIds(fixture, new Set(templates.map((t) => t.templatePrincipalId)));
-        const template = fixture.filter((r) => r.subjectType === 'scoped_role' && roleIds.has(r.subjectId));
-        const desired = agentGrantRelationships({
-          ...profile,
-          actions: composition.actions,
-          legalEntityWriteRelations: writerRelations,
-          template,
+        const namedPermissions = reviewedTransitionAgentNamedPermissions(fixture, profile);
+        const desired = currentAgentProfileRelationships({
+          catalog,
+          company: { active: true, legalEntityId: profile.legalEntityId, profile },
+          installedModuleKeys: new Set(scope.moduleKeys),
+          namedPermissions,
+          principalId: profile.principalId,
+          tenantId: profile.tenantId,
         });
         return [
           ...desired,
@@ -553,10 +555,6 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
     ...buildActionAuthorizationRelationships(actions),
     ...buildIntrinsicSelfCredentialRelationships(composition.actions, actions),
   ];
-  const configuration = yield* loadSpiceDbConfig();
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(`http://${configuration.endpoint}`).hostname)) {
-    return yield* fail('Only loopback graph cutover is allowed');
-  }
   const client = yield* Effect.acquireRelease(
     Effect.try({
       catch: (cause) => fail('Cannot open local graph', cause),

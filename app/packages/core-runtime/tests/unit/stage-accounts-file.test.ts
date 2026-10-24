@@ -79,6 +79,7 @@ it.effect('derives grantable Tenant relations from the SpiceDB schema, never mem
     expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('identity_admin');
     expect(STAGE_GRANTABLE_TENANT_RELATIONS).toContain('party_identity_reader');
     expect(STAGE_GRANTABLE_TENANT_RELATIONS).not.toContain('member');
+    expect(STAGE_GRANTABLE_TENANT_RELATIONS).not.toContain('company_member');
   }),
 );
 

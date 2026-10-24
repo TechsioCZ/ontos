@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { companyMembershipAdmissionRelationships } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { principalRelationships } from './permissions.mts';
 import type { DemoAction } from './permissions.mts';
 
@@ -39,7 +40,9 @@ export const verificationContext = Effect.fn('Demo.verificationContext')(functio
       registrationNumber: 'CI-VERIFICATION',
     },
     modules: [{ moduleId: taskModule, stateId: '78000000-0000-4000-8000-000000000090' }],
-    relationships,
+    relationships: companyMembershipAdmissionRelationships(relationships, [
+      { principalId, tenantId: verificationTenantId },
+    ]),
     tenant: {
       defaultLocale: 'cs',
       displayName: verificationName,

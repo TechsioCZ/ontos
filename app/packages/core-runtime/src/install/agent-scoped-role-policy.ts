@@ -97,7 +97,7 @@ const validDesiredRelationship = (
   const principalMembership =
     item.subject.object.objectType === 'principal' &&
     item.subject.object.objectId === input.principalId &&
-    item.relation === 'member' &&
+    (item.relation === 'member' || (item.resource.objectType === 'tenant' && item.relation === 'company_member')) &&
     item.subject.optionalRelation === '';
   if (item.resource.objectType === 'scoped_role') {
     return principalMembership && item.resource.objectId === roleObjectId;
@@ -240,14 +240,15 @@ export const planAgentScopedRoleReplacement = Effect.fn('AgentScopedRolePolicy.p
     const currentPrincipalPolicy = input.currentPrincipalRelationships.filter(
       (item) =>
         item.resource !== undefined &&
-        (item.resource.objectType !== 'tenant' || item.relation === 'member') &&
+        (item.resource.objectType !== 'tenant' || ['member', 'company_member'].includes(item.relation)) &&
         inCompanyScope(item.resource, input),
     );
     const current = new Map([...currentPrincipalPolicy, ...rolePolicy].map((item) => [key(item), item]));
     const desired = new Map(input.desired.map((item) => [key(item), item]));
     const revoked = [...current].flatMap(([identity, item]) => {
-      // Agent archival preserves tenant identity/membership, as the previous writer did.
-      const retainedTenantMembership = item.resource?.objectType === 'tenant' && item.relation === 'member';
+      // Global SQL membership reconciliation, not a company-policy writer, owns tenant admission.
+      const retainedTenantMembership =
+        item.resource?.objectType === 'tenant' && ['member', 'company_member'].includes(item.relation);
       return !desired.has(identity) && !retainedTenantMembership ? [item] : [];
     });
     const granted = [

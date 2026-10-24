@@ -27,6 +27,7 @@ import type {
 import {
   bootstrapRelationshipRequest,
   bootstrapRelationshipsFromNative,
+  companyMembershipAdmissionRelationships,
   scopedActionRoleBootstrapRelationships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
@@ -99,6 +100,22 @@ const deletedRelationships = (updates: readonly v1.RelationshipUpdate[]) =>
       ? [update.relationship]
       : [],
   );
+
+it('projects only explicit company actors into SQL-owned admission while retaining workload and foreign scopes', () => {
+  const member = {
+    relation: 'member',
+    resourceId: tenantId,
+    resourceType: 'tenant',
+    subjectId: principalId,
+    subjectType: 'principal',
+  };
+  const workload = { ...member, subjectId: 'workload' };
+  const foreign = { ...member, resourceId: otherTenantId };
+  const company = { ...member, resourceId: legalEntityId, resourceType: 'legal_entity' };
+  expect(
+    companyMembershipAdmissionRelationships([member, workload, foreign, company], [{ principalId, tenantId }]),
+  ).toEqual([{ ...member, relation: 'company_member' }, workload, foreign, company]);
+});
 
 it('derives Actions only from exact installed module scopes and descriptor company requirements', () => {
   const actions = deriveScopedActionAuthorization(descriptors, installedModuleScopes);

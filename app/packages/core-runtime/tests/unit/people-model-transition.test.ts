@@ -7,6 +7,7 @@ import {
   applyPeopleModelTransitionSealedGraph,
   PeopleModelTransitionError,
   planPeopleModelTransition,
+  reviewedTransitionAgentNamedPermissions,
   verifyPeopleModelTransitionGraph,
 } from '../../src/install/people-model-transition.ts';
 import type {
@@ -15,6 +16,10 @@ import type {
 } from '../../src/install/people-model-transition.ts';
 import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
+import {
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+} from '../../src/permissions/context-access.ts';
 
 const tenantId = 'tenant-a';
 const legalEntityId = 'company-a';
@@ -40,8 +45,8 @@ const input = (): PeopleModelTransitionInput => ({
   compositionRevision: 'published-revision',
   deferredAgentPrincipalIds: [agent],
   desired: [
-    r('tenant', tenantId, 'member', 'principal', human),
-    r('tenant', tenantId, 'member', 'principal', agent),
+    r('tenant', tenantId, 'company_member', 'principal', human),
+    r('tenant', tenantId, 'company_member', 'principal', agent),
     r('scoped_role', hr, 'member', 'principal', human),
     r('scoped_role', ar, 'member', 'principal', agent),
     humanPolicy,
@@ -82,6 +87,66 @@ const input = (): PeopleModelTransitionInput => ({
   },
   reviewedInputSha256: 'a'.repeat(64),
   technicalPrincipalIds: [],
+});
+
+it('reads reviewed target structural named-permission metadata without inferring grants from personas', () => {
+  const scope = { legalEntityId, tenantId };
+  const resourceId =
+    toContextPermissionAccessObjectId(tenantId, legalEntityId, {
+      moduleId: 'work.tasks',
+      permission: 'work.tasks.read_all',
+    }) ?? '';
+  const link = {
+    relation: 'legal_entity',
+    resourceId,
+    resourceType: 'context_permission',
+    subjectId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
+    subjectType: 'legal_entity',
+  };
+  const persona = {
+    ...link,
+    relation: 'role_grantee',
+    subjectId: hr,
+    subjectRelation: 'member',
+    subjectType: 'scoped_role',
+  };
+  expect(reviewedTransitionAgentNamedPermissions([persona], scope)).toEqual([]);
+  expect(reviewedTransitionAgentNamedPermissions([link, link, persona], scope)).toEqual([
+    { relation: 'role_grantee', resourceId, resourceType: 'context_permission' },
+  ]);
+  expect(() => reviewedTransitionAgentNamedPermissions([{ ...link, subjectId: 'foreign-company' }], scope)).toThrow(
+    PeopleModelTransitionError,
+  );
+  expect(() => reviewedTransitionAgentNamedPermissions([{ ...link, resourceId: `${resourceId}=` }], scope)).toThrow(
+    PeopleModelTransitionError,
+  );
+  expect(() => reviewedTransitionAgentNamedPermissions([{ ...link, subjectRelation: 'member' }], scope)).toThrow(
+    PeopleModelTransitionError,
+  );
+});
+
+it('replaces actor admission with SQL-owned company membership without changing workload or retail admission', () => {
+  const original = input();
+  const legacy = r('tenant', tenantId, 'member', 'principal', human);
+  const workload = r('tenant', tenantId, 'member', 'principal', 'workload');
+  const retailAdmission = r('tenant', tenantId, 'member', 'principal', 'retail-customer');
+  const plan = planPeopleModelTransition({
+    ...original,
+    desired: [...original.desired, workload],
+    observed: {
+      ...original.observed,
+      relationships: [...original.observed.relationships, legacy, workload, retailAdmission],
+    },
+    technicalPrincipalIds: ['workload'],
+  });
+  expect(plan.deletions).toContainEqual(legacy);
+  expect(plan.expected).not.toContainEqual(legacy);
+  expect(plan.expected).toContainEqual(r('tenant', tenantId, 'company_member', 'principal', human));
+  expect(plan.expected).toContainEqual(workload);
+  expect(plan.expected).toContainEqual(retailAdmission);
+  expect(() => planPeopleModelTransition({ ...original, desired: [...original.desired, legacy] })).toThrow(
+    PeopleModelTransitionError,
+  );
 });
 
 it('replaces blanket and direct authority with exact reviewed roles while preserving record and retail identity', () => {

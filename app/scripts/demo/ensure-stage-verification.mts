@@ -17,8 +17,14 @@ export const stageVerificationAccounts = Effect.fn('Stage.verificationAccounts')
 ) {
   const context = yield* verificationContext();
   const [module] = context.modules;
-  if (module === undefined) {
-    return yield* new StageVerificationBootstrapError({ reason: 'Verification module is required' });
+  const membership = context.companyMemberships.find(
+    (row) =>
+      row.principalId === verificationAccount.principalId && row.legalEntityId === context.legalEntity.legalEntityId,
+  );
+  if (module === undefined || membership === undefined) {
+    return yield* new StageVerificationBootstrapError({
+      reason: 'Verification module and explicit membership are required',
+    });
   }
   const scope = { legalEntityId: context.legalEntity.legalEntityId, tenantId: context.tenant.tenantId };
   const actionKey = 'work.tasks.apply-command';
@@ -45,7 +51,7 @@ export const stageVerificationAccounts = Effect.fn('Stage.verificationAccounts')
       {
         accounts: [
           {
-            affiliation: 'employee',
+            affiliation: membership.affiliation,
             authBindingId: verificationAccount.authBindingId,
             displayName: verificationAccount.displayName,
             email: verificationAccount.email,

@@ -226,9 +226,15 @@ it.effect('rejects an oversized atomic mutation instead of committing policy in 
   }),
 );
 
-it.effect('archival removes company and role policy but preserves the tenant membership', () =>
+it.effect('company policy removal preserves independent and SQL-owned admission for global reconciliation', () =>
   Effect.gen(function* archivePolicy() {
-    const before = policy();
+    const independent = v1.Relationship.create({
+      relation: 'member',
+      resource: { objectId: scope.tenantId, objectType: 'tenant' },
+      subject: { object: { objectId: scope.principalId, objectType: 'principal' } },
+    });
+    const company = v1.Relationship.create({ ...independent, relation: 'company_member' });
+    const before = [...new Map([...policy(), independent, company].map((item) => [identity(item), item])).values()];
     const state = graph(before);
     yield* replaceAgentScopedRolePolicy(state.rpc, {
       ...scope,
@@ -237,7 +243,9 @@ it.effect('archival removes company and role policy but preserves the tenant mem
     });
     expect(state.writes).toHaveLength(1);
     expect(state.values()).toEqual(
-      before.filter((item) => item.resource?.objectType === 'tenant' && item.relation === 'member'),
+      before.filter(
+        (item) => item.resource?.objectType === 'tenant' && ['member', 'company_member'].includes(item.relation),
+      ),
     );
   }),
 );

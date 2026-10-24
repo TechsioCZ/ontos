@@ -30,6 +30,7 @@ import {
 import type { CoreDatabaseExecutor, CoreTransaction } from '../packages/core-runtime/src/db/types.ts';
 import {
   BootstrapCompanyMembershipSchema,
+  companyMembershipAdmissionRelationships,
   installBootstrapCompanyMemberships,
   bootstrapPrincipalRecord,
   bootstrapRelationshipRequest,
@@ -436,7 +437,7 @@ export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.bu
         subjectType: 'legal_entity',
       });
     }
-    return shared;
+    return companyMembershipAdmissionRelationships(shared, [context]);
   },
 );
 

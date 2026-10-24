@@ -88,7 +88,7 @@ const addPermissionRelationships = (add: AddRelationship, index: number, princip
 const relationships = (): readonly Relationship[] => {
   const result: Relationship[] = [];
   const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) => {
-    if (subjectType !== 'principal' || relation === 'member') {
+    if (subjectType !== 'principal' || ['member', 'company_member'].includes(relation)) {
       return result.push({ relation, resourceId, resourceType, subjectId, subjectType });
     }
     const roleId = toScopedRoleObjectId({
@@ -108,7 +108,7 @@ const relationships = (): readonly Relationship[] => {
   const legal = toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '';
   add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
   for (const [index, account] of demoAccounts.entries()) {
-    add('tenant', demoTenantId, 'member', 'principal', account.principalId);
+    add('tenant', demoTenantId, 'company_member', 'principal', account.principalId);
     add(
       'scoped_role',
       toScopedRoleObjectId({

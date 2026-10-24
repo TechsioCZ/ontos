@@ -294,6 +294,14 @@ it.effect('generates stable module state IDs and complete access relationships',
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
     const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
     expect(relationships.length).toBe(12);
+    expect(relationships).toContainEqual({
+      relation: 'company_member',
+      resourceId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+      resourceType: 'tenant',
+      subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+      subjectType: 'principal',
+    });
+    expect(relationships.some((row) => row.resourceType === 'tenant' && row.relation === 'member')).toBe(false);
     expect(relationships.filter(({ resourceType }) => resourceType === 'principal')).toEqual([
       {
         relation: 'tenant',

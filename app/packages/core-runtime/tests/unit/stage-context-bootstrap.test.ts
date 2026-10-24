@@ -119,7 +119,7 @@ it.effect('writes exactly the Tenant relations listed in grant data, only inside
       });
       expect(
         relationships
-          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
+          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'company_member')
           .map(({ relation }) => relation),
       ).toEqual([...context.tenantRelations]);
       expect(
@@ -146,7 +146,7 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
       subjectId: retired.principalIds[0],
       subjectType: 'principal',
     });
-    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 5));
+    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 6));
     expect(relationships).toContainEqual({
       relation: 'member',
       resourceId: retired.tenantId,
@@ -156,7 +156,7 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
     });
     expect(
       relationships.filter(({ resourceType }) => resourceType === 'tenant').map(({ relation }) => relation),
-    ).toEqual(['member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
+    ).toEqual(['member', 'company_member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
   }),
 );
 

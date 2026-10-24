@@ -49,7 +49,8 @@ it.effect(
       expect(
         principalGrants.every(
           (relationship) =>
-            relationship.subjectId === verificationAccount.principalId && relationship.relation === 'member',
+            relationship.subjectId === verificationAccount.principalId &&
+            relationship.relation === (relationship.resourceType === 'tenant' ? 'company_member' : 'member'),
         ),
       ).toBe(true);
       expect(new Set(principalGrants.map((row) => row.resourceType))).toEqual(
@@ -149,6 +150,7 @@ it.effect('generates a v4 stage accounts policy confined to the verification ten
     expect(tenant.moduleKey).toBe(taskModule);
     expect(tenant.accounts).toHaveLength(1);
     expect(tenant.accounts[0].principalId).toBe(verificationAccount.principalId);
+    expect(tenant.accounts[0].affiliation).toBe('external');
     expect(file.scopedRoles).toHaveLength(1);
     expect(file.scopedRoles[0].tenantId).toBe(verificationTenantId);
     expect(file.scopedRoles[0].legalEntityId).toBe(verificationLegalEntityId);

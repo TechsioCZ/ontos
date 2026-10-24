@@ -402,7 +402,7 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
         subjectType: 'principal',
       },
       {
-        relation: 'member',
+        relation: 'company_member',
         resourceId: context.tenantId,
         resourceType: 'tenant',
         subjectId: context.principalId,
@@ -491,7 +491,7 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
           subjectId: principalId,
           subjectType: 'principal',
         },
-        ...['member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
+        ...['member', 'company_member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
           relation,
           resourceId: context.tenantId,
           resourceType: 'tenant',
