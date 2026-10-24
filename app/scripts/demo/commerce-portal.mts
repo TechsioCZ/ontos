@@ -46,6 +46,8 @@ import {
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import { ExternalIdentityProviderConfigurationSchema } from '../../apps/shell-super-app/api/auth/external-identity-provider.ts';
+import { CommercePortalAuthVerificationWorkloadGrantsSchema } from '../../verticals/commerce-customer-context/api/portal-auth/verification-http/workload-grants.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import { writeAiRelationships } from './ai-profiles.mts';
@@ -213,7 +215,7 @@ export const commercePortalExternalIdentityDeployment = () => {
       ...BINDING_OPERATIONS.map((operation) => ({ ...workload, operation })),
       ...GATEWAY_CONTEXT_AUDIENCES.map((targetAudience) => ({
         ...workload,
-        operation: 'gateway-context',
+        operation: 'gateway-context' as const,
         targetAudience,
       })),
     ],
@@ -221,17 +223,35 @@ export const commercePortalExternalIdentityDeployment = () => {
   };
 };
 
-export const commercePortalVerificationWorkloadGrants = () => ({
-  grants: [
-    {
-      commerceAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
-      operation: 'commerce-portal-authentication.verify-external-authentication.v1',
-      receivingAudience: SHELL_AUDIENCE,
-      tenantId: demoTenantId,
-      workloadAuthenticationNamespaceId: STAFF_NAMESPACE,
-      workloadPrincipalId: commercePortalPrincipal.principalId,
-    },
-  ],
+export const commercePortalVerificationWorkloadGrants = (
+  deployment: Pick<
+    Schema.Codec.Encoded<typeof ExternalIdentityProviderConfigurationSchema>,
+    'authenticationNamespaceId' | 'grants' | 'providerEndpointAudience'
+  > = commercePortalExternalIdentityDeployment(),
+) => ({
+  grants: deployment.grants
+    .filter(
+      (grant) =>
+        grant.receivingAudience === deployment.providerEndpointAudience &&
+        grant.targetAuthenticationNamespaceId === deployment.authenticationNamespaceId,
+    )
+    .filter(
+      (grant, index, candidates) =>
+        candidates.findIndex(
+          (candidate) =>
+            candidate.tenantId === grant.tenantId &&
+            candidate.workloadPrincipalId === grant.workloadPrincipalId &&
+            candidate.workloadAuthenticationNamespaceId === grant.workloadAuthenticationNamespaceId,
+        ) === index,
+    )
+    .map((grant) => ({
+      commerceAuthenticationNamespaceId: deployment.authenticationNamespaceId,
+      operation: 'commerce-portal-authentication.verify-external-authentication.v1' as const,
+      receivingAudience: grant.receivingAudience,
+      tenantId: grant.tenantId,
+      workloadAuthenticationNamespaceId: grant.workloadAuthenticationNamespaceId,
+      workloadPrincipalId: grant.workloadPrincipalId,
+    })),
   providerEndpointAudience: GATEWAY_CONTEXT_AUDIENCES[0],
 });
 
@@ -239,6 +259,41 @@ class CommercePortalError extends Schema.TaggedError<CommercePortalError>()('Com
   reason: Schema.String,
 }) {}
 const fail = (reason: string) => new CommercePortalError({ reason });
+
+/** Run on the assembled bundle before upload; the receiving owner grant is never a manual extra. */
+export const commercePortalReleaseSecrets = Effect.fn('CommercePortal.releaseSecrets')(function* releaseSecrets(
+  bundle: Readonly<Record<string, Readonly<Record<string, string>>>>,
+): Effect.fn.Return<Readonly<Record<string, Readonly<Record<string, string>>>>, CommercePortalError> {
+  const commerce = bundle['commerce-customer-context'];
+  const shell = bundle['shell-super-app'];
+  if (commerce === undefined || shell === undefined) {
+    return yield* fail('Commerce release secrets require the Commerce and Shell units');
+  }
+  const metadataUnavailable = () => fail('Commerce release secrets require valid Shell provider workload metadata');
+  const deployment = yield* Schema.decodeUnknownEffect(
+    Schema.fromJsonString(ExternalIdentityProviderConfigurationSchema),
+    {
+      onExcessProperty: 'error',
+    },
+  )(shell.ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT).pipe(Effect.mapError(metadataUnavailable));
+  const grants = commercePortalVerificationWorkloadGrants(deployment);
+  if (deployment.authenticationNamespaceId !== COMMERCE_PORTAL_NAMESPACE || grants.grants.length === 0) {
+    return yield* metadataUnavailable();
+  }
+  const verification = yield* Schema.decodeEffect(CommercePortalAuthVerificationWorkloadGrantsSchema)(grants).pipe(
+    Effect.mapError(metadataUnavailable),
+  );
+  const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(CommercePortalAuthVerificationWorkloadGrantsSchema))(
+    verification,
+  ).pipe(Effect.mapError(metadataUnavailable));
+  return {
+    ...bundle,
+    'commerce-customer-context': {
+      ...commerce,
+      COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS: encoded,
+    },
+  };
+});
 
 const operatorEmail = 'obchod@demo.ontos';
 const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234')));

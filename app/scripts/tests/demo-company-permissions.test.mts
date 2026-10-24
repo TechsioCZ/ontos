@@ -29,8 +29,10 @@ import {
 import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
 import {
   commercePortalActionKeys,
+  commercePortalExternalIdentityDeployment,
   commercePortalPrincipal,
   commercePortalRelationships,
+  commercePortalReleaseSecrets,
   commercePortalVerificationWorkloadGrants,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
@@ -496,3 +498,93 @@ it('grants only the exact portal workload on the owner verification audience', (
     providerEndpointAudience: 'commerce-customer-context',
   });
 });
+
+it.effect(
+  'generates missing verification grants from the assembled Shell deployment, preserving all other secrets',
+  () =>
+    Effect.gen(function* generatedReleaseGrants() {
+      const deployment = commercePortalExternalIdentityDeployment();
+      const tenantId = '10000000-0000-4000-8000-000000000041';
+      const workloadPrincipalId = '10000000-0000-4000-8000-000000000042';
+      const stagedDeployment = {
+        ...deployment,
+        grants: deployment.grants.map((grant) => ({ ...grant, tenantId, workloadPrincipalId })),
+      };
+      const bundle = {
+        'commerce-customer-context': { COMMERCE_CORE_IDENTITY_API_KEY: 'unit-only-secret' },
+        'party-registry': { UNRELATED_SECRET: 'unit-only-party-secret' },
+        'shell-super-app': {
+          BETTER_AUTH_SECRET: 'unit-only-shell-secret',
+          ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(stagedDeployment),
+        },
+      };
+      const result = yield* commercePortalReleaseSecrets(bundle);
+      expect(result['commerce-customer-context']?.COMMERCE_CORE_IDENTITY_API_KEY).toBe('unit-only-secret');
+      expect(result['party-registry']).toBe(bundle['party-registry']);
+      expect(result['shell-super-app']).toBe(bundle['shell-super-app']);
+      expect(Object.keys(bundle['commerce-customer-context'])).toEqual(['COMMERCE_CORE_IDENTITY_API_KEY']);
+      const generated: unknown = JSON.parse(
+        result['commerce-customer-context']?.COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ?? 'null',
+      );
+      expect(generated).toEqual({
+        grants: [
+          {
+            commerceAuthenticationNamespaceId: deployment.authenticationNamespaceId,
+            operation: 'commerce-portal-authentication.verify-external-authentication.v1',
+            receivingAudience: deployment.providerEndpointAudience,
+            tenantId,
+            workloadAuthenticationNamespaceId: stagedDeployment.grants[0]?.workloadAuthenticationNamespaceId,
+            workloadPrincipalId,
+          },
+        ],
+        providerEndpointAudience: 'commerce-customer-context',
+      });
+      const second = yield* commercePortalReleaseSecrets(result);
+      expect(second).toEqual(result);
+    }),
+);
+
+it.effect('replaces stale hand-copied verification grants with the canonical generated value', () =>
+  Effect.gen(function* replacesStaleReleaseGrants() {
+    const result = yield* commercePortalReleaseSecrets({
+      'commerce-customer-context': { COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS: '{"grants":[]}' },
+      'shell-super-app': {
+        ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(commercePortalExternalIdentityDeployment()),
+      },
+    });
+    expect(result['commerce-customer-context']?.COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS).toBe(
+      JSON.stringify(commercePortalVerificationWorkloadGrants()),
+    );
+  }),
+);
+
+it.effect('refuses release bundles without usable owner workload metadata rather than shipping deny-all defaults', () =>
+  Effect.gen(function* rejectsMissingReleaseMetadata() {
+    const deployment = commercePortalExternalIdentityDeployment();
+    const invalidDeployments = [
+      undefined,
+      'not-json',
+      JSON.stringify({ ...deployment, grants: [] }),
+      JSON.stringify({ ...deployment, authenticationNamespaceId: 'foreign.portal.namespace' }),
+      JSON.stringify({
+        ...deployment,
+        grants: deployment.grants.map((grant) => ({ ...grant, receivingAudience: 'foreign-receiver' })),
+      }),
+    ];
+    for (const value of invalidDeployments) {
+      const failure = yield* Effect.flip(
+        commercePortalReleaseSecrets({
+          'commerce-customer-context': {},
+          'shell-super-app': value === undefined ? {} : { ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: value },
+        }),
+      );
+      expect(failure.reason).toBe('Commerce release secrets require valid Shell provider workload metadata');
+    }
+    const noCommerceUnit = yield* Effect.flip(
+      commercePortalReleaseSecrets({
+        'shell-super-app': { ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: JSON.stringify(deployment) },
+      }),
+    );
+    expect(noCommerceUnit.reason).toBe('Commerce release secrets require the Commerce and Shell units');
+  }),
+);
