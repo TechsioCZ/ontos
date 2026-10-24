@@ -1,3 +1,4 @@
+import { assignableSalespeople } from '../../../../crm/records.ts';
 // AREA: visits (C06) — owned by the crm-visits lane. Plan a contact / reschedule it / complete it (+ visit).
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -189,9 +190,7 @@ export const PlanContactPanel = ({
           <SelectTemplate
             items={[
               { label: 'Přidělený obchodník klienta', value: '' },
-              ...records.state.salespeople
-                .filter((person) => person.active)
-                .map((person) => ({ label: person.name, value: person.id })),
+              ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
             ]}
             label="Odpovědný obchodník"
             name="salesperson"

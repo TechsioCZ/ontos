@@ -10,7 +10,7 @@ import { useState } from 'react';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
-import { salespersonName } from '../../../../crm/records.ts';
+import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
 
 const NONE = 'none';
 
@@ -83,12 +83,10 @@ export const AssignDialog = ({
       <div className="flex flex-col gap-200">
         <SelectTemplate
           items={[
-            ...records.state.salespeople
-              .filter((person) => person.active)
-              .map((person) => ({
-                label: person.id === client.ownerSalespersonId ? `${person.name} (současný)` : person.name,
-                value: person.id,
-              })),
+            ...assignableSalespeople(records).map((person) => ({
+              label: person.id === client.ownerSalespersonId ? `${person.name} (současný)` : person.name,
+              value: person.id,
+            })),
             { label: 'Bez obchodníka', value: NONE },
           ]}
           label="Nový obchodník"

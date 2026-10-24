@@ -10,6 +10,7 @@ import {
   CrmErrorSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import { assignmentPolicy } from '../services/assignment-policy.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -43,7 +44,7 @@ export const applyCommandAction = defineAction(
     legalEntityScope: 'required',
     owningModuleKey: 'demo.crm',
     payloadSchema: ApplyCommandPayloadSchema,
-    policies: [],
+    policies: [assignmentPolicy],
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },

@@ -6,10 +6,12 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
+import { readAssignablePrincipals } from '@app/core-runtime/auth/assignable-principals';
+import { crmAssignmentPermission } from '../services/assignment-policy.ts';
 import { Effect, Match } from 'effect';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { authorizedImportSamples } from '../../api/authorized-import-samples.ts';
-import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { clientReadEvidence } from './agent-review.ts';
@@ -78,9 +80,13 @@ export const recordsRead = defineRead(
   {
     // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (input, context) => context.services.loadRecords(input).pipe(Effect.mapError(readFailure)),
+    load: (input, context) =>
+      Effect.all(
+        { records: context.services.loadRecords(input), directory: context.services.loadAssignmentDirectory() },
+        { concurrency: 1 },
+      ).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
-      finishCrmRecords(input, context.loaded, context.prepared, context.scope).pipe(
+      finishCrmRecords(input, context.loaded.records, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
         // A clientId the viewer may not see (foreign rep's client, or none) answers 404 with no data (C00).
         Effect.filterOrFail(
@@ -90,6 +96,27 @@ export const recordsRead = defineRead(
               code: 'read_handler_not_found',
               reason: 'Klient neexistuje nebo k němu nemáte přístup',
             }),
+        ),
+        Effect.flatMap((result) =>
+          readAssignablePrincipals(context.loaded.directory, crmAssignmentPermission).pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new ReadHandlerUnavailable({
+                  code: 'read_handler_unavailable',
+                  reason: 'Seznam obchodníků je dočasně nedostupný.',
+                }),
+                'cause',
+                { value: cause },
+              ),
+            ),
+            Effect.map((assignmentCandidates) => ({
+              ...result,
+              assignmentCandidates,
+              departedPrincipalIds: context.loaded.directory.members.flatMap((member) =>
+                member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],
+              ),
+            })),
+          ),
         ),
         Effect.map((result) => ({
           evidence: clientReadEvidence(

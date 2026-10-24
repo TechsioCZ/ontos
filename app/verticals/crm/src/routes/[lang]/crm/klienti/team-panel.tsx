@@ -3,74 +3,14 @@
 import { SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Fiber, Option, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { useEffect, useState } from 'react';
+import { Effect } from 'effect';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const REQUEST_TIMEOUT = '30 seconds';
-
-const AccountSchema = Schema.Struct({
-  displayName: Schema.String,
-  kind: Schema.Literals(['human', 'agent']),
-  principalRef: Schema.Struct({
-    principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CrmPrincipalId')),
-    tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CrmTenantId')),
-  }),
-  principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
-  selectedCompanyMembership: Schema.OptionFromNullOr(
-    Schema.Struct({ status: Schema.Literals(['invited', 'active', 'disabled', 'departed']) }),
-  ),
-});
-const AccountListSchema = Schema.Struct({
-  items: Schema.Array(AccountSchema),
-  nextOffset: Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-});
-type Account = typeof AccountSchema.Type;
-
-type Accounts =
-  | { readonly kind: 'loading' }
-  | { readonly forbidden: boolean; readonly kind: 'unavailable' }
-  | { readonly accounts: readonly Account[]; readonly kind: 'ready' };
-
-const unavailable: Accounts = { forbidden: false, kind: 'unavailable' };
-const readAccountPage: (
-  offset: number,
-  accounts: readonly Account[],
-) => Effect.Effect<Accounts, never, HttpClient.HttpClient> = Effect.fn('Crm.loadPeoplePage')(
-  function* loadPeoplePage(offset: number, accounts: readonly Account[]) {
-    const client = yield* HttpClient.HttpClient;
-    const request = yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post('/shell-super-app-api/auth/identity/people/list').pipe(
-        HttpClientRequest.setHeader('accept', 'application/json'),
-      ),
-      { limit: 100, offset },
-    );
-    const response = yield* client.execute(request).pipe(Effect.timeout(REQUEST_TIMEOUT));
-    if (response.status !== 200) {
-      return { forbidden: response.status === 403, kind: 'unavailable' } satisfies Accounts;
-    }
-    const list = yield* Schema.decodeUnknownEffect(AccountListSchema)(yield* response.json);
-    const collected = [...accounts, ...list.items];
-    if (Option.isNone(list.nextOffset)) {
-      return { accounts: collected, kind: 'ready' } satisfies Accounts;
-    }
-    if (list.nextOffset.value <= offset) {
-      return unavailable;
-    }
-    return yield* readAccountPage(list.nextOffset.value, collected);
-  },
-  Effect.orElseSucceed(() => unavailable),
-);
-const loadAccounts = Effect.suspend(() => readAccountPage(0, [])).pipe(
-  Effect.timeout(REQUEST_TIMEOUT),
-  Effect.orElseSucceed(() => unavailable),
-);
 
 export const TeamPanel = ({
   busy,
@@ -85,15 +25,6 @@ export const TeamPanel = ({
   readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
 }) => {
   const toaster = useToast();
-  const [accounts, setAccounts] = useState<Accounts>({ kind: 'loading' });
-  useEffect(() => {
-    const fiber = browserRuntime.runFork(
-      loadAccounts.pipe(Effect.andThen((value) => Effect.sync(() => setAccounts(value)))),
-    );
-    return () => {
-      browserRuntime.runFork(Fiber.interrupt(fiber));
-    };
-  }, []);
   const run = (command: CrmCommand, success: string) => {
     browserRuntime.runFork(
       // oxlint-disable-next-line typescript/promise-function-async -- Native parent React event adapter is already Promise-based; remove-when: parent exposes an Effect command.
@@ -112,15 +43,10 @@ export const TeamPanel = ({
     );
   };
   const registered = new Set(records.state.salespeople.map((person) => person.principalId));
-  const candidates =
-    accounts.kind === 'ready'
-      ? accounts.accounts.filter(
-          (account) =>
-            account.principalStatus === 'active' &&
-            Option.exists(account.selectedCompanyMembership, (membership) => membership.status === 'active') &&
-            !registered.has(account.principalRef.principalId),
-        )
-      : [];
+  const candidates = records.assignmentCandidates.filter(
+    (account) => !registered.has(account.principalRef.principalId),
+  );
+  const departed = new Set(records.departedPrincipalIds);
   const clientCount = (id: string) =>
     records.state.clients.items.filter((client) => client.status === 'active' && client.ownerSalespersonId === id)
       .length;
@@ -133,7 +59,7 @@ export const TeamPanel = ({
         </Button>
       }
       closeLabel={dialogCloseLabel}
-      description="Přiřazení do CRM je samostatné rozhodnutí. Lze zařadit člověka i agenta; druh přihlášení ani pracovní pozice nepřidělují práva."
+      description="Zařaďte člověka nebo agenta s aktivním přístupem do CRM této firmy. Odchod z firmy zachovává historii; klienty převeďte jinému obchodníkovi."
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -148,6 +74,8 @@ export const TeamPanel = ({
         <ul className="flex flex-col gap-100">
           {records.state.salespeople.map((person) => {
             const owned = clientCount(person.id);
+            const hasDeparted = person.principalId !== undefined && departed.has(person.principalId);
+            const activeLabel = person.active ? 'Aktivní' : 'Vyřazen';
             return (
               <li
                 className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-100 p-150`}
@@ -157,7 +85,7 @@ export const TeamPanel = ({
                   <span className="flex items-center gap-100 font-medium">
                     {person.name}
                     <Badge size="sm" variant={person.active ? 'success' : 'outline'}>
-                      {person.active ? 'Aktivní' : 'Vyřazen'}
+                      {hasDeparted ? 'Odešel – přeřadit' : activeLabel}
                     </Badge>
                   </span>
                   <span className="text-fg-secondary text-xs">
@@ -171,7 +99,7 @@ export const TeamPanel = ({
                   </span>
                 </span>
                 <Button
-                  disabled={busy || (person.active && owned > 0)}
+                  disabled={busy || (person.active && owned > 0) || (!person.active && hasDeparted)}
                   onClick={() =>
                     run(
                       { _tag: 'SetSalespersonActive', active: !person.active, salespersonId: person.id },
@@ -191,19 +119,11 @@ export const TeamPanel = ({
         </ul>
         <section className="flex flex-col gap-100">
           <h3 className="font-semibold text-sm">Aktivní lidé a agenti, kteří ještě nejsou zařazení</h3>
-          {accounts.kind === 'loading' && <p className="text-fg-secondary text-sm">Načítám účty firmy…</p>}
-          {accounts.kind === 'unavailable' && (
-            <StatusText showIcon status="warning">
-              {accounts.forbidden
-                ? 'Seznam účtů firmy vidí jen správce. Nového obchodníka zařadí správce.'
-                : 'Seznam účtů se nepodařilo načíst. Zkuste to prosím znovu.'}
-            </StatusText>
-          )}
-          {accounts.kind === 'ready' && candidates.length === 0 && (
+          {candidates.length === 0 ? (
             <p className="text-fg-secondary text-sm">
-              Všichni aktivní členové firmy jsou zařazení. Členství spravuje správce v Nastavení › Lidé a role.
+              Všichni dostupní obchodníci už jsou zařazení. Přístup do CRM spravuje správce v Nastavení › Lidé a role.
             </p>
-          )}
+          ) : null}
           {candidates.map((account) => (
             <div
               className="flex flex-wrap items-center justify-between gap-100 rounded-lg border border-border-primary border-dashed p-150"
@@ -211,7 +131,7 @@ export const TeamPanel = ({
             >
               <span className="flex min-w-0 flex-col">
                 <span className="font-medium">{account.displayName}</span>
-                <span className="text-fg-secondary text-xs">{account.kind === 'agent' ? 'AI agent' : 'Člověk'}</span>
+                <span className="text-fg-secondary text-xs">Přístup do CRM ověřen</span>
               </span>
               <Button
                 disabled={busy}

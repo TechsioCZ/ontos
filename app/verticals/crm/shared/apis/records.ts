@@ -22,6 +22,18 @@ export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 
 export const RecordsResponseSchema = Schema.Struct({
+  assignmentCandidates: Schema.Array(
+    Schema.Struct({
+      displayName: Schema.String,
+      principalRef: Schema.Struct({
+        principalId: Schema.String.pipe(Schema.brand('CrmAssignablePrincipalId'), Schema.decodeTo(Schema.String)),
+        tenantId: Schema.String.pipe(Schema.brand('CrmAssignableTenantId'), Schema.decodeTo(Schema.String)),
+      }),
+    }),
+  ),
+  departedPrincipalIds: Schema.Array(
+    Schema.String.pipe(Schema.brand('CrmDepartedPrincipalId'), Schema.decodeTo(Schema.String)),
+  ),
   /** Company-wide seed samples; supplied only to viewers authorized to import orders. Never persisted. */
   importSamples: Schema.optionalKey(
     Schema.Array(

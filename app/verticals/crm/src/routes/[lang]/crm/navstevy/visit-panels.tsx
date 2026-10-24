@@ -1,3 +1,4 @@
+import { assignableSalespeople } from '../../../../crm/records.ts';
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -158,9 +159,7 @@ export const VisitFields = ({
         <SelectTemplate
           items={[
             { label: 'Podle přidělení klienta', value: '' },
-            ...records.state.salespeople
-              .filter((person) => person.active)
-              .map((person) => ({ label: person.name, value: person.id })),
+            ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
           ]}
           label="Obchodník"
           name="salesperson"

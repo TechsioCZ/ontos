@@ -17,7 +17,7 @@ const principal = {
   tenantId: '40000000-0000-4000-8000-000000000001',
 } as const;
 const payload: ApplyCommandPayload = {
-  command: { _tag: 'CreateClient', kind: 'organization', name: 'Native grant client' },
+  command: { _tag: 'UpdateClient', id: 'client-native-grant', patch: { name: 'Native grant client' } },
   expectedRevision: 0,
 };
 const request = {
@@ -69,6 +69,7 @@ it.effect('executes an API-key principal through the real Action when native exe
               calls.push({ command, invocationId });
               return { entityIds: ['client-native-grant'], revision: expectedRevision + 1 };
             }),
+          loadAssignmentDirectory: unused,
           loadRecords: unused,
         }),
       ],
@@ -121,5 +122,20 @@ it.effect('a proposal-only approval profile cannot execute CRM commands with an 
     expect(snapshot.transactionCount).toBe(0);
     expect(snapshot.committed).toHaveLength(0);
     expect(snapshot.stages).not.toContain('handler_executed');
+  }).pipe(Effect.provide(unusedProductionServices)),
+);
+
+it.effect.each([
+  { _tag: 'CreateClient', kind: 'organization', name: 'Firma' },
+  { _tag: 'CreateClient', kind: 'organization', name: 'Firma', ownerSalespersonId: 'target' },
+] as const)('fails closed before owner writes for an unverified explicit or actor-default assignment %j', (command) =>
+  Effect.gen(function* unavailableAssignment() {
+    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
+    const failure = yield* harness.runtime
+      .runAction({ ...request, payload: { ...payload, command } })
+      .pipe(Effect.flip);
+    expect(Predicate.isTagged(failure, 'ActionPolicyDenied')).toBe(true);
+    expect(harness.snapshot().transactionCount).toBe(0);
+    expect(harness.snapshot().stages).not.toContain('handler_executed');
   }).pipe(Effect.provide(unusedProductionServices)),
 );

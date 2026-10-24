@@ -160,9 +160,26 @@ export const useCrmRecords = (clientId?: string) => {
   return { busy, load, state: stateOf(snapshot), submit };
 };
 
-/** Display name of a salesperson id, or undefined. */
-export const salespersonName = (records: RecordsResponse, id: string | undefined) =>
-  id === undefined ? undefined : records.state.salespeople.find((person) => person.id === id)?.name;
+/** Picker candidates come only from the Core-authorized company directory, never historical records alone. */
+export const assignableSalespeople = (records: Pick<RecordsResponse, 'assignmentCandidates' | 'state'>) => {
+  const eligible = new Set(records.assignmentCandidates.map((candidate) => candidate.principalRef.principalId));
+  return records.state.salespeople.filter(
+    (person) => person.active && person.principalId !== undefined && eligible.has(person.principalId),
+  );
+};
+
+/** Keep historical owners visible, but make a departed person's outstanding work explicit. */
+export const salespersonName = (records: RecordsResponse, id: string | undefined) => {
+  const person = records.state.salespeople.find((candidate) => candidate.id === id);
+  if (
+    person !== undefined &&
+    person.principalId !== undefined &&
+    records.departedPrincipalIds.includes(person.principalId)
+  ) {
+    return `${person.name} · Odešel – přeřadit`;
+  }
+  return person?.name;
+};
 
 export const clientName = (records: RecordsResponse, id: string | undefined) =>
   id === undefined ? undefined : records.state.clients.items.find((client) => client.id === id)?.name;

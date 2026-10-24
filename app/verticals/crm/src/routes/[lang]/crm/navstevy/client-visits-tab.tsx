@@ -1,3 +1,4 @@
+import { assignableSalespeople } from '../../../../crm/records.ts';
 // Client-card "Návštěvy" tab. OWNER: crm-visits. Contract: export name + ClientCardTabProps (klienti/card-tab-props.ts).
 // The card itself is a SidePanel, so everything here is inline (no stacked dialogs): summary facts, inline
 // "record visit" and "plan contact" forms, open plan items, and the client's timeline with correction history.
@@ -280,9 +281,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
                 <SelectTemplate
                   items={[
                     { label: 'Přidělený obchodník klienta', value: '' },
-                    ...records.state.salespeople
-                      .filter((person) => person.active)
-                      .map((person) => ({ label: person.name, value: person.id })),
+                    ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
                   ]}
                   label="Odpovědný obchodník"
                   name="planSalesperson"

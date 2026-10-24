@@ -1,3 +1,4 @@
+import { assignableSalespeople } from '../../../../crm/records.ts';
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
 // someone with demo.crm.assign may pick the salesperson; a salesperson always creates the client for themself.
 import { SidePanel, dialogCloseLabel, foldSearchText, surfaceTileClassName } from '@app/admin-ui';
@@ -202,9 +203,7 @@ export const ClientFormDialog = ({
   };
 
   const owners = [
-    ...records.state.salespeople
-      .filter((person) => person.active)
-      .map((person) => ({ label: person.name, value: person.id })),
+    ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
     { label: 'Zatím bez obchodníka', value: NONE },
   ];
 
