@@ -99,15 +99,19 @@ it.effect('retains denial and never exposes a remote target for a canonical path
   }),
 );
 
-it.effect('keeps the shell recovery model for unknown canonical targets', () =>
-  Effect.gen(function* reportsShellNotFound() {
-    resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
-    const model = yield* Effect.promise(() =>
-      loader({ params: { lang: 'cs' }, request: requestFor('/cs/previously-unknown/page') }),
-    );
-    expect(model).toMatchObject({ state: 'not_found', shell: authenticatedShell });
-    expect(model).not.toHaveProperty('target');
-  }),
+it.effect.each(['/cs/previously-unknown/page', '/cs/sprava/lide'])(
+  'keeps Shell not-found recovery for an unregistered canonical target %s',
+  (pathname) =>
+    Effect.gen(function* reportsShellNotFound() {
+      resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
+      const model = yield* Effect.promise(() => loader({ params: { lang: 'cs' }, request: requestFor(pathname) }));
+      expect(model).toMatchObject({ shell: authenticatedShell, state: 'not_found' });
+      expect(model).not.toHaveProperty('target');
+      expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+        { canonicalPath: pathname.slice(3), compositionRevision: authenticatedShell.compositionRevision },
+        expect.any(Object),
+      );
+    }),
 );
 
 it.effect.each([

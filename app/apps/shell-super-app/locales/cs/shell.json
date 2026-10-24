@@ -603,7 +603,9 @@
             "change-status": "změnit stav agenta {{target}}",
             "delete": "smazat agenta {{target}}",
             "other": "změnit agenta {{target}}"
-          }
+          },
+          "succeeded": "Provedeno",
+          "deniedStatus": "Zamítnuto"
         },
         "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
       },

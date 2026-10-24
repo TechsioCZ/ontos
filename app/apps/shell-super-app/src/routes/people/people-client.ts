@@ -3,6 +3,7 @@ import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import {
   PEOPLE_PATHS,
+  PeopleRoleCatalogSchema,
   InvitePeopleResponseSchema,
   PeopleListResponseSchema,
   SetPeopleCompanyMembershipResponseSchema,
@@ -46,7 +47,12 @@ export const newRequestToken = Effect.gen(function* peopleRequestKey() {
 
 const call = <A>(
   path: string,
-  body: PeopleListRequest | SetPeopleCompanyMembershipRequest | SetPeopleRoleRequest | InvitePeopleRequest,
+  body:
+    | Readonly<Record<string, never>>
+    | PeopleListRequest
+    | SetPeopleCompanyMembershipRequest
+    | SetPeopleRoleRequest
+    | InvitePeopleRequest,
   schema: Schema.Codec<A, unknown>,
   mutation: boolean,
 ) =>
@@ -117,3 +123,11 @@ export const loadPeopleForPerson = (scope: 'company' | 'tenant', principalId: st
 
 export const invitePerson = (request: InvitePeopleRequest) =>
   call(PEOPLE_PATHS.companyInvite, request, InvitePeopleResponseSchema, true);
+
+export const loadRoleCatalog = (scope: 'company' | 'tenant') =>
+  call(
+    scope === 'company' ? PEOPLE_PATHS.companyRoleCatalog : PEOPLE_PATHS.tenantRoleCatalog,
+    {},
+    PeopleRoleCatalogSchema,
+    false,
+  );

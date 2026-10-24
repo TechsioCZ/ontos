@@ -99,6 +99,7 @@ export {
   PeopleDirectoryResultSchema,
   peopleDirectoryRead,
 } from './auth/people-directory-read.ts';
+export { RoleCatalogResultSchema, roleCatalogRead } from './auth/role-catalog-read.ts';
 export { PersonInvitationIdentityProvider } from './auth/person-invitation-identity-provider.ts';
 export type {
   PersonInvitationIdentityInput,

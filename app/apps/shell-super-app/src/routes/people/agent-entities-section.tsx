@@ -663,14 +663,14 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
             const reason = denied ? undefined : entry.details['reason'];
             return (
               <li
-                className="flex gap-150 border-border-primary/60 border-b py-100 last:border-b-0"
+                className="flex flex-wrap gap-150 border-border-primary/60 border-b py-100 last:border-b-0 sm:flex-nowrap"
                 key={entry.auditEventId}
               >
                 <span
                   aria-hidden
                   className={`mt-50 size-150 shrink-0 rounded-full ${denied ? 'bg-danger' : 'bg-success'}`}
                 />
-                <div className="flex min-w-0 flex-1 flex-col gap-50">
+                <div className="order-2 flex min-w-0 basis-full flex-col gap-50 sm:order-none sm:flex-1 sm:basis-auto">
                   <p className="text-sm [overflow-wrap:anywhere]">
                     <span className="font-medium">{entry.actorName ?? t(`${key}.audit.system`)}</span> {describe(entry)}
                   </p>
@@ -681,7 +681,7 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
                 </div>
                 <span className="shrink-0 self-start">
                   <Badge size="sm" variant={denied ? 'danger' : 'success'}>
-                    {t(denied ? `${PEOPLE_KEY}.audit.denied` : `${PEOPLE_KEY}.audit.succeeded`)}
+                    {t(denied ? `${key}.audit.deniedStatus` : `${key}.audit.succeeded`)}
                   </Badge>
                 </span>
               </li>
@@ -745,15 +745,16 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
     <>
       <SectionCard
         actions={
-          <Button
-            disabled={state.state !== 'ready'}
-            icon="icon-[mdi--robot-outline]"
-            onClick={() => setEditing({ mode: 'create' })}
-            size="sm"
-            variant="primary"
-          >
-            {t(`${key}.create`)}
-          </Button>
+          state.state === 'ready' ? (
+            <Button
+              icon="icon-[mdi--robot-outline]"
+              onClick={() => setEditing({ mode: 'create' })}
+              size="sm"
+              variant="primary"
+            >
+              {t(`${key}.create`)}
+            </Button>
+          ) : null
         }
         title={t(`${key}.title`)}
       >

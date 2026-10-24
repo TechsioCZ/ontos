@@ -123,12 +123,14 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 import {
   invitePeoplePerson,
   listPeople,
+  listPeopleRoleCatalog,
   setPeopleCompanyMembership,
   setPeopleScopedRole,
 } from './auth/people-administration.ts';
 import {
   InvitePeopleResponseSchema,
   PeopleListResponseSchema,
+  PeopleRoleCatalogSchema,
   SetPeopleCompanyMembershipResponseSchema,
   SetPeopleRoleResponseSchema,
 } from '../shared/people-api.ts';
@@ -2542,6 +2544,24 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
           const context = yield* commandContext(request, headers, 'company');
           const result = yield* invitePeoplePerson(context, payload).pipe(Effect.catch(failure));
           return yield* decodeResponse(InvitePeopleResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listCompanyRoleCatalog', ({ request }) =>
+        Effect.gen(function* listCompanyRoleCatalogHandler() {
+          const principal = yield* principalFor(request, 'company');
+          const result = yield* listPeopleRoleCatalog(principal, correlationFromRequest(request)).pipe(
+            Effect.catch(failure),
+          );
+          return yield* decodeResponse(PeopleRoleCatalogSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listTenantRoleCatalog', ({ request }) =>
+        Effect.gen(function* listTenantRoleCatalogHandler() {
+          const principal = yield* principalFor(request, 'tenant');
+          const result = yield* listPeopleRoleCatalog(principal, correlationFromRequest(request)).pipe(
+            Effect.catch(failure),
+          );
+          return yield* decodeResponse(PeopleRoleCatalogSchema, result, shellInternalProblem);
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('listCompanyPeople', ({ payload, request }) =>

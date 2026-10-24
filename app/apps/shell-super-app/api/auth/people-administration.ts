@@ -4,6 +4,8 @@ import {
   invitePersonAction,
   PeopleDirectoryResultSchema,
   ReadRuntime,
+  RoleCatalogResultSchema,
+  roleCatalogRead,
   peopleDirectoryRead,
   setCompanyMembershipAction,
   setScopedRoleMembershipAction,
@@ -64,4 +66,18 @@ export const invitePeoplePerson = Effect.fn('invitePeoplePerson')(function* invi
   const runtime = yield* ActionRuntime;
   const result = yield* runtime.runAction({ ...context, payload, registration: invitePersonAction });
   return yield* Schema.encodeEffect(invitePersonAction.descriptor.resultSchema)(result);
+});
+
+export const listPeopleRoleCatalog = Effect.fn('PeopleAdministration.listRoleCatalog')(function* listRoleCatalog(
+  principal: TrustedPrincipalContext,
+  correlationId: string,
+) {
+  const runtime = yield* ReadRuntime;
+  const result = yield* runtime.runRead({
+    input: {},
+    principal,
+    registration: roleCatalogRead,
+    transport: { correlationId },
+  });
+  return yield* Schema.encodeEffect(RoleCatalogResultSchema)(result);
 });

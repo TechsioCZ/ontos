@@ -18,6 +18,7 @@ const { fixture } = rstest.hoisted(() => ({
       status: 'active',
       writePolicy: 'approval',
     },
+    forbidden: false,
     target: '00000000-0000-4000-8000-000000000003',
   },
 }));
@@ -32,18 +33,21 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ language: 'cs', t: (key: string) => key }),
 }));
 rstest.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
-  usePageData: () => ({
-    refreshing: false,
-    state: 'ready',
-    value: {
-      agents: [fixture.agent],
-      audit: [],
-      company: { legalEntityId: 'company', legalName: 'Firma' },
-      members: [],
-      modules: [],
-      presets: [],
-    },
-  }),
+  usePageData: () =>
+    fixture.forbidden
+      ? { error: { reason: 'forbidden' }, refreshing: false, state: 'failed' }
+      : {
+          refreshing: false,
+          state: 'ready',
+          value: {
+            agents: [fixture.agent],
+            audit: [],
+            company: { legalEntityId: 'company', legalName: 'Firma' },
+            members: [],
+            modules: [],
+            presets: [],
+          },
+        },
 }));
 rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
   AgentEditorPanel: ({ agent }: { readonly agent: AgentEntity | null }) => (
@@ -52,6 +56,7 @@ rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
 }));
 afterEach(() => {
   cleanup();
+  fixture.forbidden = false;
   fixture.agent.hasProfile = true;
   fixture.agent.principalId = fixture.target;
 });
@@ -81,4 +86,10 @@ it('drops an old agent detail when the selected company no longer admits that pr
   fixture.agent = { ...fixture.agent, principalId: '00000000-0000-4000-8000-000000000009' };
   view.rerender(<AgentEntitiesSection legalEntityId="other-company" onNotify={() => {}} />);
   expect(screen.queryByTestId('agent-editor')).toBeNull();
+});
+
+it('does not render an admin-only creation control for a member without agent administration', () => {
+  fixture.forbidden = true;
+  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+  expect(screen.queryByRole('button', { name: 'shell.agents.section.create' })).toBeNull();
 });

@@ -8,6 +8,7 @@ import { PeoplePanel } from '../../src/routes/people/people-panel.tsx';
 
 const { commands } = rstest.hoisted(() => ({
   commands: {
+    catalog: rstest.fn(),
     invite: rstest.fn(),
     linked: rstest.fn(),
     list: rstest.fn(),
@@ -21,6 +22,7 @@ rstest.mock('../../src/routes/people/people-client.ts', () => ({
   invitePerson: commands.invite,
   loadPeople: commands.list,
   loadPeopleForPerson: commands.linked,
+  loadRoleCatalog: commands.catalog,
 }));
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -50,6 +52,16 @@ const list = {
 } as const;
 afterEach(cleanup);
 beforeEach(() => {
+  commands.catalog.mockReturnValue(
+    Effect.succeed({
+      status: 'ok',
+      value: {
+        items: [
+          { description: 'Práce s přidělenými klienty.', name: 'Obchodník', roleKey: 'crm-sales', scope: list.scope },
+        ],
+      },
+    }),
+  );
   commands.list.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
   commands.linked.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
@@ -128,4 +140,53 @@ it('keeps committed membership changes processing while the actual projection di
   await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
   await screen.findByText(/Zpracovává se 1 změn/u);
   expect(screen.getByText(/Osoba odešla z firmy/u)).toBeDefined();
+});
+
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
+it('selects a named role from the governed catalog without exposing identifiers', async () => {
+  const user = userEvent.setup();
+  commands.role.mockReturnValue(
+    Effect.succeed({
+      status: 'ok',
+      value: {
+        operation: 'assign',
+        principalRef,
+        projection: 'pending',
+        role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
+      },
+    }),
+  );
+  render(<PeoplePanel companyId={companyId} />);
+  await user.click(await screen.findByRole('button', { name: 'Spravovat role' }));
+  expect(screen.queryByLabelText('Klíč role')).toBeNull();
+  expect(screen.queryByText(/SpiceDB/u)).toBeNull();
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales');
+  expect(screen.getByText('Práce s přidělenými klienty.')).toBeDefined();
+  await user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů');
+  await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
+  await waitFor(() =>
+    expect(commands.role).toHaveBeenCalledWith('company', {
+      operation: 'assign',
+      principalRef,
+      reason: 'Převzetí klientů',
+      roleKey: 'crm-sales',
+    }),
+  );
+});
+
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
+it('renders role chips with Czech names rather than internal keys', async () => {
+  commands.list.mockReturnValue(
+    Effect.succeed({
+      status: 'ok',
+      value: {
+        ...list,
+        items: [{ ...person, roleAssignments: [{ roleKey: 'crm-sales', scope: list.scope, tenantId }] }],
+      },
+    }),
+  );
+  render(<PeoplePanel companyId={companyId} />);
+  await screen.findByText('Obchodník');
+  expect(screen.queryByText(/crm-sales/u)).toBeNull();
+  expect(screen.queryByText(/00000000/u)).toBeNull();
 });

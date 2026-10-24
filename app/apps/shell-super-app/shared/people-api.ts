@@ -22,6 +22,17 @@ export const PeopleRoleSchema = Schema.Struct({
   scope: PeopleScopeSchema,
   tenantId: TenantId,
 });
+export const PeopleRoleCatalogSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      description: Schema.String,
+      name: Schema.String,
+      roleKey: text(200),
+      scope: PeopleScopeSchema,
+    }),
+  ),
+});
+export type PeopleRoleCatalog = typeof PeopleRoleCatalogSchema.Type;
 export const PeopleCompanyMembershipSchema = Schema.Struct({
   affiliation: CompanyAffiliationSchema,
   legalEntityId: LegalEntityId,
@@ -100,6 +111,8 @@ export const PEOPLE_PATHS = {
   companyList: '/auth/identity/people/list',
   companyMembership: '/auth/identity/people/company-membership',
   companyRole: '/auth/identity/people/company-role',
+  companyRoleCatalog: '/auth/identity/people/role-catalog',
   tenantList: '/auth/identity/people/tenant-list',
   tenantRole: '/auth/identity/people/tenant-role',
+  tenantRoleCatalog: '/auth/identity/people/tenant-role-catalog',
 } as const;

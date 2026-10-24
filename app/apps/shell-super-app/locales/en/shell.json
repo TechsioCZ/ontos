@@ -603,7 +603,9 @@
             "change-status": "change the status of agent {{target}}",
             "delete": "delete agent {{target}}",
             "other": "change agent {{target}}"
-          }
+          },
+          "succeeded": "Completed",
+          "deniedStatus": "Denied"
         },
         "loadError": "Could not load agents. Please try again."
       },

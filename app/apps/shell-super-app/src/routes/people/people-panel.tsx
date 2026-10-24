@@ -6,17 +6,22 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Effect, Fiber } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
-import type { PeopleList, Person, SetPeopleCompanyMembershipRequest } from '../../../shared/people-api.ts';
+import type {
+  PeopleList,
+  PeopleRoleCatalog,
+  Person,
+  SetPeopleCompanyMembershipRequest,
+} from '../../../shared/people-api.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import type { PeopleOutcome } from './people-client.ts';
-import { changeCompanyMembership, changeScopedRole, loadPeople, loadPeopleForPerson } from './people-client.ts';
 import {
-  isChangeConfirmed,
-  membershipLabels,
-  personKindLabel,
-  principalStatusLabels,
-  scopeLabel,
-} from './people-model.ts';
+  changeCompanyMembership,
+  changeScopedRole,
+  loadPeople,
+  loadPeopleForPerson,
+  loadRoleCatalog,
+} from './people-client.ts';
+import { isChangeConfirmed, membershipLabels, personKindLabel, principalStatusLabels } from './people-model.ts';
 import { InvitePersonButton } from './invite-person-button.tsx';
 import type { PendingPeopleChange } from './people-model.ts';
 
@@ -24,14 +29,70 @@ interface Editor {
   readonly kind: 'membership' | 'role';
   readonly person: Person;
 }
+const roleName = (catalog: PeopleRoleCatalog | undefined, roleKey: string) =>
+  catalog?.items.find((role) => role.roleKey === roleKey)?.name ?? 'Název role není dostupný';
 const selectClass = 'w-full rounded-md border border-border-primary bg-base p-100';
 
+const RolePicker = ({
+  busy,
+  catalog,
+  onChange,
+  operation,
+  person,
+  roleKey,
+  scope,
+}: {
+  readonly busy: boolean;
+  readonly catalog: PeopleRoleCatalog | undefined;
+  readonly onChange: (roleKey: string) => void;
+  readonly operation: 'assign' | 'revoke';
+  readonly person: Person;
+  readonly roleKey: string;
+  readonly scope: 'company' | 'tenant';
+}) => {
+  const selected = catalog?.items.find((role) => role.roleKey === roleKey);
+  return (
+    <>
+      <p className="text-fg-secondary text-sm">
+        Role platí pro {scope === 'tenant' ? 'celou organizaci' : 'vybranou firmu'}.
+      </p>
+      <label className="grid gap-50">
+        Role
+        <select
+          className={selectClass}
+          disabled={catalog === undefined || busy}
+          onChange={(event) => onChange(event.target.value)}
+          required
+          value={roleKey}
+        >
+          <option value="">Vyberte roli</option>
+          {catalog?.items.flatMap((role) =>
+            operation === 'assign' || person.roleAssignments.some((assigned) => assigned.roleKey === role.roleKey)
+              ? [
+                  <option key={role.roleKey} value={role.roleKey}>
+                    {role.name}
+                  </option>,
+                ]
+              : [],
+          )}
+        </select>
+      </label>
+      {catalog === undefined ? (
+        <StatusText status="warning">Seznam rolí není dostupný. Obnovte seznam.</StatusText>
+      ) : null}
+      {selected === undefined ? null : <p className="text-fg-secondary text-sm">{selected.description}</p>}
+    </>
+  );
+};
+
 const PeopleEditor = ({
+  catalog,
   editor,
   onClose,
   onCommitted,
   scope,
 }: {
+  readonly catalog: PeopleRoleCatalog | undefined;
   readonly editor: Editor;
   readonly onClose: () => void;
   readonly onCommitted: (change: PendingPeopleChange) => void;
@@ -119,22 +180,23 @@ const PeopleEditor = ({
         <p>{person.displayName}</p>
         {editor.kind === 'role' ? (
           <>
-            <p className="text-fg-secondary text-sm">
-              Rozsah: {scope === 'tenant' ? 'celý tenant' : 'vybraná firma'}. Rozsah se neurčuje podle názvu role.
-              Použijte přesný klíč již zavedené role ve SpiceDB; seznam přiřazení není katalog rolí.
-            </p>
-            <FormInput
-              label="Klíč role"
-              maxLength={200}
-              onChange={(event) => setRoleKey(event.target.value)}
-              required
-              value={roleKey}
+            <RolePicker
+              busy={busy}
+              catalog={catalog}
+              onChange={setRoleKey}
+              operation={operation}
+              person={person}
+              roleKey={roleKey}
+              scope={scope}
             />
             <label className="grid gap-50">
               Změna
               <select
                 className={selectClass}
-                onChange={(event) => setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign')}
+                onChange={(event) => {
+                  setOperation(event.target.value === 'revoke' ? 'revoke' : 'assign');
+                  setRoleKey('');
+                }}
                 value={operation}
               >
                 <option value="assign">Přiřadit</option>
@@ -204,11 +266,13 @@ const PeopleEditor = ({
 };
 
 const PersonDetail = ({
+  catalog,
   onClose,
   onEdit,
   person,
   scope,
 }: {
+  readonly catalog: PeopleRoleCatalog | undefined;
   readonly onClose: () => void;
   readonly onEdit: (editor: Editor) => void;
   readonly person: Person;
@@ -259,7 +323,10 @@ const PersonDetail = ({
           ? 'Bez členství ve vybrané firmě'
           : membershipLabels[person.selectedCompanyMembership.status]}
       </p>
-      <p>Role v tomto rozsahu: {person.roleAssignments.map((role) => role.roleKey).join(', ') || 'Žádné'}</p>
+      <p>
+        Role v tomto rozsahu:{' '}
+        {person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).join(', ') || 'Žádné'}
+      </p>
       {person.selectedCompanyMembership?.status === 'departed' ? (
         <p>Odchod zachovává historii. Případné přeřazení práce ověřte přímo v agendě, která práci eviduje.</p>
       ) : null}
@@ -268,11 +335,13 @@ const PersonDetail = ({
 );
 
 const PersonCard = ({
+  catalog,
   onDetail,
   onEdit,
   person,
   scope,
 }: {
+  readonly catalog: PeopleRoleCatalog | undefined;
   readonly onDetail: (person: Person) => void;
   readonly onEdit: (editor: Editor) => void;
   readonly person: Person;
@@ -296,7 +365,7 @@ const PersonCard = ({
       </div>
       <Badge variant={person.selectedCompanyMembership?.status === 'departed' ? 'warning' : 'outline'}>
         {person.selectedCompanyMembership === null
-          ? 'Tenant'
+          ? 'Organizace'
           : membershipLabels[person.selectedCompanyMembership.status]}
       </Badge>
     </div>
@@ -308,7 +377,9 @@ const PersonCard = ({
         <span className="text-fg-secondary text-sm">Žádné role v tomto rozsahu</span>
       ) : (
         person.roleAssignments.map((role) => (
-          <Badge key={role.roleKey} variant="outline">{`${role.roleKey} · ${scopeLabel(role.scope)}`}</Badge>
+          <Badge key={role.roleKey} variant="outline">
+            {roleName(catalog, role.roleKey)}
+          </Badge>
         ))
       )}
     </div>
@@ -340,6 +411,11 @@ const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedP
   return error;
 };
 
+const currentRoleCatalog = (
+  loaded: { readonly key: string; readonly outcome: PeopleOutcome<PeopleRoleCatalog> } | undefined,
+  requestKey: string,
+) => (loaded?.key === requestKey && loaded.outcome.status === 'ok' ? loaded.outcome.value : undefined);
+
 export const PeoplePanel = ({
   companyId,
   linkedPerson,
@@ -348,6 +424,10 @@ export const PeoplePanel = ({
   readonly linkedPerson?: string | undefined;
 }) => {
   const [scope, setScope] = useState<'company' | 'tenant'>(companyId === undefined ? 'tenant' : 'company');
+  const [catalogLoaded, setCatalogLoaded] = useState<{
+    readonly key: string;
+    readonly outcome: PeopleOutcome<PeopleRoleCatalog>;
+  }>();
   const [offset, setOffset] = useState(0);
   const [detail, setDetail] = useState<Person>();
   const [loaded, setLoaded] = useState<{ readonly key: string; readonly outcome: PeopleOutcome<PeopleList> }>();
@@ -357,6 +437,7 @@ export const PeoplePanel = ({
   const [refresh, setRefresh] = useState(0);
   const requestKey = `${companyId}:${scope}:${offset}:${refresh}:${linkedPerson}`;
   const current = loaded?.key === requestKey ? loaded.outcome : undefined;
+  const catalog = currentRoleCatalog(catalogLoaded, requestKey);
   const loading = current === undefined;
   const list = current?.status === 'ok' ? current.value : undefined;
   const error = peopleReadError(current, linkedPerson);
@@ -373,7 +454,14 @@ export const PeoplePanel = ({
     const request =
       linkedPerson === undefined ? loadPeople(scope, { limit: 50, offset }) : loadPeopleForPerson(scope, linkedPerson);
     const fiber = browserRuntime.runFork(
-      request.pipe(Effect.andThen((outcome) => Effect.sync(() => acceptRead(requestKey, outcome)))),
+      Effect.all({ people: request, roles: loadRoleCatalog(scope) }, { concurrency: 2 }).pipe(
+        Effect.andThen(({ people, roles }) =>
+          Effect.sync(() => {
+            acceptRead(requestKey, people);
+            setCatalogLoaded({ key: requestKey, outcome: roles });
+          }),
+        ),
+      ),
     );
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
@@ -384,8 +472,8 @@ export const PeoplePanel = ({
     <div className="grid min-w-0 gap-300">
       <section className="grid gap-150 rounded-lg border border-border-primary bg-base p-300">
         <p>
-          Lidé a agenti mají vlastní přihlášení. Oprávnění přidělují pouze role ve SpiceDB. Zaměstnanci jsou organizační
-          struktura, nikoli zdroj oprávnění.
+          Každý člověk i agent má vlastní přihlášení. Role určují, co může ve firmě dělat. Pracovní zařazení samo o sobě
+          přístup nepřiděluje.
         </p>
         <div className="flex flex-wrap items-end gap-150">
           <label className="grid gap-50">
@@ -400,7 +488,7 @@ export const PeoplePanel = ({
               value={scope}
             >
               {companyId === undefined ? null : <option value="company">Vybraná firma</option>}
-              <option value="tenant">Celý tenant</option>
+              <option value="tenant">Celá organizace</option>
             </select>
           </label>
           <Button
@@ -445,7 +533,13 @@ export const PeoplePanel = ({
         </StatusText>
       )}
       {detail === undefined ? null : (
-        <PersonDetail onClose={() => setDetail(undefined)} onEdit={setEditor} person={detail} scope={scope} />
+        <PersonDetail
+          catalog={catalog}
+          onClose={() => setDetail(undefined)}
+          onEdit={setEditor}
+          person={detail}
+          scope={scope}
+        />
       )}
       {list === undefined ? null : (
         <>
@@ -455,6 +549,7 @@ export const PeoplePanel = ({
             <ul className="grid gap-150">
               {list.items.map((person) => (
                 <PersonCard
+                  catalog={catalog}
                   key={person.principalRef.principalId}
                   onDetail={setDetail}
                   onEdit={setEditor}
@@ -488,6 +583,7 @@ export const PeoplePanel = ({
           </div>
           {editor === undefined ? null : (
             <PeopleEditor
+              catalog={catalog}
               editor={editor}
               key={`${scope}:${editor.kind}:${editor.person.principalRef.principalId}`}
               onClose={() => setEditor(undefined)}

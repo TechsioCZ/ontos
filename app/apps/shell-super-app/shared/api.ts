@@ -31,6 +31,7 @@ import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './docum
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import {
   PEOPLE_PATHS,
+  PeopleRoleCatalogSchema,
   InvitePeopleRequestSchema,
   InvitePeopleResponseSchema,
   PeopleListRequestSchema,
@@ -1133,6 +1134,20 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(
     HttpApiGroup.make('peopleAdministration')
+      .add(
+        HttpApiEndpoint.post('listCompanyRoleCatalog', PEOPLE_PATHS.companyRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantRoleCatalog', PEOPLE_PATHS.tenantRoleCatalog, {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: PeopleRoleCatalogSchema,
+        }),
+      )
       .add(
         HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
           error: identityErrors,
