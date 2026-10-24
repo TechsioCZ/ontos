@@ -34,7 +34,17 @@ export function EnrollmentProgress() {
   useEffect(() => {
     const controller = new AbortController();
     loadProgress("read", controller.signal)
-      .then((result) => {
+      .then(async (initial) => {
+        if (controller.signal.aborted) return;
+        // Login lands here. One explicit, request-owned pass completes a pending registration;
+        // terminal/reconciliation states never replay automatically and there is no polling loop.
+        let result = initial;
+        if (result.state === "IN_PROGRESS" || result.state === "VERIFICATION_REQUIRED") {
+          result = await loadProgress("resume");
+          if (controller.signal.aborted) return;
+          // COMPLETE is owner evidence, not account admission. Recheck the real account before routing.
+          if (result.state === "COMPLETE") result = await loadProgress("read", controller.signal);
+        }
         if (controller.signal.aborted) return;
         setProgress(result);
         setPending(false);
@@ -53,7 +63,8 @@ export function EnrollmentProgress() {
     setPending(true);
     setError("");
     try {
-      const result = await loadProgress(operation);
+      let result = await loadProgress(operation);
+      if (operation !== "read" && result.state === "COMPLETE") result = await loadProgress("read");
       setProgress(result);
       if (result.state === "ADMITTED") router.replace("/muj-ucet");
     } catch (cause) {
