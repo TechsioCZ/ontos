@@ -53,6 +53,7 @@ import {
   Predicate,
   Redacted,
   References,
+  Result,
   Schema,
   Tracer,
 } from 'effect';
@@ -1142,6 +1143,16 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
+const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
+  Value,
+  Failure,
+  Requirements,
+>(effect: Effect.Effect<Value, Failure, Requirements>) {
+  const collector = yield* gatewayTimingCollector;
+  yield* collector.appendResponseHeader;
+  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
+});
+
 const PEOPLE_ADMINISTRATION = 'people_administration';
 
 /**
@@ -1176,7 +1187,9 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
   yield* noStore;
   const authentication = yield* AuthenticationService;
   const headers = requestHeaders(request.headers);
-  const context = yield* authentication.resolveShellContext(headers).pipe(Effect.mapError(problem));
+  const { context, tenants: tenantResult } = yield* authentication
+    .resolveDocumentContext(headers)
+    .pipe(observeGatewayPhase('document-authentication'), Effect.mapError(problem));
   yield* forwardSetCookieHeaders(context.setCookieHeaders);
   const session = yield* decodeResponse(
     CurrentSessionSchema,
@@ -1201,22 +1214,20 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
     { state: context.state },
   );
-  const tenants = authentication.availableTenants(headers).pipe(
-    Effect.map(({ tenants: available }) => ({ state: 'available' as const, tenants: available })),
-    Effect.catch((error) =>
-      Effect.succeed({
-        state: Predicate.isTagged(tenantAuthenticationProblem(error), 'TenantAuthenticationRequiredProblem')
-          ? ('authentication_required' as const)
-          : ('unavailable' as const),
-      }),
-    ),
-  );
+  const tenants = Result.match(tenantResult, {
+    onFailure: (error) => ({
+      state: Predicate.isTagged(tenantAuthenticationProblem(error), 'TenantAuthenticationRequiredProblem')
+        ? ('authentication_required' as const)
+        : ('unavailable' as const),
+    }),
+    onSuccess: ({ tenants: available }) => ({ state: 'available' as const, tenants: available }),
+  });
   if (context.state !== 'authenticated') {
     return {
       composition: { navigation: [] as const, state: context.state },
       legalEntities,
       session,
-      tenants: yield* tenants,
+      tenants,
     };
   }
   const { legalEntityId } = context.identity;
@@ -1233,7 +1244,9 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     { startImmediately: true },
   );
   const composition = Effect.gen(function* loadDocumentComposition() {
-    const catalog = yield* captureShellRelease(payload.compositionRevision);
+    const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
+      observeGatewayPhase('document-admission'),
+    );
     const governedReads = yield* ShellGovernedReads;
     const response = yield* governedReads
       .composition({
@@ -1247,6 +1260,7 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
     return { catalog, composition: documentComposition };
   }).pipe(
+    observeGatewayPhase('document-composition'),
     Effect.catch((error) =>
       Effect.succeed({
         catalog: null,
@@ -1258,9 +1272,9 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
       }),
     ),
   );
-  const [captured, documentTenants] = yield* Effect.all([composition, tenants], { concurrency: 2 });
+  const captured = yield* composition;
   const documentComposition = captured.composition;
-  const base = { composition: documentComposition, legalEntities, session, tenants: documentTenants };
+  const base = { composition: documentComposition, legalEntities, session, tenants };
   if (documentComposition.state !== 'available' || captured.catalog === null) {
     return base;
   }
@@ -1270,6 +1284,7 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
       documentComposition.compositionRevision,
       documentComposition.gatewayAudiences,
     ).pipe(
+      observeGatewayPhase('document-assertions'),
       Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
       Effect.option,
     ),
@@ -1287,6 +1302,7 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
           composition: documentComposition,
           principal: { ...context.principal, legalEntityId },
         }).pipe(
+          observeGatewayPhase('document-home'),
           Effect.provideService(CapturedShellCompositionCatalog, captured.catalog),
           Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
         )
@@ -1303,6 +1319,7 @@ const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
   handlers.handle('documentContext', ({ payload, request }) =>
     withRequestPermissionDecisions(documentContextHandler(request, payload)).pipe(
       Effect.flatMap((response) => decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem)),
+      withGatewayTimings,
       recoverUnexpectedDefect(request, 'Unexpected Shell document context defect', () =>
         Effect.fail(authenticationInternalProblem()),
       ),
@@ -1932,16 +1949,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         }),
       ),
     );
-});
-
-const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
-  Value,
-  Failure,
-  Requirements,
->(effect: Effect.Effect<Value, Failure, Requirements>) {
-  const collector = yield* gatewayTimingCollector;
-  yield* collector.appendResponseHeader;
-  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
 });
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(

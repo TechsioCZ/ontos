@@ -23,12 +23,13 @@ import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { admin } from 'better-auth/plugins/admin';
 import { jwt } from 'better-auth/plugins/jwt';
-import { Context, Data, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { Context, Data, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Result, Schema } from 'effect';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
 import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { AuthConfig } from './config.ts';
 import { observeAuthenticationPhase, withAuthenticationTimeout } from './observability.ts';
+import { observeGatewayPhase } from './gateway-timing.ts';
 import type { AuthenticationPhase } from './observability.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -242,6 +243,14 @@ export interface AuthenticationServiceContract {
   ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError, ContextAccess>;
   /** Better Auth OAuth 2.1 authorization server for MCP clients; mounted by api/auth/oauth-server/transport.ts. Optional so test doubles stay valid. */
   readonly oauth?: OAuthServerEndpoint;
+  readonly resolveDocumentContext: (requestHeaders: Headers) => Effect.Effect<
+    {
+      readonly context: ShellContextResult;
+      readonly tenants: Result.Result<AvailableTenantsResult, AuthenticationRuntimeError>;
+    },
+    AuthenticationRuntimeError,
+    ContextAccess | LegalEntityContext
+  >;
   readonly resolveShellContext: (
     requestHeaders: Headers,
   ) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, ContextAccess | LegalEntityContext>;
@@ -880,6 +889,7 @@ const assembleAuthenticationService = (
 
   const readResolvedSession = (requestHeaders: Headers): ResolvedSessionEffect =>
     getSession(requestHeaders).pipe(
+      observeGatewayPhase('session-read'),
       Effect.flatMap((result): ResolvedSessionEffect => {
         if (result.response === null) {
           return Effect.succeed({
@@ -925,6 +935,7 @@ const assembleAuthenticationService = (
           })();
           return resolvedIdentity.pipe(
             observeAuthenticationPhase('session.principal', requestHeaders),
+            observeGatewayPhase('session-principal'),
             Effect.map(({ identity, principal }) =>
               withOptionalProperty(
                 {
@@ -947,6 +958,7 @@ const assembleAuthenticationService = (
 
         return resolveDefaultIdentity(response.user, response.session.id).pipe(
           observeAuthenticationPhase('session.principal', requestHeaders),
+          observeGatewayPhase('session-principal'),
           Effect.flatMap(({ identity, principal }) =>
             Effect.suspend(() =>
               runSessionUpdate(
@@ -1002,6 +1014,7 @@ const assembleAuthenticationService = (
           return unavailable('legal_entity_selection_unavailable');
         }),
         observeAuthenticationPhase('session.legal-entities', requestHeaders),
+        observeGatewayPhase('session-legal-entities'),
       );
       const clearInvalidSavedSelection = Effect.gen(function* clearInvalidSavedSelectionEffect() {
         if (resolved.savedLegalEntityId === undefined) {
@@ -1105,19 +1118,40 @@ const assembleAuthenticationService = (
     },
   );
 
+  const availableTenantsForSession = (resolved: AuthenticatedResolvedSession, requestHeaders: Headers) =>
+    resolver.listAvailableTenants(resolved.userId).pipe(
+      Effect.map((tenants) => ({
+        setCookieHeaders: resolved.setCookieHeaders,
+        tenants,
+      })),
+      Effect.mapError(mapResolverError),
+      observeAuthenticationPhase('tenants.list', requestHeaders),
+      observeGatewayPhase('session-tenants'),
+    );
+
+  const resolveDocumentContext = Effect.fn('AuthenticationService.resolveDocumentContext')(
+    function* resolveDocumentContextEffect(requestHeaders: Headers) {
+      const resolved = yield* readResolvedSession(requestHeaders);
+      if (resolved.state === 'anonymous') {
+        return { context: resolved, tenants: Result.fail(new InvalidCredentialsError()) };
+      }
+      // Tenant choices and legal-entity selection use the same authenticated session. Both still
+      // read their current authorities, and every new document resolves its session again.
+      const [context, tenants] = yield* Effect.all(
+        [
+          resolveContext(resolved, requestHeaders),
+          availableTenantsForSession(resolved, requestHeaders).pipe(Effect.result),
+        ],
+        { concurrency: 2 },
+      );
+      return { context, tenants };
+    },
+  );
+
   return {
     availableTenants: (requestHeaders) =>
       authenticatedSession(requestHeaders).pipe(
-        Effect.flatMap((resolved) =>
-          resolver.listAvailableTenants(resolved.userId).pipe(
-            Effect.map((tenants) => ({
-              setCookieHeaders: resolved.setCookieHeaders,
-              tenants,
-            })),
-            Effect.mapError(mapResolverError),
-            observeAuthenticationPhase('tenants.list', requestHeaders),
-          ),
-        ),
+        Effect.flatMap((resolved) => availableTenantsForSession(resolved, requestHeaders)),
       ),
     createFixtureUser: provisionFixtureUser,
     currentSession: (requestHeaders) =>
@@ -1145,6 +1179,7 @@ const assembleAuthenticationService = (
       handler: (request: Request) => getAuth().handler(request),
       issuer: oauthIssuer,
     },
+    resolveDocumentContext,
     resolveShellContext,
     resolveTenantContext: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
