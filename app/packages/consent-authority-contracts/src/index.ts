@@ -130,7 +130,11 @@ export const ConsentSelfServicePathSchema = Schema.Union([
 export type ConsentSelfServicePath = typeof ConsentSelfServicePathSchema.Type;
 
 export const ConsentSelfServiceRequestSchema = Schema.Struct({
+  acknowledgedAt: Schema.optional(Schema.Never),
   decision: ConsentDecisionKindSchema,
+  decisionEffectiveAt: Schema.optional(Schema.Never),
+  decisionReceipt: Schema.optional(Schema.Never),
+  effectiveAt: Schema.optional(Schema.Never),
   /** These refs are business input; Privacy resolves their authoritative records before commit. */
   noticeEvidenceRefs: EvidenceRefs,
   path: ConsentSelfServicePathSchema,
@@ -156,6 +160,12 @@ const CommonAuthorityFields = {
 
 export const TrustedOperationConsentAuthorityFactSchema = Schema.Struct({
   ...CommonAuthorityFields,
+  /** Resolved from the owner's immutable server-authored receipt, never from request timestamps. */
+  decisionReceipt: Schema.Struct({
+    acknowledgedAt: PrivacyIsoTimestampSchema,
+    decision: ConsentDecisionKindSchema,
+    requestRef: Ref,
+  }),
   expiresAt: PrivacyIsoTimestampSchema,
   kind: Schema.Literal('OPERATION_SCOPED'),
   proofRef: Ref,

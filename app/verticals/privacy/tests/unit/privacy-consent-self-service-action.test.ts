@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
@@ -121,6 +122,11 @@ const portalFact: TrustedPortalConsentAuthorityFact = {
 
 const operationFact: TrustedOperationConsentAuthorityFact = {
   authorizedScope: consentScope,
+  decisionReceipt: {
+    acknowledgedAt: '1961-01-01T00:00:00Z',
+    decision: operationRequest.decision,
+    requestRef: operationPath.requestRef,
+  },
   evidenceRefs: ['evidence:operation-action-test'],
   expiresAt: '2099-01-01T00:00:00Z',
   kind: 'OPERATION_SCOPED',
@@ -235,6 +241,51 @@ const portsFor = (facts: {
 });
 
 describe('Consent self-service governed Action', () => {
+  it.effect('does not turn an acknowledged grant into a newer decision when retried after withdrawal', () =>
+    Effect.gen(function* delayedAcknowledgedGrant() {
+      yield* TestClock.setTime(new Date('2026-10-23T12:00:00.000Z').getTime());
+      const recorded: ConsentDecision[] = [];
+      const acknowledgedAt = DateTime.formatIso(yield* DateTime.now);
+      const grant = Schema.decodeUnknownSync(ConsentSelfServicePayloadSchema)({
+        ...operationRequest,
+        decision: 'GRANTED',
+        path: { ...operationPath, operation: 'CONSENT_WRITE', operationRef: 'grant:A', requestRef: 'grant:A' },
+      });
+      // The receipt exists at the owner, but the first Privacy call never executes successfully.
+      yield* Effect.flip(
+        handleConsentSelfService(grant, contextFor({ authority: consentSelfServiceAuthorityUnavailable }, recorded)),
+      );
+      expect(recorded).toHaveLength(0);
+      yield* TestClock.adjust('1 second');
+      const withdrawnAt = DateTime.formatIso(yield* DateTime.now);
+      const withdrawFact = {
+        ...operationFact,
+        decisionReceipt: {
+          acknowledgedAt: withdrawnAt,
+          decision: 'WITHDRAWN' as const,
+          requestRef: operationPath.requestRef,
+        },
+      };
+      yield* handleConsentSelfService(
+        operationRequest,
+        contextFor({ authority: authority(portsFor({ operation: withdrawFact })) }, recorded),
+      );
+      yield* TestClock.adjust('1 second');
+      const grantFact = {
+        ...operationFact,
+        decisionReceipt: { acknowledgedAt, decision: 'GRANTED' as const, requestRef: grant.path.requestRef },
+        operation: grant.path.operation,
+        operationRef: grant.path.operationRef,
+      };
+      const retried = yield* handleConsentSelfService(
+        grant,
+        contextFor({ authority: authority(portsFor({ operation: grantFact })) }, recorded),
+      );
+      expect(retried.decision.effectiveAt).toBe(acknowledgedAt);
+      expect(recorded[0]?.effectiveAt).toBe(withdrawnAt);
+      expect(retried.decision.recordedAt).toBe(DateTime.formatIso(yield* DateTime.now));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
   it.effect('runs portal authority resolution through the public Action handler', () =>
     Effect.gen(function* runsPortalAction() {
       const result = yield* handleConsentSelfService(

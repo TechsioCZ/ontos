@@ -88,6 +88,11 @@ const fact = (now: DateTime.Utc) =>
   Schema.decodeUnknownSync(TrustedOperationConsentAuthorityFactSchema)({
     actorPrincipalRef: { principalId, tenantId },
     authorizedScope: request.scope,
+    decisionReceipt: {
+      acknowledgedAt: DateTime.formatIso(now),
+      decision: request.decision,
+      requestRef: request.path.requestRef,
+    },
     evidenceRefs: ['session:one', 'enrollment:complete'],
     expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 10 })),
     kind: 'OPERATION_SCOPED',

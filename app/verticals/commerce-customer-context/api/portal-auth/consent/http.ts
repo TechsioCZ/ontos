@@ -308,6 +308,11 @@ const resolve = Effect.fn('CustomerConsent.resolveAuthority')(function* resolveA
   const fact: TrustedOperationConsentAuthorityFact = {
     actorPrincipalRef: { principalId: catalog.configured.actorPrincipalId, tenantId: base.tenantId },
     authorizedScope: receipt.scope,
+    decisionReceipt: {
+      acknowledgedAt: DateTime.formatIso(receipt.acknowledgedAt),
+      decision: receipt.decision,
+      requestRef: receipt.requestId,
+    },
     evidenceRefs: [receipt.requestId, evidence.sessionRef],
     expiresAt: evidence.expiresAt.toISOString(),
     kind: 'OPERATION_SCOPED',

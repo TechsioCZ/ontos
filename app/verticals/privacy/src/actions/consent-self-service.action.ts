@@ -122,6 +122,12 @@ export const handleConsentSelfService = Effect.fn('ConsentSelfServiceAction.hand
       reason: 'A withdrawal operation must record a WITHDRAWN decision',
     });
   }
+  if (payload.path.kind === 'OPERATION_SCOPED' && authorization.decisionEffectiveAt === undefined) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'An operation-scoped decision requires an authoritative receipt time',
+    });
+  }
   const decision = {
     actorEvidence: {
       actor: { principalId: context.scope.principalId, tenantId: scope.tenantId },
@@ -131,7 +137,8 @@ export const handleConsentSelfService = Effect.fn('ConsentSelfServiceAction.hand
     },
     decision: payload.decision,
     decisionId: `consent-self-service:${payload.path.requestRef}`,
-    effectiveAt: now,
+    // Delivery/retry time is not the customer's legal decision time.
+    effectiveAt: authorization.decisionEffectiveAt ?? now,
     flowEvidenceRefs: authorization.evidenceRefs,
     flowEvidenceTrust: 'TRUSTED_OPERATION_CONTEXT' as const,
     noticeEvidenceRefs: payload.noticeEvidenceRefs,

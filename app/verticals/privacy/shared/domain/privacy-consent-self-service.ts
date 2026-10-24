@@ -6,7 +6,7 @@ import {
 import type { ConsentSelfServiceRequest, TrustedOperationConsentAuthorityFact } from '@app/consent-authority-contracts';
 
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
 import { ConsentScopeSchema } from './privacy-consent-scope.ts';
@@ -135,6 +135,8 @@ export const ConsentSelfServiceAuthorizationSchema = Schema.Struct({
   actorPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   allowed: Schema.Boolean,
   authority: Schema.Literals(['CONSENT_ONLY', 'RETAIL_PROFILE_CONSENT', 'SUPPORT_ASSISTED_CONSENT']),
+  /** Only an allowed operation-scoped owner's receipt supplies this legal decision time. */
+  decisionEffectiveAt: Schema.optionalKey(PrivacyIsoTimestampSchema),
   evidenceRefs: Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
   outcome: ConsentSelfServiceOutcomeSchema,
   scopeRef: Ref,
@@ -332,7 +334,25 @@ const authorizeOperationScoped = (
   if (fact.expiresAt <= now || fact.verifiedAt > now) {
     return denied({ ...base, outcome: 'OPERATION_CONTEXT_EXPIRED' });
   }
-  return allowed({ ...base, outcome: 'ALLOWED_OPERATION_SCOPED' });
+  if (
+    fact.decisionReceipt.requestRef !== request.path.requestRef ||
+    fact.decisionReceipt.decision !== request.decision
+  ) {
+    return denied({ ...base, outcome: 'OPERATION_CONTEXT_CONFLICT' });
+  }
+  const acknowledgedAt = DateTime.make(fact.decisionReceipt.acknowledgedAt);
+  const evaluatedAt = DateTime.make(now);
+  if (
+    Option.isNone(acknowledgedAt) ||
+    Option.isNone(evaluatedAt) ||
+    DateTime.toEpochMillis(acknowledgedAt.value) > DateTime.toEpochMillis(evaluatedAt.value)
+  ) {
+    return denied({ ...base, outcome: 'OPERATION_CONTEXT_CONFLICT' });
+  }
+  return {
+    ...allowed({ ...base, outcome: 'ALLOWED_OPERATION_SCOPED' }),
+    decisionEffectiveAt: DateTime.formatIso(acknowledgedAt.value),
+  };
 };
 
 const authorizeSupportAssisted = (
