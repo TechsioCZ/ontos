@@ -5,6 +5,7 @@ import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 
 import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
+import { buildPrincipalSelfCredentialUpdates } from '../permissions/action-authorization-lifecycle.ts';
 import { toContextPermissionAccessObjectId, toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
 import { demoAccountObjectIdParts } from './demo-account-administration.ts';
 import type { DemoAccountRelationship } from './demo-account-administration.ts';
@@ -157,6 +158,34 @@ const validateReviewedRole = (
     return invalid('An approved role assignment is absent from target graph policy');
   }
 };
+const validateReviewedPrincipalStructure = (
+  member: PeopleModelTransitionMembership,
+  desired: ReadonlyMap<string, v1.Relationship>,
+): void => {
+  const structural = new Set<string>();
+  for (const update of buildPrincipalSelfCredentialUpdates({ ...member, tenantActive: true })) {
+    if (update.relationship === undefined) {
+      return invalid('Native principal structure is incomplete');
+    }
+    const present = desired.has(identity(update.relationship));
+    if (present !== (update.operation === v1.RelationshipUpdate_Operation.TOUCH)) {
+      return invalid('Reviewed target omits native principal structure or grants nonhuman self credentials');
+    }
+    if (present) {
+      structural.add(identity(update.relationship));
+    }
+  }
+  for (const row of desired.values()) {
+    if (
+      row.resource?.objectType === 'principal' &&
+      row.resource.objectId === member.principalId &&
+      ['self', 'tenant'].includes(row.relation) &&
+      !structural.has(identity(row))
+    ) {
+      return invalid('Reviewed principal structure names an unreviewed subject or tenancy');
+    }
+  }
+};
 const validateReviewedMembership = (
   m: PeopleModelTransitionMembership,
   principalTenants: Map<string, string>,
@@ -191,6 +220,7 @@ const validateReviewedMembership = (
   for (const role of m.scopedRoles) {
     validateReviewedRole(m, role, desired);
   }
+  validateReviewedPrincipalStructure(m, desired);
 };
 const validateActorAdmission = (r: v1.Relationship, memberships: readonly PeopleModelTransitionMembership[]): void => {
   const { resource } = r;
@@ -294,10 +324,16 @@ const observedGraph = (relationships: readonly v1.Relationship[]) => {
   return current;
 };
 
+const managedPrincipalStructure = (row: v1.Relationship, managed: ReadonlySet<string>): boolean =>
+  row.resource?.objectType === 'principal' &&
+  managed.has(row.resource.objectId) &&
+  ['self', 'tenant'].includes(row.relation);
+
 /** No role labels, action-key prefixes, employment guesses, or SQL desired-grant ledger. */
 export const planPeopleModelTransition = (input: PeopleModelTransitionInput): PeopleModelTransitionPlan => {
   const { deferredRoles, desired, managed } = validateReviewedInput(input);
   const current = observedGraph(input.observed.relationships);
+  const principalStructureIds = new Set(input.memberships.map((member) => member.principalId));
   const managedRoleIds = new Set(
     input.desired.flatMap((r) =>
       r.resource?.objectType === 'scoped_role' &&
@@ -311,6 +347,9 @@ export const planPeopleModelTransition = (input: PeopleModelTransitionInput): Pe
     if (legacyAction(r)) {
       return true;
     }
+    if (managedPrincipalStructure(r, principalStructureIds)) {
+      return true;
+    }
     const subject = r.subject?.object;
     if (subject?.objectType === 'scoped_role' && managedRoleIds.has(subject.objectId)) {
       return true;
@@ -321,7 +360,7 @@ export const planPeopleModelTransition = (input: PeopleModelTransitionInput): Pe
     if (subject?.objectType !== 'principal' || !managed.has(subject.objectId)) {
       return false;
     }
-    // Self, operators, retail self-service and assigned records are identity/history, not blanket business roles.
+    // Operators, retail self-service and assigned records preserve identity/history, not blanket business roles.
     return (
       admission(r) || (directPolicyTypes.has(r.resource?.objectType ?? '') && r.relation !== 'self_service_grantee')
     );

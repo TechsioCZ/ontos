@@ -39,6 +39,7 @@ import {
   installBootstrapCompanyMemberships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { currentAgentProfileRelationships } from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
+import { buildPrincipalSelfCredentialUpdates } from '../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { agentNamedPermissionScopeRelationships } from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
 import { foldAgentActionMigrationProfiles } from '../../packages/core-runtime/src/install/agent-action-policy-migration.ts';
@@ -549,7 +550,24 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
     { concurrency: 1 },
   );
   const actions = deriveScopedActionAuthorization(composition.actions, composition.installedModuleScopes);
+  const reviewedPrincipalIds = new Set(document.rows.map((row) => row.principalId));
+  const principalStructure = inventory.actorRows
+    .filter((actor) => reviewedPrincipalIds.has(actor.principalId))
+    .flatMap((actor) =>
+      buildPrincipalSelfCredentialUpdates({
+        ...actor,
+        tenantActive: inventory.tenantRows.some(
+          (tenant) => tenant.tenantId === actor.tenantId && tenant.status === 'active',
+        ),
+      }),
+    )
+    .flatMap((update) =>
+      update.operation === v1.RelationshipUpdate_Operation.TOUCH && update.relationship !== undefined
+        ? [update.relationship]
+        : [],
+    );
   const desired = [
+    ...principalStructure,
     ...fixture.map(relationship),
     ...agentRelationships.flat(),
     ...buildActionAuthorizationRelationships(actions),

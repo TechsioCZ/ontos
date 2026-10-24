@@ -45,6 +45,9 @@ const input = (): PeopleModelTransitionInput => ({
   compositionRevision: 'published-revision',
   deferredAgentPrincipalIds: [agent],
   desired: [
+    r('principal', human, 'tenant', 'tenant', tenantId),
+    r('principal', human, 'self', 'principal', human),
+    r('principal', agent, 'tenant', 'tenant', tenantId),
     r('tenant', tenantId, 'company_member', 'principal', human),
     r('tenant', tenantId, 'company_member', 'principal', agent),
     r('scoped_role', hr, 'member', 'principal', human),
@@ -87,6 +90,32 @@ const input = (): PeopleModelTransitionInput => ({
   },
   reviewedInputSha256: 'a'.repeat(64),
   technicalPrincipalIds: [],
+});
+
+it('requires native human self credentials and removes stale agent self structure without touching history', () => {
+  const original = input();
+  const self = r('principal', human, 'self', 'principal', human);
+  const stale = r('principal', agent, 'self', 'principal', agent);
+  const operator = r('principal', agent, 'operator', 'principal', human);
+  const plan = planPeopleModelTransition({
+    ...original,
+    observed: { ...original.observed, relationships: [...original.observed.relationships, stale, operator] },
+  });
+  expect(plan.additions).toContainEqual(self);
+  expect(plan.deletions).toContainEqual(stale);
+  expect(plan.expected).toContainEqual(operator);
+  expect(() =>
+    planPeopleModelTransition({ ...original, desired: original.desired.filter((row) => key(row) !== key(self)) }),
+  ).toThrow(PeopleModelTransitionError);
+  expect(() => planPeopleModelTransition({ ...original, desired: [...original.desired, stale] })).toThrow(
+    PeopleModelTransitionError,
+  );
+  expect(() =>
+    planPeopleModelTransition({
+      ...original,
+      desired: [...original.desired, r('principal', human, 'self', 'principal', agent)],
+    }),
+  ).toThrow(PeopleModelTransitionError);
 });
 
 it('reads reviewed target structural named-permission metadata without inferring grants from personas', () => {
