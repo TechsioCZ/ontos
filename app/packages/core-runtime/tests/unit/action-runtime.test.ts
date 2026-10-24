@@ -37,7 +37,11 @@ import {
   makeActionRepository,
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  ACTION_RUNTIME_STAGES,
+  ActionExecutionResolutionSchema,
+  makeActionRuntime,
+} from '../../src/actions/runtime.ts';
 import {
   allowOwnerAuthorizationOverlay,
   transactionalOwnerAuthorization,
@@ -290,7 +294,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
           }),
         );
       }
-      return Effect.succeed(currentInvocation);
+      return Effect.succeed({ ...currentInvocation, actionKey: 'shell.counter.write' });
     },
     transitionInvocationToRunning: () => {
       transitionCount += 1;
@@ -4294,7 +4298,13 @@ for (const scenario of [
             status: scenario.status,
           },
         });
-        const expected = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
+        const executionState = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
+        const expected =
+          scenario.state === 'COMMITTED' ? { actionKey: 'shell.counter.write', ...executionState } : executionState;
+        expect(Schema.is(ActionExecutionResolutionSchema)(expected)).toBe(true);
+        if (scenario.state === 'COMMITTED') {
+          expect(Schema.is(ActionExecutionResolutionSchema)(executionState)).toBe(false);
+        }
         expect(yield* h.runtime.resolveActionExecution({ invocationId, principal })).toEqual(expected);
         expect(
           yield* h.runtime.resolveActionExecution({

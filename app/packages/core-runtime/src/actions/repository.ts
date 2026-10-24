@@ -293,7 +293,10 @@ export interface ActionRepositoryService {
   readonly resolveInvocation: (
     executor: CoreDatabaseExecutor,
     input: ResolveActionInvocationInput,
-  ) => Effect.Effect<ActionInvocationRecord, ActionInvocationNotFound | ActionInvocationPersistenceError>;
+  ) => Effect.Effect<
+    ActionInvocationRecord & { readonly actionKey: string },
+    ActionInvocationNotFound | ActionInvocationPersistenceError
+  >;
   readonly transitionInvocationToRunning: (
     executor: ActionInvocationStateExecutor,
     invocationId: string,
@@ -513,7 +516,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
     const hasInvocationId = input.invocationId !== undefined;
     return executor
-      .select(invocationSelection)
+      .select({ ...invocationSelection, actionKey: actionInvocations.actionKey })
       .from(actionInvocations)
       .where(
         and(

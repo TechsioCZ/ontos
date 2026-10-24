@@ -2,11 +2,12 @@ import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import { Redacted, Schema } from 'effect';
+import { Match, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
 import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
 import { partyRegistryApi } from '../shared/api.ts';
+import { DuplicateCandidateResolutionActionKeySchema } from '../shared/command-api.ts';
 import type { ResolvePartyCommandCommitPayload, ResolvePartyCommandCommitResult } from '../shared/command-api.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
@@ -224,6 +225,12 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCommandCommitResolution', ...resolution } satisfies ResolvePartyCommandCommitResult;
     }
+    // Only the persisted, caller-owned invocation proves this was a review command, for either lookup form.
+    // Reviewers need native commit proof, not the create continuation's separate manage-identity grant.
+    const { actionKey, ...commitResolution } = resolution;
+    if (Schema.is(DuplicateCandidateResolutionActionKeySchema)(actionKey)) {
+      return { _tag: 'PartyCommandCommitResolution', ...commitResolution } satisfies ResolvePartyCommandCommitResult;
+    }
     const readRuntime = yield* ReadRuntime;
     const { createResult } = yield* readRuntime
       .runRead({
@@ -233,8 +240,15 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         principal,
         transport: { correlationId },
       })
-      .pipe(Effect.mapError((cause) => Object.assign(partyCommandProblem.unavailable(), { cause })));
-    const result = { _tag: 'PartyCommandCommitResolution' as const, ...resolution };
+      .pipe(
+        Effect.mapError((cause) =>
+          Match.value(cause).pipe(
+            Match.tag('ReadPermissionDenied', partyCommandProblem.unavailable),
+            Match.orElse((failure) => Object.assign(partyCommandProblem.unavailable(), { cause: failure })),
+          ),
+        ),
+      );
+    const result = { _tag: 'PartyCommandCommitResolution' as const, ...commitResolution };
     return createResult === undefined ? result : { ...result, createResult };
   },
 );

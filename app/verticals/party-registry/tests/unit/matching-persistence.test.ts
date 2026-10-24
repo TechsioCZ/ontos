@@ -2,6 +2,7 @@
 import { ActionRuntime } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Layer, Schema, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -37,6 +38,7 @@ import {
   createOrMatchParty,
   acceptRetailEnrollmentEvidence,
   findPartyCreateContinuation,
+  listDuplicateCandidateCases,
   matchParty,
   resolveDuplicateCandidateCreate,
   resolveDuplicateCandidateMatch,
@@ -122,6 +124,8 @@ const recordedRows = (values: RecordedValues): readonly Row[] => {
 const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   const results = new Map([...queues].map(([table, rows]) => [table, [...rows]]));
   const reads: { table: unknown; locked: boolean }[] = [];
+  const queries: SQL[] = [];
+  const limits: number[] = [];
   const inserts: { table: unknown; values: Row | readonly Row[] }[] = [];
   const updates: { table: unknown; values: Row }[] = [];
   const select = () => {
@@ -142,9 +146,17 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
           reads.push(read);
           return chain;
         },
-        limit: () => chain,
+        limit: (limit: number) => {
+          limits.push(limit);
+          return chain;
+        },
         orderBy: () => chain,
-        where: () => chain,
+        where: (query?: SQL) => {
+          if (query !== undefined) {
+            queries.push(query);
+          }
+          return chain;
+        },
       },
     );
     return chain;
@@ -219,8 +231,51 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
   };
   // SAFETY: this test double implements exactly the fluent methods called by the persistence seam.
   const transaction = { insert, select, update } as unknown as Parameters<typeof resolveDuplicateCandidateMatch>[0];
-  return { inserts, reads, transaction, updates };
+  return { inserts, limits, queries, reads, transaction, updates };
 };
+
+it.effect('the pending review queue uses tenant and active-state filters, bounded keyset paging, and no writes', () =>
+  Effect.gen(function* pendingReviewQueue() {
+    const rows = Array.from({ length: 26 }, (_, index) => ({
+      ...caseRow(),
+      candidateCaseId: `30000000-0000-4000-8000-${String(99 - index).padStart(12, '0')}`,
+      lifecycleState: index === 0 ? 'NEEDS_EVIDENCE' : 'OPEN',
+    }));
+    const subject = harness(new Map([[duplicateCandidateCases, [rows]]]));
+    const afterCaseRef = makeDuplicateCandidateCaseRef(tenantId, candidateCaseId);
+    const page = yield* listDuplicateCandidateCases(subject.transaction, tenantId, { afterCaseRef });
+    expect(page.items).toHaveLength(25);
+    expect(page.items[0]?.lifecycleState).toBe('NEEDS_EVIDENCE');
+    expect(page.nextCaseRef?.resourceId).toBe(rows[24]?.candidateCaseId);
+    expect(page.items[0]?.displayName).toBeNull();
+    expect(subject.limits).toEqual([26]);
+    const [query] = subject.queries;
+    expect(query).toBeDefined();
+    if (query !== undefined) {
+      const compiled = new PgDialect().sqlToQuery(query);
+      expect(compiled.params).toEqual([tenantId, 'OPEN', 'NEEDS_EVIDENCE', candidateCaseId]);
+      expect(compiled.sql).toContain('"tenant_id" =');
+      expect(compiled.sql).toContain('"lifecycle_state" in');
+      expect(compiled.sql).toContain('"candidate_case_id" <');
+    }
+    expect(subject.inserts).toEqual([]);
+    expect(subject.updates).toEqual([]);
+  }),
+);
+
+it.effect('an empty or final review page has no continuation cursor', () =>
+  Effect.gen(function* finalReviewPage() {
+    const empty = harness();
+    expect(yield* listDuplicateCandidateCases(empty.transaction, tenantId, {})).toEqual({
+      items: [],
+      nextCaseRef: null,
+    });
+    const final = harness(new Map([[duplicateCandidateCases, [[caseRow()]]]]));
+    const page = yield* listDuplicateCandidateCases(final.transaction, tenantId, {});
+    expect(page.items).toHaveLength(1);
+    expect(page.nextCaseRef).toBeNull();
+  }),
+);
 
 const ambiguousHarness = (existingCase: boolean) =>
   harness(

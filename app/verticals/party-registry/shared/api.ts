@@ -15,6 +15,7 @@ import { CounterpartyReadApi } from './apis/counterparty-read.ts';
 import { CounterpartyRoleHistoryApi } from './apis/counterparty-role-history.ts';
 import { CustomerListApi } from './apis/customer-list.ts';
 import { DuplicateCandidateDetailApi } from './apis/duplicate-candidate-detail.ts';
+import { DuplicateCandidateListApi } from './apis/duplicate-candidate-list.ts';
 import { ExecutePrivacyMeasureActionApi } from './apis/execute-privacy-measure-action.ts';
 import { GuestPartyResolutionApi } from './apis/guest-party-resolution.ts';
 import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
@@ -109,6 +110,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(CounterpartyRoleHistoryApi)
   .addHttpApi(CustomerListApi)
   .addHttpApi(DuplicateCandidateDetailApi)
+  .addHttpApi(DuplicateCandidateListApi)
   .addHttpApi(ExecutePrivacyMeasureActionApi)
   .addHttpApi(GuestPartyResolutionApi)
   .addHttpApi(OrganizationEngagementProfileApi)

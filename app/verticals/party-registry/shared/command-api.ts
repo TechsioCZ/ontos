@@ -279,6 +279,13 @@ export const PartyCommandCommitIndeterminateProblemSchema = makeProblemDetailsSc
   },
 );
 
+export const DuplicateCandidateResolutionActionKeySchema = Schema.Literals([
+  'party.registry.resolve-duplicate-candidate-match',
+  'party.registry.resolve-duplicate-candidate-create',
+  'party.registry.mark-duplicate-candidate-needs-evidence',
+  'party.registry.dismiss-duplicate-candidate',
+]);
+
 export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
   Schema.Struct({
     invocationId: ActionInvocationIdSchema,
@@ -287,11 +294,14 @@ export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
   }),
   Schema.Struct({
     invocationId: Schema.optionalKey(Schema.Never),
-    actionKey: Schema.Literals([
-      'party.registry.create-party',
-      'party.registry.accept-retail-enrollment-evidence',
-      'party.registry.counterparty-customer-onboard',
-      'party.registry.add-contact-point',
+    actionKey: Schema.Union([
+      Schema.Literals([
+        'party.registry.create-party',
+        'party.registry.accept-retail-enrollment-evidence',
+        'party.registry.counterparty-customer-onboard',
+        'party.registry.add-contact-point',
+      ]),
+      DuplicateCandidateResolutionActionKeySchema,
     ]),
     idempotencyKey: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
   }),

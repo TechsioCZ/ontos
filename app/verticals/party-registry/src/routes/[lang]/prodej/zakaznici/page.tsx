@@ -34,11 +34,13 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
+import { CustomerIdentityReviewPanel } from './customer-identity-review-panel.tsx';
 import {
   allCustomers,
   customerWritesRefused,
   customersData,
   useCustomerDetailSelection,
+  useCustomerIdentityReview,
   rememberCustomerWriteRefusal,
 } from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
@@ -310,6 +312,8 @@ const CustomersContent = () => {
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selection>({});
   const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } = useCustomerDetailSelection();
+  const review = useCustomerIdentityReview(reload);
+  const reviewKey = `${key}.identityReview`;
   const [createOpen, setCreateOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<ColumnVisibility>(defaultColumnVisibility);
   const [editOpen, setEditOpen] = useState(false);
@@ -465,11 +469,16 @@ const CustomersContent = () => {
       <div className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            writesRefused ? undefined : (
-              <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
-                {t(`${key}.newCustomer`)}
+            <>
+              <Button onClick={() => review.openReview()} size="sm" theme="outlined" variant="secondary">
+                {t(`${reviewKey}.open`)}
               </Button>
-            )
+              {!writesRefused && (
+                <Button icon="icon-[mdi--plus]" onClick={openCreate} size="sm" variant="primary">
+                  {t(`${key}.newCustomer`)}
+                </Button>
+              )}
+            </>
           }
           description={t(`${key}.description`)}
           title={t(`${key}.title`)}
@@ -533,6 +542,7 @@ const CustomersContent = () => {
         />
       </div>
 
+      <CustomerIdentityReviewPanel review={review} />
       <CustomerCreateDialog
         existing={items}
         onCreated={reload}

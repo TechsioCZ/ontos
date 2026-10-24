@@ -1614,11 +1614,13 @@ const testProgram12 = () =>
 
       const keyedLookup = { actionKey: 'shell.test.lost-ack', idempotencyKey: key, principal };
       expect(yield* resolvingRuntime.resolveActionExecution(keyedLookup)).toEqual({
+        actionKey: 'shell.test.lost-ack',
         invocationId,
         retryCommand: false,
         state: 'COMMITTED',
       });
       expect(yield* resolvingRuntime.resolveActionExecution({ invocationId, principal })).toEqual({
+        actionKey: 'shell.test.lost-ack',
         invocationId,
         retryCommand: false,
         state: 'COMMITTED',

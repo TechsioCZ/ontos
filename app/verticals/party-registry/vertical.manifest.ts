@@ -59,6 +59,7 @@ import { createPartyRelationshipAction } from './src/actions/create-party-relati
 import { CustomerListApi } from './shared/apis/customer-list.ts';
 import { CustomersPage } from './src/routes/[lang]/prodej/zakaznici/page.tsx';
 import { dismissDuplicateCandidateAction } from './src/actions/dismiss-duplicate-candidate.action.ts';
+import { DuplicateCandidateListApi } from './shared/apis/duplicate-candidate-list.ts';
 import { endContactPointAction } from './src/actions/end-contact-point.action.ts';
 import { endPartyOfficialIdentifierAction } from './src/actions/end-party-official-identifier.action.ts';
 import { endPartyRelationshipAction } from './src/actions/end-party-relationship.action.ts';
@@ -150,6 +151,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       'counterparty-role-history': CounterpartyRoleHistoryApi,
       'customer-list': CustomerListApi,
       'duplicate-candidate-detail': DuplicateCandidateDetailApi,
+      'duplicate-candidate-list': DuplicateCandidateListApi,
       'guest-party-resolution': GuestPartyResolutionApi,
       'organization-engagement-profile': OrganizationEngagementProfileApi,
       'party-contact-point-detail': PartyContactPointDetailApi,

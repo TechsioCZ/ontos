@@ -43,6 +43,7 @@ import type {
   ReadRuntimeService,
 } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -60,6 +61,7 @@ import { partyRegistryApi } from '../../shared/api.ts';
 import { PartyMatchDecisionRequestSchema } from '../../shared/apis/party-match-decision.ts';
 import {
   PartyCommandInvalidRequestProblemSchema,
+  PartyCommandUnavailableProblemSchema,
   ResolvePartyCommandCommitResultSchema,
 } from '../../shared/command-api.ts';
 import {
@@ -73,6 +75,7 @@ import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matchin
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
+import { dismissDuplicateCandidateAction } from '../../src/actions/dismiss-duplicate-candidate.action.ts';
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
@@ -130,7 +133,14 @@ const relationshipPayload = {
   validTo: null,
 } as const;
 
+const dismissPayload = {
+  caseRef: { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' },
+  expectedRevision: 1,
+  reason: 'Not a subject',
+} as const;
+
 type CommandTestPayload =
+  | typeof dismissPayload
   | Readonly<Record<string, never>>
   | typeof archivePayload
   | typeof createPayload
@@ -430,7 +440,10 @@ const handle = (app: ReturnType<typeof mounted>, request: Request) =>
 const forEachSequential = <Item, E, R>(items: Iterable<Item>, run: (item: Item) => Effect.Effect<void, E, R>) =>
   Effect.forEach(items, run, { discard: true });
 
-const recoveryRequest = (invocationId: string, token?: string) => {
+const recoveryRequest = (
+  identity: string | Readonly<{ actionKey: string; idempotencyKey: string }>,
+  token?: string,
+) => {
   const headers = new Headers({
     'content-type': 'application/json',
     'x-correlation-id': 'party-recovery-test',
@@ -439,7 +452,7 @@ const recoveryRequest = (invocationId: string, token?: string) => {
     headers.set('authorization', `Bearer ${token}`);
   }
   return new Request('https://party.ontos.test/party-registry/action-commits/resolve', {
-    body: JSON.stringify({ invocationId }),
+    body: JSON.stringify(Predicate.isString(identity) ? { invocationId: identity } : identity),
     headers,
     method: 'POST',
   });
@@ -1621,6 +1634,123 @@ it.live('commit resolution requires authentication and a valid invocation withou
     expect(harness.snapshot().invocations.length).toBe(0);
   }),
 );
+
+for (const reviewCommand of [true, false]) {
+  it.live(
+    reviewCommand
+      ? 'reviewer-only committed recovery accepts invocation-ID and keyed lookup without the manage-identity read'
+      : 'committed create recovery still requires manage-identity permission for invocation-ID and keyed lookup',
+    () =>
+      Effect.gen(function* recoverWithReviewerOnlyPermission() {
+        const assertion = yield* makeAssertion();
+        const harness = yield* makeActionTestHarness({
+          actionPermission: 'allowed',
+          tenantPermission: 'allowed',
+          services: [
+            bindActionTestServices(dismissDuplicateCandidateAction, {
+              resolve: () =>
+                Effect.succeed({
+                  caseRef: dismissPayload.caseRef,
+                  decisionRef: null,
+                  lifecycleState: 'DISMISSED' as const,
+                  outcome: 'DISMISSED_AS_NON_SUBJECT' as const,
+                  partyRef: null,
+                }),
+            }),
+            bindActionTestServices(createPartyAction, {
+              createOrMatch: () =>
+                Effect.succeed({
+                  outcome: 'CREATED' as const,
+                  partyRef,
+                  decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' as const },
+                }),
+            }),
+          ],
+        });
+        const readPermissions: string[] = [];
+        // The Action runtime is real. This typed Read boundary grants only review permission,
+        // resolving the required permission from the actual production Read registration.
+        const reviewerReads: ReadRuntimeService = {
+          runRead: (input) =>
+            Effect.gen(function* reviewerReadPermission() {
+              const actor = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input.principal).pipe(
+                Effect.orDie,
+              );
+              const resolveTarget = getReadPermissionTargetResolver(input.registration);
+              if (!Predicate.isFunction(resolveTarget)) {
+                return yield* Effect.die('Expected an unconditional permission resolver');
+              }
+              const target = resolveTarget(input.decodedInput, {
+                ...actor,
+                correlationId: 'reviewer-recovery',
+              });
+              if (target?.kind !== 'tenant') {
+                return yield* Effect.die('Expected a tenant permission target');
+              }
+              readPermissions.push(target.permission);
+              if (target.permission !== 'review_party_identity') {
+                return yield* new ReadPermissionDenied({
+                  code: 'read_permission_denied',
+                  reason: 'Reviewer has no manage-identity grant',
+                });
+              }
+              return yield* Effect.die('Review commit proof must not load a business result');
+            }),
+        };
+        const app = yield* mountApp(harness, assertion.environment, reviewerReads);
+        const slug = reviewCommand ? 'dismiss-duplicate-candidate' : 'create-party';
+        const idempotencyKey = 'reviewer-commit-recovery';
+        const committed = yield* handle(
+          app,
+          commandRequest(slug, reviewCommand ? dismissPayload : createPayload, assertion.token, {
+            'idempotency-key': idempotencyKey,
+          }),
+        );
+        expect(committed.status).toBe(200);
+        const [invocation] = harness.snapshot().invocations;
+        if (invocation === undefined) {
+          return expect.unreachable('Expected a committed invocation');
+        }
+        const snapshot = harness.snapshot();
+        const keyedIdentity = { actionKey: `party.registry.${slug}`, idempotencyKey };
+        for (const identity of [invocation.actionInvocationId, keyedIdentity]) {
+          const recovered = yield* handle(app, recoveryRequest(identity, assertion.token));
+          expect(recovered.status).toBe(reviewCommand ? 200 : 503);
+          const body = yield* Effect.promise(() => recovered.json());
+          if (reviewCommand) {
+            expect(Schema.is(ResolvePartyCommandCommitResultSchema)(body)).toBe(true);
+            expect(Struct.omit(body, ['_tag'])).toEqual({
+              invocationId: invocation.actionInvocationId,
+              retryCommand: false,
+              state: 'COMMITTED',
+            });
+          } else {
+            expect(Schema.is(PartyCommandUnavailableProblemSchema)(body)).toBe(true);
+          }
+          const notOwned = yield* handle(app, recoveryRequest(identity, assertion.otherToken));
+          expect(notOwned.status).toBe(200);
+          const notOwnedBody = yield* Effect.promise(() => notOwned.json());
+          expect(Schema.is(ResolvePartyCommandCommitResultSchema)(notOwnedBody)).toBe(true);
+          expect(Struct.omit(notOwnedBody, ['_tag'])).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        }
+        if (!reviewCommand) {
+          const spoofed = yield* handle(
+            app,
+            recoveryRequest(
+              { actionKey: 'party.registry.dismiss-duplicate-candidate', idempotencyKey },
+              assertion.token,
+            ),
+          );
+          expect(spoofed.status).toBe(200);
+          const spoofedBody = yield* Effect.promise(() => spoofed.json());
+          expect(Schema.is(ResolvePartyCommandCommitResultSchema)(spoofedBody)).toBe(true);
+          expect(Struct.omit(spoofedBody, ['_tag'])).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        }
+        expect(readPermissions).toEqual(reviewCommand ? [] : ['manage_party_identity', 'manage_party_identity']);
+        expect(harness.snapshot()).toEqual(snapshot);
+      }),
+  );
+}
 
 it.live('a still-running invocation resolves without authorizing duplicate dispatch', () =>
   Effect.gen(function* resolveOpenInvocationWithoutRetry() {

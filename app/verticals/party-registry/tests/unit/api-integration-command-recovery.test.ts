@@ -174,6 +174,23 @@ const recoveryProblems = [
   },
 ];
 
+it('review resolutions can reconcile their exact idempotency identity without inventing a new command', () => {
+  for (const actionKey of [
+    'party.registry.resolve-duplicate-candidate-match',
+    'party.registry.resolve-duplicate-candidate-create',
+    'party.registry.mark-duplicate-candidate-needs-evidence',
+    'party.registry.dismiss-duplicate-candidate',
+  ]) {
+    expect(Schema.is(ResolvePartyCommandCommitPayloadSchema)({ actionKey, idempotencyKey: 'review:42' })).toBe(true);
+  }
+  expect(
+    Schema.is(ResolvePartyCommandCommitPayloadSchema)({
+      actionKey: 'party.registry.merge-parties',
+      idempotencyKey: 'review:42',
+    }),
+  ).toBe(false);
+});
+
 for (const { name, decode, is, problem } of recoveryProblems) {
   it.effect(name, () =>
     Effect.gen(function* decodeRecoveryContract() {

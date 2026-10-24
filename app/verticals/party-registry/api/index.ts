@@ -23,6 +23,7 @@ import { counterpartyReadReadApiLive } from './counterparty-read-read-server.ts'
 import { counterpartyRoleHistoryReadApiLive } from './counterparty-role-history-read-server.ts';
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { duplicateCandidateDetailReadApiLive } from './duplicate-candidate-detail-read-server.ts';
+import { duplicateCandidateListReadApiLive } from './duplicate-candidate-list-read-server.ts';
 import { executePrivacyMeasureActionApiLive } from './execute-privacy-measure-action-server.ts';
 import { guestPartyResolutionReadApiLive } from './guest-party-resolution-read-server.ts';
 import { privacyMeasureExecutionReadApiLive } from './privacy-measure-execution-read-server.ts';
@@ -127,6 +128,7 @@ export const makePartyRegistryApiRuntime = (
     counterpartyRoleHistoryReadApiLive,
     customerListReadApiLive,
     duplicateCandidateDetailReadApiLive,
+    duplicateCandidateListReadApiLive,
     executePrivacyMeasureActionApiLive,
     guestPartyResolutionReadApiLive,
     organizationEngagementProfileReadApiLive,

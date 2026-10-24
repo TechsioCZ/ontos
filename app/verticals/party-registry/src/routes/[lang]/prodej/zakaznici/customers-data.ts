@@ -4,6 +4,14 @@ import { DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Schema }
 import { definePageData, modulePagePreload } from '@app/shared-contracts/page-data';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
+import { executeDuplicateCandidateList } from '../../../../api/duplicate-candidate-list-client.ts';
+import { executeDuplicateCandidateDetail } from '../../../../api/duplicate-candidate-detail-client.ts';
+import type { DuplicateCandidateListResponse } from '../../../../../shared/apis/duplicate-candidate-list.ts';
+import type { DuplicateCandidateCaseRefSchema } from '../../../../../shared/resources/duplicate-candidate-case.ts';
+import type { DuplicateCaseResolutionResult } from '../../../../../shared/domain/matching-contracts.ts';
+import { DuplicateCaseResolutionPayloadSchema } from '../../../../../shared/domain/matching-contracts.ts';
+import { ResolveDuplicateCandidateMatchPayloadSchema } from '../../../../../shared/actions/resolve-duplicate-candidate-match.ts';
+
 import type { CustomerSegment } from '../../../../api/customer-segments-client.ts';
 import { customerSegmentsFor } from '../../../../api/customer-segments-client.ts';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
@@ -19,6 +27,11 @@ import {
   addContactPoint,
   addPartyOfficialIdentifier,
   correctPartyFact,
+  dismissDuplicateCandidate,
+  markDuplicateCandidateNeedsEvidence,
+  resolveDuplicateCandidateCreate,
+  resolveDuplicateCandidateMatch,
+  resolvePartyCommandCommit,
   endContactPoint,
   endPartyOfficialIdentifier,
   unarchiveParty,
@@ -39,6 +52,8 @@ import {
   discardCustomerDraftKeys,
 } from './customers-model.ts';
 import type { CreateDraft } from './customers-model.ts';
+
+type DuplicateCandidateCaseRef = typeof DuplicateCandidateCaseRefSchema.Type;
 
 export interface CustomersSnapshot {
   readonly items: readonly CustomerListItem[];
@@ -592,5 +607,390 @@ export const useCustomerDetailSelection = () => {
     detailValue: detailSnapshot?.value,
     openDetail,
     retryDetail,
+  };
+};
+
+export const loadCustomerDuplicateQueue = (afterCaseRef?: DuplicateCandidateCaseRef) =>
+  correlation('duplicate-list').pipe(
+    Effect.flatMap((id) => executeDuplicateCandidateList(afterCaseRef === undefined ? {} : { afterCaseRef }, id)),
+  );
+
+export const loadCustomerDuplicateDetail = Effect.fn('CustomersData.loadDuplicate')(function* loadDuplicate(
+  caseRef: DuplicateCandidateCaseRef,
+) {
+  const id = yield* correlation('duplicate-detail');
+  const candidateCase = yield* executeDuplicateCandidateDetail({ caseRef }, id);
+  const parties = yield* Effect.forEach(
+    candidateCase.candidateParties,
+    (partyRef) =>
+      Effect.all(
+        {
+          identity: section(executePartyDetail({ partyRef }, id)),
+          contacts: section(executePartyContactPoints({ includeHistorical: false, partyRef }, id)),
+        },
+        { concurrency: 1 },
+      ).pipe(Effect.map((value) => ({ ...value, partyRef }))),
+    { concurrency: 2 },
+  );
+  return { candidateCase, parties };
+});
+type CustomerDuplicateDetail = Effect.Success<ReturnType<typeof loadCustomerDuplicateDetail>>;
+export type CustomerDuplicateResolution = Exclude<
+  DuplicateCaseResolutionResult['outcome'],
+  'CONFIRMED_DUPLICATE_PARTIES'
+>;
+interface CustomerDuplicateAttempt {
+  readonly caseRef: DuplicateCandidateCaseRef;
+  readonly expectedRevision: number;
+  readonly reason: string;
+  readonly id: string;
+  readonly resolution: CustomerDuplicateResolution;
+  readonly selectedPartyRef: PartyRef | undefined;
+}
+
+const duplicateActionKeys = {
+  MATCH_EXISTING: 'party.registry.resolve-duplicate-candidate-match',
+  CREATE_NEW: 'party.registry.resolve-duplicate-candidate-create',
+  NEEDS_EVIDENCE: 'party.registry.mark-duplicate-candidate-needs-evidence',
+  DISMISSED_AS_NON_SUBJECT: 'party.registry.dismiss-duplicate-candidate',
+} as const;
+
+/** Resolution never creates a Counterparty, merges Parties, or bypasses the owner's canonical recheck. */
+export const resolveCustomerDuplicate = Effect.fn('CustomersData.resolveDuplicate')(function* resolveDuplicate(
+  attempt: CustomerDuplicateAttempt,
+) {
+  const payload = yield* Schema.decodeEffect(DuplicateCaseResolutionPayloadSchema)(attempt);
+  const options = { correlationId: attempt.id, idempotencyKey: attempt.id };
+  return yield* Match.value(attempt.resolution).pipe(
+    Match.when('MATCH_EXISTING', () =>
+      Schema.decodeUnknownEffect(ResolveDuplicateCandidateMatchPayloadSchema)({
+        ...payload,
+        selectedPartyRef: attempt.selectedPartyRef,
+      }).pipe(Effect.flatMap((matchPayload) => resolveDuplicateCandidateMatch(matchPayload, options))),
+    ),
+    Match.when('CREATE_NEW', () => resolveDuplicateCandidateCreate(payload, options)),
+    Match.when('NEEDS_EVIDENCE', () => markDuplicateCandidateNeedsEvidence(payload, options)),
+    Match.when('DISMISSED_AS_NON_SUBJECT', () => dismissDuplicateCandidate(payload, options)),
+    Match.exhaustive,
+  );
+});
+
+type DuplicateFailure = Effect.Error<
+  | ReturnType<typeof loadCustomerDuplicateQueue>
+  | ReturnType<typeof loadCustomerDuplicateDetail>
+  | ReturnType<typeof resolveCustomerDuplicate>
+  | ReturnType<typeof resolvePartyCommandCommit>
+>;
+export const customerDuplicateFailureKey = (failure: DuplicateFailure) => {
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(401) }))(failure)) {
+    return 'authentication';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(404) }))(failure)) {
+    return 'notFound';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(failure)) {
+    return 'forbidden';
+  }
+  if (Schema.is(Schema.Struct({ status: Schema.Literal(409) }))(failure)) {
+    return 'conflict';
+  }
+  if (
+    Schema.is(Schema.Struct({ status: Schema.Literals([400, 422]) }))(failure) ||
+    Predicate.isTagged(failure, 'SchemaError')
+  ) {
+    return 'validation';
+  }
+  return 'unavailable';
+};
+type DuplicateFailureKey = ReturnType<typeof customerDuplicateFailureKey>;
+type DuplicateRead<Value> =
+  | { readonly status: 'idle' | 'loading' }
+  | { readonly status: 'failed'; readonly failure: DuplicateFailureKey }
+  | { readonly status: 'ready'; readonly value: Value };
+
+const duplicateReadState = <Value, Failure extends DuplicateFailure>(operation: Effect.Effect<Value, Failure>) =>
+  operation.pipe(
+    Effect.match({
+      onFailure: (failure): DuplicateRead<Value> => ({
+        failure: customerDuplicateFailureKey(failure),
+        status: 'failed',
+      }),
+      onSuccess: (value): DuplicateRead<Value> => ({ status: 'ready', value }),
+    }),
+  );
+
+/** User-opened review state. Request generations prevent an old selection from replacing the current case. */
+export const useCustomerIdentityReview = (onResolved: () => void) => {
+  const [open, setOpen] = useState(false);
+  const [queue, setQueue] = useState<DuplicateRead<DuplicateCandidateListResponse>>({ status: 'idle' });
+  const [detail, setDetail] = useState<DuplicateRead<CustomerDuplicateDetail>>({ status: 'idle' });
+  const [selectedPartyId, setSelectedPartyId] = useState('');
+  const [reason, setReason] = useState('');
+  const [notice, setNotice] = useState<{ readonly key: string; readonly success: boolean }>();
+  const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [committed, setCommitted] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
+  const queueRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const caseSelection = useRef<DuplicateCandidateCaseRef | null>(null);
+  const writing = useRef(false);
+  const pending = useRef<CustomerDuplicateAttempt | null>(null);
+
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (busy || uncertain) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+    globalThis.addEventListener('beforeunload', guard);
+    return () => globalThis.removeEventListener('beforeunload', guard);
+  }, [busy, uncertain]);
+  useEffect(
+    () => () => {
+      queueRequest.current += 1;
+      detailRequest.current += 1;
+    },
+    [],
+  );
+
+  const loadQueue = (afterCaseRef?: DuplicateCandidateCaseRef) => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    queueRequest.current += 1;
+    const request = queueRequest.current;
+    setQueue({ status: 'loading' });
+    void browserRuntime.runPromise(
+      loadCustomerDuplicateQueue(afterCaseRef).pipe(
+        Effect.match({
+          onFailure: (failure) => {
+            if (queueRequest.current === request) {
+              setQueue({ status: 'failed', failure: customerDuplicateFailureKey(failure) });
+            }
+          },
+          onSuccess: (value) => {
+            if (queueRequest.current === request) {
+              setQueue({ status: 'ready', value });
+            }
+          },
+        }),
+      ),
+    );
+  };
+  const selectCase = (caseRef: DuplicateCandidateCaseRef) => {
+    if (writing.current || pending.current !== null) {
+      return;
+    }
+    detailRequest.current += 1;
+    const request = detailRequest.current;
+    caseSelection.current = caseRef;
+    setDetail({ status: 'loading' });
+    setSelectedPartyId('');
+    setReason('');
+    setNotice(undefined);
+    setStale(false);
+    setCommitted(false);
+    void browserRuntime.runPromise(
+      loadCustomerDuplicateDetail(caseRef).pipe(
+        Effect.match({
+          onFailure: (failure) => {
+            if (detailRequest.current === request) {
+              setDetail({ status: 'failed', failure: customerDuplicateFailureKey(failure) });
+            }
+          },
+          onSuccess: (value) => {
+            if (detailRequest.current === request) {
+              setDetail({ status: 'ready', value });
+            }
+          },
+        }),
+      ),
+    );
+  };
+
+  const refreshAfterSaved = () =>
+    Effect.sync(() => {
+      pending.current = null;
+      setUncertain(false);
+      setCommitted(true);
+      setQueue({ status: 'loading' });
+      setDetail({ status: 'loading' });
+      onResolved();
+    }).pipe(
+      // Each governed read keeps its own outcome: a denied queue must not leave old rows visible,
+      // and a failed detail read must not discard a successfully refreshed queue.
+      Effect.andThen(
+        Effect.all(
+          {
+            queue: duplicateReadState(loadCustomerDuplicateQueue()),
+            detail:
+              caseSelection.current === null
+                ? Effect.succeed<DuplicateRead<CustomerDuplicateDetail>>({ status: 'idle' })
+                : duplicateReadState(loadCustomerDuplicateDetail(caseSelection.current)),
+          },
+          { concurrency: 2 },
+        ),
+      ),
+      Effect.flatMap((next) =>
+        Effect.sync(() => {
+          setQueue(next.queue);
+          setDetail(next.detail);
+          const failed = next.queue.status === 'failed' || next.detail.status === 'failed';
+          setStale(failed);
+          setNotice({ key: failed ? 'savedReloadFailed' : 'saved', success: true });
+        }),
+      ),
+    );
+  const executeAttempt = (attempt: CustomerDuplicateAttempt) =>
+    resolveCustomerDuplicate(attempt).pipe(
+      Effect.matchEffect({
+        onSuccess: refreshAfterSaved,
+        onFailure: (failure) => {
+          if (Predicate.isTagged(failure, 'PartyCommandAlreadyCommittedProblem')) {
+            return refreshAfterSaved();
+          }
+          return Effect.sync(() => {
+            const key = customerDuplicateFailureKey(failure);
+            if (key === 'unavailable') {
+              // A lost acknowledgement is not permission to issue a fresh command.
+              setUncertain(true);
+              setNotice({ key: 'uncertain', success: false });
+            } else {
+              pending.current = null;
+              setUncertain(false);
+              setStale(key === 'conflict' || key === 'notFound');
+              setNotice({ key, success: false });
+            }
+          });
+        },
+      }),
+    );
+  const finishWrite = () => {
+    writing.current = false;
+    setBusy(false);
+  };
+  const canResolve =
+    detail.status === 'ready' &&
+    ['OPEN', 'NEEDS_EVIDENCE'].includes(detail.value.candidateCase.lifecycleState) &&
+    !busy &&
+    !stale &&
+    !committed &&
+    !uncertain;
+  const resolve = (resolution: CustomerDuplicateResolution) => {
+    if (writing.current || !canResolve || detail.status !== 'ready') {
+      return;
+    }
+    const selected = detail.value.parties.find((item) => item.partyRef.resourceId === selectedPartyId);
+    if (
+      reason.trim() === '' ||
+      (resolution === 'MATCH_EXISTING' &&
+        (selected?.identity.status !== 'ready' ||
+          selected.identity.value.resolution.kind !== 'DIRECT' ||
+          Option.isSome(selected.identity.value.party.archivedAt)))
+    ) {
+      setNotice({ key: 'validation', success: false });
+      return;
+    }
+    writing.current = true;
+    queueRequest.current += 1;
+    detailRequest.current += 1;
+    setBusy(true);
+    setNotice(undefined);
+    const { candidateCase } = detail.value;
+    void browserRuntime.runPromise(
+      correlation('duplicate-resolve').pipe(
+        Effect.flatMap((id) => {
+          const attempt: CustomerDuplicateAttempt = {
+            caseRef: candidateCase.caseRef,
+            expectedRevision: candidateCase.revision,
+            id,
+            reason: reason.trim(),
+            resolution,
+            selectedPartyRef: selected?.partyRef,
+          };
+          pending.current = attempt;
+          return executeAttempt(attempt);
+        }),
+        Effect.ensuring(Effect.sync(finishWrite)),
+      ),
+    );
+  };
+  const checkStatus = () => {
+    const attempt = pending.current;
+    if (writing.current || attempt === null) {
+      return;
+    }
+    writing.current = true;
+    setBusy(true);
+    void browserRuntime.runPromise(
+      resolvePartyCommandCommit(
+        {
+          actionKey: duplicateActionKeys[attempt.resolution],
+          idempotencyKey: attempt.id,
+        },
+        { correlationId: attempt.id },
+      ).pipe(
+        Effect.matchEffect({
+          onFailure: (failure) =>
+            Effect.sync(() => setNotice({ key: customerDuplicateFailureKey(failure), success: false })),
+          onSuccess: (resolution) => {
+            if (resolution.state === 'COMMITTED') {
+              return refreshAfterSaved();
+            }
+            if (resolution.retryCommand) {
+              return executeAttempt(attempt);
+            }
+            return Effect.sync(() => {
+              if (resolution.state === 'REJECTED') {
+                pending.current = null;
+                setUncertain(false);
+                setNotice({ key: 'forbidden', success: false });
+              } else {
+                setNotice({ key: 'uncertain', success: false });
+              }
+            });
+          },
+        }),
+        Effect.ensuring(Effect.sync(finishWrite)),
+      ),
+    );
+  };
+  return {
+    busy,
+    canResolve,
+    checkStatus,
+    committed,
+    detail,
+    loading: queue.status === 'loading' || detail.status === 'loading',
+    loadQueue,
+    notice,
+    open,
+    queue,
+    reason,
+    resolve,
+    selectedPartyId,
+    setReason,
+    setSelectedPartyId,
+    stale,
+    uncertain,
+    openReview: () => {
+      setOpen(true);
+      if (queue.status === 'idle') {
+        loadQueue();
+      }
+    },
+    closeReview: (next: boolean) => {
+      if (!writing.current) {
+        setOpen(next);
+      }
+    },
+    selectCase,
+    refreshDetail: () => {
+      if (caseSelection.current !== null) {
+        selectCase(caseSelection.current);
+      }
+    },
   };
 };

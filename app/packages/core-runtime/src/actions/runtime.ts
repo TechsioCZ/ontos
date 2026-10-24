@@ -254,6 +254,12 @@ const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
 
 export type ActionCommitOpen = typeof ActionCommitOpenSchema.Type;
 
+const ActionCommitActionKeySchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+).pipe(Schema.brand('ActionCommitActionKey'));
+
 export const ActionExecutionResolutionSchema = Schema.Union([
   Schema.Struct({ retryCommand: Schema.Literal(true), state: Schema.Literal('NOT_STARTED') }),
   Schema.Struct({
@@ -264,16 +270,17 @@ export const ActionExecutionResolutionSchema = Schema.Union([
   Schema.Struct({
     invocationId: ActionInvocationIdSchema,
     retryCommand: Schema.Literal(false),
-    state: Schema.Literals(['RUNNING', 'COMMITTED', 'REJECTED']),
+    state: Schema.Literals(['RUNNING', 'REJECTED']),
+  }),
+  Schema.Struct({
+    actionKey: ActionCommitActionKeySchema,
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(false),
+    state: Schema.Literal('COMMITTED'),
   }),
 ]);
 export type ActionExecutionResolution = typeof ActionExecutionResolutionSchema.Type;
 
-const ActionCommitActionKeySchema = Schema.String.check(
-  Schema.isTrimmed(),
-  Schema.isMinLength(1),
-  Schema.isMaxLength(300),
-).pipe(Schema.brand('ActionCommitActionKey'));
 const ActionCommitIdempotencyKeySchema = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isMinLength(1),
@@ -2148,7 +2155,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const record = invocation.value;
     const invocationId = ActionInvocationIdSchema.make(record.actionInvocationId);
     if (record.status === 'succeeded') {
-      return { invocationId, retryCommand: false, state: 'COMMITTED' } as const;
+      return {
+        actionKey: ActionCommitActionKeySchema.make(record.actionKey),
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      } as const;
     }
     if (record.status === 'received' && record.completedAt === null) {
       return { invocationId, retryCommand: true, state: 'RETRYABLE' } as const;
