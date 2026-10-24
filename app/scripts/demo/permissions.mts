@@ -262,8 +262,47 @@ const relationshipKey = (relationship: DemoRelationship) =>
     relationship.subjectRelation ?? '',
   ].join('|');
 
-/** A principal is assigned to an exact scoped module role; capabilities target its userset. */
-export const demoPrincipalRoleKey = (principalId: string): string => `demo:${principalId}`;
+/** Fixture labels only: authorization remains entirely in the generated SpiceDB relationships.
+ * CRM representatives share an identical profile. All other human profiles remain isolated,
+ * including supplemental grants that address this same key. Company scope stays in role identity.
+ */
+export const demoPrincipalRoleKey = (principalId: string): string => {
+  const humanProfiles = [
+    ['obchod', 'sales-leadership'],
+    ['obchodnik', 'sales'],
+    ['ucetni', 'accounting'],
+    ['sklad', 'warehouse'],
+    ['hanak-spravce', 'crm-administration'],
+    ['hanak-vedouci', 'crm-leadership'],
+    ['hanak-obchodnik-a', 'crm-sales'],
+    ['hanak-obchodnik-b', 'crm-sales'],
+    ['kavarna-eshop', 'eshop-administration'],
+    ['akros-eshop', 'eshop-administration'],
+    ['akros-expedice', 'fulfilment'],
+    ['kavarna-expedice', 'fulfilment'],
+  ] as const;
+  for (const [person, roleKey] of humanProfiles) {
+    if (principalId === demoId(principalResource, person)) {
+      return roleKey;
+    }
+  }
+  switch (principalId) {
+    case '72000000-0000-4000-8000-000000000010':
+      return 'development-administration';
+    case '72000000-0000-4000-8000-000000000021':
+      return 'management';
+    case '72000000-0000-4000-8000-000000000022':
+      return 'operations';
+    case '72000000-0000-4000-8000-000000000023':
+      return 'rental-accounting';
+    case '72000000-0000-4000-8000-000000000024':
+      return 'external-business';
+    case '72000000-0000-4000-8000-000000000090':
+      return 'connection-verification';
+    default:
+      return `demo:${principalId}`;
+  }
+};
 
 export const roleRelationship = (
   resourceType: string,
