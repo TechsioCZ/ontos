@@ -30,6 +30,7 @@ import {
   demoCompanyMemberships,
   demoPrincipalRoleKey,
   principalRelationships,
+  reviewedHumanActionAddonRelationships,
   privacyMarketingOperator,
   siamparkRentalPersonas,
   storefrontPrincipal,
@@ -512,4 +513,48 @@ it('grants only the exact portal workload on the owner verification audience', (
     ],
     providerEndpointAudience: 'commerce-customer-context',
   });
+});
+
+it('restores only seven reviewed human executors in two separately scoped named add-ons', () => {
+  const operational = [
+    actionDescriptor('crm.activities.apply-command', 'crm.activities'),
+    actionDescriptor('demo.workforce.apply-command', 'demo.workforce'),
+    actionDescriptor('demo.merchandise.apply-command', merchandiseModule),
+    actionDescriptor('demo.sales-insights.apply-command', 'demo.sales-insights'),
+    actionDescriptor('finance.billing.apply-command', billingModule),
+    actionDescriptor('property.portfolio.apply-command', portfolioModule),
+  ];
+  const leasing = actionDescriptor('property.leasing.apply-command', 'property.leasing');
+  const rows = reviewedHumanActionAddonRelationships([...operational, leasing, ...descriptors]);
+  const operationsPerson = siamparkRentalPersonas[1].principalId;
+  expect(new Set(grantsFor(rows, operationsPerson).map((row) => row.resourceId))).toEqual(
+    new Set(operational.map((action) => toSpiceDbActionGrantObjectId(actionScope(action, rentalDemoLegalEntityId)))),
+  );
+  expect(grantsFor(rows, salesRep.principalId).map((row) => row.resourceId)).toEqual([
+    toSpiceDbActionGrantObjectId(actionScope(leasing, demoLegalEntityId)),
+  ]);
+  expect(rows.filter((row) => row.resourceType === 'action_grant' && row.relation === 'role')).toHaveLength(7);
+  expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.resourceId))).toEqual(
+    new Set([
+      toScopedRoleObjectId({
+        legalEntityId: rentalDemoLegalEntityId,
+        roleKey: 'operations-execution',
+        tenantId: demoTenantId,
+      }),
+      toScopedRoleObjectId({
+        legalEntityId: demoLegalEntityId,
+        roleKey: 'rental-sales-execution',
+        tenantId: demoTenantId,
+      }),
+    ]),
+  );
+  expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.subjectId))).toEqual(
+    new Set([operationsPerson, salesRep.principalId]),
+  );
+  expect(rows.some((row) => row.resourceType === 'module_access' || row.resourceType === 'context_permission')).toBe(
+    false,
+  );
+  expect(() => reviewedHumanActionAddonRelationships(operational)).toThrow(
+    'Reviewed Action missing: property.leasing.apply-command',
+  );
 });
