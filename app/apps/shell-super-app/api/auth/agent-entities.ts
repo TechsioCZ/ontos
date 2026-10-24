@@ -1,7 +1,7 @@
 /**
  * Agent entities of the selected company (Lidé a role › Agentní entity). The company administrator lists, creates,
  * configures, deactivates / reactivates and deletes agents. Every change runs the Core Action
- * `core.identity.configure-agent` for profiles (`manage-demo-account` remains for status/archive), with sensitive
+ * `core.identity.configure-agent` for profiles and `core.identity.manage-agent-status` for status/archive, with sensitive
  * audit; then its company-scoped role policy is rebuilt from the selected module access and write policy,
  * and its operators are written with principal#tenant. Deactivation and deletion revoke the agent's active OAuth
  * connections at once and withdraw its waiting proposals. Changes of one company's agents run one at a time
@@ -13,12 +13,12 @@ import {
   ActionRuntime,
   agentGrantRelationships,
   agentModuleAccessOf,
-  manageDemoAccountAction,
+  manageAgentStatusAction,
   configureAgentAction,
   openDemoAccountGrants,
   withPostgresSessionAdvisoryLock,
 } from '@app/core-runtime';
-import type { DemoAccountGrants, ManageDemoAccountPayload } from '@app/core-runtime';
+import type { DemoAccountGrants, ManageAgentStatusPayload } from '@app/core-runtime';
 import type {
   AgentEntity,
   AgentEntityOverview,
@@ -219,9 +219,9 @@ const changeAgent = <R>(
   Effect.gen(function* changeAgent() {
     const { legalEntityId, principalId: actorPrincipalId, tenantId } = caller.principal;
     const runtime = yield* ActionRuntime;
-    const run = (payload: ManageDemoAccountPayload) =>
+    const run = (payload: ManageAgentStatusPayload) =>
       runtime
-        .runAction({ payload, principal: caller.principal, registration: manageDemoAccountAction, transport })
+        .runAction({ payload, principal: caller.principal, registration: manageAgentStatusAction, transport })
         .pipe(Effect.mapError(fromActionError));
     const members = yield* deps.directory.members(tenantId, legalEntityId);
     const agents = (yield* deps.directory.agents(tenantId, legalEntityId, members)).filter(

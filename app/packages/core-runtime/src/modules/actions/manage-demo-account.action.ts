@@ -10,8 +10,8 @@
  * Unlike `core.identity.change-principal-status`, which is limited to non-human principals, this Action targets
  * human principals, so the deactivated person is rejected by the principal resolver on the next request.
  *
- * Agent profile creation/configuration belongs to the governed configure-agent Action.
- * This development helper still handles demo human accounts and agent status/archive operations.
+ * Agent profiles and status changes belong to the native configure-agent and manage-agent-status Actions.
+ * This development helper handles human accounts only.
  */
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Schema } from 'effect';
@@ -61,19 +61,13 @@ export const ManageDemoAccountPayloadSchema = Schema.Union([
     principalId: uuid,
     reason: Schema.optionalKey(text(500)),
   }),
-  Schema.Struct({
-    expectedStatus: status,
-    operation: Schema.Literal('archive-agent'),
-    principalId: uuid,
-    reason: text(500),
-  }),
 ]);
 export type ManageDemoAccountPayload = typeof ManageDemoAccountPayloadSchema.Type;
 
 export const ManageDemoAccountResultSchema = Schema.Struct({
-  operation: Schema.Literals(['create', 'change-role', 'change-status', 'archive-agent']),
+  operation: Schema.Literals(['create', 'change-role', 'change-status']),
   principalId: uuid,
-  status: Schema.Literals(['active', 'disabled', 'archived']),
+  status,
 });
 export type ManageDemoAccountResult = typeof ManageDemoAccountResultSchema.Type;
 
@@ -119,8 +113,8 @@ const loadManagedPrincipal = (transaction: Transaction, tenantId: string, princi
     .pipe(
       Effect.mapError(persistenceFailure),
       Effect.flatMap(([row]) =>
-        row === undefined || (row.kind !== 'human' && row.kind !== 'agent')
-          ? Effect.fail(invalid('The target is not a person or agent entity of this tenant'))
+        row === undefined || row.kind !== 'human'
+          ? Effect.fail(invalid('The target is not a human principal of this tenant'))
           : Effect.succeed(row),
       ),
     );
@@ -207,33 +201,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
   if (payload.principalId === context.scope.principalId) {
     return yield* invalid('An administrator cannot change their own account');
   }
-  if (payload.operation === 'archive-agent') {
-    if (target.kind !== 'agent') {
-      return yield* invalid('The target is not an agent entity');
-    }
-    if (target.status !== payload.expectedStatus) {
-      return yield* conflict('The agent status changed concurrently');
-    }
-    yield* transaction
-      .update(principals)
-      .set({ disabledAt: now, status: 'archived' })
-      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
-      .pipe(Effect.mapError(persistenceFailure));
-    yield* context.recordAuditEvidence({
-      ...emptyEvidence(payload.principalId, 'archive-agent'),
-      displayName: target.displayName,
-      newStatus: 'archived',
-      previousStatus: target.status,
-      principalKind: 'agent',
-      reason: payload.reason,
-    });
-    yield* recordPrincipalLifecycleChange(context, payload.principalId);
-    return { operation: 'archive-agent' as const, principalId: payload.principalId, status: 'archived' as const };
-  }
   if (payload.operation === 'change-role') {
-    if (target.kind !== 'human') {
-      return yield* invalid('Only people have demo roles');
-    }
     yield* context.recordAuditEvidence({
       ...emptyEvidence(payload.principalId, 'change-role'),
       displayName: target.displayName,

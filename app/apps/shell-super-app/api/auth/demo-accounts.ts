@@ -56,6 +56,7 @@ const coreAuditEventsWrite = core.table('audit_events', {
 
 const ACTION_KEY = 'core.identity.manage-demo-account';
 const CONFIGURE_AGENT_ACTION_KEY = 'core.identity.configure-agent';
+const MANAGE_AGENT_STATUS_ACTION_KEY = 'core.identity.manage-agent-status';
 
 interface DemoRole {
   readonly administrator: boolean;
@@ -244,6 +245,7 @@ export const demoAccountAuditActionRows = (legalEntityId: string, subjects: 'age
     subjects === 'agents'
       ? or(
           sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${CONFIGURE_AGENT_ACTION_KEY}`,
+          sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${MANAGE_AGENT_STATUS_ACTION_KEY}`,
           and(
             sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
             sql`${coreAuditEvents.evidenceJson}->>'principalKind' = 'agent'`,

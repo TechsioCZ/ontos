@@ -990,3 +990,10 @@ export {
   AgentProfileSchema,
 } from './modules/actions/configure-agent.action.ts';
 export type { ConfigureAgentPayload } from './modules/actions/configure-agent.action.ts';
+export {
+  manageAgentStatusAction,
+  ManageAgentStatusPayloadSchema,
+  ManageAgentStatusResultSchema,
+  ManageAgentStatusAuditEvidenceSchema,
+} from './modules/actions/manage-agent-status.action.ts';
+export type { ManageAgentStatusPayload } from './modules/actions/manage-agent-status.action.ts';
