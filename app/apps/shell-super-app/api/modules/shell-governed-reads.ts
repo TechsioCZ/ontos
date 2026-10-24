@@ -95,7 +95,8 @@ export class ShellGovernedReads extends Context.Service<ShellGovernedReads, Shel
 const emptyInput = Schema.Struct({});
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  // The frame is company-admission metadata; module/page capabilities still filter its contents below.
+  authorization: { kind: 'authenticated_principal' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
@@ -120,6 +121,20 @@ const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   entrypointKey: 'core.shell.resource-detail-timeline',
   moduleKey: 'core.shell',
   role: 'api',
+});
+
+const unavailableBecause = (reason: string) => (cause: unknown) =>
+  Object.defineProperty(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), 'cause', {
+    configurable: true,
+    value: cause,
+  });
+const committedModuleStates = (
+  records: Effect.Success<ReturnType<TenantModuleStateServiceContract['getTenantModuleStates']>>,
+) => ({
+  getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) => {
+    const requested = new Set(moduleIds);
+    return Effect.succeed(records.filter((record) => requested.has(record.moduleKey)));
+  },
 });
 
 const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(function* makeShellRegistrations(
@@ -153,11 +168,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       }),
     );
   };
-  const unavailableBecause = (reason: string) => (cause: unknown) =>
-    Object.defineProperty(new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason }), 'cause', {
-      configurable: true,
-      value: cause,
-    });
   /**
    * Search and resource detail read only module states in the transaction. Their provider calls and SpiceDB
    * checks run after commit against exactly the states that transaction read.
@@ -170,12 +180,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     services.moduleStates
       .getTenantModuleStates(tenantId, moduleIds)
       .pipe(Effect.mapError(unavailableBecause('Shell module states are temporarily unavailable')));
-  const committedModuleStates = (records: Effect.Success<ReturnType<typeof loadModuleStates>>) => ({
-    getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) => {
-      const requested = new Set(moduleIds);
-      return Effect.succeed(records.filter((record) => requested.has(record.moduleKey)));
-    },
-  });
   const compositionUnavailable = unavailableBecause('Shell composition is temporarily unavailable');
   const moduleTargetUnavailable = unavailableBecause('The Shell module target is temporarily unavailable');
   const composition = defineRead(
@@ -460,7 +464,6 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
               principalId: principal.principalId,
               tenantId: principal.tenantId,
             },
-        compositionEntrypoint.moduleKey,
       ),
     prefetchModuleTargetDecisions: (principal: TrustedPrincipalContext, selector: MutableModuleTargetSelector) =>
       compositionAccess.prefetchModuleTargetDecisions(

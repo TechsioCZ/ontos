@@ -1076,3 +1076,32 @@ it.effect('fails closed when the company navigation settings cannot be read', ()
     expect(failure).toBeInstanceOf(ShellCompositionUnavailableError);
   }),
 );
+
+it.effect('keeps the admitted Shell frame available when every contributed module is denied', () =>
+  Effect.gen(function* zeroRoleComposition() {
+    const checkedModules: string[] = [];
+    const approvedCatalog = yield* catalog();
+    const sources = {
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: contextAccess({}, (moduleIds) => checkedModules.push(...moduleIds)),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+      },
+      navigationExclusions: noExclusions,
+    };
+    yield* makeShellCompositionAccess(sources).prefetchCompositionDecisions(context);
+    const result = yield* makeShellComposition(sources).compose(context);
+    expect(result).toEqual({
+      compositionRevision: approvedCatalog.composition.revision,
+      deniedAppIds: ['documents-center', 'property-registry'],
+      gatewayAudiences: [],
+      homeComponents: [],
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
+    expect(new Set(checkedModules)).toEqual(new Set(approvedCatalog.moduleIds));
+    expect(checkedModules).not.toContain('core.shell');
+  }),
+);

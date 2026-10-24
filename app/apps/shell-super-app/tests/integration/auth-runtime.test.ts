@@ -55,6 +55,7 @@ import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { ShellDocumentContextSchema } from '../../shared/api.ts';
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -855,6 +856,7 @@ it.live(
               | 'manage_party_relationships'
               | 'merge_party_identity'
               | 'read_party_identity'
+              | 'read_people'
               | 'review_party_identity'
               | 'select_context';
             readonly tenantIds: readonly string[];
@@ -952,6 +954,88 @@ it.live(
       queryHash: null,
       resultCount: 0,
     });
+    // Company admission must open the Shell frame even when every module capability is denied.
+    const zeroRoleModuleChecks: string[] = [];
+    const zeroRoleContextAccess = {
+      ...legalEntitySelectionOptions.contextAccess,
+      legalEntities: ({
+        legalEntityIds,
+        permission,
+      }: Parameters<(typeof ContextAccess)['Service']['legalEntities']>[0]) =>
+        Effect.succeed(
+          legalEntityIds.map((key) => ({
+            decision: permission === undefined || permission === 'access' ? ('allowed' as const) : ('denied' as const),
+            key,
+          })),
+        ),
+      modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) => {
+        zeroRoleModuleChecks.push(...moduleIds);
+        return Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key })));
+      },
+      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
+        Effect.succeed(
+          tenantIds.map((key) => ({
+            decision: permission === 'access' ? ('allowed' as const) : ('denied' as const),
+            key,
+          })),
+        ),
+    };
+    const zeroRoleRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      makeGatewayIssuerLayer({
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000003'),
+        loadAdmission: installedAdmission(['testing.one']),
+        loadConfig: parseGatewayIssuerConfig({}),
+      }),
+      moduleStateLayer,
+      installedCatalog(['testing.one']),
+      false,
+      Layer.mergeAll(
+        Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+        Layer.succeed(ContextAccess, zeroRoleContextAccess),
+      ),
+    ).createHandler();
+    handlers.push(zeroRoleRuntime);
+    const zeroRoleDocumentResponse = yield* Effect.tryPromise(() =>
+      zeroRoleRuntime.handler(
+        new Request(`${configuration.baseUrl}/shell/document-context`, {
+          body: JSON.stringify({ home: true }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: headerValue(authenticatedHeaders, 'cookie'),
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(zeroRoleDocumentResponse.status).toBe(200);
+    const zeroRoleDocument = yield* Schema.decodeUnknownEffect(ShellDocumentContextSchema)(
+      yield* Effect.tryPromise(() => zeroRoleDocumentResponse.json()),
+    );
+    expect(zeroRoleDocument.session).toMatchObject({
+      identity: { legalEntityId: fixtureLegalEntityId },
+      state: 'authenticated',
+    });
+    expect(zeroRoleDocument.composition).toEqual({
+      compositionRevision: testRevision,
+      deniedAppIds: ['inventory-stock'],
+      gatewayAudiences: [],
+      homeComponents: [],
+      navigation: [],
+      state: 'available',
+      unavailableDeployments: [],
+    });
+    expect(zeroRoleDocument.home?.contribution).toEqual({ state: 'forbidden' });
+    expect(zeroRoleDocument.canManagePeople).toBe(false);
+    expect(zeroRoleDocument.legalEntities).toMatchObject({
+      legalEntities: [{ legalEntityId: fixtureLegalEntityId }],
+      selectedLegalEntityId: fixtureLegalEntityId,
+      state: 'authenticated',
+    });
+    expect(zeroRoleModuleChecks).toContain('testing.one');
+    expect(zeroRoleModuleChecks).not.toContain('core.shell');
     const refreshingRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
         ...authentication,

@@ -398,10 +398,10 @@ export const makeShellCompositionData = (sources: ShellCompositionDataSources) =
     // Sequential on purpose: both reads share the governed read's Core transaction.
     const { excludedEntrypoints, records } = yield* Effect.all(
       {
-        records: loadStates(sources, context, authorization.catalog.moduleIds),
         excludedEntrypoints: sources.navigationExclusions
           .listExcludedEntrypoints(context.tenantId, authorization.legalEntityId)
           .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause }))),
+        records: loadStates(sources, context, authorization.catalog.moduleIds),
       },
       { concurrency: 1 },
     );
@@ -498,7 +498,10 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     const pages = pageByContributionKey(catalog);
     const approvedModules = new Map(catalog.composition.modules.map((module) => [module.moduleId, module] as const));
     /** The page's approved remote, when it is browser code whose exposure the catalog confirms. */
-    const pageRemote = (contract: (typeof catalog.contracts)[number], page: ShellRenderableContribution | undefined) => {
+    const pageRemote = (
+      contract: (typeof catalog.contracts)[number],
+      page: ShellRenderableContribution | undefined,
+    ) => {
       const approvedModule = approvedModules.get(contract.manifest.module.id);
       const component =
         page === undefined
@@ -511,7 +514,10 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         ? undefined
         : {
             expose: page.expose,
-            manifest: { sha256: approvedModule.federation.manifest.sha256, url: approvedModule.federation.manifest.url },
+            manifest: {
+              sha256: approvedModule.federation.manifest.sha256,
+              url: approvedModule.federation.manifest.url,
+            },
             remoteName: approvedModule.federation.remoteName,
           };
     };
@@ -523,42 +529,42 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         return [];
       }
       return contract.manifest.publicSurface.shellContributions.navigation.flatMap((contribution) => {
-        const { authorization, entrypointKey } = contribution.entrypoint;
+        const { authorization: navigationAuthorization, entrypointKey } = contribution.entrypoint;
         if (
           excludedEntrypoints.has(entrypointKey) ||
-          (authorization.kind === 'context_permission' &&
-            deniedEntrypoints.has(toContextPermissionAccessKey({ moduleId, permission: authorization.permission })))
+          (navigationAuthorization.kind === 'context_permission' &&
+            deniedEntrypoints.has(
+              toContextPermissionAccessKey({ moduleId, permission: navigationAuthorization.permission }),
+            ))
         ) {
           return [];
         }
         const page = pages.get(contribution.pageKey);
         const unavailable = permission === 'unavailable' || page === undefined;
         const remote = unavailable ? undefined : pageRemote(contract, page);
-        return [
-          withOptionalProperty(
-            {
-              appId: contract.deployment.appId,
-              enabled: !unavailable,
-              entrypointKey: contribution.entrypoint.entrypointKey,
-              groupKey: contribution.groupKey,
-              homeStart: contribution.homeStart,
-            },
-            !unavailable,
-            'href',
-            page?.routePath ?? '',
-            {
-              icon: contribution.icon,
-              label: contribution.label,
-              moduleId,
-              order: Number(contribution.order),
-              requiresCapability: contribution.requiresCapability,
-              state,
-              unavailable,
-              writable: state === 'active',
-              ...(remote === undefined ? {} : { remote }),
-            },
-          ),
-        ];
+        const item = withOptionalProperty(
+          {
+            appId: contract.deployment.appId,
+            enabled: !unavailable,
+            entrypointKey: contribution.entrypoint.entrypointKey,
+            groupKey: contribution.groupKey,
+            homeStart: contribution.homeStart,
+          },
+          !unavailable,
+          'href',
+          page?.routePath ?? '',
+          {
+            icon: contribution.icon,
+            label: contribution.label,
+            moduleId,
+            order: Number(contribution.order),
+            requiresCapability: contribution.requiresCapability,
+            state,
+            unavailable,
+            writable: state === 'active',
+          },
+        );
+        return remote === undefined ? [item] : [{ ...item, remote }];
       });
     });
     const appIds = [...new Set(catalog.contracts.map((contract) => contract.deployment.appId))].toSorted();
@@ -690,12 +696,11 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
   );
 
   /**
-   * Asks SpiceDB, in one round trip, for every decision a composition read of the captured release checks: the read
-   * entrypoint's module access, each module's access and the navigation permissions. Run beside the read under
-   * `withRequestPermissionDecisions`, the read's own checks join these decisions instead of paying a round trip each
-   * (scope, entrypoint and composition checks were three sequential round trips). Failures are the read's to report.
+   * Asks SpiceDB, in one round trip, for each module's access and navigation permissions in the captured release.
+   * The Shell frame itself needs company admission, not a Shell module capability. Run beside the governed read
+   * under `withRequestPermissionDecisions` so its content checks join these decisions. Failures are the read's to report.
    */
-  const prefetchCompositionDecisions = (context: ShellCompositionContext, entrypointModuleId: string) =>
+  const prefetchCompositionDecisions = (context: ShellCompositionContext) =>
     Effect.gen(function* prefetchCompositionDecisionsEffect() {
       const { legalEntityId } = context;
       if (legalEntityId === undefined) {
@@ -706,7 +711,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         [
           sources.contextAccess.modules({
             legalEntityId,
-            moduleIds: [...new Set([entrypointModuleId, ...catalog.moduleIds])],
+            moduleIds: catalog.moduleIds,
             principalId: context.principalId,
             tenantId: context.tenantId,
           }),
