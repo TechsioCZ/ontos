@@ -2,8 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { PgClient } from '@effect/sql-pg';
-import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { and, eq, sql } from 'drizzle-orm';
+import { Config, Context, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -26,6 +26,10 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import {
+  LegalEntityContext,
+  makeLegalEntityContext,
+} from '../../../../packages/core-runtime/src/auth/legal-entity-context.ts';
+import {
   makePrincipalResolver,
   PrincipalResolver,
 } from '../../../../packages/core-runtime/src/auth/principal-resolver.ts';
@@ -33,8 +37,8 @@ import {
   staffAuthenticationNamespaceRegistration,
   STAFF_AUTHENTICATION_NAMESPACE_ID,
 } from '../../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
-import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   applicationCompositionAuthority,
   auditEvents,
@@ -56,14 +60,27 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
-import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../../../../packages/core-runtime/src/outbox/core-system-subscriptions.ts';
-import { createSpiceDbPermissionClient } from '../../../../packages/core-runtime/src/permissions/client.ts';
-import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import {
+  corePrincipalLifecycleSubscription,
+  CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
+} from '../../../../packages/core-runtime/src/outbox/core-system-subscriptions.ts';
+import { createSpiceDbPermissionClient } from '../../../../packages/core-runtime/src/permissions/client.ts';
+import { loadSpiceDbConfig, SpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import {
+  ContextAccess,
   makeContextAccess,
   toLegalEntityAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../../../packages/core-runtime/src/permissions/schema.ts';
+import { ActiveApplicationCompositionService } from '../../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { coreSystemOutboxWorkers } from '../../../../packages/core-runtime/src/outbox/core-system-worker-entry.ts';
+import { makeOutboxRepository } from '../../../../packages/core-runtime/src/outbox/repository.ts';
+import { makeOutboxRuntime } from '../../../../packages/core-runtime/src/outbox/runtime.ts';
+import {
+  ActionAuthorizationLifecycle,
+  ActionAuthorizationLifecycleLive,
+} from '../../../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
+import { ScopedRoleMembershipLifecycleLive } from '../../../../packages/core-runtime/src/permissions/scoped-role-membership-lifecycle.ts';
 import { makeActionPermissionService } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -81,11 +98,10 @@ import { BetterAuthPersonInvitationIdentityProviderLive } from '../../api/auth/i
 import { setInvitationPassword } from '../../api/auth/invitation/transport.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 
-const mailpitUrl = 'http://127.0.0.1:8026';
 const CapturedMailSchema = Schema.Struct({ ID: Schema.String, Subject: Schema.String });
 const MailSearchSchema = Schema.fromJsonString(Schema.Struct({ messages: Schema.Array(CapturedMailSchema) }));
 const MailMessageSchema = Schema.fromJsonString(Schema.Struct({ Text: Schema.String }));
-const captured = (recipient: string) => {
+const capturedFrom = (mailpitUrl: string, recipient: string) => {
   const query = encodeURIComponent(`to:${recipient}`);
   return Effect.tryPromise(async () => {
     const response = await fetch(`${mailpitUrl}/api/v1/search?query=${query}`);
@@ -98,7 +114,7 @@ const captured = (recipient: string) => {
     Effect.map((result) => result.messages),
   );
 };
-const readCaptured = (id: string) =>
+const readCapturedFrom = (mailpitUrl: string, id: string) =>
   Effect.tryPromise(async () => {
     const response = await fetch(`${mailpitUrl}/api/v1/message/${id}`);
     if (!response.ok) {
@@ -106,7 +122,7 @@ const readCaptured = (id: string) =>
     }
     return await response.text();
   }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(MailMessageSchema)));
-const deleteCaptured = (message: typeof CapturedMailSchema.Type) =>
+const deleteCapturedFrom = (mailpitUrl: string, message: typeof CapturedMailSchema.Type) =>
   Effect.tryPromise(async () => {
     const response = await fetch(`${mailpitUrl}/api/v1/messages`, {
       body: JSON.stringify({ IDs: [message.ID] }),
@@ -117,9 +133,11 @@ const deleteCaptured = (message: typeof CapturedMailSchema.Type) =>
       throw new Error('Owned invitation Mailpit message cleanup failed');
     }
   });
-const deleteRecipientMessages = (email: string) =>
-  captured(email).pipe(
-    Effect.flatMap((messages) => Effect.forEach(messages, deleteCaptured, { discard: true })),
+const deleteRecipientMessagesFrom = (mailpitUrl: string, email: string) =>
+  capturedFrom(mailpitUrl, email).pipe(
+    Effect.flatMap((messages) =>
+      Effect.forEach(messages, (message) => deleteCapturedFrom(mailpitUrl, message), { discard: true }),
+    ),
     Effect.ignore,
   );
 const relationship = (
@@ -138,9 +156,15 @@ const relationship = (
 
 // This proof owns a throwaway DB and isolated SpiceDB schema. Never run against the demo database/graph.
 it.live(
-  'invites atomically, dispatches once after commit, accepts an expiring one-use native token and logs in without granting rights',
+  'accepts native invitations atomically with company admission, without granting roles or business authority',
   () =>
     Effect.gen(function* invitationRuntime() {
+      const mailpitUrl = yield* Config.String('ONTOS_INVITATION_TEST_MAILPIT_URL');
+      const smtpPort = yield* Config.Int('ONTOS_INVITATION_TEST_SMTP_PORT');
+      expect(new URL(mailpitUrl).hostname).toBe('127.0.0.1');
+      const captured = (email: string) => capturedFrom(mailpitUrl, email);
+      const readCaptured = (id: string) => readCapturedFrom(mailpitUrl, id);
+      const deleteRecipientMessages = (email: string) => deleteRecipientMessagesFrom(mailpitUrl, email);
       const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
       expect(pair.runtime.database).toMatch(/^people_model_scratch_20261023_[0-9a-f]+$/u);
       expect(pair.admin.database).toBe(pair.runtime.database);
@@ -308,14 +332,14 @@ it.live(
         Effect.provideService(AuthDatabase, authDatabase),
         Effect.provideService(PrincipalResolver, resolver),
       );
-      const sql = yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) });
+      const emailSql = yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) });
       const transport: EmailTransportRuntime = {
         kind: 'smtp',
-        makeDelivery: (from) => makeSmtpEmailDelivery({ from, host: '127.0.0.1', port: 1026 }),
+        makeDelivery: (from) => makeSmtpEmailDelivery({ from, host: '127.0.0.1', port: smtpPort }),
         provider: { configured: true, label: 'Owned Mailpit test capture' },
       };
       const dispatch = dispatchEmailBatchWith(transport, { ONTOS_PUBLIC_URL: 'http://localhost:3020' }).pipe(
-        Effect.provideService(PgClient.PgClient, sql),
+        Effect.provideService(PgClient.PgClient, emailSql),
       );
       const key = randomUUID();
       const invited = yield* invite(recipient, adminId, key);
@@ -385,6 +409,55 @@ it.live(
           }),
         );
       expect((yield* accept(token, 'short')).status).toBe(400);
+      const [unaccepted] = yield* admin.executor
+        .select()
+        .from(principalCompanyMemberships)
+        .where(eq(principalCompanyMemberships.principalId, invited.principalRef.principalId));
+      expect(unaccepted?.status).toBe('invited');
+      expect(
+        (yield* contextAccess.legalEntities({
+          legalEntityIds: [companyId],
+          principalId: invited.principalRef.principalId,
+          tenantId,
+        }))[0]?.decision,
+      ).toBe('denied');
+      // Force a real credential-write failure AFTER the consume hook has activated the membership and queued work.
+      // This schema constraint belongs only to the guarded throwaway database and is removed before the real acceptance.
+      expect(intent.providerSubjectId).toMatch(/^[0-9a-f-]{36}$/u);
+      yield* admin.executor.execute(
+        sql.raw(
+          `ALTER TABLE auth.account ADD CONSTRAINT owned_invitation_credential_failure CHECK (user_id <> '${intent.providerSubjectId}')`,
+        ),
+        'objects',
+      );
+      const failedCredential = yield* accept(token).pipe(
+        Effect.ensuring(
+          admin.executor
+            .execute(sql`ALTER TABLE auth.account DROP CONSTRAINT owned_invitation_credential_failure`, 'objects')
+            .pipe(Effect.orDie),
+        ),
+      );
+      expect(failedCredential.status).toBeGreaterThanOrEqual(500);
+      expect(
+        yield* authDatabase.executor.select().from(verification).where(eq(verification.id, intent.verificationId)),
+      ).toHaveLength(1);
+      expect(
+        yield* authDatabase.executor.select().from(account).where(eq(account.userId, intent.providerSubjectId)),
+      ).toHaveLength(0);
+      const [rolledBackMembership] = yield* admin.executor
+        .select()
+        .from(principalCompanyMemberships)
+        .where(eq(principalCompanyMemberships.principalId, invited.principalRef.principalId));
+      expect(rolledBackMembership).toMatchObject({ revision: 1, status: 'invited' });
+      expect(
+        yield* admin.executor
+          .select()
+          .from(auditEvents)
+          .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'auth.invitation.accepted'))),
+      ).toHaveLength(0);
+      expect(
+        yield* admin.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+      ).toHaveLength(1);
       const accepted = yield* Effect.all([accept(token), accept(token)], { concurrency: 2 });
       expect(accepted.map((response) => response.status).toSorted((a, b) => a - b)).toEqual([200, 400]);
       expect((yield* accept(token, randomBytes(24).toString('base64url'))).status).toBe(400);
@@ -398,14 +471,76 @@ it.live(
         .select()
         .from(principalCompanyMemberships)
         .where(eq(principalCompanyMemberships.principalId, invited.principalRef.principalId));
-      expect(membership?.status).toBe('invited');
+      expect(membership).toMatchObject({ affiliation: 'external', revision: 2, status: 'active' });
+      const lifecycleContext = yield* Layer.build(
+        ActionAuthorizationLifecycleLive.pipe(
+          Layer.provide(ScopedRoleMembershipLifecycleLive),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(CoreDatabase, database),
+              Layer.succeed(DatabaseConfig, pair.runtime),
+              Layer.succeed(SpiceDbConfig, graphConfiguration),
+              Layer.succeed(ActiveApplicationCompositionService, authority),
+            ),
+          ),
+        ),
+      );
+      const lifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
+      const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor));
+      yield* outbox.matchMessages({ compositionRevision: composition.revision });
+      const drained = yield* outbox
+        .runCycle({
+          claimOwner: 'owned-invitation-acceptance',
+          compositionRevision: composition.revision,
+          maxDeliveries: 10,
+          now: yield* DateTime.nowAsDate,
+          registrations: coreSystemOutboxWorkers.filter(
+            (worker) => worker.descriptor.workerKey === corePrincipalLifecycleSubscription.workerKey,
+          ),
+          subscriptions: [corePrincipalLifecycleSubscription],
+        })
+        .pipe(Effect.provideService(ActionAuthorizationLifecycle, lifecycle));
+      expect(drained.failed).toBe(0);
+      expect(drained.succeeded).toBe(2);
+      const nativeCheck = (objectType: string, objectId: string, permissionKey: string) =>
+        Effect.promise(() =>
+          graph.promises.checkPermission(
+            v1.CheckPermissionRequest.create({
+              consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+              permission: permissionKey,
+              resource: { objectId, objectType },
+              subject: { object: { objectId: invited.principalRef.principalId, objectType: 'principal' } },
+            }),
+          ),
+        ).pipe(
+          Effect.map((answer) => answer.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      expect(yield* nativeCheck('tenant', tenantId, 'access')).toBe(true);
+      expect(yield* nativeCheck('tenant', tenantId, 'manage_identity')).toBe(false);
+      expect(yield* nativeCheck('legal_entity', companyObject(companyId), 'manage_people')).toBe(false);
+      expect(yield* nativeCheck('legal_entity', companyObject(otherCompanyId), 'access')).toBe(false);
+      expect(yield* nativeCheck('scoped_role', roleId, 'member')).toBe(false);
+      const acceptedAudit = yield* admin.executor
+        .select()
+        .from(auditEvents)
+        .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'auth.invitation.accepted')));
+      expect(acceptedAudit).toHaveLength(1);
+      expect(JSON.stringify(acceptedAudit).includes(token)).toBe(false);
       expect(
         (yield* contextAccess.legalEntities({
           legalEntityIds: [companyId],
           principalId: invited.principalRef.principalId,
           tenantId,
         }))[0]?.decision,
-      ).toBe('denied');
+      ).toBe('allowed');
+      const cookie = signedIn.setCookieHeaders.map((value) => value.split(';')[0]).join('; ');
+      const selectedContext = yield* authentication
+        .resolveShellContext(new Headers({ cookie }))
+        .pipe(
+          Effect.provideService(ContextAccess, contextAccess),
+          Effect.provideService(LegalEntityContext, makeLegalEntityContext(database)),
+        );
+      expect(selectedContext).toMatchObject({ identity: { legalEntityId: companyId }, state: 'authenticated' });
       const expired = yield* invite(expiredRecipient);
       const [expiredIntent] = yield* admin.executor
         .select()
@@ -426,6 +561,11 @@ it.live(
         .set({ expiresAt: new Date(0) })
         .where(eq(verification.id, expiredIntent.verificationId));
       expect((yield* accept(expiredVerification.identifier.slice('reset-password:'.length))).status).toBe(400);
+      const [expiredMembership] = yield* admin.executor
+        .select()
+        .from(principalCompanyMemberships)
+        .where(eq(principalCompanyMemberships.principalId, expired.principalRef.principalId));
+      expect(expiredMembership).toMatchObject({ revision: 1, status: 'invited' });
       expect(
         yield* authDatabase.executor.select().from(account).where(eq(account.userId, expiredIntent.providerSubjectId)),
       ).toHaveLength(0);
@@ -468,6 +608,6 @@ it.live(
       expect(yield* captured(recipient)).toHaveLength(1);
       expect(
         yield* admin.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     }).pipe(Effect.provide(Reactivity.layer)),
 );

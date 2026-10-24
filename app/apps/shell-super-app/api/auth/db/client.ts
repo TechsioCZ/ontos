@@ -1,8 +1,12 @@
-import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import {
+  EffectDrizzleAuthTransactionHooks,
+  makeEffectDrizzleAuthAdapter,
+} from '@app/better-auth-effect-drizzle/server';
+import type { EffectDrizzleAuthTransaction } from '@app/better-auth-effect-drizzle/server';
+import { DatabaseConfig, acceptPersonInvitationFromTransaction, configureDatabasePool } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
@@ -42,7 +46,37 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );
-  const adapter = yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema);
+  const adapter = yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema).pipe(
+    Effect.provideService(EffectDrizzleAuthTransactionHooks, {
+      afterConsume: Effect.fn('AuthDatabase.acceptConsumedInvitation')(function* acceptConsumedInvitation(
+        transaction: EffectDrizzleAuthTransaction,
+        model: string,
+        row: Parameters<(typeof EffectDrizzleAuthTransactionHooks)['Service']['afterConsume']>[2],
+      ) {
+        if (
+          model !== 'verification' ||
+          !Schema.is(Schema.String)(row['identifier']) ||
+          !row['identifier'].startsWith('reset-password:')
+        ) {
+          return;
+        }
+        // Only consumeOne inside the native password transaction reaches this hook. Deletes/cleanup and sign-in do not.
+        // Decode no token-bearing field: credentials and invitation secrets must not enter failures or audit evidence.
+        const consumed = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({
+            expiresAt: Schema.Date,
+            id: Schema.String,
+            value: Schema.String,
+          }),
+        )({ expiresAt: row['expiresAt'], id: row['id'], value: row['value'] });
+        yield* acceptPersonInvitationFromTransaction(transaction, {
+          expiresAt: consumed.expiresAt,
+          providerSubjectId: consumed.value,
+          verificationId: consumed.id,
+        });
+      }, Effect.orDie),
+    }),
+  );
   return { adapter, executor };
 });
 

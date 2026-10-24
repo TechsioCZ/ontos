@@ -1,7 +1,12 @@
 import { v1 } from '@authzed/authzed-node';
+import type { ReviewedInvitationMembership } from '../people-model-post-baseline.mts';
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { admitPostBaselineRelationships, postBaselinePrincipals } from '../people-model-post-baseline.mts';
+import {
+  admitPostBaselineRelationships,
+  postBaselinePrincipals,
+  reviewedAcceptedInvitationMembership,
+} from '../people-model-post-baseline.mts';
 
 const baseline = {
   capturedAt: DateTime.makeUnsafe('2026-10-24T15:30:28.411Z'),
@@ -42,7 +47,14 @@ const retail = [
   edge('business_permission', resource, 'legal_entity', 'legal_entity', ctx(['tenant', 'company'])),
 ];
 const check = (actual: readonly v1.Relationship[], enrollments = [enrollment]) =>
-  admitPostBaselineRelationships({ actual, baseline, enrollments, principals: [old, fresh], sealed });
+  admitPostBaselineRelationships({
+    actual,
+    baseline,
+    enrollments,
+    principals: [old, fresh],
+    reviewedInvitationMemberships: [],
+    sealed,
+  });
 const rejected = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.flip, Effect.asVoid);
 
 it.effect('accepts unchanged seal, exact new human structure, and completed native enrollment', () =>
@@ -122,6 +134,7 @@ it.effect('rejects other retail holders/relations, unknown company or permission
         baseline,
         enrollments: [enrollment, { ...enrollment, principalId: 'other' }],
         principals: [old, fresh, { ...fresh, principalId: 'other' }],
+        reviewedInvitationMemberships: [],
         sealed,
       }),
     );
@@ -136,8 +149,79 @@ it.effect('rejects missing sealed tuples and changing an archived resource', () 
         baseline,
         enrollments: [enrollment],
         principals: [old, fresh],
+        reviewedInvitationMemberships: [],
         sealed: [...sealed, retail[1]],
       }),
     );
+  }),
+);
+
+const reviewed = reviewedAcceptedInvitationMembership;
+const proofBaseline = {
+  ...baseline,
+  companies: [
+    ...baseline.companies,
+    { legal_entity_id: reviewed.legalEntityId, status: 'active', tenant_id: reviewed.tenantId },
+  ],
+  tenants: [...baseline.tenants, { status: 'active', tenant_id: reviewed.tenantId }],
+};
+const proofPrincipal = { ...fresh, principalId: reviewed.principalId, tenantId: reviewed.tenantId };
+const proofMembership = { ...reviewed, companyStatus: 'active', tenantStatus: 'active' };
+const proofPair = [
+  edge('tenant', reviewed.tenantId, 'company_member', 'principal', reviewed.principalId),
+  edge('legal_entity', ctx([reviewed.tenantId, reviewed.legalEntityId]), 'member', 'principal', reviewed.principalId),
+];
+const checkProof = (
+  actual: readonly v1.Relationship[],
+  reviewedInvitationMemberships: readonly ReviewedInvitationMembership[] = [proofMembership],
+  principal = proofPrincipal,
+) =>
+  admitPostBaselineRelationships({
+    actual,
+    baseline: proofBaseline,
+    enrollments: [],
+    principals: [old, principal],
+    reviewedInvitationMemberships,
+    sealed,
+  });
+it.effect('admits only the exact SQL-proven accepted external invitation pair with no roles', () =>
+  Effect.gen(function* admissionCase() {
+    expect(yield* checkProof([...sealed, ...proofPair])).toEqual(proofPair);
+    expect(yield* checkProof(sealed)).toEqual([]);
+    yield* rejected(checkProof([...sealed, ...proofPair], []));
+    yield* rejected(checkProof([...sealed, proofPair[0]]));
+    yield* rejected(checkProof([...sealed, proofPair[1]]));
+    yield* rejected(checkProof(proofPair));
+    yield* rejected(checkProof([...sealed, ...proofPair], [proofMembership, proofMembership]));
+    for (const change of [
+      { principalId: 'other' },
+      { tenantId: 'other' },
+      { legalEntityId: 'other' },
+      { affiliation: 'employee' },
+      { revision: 1 },
+      { status: 'invited' },
+      { status: 'disabled' },
+      { status: 'departed' },
+      { companyStatus: 'inactive' },
+      { tenantStatus: 'inactive' },
+    ]) {
+      yield* rejected(checkProof([...sealed, ...proofPair], [{ ...proofMembership, ...change }]));
+    }
+    yield* rejected(checkProof([...sealed, ...proofPair], [proofMembership], { ...proofPrincipal, kind: 'agent' }));
+    yield* rejected(
+      checkProof([...sealed, ...proofPair], [proofMembership], { ...proofPrincipal, createdAt: old.createdAt }),
+    );
+    for (const row of [
+      edge('scoped_role', 'role', 'member', 'principal', reviewed.principalId),
+      edge('tenant', reviewed.tenantId, 'member', 'principal', reviewed.principalId),
+      v1.Relationship.create({ ...proofPair[0], optionalCaveat: { caveatName: 'conditional' } }),
+      v1.Relationship.create({ ...proofPair[0], optionalExpiresAt: { seconds: '123' } }),
+      v1.Relationship.create({
+        ...proofPair[0],
+        subject: { object: { objectId: reviewed.principalId, objectType: 'principal' }, optionalRelation: 'self' },
+      }),
+    ]) {
+      yield* rejected(checkProof([...sealed, ...proofPair, row]));
+    }
   }),
 );

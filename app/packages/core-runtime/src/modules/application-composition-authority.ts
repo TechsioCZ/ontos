@@ -34,7 +34,7 @@ const READ_COMMITTED_ISOLATION = 'read committed';
 
 /** The CASE prevents acquiring either publication lock under an unsupported snapshot. */
 const lockReadCommitted = Effect.fn('ApplicationCompositionAuthority.lockReadCommitted')(
-  function* lockReadCommittedEffect(transaction: CoreTransaction, acquire: SQL) {
+  function* lockReadCommittedEffect(transaction: Pick<CoreTransaction, 'execute'>, acquire: SQL) {
     const [isolation] = yield* transaction.execute<{ readonly isolation: string }>(
       sql`select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${READ_COMMITTED_ISOLATION} then ${acquire} end as publication_lock`,
       'objects',
@@ -92,7 +92,7 @@ export const precheckApplicationCompositionAdmission = (
  */
 export const lockApplicationCompositionAuthority = Effect.fn('ApplicationCompositionAuthority.lock')(
   function* lockApplicationCompositionAuthorityEffect(
-    transaction: CoreTransaction,
+    transaction: Pick<CoreTransaction, 'execute' | 'select'>,
     expectedRevision: string,
     operation: 'match' | 'read' | 'worker' | 'write',
   ) {
@@ -106,10 +106,9 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
     if (operation !== 'match') {
       return Object.freeze([]);
     }
-    const decodedSubscriptions = yield* Schema.decodeUnknownEffect(
-      Schema.Array(OutboxSubscriptionAuthoritySchema),
-      { onExcessProperty: 'error' },
-    )(subscriptionsJson).pipe(
+    const decodedSubscriptions = yield* Schema.decodeUnknownEffect(Schema.Array(OutboxSubscriptionAuthoritySchema), {
+      onExcessProperty: 'error',
+    })(subscriptionsJson).pipe(
       Effect.mapError((cause) => unavailable('The approved Outbox subscription authority is invalid', cause)),
     );
     return yield* Effect.try({

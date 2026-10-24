@@ -100,6 +100,7 @@ export {
   peopleDirectoryRead,
 } from './auth/people-directory-read.ts';
 export { RoleCatalogResultSchema, roleCatalogRead } from './auth/role-catalog-read.ts';
+export { acceptPersonInvitationFromTransaction } from './auth/person-invitation-acceptance.ts';
 export { PersonInvitationIdentityProvider } from './auth/person-invitation-identity-provider.ts';
 export type {
   PersonInvitationIdentityInput,

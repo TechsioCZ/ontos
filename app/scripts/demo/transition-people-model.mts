@@ -81,9 +81,10 @@ import {
   admitPostBaselineRelationships,
   ReviewedPeopleInventorySchema,
   reviewedPeopleInventorySha256,
+  reviewedInvitationMembershipEvidenceSql,
   retailEnrollmentEvidenceSql,
 } from '../people-model-post-baseline.mts';
-import type { RetailEnrollment } from '../people-model-post-baseline.mts';
+import type { RetailEnrollment, ReviewedInvitationMembership } from '../people-model-post-baseline.mts';
 
 const TenantIdSchema = PrincipalRefSchema.fields.tenantId;
 const PrincipalIdSchema = PrincipalRefSchema.fields.principalId;
@@ -348,6 +349,13 @@ const readSqlInventory = (document: MembershipDocument, mode: 'dry-run' | 'apply
             mode === 'verify'
               ? yield* tx.execute<RetailEnrollment>(sql.raw(retailEnrollmentEvidenceSql), 'objects')
               : [];
+          const reviewedInvitationMemberships =
+            mode === 'verify'
+              ? yield* tx.execute<ReviewedInvitationMembership>(
+                  sql.raw(reviewedInvitationMembershipEvidenceSql),
+                  'objects',
+                )
+              : [];
           return {
             actorRows,
             auditRows,
@@ -355,6 +363,7 @@ const readSqlInventory = (document: MembershipDocument, mode: 'dry-run' | 'apply
             membershipRows,
             membershipsPresent,
             retailEnrollments,
+            reviewedInvitationMemberships,
             tenantRows,
           };
         }),
@@ -814,6 +823,7 @@ const replayStage = (args: TransitionArguments, ready: PreparedTransition, plan:
       baseline,
       enrollments: ready.inventory.retailEnrollments,
       principals: ready.inventory.actorRows,
+      reviewedInvitationMemberships: ready.inventory.reviewedInvitationMemberships,
       sealed: stage.expected,
     });
     const replayExpected = [...stage.expected, ...extraRelationships];

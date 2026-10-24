@@ -34,6 +34,24 @@ export interface RetailEnrollment extends Record<string, unknown> {
   readonly profileId: string;
   readonly tenantId: string;
 }
+export const reviewedAcceptedInvitationMembership = Object.freeze({
+  affiliation: 'external',
+  legalEntityId: '71000000-0000-4000-8000-000000000020',
+  principalId: 'ec50763d-5bb4-42db-aa0a-a67bde8d346e',
+  revision: 2,
+  status: 'active',
+  tenantId: '70000000-0000-4000-8000-000000000020',
+});
+export interface ReviewedInvitationMembership extends Record<string, unknown> {
+  readonly affiliation: string | null;
+  readonly companyStatus: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly revision: number;
+  readonly status: string;
+  readonly tenantId: string;
+  readonly tenantStatus: string;
+}
 const reject = (reason: string) => Effect.fail(new PeopleModelTransitionError({ reason }));
 
 /** SQL identity evidence only; this never evaluates a graph permission. */
@@ -91,12 +109,43 @@ const edge = (resourceType: string, resourceId: string, relation: string, subjec
     subject: { object: { objectId: subjectId, objectType: subjectType } },
   });
 
-/** Only native self/tenant structure and exact SQL-owned retail self-service pairs may extend the seal. */
+const isReviewedInvitationMembership = ({
+  actors,
+  baseline,
+  membership,
+}: {
+  readonly actors: readonly CurrentPrincipal[];
+  readonly baseline: typeof ReviewedPeopleInventorySchema.Type;
+  readonly membership: ReviewedInvitationMembership;
+}) => {
+  const reviewed = reviewedAcceptedInvitationMembership;
+  return !(
+    membership.principalId !== reviewed.principalId ||
+    membership.tenantId !== reviewed.tenantId ||
+    membership.legalEntityId !== reviewed.legalEntityId ||
+    membership.affiliation !== reviewed.affiliation ||
+    membership.status !== reviewed.status ||
+    membership.revision !== reviewed.revision ||
+    membership.companyStatus !== 'active' ||
+    membership.tenantStatus !== 'active' ||
+    !actors.some((p) => p.principalId === membership.principalId && p.tenantId === membership.tenantId) ||
+    !baseline.companies.some(
+      (c) =>
+        c.tenant_id === membership.tenantId && c.legal_entity_id === membership.legalEntityId && c.status === 'active',
+    )
+  );
+};
+
+const incompletePair = (pair: readonly string[], actual: ReadonlySet<string>) =>
+  pair.some((key) => actual.has(key)) && !pair.every((key) => actual.has(key));
+
+/** Only exact reviewed admission and SQL-owned self-service structure may extend the seal. */
 export const admitPostBaselineRelationships = (input: {
   readonly actual: readonly v1.Relationship[];
   readonly baseline: typeof ReviewedPeopleInventorySchema.Type;
   readonly enrollments: readonly RetailEnrollment[];
   readonly principals: readonly CurrentPrincipal[];
+  readonly reviewedInvitationMemberships: readonly ReviewedInvitationMembership[];
   readonly sealed: readonly v1.Relationship[];
 }) =>
   Effect.gen(function* admitNativeRelationships() {
@@ -114,6 +163,30 @@ export const admitPostBaselineRelationships = (input: {
     for (const actor of actors) {
       allowed.add(tupleKey(edge('principal', actor.principalId, 'self', 'principal', actor.principalId)));
       allowed.add(tupleKey(edge('principal', actor.principalId, 'tenant', 'tenant', actor.tenantId)));
+    }
+    if (input.reviewedInvitationMemberships.length > 1) {
+      return yield* reject('Only the exact reviewed invitation membership may extend admission');
+    }
+    for (const membership of input.reviewedInvitationMemberships) {
+      if (!isReviewedInvitationMembership({ actors, baseline: input.baseline, membership })) {
+        return yield* reject('SQL membership differs from the exact coordinator-reviewed native invitation repair');
+      }
+      const pair = [
+        tupleKey(edge('tenant', membership.tenantId, 'company_member', 'principal', membership.principalId)),
+        tupleKey(
+          edge(
+            'legal_entity',
+            yield* objectId([membership.tenantId, membership.legalEntityId]),
+            'member',
+            'principal',
+            membership.principalId,
+          ),
+        ),
+      ];
+      paired.set('reviewed-invitation-membership', pair);
+      for (const key of pair) {
+        allowed.add(key);
+      }
     }
     for (const enrollment of input.enrollments) {
       if (!actors.some((p) => p.principalId === enrollment.principalId && p.tenantId === enrollment.tenantId)) {
@@ -168,8 +241,8 @@ export const admitPostBaselineRelationships = (input: {
       }
     }
     for (const pair of paired.values()) {
-      if (pair.some((k) => actual.has(k)) && !pair.every((k) => actual.has(k))) {
-        return yield* reject('Incomplete native retail self-service pair');
+      if (incompletePair(pair, actual)) {
+        return yield* reject('Incomplete exact native admission or self-service pair');
       }
     }
     return extras;
@@ -181,3 +254,10 @@ from commerce_customer_context.retail_portal_profile_bindings b
 join commerce_customer_context.retail_customer_profiles p on (p.tenant_id,p.legal_entity_id,p.retail_customer_profile_id)=(b.tenant_id,b.legal_entity_id,b.retail_customer_profile_id)
 join commerce_customer_context.retail_portal_profile_binding_permission_mutations m on (m.tenant_id,m.legal_entity_id,m.retail_portal_profile_binding_id,m.principal_id,m.retail_customer_profile_id)=(b.tenant_id,b.legal_entity_id,b.retail_portal_profile_binding_id,b.principal_id,b.retail_customer_profile_id)
 where b.lifecycle='ACTIVE' and b.revoked_at is null and b.authorization_operation='grant' and b.authorization_state in ('ACTIVE','PENDING_GRANT') and m.operation='grant' and m.state in ('ACTIVE','PENDING_GRANT')`;
+
+/** Exact reviewed proof repair, not an allowance for all present or future company memberships. */
+export const reviewedInvitationMembershipEvidenceSql = `select m.tenant_id as "tenantId", m.legal_entity_id as "legalEntityId", m.principal_id as "principalId", m.affiliation, m.status, m.revision, c.status as "companyStatus", t.status as "tenantStatus"
+from core.principal_company_memberships m
+join core.legal_entities c on (c.tenant_id,c.legal_entity_id)=(m.tenant_id,m.legal_entity_id)
+join core.tenants t on t.tenant_id=m.tenant_id
+where m.principal_id='ec50763d-5bb4-42db-aa0a-a67bde8d346e'`;

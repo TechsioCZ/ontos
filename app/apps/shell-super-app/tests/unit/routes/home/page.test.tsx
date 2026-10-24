@@ -72,7 +72,9 @@ const translations = new Map(
     'shell.dashboard.account.label': 'Account menu',
     'shell.dashboard.brand': 'OntOS',
     'shell.dashboard.header.label': 'Dashboard header',
+    'shell.dashboard.home.noAreas': 'You have not been assigned a role yet — ask your company administrator.',
     'shell.dashboard.home.title': 'Home',
+    'shell.dashboard.legalEntity.accessBlocked': 'No legal entity is available for this account.',
     'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
     'shell.dashboard.legalEntity.failed': 'Legal entity switching failed',
     'shell.dashboard.legalEntity.pending': 'Switching legal entity',
@@ -474,6 +476,26 @@ it.live.each(switchFailureCases)(
       expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
     }),
 );
+
+it('keeps an admitted company selectable with a clear empty state when no role grants an area', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  render(
+    <HomeView
+      initialModel={{
+        ...model,
+        homeContribution: { state: 'forbidden' },
+        navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
+      }}
+    />,
+  );
+  expect(screen.getByRole('combobox', { name: 'Current legal entity' }).textContent).toContain('Alpha company');
+  expect(screen.getByText('You have not been assigned a role yet — ask your company administrator.')).toBeDefined();
+  expect(screen.queryByText('No legal entity is available for this account.')).toBeNull();
+  expect(resolvedTargetMock).not.toHaveBeenCalled();
+});
 
 it('does not invoke the lazy owner renderer for forbidden or unavailable Home targets', () => {
   const model = authenticatedModel();

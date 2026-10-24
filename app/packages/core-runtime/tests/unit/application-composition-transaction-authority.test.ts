@@ -173,7 +173,7 @@ it.effect('unsupported transaction snapshots cannot bypass either side of the pu
       for (const lock of [
         (transaction: Parameters<typeof lockApplicationCompositionAuthority>[0]) =>
           lockApplicationCompositionAuthority(transaction, revision, 'write').pipe(Effect.asVoid),
-        (transaction: Parameters<typeof lockApplicationCompositionAuthority>[0]) =>
+        (transaction: Parameters<typeof lockApplicationCompositionPublication>[0]) =>
           lockApplicationCompositionPublication(transaction).pipe(Effect.asVoid),
       ]) {
         const failure = yield* database.transaction(lock).pipe(Effect.flip);

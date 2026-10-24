@@ -35,7 +35,7 @@
         "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu.",
         "start": "Začít: {{destination}}",
         "areas": "Vaše agendy",
-        "noAreas": "Tento účet zatím nemá přiřazenou žádnou agendu. Požádejte správce o přidělení role.",
+        "noAreas": "Zatím nemáte přiřazenou žádnou roli — požádejte správce firmy.",
         "groupHints": {
           "realEstate": "Nemovitosti, nájmy a pobyty",
           "facility": "Provoz, majetek a energie",

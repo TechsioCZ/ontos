@@ -175,6 +175,31 @@ it.effect('does not request composition for an anonymous session', () =>
   }),
 );
 
+it.effect('retains company admission when no role exposes navigation or a module Home', () =>
+  Effect.gen(function* admittedWithoutRoles() {
+    shellCompositionMock.mockReturnValueOnce(
+      Effect.succeed({
+        compositionRevision,
+        deniedAppIds: [],
+        gatewayAudiences: [],
+        homeComponents: [],
+        navigation: [],
+        state: 'available' as const,
+        unavailableDeployments: [],
+      }),
+    );
+    const model = yield* loadModel({ request: request() });
+    expect(model).toMatchObject({
+      contextState: 'authenticated',
+      homeContribution: { state: 'forbidden' },
+      legalEntities: { items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }], state: 'available' },
+      navigation: { items: [], state: 'available' },
+      selectedLegalEntityId: 'legal-1',
+      state: 'authenticated',
+    });
+  }),
+);
+
 it.effect('does not invent a selected legal entity while a tenant session requires selection', () =>
   Effect.gen(function* verifyCase3() {
     const tenantIdentity = {

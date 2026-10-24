@@ -35,7 +35,7 @@
         "welcomeHint": "The areas you can access are listed in the menu on the left.",
         "start": "Start: {{destination}}",
         "areas": "Your areas",
-        "noAreas": "This account has no area assigned yet. Ask an administrator for a role.",
+        "noAreas": "You have not been assigned a role yet — ask your company administrator.",
         "groupHints": {
           "realEstate": "Properties, leases and stays",
           "facility": "Operations, assets and energy",
