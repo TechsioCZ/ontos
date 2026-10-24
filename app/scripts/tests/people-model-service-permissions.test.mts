@@ -1,4 +1,9 @@
-import { permissionUniverseUnion, PermissionUniverseError } from '../people-model-permission-universe.mts';
+import {
+  permissionUniverseUnion,
+  PermissionUniverseError,
+  classifyPrincipalPermissionCases,
+  validatePostBaselinePrincipalPermission,
+} from '../people-model-permission-universe.mts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -233,4 +238,55 @@ it.effect('unions before/after objects without losing frozen baseline positions 
     const duplicate = yield* permissionUniverseUnion(before, [...after, after[0]]).pipe(Effect.flip);
     expect(Schema.is(PermissionUniverseError)(duplicate)).toBe(true);
   }),
+);
+
+it.effect(
+  'distinguishes restored service objects from future signup/invitation objects and enforces current policy',
+  () =>
+    Effect.gen(function* postBaseline() {
+      const restoredService = 'restored-service';
+      const futureSignup = 'future-signup';
+      const classified = yield* classifyPrincipalPermissionCases(
+        [
+          ['principal', restoredService, 'operate'],
+          ['principal', futureSignup, 'manage_own_credentials'],
+          ['principal', 'future-invitee', 'operate'],
+        ],
+        [restoredService],
+      );
+      expect(classified.restored).toEqual([['principal', restoredService, 'operate']]);
+      expect(classified.postBaseline).toHaveLength(2);
+      const policy = {
+        allowed: true,
+        permission: 'manage_own_credentials',
+        resourcePrincipalId: futureSignup,
+        roleGrantedPrincipalIds: [],
+        subjectPrincipalId: futureSignup,
+      };
+      expect(yield* validatePostBaselinePrincipalPermission(policy)).toMatchObject({
+        historicalAnswer: 'not_applicable',
+      });
+      expect(
+        Schema.is(PermissionUniverseError)(
+          yield* validatePostBaselinePrincipalPermission({ ...policy, subjectPrincipalId: 'unrelated-human' }).pipe(
+            Effect.flip,
+          ),
+        ),
+      ).toBe(true);
+      yield* validatePostBaselinePrincipalPermission({
+        ...policy,
+        allowed: false,
+        subjectPrincipalId: 'unrelated-human',
+      });
+      yield* validatePostBaselinePrincipalPermission({
+        ...policy,
+        roleGrantedPrincipalIds: ['explicit-role-holder'],
+        subjectPrincipalId: 'explicit-role-holder',
+      });
+      expect(
+        Schema.is(PermissionUniverseError)(
+          yield* classifyPrincipalPermissionCases([['action', 'unexpected', 'execute']], []).pipe(Effect.flip),
+        ),
+      ).toBe(true);
+    }),
 );

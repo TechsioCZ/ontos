@@ -26,3 +26,47 @@ export const permissionUniverseUnion = Effect.fn('People.permissionUniverseUnion
     return { added, entries: [...before, ...added], removed };
   },
 );
+
+/** Restored objects have historical answers; a newly created identity must never get a fabricated old denial. */
+export const classifyPrincipalPermissionCases = Effect.fn('People.classifyPrincipalPermissionCases')(
+  function* classifyPrincipalPermissionCasesEffect(
+    entries: readonly PermissionUniverseEntry[],
+    archivedPrincipalIds: readonly string[],
+  ) {
+    const archived = new Set(archivedPrincipalIds);
+    const restored: PermissionUniverseEntry[] = [];
+    const postBaseline: PermissionUniverseEntry[] = [];
+    for (const entry of entries) {
+      if (entry[0] !== 'principal' || (entry[2] !== 'operate' && entry[2] !== 'manage_own_credentials')) {
+        return yield* new PermissionUniverseError({
+          reason: 'New non-principal permission cases require explicit policy review',
+        });
+      }
+      (archived.has(entry[1]) ? restored : postBaseline).push(entry);
+    }
+    return { postBaseline, restored };
+  },
+);
+
+/** An expectation check, not an authorization grant. Role holders must come from explicit current catalog evidence. */
+export const validatePostBaselinePrincipalPermission = Effect.fn('People.validatePostBaselinePrincipalPermission')(
+  function* validatePostBaselinePrincipalPermissionEffect(input: {
+    readonly allowed: boolean;
+    readonly permission: string;
+    readonly resourcePrincipalId: string;
+    readonly roleGrantedPrincipalIds: readonly string[];
+    readonly subjectPrincipalId: string;
+  }) {
+    if (input.permission !== 'operate' && input.permission !== 'manage_own_credentials') {
+      return yield* new PermissionUniverseError({ reason: 'Unsupported post-baseline principal permission' });
+    }
+    if (
+      input.allowed &&
+      input.subjectPrincipalId !== input.resourcePrincipalId &&
+      !input.roleGrantedPrincipalIds.includes(input.subjectPrincipalId)
+    ) {
+      return yield* new PermissionUniverseError({ reason: 'Unexpected human authority on a post-baseline principal' });
+    }
+    return { currentPolicyExpectationMet: true, historicalAnswer: 'not_applicable' };
+  },
+);
