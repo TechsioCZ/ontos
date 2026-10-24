@@ -8,19 +8,26 @@ import { ActionPermission } from '../../packages/core-runtime/src/permissions/se
 import { ActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
 import type { TrustedPrincipalContext } from '../../packages/core-runtime/src/actions/principal-context.ts';
 import type { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
-import { auditEvents, principalCompanyMemberships, principals } from '../../packages/core-runtime/src/db/schema.ts';
+import {
+  auditEvents,
+  principalCompanyMemberships,
+  principals,
+  tenantModuleStates,
+} from '../../packages/core-runtime/src/db/schema.ts';
 import {
   configureAgentAction,
   ConfigureAgentAuditEvidenceSchema,
   ConfigureAgentPayloadSchema,
 } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
 import { openDemoAccountGrants } from '../../packages/core-runtime/src/install/demo-account-administration.ts';
-import { agentGrantRelationships } from '../../packages/core-runtime/src/install/agent-entity-grants.ts';
+import {
+  currentAgentProfileRelationships,
+  readCurrentAgentNamedPermissions,
+} from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
 import { planAgentScopedRoleReplacement } from '../../packages/core-runtime/src/install/agent-scoped-role-policy.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-transaction-guard.ts';
-import { companyCatalog } from '../../apps/shell-super-app/api/auth/agent-entities.ts';
-import { companyRoleTemplates } from '../../apps/shell-super-app/api/auth/demo-accounts.ts';
+import { ShellInstalledModuleCatalog } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 
 const configureOperation = 'configure-agent' as const;
 const createOperation = 'create-agent' as const;
@@ -245,20 +252,18 @@ export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function*
           'Legacy global Action grants remain; complete the reviewed cutover before agent-profile setup',
         );
       }
-      const catalog = yield* companyCatalog(
-        input.legalEntityId,
-        yield* companyRoleTemplates(input.tenantId, input.legalEntityId),
-        grants,
-      );
-      const desired = agentGrantRelationships({
-        actions: catalog.actions,
-        legalEntityId: input.legalEntityId,
-        legalEntityWriteRelations: catalog.legalEntityWriteRelations,
-        modules: input.modules,
+      const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
+      const installedModules = yield* executor
+        .select({ moduleKey: tenantModuleStates.moduleKey })
+        .from(tenantModuleStates)
+        .where(and(eq(tenantModuleStates.tenantId, input.tenantId), eq(tenantModuleStates.state, 'active')));
+      const desired = currentAgentProfileRelationships({
+        catalog,
+        company: { active: true, legalEntityId: input.legalEntityId, profile: input },
+        installedModuleKeys: new Set(installedModules.map(({ moduleKey }) => moduleKey)),
+        namedPermissions: yield* readCurrentAgentNamedPermissions(rpc, input),
         principalId: input.principalId,
-        template: catalog.union,
         tenantId: input.tenantId,
-        writePolicy: input.writePolicy,
       });
       const plan = yield* planAgentScopedRoleReplacement(rpc, {
         ...input,

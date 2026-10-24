@@ -214,7 +214,11 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
       : [],
   );
   const relationships = [
-    membership('tenant', input.tenantId),
+    v1.Relationship.create({
+      relation: 'company_member',
+      resource: { objectId: input.tenantId, objectType: 'tenant' },
+      subject: principalSubject,
+    }),
     membership('legal_entity', companyObjectId),
     membership('scoped_role', roleObjectId),
     ...namedPolicy,

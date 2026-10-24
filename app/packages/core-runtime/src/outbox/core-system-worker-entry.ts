@@ -18,7 +18,10 @@ import {
 import { defineOutboxWorker } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './verified-handler-context.ts';
 
-export { ActionAuthorizationLifecycleLive } from '../permissions/action-authorization-lifecycle.ts';
+export {
+  ActionAuthorizationLifecycle,
+  ActionAuthorizationLifecycleLive,
+} from '../permissions/action-authorization-lifecycle.ts';
 export { ScopedRoleMembershipLifecycleLive } from '../permissions/scoped-role-membership-lifecycle.ts';
 export { SpiceDbConfigError } from '../permissions/config-error.ts';
 export { SpiceDbConfigLive } from '../permissions/config.ts';

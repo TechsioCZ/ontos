@@ -20,8 +20,9 @@ import {
 import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import { readCurrentAuditedAgentProfile, reconcileCurrentAgentProfiles } from './agent-profile-lifecycle.ts';
 import { buildCompanyMembershipUpdates } from './company-membership.ts';
-import { loadSpiceDbConfig } from './config.ts';
+import { SpiceDbConfig } from './config.ts';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { ScopedRoleMembershipLifecycle } from './scoped-role-membership-lifecycle.ts';
 import type { ScopedRoleIdentity } from './scoped-role.ts';
@@ -99,6 +100,23 @@ export const buildPrincipalSelfCredentialUpdates = (input: {
   }),
 ];
 
+/** Separate provenance prevents company departure from deleting independent tenant admission. */
+export const buildCompanyTenantAdmissionUpdate = (input: {
+  readonly membershipUpdates: readonly v1.RelationshipUpdate[];
+  readonly principalId: string;
+  readonly tenantId: string;
+}): v1.RelationshipUpdate =>
+  v1.RelationshipUpdate.create({
+    operation: input.membershipUpdates.some((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH)
+      ? v1.RelationshipUpdate_Operation.TOUCH
+      : v1.RelationshipUpdate_Operation.DELETE,
+    relationship: {
+      relation: 'company_member',
+      resource: { objectId: input.tenantId, objectType: 'tenant' },
+      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
+    },
+  });
+
 const readCurrentCompanyMembershipUpdates = Effect.fn(
   'ActionAuthorizationLifecycle.readCurrentCompanyMembershipUpdates',
 )(function* readCurrentCompanyMembershipUpdates(
@@ -137,23 +155,39 @@ const readCurrentCompanyMembershipUpdates = Effect.fn(
             eq(principalCompanyMemberships.principalId, principalId),
           ),
         );
-      return membership === undefined
-        ? []
-        : buildCompanyMembershipUpdates({
-            affiliation: membership.affiliation,
-            companyActive: company.status === 'active',
-            kind: principal.kind,
-            legalEntityId: company.legalEntityId,
-            principalId,
-            principalStatus: principal.status,
-            status: membership.status,
-            tenantActive: principal.tenantStatus === 'active',
-            tenantId,
-          });
+      const updates =
+        membership === undefined
+          ? []
+          : buildCompanyMembershipUpdates({
+              affiliation: membership.affiliation,
+              companyActive: company.status === 'active',
+              kind: principal.kind,
+              legalEntityId: company.legalEntityId,
+              principalId,
+              principalStatus: principal.status,
+              status: membership.status,
+              tenantActive: principal.tenantStatus === 'active',
+              tenantId,
+            });
+      const profile =
+        principal.kind === 'agent'
+          ? yield* readCurrentAuditedAgentProfile(transaction, tenantId, company.legalEntityId, principalId)
+          : null;
+      return {
+        agentProfile: {
+          active: updates.some((update) => update.operation === v1.RelationshipUpdate_Operation.TOUCH),
+          legalEntityId: company.legalEntityId,
+          profile,
+        },
+        updates,
+      };
     }),
     { concurrency: 1 },
   );
-  return membershipUpdates.flat();
+  return {
+    agentProfiles: membershipUpdates.map(({ agentProfile }) => agentProfile),
+    membershipUpdates: membershipUpdates.flatMap(({ updates }) => updates),
+  };
 });
 
 export class ActionAuthorizationLifecycle extends Context.Service<
@@ -182,6 +216,7 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
     const database = yield* CoreDatabase;
     const configuration = yield* DatabaseConfig;
     const authority = yield* ActiveApplicationCompositionService;
+    const spiceConfiguration = yield* SpiceDbConfig;
     const roleLifecycle = yield* ScopedRoleMembershipLifecycle;
     return {
       reconcilePrincipal: Effect.fn('ActionAuthorizationLifecycle.reconcilePrincipal')(function* reconcilePrincipal(
@@ -193,7 +228,6 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
           Redacted.make(configuration.connectionString),
           `ontos.principal-self-credentials:${tenantId}:${principalId}`,
           Effect.gen(function* reconcileSerializedPrincipal() {
-            const spiceConfiguration = yield* loadSpiceDbConfig();
             const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
             if (snapshot.composition.revision !== compositionRevision) {
               return yield* failed();
@@ -213,13 +247,20 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                 if (principal === undefined) {
                   return yield* failed();
                 }
-                const membershipUpdates = yield* readCurrentCompanyMembershipUpdates(
+                const membership = yield* readCurrentCompanyMembershipUpdates(
                   transaction,
                   principal,
                   tenantId,
                   principalId,
                 );
-                return { ...principal, membershipUpdates };
+                const installedModules =
+                  principal.kind === 'agent'
+                    ? yield* transaction
+                        .select({ moduleKey: tenantModuleStates.moduleKey })
+                        .from(tenantModuleStates)
+                        .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.state, 'active')))
+                    : [];
+                return { ...principal, ...membership, installedModules };
               }),
             );
             // The SQL fence ended. An old delivery always applies the current row, never old event authority.
@@ -227,6 +268,16 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
               Effect.try({ catch: failed, try: () => openSpiceDbRpc(spiceConfiguration, 5000) }),
               (rpc) => Effect.sync(rpc.close),
             );
+            if (current.kind === 'agent') {
+              const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition);
+              yield* reconcileCurrentAgentProfiles(client, {
+                catalog,
+                companies: current.agentProfiles,
+                installedModuleKeys: new Set(current.installedModules.map(({ moduleKey }) => moduleKey)),
+                principalId,
+                tenantId,
+              });
+            }
             yield* client
               .writeRelationships(
                 v1.WriteRelationshipsRequest.create({
@@ -239,6 +290,11 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                       tenantId,
                     }),
                     ...current.membershipUpdates,
+                    buildCompanyTenantAdmissionUpdate({
+                      membershipUpdates: current.membershipUpdates,
+                      principalId,
+                      tenantId,
+                    }),
                   ],
                 }),
               )
@@ -256,7 +312,6 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
           Redacted.make(configuration.connectionString),
           `ontos.action-authorization:${tenantId}`,
           Effect.gen(function* reconcileSerializedTenant() {
-            const spiceConfiguration = yield* loadSpiceDbConfig();
             // Every retry loads the latest authority AFTER serialization. No event payload
             // or earlier job's snapshot can overwrite a newer reconciler's graph state.
             const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));

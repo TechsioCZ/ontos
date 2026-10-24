@@ -14,6 +14,8 @@ definition scoped_role {
 
 definition tenant {
   relation member: principal
+  // Owned only by the current SQL company-membership projection.
+  relation company_member: principal
   relation context_role: scoped_role#member
   relation superadmin: scoped_role#member
   relation auditor: scoped_role#member
@@ -24,9 +26,9 @@ definition tenant {
   relation party_identity_reviewer: principal | scoped_role#member
   relation party_relationship_manager: principal | scoped_role#member
   relation support: principal | scoped_role#member
-  permission access = member
+  permission access = member + company_member
   permission select_context = (context_role + superadmin + auditor) & access
-  permission manage_own_credentials = member->manage_own_credentials & access
+  permission manage_own_credentials = (member->manage_own_credentials + company_member->manage_own_credentials) & access
   permission read_all = (superadmin + auditor) & access
   permission write_all = superadmin & access
   permission manage_identity = (identity_admin + superadmin) & access

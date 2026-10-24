@@ -48,6 +48,7 @@ import {
   principalCompanyMemberships,
   principals,
   tenants,
+  tenantModuleStates,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { buildActionAuthorizationRelationships } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { configureAgentAction } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
@@ -169,6 +170,13 @@ it.live(
         status: 'active',
         tenantId,
       });
+      yield* admin.executor.insert(tenantModuleStates).values(
+        composition.modules.map(({ moduleId }) => ({
+          moduleKey: moduleId,
+          state: 'active' as const,
+          tenantId,
+        })),
+      );
       yield* admin.executor.insert(legalEntities).values(
         companies.map((legalEntityId) => ({
           legalEntityId,
@@ -569,6 +577,61 @@ it.live(
         expect(issuedKey.cleanupPending).toBe(false);
         expect(Object.hasOwn(issuedKey, 'providerKeyId')).toBe(false);
         const verifiedKey = yield* keys.verify(Redacted.value(issuedKey.secret));
+        // One actual principal belongs to both companies; the issued key still belongs only to A.
+        yield* admin.executor
+          .insert(principalCompanyMemberships)
+          .values({
+            affiliation: null,
+            legalEntityId: otherCompany,
+            principalId: original.principalId,
+            status: 'active',
+            tenantId,
+          })
+          .onConflictDoNothing();
+        yield* Effect.promise(() =>
+          graph.promises.writeRelationships(
+            v1.WriteRelationshipsRequest.create({
+              updates: [
+                {
+                  operation: v1.RelationshipUpdate_Operation.TOUCH,
+                  relationship: relationship(
+                    'legal_entity',
+                    toLegalEntityAccessObjectId(tenantId, otherCompany) ?? '',
+                    'member',
+                    'principal',
+                    original.principalId,
+                  ),
+                },
+              ],
+            }),
+          ),
+        );
+        const keyContext = {
+          authBindingId: issuedKey.authBindingId,
+          authContextRef: `better-auth-api-key:${verifiedKey.providerKeyId}`,
+          authenticationNamespaceId: registration.authenticationNamespaceId,
+          authMethod: 'api_key' as const,
+          principalId: original.principalId,
+          tenantId,
+        };
+        const keyScope = makeOperationalScopeResolver(makeOperationalScopeRepository(database), access);
+        yield* keyScope.resolve({
+          correlationId: randomUUID(),
+          legalEntityScope: 'required',
+          principal: { ...keyContext, legalEntityId: original.legalEntityId },
+        });
+        const crossCompanyKey = yield* keyScope
+          .resolve({
+            correlationId: randomUUID(),
+            legalEntityScope: 'required',
+            principal: { ...keyContext, legalEntityId: otherCompany },
+          })
+          .pipe(Effect.flip);
+        expect(Predicate.isTagged(crossCompanyKey, 'OperationContextDenied')).toBe(true);
+        const tenantKeyContext = yield* keyScope
+          .resolve({ correlationId: randomUUID(), legalEntityScope: 'optional', principal: keyContext })
+          .pipe(Effect.flip);
+        expect(Predicate.isTagged(tenantKeyContext, 'OperationContextDenied')).toBe(true);
         const [storedKey] = yield* authDatabase.executor
           .select({ key: apikey.key })
           .from(apikey)
@@ -622,6 +685,17 @@ it.live(
           requestHeaders: operator.requestHeaders,
         });
         expect(tenantKey.cleanupPending).toBe(false);
+        const workloadVerified = yield* keys.verify(Redacted.value(tenantKey.secret));
+        yield* keyScope.resolve({
+          correlationId: randomUUID(),
+          legalEntityScope: 'optional',
+          principal: {
+            ...keyContext,
+            authBindingId: tenantKey.authBindingId,
+            authContextRef: `better-auth-api-key:${workloadVerified.providerKeyId}`,
+            principalId: serviceId,
+          },
+        });
         yield* lifecycle.setStatus({
           authBindingId: tenantKey.authBindingId,
           correlationId: randomUUID(),

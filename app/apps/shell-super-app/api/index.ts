@@ -1,3 +1,8 @@
+import {
+  ActionAuthorizationLifecycleLive,
+  ScopedRoleMembershipLifecycleLive,
+  SpiceDbConfigLive,
+} from '@app/core-runtime/outbox/core-system-worker';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
@@ -20,6 +25,7 @@ import {
   managedPrincipalsRead,
   OutboxRepositoryLive,
   OutboxRuntimeLive,
+  OperationalScopeResolver,
   PrincipalResolver,
   PrincipalResolverLive,
   ReadRuntime,
@@ -2043,6 +2049,22 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
     legalEntityId,
     {},
   );
+  const scopeResolver = yield* OperationalScopeResolver;
+  yield* scopeResolver
+    .resolve({
+      correlationId: crypto.randomUUID(),
+      legalEntityScope: 'optional',
+      principal,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        failApiKeyGatewayProblem(
+          Predicate.isTagged(error, 'OperationContextUnavailable')
+            ? gatewayAuthorizationUnavailableProblem()
+            : gatewayForbiddenProblem(),
+        ),
+      ),
+    );
   return yield* issueGatewayContextAssertion({
     audience: payload.audience,
     compositionRevision,
@@ -2279,6 +2301,22 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
       tenantId: identity.tenantId,
     },
   };
+  const scopeResolver = yield* OperationalScopeResolver;
+  yield* scopeResolver
+    .resolve({
+      correlationId: crypto.randomUUID(),
+      legalEntityScope: 'required',
+      principal: caller.principal,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        failIdentityProblem(
+          Predicate.isTagged(error, 'OperationContextUnavailable')
+            ? shellCapabilityUnavailableProblem()
+            : shellTargetForbiddenProblem(),
+        ),
+      ),
+    );
   return caller;
 });
 
@@ -2764,6 +2802,17 @@ export const makeShellAuthenticationApiRuntime = (
     moduleEntrypointGatewayLayer,
     operationalScopeResolverLayer,
   );
+  const lifecycleDependencies = Layer.mergeAll(
+    corePersistenceLive,
+    DatabaseConfigLive,
+    activeApplicationCompositionLive,
+    SpiceDbConfigLive,
+  );
+  const authorizationLifecycleLayer = ActionAuthorizationLifecycleLive.pipe(
+    Layer.provide(
+      Layer.merge(lifecycleDependencies, ScopedRoleMembershipLifecycleLive.pipe(Layer.provide(lifecycleDependencies))),
+    ),
+  );
   const readRuntimeLayer = ReadRuntimeLive.pipe(Layer.provide(sharedOperationLayers));
   const actionRuntimeLayer = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     Layer.provide(
@@ -2873,6 +2922,8 @@ export const makeShellAuthenticationApiRuntime = (
     identityLifecycleLayer,
     supportImpersonationServiceLive,
     principalResolverLive,
+    operationalScopeResolverLayer,
+    authorizationLifecycleLayer,
     legalEntityContextLive,
     issuerLayer,
     moduleStateLayer,

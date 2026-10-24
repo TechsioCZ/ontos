@@ -231,7 +231,7 @@ it.live(
       const companyObjectId = (id: string) =>
         toLegalEntityAccessObjectId(tenantId, id) ?? expect.unreachable('Invalid fixture company scope');
       const relationships = [
-        ...[...actorIds, human, agent].map((id) => relationship('tenant', tenantId, 'member', 'principal', id)),
+        ...[...actorIds, agent].map((id) => relationship('tenant', tenantId, 'member', 'principal', id)),
         ...[companyId, otherCompanyId].map((id) =>
           relationship('legal_entity', companyObjectId(id), 'tenant', 'tenant', tenantId),
         ),
@@ -512,6 +512,20 @@ it.live(
         ).pipe(
           Effect.map((result) => result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
         );
+      const tenantPermission = (permissionKey: string, id = human) =>
+        Effect.promise(() =>
+          client.promises.checkPermission(
+            v1.CheckPermissionRequest.create({
+              consistency: fullyConsistent,
+              permission: permissionKey,
+              resource: { objectId: tenantId, objectType: 'tenant' },
+              subject: { object: { objectId: id, objectType: 'principal' } },
+            }),
+          ),
+        ).pipe(
+          Effect.map((result) => result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      expect(yield* tenantPermission('access')).toBe(false);
       expect(yield* access(human)).toBe(false);
       const firstDrain = yield* drain();
       expect(firstDrain.succeeded).toBe(3);
@@ -523,6 +537,10 @@ it.live(
       expect(active.revision).toBe(3);
       expect((yield* drain()).succeeded).toBe(1);
       expect(yield* access(human)).toBe(true);
+      expect(yield* tenantPermission('access')).toBe(true);
+      expect(yield* tenantPermission('manage_own_credentials')).toBe(true);
+      // Admission creates no tenant-wide administrative capability.
+      expect(yield* tenantPermission('manage_identity')).toBe(false);
       expect((yield* readPeople(companyAdmin, companyId)).items[0]?.selectedCompanyMembershipProjection).toEqual(
         Option.some({
           expectedMember: true,
@@ -532,6 +550,10 @@ it.live(
       yield* admin.executor.update(principals).set({ status: 'disabled' }).where(eq(principals.principalId, human));
       yield* lifecycle.reconcilePrincipal(tenantId, human, composition.revision);
       expect(yield* access(human)).toBe(false);
+      expect(yield* tenantPermission('access')).toBe(false);
+      expect(yield* tenantPermission('manage_own_credentials')).toBe(false);
+      // Independently owned tenant admission survives this unrelated company lifecycle.
+      expect(yield* tenantPermission('access', superadmin)).toBe(true);
       const retained = yield* admin.executor
         .select()
         .from(principalCompanyMemberships)
@@ -768,6 +790,68 @@ it.live(
         readSchema: (request) => Effect.tryPromise(() => client.promises.readSchema(request)),
         writeRelationships: (request) => Effect.tryPromise(() => client.promises.writeRelationships(request)),
       };
+      // A new invited human has no independently owned tenant#member edge.
+      // Multiple companies contribute one source-owned admission; the final departure revokes only it.
+      yield* admin.executor.update(principals).set({ status: 'active' }).where(eq(principals.principalId, human));
+      const retailPermission = randomUUID();
+      yield* Effect.promise(() =>
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: [
+              {
+                operation: v1.RelationshipUpdate_Operation.TOUCH,
+                relationship: relationship(
+                  'business_permission',
+                  retailPermission,
+                  'self_service_grantee',
+                  'principal',
+                  human,
+                ),
+              },
+            ],
+          }),
+        ),
+      );
+      const retailAccess = () =>
+        Effect.promise(() =>
+          client.promises.checkPermission(
+            v1.CheckPermissionRequest.create({
+              consistency: fullyConsistent,
+              permission: 'use',
+              resource: { objectId: retailPermission, objectType: 'business_permission' },
+              subject: { object: { objectId: human, objectType: 'principal' } },
+            }),
+          ),
+        ).pipe(
+          Effect.map((result) => result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      yield* invoke(superadmin, { ...payload, expectedRevision: 3 });
+      yield* invoke(superadmin, payload, otherCompanyId);
+      expect((yield* drain()).failed).toBe(0);
+      expect(yield* tenantPermission('access')).toBe(true);
+      expect(yield* access(human, otherCompanyId)).toBe(true);
+      yield* invoke(superadmin, { ...payload, expectedRevision: 4, status: 'departed' });
+      expect((yield* drain()).failed).toBe(0);
+      expect(yield* access(human)).toBe(false);
+      expect(yield* access(human, otherCompanyId)).toBe(true);
+      expect(yield* tenantPermission('access')).toBe(true);
+      expect(yield* retailAccess()).toBe(true);
+      yield* invoke(superadmin, { ...payload, expectedRevision: 1, status: 'departed' }, otherCompanyId);
+      expect((yield* drain()).failed).toBe(0);
+      expect(yield* tenantPermission('access')).toBe(false);
+      expect(yield* tenantPermission('manage_own_credentials')).toBe(false);
+      expect(yield* retailAccess()).toBe(true);
+      expect(yield* tenantPermission('access', superadmin)).toBe(true);
+      const departedHistory = yield* admin.executor
+        .select()
+        .from(principalCompanyMemberships)
+        .where(
+          and(eq(principalCompanyMemberships.tenantId, tenantId), eq(principalCompanyMemberships.principalId, human)),
+        );
+      expect(departedHistory).toHaveLength(2);
+      expect(departedHistory.every((row) => row.status === 'departed')).toBe(true);
+      const preservedHuman = yield* admin.executor.select().from(principals).where(eq(principals.principalId, human));
+      expect(preservedHuman[0]?.status).toBe('active');
       const operatorAction = { actionKey: 'core.identity.owned-operator-proof', legalEntityId: companyId, tenantId };
       const operatorRole = { legalEntityId: companyId, roleKey: 'owned-operator-proof', tenantId };
       const deniedPrincipalId = randomUUID();

@@ -98,7 +98,7 @@ it('writes explicit role policy and only the agent principal membership, never e
   const result = agentGrantRelationships(input);
   const roleId = agentScopedRoleObjectId(scope);
   expect(has(result, 'scoped_role', roleId, 'member')).toBe(true);
-  const policies = result.filter((item) => item.relation !== 'member');
+  const policies = result.filter((item) => item.subject?.object?.objectType !== 'principal');
   expect(policies.length).toBeGreaterThan(0);
   expect(
     policies.every(
@@ -198,4 +198,10 @@ it('preserves explicit Shell entry access without granting Shell resource reads 
   expect(has(result, 'module_access', shellId, 'writer_role')).toBe(false);
   const noShell = agentGrantRelationships({ ...input, template: [] });
   expect(has(noShell, 'module_access', shellId, 'accessor_role')).toBe(false);
+});
+
+it('uses source-owned company admission, never independent tenant membership', () => {
+  const result = agentGrantRelationships(input);
+  expect(has(result, 'tenant', tenantId, 'company_member')).toBe(true);
+  expect(has(result, 'tenant', tenantId, 'member')).toBe(false);
 });

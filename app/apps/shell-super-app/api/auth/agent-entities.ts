@@ -11,7 +11,6 @@
  */
 import {
   ActionRuntime,
-  agentGrantRelationships,
   agentModuleAccessOf,
   manageAgentStatusAction,
   configureAgentAction,
@@ -26,6 +25,7 @@ import type {
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
 import { Effect, Redacted } from 'effect';
+import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
@@ -286,22 +286,10 @@ const changeAgent = <R>(
           Effect.catchTag('ActionAlreadyCommitted', () => Effect.succeed({ principalId })),
           Effect.mapError(fromActionError),
         );
-      const written = yield* grants
-        .replaceAgentGrants({
-          desired: agentGrantRelationships({
-            actions: catalog.actions,
-            legalEntityId,
-            legalEntityWriteRelations: catalog.legalEntityWriteRelations,
-            modules: request.modules,
-            principalId: result.principalId,
-            template: catalog.union,
-            tenantId,
-            writePolicy: request.writePolicy,
-          }),
-          legalEntityId,
-          principalId: result.principalId,
-          tenantId,
-        })
+      const lifecycle = yield* ActionAuthorizationLifecycle;
+      const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
+      yield* lifecycle
+        .reconcilePrincipal(tenantId, result.principalId, installed.composition.revision)
         .pipe(Effect.mapError(unavailable));
       yield* deps.directory.replaceOperators({
         actorPrincipalId,
@@ -313,8 +301,8 @@ const changeAgent = <R>(
         tenantId,
       });
       const created: ManageAgentEntityResponse = {
-        grantsGranted: written.granted,
-        grantsRevoked: written.revoked,
+        grantsGranted: 0,
+        grantsRevoked: 0,
         operation: 'create',
         principalId: result.principalId,
         revokedConnections: 0,
@@ -366,26 +354,14 @@ const changeAgent = <R>(
           ),
           Effect.mapError(fromActionError),
         );
-      const written = yield* grants
-        .replaceAgentGrants({
-          desired: agentGrantRelationships({
-            actions: catalog.actions,
-            legalEntityId,
-            legalEntityWriteRelations: catalog.legalEntityWriteRelations,
-            modules: request.modules,
-            principalId: agent.principalId,
-            template: catalog.union,
-            tenantId,
-            writePolicy: request.writePolicy,
-          }),
-          legalEntityId,
-          principalId: agent.principalId,
-          tenantId,
-        })
+      const lifecycle = yield* ActionAuthorizationLifecycle;
+      const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
+      yield* lifecycle
+        .reconcilePrincipal(tenantId, agent.principalId, installed.composition.revision)
         .pipe(Effect.mapError(unavailable));
       const configured: ManageAgentEntityResponse = {
-        grantsGranted: written.granted,
-        grantsRevoked: written.revoked,
+        grantsGranted: 0,
+        grantsRevoked: 0,
         operation: 'configure',
         principalId: agent.principalId,
         revokedConnections: 0,

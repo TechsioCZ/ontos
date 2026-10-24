@@ -6,6 +6,7 @@ import { expect, it } from 'effect-rstest';
 import {
   ActionAuthorizationLifecycle,
   buildPrincipalSelfCredentialUpdates,
+  buildCompanyTenantAdmissionUpdate,
   deriveActionAuthorizationInstalledScopes,
 } from '../../src/permissions/action-authorization-lifecycle.ts';
 import { deriveScopedActionAuthorization } from '../../src/install/action-authorization-provisioning.ts';
@@ -157,3 +158,17 @@ it.effect(
       ]);
     }),
 );
+
+it('projects tenant admission from any remaining eligible company without touching independently owned member edges', () => {
+  const scope = { principalId: 'human-a', tenantId: 'tenant-a' };
+  const active = v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.TOUCH });
+  const departed = v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE });
+  for (const updates of [[], [departed], [departed, departed]]) {
+    const result = buildCompanyTenantAdmissionUpdate({ ...scope, membershipUpdates: updates });
+    expect(result.operation).toBe(v1.RelationshipUpdate_Operation.DELETE);
+    expect(result.relationship?.relation).toBe('company_member');
+  }
+  const result = buildCompanyTenantAdmissionUpdate({ ...scope, membershipUpdates: [departed, active] });
+  expect(result.operation).toBe(v1.RelationshipUpdate_Operation.TOUCH);
+  expect(result.relationship?.relation).toBe('company_member');
+});
