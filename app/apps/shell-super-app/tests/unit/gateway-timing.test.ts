@@ -1,4 +1,4 @@
-import { Effect, Exit, Logger, Option, Ref } from 'effect';
+import { Effect, Exit, Logger, Option, Ref, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
 import { describe, expect, it } from 'effect-rstest';
@@ -34,6 +34,158 @@ const capturedLogs = (entries: unknown[]) =>
   ]);
 
 describe('Shell gateway phase timing', () => {
+  it.effect('preserves fixed numeric owner read phases alongside gateway phases', () =>
+    Effect.gen(function* ownerAndGatewayTimings() {
+      const ownerTimings =
+        'read-authentication;dur=0, read-admission;dur=1.25, read-scope;dur=2, read-module;dur=3, read-permission;dur=4, read-prepare;dur=5, read-transaction;dur=6, read-authority;dur=7, read-rls;dur=8, read-owner;dur=9.125, read-validation;dur=10, read-audit;dur=11, read-encode;dur=12';
+      const upstream = HttpServerResponse.text('owner response', {
+        headers: {
+          'cache-control': 'private, no-store',
+          'server-timing': ownerTimings,
+          'set-cookie': 'session=opaque; HttpOnly',
+        },
+        status: 202,
+      });
+      const response = yield* handle(
+        TestClock.adjust(25).pipe(Effect.as(upstream), observeGatewayPhase('owner-dispatch'), withGatewayTimings),
+      );
+      expect(response.headers['server-timing']).toBe(`${ownerTimings}, owner-dispatch;dur=25`);
+      expect(response.status).toBe(202);
+      expect(response.body).toBe(upstream.body);
+      expect(response.headers['cache-control']).toBe('private, no-store');
+      expect(response.headers['set-cookie']).toBe('session=opaque; HttpOnly');
+    }),
+  );
+
+  it.effect('sanitizes owner-only responses without changing their streaming body or response policy', () =>
+    Effect.gen(function* ownerOnlyTimings() {
+      const upstream = HttpServerResponse.stream(Stream.never, {
+        headers: {
+          'cache-control': 'private, no-store',
+          'server-timing': [
+            ' read-owner ; dur=1.25 ',
+            'read-encode;dur=0.0000001',
+            'private-principal;dur=1',
+            'read-private-tenant;dur=2',
+            'isolate-private-id;dur=3',
+            'owner-dispatch;dur=999',
+            'read-audit;dur=1;desc="private-token"',
+            'read-rls;dur=NaN',
+            'read-rls;dur=Infinity',
+            'read-rls;dur=-1',
+            'read-rls;dur=-0',
+            'read-rls;dur=+1',
+            'read-rls;dur=1e3',
+            'read-rls;dur=0x10',
+            'read-rls;dur=.5',
+            'read-rls;dur=5.',
+            'read-rls;dur=1.2.3',
+            'read-rls;dur=2ms',
+            `read-rls;dur=${'9'.repeat(309)}`,
+          ].join(', '),
+          'set-cookie': 'session=opaque; HttpOnly',
+        },
+        status: 206,
+      });
+      const response = yield* handle(Effect.succeed(upstream).pipe(withGatewayTimings));
+      expect(response.headers['server-timing']).toBe('read-owner;dur=1.25, read-encode;dur=0.0000001');
+      expect(response.body).toBe(upstream.body);
+      expect(response.status).toBe(206);
+      expect(response.headers['cache-control']).toBe('private, no-store');
+      expect(response.headers['set-cookie']).toBe('session=opaque; HttpOnly');
+    }),
+  );
+
+  it.effect('never promotes comma-separated text inside quoted descriptions into owner metrics', () =>
+    Effect.gen(function* quotedOwnerTimings() {
+      for (const description of [
+        'private;desc="prefix, read-owner;dur=123456, suffix"',
+        'read-audit;dur=1;desc="prefix, read-owner;dur=123456, suffix"',
+        String.raw`private;desc="escaped \" quote, read-owner;dur=123456, suffix"`,
+      ]) {
+        const response = yield* handle(
+          Effect.succeed(
+            HttpServerResponse.empty({
+              headers: { 'server-timing': `${description}, read-encode;dur=2` },
+            }),
+          ).pipe(withGatewayTimings),
+        );
+        expect(response.headers['server-timing']).toBe('read-encode;dur=2');
+      }
+      const malformed = yield* handle(
+        Effect.succeed(
+          HttpServerResponse.empty({
+            headers: { 'server-timing': 'private;desc="unclosed, read-owner;dur=123456, read-encode;dur=2' },
+          }),
+        ).pipe(withGatewayTimings),
+      );
+      expect(malformed.headers['server-timing']).toBeUndefined();
+    }),
+  );
+
+  it.effect('removes a wholly private or malformed owner header without adding empty timings', () =>
+    Effect.gen(function* invalidOwnerTimings() {
+      const response = yield* handle(
+        Effect.succeed(
+          HttpServerResponse.empty({
+            headers: {
+              'cache-control': 'no-store',
+              'server-timing': 'private-principal;dur=1, read-owner;dur=NaN, isolate-private-id;dur=2',
+            },
+            status: 503,
+          }),
+        ).pipe(withGatewayTimings),
+      );
+      expect(response.headers['server-timing']).toBeUndefined();
+      expect(response.status).toBe(503);
+      expect(response.headers['cache-control']).toBe('no-store');
+    }),
+  );
+
+  it.effect('bounds owner phases while reserving space for gateway phases', () =>
+    Effect.gen(function* boundedOwnerTimings() {
+      const response = yield* handle(
+        TestClock.adjust(5).pipe(
+          Effect.as(
+            HttpServerResponse.empty({
+              headers: { 'server-timing': Array.from({ length: 70 }, () => 'read-owner;dur=1').join(', ') },
+            }),
+          ),
+          observeGatewayPhase('owner-dispatch'),
+          withGatewayTimings,
+        ),
+      );
+      expect(response.headers['server-timing']).toBe(
+        [...Array.from({ length: 63 }, () => 'read-owner;dur=1'), 'owner-dispatch;dur=5'].join(', '),
+      );
+    }),
+  );
+
+  it.effect('rejects oversized owner headers but retains gateway diagnostics', () =>
+    Effect.gen(function* oversizedOwnerTimings() {
+      const response = yield* handle(
+        Effect.succeed(
+          HttpServerResponse.empty({
+            headers: { 'server-timing': `read-owner;dur=1, ${'private'.repeat(600)}` },
+          }),
+        ).pipe(observeGatewayPhase('key-verify'), withGatewayTimings),
+      );
+      expect(response.headers['server-timing']).toBe('key-verify;dur=0');
+    }),
+  );
+
+  it.effect('bounds repeated gateway phases even without an owner header', () =>
+    Effect.gen(function* boundedGatewayTimings() {
+      const response = yield* handle(
+        Effect.forEach(Array.from({ length: 70 }), () => Effect.void.pipe(observeGatewayPhase('key-verify'))).pipe(
+          Effect.as(HttpServerResponse.empty()),
+          withGatewayTimings,
+        ),
+      );
+      expect(response.headers['server-timing']).toBe(Array.from({ length: 64 }, () => 'key-verify;dur=0').join(', '));
+    }),
+  );
+
   it.effect('reports document session, composition, admission and signing phases', () =>
     Effect.gen(function* documentPhases() {
       const response = yield* handle(
