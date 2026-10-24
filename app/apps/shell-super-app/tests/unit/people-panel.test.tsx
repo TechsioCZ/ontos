@@ -37,6 +37,7 @@ const membership = {
 } as const;
 const person = {
   displayName: 'Jana Nováková',
+  invitationDelivery: null,
   kind: 'human',
   principalRef,
   principalStatus: 'active',
@@ -237,3 +238,82 @@ it('stacks full-width person-detail actions on narrow screens without fixed-heig
     expect(button.className).not.toMatch(/(?:^|\s)h-/u);
   }
 });
+
+it.effect('refreshes a person detail from waiting to the native undeliverable receipt', () =>
+  Effect.promise(async () => {
+    const user = userEvent.setup();
+    commands.list.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          ...list,
+          items: [{ ...person, invitationDelivery: { status: 'pending' } }],
+        },
+      }),
+    );
+    render(<PeoplePanel companyId={companyId} />);
+    await user.click(await screen.findByRole('button', { name: person.displayName }));
+    await screen.findByText('E-mail s pozvánkou: čeká na odeslání.');
+    commands.list.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          ...list,
+          items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
+        },
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Zavřít' }));
+    await user.click(screen.getByRole('button', { name: 'Obnovit seznam' }));
+    await user.click(await screen.findByRole('button', { name: person.displayName }));
+    await screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.');
+    expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
+    expect(screen.queryByText(/undeliverable_recipient/u)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Poslat pozvánku znovu' })).toBeNull();
+  }),
+);
+
+it.effect('loads the terminal invitation receipt on a fresh person deep link without local invite state', () =>
+  Effect.promise(async () => {
+    commands.linked.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          ...list,
+          items: [{ ...person, invitationDelivery: { reason: 'recipient_unavailable', status: 'undeliverable' } }],
+        },
+      }),
+    );
+    render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+    await screen.findByText(/E-mail s pozvánkou: nelze doručit/u);
+    expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
+  }),
+);
+
+it.effect('distinguishes accepted mail from an unconfirmed interrupted delivery', () =>
+  Effect.gen(function* honestMailStatus() {
+    yield* Effect.forEach(
+      [
+        { delivery: { status: 'sent' }, expected: /E-mail s pozvánkou: odesláno/u },
+        { delivery: { status: 'unknown' }, expected: /E-mail s pozvánkou: doručení nelze ověřit/u },
+      ] as const,
+      ({ delivery, expected }) =>
+        Effect.promise(async () => {
+          commands.linked.mockReturnValue(
+            Effect.succeed({
+              status: 'ok',
+              value: {
+                ...list,
+                items: [{ ...person, invitationDelivery: delivery }],
+              },
+            }),
+          );
+          render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+          await screen.findByText(expected);
+          expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
+          cleanup();
+        }),
+      { concurrency: 1, discard: true },
+    );
+  }),
+);

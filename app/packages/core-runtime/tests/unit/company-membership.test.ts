@@ -190,6 +190,7 @@ it.effect('keeps selected company membership and observed graph projection disti
       items: [
         {
           displayName: 'Retained person',
+          invitationDelivery: null,
           kind: 'human',
           principalRef: principal,
           principalStatus: 'disabled',

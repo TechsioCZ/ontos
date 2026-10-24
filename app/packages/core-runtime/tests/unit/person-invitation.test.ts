@@ -4,6 +4,8 @@ import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../src/actions/collector.ts';
 import {
+  invitationDeliveryFromLedger,
+  PersonInvitationDeliverySchema,
   InvitePersonAuditEvidenceSchema,
   InvitePersonPayloadSchema,
   InvitePersonResultSchema,
@@ -17,6 +19,8 @@ const invitationId = '74000000-0000-4000-8000-000000000001';
 const tenantId = '71000000-0000-4000-8000-000000000001';
 const legalEntityId = '72000000-0000-4000-8000-000000000001';
 const principalRef = { principalId: '73000000-0000-4000-8000-000000000001', tenantId };
+const receipt = (status: string | null, errorTag: string | null = null, expired = false) =>
+  invitationDeliveryFromLedger({ errorTag, expired, status });
 const payload = { affiliation: 'external', displayName: 'Invited person', email: 'person@example.org' };
 
 it.effect(
@@ -122,5 +126,31 @@ it.effect('keeps invitation intent immutable and RLS-bound to its exact selected
       expect(text).toContain('ontos.tenant_id');
       expect(text).toContain('ontos.legal_entity_id');
     }
+  }),
+);
+
+it.effect('projects every native invitation ledger state without leaking error tags or claiming unknown delivery', () =>
+  Effect.gen(function* nativeReceipts() {
+    expect(receipt(null)).toEqual({ status: 'pending' });
+    expect(receipt('SENDING')).toEqual({ status: 'pending' });
+    expect(receipt('RETRY')).toEqual({ status: 'pending' });
+    expect(receipt('SENT')).toEqual({ status: 'sent' });
+    expect(receipt('SKIPPED', 'undeliverable_recipient')).toEqual({
+      reason: 'recipient_unavailable',
+      status: 'undeliverable',
+    });
+    expect(receipt('FAILED', 'retry_window_expired')).toEqual({ reason: 'retry_expired', status: 'undeliverable' });
+    expect(receipt('FAILED', 'smtp_550_private_recipient')).toEqual({ reason: 'rejected', status: 'undeliverable' });
+    expect(receipt('SKIPPED', 'private_detail')).toEqual({ reason: 'rejected', status: 'undeliverable' });
+    expect(receipt(null, null, true)).toEqual({ reason: 'invitation_expired', status: 'undeliverable' });
+    expect(receipt('UNKNOWN', 'interrupted')).toEqual({ status: 'unknown' });
+    expect(receipt('SENT', null, true)).toEqual({ status: 'sent' });
+    expect(
+      yield* Schema.decodeUnknownEffect(PersonInvitationDeliverySchema, { onExcessProperty: 'error' })({
+        errorTag: 'smtp_550_private_recipient',
+        reason: 'rejected',
+        status: 'undeliverable',
+      }).pipe(Effect.flip),
+    ).toBeDefined();
   }),
 );

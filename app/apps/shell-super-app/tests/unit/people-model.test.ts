@@ -17,6 +17,7 @@ const scope = { _tag: 'company', legalEntityId } as const;
 const membership = { affiliation: 'external', legalEntityId, principalRef, revision: 2, status: 'departed' } as const;
 const person: Person = {
   displayName: 'Jana',
+  invitationDelivery: null,
   kind: 'human',
   principalRef,
   principalStatus: 'active',

@@ -4,7 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Fiber } from 'effect';
+import { Effect, Fiber, Match } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
 import type {
@@ -266,6 +266,32 @@ const PeopleEditor = ({
   );
 };
 
+const invitationFailureReasons = {
+  invitation_expired: 'Platnost pozvánky vypršela před odesláním.',
+  recipient_unavailable: 'Na tuto e-mailovou adresu nelze odesílat zprávy.',
+  rejected: 'Poštovní služba odeslání odmítla.',
+  retry_expired: 'Poštovní služba nebyla dostupná ani po opakovaných pokusech.',
+} as const;
+
+const InvitationDelivery = ({ delivery }: { readonly delivery: Person['invitationDelivery'] }) => {
+  if (delivery === null) {
+    return null;
+  }
+  return Match.value(delivery).pipe(
+    Match.when({ status: 'sent' }, () => (
+      <p>E-mail s pozvánkou: odesláno. Poštovní služba zprávu přijala; přečtení není ověřené.</p>
+    )),
+    Match.when({ status: 'undeliverable' }, ({ reason }) => (
+      <p>E-mail s pozvánkou: nelze doručit. {invitationFailureReasons[reason]}</p>
+    )),
+    Match.when({ status: 'unknown' }, () => (
+      <p>E-mail s pozvánkou: doručení nelze ověřit. Spojení se přerušilo; zpráva už mohla být odeslána.</p>
+    )),
+    Match.when({ status: 'pending' }, () => <p>E-mail s pozvánkou: čeká na odeslání.</p>),
+    Match.exhaustive,
+  );
+};
+
 const PersonDetail = ({
   catalog,
   onClose,
@@ -328,6 +354,7 @@ const PersonDetail = ({
           ? 'Bez členství ve vybrané firmě'
           : membershipLabels[person.selectedCompanyMembership.status]}
       </p>
+      <InvitationDelivery delivery={person.invitationDelivery} />
       <p>
         Role v tomto rozsahu:{' '}
         {person.roleAssignments.map((role) => roleName(catalog, role.roleKey)).join(', ') || 'Žádné'}
@@ -438,7 +465,6 @@ export const PeoplePanel = ({
   const [loaded, setLoaded] = useState<{ readonly key: string; readonly outcome: PeopleOutcome<PeopleList> }>();
   const [editor, setEditor] = useState<Editor | undefined>();
   const [pending, setPending] = useState<readonly PendingPeopleChange[]>([]);
-  const [invitationQueued, setInvitationQueued] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const requestKey = `${companyId}:${scope}:${offset}:${refresh}:${linkedPerson}`;
   const current = loaded?.key === requestKey ? loaded.outcome : undefined;
@@ -449,9 +475,10 @@ export const PeoplePanel = ({
   const acceptRead = useEffectEvent((key: string, outcome: PeopleOutcome<PeopleList>) => {
     setLoaded({ key, outcome });
     if (outcome.status === 'ok') {
-      if (linkedPerson !== undefined) {
-        setDetail(outcome.value.items.find((person) => person.principalRef.principalId === linkedPerson));
-      }
+      setDetail((selected) => {
+        const principalId = linkedPerson ?? selected?.principalRef.principalId;
+        return outcome.value.items.find((person) => person.principalRef.principalId === principalId);
+      });
       setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, outcome.value)));
     }
   });
@@ -507,7 +534,6 @@ export const PeoplePanel = ({
           {scope === 'company' && list !== undefined ? (
             <InvitePersonButton
               onCommitted={(change) => {
-                setInvitationQueued(true);
                 setPending((changes) => [...changes, change]);
                 setRefresh((value) => value + 1);
               }}
@@ -515,12 +541,6 @@ export const PeoplePanel = ({
           ) : null}
         </div>
       </section>
-      {invitationQueued ? (
-        <StatusText aria-live="polite" status="warning">
-          Pozvánka se zpracovává. Přihlášení a pozvané členství jsou zapsané; e-mail čeká na odeslání. Doručení zatím
-          není ověřené. Pozvánka sama nepřiděluje žádné role ani neaktivuje členství.
-        </StatusText>
-      ) : null}
       {pending.length === 0 ? null : (
         <StatusText aria-live="polite" status="warning">
           Zpracovává se {pending.length}{' '}

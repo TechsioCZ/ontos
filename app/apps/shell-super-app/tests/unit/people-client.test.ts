@@ -120,6 +120,7 @@ it.effect('invites with email and explicit affiliation, never a principal ID, an
     } as const;
     fetch.mockResolvedValue(Response.json(result));
     const payload = { affiliation: 'employee', displayName: 'Jana', email: 'jana@example.test' } as const;
+      invitationDelivery: null,
     expect(yield* invitePerson(payload)).toEqual({ status: 'ok', value: result });
     const [call] = fetch.mock.calls;
     expect(requestPath(call?.[0])).toBe('/shell-super-app-api/auth/identity/people/invite');

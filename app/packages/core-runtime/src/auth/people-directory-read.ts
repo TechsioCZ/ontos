@@ -2,8 +2,16 @@ import { v1 } from '@authzed/authzed-node';
 import { and, asc, eq, or, sql } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
 
-import { legalEntities, principalCompanyMemberships, principals, tenants } from '../db/schema.ts';
+import {
+  emailDeliveries,
+  legalEntities,
+  personInvitations,
+  principalCompanyMemberships,
+  principals,
+  tenants,
+} from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import { invitationDeliveryFromLedger, PersonInvitationDeliverySchema } from './person-invitation.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import {
   ScopedRoleMembershipRoleSchema,
@@ -31,6 +39,7 @@ export const PeopleDirectoryResultSchema = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       displayName: Schema.String,
+      invitationDelivery: Schema.OptionFromNullOr(PersonInvitationDeliverySchema),
       kind: Schema.Literals(['human', 'agent']),
       principalRef: PrincipalRefSchema,
       principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
@@ -68,6 +77,10 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
         companyId: principalCompanyMemberships.legalEntityId,
         companyStatus: legalEntities.status,
         displayName: principals.displayName,
+        invitationErrorTag: emailDeliveries.errorTag,
+        invitationExpired: sql<boolean | null>`${personInvitations.expiresAt} <= now()`,
+        invitationId: personInvitations.invitationId,
+        invitationStatus: emailDeliveries.status,
         kind: principals.kind,
         membershipRevision: principalCompanyMemberships.revision,
         membershipStatus: principalCompanyMemberships.status,
@@ -90,6 +103,24 @@ const peopleDirectoryServices = (transaction: ScopedTransactionExecutor) => ({
         and(
           eq(legalEntities.tenantId, principalCompanyMemberships.tenantId),
           eq(legalEntities.legalEntityId, principalCompanyMemberships.legalEntityId),
+        ),
+      )
+      .leftJoin(
+        personInvitations,
+        and(
+          eq(personInvitations.tenantId, principals.tenantId),
+          eq(personInvitations.principalId, principals.principalId),
+          legalEntityId === undefined ? sql`false` : eq(personInvitations.legalEntityId, legalEntityId),
+        ),
+      )
+      .leftJoin(
+        emailDeliveries,
+        and(
+          eq(emailDeliveries.tenantId, personInvitations.tenantId),
+          eq(emailDeliveries.legalEntityId, personInvitations.legalEntityId),
+          eq(emailDeliveries.source, 'person-invitation'),
+          eq(emailDeliveries.subjectId, sql`${personInvitations.invitationId}::text`),
+          eq(emailDeliveries.dedupeKey, sql`'person-invitation:' || ${personInvitations.invitationId}::text`),
         ),
       )
       .where(
@@ -243,6 +274,14 @@ const finish = Effect.fn('PeopleDirectory.finish')(function* finish(
           );
           return {
             displayName: row.displayName,
+            invitationDelivery:
+              row.invitationId === null
+                ? null
+                : invitationDeliveryFromLedger({
+                    errorTag: row.invitationErrorTag,
+                    expired: row.invitationExpired,
+                    status: row.invitationStatus,
+                  }),
             kind: row.kind,
             principalRef,
             principalStatus: row.principalStatus,

@@ -44,10 +44,20 @@ export const PeopleListRequestSchema = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ maximum: 100, minimum: 1 })),
   offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
+export const PeopleInvitationDeliverySchema = Schema.Union([
+  Schema.Struct({ status: Schema.Literal('pending') }),
+  Schema.Struct({ status: Schema.Literal('sent') }),
+  Schema.Struct({ status: Schema.Literal('unknown') }),
+  Schema.Struct({
+    reason: Schema.Literals(['recipient_unavailable', 'rejected', 'retry_expired', 'invitation_expired']),
+    status: Schema.Literal('undeliverable'),
+  }),
+]);
 export const PeopleListResponseSchema = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       displayName: Schema.String,
+      invitationDelivery: Schema.NullOr(PeopleInvitationDeliverySchema),
       kind: Schema.Literals(['human', 'agent']),
       principalRef: PeoplePrincipalRefSchema,
       principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
