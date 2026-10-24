@@ -52,8 +52,7 @@ export const assignmentPolicy = defineMicroverticalPolicy<ApplyCommandPayload, '
       }
       const { legalEntityId } = principal;
       if (legalEntityId === undefined) {
-        yield* denyPolicy('assignment_scope_required', 'A trusted company scope is required');
-        return;
+        return yield* denyPolicy('assignment_scope_required', 'A trusted company scope is required');
       }
       const { directory, value } = yield* loadAssignmentPreflightSnapshot(
         { ...principal, correlationId: transport.correlationId, legalEntityId },
