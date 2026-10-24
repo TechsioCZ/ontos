@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 
 import type { ShellNavigationItem } from '../../../shared/api.ts';
@@ -5,6 +6,7 @@ import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from
 import {
   hasModuleAiApprovals,
   moduleAgentApprovalsGroupKey,
+  presentedShellNavigationItems,
   withAgentPlatformNavigation,
   withConnectedAppsNavigation,
   withoutModuleAiApprovals,
@@ -64,4 +66,18 @@ it('adds the platform approval and connection pages to Settings only when shown'
     ['shell-super-app.page.agent-activity', 'shell.navigation.settings'],
     ['shell-super-app.page.connected-apps', 'shell.navigation.settings'],
   ]);
+});
+
+it('shows Shell people navigation from the scoped capability even with no workforce navigation contribution', () => {
+  expect(presentedShellNavigationItems([], true).map(({ href }) => href)).toContain('/sprava/lide-a-role');
+  expect(presentedShellNavigationItems([], false).map(({ href }) => href)).not.toContain('/sprava/lide-a-role');
+  expect(
+    presentedShellNavigationItems([clients], true).filter(({ href }) => href === '/sprava/lide-a-role'),
+  ).toHaveLength(1);
+});
+
+it('does not condition the document capability on an installed module navigation marker', () => {
+  const ingress = readFileSync(new URL('../../../api/index.ts', import.meta.url), 'utf-8');
+  expect(ingress).toContain('const canManagePeople = yield* Fiber.join(capability);');
+  expect(ingress).not.toContain("const PEOPLE_ADMINISTRATION = 'people_administration'");
 });

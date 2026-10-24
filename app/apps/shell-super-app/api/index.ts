@@ -1186,8 +1186,6 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
-const PEOPLE_ADMINISTRATION = 'people_administration';
-
 /** Signing is local CPU work; a few in flight keep one document's assertions from monopolising the isolate. */
 const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
 
@@ -1337,11 +1335,8 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     ),
     { startImmediately: true },
   );
-  const canManagePeople = documentComposition.navigation.some(
-    ({ requiresCapability }) => requiresCapability === PEOPLE_ADMINISTRATION,
-  )
-    ? yield* Fiber.join(capability)
-    : false;
+  // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
+  const canManagePeople = yield* Fiber.join(capability);
   const home =
     payload.home === true
       ? yield* resolveDocumentHome({
