@@ -47,6 +47,15 @@
         "empty": "No activities have been recorded yet.",
         "kind": "Activity type",
         "partyType": "Contact type",
+        "partyTypes": {
+          "PERSON": "Person",
+          "ORGANIZATION": "Organization",
+          "UNRESOLVED": "Unspecified"
+        },
+        "roleTypes": {
+          "CUSTOMER": "Customer",
+          "SUPPLIER": "Supplier"
+        },
         "roles": "Roles"
       }
     }

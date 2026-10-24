@@ -33,7 +33,6 @@
       "location": "Location",
       "locationPlaceholder": "Building, unit or equipment",
       "note": "Note",
-      "simulation": "Simulation",
       "demo": "DEMO",
       "readOnly": "Read only",
       "revision": "Revision {{revision}}",

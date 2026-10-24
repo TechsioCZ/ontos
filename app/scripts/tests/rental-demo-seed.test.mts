@@ -966,3 +966,12 @@ it.effect('cancels only the exact QA order through native staff status change, w
     expect(revision).toBe(1);
   }),
 );
+
+it('does not fabricate signatures or signed-document evidence for rental contracts', () => {
+  for (const lease of rentalStory.leases) {
+    if (lease.contract !== null) {
+      expect(lease.contract).not.toHaveProperty('signedBy');
+      expect(lease.contract).not.toHaveProperty('signedOn');
+    }
+  }
+});

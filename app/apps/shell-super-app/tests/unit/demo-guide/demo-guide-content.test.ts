@@ -115,3 +115,12 @@ it('describes authenticated owner-backed checkout without unsupported payment or
   expect(boundaries).not.toContain('ukázka běží jen lokálně');
   expect(boundaries).not.toContain('nikdy skutečným adresátům');
 });
+
+it('describes real operations without simulated service promises', () => {
+  for (const guide of demoGuides) {
+    const text = JSON.stringify(guide);
+    expect(text).not.toMatch(/simulac|simulov|simulated/iu);
+  }
+  const rentalGuide = demoGuideFor(legalEntities.siampark);
+  expect(JSON.stringify(rentalGuide)).not.toMatch(/podepsan[áéý]|s podpisem/iu);
+});

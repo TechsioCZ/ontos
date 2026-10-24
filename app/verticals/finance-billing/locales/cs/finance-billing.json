@@ -200,8 +200,6 @@
       "void": "Zrušit fakturu",
       "sync": "Vyžádat účetní export",
       "retry": "Opakovat účetní export",
-      "observeAccounting": "Simulovat úspěšné účetní potvrzení",
-      "observePayment": "Simulovat potvrzenou úhradu",
       "payment": "Celkem potvrzeno uhrazeno v CZK",
       "noReceipt": "Zatím bez účetního potvrzení",
       "history": "Historie účetního exportu",

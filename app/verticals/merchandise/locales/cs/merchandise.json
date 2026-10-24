@@ -23,7 +23,7 @@
           "cancel": "Stornovat",
           "confirm": "Začít zpracovávat",
           "deliver": "Dokončit",
-          "ship": "Předat dopravci (simulace)",
+          "ship": "Předat dopravci",
           "pack": "Připraveno k předání"
         },
         "bulk": {

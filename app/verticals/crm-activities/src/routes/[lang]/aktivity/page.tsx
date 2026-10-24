@@ -307,9 +307,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
             <h1 className="crmactivities:text-3xl crmactivities:font-semibold" id="records-heading">
               {t(`${key}.title`)}
             </h1>
-            <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">
-              {t(`${key}.intro`)}
-            </p>
+            <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">{t(`${key}.intro`)}</p>
           </div>
           <Button disabled={pending} onClick={refresh} size="sm" theme="outlined" variant="secondary">
             {t(`${key}.refresh`)}
@@ -419,14 +417,14 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                   <dl className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:grid crmactivities:gap-4 crmactivities:p-4 crmactivities:text-sm">
                     <div className="crmactivities:space-y-1">
                       <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.partyType`)}</dt>
-                      <dd>{card.party.partyType}</dd>
+                      <dd>{t(`${key}.partyTypes.${card.party.partyType}`)}</dd>
                     </div>
                     <div className="crmactivities:space-y-2">
                       <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.roles`)}</dt>
                       <dd className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2">
                         {card.currentRoles.map((role) => (
                           <Badge key={role.roleType} size="sm" variant="outline">
-                            {role.roleType}
+                            {t(`${key}.roleTypes.${role.roleType}`)}
                           </Badge>
                         ))}
                       </dd>
@@ -442,9 +440,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                     save();
                   }}
                 >
-                  <h2 className="crmactivities:text-xl crmactivities:font-semibold">
-                    {t(`${key}.record`)}
-                  </h2>
+                  <h2 className="crmactivities:text-xl crmactivities:font-semibold">{t(`${key}.record`)}</h2>
                   <div className="crmactivities:grid crmactivities:items-start crmactivities:gap-4 crmactivities:md:grid-cols-2">
                     <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
                       <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:items-end crmactivities:gap-3">

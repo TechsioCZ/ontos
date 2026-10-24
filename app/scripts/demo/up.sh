@@ -28,7 +28,6 @@ STUB_DIR="$SCRATCH/demo-bin"
 # Not Siampark's 3031: on the demo machine launchd still owns 3031 for the old Siampark composition service.
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 SHELL_PORT=3020
-STOREFRONT_PORT=3060
 BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
 [[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "DEMO_BUILD_JOBS must be a positive integer" >&2; exit 1; }
 DOCKER=(docker --context orbstack)
@@ -210,11 +209,6 @@ for id in "${failed[@]}"; do
 done
 [ ${#failed[@]} -eq 0 ] || die "build failed: ${failed[*]} (logs: $LOG_DIR/build-<id>.log)"
 
-# Standalone storefront is not a federated vertical; its dist is served by its own BFF.
-if [ "${DEMO_SKIP_BUILD:-0}" != 1 ] || [ ! -f apps/eshop-storefront/dist/index.html ]; then
-  step build-eshop-storefront pnpm_ --dir apps/eshop-storefront build
-fi
-
 # 5. Servers. Each runs in its own process group so down.sh can stop the whole tree.
 set -m
 start() { # start <name> <command...>
@@ -231,7 +225,6 @@ assert_free() {
   fi
 }
 assert_free "$SHELL_PORT" shell-super-app
-assert_free "$STOREFRONT_PORT" eshop-storefront
 assert_free "$COMPOSITION_PORT" composition
 assert_free "${EMAIL_DISPATCHER_PORT:-3096}" email-dispatcher
 for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
@@ -341,10 +334,6 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-siampark-cases.mts
 fi
-# Config reads app/.env.demo.local server-side; start only after the storefront managed key exists.
-start eshop-storefront env "ESHOP_STOREFRONT_PORT=$STOREFRONT_PORT" "${WITH_ENV[@]}" \
-  pnpm --dir apps/eshop-storefront start
-wait_http "http://127.0.0.1:$STOREFRONT_PORT/api/home" 120 eshop-storefront
 # AKROS remains an independent Next.js app. Its helper owns :3070 and registers the PID for down.sh.
 step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
 cat <<EOF
@@ -352,7 +341,6 @@ cat <<EOF
 [demo] AKROS: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
 [demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   testovací adresy: http://localhost:8026   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
-[demo] Storefront: http://localhost:$STOREFRONT_PORT (Kavárna Doma, customer-facing DEMO)
 [demo] Verticals: ${VERTICALS[*]}
 [demo] Login: management@siampark.demo / password1234  (also operations@, finance@, external@)
 [demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local

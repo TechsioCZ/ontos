@@ -6,6 +6,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { VerificationResendForm } from "@/components/verification-resend-form";
+import type { AccountSubmissionResponse } from "@/ontos/account";
 
 async function submitAccount(
   form: HTMLFormElement,
@@ -24,14 +25,14 @@ async function submitAccount(
       termsAccepted: fields.has("privacyConsent"),
     }),
   });
-  const result = (await response.json()) as { message?: string; outcome?: string };
-  if (!response.ok) throw new Error(result.message ?? "Účet je dočasně nedostupný.");
-  return result;
+  const result = (await response.json()) as AccountSubmissionResponse;
+  return { ...result, ok: response.ok };
 }
 
 export function LoginForm() {
   const router = useRouter();
   const [error, setError] = useState("");
+  const [verificationRequired, setVerificationRequired] = useState(false);
   const [pending, setPending] = useState(false);
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,8 +40,14 @@ export function LoginForm() {
     const form = event.currentTarget;
     setPending(true);
     setError("");
+    setVerificationRequired(false);
     try {
       const result = await submitAccount(form, "login");
+      if (!result.ok) {
+        setVerificationRequired(result.code === "verification_required");
+        setError(result.message ?? "Účet je dočasně nedostupný.");
+        return;
+      }
       if (result.outcome !== "SESSION_CREATED") throw new Error("Přihlášení nebylo potvrzeno.");
       form.reset();
       router.push("/dokonceni-registrace");
@@ -81,7 +88,7 @@ export function LoginForm() {
         </Button>
         {error && <p role="alert">{error}</p>}
       </form>
-      <VerificationResendForm />
+      {verificationRequired && <VerificationResendForm />}
     </>
   );
 }
@@ -105,6 +112,7 @@ export function RegistrationForm() {
     setError("");
     try {
       const result = await submitAccount(form, "register", requestId.current);
+      if (!result.ok) throw new Error(result.message ?? "Účet je dočasně nedostupný.");
       if (result.outcome !== "ENROLLMENT_STARTED") throw new Error("Registrace nebyla přijata.");
       form.reset();
       setSubmitted(true);

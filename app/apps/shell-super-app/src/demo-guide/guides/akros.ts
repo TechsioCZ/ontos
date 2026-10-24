@@ -91,7 +91,7 @@ export const akrosGuide: DemoGuide = {
       steps: [
         {
           click:
-            'Vyhledejte stejné číslo → detail → Začít zpracovávat → Připraveno k předání → Předat dopravci (simulace) → Dokončit.',
+            'Vyhledejte stejné číslo → detail → Začít zpracovávat → Připraveno k předání → Předat dopravci → Dokončit.',
           id: 'akros-expedice-stavy',
           persona: expedice,
           say: 'Expedice posouvá skutečný stav objednávky, ale nemění její obsah ani ceny. Tento krok zatím nezajišťuje rezervaci přepravy ani štítek.',
@@ -188,16 +188,16 @@ export const akrosGuide: DemoGuide = {
     live: [
       'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu AKROS čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
       'Objednávka se skutečně uloží do OntOS, sníží sklad varianty a vidí ji správce i expedice; zákazník sleduje stav ve svém účtu.',
-      'Změna ceny, textu nebo obrázku v administraci se v e-shopu projeví po obnovení stránky (krátká cache).',
+      'E-shop načítá aktuální ceny a dostupnost z OntOS při otevření stránky i při odeslání objednávky.',
       'Přihlášení a registrace používají zákaznický účet napojený na OntOS. Pokladna vyžaduje přihlášení před zadáním dopravy a adresy.',
     ],
-    simulated: [
+    operations: [
       'Volba PPL nebo České pošty se s aktuální cenou uloží do objednávky; sama nezarezervuje přepravu ani nevytvoří štítek.',
       'Objednávka bez online platby: v pokladně není platební brána a odesláním se nic neplatí.',
       'Objednávka i zákaznické údaje se skutečně ukládají; používejte účet a kontakty určené pro ukázku.',
       'Doručení e-mailů závisí na nastavení prostředí. Při ukázce neslibujte doručení do skutečné schránky ani omezení jen na lokální Mailpit.',
     ],
-    unfinished: [
+    scope: [
       'Množstevní cenové úrovně (nižší cena od 100 nebo 500 ks) zdrojová data nemají, e-shop je proto nenabízí.',
       'Produkt nejde smazat, jen vyřadit z prodeje (neaktivní a nezveřejněný).',
       'Odkaz v průvodci používá e-shop daného prostředí: na stage veřejný stage e-shop, při místním spuštění localhost.',

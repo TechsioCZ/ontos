@@ -30,7 +30,7 @@ const propertyResponsiblePerson = 'Provoz Siampark';
 
 /**
  * Siampark rental story (company 0021): two buildings, eight units, five tenant organizations, leases in every
- * state (active, ending, upcoming, ended, draft), contracts with recorded signature evidence, service tasks on the
+ * state (active, ending, upcoming, ended, draft), unsigned contract records, service tasks on the
  * units and issued invoices anchored to building, unit, lease and contract. Every identity is a fixed UUIDv5, so a
  * rerun only fills in what is missing and never overwrites diverging data.
  */
@@ -42,8 +42,6 @@ export const rentalStory = {
         noticePeriod: '6 měsíců ke konci kalendářního měsíce',
         renewalNoticeDate: '2028-04-30',
         responsiblePerson: 'Jana Správcová',
-        signedBy: 'Petra Malá, jednatelka Kavárna U Parku s.r.o.',
-        signedOn: '2025-10-15',
         state: 'ACTIVE',
         subject: 'Nájem obchodního prostoru R101 pro provoz kavárny',
       },
@@ -62,8 +60,6 @@ export const rentalStory = {
         noticePeriod: '3 měsíce',
         renewalNoticeDate: '2026-11-30',
         responsiblePerson: 'Jana Správcová',
-        signedBy: 'Ing. arch. Tomáš Horák',
-        signedOn: '2025-12-10',
         state: 'ACTIVE',
         subject: 'Nájem kanceláře R201 (2. NP) včetně dvou parkovacích stání',
       },
@@ -82,8 +78,6 @@ export const rentalStory = {
         noticePeriod: '2 měsíce',
         renewalNoticeDate: '2026-10-25',
         responsiblePerson: 'Martin Provozní',
-        signedBy: 'Karel Dvořák, personální ředitel Technoservis Praha a.s.',
-        signedOn: '2025-10-20',
         state: 'ACTIVE',
         subject: 'Služební byt A101 pro zaměstnance nájemce',
       },
@@ -102,8 +96,6 @@ export const rentalStory = {
         noticePeriod: '6 měsíců',
         renewalNoticeDate: '2029-05-31',
         responsiblePerson: 'Jana Správcová',
-        signedBy: 'PharmDr. Eva Svobodová',
-        signedOn: '2026-10-12',
         state: 'DRAFT',
         subject: 'Nájem kanceláře R301 pro výdejnu a zázemí lékárny',
       },
@@ -122,8 +114,6 @@ export const rentalStory = {
         noticePeriod: '3 měsíce',
         renewalNoticeDate: null,
         responsiblePerson: 'Martin Provozní',
-        signedBy: 'Jan Novotný, jednatel',
-        signedOn: '2025-08-20',
         state: 'TERMINATED',
         subject: 'Nájem bytu A202 – ukončeno dohodou k 31. 8. 2026',
       },
@@ -556,34 +546,6 @@ const ensureContract = (
       record.counterpartyRef.resourceId === tenant.counterpartyRef.resourceId &&
         record.unitRef?.resourceId === unit.unitRef.resourceId,
     );
-    if (
-      record.signatureState === 'NOT_SENT' &&
-      (record.lifecycleState === 'DRAFT' || record.lifecycleState === 'ACTIVE')
-    ) {
-      const now = DateTime.formatIso(yield* DateTime.now);
-      yield* client.apply(
-        agreementsAudience,
-        agreementCommand,
-        {
-          _tag: 'RecordSignedDocument',
-          contractRef: record.contractRef,
-          document: {
-            contractRef: record.contractRef,
-            createdAt: now,
-            documentRef: storyRef(target, 'legal.agreements', 'document', spec.key),
-            fileName: `Najemni-smlouva-${unit.code}-podepsana.pdf`,
-            kind: 'LEASE',
-            lifecycleState: 'FINAL',
-            signedDocumentReference: `demo://siampark/smlouvy/${spec.key}`,
-            title: `Podepsaná nájemní smlouva ${unit.code} (DEMO evidence, bez souboru)`,
-            updatedAt: now,
-          },
-          signedBy: terms.signedBy,
-          signedOn: terms.signedOn,
-        },
-        snapshot.revision,
-      );
-    }
     return record;
   });
 type Contract = NonNullable<Effect.Success<ReturnType<typeof ensureContract>>>;

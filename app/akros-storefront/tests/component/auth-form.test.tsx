@@ -45,10 +45,12 @@ describe("real customer forms", () => {
       Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),
     );
     render(<LoginForm />);
+    expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
     login();
     expect((await screen.findByRole("alert")).textContent).toContain(
       "Nesprávný e-mail nebo heslo.",
     );
+    expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
     expect(router.push).not.toHaveBeenCalled();
     expect(router.refresh).not.toHaveBeenCalled();
     expect(localStorage.length).toBe(0);
@@ -89,13 +91,23 @@ describe("real customer forms", () => {
   });
 });
 
-it("offers a real email-only resend on login without navigating or persisting a profile", async () => {
-  fetchAccount.mockResolvedValue(Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }));
+it("offers email-only resend only after the owner rejects an unverified login", async () => {
+  fetchAccount
+    .mockResolvedValueOnce(
+      Response.json(
+        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+        { status: 403 },
+      ),
+    )
+    .mockResolvedValueOnce(Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }));
   render(<LoginForm />);
+  expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
+  login();
+  await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
   fill("verification-resend-email", "waiting@example.test");
   fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
   expect(await screen.findByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeTruthy();
-  const [path, init] = fetchAccount.mock.calls[0]!;
+  const [path, init] = fetchAccount.mock.calls[1]!;
   expect(path).toBe("/api/ontos/account");
   expect(JSON.parse(String(init!.body))).toEqual({
     operation: "resend-verification",
@@ -110,23 +122,61 @@ it("disables resend while awaiting the owner and shows a real rate-limit refusal
   let complete: (value: Response) => void = () => {
     throw new Error("Request not pending");
   };
-  fetchAccount.mockImplementation(
-    () =>
-      new Promise<Response>((resolve) => {
-        complete = resolve;
-      }),
-  );
+  fetchAccount
+    .mockResolvedValueOnce(
+      Response.json(
+        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+        { status: 403 },
+      ),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          complete = resolve;
+        }),
+    );
   render(<LoginForm />);
+  login();
+  await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
   fill("verification-resend-email", "waiting@example.test");
   fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
   expect(screen.getByRole("button", { name: "Odesílám…" }).hasAttribute("disabled")).toBe(true);
-  expect(fetchAccount).toHaveBeenCalledOnce();
+  expect(fetchAccount).toHaveBeenCalledTimes(2);
   complete(
     Response.json({ message: "Příliš mnoho pokusů. Zkuste to prosím později." }, { status: 429 }),
   );
-  expect((await screen.findByRole("alert")).textContent).toContain("Příliš mnoho pokusů");
+  expect(await screen.findByText("Příliš mnoho pokusů. Zkuste to prosím později.")).toBeTruthy();
   expect(screen.queryByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeNull();
   expect(
     screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }).hasAttribute("disabled"),
   ).toBe(false);
+});
+
+it("clears the verification offer when another login is rejected for a different reason", async () => {
+  fetchAccount
+    .mockResolvedValueOnce(
+      Response.json(
+        { code: "verification_required", message: "Nejprve potvrďte e-mail." },
+        { status: 403 },
+      ),
+    )
+    .mockResolvedValueOnce(
+      Response.json({ message: "Nesprávný e-mail nebo heslo." }, { status: 401 }),
+    );
+  render(<LoginForm />);
+  login();
+  await screen.findByRole("button", { name: "Poslat ověřovací e-mail znovu" });
+  login();
+  await screen.findByText("Nesprávný e-mail nebo heslo.");
+  expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
+});
+
+it("does not infer verification state from a translated error message", async () => {
+  fetchAccount.mockResolvedValue(
+    Response.json({ message: "Nejprve potvrďte e-mail." }, { status: 403 }),
+  );
+  render(<LoginForm />);
+  login();
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
 });

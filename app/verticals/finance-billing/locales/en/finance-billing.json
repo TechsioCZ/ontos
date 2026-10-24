@@ -200,8 +200,6 @@
       "void": "Void invoice",
       "sync": "Request accounting export",
       "retry": "Retry accounting export",
-      "observeAccounting": "Simulate successful accounting receipt",
-      "observePayment": "Simulate confirmed payment",
       "payment": "Cumulative confirmed payment in CZK",
       "noReceipt": "No accounting receipt yet",
       "history": "Accounting export history",
