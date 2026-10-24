@@ -120,7 +120,7 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     originCheck: true,
   }),
   emailVerification: Object.freeze({
-    expiresInSeconds: 900,
+    expiresInSeconds: 86_400,
     requiredBeforeSignIn: true,
   }),
   mfa: Object.freeze({
