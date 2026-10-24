@@ -30,6 +30,8 @@ import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/oauth-server/
 import { makeReadRuntime } from '../../packages/core-runtime/src/reads/runtime.ts';
 import { managedPrincipalsRead } from '../../packages/core-runtime/src/auth/principal-administration-reads.ts';
 import { bindManagedApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-managed-api-key.action.ts';
+import { bindSelfApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-self-api-key.action.ts';
+import { setSelfApiKeyBindingStatusAction } from '../../packages/core-runtime/src/modules/actions/set-self-api-key-binding-status.action.ts';
 import { setManagedApiKeyBindingStatusAction } from '../../packages/core-runtime/src/modules/actions/set-managed-api-key-binding-status.action.ts';
 import { makeActionRepository } from '../../packages/core-runtime/src/actions/repository.ts';
 import { makePrincipalResolver, PrincipalResolver } from '../../packages/core-runtime/src/auth/principal-resolver.ts';
@@ -50,7 +52,12 @@ import {
   tenants,
   tenantModuleStates,
 } from '../../packages/core-runtime/src/db/schema.ts';
-import { buildActionAuthorizationRelationships } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildIntrinsicSelfCredentialRelationships,
+  deriveScopedActionAuthorization,
+} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { buildPrincipalSelfCredentialUpdates } from '../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
 import { configureAgentAction } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
 import { makeModuleEntrypointGateway } from '../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../packages/core-runtime/src/modules/module-state-gate.ts';
@@ -284,7 +291,24 @@ it.live(
         })),
       );
       const role = toScopedRoleObjectId({ roleKey: 'tenant-superadmin', tenantId });
+      const selfDescriptors = [bindSelfApiKeyAction, setSelfApiKeyBindingStatusAction].map(({ descriptor }) => {
+        const { authorization } = descriptor.entrypoint;
+        if (authorization.kind !== 'action_execution') {
+          return expect.unreachable('Own-credential Actions require native Action execution authorization');
+        }
+        return {
+          actionKey: descriptor.actionKey,
+          legalEntityScope: descriptor.legalEntityScope,
+          owningModuleKey: descriptor.owningModuleKey,
+          provisioning: authorization.provisioning,
+        };
+      });
+      const selfActions = deriveScopedActionAuthorization(selfDescriptors, [
+        { moduleKeys: ['core.identity'], tenantId },
+      ]);
       const graphRows = [
+        ...buildActionAuthorizationRelationships(selfActions),
+        ...buildIntrinsicSelfCredentialRelationships(selfDescriptors, selfActions),
         ...companies.map((legalEntityId) =>
           relationship(
             'module_access',
@@ -471,6 +495,13 @@ it.live(
           subjectType: 'user',
           tenantId,
         });
+        yield* admin.executor.insert(principalCompanyMemberships).values({
+          affiliation: 'employee',
+          legalEntityId: original.legalEntityId,
+          principalId: adminId,
+          status: 'active',
+          tenantId,
+        });
         const companyRole = toScopedRoleObjectId({
           legalEntityId: original.legalEntityId,
           roleKey: 'company-admin',
@@ -480,7 +511,7 @@ it.live(
           graph.promises.writeRelationships(
             v1.WriteRelationshipsRequest.create({
               updates: [
-                relationship('tenant', tenantId, 'member', 'principal', adminId),
+                relationship('tenant', tenantId, 'company_member', 'principal', adminId),
                 relationship(
                   'legal_entity',
                   toLegalEntityAccessObjectId(tenantId, original.legalEntityId) ?? '',
@@ -517,6 +548,48 @@ it.live(
           ),
           (session) => session.close.pipe(Effect.ignore),
         );
+        // Restored company humans have no independent tenant#member or tenant admin role.
+        // Their own-key path stays tenant-scoped and needs native principal structure.
+        expect(companyOperator.principal.legalEntityId).toBeUndefined();
+        const selfInput = {
+          correlationId: randomUUID(),
+          idempotencyKey: randomUUID(),
+          name: 'Real company human own key',
+          principal: companyOperator.principal,
+          requestHeaders: companyOperator.requestHeaders,
+        };
+        expect(Predicate.isTagged(yield* lifecycle.issue(selfInput).pipe(Effect.flip), 'ActionPermissionDenied')).toBe(
+          true,
+        );
+        yield* Effect.promise(() =>
+          graph.promises.writeRelationships(
+            v1.WriteRelationshipsRequest.create({
+              updates: [
+                ...buildPrincipalSelfCredentialUpdates({
+                  kind: 'human',
+                  principalId: adminId,
+                  status: 'active',
+                  tenantActive: true,
+                  tenantId,
+                }),
+              ],
+            }),
+          ),
+        );
+        const selfKey = yield* lifecycle.issue({ ...selfInput, idempotencyKey: randomUUID() });
+        const verifiedSelfKey = yield* keys.verify(Redacted.value(selfKey.secret));
+        const selfIdentity = yield* resolver.resolveBetterAuthApiKey(verifiedSelfKey.providerKeyId);
+        expect(selfIdentity.principalId).toBe(adminId);
+        const revokedSelf = yield* lifecycle.setStatus({
+          authBindingId: selfKey.authBindingId,
+          correlationId: randomUUID(),
+          expectedStatus: 'active',
+          idempotencyKey: randomUUID(),
+          newStatus: 'revoked',
+          principal: companyOperator.principal,
+          reason: 'Owned self-key proof complete',
+        });
+        expect(revokedSelf.enabled).toBe(false);
         const companyPrincipal = { ...companyOperator.principal, legalEntityId: original.legalEntityId };
         const companyAgentScope = 'company-agent' as const;
         const tenantManagedScope = 'tenant-managed' as const;
