@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Predicate } from 'effect';
 
 import { toContextPermissionAccessKey } from '@app/core-runtime';
 import type { ContextAccessDecision } from '@app/core-runtime';
@@ -37,9 +37,15 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
   let dataAccessEvidence = 0;
   let groupRoutineCalls = 0;
   const queriedContextPermissions: string[] = [];
-  const query = (text: string) => {
+  const query = (text: string, values: readonly unknown[]) => {
     if (text.includes('transaction_timestamp')) {
-      return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
+      return Effect.succeed([
+        {
+          legal_entity_id: values[1],
+          operation_at: new Date('2026-09-21T10:00:00.000Z'),
+          tenant_id: values[0],
+        },
+      ]);
     }
     if (text.includes('data_access_events')) {
       dataAccessEvidence += 1;
@@ -59,7 +65,8 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
         {
           actual_revision: 0,
           changed: false,
-          group_json: Option.none(),
+          // Raw PostgreSQL NULL is decoded by the owner schema into Option.none().
+          group_json: null,
           outcome: 'NOT_FOUND',
         },
       ]);

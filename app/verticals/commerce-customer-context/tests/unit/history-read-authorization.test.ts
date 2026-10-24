@@ -286,9 +286,15 @@ it.effect('executes exact business and Resource gates before resolving unavailab
     let businessChecks = 0;
     let resourceChecks = 0;
     const database = {
-      executor: yield* makeTestDatabase((text) => {
+      executor: yield* makeTestDatabase((text, values) => {
         if (text.includes('transaction_timestamp')) {
-          return Effect.succeed([{ operation_at: new Date('2026-09-21T10:00:00.000Z') }]);
+          return Effect.succeed([
+            {
+              legal_entity_id: values[1],
+              operation_at: new Date('2026-09-21T10:00:00.000Z'),
+              tenant_id: values[0],
+            },
+          ]);
         }
         return Effect.succeed(
           text.includes('current_setting') ? [{ legal_entity_id: scope.legalEntityId, tenant_id: tenantId }] : [],
