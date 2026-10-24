@@ -6,6 +6,10 @@ import {
   toModuleAccessObjectId,
 } from '@app/core-runtime';
 import { StageAccountsFileSchema, parseStageAccountsFile } from '@app/core-runtime/install/stage-accounts-file';
+import {
+  buildStageContextRelationships,
+  stageContextsFromAccountsFile,
+} from '@app/core-runtime/install/stage-context-bootstrap';
 import { expect, it } from 'effect-rstest';
 import { Effect, FileSystem, Redacted, Result, Schema } from 'effect';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
@@ -235,6 +239,36 @@ it.effect(
         expect(absent.some((row) => row.subjectId === membership.principalId || row.resourceId === roleId)).toBe(false);
       }
     }),
+);
+
+it.effect('gives the verification account module access only through its task-writer role, never a direct grant', () =>
+  Effect.gen(function* rolesOnlyVerificationAccess() {
+    const accounts = yield* stageVerificationAccounts(Redacted.make('verification-test-password'));
+    const source = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toEncoded(StageAccountsFileSchema)))(
+      accounts,
+    );
+    const [context] = stageContextsFromAccountsFile(yield* parseStageAccountsFile({ mode: 0o600, source }));
+    const bootstrap = yield* buildStageContextRelationships(context);
+    const taskAccess = toModuleAccessObjectId(verificationTenantId, verificationLegalEntityId, taskModule);
+    expect(bootstrap.some((row) => row.resourceType === 'module_access' && row.relation === 'accessor')).toBe(false);
+    expect(bootstrap).toContainEqual({
+      relation: 'member',
+      resourceId: roleId,
+      resourceType: 'scoped_role',
+      subjectId: verificationAccount.principalId,
+      subjectType: 'principal',
+    });
+    const policy = yield* verificationContext();
+    expect(
+      policy.relationships.some(
+        (row) =>
+          row.resourceId === taskAccess &&
+          row.relation === 'accessor_role' &&
+          row.subjectId === roleId &&
+          row.subjectRelation === 'member',
+      ),
+    ).toBe(true);
+  }),
 );
 
 it.effect('pins each environment replay artifact by its own exact reviewed hash, never the old LOCAL identities', () =>

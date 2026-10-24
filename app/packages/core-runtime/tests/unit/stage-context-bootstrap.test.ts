@@ -127,6 +127,12 @@ it.effect('writes exactly the Tenant relations listed in grant data, only inside
           .filter(({ resourceType }) => resourceType === 'tenant')
           .every(({ resourceId }) => resourceId === context.tenantId),
       ).toBe(true);
+      expect(
+        relationships.some(
+          ({ relation, resourceType, subjectType }) =>
+            resourceType === 'module_access' && relation === 'accessor' && subjectType === 'principal',
+        ),
+      ).toBe(false);
     }
   }),
 );

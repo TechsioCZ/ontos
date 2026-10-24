@@ -422,19 +422,13 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
         subjectId: context.principalId,
         subjectType: 'principal',
       },
+      // Module access comes only from the context's scoped roles (accessor_role), never a direct grant.
       {
         relation: 'legal_entity',
         resourceId: moduleObjectId,
         resourceType: 'module_access',
         subjectId: legalEntityObjectId,
         subjectType: 'legal_entity',
-      },
-      {
-        relation: 'accessor',
-        resourceId: moduleObjectId,
-        resourceType: 'module_access',
-        subjectId: context.principalId,
-        subjectType: 'principal',
       },
       ...context.tenantRelations.map((relation) => ({
         relation,
