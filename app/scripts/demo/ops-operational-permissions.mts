@@ -26,9 +26,18 @@ import type { DemoAction } from './permissions.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
 export const opsOperationalRelationships = (actions: readonly DemoAction[]) =>
-  siamparkRentalPersonas.filter((persona) => persona.email === 'external@siampark.demo').flatMap((persona) =>
-    principalRelationships(persona.principalId, persona.role, actions.filter((action) => action.actionKey === 'facility.operations.apply-command'), rentalDemoLegalEntityId, demoTenantId, 'operational-repair-external'),
-  );
+  siamparkRentalPersonas
+    .filter((persona) => persona.email === 'external@siampark.demo')
+    .flatMap((persona) =>
+      principalRelationships(
+        persona.principalId,
+        persona.role,
+        actions.filter((action) => action.actionKey === 'facility.operations.apply-command'),
+        rentalDemoLegalEntityId,
+        demoTenantId,
+        'operational-repair-external',
+      ),
+    );
 
 const environmentLive = ConfigProvider.layer(
   Effect.gen(function* loadOperatorConfiguration() {

@@ -26,9 +26,18 @@ import { principalRelationships, siamparkRentalPersonas } from './permissions.mt
 const emails = new Set(['management@siampark.demo', 'external@siampark.demo']);
 
 export const siamparkCrmRelationships = (actions: readonly DemoAction[]) =>
-  siamparkRentalPersonas.filter((persona) => emails.has(persona.email)).flatMap((persona) =>
-    principalRelationships(persona.principalId, persona.role, actions.filter((action) => action.actionKey === 'demo.crm.apply-command'), rentalDemoLegalEntityId, demoTenantId, persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external'),
-  );
+  siamparkRentalPersonas
+    .filter((persona) => emails.has(persona.email))
+    .flatMap((persona) =>
+      principalRelationships(
+        persona.principalId,
+        persona.role,
+        actions.filter((action) => action.actionKey === 'demo.crm.apply-command'),
+        rentalDemoLegalEntityId,
+        demoTenantId,
+        persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external',
+      ),
+    );
 
 const environmentLive = ConfigProvider.layer(
   Effect.gen(function* loadOperatorConfiguration() {

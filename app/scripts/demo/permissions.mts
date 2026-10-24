@@ -267,41 +267,36 @@ const relationshipKey = (relationship: DemoRelationship) =>
  * including supplemental grants that address this same key. Company scope stays in role identity.
  */
 export const demoPrincipalRoleKey = (principalId: string): string => {
-  const humanProfiles = [
-    ['obchod', 'sales-leadership'],
-    ['obchodnik', 'sales'],
-    ['ucetni', 'accounting'],
-    ['sklad', 'warehouse'],
-    ['hanak-spravce', 'crm-administration'],
-    ['hanak-vedouci', 'crm-leadership'],
-    ['hanak-obchodnik-a', 'crm-sales'],
-    ['hanak-obchodnik-b', 'crm-sales'],
-    ['kavarna-eshop', 'eshop-administration'],
-    ['akros-eshop', 'eshop-administration'],
-    ['akros-expedice', 'fulfilment'],
-    ['kavarna-expedice', 'fulfilment'],
-  ] as const;
-  for (const [person, roleKey] of humanProfiles) {
+  const humanProfiles = {
+    'akros-eshop': 'eshop-administration',
+    'akros-expedice': 'fulfilment',
+    'hanak-obchodnik-a': 'crm-sales',
+    'hanak-obchodnik-b': 'crm-sales',
+    'hanak-spravce': 'crm-administration',
+    'hanak-vedouci': 'crm-leadership',
+    'kavarna-eshop': 'eshop-administration',
+    'kavarna-expedice': 'fulfilment',
+    obchod: 'sales-leadership',
+    obchodnik: 'sales',
+    sklad: 'warehouse',
+    ucetni: 'accounting',
+  };
+  const literalProfiles = new Map(
+    Object.entries({
+      '72000000-0000-4000-8000-000000000010': 'development-administration',
+      '72000000-0000-4000-8000-000000000021': 'management',
+      '72000000-0000-4000-8000-000000000022': 'operations',
+      '72000000-0000-4000-8000-000000000023': 'rental-accounting',
+      '72000000-0000-4000-8000-000000000024': 'external-business',
+      '72000000-0000-4000-8000-000000000090': 'connection-verification',
+    }),
+  );
+  for (const [person, roleKey] of Object.entries(humanProfiles)) {
     if (principalId === demoId(principalResource, person)) {
       return roleKey;
     }
   }
-  switch (principalId) {
-    case '72000000-0000-4000-8000-000000000010':
-      return 'development-administration';
-    case '72000000-0000-4000-8000-000000000021':
-      return 'management';
-    case '72000000-0000-4000-8000-000000000022':
-      return 'operations';
-    case '72000000-0000-4000-8000-000000000023':
-      return 'rental-accounting';
-    case '72000000-0000-4000-8000-000000000024':
-      return 'external-business';
-    case '72000000-0000-4000-8000-000000000090':
-      return 'connection-verification';
-    default:
-      return `demo:${principalId}`;
-  }
+  return literalProfiles.get(principalId) ?? `demo:${principalId}`;
 };
 
 export const roleRelationship = (
@@ -813,4 +808,44 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
     [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()],
     demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
   );
+};
+
+/** Reviewed live-only restoration: exact executors, no module or context-permission union. */
+export const reviewedHumanActionAddonRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const operationsKeys = [
+    'crm.activities.apply-command',
+    'demo.workforce.apply-command',
+    'demo.merchandise.apply-command',
+    'demo.sales-insights.apply-command',
+    'finance.billing.apply-command',
+    'property.portfolio.apply-command',
+  ];
+  const selected = (keys: readonly string[]) =>
+    keys.map((key) => {
+      const action = actions.find((candidate) => candidate.actionKey === key);
+      if (action === undefined) {
+        throw new Error(`Reviewed Action missing: ${key}`);
+      }
+      return action;
+    });
+  return [
+    ...selected(operationsKeys).flatMap((action) =>
+      scopedDemoActionRelationships(
+        siamparkRentalPersonas[1].principalId,
+        action,
+        rentalDemoLegalEntityId,
+        demoTenantId,
+        'operations-execution',
+      ),
+    ),
+    ...selected(['property.leasing.apply-command']).flatMap((action) =>
+      scopedDemoActionRelationships(
+        demoHumanAccounts[1].principalId,
+        action,
+        demoLegalEntityId,
+        demoTenantId,
+        'rental-sales-execution',
+      ),
+    ),
+  ];
 };
