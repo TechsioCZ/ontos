@@ -492,13 +492,6 @@ jobs:
           tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
           mise exec -- pnpm run cloudflare:deploy
 
-      # One price-free navigation read after the composition switch (skipped while younger than 12 min).
-      # The 15-minute cron warms only this tree too; price/stock entries are read on demand and expire
-      # after 10 s, so no periodic owner reads are wasted warming short-lived product values.
-      - name: Warm the AKROS storefront catalog cache
-        continue-on-error: true
-        run: curl -sS --max-time 60 -X POST -w ' -> %{http_code} %{time_total}s\n' "$STAGE_STOREFRONT_URL/api/ontos/catalog-warm"
-
       # One short check, no load: the stage Workers CPU budget is capped.
       - name: Smoke the Shell login and OAuth metadata
         run: |

@@ -326,12 +326,12 @@ describe("OntOS catalog server reads", () => {
         .every((query) => !query.includeCategories && !query.includeCategoryContent),
     ).toBe(true);
   });
-  it("warms only price-free navigation, skips young values, and leaves product reads to shoppers", async () => {
-    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 0, refreshed: 1, failed: 0 });
+  it("loads navigation on demand and keeps product reads separate", async () => {
+    await server.getShellSnapshot();
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
       { pageSize: 1, fields: "card", includeCategories: true },
     ]);
-    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 1, refreshed: 0, failed: 0 });
+    await server.getShellSnapshot();
     expect(readRecords).toHaveBeenCalledTimes(1);
     vi.mocked(readRecords).mockClear();
     await renderCache.run(new Map(), () =>
