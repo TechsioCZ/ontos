@@ -1709,8 +1709,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     ) {
       const catalogQuery = view.storefrontCatalog;
       const page =
-        catalogQuery === undefined ? undefined : yield* storefrontProducts(transaction, store, { query: catalogQuery });
-      // Product pages carry their head in the same statement; an order-status-only read still needs its revision.
+        catalogQuery === undefined || catalogQuery.mode === 'categories'
+          ? undefined
+          : yield* storefrontProducts(transaction, store, { query: catalogQuery });
+      // Product pages carry their head in the same statement; category/order-only reads still need their revision.
       const head = page?.head ?? (yield* loadHead(transaction, store));
       if (head === undefined) return yield* unavailable();
       const { revision, homepageFeaturedProductIds: featuredIds } = head;

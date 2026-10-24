@@ -80,11 +80,15 @@ beforeEach(async () => {
     const catalog = (query as Query).view.storefrontCatalog;
     return {
       revision: 5,
-      total: 1,
-      page: 1,
-      pageSize: Number(catalog.pageSize ?? 24),
-      homepageFeaturedProductIds: [],
-      products: [product("p1")],
+      ...(catalog.mode === "categories"
+        ? { products: [] }
+        : {
+            total: 1,
+            page: 1,
+            pageSize: Number(catalog.pageSize ?? 24),
+            homepageFeaturedProductIds: [],
+            products: [product("p1")],
+          }),
       ...(catalog.includeCategories || catalog.includeCategoryContent
         ? {
             categories: tree
@@ -205,7 +209,7 @@ describe("OntOS catalog server reads", () => {
     await server.getCatalogPage({ q: "b", pageSize: 24 });
     const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
     expect(calls.filter((call) => call.includeCategories === true)).toEqual([
-      { pageSize: 1, fields: "card", includeCategories: true },
+      { mode: "categories", includeCategories: true },
     ]);
     expect(calls.filter((call) => call.includeCategories === false)).toHaveLength(2);
     expect(server.CATEGORY_CACHE_MS).toBe(15 * 60_000);
@@ -329,7 +333,7 @@ describe("OntOS catalog server reads", () => {
   it("loads navigation on demand and keeps product reads separate", async () => {
     await server.getShellSnapshot();
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
-      { pageSize: 1, fields: "card", includeCategories: true },
+      { mode: "categories", includeCategories: true },
     ]);
     await server.getShellSnapshot();
     expect(readRecords).toHaveBeenCalledTimes(1);
@@ -395,7 +399,7 @@ describe("OntOS catalog server reads", () => {
   it("ships only the slim navigation to the layout: no products, no deep categories", async () => {
     const snapshot = await server.getShellSnapshot();
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
-      { pageSize: 1, fields: "card", includeCategories: true },
+      { mode: "categories", includeCategories: true },
     ]);
     expect(snapshot.catalog.products).toEqual([]);
     expect(snapshot.categories.categories.map((c) => c.id)).toEqual(["root", "srouby"]);

@@ -132,7 +132,7 @@ export async function readCartProducts(
 }
 
 const loadRootTree = async () =>
-  projectCategories(await readCatalog({ pageSize: 1, fields: "card", includeCategories: true }));
+  projectCategories(await readCatalog({ mode: "categories", includeCategories: true }));
 /** The first listing page of a category, sorted by name and unfiltered, as the category page reads it. */
 const firstCategoryPage = (categorySlug: string) => ({
   categorySlug,

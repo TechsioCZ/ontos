@@ -1223,140 +1223,147 @@ const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAsse
  * `shell.document-context.issue.session`): a separate batch call had to wait for this answer and then resolved the
  * session a second time. When signing fails the document goes without them and the browser asks the batch issuer.
  */
-const documentContextHandler = Effect.fn('shell.composition.documentContext')(function* documentContextHandlerEffect(
-  request: RequestWithHeaders,
-  payload: ShellDocumentContextRequest,
-) {
-  yield* noStore;
-  const authentication = yield* AuthenticationService;
-  const headers = requestHeaders(request.headers);
-  const { context, tenants: tenantResult } = yield* authentication
-    .resolveDocumentContext(headers)
-    .pipe(observeGatewayPhase('document-authentication'), Effect.mapError(problem));
-  yield* forwardSetCookieHeaders(context.setCookieHeaders);
-  const session = yield* decodeResponse(
-    CurrentSessionSchema,
-    Match.value(context).pipe(
-      Match.discriminators('state')({
-        access_blocked: currentAccessBlockedResponse,
-        anonymous: currentAnonymousResponse,
-        authenticated: currentAuthenticatedResponse,
-        selection_required: currentSelectionRequiredResponse,
-        tenant_authenticated: currentTenantAuthenticatedResponse,
-      }),
-      Match.exhaustive,
-    ),
-    authenticationInternalProblem,
-  );
-  if (context.state === 'anonymous') {
-    return { session };
-  }
-  const legalEntities = withOptionalProperty(
-    {
-      legalEntities: context.availableLegalEntities,
-      tenantContextAvailable: yield* canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
-    },
-    context.state === 'authenticated',
-    'selectedLegalEntityId',
-    context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
-    { state: context.state },
-  );
-  const tenants = Result.match(tenantResult, {
-    onFailure: (error) => ({
-      state: Predicate.isTagged(tenantAuthenticationProblem(error), 'TenantAuthenticationRequiredProblem')
-        ? ('authentication_required' as const)
-        : ('unavailable' as const),
-    }),
-    onSuccess: ({ tenants: available }) => ({ state: 'available' as const, tenants: available }),
-  });
-  if (context.state !== 'authenticated') {
-    return {
-      composition: { navigation: [] as const, state: context.state },
-      legalEntities,
-      session,
-      tenants,
-    };
-  }
-  const { legalEntityId } = context.identity;
-  const capability = yield* Effect.forkChild(
-    demoAccountCapability({
-      legalName:
-        context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
-        legalEntityId,
-      principal: { ...context.principal, legalEntityId },
-    }).pipe(
-      Effect.map(({ canManage }) => canManage),
-      Effect.orElseSucceed(() => false),
-    ),
-    { startImmediately: true },
-  );
-  const composition = Effect.gen(function* loadDocumentComposition() {
-    const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
-      observeGatewayPhase('document-admission'),
+export const documentContextHandler = Effect.fn('shell.composition.documentContext')(
+  function* documentContextHandlerEffect(request: RequestWithHeaders, payload: ShellDocumentContextRequest) {
+    yield* noStore;
+    const authentication = yield* AuthenticationService;
+    const headers = requestHeaders(request.headers);
+    const { context, tenants: tenantResult } = yield* authentication
+      .resolveDocumentContext(headers)
+      .pipe(observeGatewayPhase('document-authentication'), Effect.mapError(problem));
+    yield* forwardSetCookieHeaders(context.setCookieHeaders);
+    const session = yield* decodeResponse(
+      CurrentSessionSchema,
+      Match.value(context).pipe(
+        Match.discriminators('state')({
+          access_blocked: currentAccessBlockedResponse,
+          anonymous: currentAnonymousResponse,
+          authenticated: currentAuthenticatedResponse,
+          selection_required: currentSelectionRequiredResponse,
+          tenant_authenticated: currentTenantAuthenticatedResponse,
+        }),
+        Match.exhaustive,
+      ),
+      authenticationInternalProblem,
     );
-    const governedReads = yield* ShellGovernedReads;
-    const response = yield* governedReads
-      .composition({
-        correlationId: correlationFromRequest(request),
-        principal: context.principal,
-      })
-      .pipe(
-        Effect.provideService(CapturedShellCompositionCatalog, catalog),
-        Effect.tapError((error) => logShellReadFailure('composition', request, error)),
-      );
-    const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
-    return { catalog, composition: documentComposition };
-  }).pipe(
-    observeGatewayPhase('document-composition'),
-    Effect.catch((error) =>
-      Effect.succeed({
-        catalog: null,
-        composition: {
-          state: Predicate.isTagged(error, 'ShellReloadRequiredProblem')
-            ? ('reload_required' as const)
-            : ('unavailable' as const),
-        },
+    if (context.state === 'anonymous') {
+      return { session };
+    }
+    const tenants = Result.match(tenantResult, {
+      onFailure: (error) => ({
+        state: Predicate.isTagged(tenantAuthenticationProblem(error), 'TenantAuthenticationRequiredProblem')
+          ? ('authentication_required' as const)
+          : ('unavailable' as const),
       }),
-    ),
-  );
-  const captured = yield* composition;
-  const documentComposition = captured.composition;
-  const base = { composition: documentComposition, legalEntities, session, tenants };
-  if (documentComposition.state !== 'available' || captured.catalog === null) {
-    return base;
-  }
-  const assertions = yield* Effect.forkChild(
-    issueDocumentGatewayAssertions(
-      context.principal,
-      documentComposition.compositionRevision,
-      documentComposition.gatewayAudiences,
-    ).pipe(
-      observeGatewayPhase('document-assertions'),
-      Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
-      Effect.option,
-    ),
-    { startImmediately: true },
-  );
-  // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
-  const canManagePeople = yield* Fiber.join(capability);
-  const home =
-    payload.home === true
-      ? yield* resolveDocumentHome({
-          canManagePeople,
-          composition: documentComposition,
-          principal: { ...context.principal, legalEntityId },
-        }).pipe(
-          observeGatewayPhase('document-home'),
-          Effect.provideService(CapturedShellCompositionCatalog, captured.catalog),
-          Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
-        )
-      : undefined;
-  const document = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
-  return Option.match(yield* Fiber.join(assertions), {
-    onNone: () => document,
-    onSome: (gatewayAssertions) => ({ ...document, gatewayAssertions }),
-  });
-});
+      onSuccess: ({ tenants: available }) => ({ state: 'available' as const, tenants: available }),
+    });
+    // The company-switcher hint grants no composition or people access. Join it only when assembling the document.
+    const { document, tenantContextAvailable } = yield* Effect.all(
+      {
+        document: Effect.gen(function* loadDocument() {
+          if (context.state !== 'authenticated') {
+            return {
+              composition: { navigation: [] as const, state: context.state },
+              session,
+              tenants,
+            };
+          }
+          const { legalEntityId } = context.identity;
+          const capability = yield* Effect.forkChild(
+            demoAccountCapability({
+              legalName:
+                context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
+                legalEntityId,
+              principal: { ...context.principal, legalEntityId },
+            }).pipe(
+              Effect.map(({ canManage }) => canManage),
+              Effect.orElseSucceed(() => false),
+            ),
+            { startImmediately: true },
+          );
+          const composition = Effect.gen(function* loadDocumentComposition() {
+            const catalog = yield* captureShellRelease(payload.compositionRevision).pipe(
+              observeGatewayPhase('document-admission'),
+            );
+            const governedReads = yield* ShellGovernedReads;
+            const response = yield* governedReads
+              .composition({
+                correlationId: correlationFromRequest(request),
+                principal: context.principal,
+              })
+              .pipe(
+                Effect.provideService(CapturedShellCompositionCatalog, catalog),
+                Effect.tapError((error) => logShellReadFailure('composition', request, error)),
+              );
+            const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
+            return { catalog, composition: documentComposition };
+          }).pipe(
+            observeGatewayPhase('document-composition'),
+            Effect.catch((error) =>
+              Effect.succeed({
+                catalog: null,
+                composition: {
+                  state: Predicate.isTagged(error, 'ShellReloadRequiredProblem')
+                    ? ('reload_required' as const)
+                    : ('unavailable' as const),
+                },
+              }),
+            ),
+          );
+          const captured = yield* composition;
+          const documentComposition = captured.composition;
+          const base = { composition: documentComposition, session, tenants };
+          if (documentComposition.state !== 'available' || captured.catalog === null) {
+            return base;
+          }
+          const assertions = yield* Effect.forkChild(
+            issueDocumentGatewayAssertions(
+              context.principal,
+              documentComposition.compositionRevision,
+              documentComposition.gatewayAudiences,
+            ).pipe(
+              observeGatewayPhase('document-assertions'),
+              Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
+              Effect.option,
+            ),
+            { startImmediately: true },
+          );
+          // Shell-owned people navigation does not depend on a workforce module contributing a legacy capability item.
+          const canManagePeople = yield* Fiber.join(capability);
+          const home =
+            payload.home === true
+              ? yield* resolveDocumentHome({
+                  canManagePeople,
+                  composition: documentComposition,
+                  principal: { ...context.principal, legalEntityId },
+                }).pipe(
+                  observeGatewayPhase('document-home'),
+                  Effect.provideService(CapturedShellCompositionCatalog, captured.catalog),
+                  Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
+                )
+              : undefined;
+          const result = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
+          return Option.match(yield* Fiber.join(assertions), {
+            onNone: () => result,
+            onSome: (gatewayAssertions) => ({ ...result, gatewayAssertions }),
+          });
+        }),
+        tenantContextAvailable: canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
+      },
+      { concurrency: 2 },
+    );
+    return {
+      ...document,
+      legalEntities: withOptionalProperty(
+        { legalEntities: context.availableLegalEntities, tenantContextAvailable },
+        context.state === 'authenticated',
+        'selectedLegalEntityId',
+        context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
+        { state: context.state },
+      ),
+    };
+  },
+);
 
 // Session, legal-entity and composition checks of one document share their SpiceDB decisions.
 const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) =>

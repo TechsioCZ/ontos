@@ -29,8 +29,11 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
  * out-of-stock = OUT_OF_STOCK|UNKNOWN. `minMinor`/`maxMinor` compare the gross `grossPriceMinor`.
  * `fields: 'card'` omits variantRecords, description, descriptionParagraphs and parameters (listing pages); every
  * product carries `variantSummary`. A `full` page holds at most 2 products unless `variantIds` narrows the variants.
+ * `mode: 'categories'` skips product reads/counts and returns `products: []` without product paging/featured metadata;
+ * category selection, publication visibility and ordering are unchanged. Default mode: `products`.
  */
 export const StorefrontCatalogQuerySchema = Schema.Struct({
+  mode: Schema.optionalKey(Schema.Literals(['products', 'categories'])),
   page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   pageSize: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 250 }))),
   slug: Schema.optionalKey(Schema.String),
