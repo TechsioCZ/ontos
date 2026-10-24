@@ -49,6 +49,7 @@ import {
   planPeopleModelTransition,
   reviewedTransitionAgentNamedPermissions,
   reviewedTransitionAgentProfiles,
+  reviewedTransitionReplayAgents,
   verifyPeopleModelTransitionGraph,
 } from '../../packages/core-runtime/src/install/people-model-transition.ts';
 import type {
@@ -121,6 +122,7 @@ const MembershipFileSchema = Schema.Struct({
   compositionRevision: Schema.String,
   fixtureRelationships: Schema.Array(RelationshipSchema),
   mode: Schema.Literal('reviewed_transition_input'),
+  preservedUnadmittedAgents: Schema.Array(Schema.Struct({ principalId: PrincipalIdSchema, tenantId: TenantIdSchema })),
   rows: Schema.Array(
     Schema.Struct({
       affiliation: Schema.OptionFromNullOr(Schema.Literals(['employee', 'external'])),
@@ -406,11 +408,26 @@ const profilesOf = (document: MembershipDocument) =>
     }
     return profiles;
   });
-const validateProfiles = (document: MembershipDocument, inventory: SqlInventory) =>
+const validateProfiles = (
+  document: MembershipDocument,
+  inventory: SqlInventory,
+  relationships: PeopleModelTransitionSnapshot['relationships'],
+) =>
   Effect.gen(function* profileEvidence() {
-    const agents = inventory.actorRows
-      .filter((p) => p.kind === 'agent')
-      .map((p) => ({ principalId: p.principalId, tenantId: p.tenantId }));
+    const agents = yield* Effect.try({
+      catch: (cause) => fail('Agent replay/preservation disposition differs from native evidence', cause),
+      try: () =>
+        reviewedTransitionReplayAgents({
+          agents: inventory.actorRows
+            .filter((p) => p.kind === 'agent')
+            .map((p) => ({ principalId: p.principalId, tenantId: p.tenantId })),
+          preservedUnadmittedAgents: document.preservedUnadmittedAgents,
+          relationships,
+          replayAgents: document.rows
+            .filter((row) => row.kind === 'agent')
+            .map((row) => ({ principalId: row.principalId, tenantId: row.tenantId })),
+        }),
+    });
     const events = [];
     for (const row of inventory.auditRows) {
       const at = Number(row.occurredAtEpochMicrosecondsText);
@@ -513,7 +530,19 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
   const provisioningMode = provisioningModeOf(mode);
   const inventory = yield* readSqlInventory(document, provisioningMode);
   yield* validateIdentityInventory(document, inventory);
-  const { deferred, expectedProfiles, profiles } = yield* validateProfiles(document, inventory);
+  const configuration = yield* loadSpiceDbConfig();
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(`http://${configuration.endpoint}`).hostname)) {
+    return yield* fail('Only loopback graph cutover is allowed');
+  }
+  const client = yield* Effect.acquireRelease(
+    Effect.try({
+      catch: (cause) => fail('Cannot open local graph', cause),
+      try: () => newSpiceDbGrpcClient(configuration),
+    }),
+    (value) => Effect.sync(() => value.close()),
+  );
+  const observed = yield* readGraph(client);
+  const { deferred, expectedProfiles, profiles } = yield* validateProfiles(document, inventory, observed.relationships);
   const tenantIds = [...new Set(document.rows.map((row) => row.tenantId))];
   const composition = yield* loadCurrentActionAuthorizationComposition(tenantIds, provisioningMode);
   const fixture = yield* peopleModelTransitionFixtureRelationships(composition.actions, document.rows);
@@ -524,10 +553,6 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
       ? composition.snapshot.composition.revision
       : document.compositionRevision,
   );
-  const configuration = yield* loadSpiceDbConfig();
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(`http://${configuration.endpoint}`).hostname)) {
-    return yield* fail('Only loopback graph cutover is allowed');
-  }
   const catalog = yield* buildApplicationCompositionCatalog(composition.snapshot.composition);
   const agentRelationships = yield* Effect.forEach(
     profiles,
@@ -579,14 +604,7 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
     ...buildActionAuthorizationRelationships(actions),
     ...buildIntrinsicSelfCredentialRelationships(composition.actions, actions),
   ];
-  const client = yield* Effect.acquireRelease(
-    Effect.try({
-      catch: (cause) => fail('Cannot open local graph', cause),
-      try: () => newSpiceDbGrpcClient(configuration),
-    }),
-    (value) => Effect.sync(() => value.close()),
-  );
-  const observed = yield* readGraph(client);
+  yield* validateProfiles(document, inventory, [...observed.relationships, ...desired]);
   const sqlState = yield* encodeMembershipState(
     EffectArray.sortWith(
       inventory.membershipRows.map((row) => ({ ...row, affiliation: Option.fromNullishOr(row.affiliation) })),

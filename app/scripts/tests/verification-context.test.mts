@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { NodeServices } from '@effect/platform-node';
 import {
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -5,13 +7,14 @@ import {
 } from '@app/core-runtime';
 import { StageAccountsFileSchema, parseStageAccountsFile } from '@app/core-runtime/install/stage-accounts-file';
 import { expect, it } from 'effect-rstest';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, FileSystem, Redacted, Result, Schema } from 'effect';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   toSpiceDbActionObjectId,
   toSpiceDbActionGrantObjectId,
 } from '../../packages/core-runtime/src/permissions/service.ts';
 import { stageVerificationAccounts } from '../demo/ensure-stage-verification.mts';
+import { readReviewedAgentProfiles, ReviewedAgentProfilesSchema } from '../demo/agent-profile-setup.mts';
 import { stageAccountsAuthorization } from '../provision-current-action-authorization.mts';
 import { peopleModelTransitionFixtureRelationships } from '../demo/people-model-transition-fixture.mts';
 import {
@@ -232,4 +235,35 @@ it.effect(
         expect(absent.some((row) => row.subjectId === membership.principalId || row.resourceId === roleId)).toBe(false);
       }
     }),
+);
+
+it.effect('pins each environment replay artifact by its own exact reviewed hash, never the old LOCAL identities', () =>
+  Effect.gen(function* verifiesProfileArtifact() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'reviewed-stage-profiles-' });
+    const path = `${directory}/profiles.json`;
+    const profile = {
+      description: null,
+      legalEntityId: verificationLegalEntityId,
+      modules: [{ access: 'read' as const, moduleId: taskModule }],
+      ownerPrincipalId: null,
+      principalId: '72000000-0000-4000-8000-000000000091',
+      tenantId: verificationTenantId,
+      writePolicy: 'read_only' as const,
+    };
+    const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.toEncoded(ReviewedAgentProfilesSchema)));
+    const source = yield* encode({ profiles: [profile], schemaVersion: 2 });
+    yield* fs.writeFileString(path, source, { mode: 0o600 });
+    const hash = createHash('sha256').update(source).digest('hex');
+    expect((yield* readReviewedAgentProfiles(path, hash)).profiles).toEqual([profile]);
+    expect(Result.isFailure(yield* Effect.result(readReviewedAgentProfiles(path, '0'.repeat(64))))).toBe(true);
+    expect(Result.isFailure(yield* Effect.result(readReviewedAgentProfiles(path, 'not-a-sha256')))).toBe(true);
+    const duplicate = yield* encode({ profiles: [profile, profile], schemaVersion: 2 });
+    yield* fs.writeFileString(path, duplicate);
+    expect(
+      Result.isFailure(
+        yield* Effect.result(readReviewedAgentProfiles(path, createHash('sha256').update(duplicate).digest('hex'))),
+      ),
+    ).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

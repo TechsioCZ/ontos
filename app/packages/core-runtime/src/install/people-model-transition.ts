@@ -61,6 +61,38 @@ export class PeopleModelTransitionError extends Schema.TaggedError<PeopleModelTr
 const invalid = (reason: string): never => {
   throw new PeopleModelTransitionError({ reason });
 };
+const agentScope = (profile: { readonly principalId: string; readonly tenantId: string }): string =>
+  `${profile.tenantId}:${profile.principalId}`;
+/** Explicitly preserve graph-empty SQL identities without resurrecting authority from an older audit. */
+export const reviewedTransitionReplayAgents = (input: {
+  readonly agents: readonly { readonly principalId: string; readonly tenantId: string }[];
+  readonly preservedUnadmittedAgents: readonly { readonly principalId: string; readonly tenantId: string }[];
+  readonly relationships: readonly v1.Relationship[];
+  readonly replayAgents: readonly { readonly principalId: string; readonly tenantId: string }[];
+}): readonly { readonly principalId: string; readonly tenantId: string }[] => {
+  const all = new Set(input.agents.map(agentScope));
+  const preserved = new Set(input.preservedUnadmittedAgents.map(agentScope));
+  const replay = new Set(input.replayAgents.map(agentScope));
+  if (
+    all.size !== input.agents.length ||
+    preserved.size !== input.preservedUnadmittedAgents.length ||
+    replay.size !== input.replayAgents.length ||
+    preserved.size + replay.size !== all.size ||
+    [...preserved].some((id) => !all.has(id) || replay.has(id)) ||
+    [...replay].some((id) => !all.has(id))
+  ) {
+    return invalid('Every SQL agent requires one explicit replay or preserved-unadmitted disposition');
+  }
+  const preservedIds = new Set(input.preservedUnadmittedAgents.map((actor) => actor.principalId));
+  if (
+    input.relationships.some(
+      (row) => preservedIds.has(row.resource?.objectId ?? '') || preservedIds.has(row.subject?.object?.objectId ?? ''),
+    )
+  ) {
+    return invalid('A preserved unadmitted agent must have no observed or desired graph references');
+  }
+  return input.replayAgents;
+};
 interface TransitionAgentAuthority {
   readonly legalEntityId: string;
   readonly modules: readonly { readonly access: string; readonly moduleId: string }[];
@@ -72,8 +104,6 @@ interface TransitionAgentReview extends TransitionAgentAuthority {
   readonly description: string | null;
   readonly ownerPrincipalId: string | null;
 }
-const agentScope = (profile: { readonly principalId: string; readonly tenantId: string }): string =>
-  `${profile.tenantId}:${profile.principalId}`;
 const sameAgentAuthority = (left: TransitionAgentAuthority, right: TransitionAgentAuthority): boolean =>
   left.legalEntityId === right.legalEntityId &&
   left.writePolicy === right.writePolicy &&

@@ -9,6 +9,7 @@ import {
   planPeopleModelTransition,
   reviewedTransitionAgentNamedPermissions,
   reviewedTransitionAgentProfiles,
+  reviewedTransitionReplayAgents,
   verifyPeopleModelTransitionGraph,
 } from '../../src/install/people-model-transition.ts';
 import type {
@@ -418,3 +419,36 @@ it.effect('finishes only the sealed stage without executing or claiming native a
     );
   }),
 );
+
+it('preserves graph-empty SQL agents explicitly without resurrecting older audited authority', () => {
+  const admitted = { principalId: agent, tenantId };
+  const superseded = { principalId: 'superseded-agent', tenantId };
+  const review = {
+    agents: [admitted, superseded],
+    preservedUnadmittedAgents: [superseded],
+    relationships: input().observed.relationships,
+    replayAgents: [admitted],
+  };
+  expect(reviewedTransitionReplayAgents(review)).toEqual([admitted]);
+  for (const changed of [
+    { ...review, preservedUnadmittedAgents: [] },
+    { ...review, preservedUnadmittedAgents: [superseded, superseded] },
+    { ...review, replayAgents: [admitted, superseded] },
+    { ...review, preservedUnadmittedAgents: [{ ...superseded, tenantId: 'another-tenant' }] },
+    { ...review, preservedUnadmittedAgents: [{ ...superseded, principalId: 'unknown-agent' }] },
+    {
+      ...review,
+      relationships: [...review.relationships, r('tenant', tenantId, 'member', 'principal', superseded.principalId)],
+    },
+    {
+      ...review,
+      relationships: [...review.relationships, r('principal', superseded.principalId, 'tenant', 'tenant', tenantId)],
+    },
+    {
+      ...review,
+      relationships: [...review.relationships, r('scoped_role', ar, 'member', 'principal', superseded.principalId)],
+    },
+  ]) {
+    expect(() => reviewedTransitionReplayAgents(changed)).toThrow(PeopleModelTransitionError);
+  }
+});

@@ -61,10 +61,9 @@ export const ReviewedAgentProfilesSchema = Schema.Struct({
       tenantId: IdentifierSchema,
       writePolicy: ConfigureAgentPayloadSchema.fields.writePolicy,
     }),
-  ).check(Schema.isLengthBetween(9, 9)),
+  ).check(Schema.isMinLength(1)),
   schemaVersion: Schema.Literal(2),
 });
-export const REVIEWED_AGENT_PROFILES_SHA256 = 'c0a7f70f85f40edea325b3eba1cbeafa6816cfc71899cb7fd4ec8e4d7c168504';
 export const AgentProfileSetupModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type AgentProfileSetupMode = typeof AgentProfileSetupModeSchema.Type;
 
@@ -72,8 +71,8 @@ export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReview
   path: string,
   expectedSha256: string,
 ) {
-  if (expectedSha256 !== REVIEWED_AGENT_PROFILES_SHA256) {
-    return yield* fail('The supplied fingerprint is not the approved nine-row input fingerprint');
+  if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
+    return yield* fail('An explicit reviewed agent-profile SHA-256 fingerprint is required');
   }
   const fs = yield* FileSystem.FileSystem;
   const bytes = yield* fs.readFile(path);
@@ -85,7 +84,7 @@ export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReview
     onExcessProperty: 'error',
   })(Buffer.from(bytes).toString('utf-8'));
   const identities = document.profiles.map((row) => `${row.tenantId}:${row.legalEntityId}:${row.principalId}`);
-  if (new Set(identities).size !== 9) {
+  if (new Set(identities).size !== document.profiles.length) {
     return yield* fail('Reviewed agent-profile input contains duplicate scope/principal rows');
   }
   return document;
