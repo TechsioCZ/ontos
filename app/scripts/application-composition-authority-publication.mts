@@ -24,6 +24,8 @@ import {
   sealApplicationCompositionAuthority,
 } from '../packages/core-runtime/src/modules/application-composition-authority.ts';
 
+import { settleParkedEnrollmentPublicationWork } from '../verticals/commerce-customer-context/scripts/enrollment-publication-accounting.mts';
+
 const unavailable = (reason: string) =>
   new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
 
@@ -221,7 +223,10 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
           Effect.gen(function* waitForDurableWork() {
             while (
               !(yield* database.executor.transaction((transaction) =>
-                isApplicationCompositionDurableWorkDrained(transaction, current.revision),
+                // Settle journal-proven parked answers before this run can ship owner migrations.
+                settleParkedEnrollmentPublicationWork(transaction, current.revision).pipe(
+                  Effect.andThen(isApplicationCompositionDurableWorkDrained(transaction, current.revision)),
+                ),
               ))
             ) {
               yield* Effect.sleep(Duration.seconds(3));

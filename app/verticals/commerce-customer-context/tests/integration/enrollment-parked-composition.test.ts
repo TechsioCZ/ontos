@@ -7,6 +7,7 @@ import {
   isApplicationCompositionDurableWorkDrained,
   loadDatabaseConnectionPair,
   publishApplicationCompositionAuthority,
+  resumeApplicationCompositionDurableAdmission,
   scopedRoutineInvokerFromTransaction,
 } from '@app/core-runtime';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -18,10 +19,12 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { settleParkedEnrollmentPublicationWork } from '../../scripts/enrollment-publication-accounting.mts';
 import {
   ClaimEnrollmentTransitionInputSchema,
   EnrollmentLeaseTokenSchema,
   ReadEnrollmentAttemptInputSchema,
+  ReconcileEnrollmentOutcomeInputSchema,
   RecordEnrollmentOutcomeInputSchema,
   StartEnrollmentAttemptInputSchema,
 } from '../../shared/enrollment-contracts.ts';
@@ -52,6 +55,11 @@ const installParkedAdmission = (execute: Execute) =>
       }
       yield* execute(sql.raw(statement.replaceAll('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION ')));
     }
+    const correction = readFileSync(
+      new URL('../../drizzle/20261024193000_parked-owner-review-publication/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    yield* execute(sql.raw(correction));
   });
 
 const expectRefused = (execute: Execute, operation: Effect.Effect<unknown, unknown>) =>
@@ -242,11 +250,12 @@ const unresolvedOwnersPinTheirRelease = (
     yield* execute(sql`rollback to savepoint unresolved_release_probe`);
     // An expired worker is not proof of an owner outcome. Every unresolved native status retains
     // the exact original marker, and a new owner invocation cannot sneak through closed admission.
-    for (const status of ['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED', 'FAILED']) {
+    for (const status of ['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED']) {
       yield* execute(sql`update commerce_customer_context.portal_enrollment_owner_operations
-        set status = ${status}, completed_at = case when ${status} = 'IN_PROGRESS' then null else clock_timestamp() end, failure_code = case when ${status} = 'FAILED' then 'owner_reconciliation_required' else null end,
+        set status = ${status}, completed_at = case when ${status} = 'IN_PROGRESS' then null else clock_timestamp() end, failure_code = null,
           lease_owner = null, lease_token = null, lease_expires_at = null
         where owner_invocation_id = ${claim.ownerInvocationId}::uuid`);
+      expect(yield* settleParkedEnrollmentPublicationWork(transaction, revisionB)).toBe(0);
       expect(yield* isApplicationCompositionDurableWorkDrained(transaction, revisionB)).toBe(false);
     }
     yield* expectRefused(
@@ -299,4 +308,183 @@ it.live(
           );
       }),
     ),
+);
+
+it.live('a journaled owner reconciliation wait releases publication and resumes unchanged under the next release', () =>
+  Effect.scoped(
+    Effect.gen(function* parkedOwnerReviewAcceptance() {
+      const releaseA = yield* makeEnrollmentApplicationCompositionSnapshot('review-release-a', []);
+      const releaseB = yield* makeEnrollmentApplicationCompositionSnapshot('review-release-b', []);
+      const releaseC = yield* makeEnrollmentApplicationCompositionSnapshot('review-release-c', []);
+      yield* installEnrollmentTestAuthority(releaseA.composition.revision);
+      const connections = yield* loadDatabaseConnectionPair();
+      const client = yield* makeTestPgClient(connections.admin.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(client, coreRelations);
+      const rollback = new Error('parked owner review rollback');
+      yield* admin
+        .transaction((transaction) =>
+          Effect.gen(function* nativeOwnerReviewPublication() {
+            const parked = yield* parkedJourney(
+              transaction,
+              releaseA.composition.revision,
+              releaseB.composition.revision,
+            );
+            yield* publishApplicationCompositionAuthority(transaction, {
+              ...releaseB,
+              validUntil: DateTime.add(releaseB.validUntil, { hours: 2 }),
+            });
+            const fixture = yield* resumeUnderCurrentRelease(parked);
+            const { claim, claimed, execute, identity, persistence } = fixture;
+            const waiting = yield* persistence.record(
+              yield* Schema.decodeEffect(RecordEnrollmentOutcomeInputSchema)({
+                ...identity,
+                actorPrincipalId: fixture.actorId,
+                expectedRevision: claimed.attempt.revision,
+                failureCode: 'owner_reconciliation_required',
+                failureReason: 'Native Party review is required',
+                leaseToken: yield* Schema.decodeUnknownEffect(EnrollmentLeaseTokenSchema)(
+                  claimed.attempt.lease?.leaseToken,
+                ),
+                nextState: 'RECONCILIATION_REQUIRED',
+                outcomeCode: 'party_candidate_ambiguous',
+                ownerInvocationId: claim.ownerInvocationId,
+                ownerModuleKey: claim.ownerModuleKey,
+                resultReference: randomUUID(),
+                status: 'FAILED',
+                transitionKey: claim.transitionKey,
+                workerId: claim.workerId,
+              }),
+              'RECONCILIATION_REQUIRED',
+            );
+            expect(waiting.attempt.state).toBe('RECONCILIATION_REQUIRED');
+            expect(waiting.attempt.lease).toBeUndefined();
+            yield* expectRefused(
+              execute,
+              execute(sql`update commerce_customer_context.portal_enrollment_attempts
+          set state = 'COMPLETE' where portal_enrollment_attempt_id = ${identity.portalEnrollmentAttemptId}::uuid`),
+            );
+            yield* closeApplicationCompositionDurableAdmission(transaction, releaseB.composition.revision);
+            expect(yield* isApplicationCompositionDurableWorkDrained(transaction, releaseB.composition.revision)).toBe(
+              true,
+            );
+            yield* resumeApplicationCompositionDurableAdmission(transaction, releaseB.composition.revision);
+            // Reproduce the existing deployed marker before the corrective migration can run:
+            // restore the published guard and let its owner trigger re-project the journaled answer.
+            const deployed = readFileSync(
+              new URL(`../../drizzle/${migrationName}/migration.sql`, import.meta.url),
+              'utf-8',
+            );
+            yield* execute(
+              sql.raw(
+                deployed.slice(
+                  deployed.indexOf('CREATE OR REPLACE FUNCTION'),
+                  deployed.indexOf('--> statement-breakpoint', deployed.indexOf('CREATE OR REPLACE FUNCTION')),
+                ),
+              ),
+            );
+            yield* execute(sql`update commerce_customer_context.portal_enrollment_owner_operations set status = status
+          where owner_invocation_id = ${claim.ownerInvocationId}::uuid`);
+            yield* closeApplicationCompositionDurableAdmission(transaction, releaseB.composition.revision);
+            expect(yield* isApplicationCompositionDurableWorkDrained(transaction, releaseB.composition.revision)).toBe(
+              false,
+            );
+            for (const status of ['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED']) {
+              yield* execute(sql`savepoint unknown_owner`);
+              yield* execute(sql`update commerce_customer_context.portal_enrollment_owner_operations
+            set status = ${status}, completed_at = case when ${status} = 'IN_PROGRESS' then null else clock_timestamp() end
+            where owner_invocation_id = ${claim.ownerInvocationId}::uuid`);
+              expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseB.composition.revision)).toBe(0);
+              expect(
+                yield* isApplicationCompositionDurableWorkDrained(transaction, releaseB.composition.revision),
+              ).toBe(false);
+              yield* execute(sql`rollback to savepoint unknown_owner`);
+            }
+            // Even an expired retained lease is not a proof of parking. Neither owner nor
+            // Attempt leases may be cleared by publisher accounting.
+            for (const table of ['portal_enrollment_attempts', 'portal_enrollment_owner_operations']) {
+              yield* execute(sql`savepoint retained_lease`);
+              yield* execute(sql`update commerce_customer_context.${sql.identifier(table)}
+            set lease_owner = 'retained-worker', lease_token = ${randomUUID()}::uuid,
+              lease_expires_at = clock_timestamp() - interval '1 second'
+            where portal_enrollment_attempt_id = ${identity.portalEnrollmentAttemptId}::uuid`);
+              expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseB.composition.revision)).toBe(0);
+              expect(
+                yield* isApplicationCompositionDurableWorkDrained(transaction, releaseB.composition.revision),
+              ).toBe(false);
+              yield* execute(sql`rollback to savepoint retained_lease`);
+            }
+            expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseA.composition.revision)).toBe(0);
+            expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseB.composition.revision)).toBe(1);
+            expect(yield* settleParkedEnrollmentPublicationWork(transaction, releaseB.composition.revision)).toBe(0);
+            expect(yield* persistence.read(identity)).toEqual(waiting.attempt);
+            expect(yield* isApplicationCompositionDurableWorkDrained(transaction, releaseB.composition.revision)).toBe(
+              true,
+            );
+            const correction = readFileSync(
+              new URL('../../drizzle/20261024193000_parked-owner-review-publication/migration.sql', import.meta.url),
+              'utf-8',
+            );
+            yield* execute(sql.raw(correction));
+            yield* drainApplicationCompositionAuthority(transaction, releaseB.composition.revision);
+            yield* publishApplicationCompositionAuthority(transaction, {
+              ...releaseC,
+              validUntil: DateTime.add(releaseC.validUntil, { hours: 3 }),
+            });
+            yield* execute(sql`set local role ontos_runtime`);
+            yield* admitEnrollmentAttempt(fixture.invoker, identity, releaseC.composition.revision);
+            const readmitted = yield* persistence.read(identity);
+            expect(readmitted.state).toBe('RECONCILIATION_REQUIRED');
+            expect(readmitted.revision).toBe(waiting.attempt.revision);
+            expect(readmitted.compositionRevision).toBe(releaseC.composition.revision);
+            expect(readmitted.accountSubject).toEqual(waiting.attempt.accountSubject);
+            const operation = yield* persistence.readOperation({
+              ...identity,
+              ownerModuleKey: claim.ownerModuleKey,
+              transitionKey: claim.transitionKey,
+            });
+            expect(operation.ownerInvocationId).toBe(claim.ownerInvocationId);
+            expect(operation.requestDigest).toBe(claim.requestDigest);
+            expect(operation.status).toBe('FAILED');
+            const reconciled = yield* persistence.reconcile(
+              yield* Schema.decodeEffect(ReconcileEnrollmentOutcomeInputSchema)({
+                ...identity,
+                actorPrincipalId: fixture.actorId,
+                expectedRevision: readmitted.revision,
+                outcomeCode: 'party_candidate_matched',
+                ownerInvocationId: claim.ownerInvocationId,
+                ownerModuleKey: claim.ownerModuleKey,
+                reconciliationRef: randomUUID(),
+                resultReference: randomUUID(),
+                status: 'SUCCEEDED',
+                transitionKey: claim.transitionKey,
+              }),
+              'IN_PROGRESS',
+            );
+            expect(reconciled.operation?.status).toBe('SUCCEEDED');
+            yield* execute(sql`reset role`);
+            const [origin] =
+              yield* execute(sql`select composition_revision, continuation_composition_revision, sweep_count
+              from commerce_customer_context.portal_enrollment_attempts
+              where tenant_id = ${identity.tenantId}::uuid
+                and portal_enrollment_attempt_id = ${identity.portalEnrollmentAttemptId}::uuid`);
+            expect(origin).toMatchObject({
+              composition_revision: releaseA.composition.revision,
+              continuation_composition_revision: releaseC.composition.revision,
+              sweep_count: 7,
+            });
+            yield* closeApplicationCompositionDurableAdmission(transaction, releaseC.composition.revision);
+            expect(yield* isApplicationCompositionDurableWorkDrained(transaction, releaseC.composition.revision)).toBe(
+              true,
+            );
+            return yield* Effect.fail(rollback);
+          }),
+        )
+        .pipe(
+          Effect.catchIf(
+            (failure) => failure === rollback,
+            () => Effect.void,
+          ),
+        );
+    }),
+  ),
 );
