@@ -77,6 +77,14 @@ import { peopleModelTransitionFixtureRelationships } from './people-model-transi
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { readReviewedAgentProfiles, reviewedProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
 
+import {
+  admitPostBaselineRelationships,
+  ReviewedPeopleInventorySchema,
+  reviewedPeopleInventorySha256,
+  retailEnrollmentEvidenceSql,
+} from '../people-model-post-baseline.mts';
+import type { RetailEnrollment } from '../people-model-post-baseline.mts';
+
 const TenantIdSchema = PrincipalRefSchema.fields.tenantId;
 const PrincipalIdSchema = PrincipalRefSchema.fields.principalId;
 const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
@@ -287,6 +295,7 @@ const readSqlInventory = (document: MembershipDocument, mode: 'dry-run' | 'apply
         Effect.gen(function* readOnlyInventory() {
           const actorRows = yield* tx
             .select({
+              createdAt: principals.createdAt,
               kind: principals.kind,
               principalId: principals.principalId,
               status: principals.status,
@@ -335,7 +344,19 @@ const readSqlInventory = (document: MembershipDocument, mode: 'dry-run' | 'apply
       in ('core.identity.manage-demo-account','core.identity.configure-agent') order by occurred_at,audit_event_id`,
             'objects',
           );
-          return { actorRows, auditRows, companyRows, membershipRows, membershipsPresent, tenantRows };
+          const retailEnrollments =
+            mode === 'verify'
+              ? yield* tx.execute<RetailEnrollment>(sql.raw(retailEnrollmentEvidenceSql), 'objects')
+              : [];
+          return {
+            actorRows,
+            auditRows,
+            companyRows,
+            membershipRows,
+            membershipsPresent,
+            retailEnrollments,
+            tenantRows,
+          };
         }),
       { accessMode: 'read only', isolationLevel: 'repeatable read' },
     );
@@ -629,6 +650,7 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
     document,
     expectedProfiles,
     input,
+    inventory,
     membershipsPresent: inventory.membershipsPresent,
   };
 });
@@ -779,10 +801,26 @@ const replayStage = (args: TransitionArguments, ready: PreparedTransition, plan:
     }
     yield* verifySchema(ready.client);
     yield* verifySqlTarget(ready);
-    yield* verifyGraph(plan, stage.expected, plan.expected);
+    const fs = yield* FileSystem.FileSystem;
+    const inventoryBytes = yield* fs.readFileString(yield* Config.String('ONTOS_PEOPLE_MODEL_REVIEWED_INVENTORY'));
+    if (hash(inventoryBytes) !== reviewedPeopleInventorySha256) {
+      return yield* fail('Replay requires the exact reviewed SQL inventory SHA');
+    }
+    const baseline = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewedPeopleInventorySchema))(
+      inventoryBytes,
+    );
+    const extraRelationships = yield* admitPostBaselineRelationships({
+      actual: plan.expected,
+      baseline,
+      enrollments: ready.inventory.retailEnrollments,
+      principals: ready.inventory.actorRows,
+      sealed: stage.expected,
+    });
+    const replayExpected = [...stage.expected, ...extraRelationships];
+    yield* verifyGraph(plan, replayExpected, plan.expected);
     const deferred = new Set(stage.artifact.deferredRelationships);
     const actual = ready.input.observed.relationships;
-    const initial = stage.expected.filter(
+    const initial = replayExpected.filter(
       (row) =>
         !deferred.has(v1.Relationship.toJsonString(row)) ||
         actual.some((r) => v1.Relationship.toJsonString(r) === v1.Relationship.toJsonString(row)),
@@ -797,7 +835,7 @@ const replayStage = (args: TransitionArguments, ready: PreparedTransition, plan:
       yield* nativeAuditedReplay(ready);
     }
     if (args.mode === 'verify' || args.mode === applyReplayMode) {
-      yield* verifyGraph(plan, stage.expected, (yield* readGraph(ready.client)).relationships);
+      yield* verifyGraph(plan, replayExpected, (yield* readGraph(ready.client)).relationships);
       yield* verifySqlTarget(ready);
       const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (value) =>
         value.close.pipe(Effect.ignore),
