@@ -27,22 +27,18 @@ export const permissionUniverseUnion = Effect.fn('People.permissionUniverseUnion
   },
 );
 
-/** Restored objects have historical answers; a newly created identity must never get a fabricated old denial. */
-export const classifyPrincipalPermissionCases = Effect.fn('People.classifyPrincipalPermissionCases')(
-  function* classifyPrincipalPermissionCasesEffect(
+/** Object identity, not its type or permission name, determines whether a historical answer exists. */
+export const classifyPermissionCases = Effect.fn('People.classifyPermissionCases')(
+  function* classifyPermissionCasesEffect(
     entries: readonly PermissionUniverseEntry[],
-    archivedPrincipalIds: readonly string[],
+    archivedObjects: readonly (readonly [objectType: string, objectId: string])[],
   ) {
-    const archived = new Set(archivedPrincipalIds);
+    const archived = new Set(yield* Effect.all(archivedObjects.map((object) => permissionEntryKey(object))));
     const restored: PermissionUniverseEntry[] = [];
     const postBaseline: PermissionUniverseEntry[] = [];
     for (const entry of entries) {
-      if (entry[0] !== 'principal' || (entry[2] !== 'operate' && entry[2] !== 'manage_own_credentials')) {
-        return yield* new PermissionUniverseError({
-          reason: 'New non-principal permission cases require explicit policy review',
-        });
-      }
-      (archived.has(entry[1]) ? restored : postBaseline).push(entry);
+      const objectKey = yield* permissionEntryKey(entry.slice(0, 2));
+      (archived.has(objectKey) ? restored : postBaseline).push(entry);
     }
     return { postBaseline, restored };
   },
@@ -66,6 +62,30 @@ export const validatePostBaselinePrincipalPermission = Effect.fn('People.validat
       !input.roleGrantedPrincipalIds.includes(input.subjectPrincipalId)
     ) {
       return yield* new PermissionUniverseError({ reason: 'Unexpected human authority on a post-baseline principal' });
+    }
+    return { currentPolicyExpectationMet: true, historicalAnswer: 'not_applicable' };
+  },
+);
+
+/** Exact self-service resources have no role override: only their own customer may use them. */
+export const validatePostBaselineSelfServicePermission = Effect.fn('People.validatePostBaselineSelfServicePermission')(
+  function* validatePostBaselineSelfServicePermissionEffect(input: {
+    readonly allowed: boolean;
+    readonly permission: string;
+    readonly selfServiceGranteePrincipalId: string;
+    readonly subjectPrincipalId: string;
+  }) {
+    if (
+      !['use', 'direct_use', 'role_use'].includes(input.permission) ||
+      input.selfServiceGranteePrincipalId.length === 0
+    ) {
+      return yield* new PermissionUniverseError({ reason: 'Unsupported post-baseline self-service permission policy' });
+    }
+    const expected = input.permission === 'use' && input.subjectPrincipalId === input.selfServiceGranteePrincipalId;
+    if (input.allowed !== expected) {
+      return yield* new PermissionUniverseError({
+        reason: 'Post-baseline self-service authority differs from its exact customer grant',
+      });
     }
     return { currentPolicyExpectationMet: true, historicalAnswer: 'not_applicable' };
   },

@@ -1,8 +1,9 @@
 import {
   permissionUniverseUnion,
   PermissionUniverseError,
-  classifyPrincipalPermissionCases,
+  classifyPermissionCases,
   validatePostBaselinePrincipalPermission,
+  validatePostBaselineSelfServicePermission,
 } from '../people-model-permission-universe.mts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
@@ -17,6 +18,8 @@ import {
 import type { SpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-rpc.ts';
 
 const tenantId = 'tenant';
+const unrelatedHuman = 'unrelated-human';
+const businessPermissionType = 'business_permission';
 const cases = serviceActionPermissionCases(
   [
     {
@@ -246,13 +249,13 @@ it.effect(
     Effect.gen(function* postBaseline() {
       const restoredService = 'restored-service';
       const futureSignup = 'future-signup';
-      const classified = yield* classifyPrincipalPermissionCases(
+      const classified = yield* classifyPermissionCases(
         [
           ['principal', restoredService, 'operate'],
           ['principal', futureSignup, 'manage_own_credentials'],
           ['principal', 'future-invitee', 'operate'],
         ],
-        [restoredService],
+        [['principal', restoredService]],
       );
       expect(classified.restored).toEqual([['principal', restoredService, 'operate']]);
       expect(classified.postBaseline).toHaveLength(2);
@@ -268,7 +271,7 @@ it.effect(
       });
       expect(
         Schema.is(PermissionUniverseError)(
-          yield* validatePostBaselinePrincipalPermission({ ...policy, subjectPrincipalId: 'unrelated-human' }).pipe(
+          yield* validatePostBaselinePrincipalPermission({ ...policy, subjectPrincipalId: unrelatedHuman }).pipe(
             Effect.flip,
           ),
         ),
@@ -276,16 +279,63 @@ it.effect(
       yield* validatePostBaselinePrincipalPermission({
         ...policy,
         allowed: false,
-        subjectPrincipalId: 'unrelated-human',
+        subjectPrincipalId: unrelatedHuman,
       });
       yield* validatePostBaselinePrincipalPermission({
         ...policy,
         roleGrantedPrincipalIds: ['explicit-role-holder'],
         subjectPrincipalId: 'explicit-role-holder',
       });
+      expect(yield* classifyPermissionCases([['action', 'future-action', 'execute']], [])).toEqual({
+        postBaseline: [['action', 'future-action', 'execute']],
+        restored: [],
+      });
+    }),
+);
+
+it.effect(
+  'classifies arbitrary new object types without fabricating old denials and checks exact self-service holders',
+  () =>
+    Effect.gen(function* selfServiceObjects() {
+      const restoredPermissionId = 'restored-permission';
+      const entries = [
+        [businessPermissionType, 'new-customer-permission', 'use'],
+        ['resource', 'future-party-resource', 'read'],
+        [businessPermissionType, restoredPermissionId, 'direct_use'],
+        ['principal', restoredPermissionId, 'operate'],
+      ] as const;
+      expect(yield* classifyPermissionCases(entries, [[businessPermissionType, restoredPermissionId]])).toEqual({
+        postBaseline: [entries[0], entries[1], entries[3]],
+        restored: [entries[2]],
+      });
+      const policy = {
+        allowed: true,
+        permission: 'use',
+        selfServiceGranteePrincipalId: 'signup-customer',
+        subjectPrincipalId: 'signup-customer',
+      };
+      expect(yield* validatePostBaselineSelfServicePermission(policy)).toMatchObject({
+        historicalAnswer: 'not_applicable',
+      });
+      for (const subjectPrincipalId of ['unrelated-human', 'tenant-admin', 'company-admin', 'auditor']) {
+        yield* validatePostBaselineSelfServicePermission({ ...policy, allowed: false, subjectPrincipalId });
+        expect(
+          Schema.is(PermissionUniverseError)(
+            yield* validatePostBaselineSelfServicePermission({ ...policy, subjectPrincipalId }).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+      }
+      for (const permission of ['role_use', 'direct_use']) {
+        yield* validatePostBaselineSelfServicePermission({ ...policy, allowed: false, permission });
+        expect(
+          Schema.is(PermissionUniverseError)(
+            yield* validatePostBaselineSelfServicePermission({ ...policy, permission }).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+      }
       expect(
         Schema.is(PermissionUniverseError)(
-          yield* classifyPrincipalPermissionCases([['action', 'unexpected', 'execute']], []).pipe(Effect.flip),
+          yield* validatePostBaselineSelfServicePermission({ ...policy, allowed: false }).pipe(Effect.flip),
         ),
       ).toBe(true);
     }),
