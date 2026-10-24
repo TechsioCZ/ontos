@@ -4,7 +4,12 @@ import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
-import { applicationCompositionAuthority } from '../packages/core-runtime/src/db/schema.ts';
+import {
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
+  outboxDeliveries,
+  outboxMessages,
+} from '../packages/core-runtime/src/db/schema.ts';
 import { validateActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
@@ -21,6 +26,63 @@ import {
 
 const unavailable = (reason: string) =>
   new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
+
+/** Logs only controlled phase names and explicit blocker metadata, never request bodies or credentials. */
+export const withApplicationCompositionPublicationProgress = <
+  Value,
+  Failure,
+  Requirements,
+  ProgressRequirements = never,
+>(
+  phase: string,
+  operation: Effect.Effect<Value, Failure, Requirements>,
+  progress?: Effect.Effect<void, never, ProgressRequirements>,
+) =>
+  Effect.gen(function* publicationProgress() {
+    yield* Effect.logInfo('Application Composition publication started', { phase });
+    const report = Effect.logInfo('Application Composition publication waiting', { phase }).pipe(
+      Effect.andThen(progress ?? Effect.void),
+    );
+    const value = yield* Effect.raceFirst(
+      operation,
+      Effect.forever(Effect.sleep(Duration.seconds(30)).pipe(Effect.andThen(report))),
+    );
+    yield* Effect.logInfo('Application Composition publication completed', { phase });
+    return value;
+  });
+
+/** Ten oldest identifiers per blocker category bound logs without exposing business payloads. */
+export const logApplicationCompositionDrainBlockers = Effect.gen(function* describeDrainBlockers() {
+  const database = yield* CoreDatabase;
+  const [blockers] = yield* database.executor.execute<{
+    readonly deliveries: unknown;
+    readonly durable: unknown;
+    readonly messages: unknown;
+  }>(
+    sql`select
+      (select coalesce(json_agg(b), '[]'::json) from (
+        select owner_module_key, original_revision, work_id, created_at
+        from ${applicationCompositionDurableWork} order by created_at, owner_module_key, work_id limit 10
+      ) b) as durable,
+      (select coalesce(json_agg(b), '[]'::json) from (
+        select outbox_message_id, producer_module_key, topic, created_at
+        from ${outboxMessages} where matched_at is null order by created_at, outbox_message_id limit 10
+      ) b) as messages,
+      (select coalesce(json_agg(b), '[]'::json) from (
+        select outbox_delivery_id, outbox_message_id, worker_key, consumer_module_key, status,
+          attempts_count, available_at, claim_expires_at
+        from ${outboxDeliveries} where status <> 'done' order by created_at, outbox_delivery_id limit 10
+      ) b) as deliveries`,
+    'objects',
+  );
+  yield* Effect.logInfo('Application Composition drain blockers (up to 10 oldest per category)', blockers);
+}).pipe(
+  Effect.timeout(Duration.seconds(5)),
+  Effect.matchEffect({
+    onFailure: () => Effect.logWarning('Application Composition drain blocker diagnostics unavailable'),
+    onSuccess: () => Effect.void,
+  }),
+);
 
 /** Administrative publication uses the existing native pool and distinct configured database identities. */
 const ApplicationCompositionAuthorityAdminDatabaseConfigLive = Layer.effect(
@@ -63,7 +125,10 @@ const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withS
         // on a table lock retained by the publication serialization transaction itself.
         const connection = yield* client.reserve;
         yield* Effect.acquireRelease(
-          connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
+          withApplicationCompositionPublicationProgress(
+            'acquire publication serialization lock',
+            connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
+          ),
           () =>
             connection.executeValues(`select pg_advisory_unlock(${lock.key})`, [...lock.params]).pipe(
               Effect.flatMap((rows) =>
@@ -145,27 +210,45 @@ const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuth
     }
     yield* Effect.gen(function* finishOldCompositionWork() {
       if (current.phase === 'active') {
-        yield* database.executor.transaction((transaction) =>
-          closeApplicationCompositionDurableAdmission(transaction, current.revision),
+        yield* withApplicationCompositionPublicationProgress(
+          'close durable admission (authority fence)',
+          database.executor.transaction((transaction) =>
+            closeApplicationCompositionDurableAdmission(transaction, current.revision),
+          ),
         );
-        while (
-          !(yield* database.executor.transaction((transaction) =>
-            isApplicationCompositionDurableWorkDrained(transaction, current.revision),
-          ))
-        ) {
-          yield* Effect.sleep(Duration.seconds(3));
-        }
-        yield* database.executor.transaction((transaction) =>
-          drainApplicationCompositionAuthority(transaction, current.revision),
+        yield* withApplicationCompositionPublicationProgress(
+          'drain durable workflows',
+          Effect.gen(function* waitForDurableWork() {
+            while (
+              !(yield* database.executor.transaction((transaction) =>
+                isApplicationCompositionDurableWorkDrained(transaction, current.revision),
+              ))
+            ) {
+              yield* Effect.sleep(Duration.seconds(3));
+            }
+          }),
+          logApplicationCompositionDrainBlockers,
+        );
+        yield* withApplicationCompositionPublicationProgress(
+          'enter draining (authority fence)',
+          database.executor.transaction((transaction) =>
+            drainApplicationCompositionAuthority(transaction, current.revision),
+          ),
         );
       }
-      while (
-        !(yield* database.executor.transaction((transaction) =>
-          isApplicationCompositionWorkDrained(transaction, current.revision),
-        ))
-      ) {
-        yield* Effect.sleep(Duration.seconds(3));
-      }
+      yield* withApplicationCompositionPublicationProgress(
+        'drain unmatched messages and unfinished deliveries',
+        Effect.gen(function* waitForOutboxWork() {
+          while (
+            !(yield* database.executor.transaction((transaction) =>
+              isApplicationCompositionWorkDrained(transaction, current.revision),
+            ))
+          ) {
+            yield* Effect.sleep(Duration.seconds(3));
+          }
+        }),
+        logApplicationCompositionDrainBlockers,
+      );
     }).pipe(
       Effect.timeoutOrElse({
         duration: Duration.millis(Math.min(Duration.toMillis(Duration.minutes(20)), lease.remaining - 30_000)),
@@ -298,8 +381,9 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
         return yield* unavailable('Application Composition freshness cannot regress');
       }
       const value = yield* publishProviderPointer;
-      yield* database.executor.transaction((transaction) =>
-        publishApplicationCompositionAuthority(transaction, approved),
+      yield* withApplicationCompositionPublicationProgress(
+        'renew native authority',
+        database.executor.transaction((transaction) => publishApplicationCompositionAuthority(transaction, approved)),
       );
       return value;
     }
@@ -319,11 +403,14 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
         yield* prepareApplicationCompositionDrain(current);
       }
     }
-    return yield* database.executor.transaction((transaction) =>
-      Effect.gen(function* promoteAndPublish() {
-        yield* publishApplicationCompositionAuthority(transaction, approved);
-        return yield* publishProviderPointer;
-      }),
+    return yield* withApplicationCompositionPublicationProgress(
+      'promote native authority and publish provider pointer',
+      database.executor.transaction((transaction) =>
+        Effect.gen(function* promoteAndPublish() {
+          yield* publishApplicationCompositionAuthority(transaction, approved);
+          return yield* publishProviderPointer;
+        }),
+      ),
     );
   });
   return yield* withApplicationCompositionPublicationLock(publication);
