@@ -298,6 +298,23 @@ export type {
 } from './permissions/principal-ref.ts';
 export { PrincipalEligibilityLive, principalEligibilityForTransaction } from './permissions/principal-eligibility.ts';
 export {
+  activeAssignmentMember,
+  AssigneeIneligible,
+  AssignablePrincipals,
+  AssignablePrincipalsUnavailable,
+  loadAssignablePrincipalDirectory,
+  loadAssignmentPreflightSnapshot,
+  makeAssignablePrincipals,
+  readAssignablePrincipals,
+  resolveAssignee,
+} from './auth/assignable-principals.ts';
+export type {
+  AssignablePrincipal,
+  AssignablePrincipalDirectory,
+  AssignmentCompanyScope,
+  AssignmentDirectoryMember,
+} from './auth/assignable-principals.ts';
+export {
   AUTHORIZATION_MUTATION_STATES,
   AUTHORIZATION_MUTATION_TRANSITIONS,
   AuthorizationMutationJournal,
