@@ -47,6 +47,8 @@ const graph = (initial: readonly v1.Relationship[] = []) => {
     checkBulkPermissions: () => Effect.die('unexpected permission check'),
     checkPermission: () => Effect.die('unexpected permission check'),
     close: () => {},
+    diffSchema: () => Effect.die('unexpected schema diff'),
+    readSchema: () => Effect.die('unexpected schema read'),
     readRelationships: (request) =>
       Effect.suspend(() => {
         reads.push(request);

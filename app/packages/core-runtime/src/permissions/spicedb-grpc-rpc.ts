@@ -54,7 +54,9 @@ export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMil
     checkBulkPermissions: call(promises.checkBulkPermissions.bind(promises)),
     checkPermission: call(promises.checkPermission.bind(promises)),
     close: () => client.close(),
+    diffSchema: call(promises.diffSchema.bind(promises)),
     readRelationships: call(promises.readRelationships.bind(promises)),
+    readSchema: call(promises.readSchema.bind(promises)),
     writeRelationships: call(promises.writeRelationships.bind(promises)),
     writeSchema: call(promises.writeSchema.bind(promises)),
   };

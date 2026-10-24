@@ -17,6 +17,13 @@ import {
   CommerceCoreIdentityClientConfig,
   commerceCoreIdentityClientOptions,
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
+import {
+  readRetailEnrollmentRestartContext,
+  retailRestartIdentity,
+  RETAIN_RETAIL_RESULTS_TRANSITION,
+} from '../journeys/retail-enrollment-restart.ts';
+import { retailEnrollmentRetainedResultsOwnerEffect } from '../journeys/retail-enrollment-restart-owner.ts';
+import type { RetailEnrollmentRestartContext } from '../journeys/retail-enrollment-restart.ts';
 import { EnrollmentDigestSchema } from '../../../shared/enrollment-contracts.ts';
 import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../../shared/portal-auth-enrollment-reference.ts';
 import type {
@@ -203,6 +210,18 @@ const succeededResultReference = (
     ),
   );
 
+const restartContextFor = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  context: CommerceEnrollmentOwnerEffectContext,
+) =>
+  Option.isNone(run) || Option.isNone(retailRestartIdentity(context.attempt))
+    ? Effect.succeedNone
+    : run.value(
+        { legalEntityId: context.subject.sellingLegalEntityRef.resourceId, tenantId: context.attempt.tenantId },
+        (transaction) =>
+          readRetailEnrollmentRestartContext(transaction, context.attempt.portalEnrollmentAttemptId, false),
+      );
+
 const retailDigestFor = (
   intent: RetailSelfEnrollmentStepIntent,
   transition: JourneyTransitionSpec,
@@ -280,6 +299,7 @@ export const verifiedRetailEnrollmentEvidence = Effect.fn(
   },
   candidate: (typeof PartyMatchRequestSchema.Type)['candidate'],
   accountLookup: CommercePortalAuthAccountLookup,
+  restart?: RetailEnrollmentRestartContext,
 ) {
   const { attempt, operations, sellingLegalEntityId } = input;
   const providerOperation = operations.find(
@@ -290,18 +310,20 @@ export const verifiedRetailEnrollmentEvidence = Effect.fn(
       operation.tenantId === attempt.tenantId &&
       operation.portalEnrollmentAttemptId === attempt.portalEnrollmentAttemptId,
   );
+  const providerOwnerInvocationId = restart?.providerOwnerInvocationId ?? providerOperation?.ownerInvocationId;
   const { accountSubject } = attempt;
   const [candidateEvidenceRef] = candidate.evidenceRefs;
   if (
-    attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
+    (attempt.journey !== 'RETAIL_SELF_ENROLLMENT' &&
+      (attempt.journey !== 'EXISTING_ACCOUNT' || restart === undefined)) ||
     attempt.targetLegalEntityId !== sellingLegalEntityId ||
-    providerOperation === undefined ||
+    providerOwnerInvocationId === undefined ||
     accountSubject === undefined ||
     candidateEvidenceRef === undefined ||
     accountSubject.authenticationNamespaceId !== 'ontos.commerce.portal.better-auth.v1' ||
     !(yield* accountLookup
       .verifiedEmailForOwnerInvocation({
-        ownerInvocationId: providerOperation.ownerInvocationId,
+        ownerInvocationId: providerOwnerInvocationId,
         providerSubjectId: accountSubject.providerSubjectId,
       })
       .pipe(
@@ -324,8 +346,9 @@ export const verifiedRetailEnrollmentEvidence = Effect.fn(
     candidateEvidenceRef,
     emailOwnership: 'VERIFIED' as const,
     enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
-    journey: 'RETAIL_SELF_ENROLLMENT' as const,
-    providerOwnerInvocationId: providerOperation.ownerInvocationId,
+    journey:
+      attempt.journey === 'EXISTING_ACCOUNT' ? ('EXISTING_ACCOUNT' as const) : ('RETAIL_SELF_ENROLLMENT' as const),
+    providerOwnerInvocationId,
     providerSubjectId: accountSubject.providerSubjectId,
     sellingLegalEntityId,
     tenantId: attempt.tenantId,
@@ -363,6 +386,7 @@ const partyEntry = (
       },
       { concurrency: 2 },
     );
+    const restart = yield* restartContextFor(run, context);
     return registered(
       retailPartyCandidateOwnerEffect({
         candidate,
@@ -378,10 +402,28 @@ const partyEntry = (
           },
           candidate,
           accountLookup,
+          Option.getOrUndefined(restart),
         ),
       }),
       requestDigest,
     );
+  });
+
+const retainResultsEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.retainResults')(function* retainResults(transition, context) {
+    const proof = yield* restartContextFor(run, context);
+    if (Option.isNone(proof)) {
+      return none;
+    }
+    if (Option.isNone(run)) {
+      return none;
+    }
+    const requestDigest = yield* retailDigestFor(
+      { sellingLegalEntityRef: context.subject.sellingLegalEntityRef, step: 'PORTAL_ACCOUNT' },
+      transition,
+      context,
+    );
+    return registered(retailEnrollmentRetainedResultsOwnerEffect(run.value, context.attempt), requestDigest);
   });
 
 const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
@@ -398,15 +440,22 @@ const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransa
         return none;
       }
       const partyRef = context.subject.partyRef.value;
-      const requestDigest = yield* retailDigestFor(
+      const { requestDigest, restart } = yield* Effect.all(
         {
-          partyRef,
-          sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
-          step: 'RETAIL_CUSTOMER_DIRECTORY',
+          requestDigest: retailDigestFor(
+            {
+              partyRef,
+              sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
+              step: 'RETAIL_CUSTOMER_DIRECTORY',
+            },
+            transition,
+            context,
+          ),
+          restart: restartContextFor(run, context),
         },
-        transition,
-        context,
+        { concurrency: 1 },
       );
+      const retainedOwnerInvocationIds = Option.getOrUndefined(restart)?.directoryOwnerInvocationIds;
       return registered(
         retailCustomerDirectoryOwnerEffect({
           compositionRevision: context.attempt.compositionRevision,
@@ -414,6 +463,7 @@ const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransa
           partyRef,
           registration: registration.value,
           requestCorrelation: context.requestCorrelation,
+          retainedOwnerInvocationIds,
           tenantId: context.attempt.tenantId,
           validFrom: DateTime.formatIso(context.attempt.createdAt),
         }),
@@ -604,10 +654,13 @@ const bindProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionR
     const { partyRef } = context.subject;
     // The binding attaches to the profile the ensure transition durably recorded; it never names a
     // profile the owner journal has not already proven.
+    const restart = yield* restartContextFor(run, context);
     const profileResourceId = succeededResultReference(
       context,
       COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
       ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
+    ).pipe(
+      Option.orElse(() => (Option.isSome(restart) ? Option.fromNullishOr(restart.value.profileId) : Option.none())),
     );
     if (Option.isNone(partyRef) || Option.isNone(profileResourceId)) {
       return none;
@@ -1095,6 +1148,10 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     };
     const portalAccount = portalAccountEntry(accountLookup, accountCreationReconciliation);
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
+      [
+        registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, RETAIN_RETAIL_RESULTS_TRANSITION),
+        retainResultsEntry(ownerTransactionRun),
+      ],
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
         partyEntry(ownerTransactionRun, accountLookup),

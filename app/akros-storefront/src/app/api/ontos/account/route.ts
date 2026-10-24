@@ -6,6 +6,7 @@ import {
   readAccount,
   registrationInput,
 } from "@/ontos/account";
+import type { AccountSubmissionResponse } from "@/ontos/account";
 import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
 
 const noStore = { "cache-control": "no-store" };
@@ -78,7 +79,12 @@ export async function POST(request: Request) {
     const result = (await response.json()) as { code?: string; outcome?: string };
     if (!response.ok)
       return Response.json(
-        { message: accountMessage(response.status, result.code) },
+        {
+          message: accountMessage(response.status, result.code),
+          ...(data.operation === "login" && result.code === "verification_required"
+            ? { code: "verification_required" as const }
+            : {}),
+        } satisfies AccountSubmissionResponse,
         {
           status: response.status,
           headers: noStore,

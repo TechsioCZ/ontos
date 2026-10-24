@@ -17,7 +17,7 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
-import { failRejectedEnrollmentAttempt } from '../attempts/attempt-persistence.ts';
+import { admitEnrollmentAttempt, failRejectedEnrollmentAttempt } from '../attempts/attempt-persistence.ts';
 import type {
   ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
@@ -273,6 +273,10 @@ const readJournal = (
   );
 
 interface ContinuationSeams {
+  readonly admit: (
+    input: ReadEnrollmentAttemptInput,
+    compositionRevision: string,
+  ) => Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly compositionRevision: string;
   readonly fail: (
     input: ReadEnrollmentAttemptInput,
@@ -418,7 +422,11 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
 ): Effect.fn.Return<PassResult, CommerceEnrollmentAttemptError> {
   yield* seams.lease;
   const store = seams.store(input);
-  const attempt = yield* store.read(input);
+  let attempt = yield* store.read(input);
+  if (attempt.compositionRevision !== seams.compositionRevision && !isEnrollmentAttemptTerminal(attempt.state)) {
+    yield* seams.admit(input, seams.compositionRevision);
+    attempt = yield* store.read(input);
+  }
   if (attempt.compositionRevision !== seams.compositionRevision) {
     return yield* attemptUnavailable(
       'The durable Attempt belongs to a different Application Composition than this continuation pass',
@@ -534,6 +542,7 @@ const continuationSweepPassForSnapshot = (
     Effect.asVoid,
   );
   const seams: ContinuationSeams = {
+    admit: ports.admit,
     compositionRevision,
     fail: ports.fail,
     lease,
@@ -557,14 +566,7 @@ const continuationSweepPassForSnapshot = (
         Effect.flatMap(() => ports.due.claimSweep(input)),
       ),
     compositionRevision,
-    listDue: (input: ListDueEnrollmentAttemptsInput) =>
-      lease.pipe(
-        Effect.flatMap(() => ports.due.listDue(input)),
-        Effect.filterOrFail(
-          (rows) => rows.every((attempt) => attempt.compositionRevision === compositionRevision),
-          () => attemptUnavailable('The due journal contains Attempts from a different continuation release'),
-        ),
-      ),
+    listDue: (input: ListDueEnrollmentAttemptsInput) => lease.pipe(Effect.flatMap(() => ports.due.listDue(input))),
   });
 };
 
@@ -632,6 +634,10 @@ export const CommerceEnrollmentContinuationLive = (
       );
       const due = commerceEnrollmentDueAttemptStoreForRun(runner.runWorker);
       const passPorts: Parameters<typeof continuationSweepPassForSnapshot>[1] = {
+        admit: (input, compositionRevision) =>
+          runner.run({ tenantId: input.tenantId }, (transaction) =>
+            admitEnrollmentAttempt(transaction, input, compositionRevision),
+          ),
         due,
         fail: (input, transition) =>
           runner.run({ tenantId: input.tenantId }, (transaction) =>

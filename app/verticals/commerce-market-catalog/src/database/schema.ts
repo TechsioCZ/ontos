@@ -1,12 +1,25 @@
 /* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical database contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
-import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 
 export const COMMERCE_MARKET_CATALOG_SCHEMA_NAME = 'commerce_market_catalog';
 
 export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'market_catalog_completeness_generations',
   'market_definition_revisions',
   'market_lifecycle_periods',
@@ -16,6 +29,21 @@ export const COMMERCE_MARKET_CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const commerceMarketCatalogSchema = pgSchema(COMMERCE_MARKET_CATALOG_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = commerceMarketCatalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('commerce_market_catalog_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const periodEnd = () => timestamp('effective_to', { withTimezone: true });
@@ -245,6 +273,7 @@ export const marketCatalogCompletenessGenerations = commerceMarketCatalogSchema.
 );
 
 export const COMMERCE_MARKET_CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
@@ -254,6 +283,7 @@ export const COMMERCE_MARKET_CATALOG_TABLES = [
 ] as const;
 
 const commerceMarketCatalogDatabaseSchema = {
+  gatewayAssertionRedemptions,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,

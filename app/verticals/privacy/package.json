@@ -26,6 +26,7 @@
     "./domain/privacy-responsibility-assignment": "./shared/domain/privacy-responsibility-assignment.ts",
     "./domain/privacy-retention-disposition": "./shared/domain/privacy-retention-disposition.ts",
     "./domain/privacy-retention-rule": "./shared/domain/privacy-retention-rule.ts",
+    "./domain/privacy-subject-identity": "./shared/domain/privacy-subject-identity.ts",
     "./domain/privacy-subject": "./shared/domain/privacy-subject.ts",
     "./domain/privacy-technology-consent": "./shared/domain/privacy-technology-consent.ts",
     "./domain/privacy-terms-consent-boundary": "./shared/domain/privacy-terms-consent-boundary.ts",

@@ -267,6 +267,7 @@ const makeServer = (
           token: 'fixture-gateway-token',
         });
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const dependencies = Layer.mergeAll(
       Layer.succeed(ActionRuntime, actionRuntime.runtime),

@@ -652,6 +652,9 @@ export const TenantDirectory = ({
             const id = entry.counterpartyRef.resourceId;
             const dossier = dossierOf(id);
             const leases = leasesOf(id);
+            const contactDetails = [entry.email, entry.phone]
+              .filter((value) => value !== null && value !== undefined && value !== '')
+              .join(' · ');
             return (
               <a className="sp-tenant-contact" href={dossierHref(id)} key={id}>
                 <div className="sp-tenant-heading">
@@ -668,9 +671,7 @@ export const TenantDirectory = ({
                     : [...new Set(leases.map((record) => unitName(record.unitRef.resourceId)))].join(', ')}{' '}
                   · {contactCountLabel(dossier?.contacts.length ?? 0)}
                 </span>
-                <span className="sp-tenant-muted">
-                  {entry.email ?? 'E-mail neuveden'} · {entry.phone ?? 'Telefon neuveden'}
-                </span>
+                {contactDetails.length > 0 && <span className="sp-tenant-muted">{contactDetails}</span>}
                 <span className="sp-tenant-muted">Kontakty, historie a obchodní případ →</span>
               </a>
             );

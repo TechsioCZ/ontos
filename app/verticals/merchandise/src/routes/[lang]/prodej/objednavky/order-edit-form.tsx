@@ -534,7 +534,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
         </div>
       </SectionCard>
 
-      <SectionCard title="Doprava (simulace)">
+      <SectionCard title="Doprava">
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-[minmax(0,1fr)_10rem]">
           <SelectTemplate
             items={methodItems}

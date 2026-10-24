@@ -18,6 +18,7 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly force_rls_count: number;
   readonly journal_count: number;
   readonly policy_count: number;
+  readonly redemption_safe: boolean;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
   readonly runtime_create: boolean;
@@ -74,16 +75,25 @@ const verification = Effect.gen(function* verifyTaxDatabase() {
 
   const [infrastructure] = yield* database.executor
     .execute<InfrastructureRow>(
-      sql`select count(distinct relation.oid)::integer as table_count, count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count, (select count(*)::integer from pg_catalog.pg_policy as policy inner join pg_catalog.pg_class as governed on governed.oid = policy.polrelid inner join pg_catalog.pg_namespace as governed_namespace on governed_namespace.oid = governed.relnamespace where governed_namespace.nspname = ${TAX_SCHEMA_NAME}) as policy_count, (select count(*)::integer from pg_catalog.pg_trigger as trigger_record inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid inner join pg_catalog.pg_namespace as trigger_namespace on trigger_namespace.oid = triggered.relnamespace where trigger_namespace.nspname = ${TAX_SCHEMA_NAME} and trigger_record.tgname like 'tax_%_append_only' and not trigger_record.tgisinternal) as append_only_trigger_count, (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_tax') as journal_count, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'USAGE') as runtime_usage, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'CREATE') as runtime_create, runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls from pg_catalog.pg_class as relation inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace cross join pg_catalog.pg_roles as runtime_role where namespace.nspname = ${TAX_SCHEMA_NAME} and relation.relkind in ('r', 'p') and runtime_role.rolname = 'ontos_runtime' group by runtime_role.rolsuper, runtime_role.rolbypassrls`,
+      sql`select
+      exists (select 1 from pg_catalog.pg_class redemption
+        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
+        where redemption_namespace.nspname = 'tax' and redemption.relname = 'gateway_assertion_redemptions'
+          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
+          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe, count(distinct relation.oid)::integer as table_count, count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count, (select count(*)::integer from pg_catalog.pg_policy as policy inner join pg_catalog.pg_class as governed on governed.oid = policy.polrelid inner join pg_catalog.pg_namespace as governed_namespace on governed_namespace.oid = governed.relnamespace where governed_namespace.nspname = ${TAX_SCHEMA_NAME}) as policy_count, (select count(*)::integer from pg_catalog.pg_trigger as trigger_record inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid inner join pg_catalog.pg_namespace as trigger_namespace on trigger_namespace.oid = triggered.relnamespace where trigger_namespace.nspname = ${TAX_SCHEMA_NAME} and trigger_record.tgname like 'tax_%_append_only' and not trigger_record.tgisinternal) as append_only_trigger_count, (select count(*)::integer from pg_catalog.pg_class as journal inner join pg_catalog.pg_namespace as journal_namespace on journal_namespace.oid = journal.relnamespace where journal_namespace.nspname = 'drizzle' and journal.relname = '__drizzle_migrations_tax') as journal_count, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'USAGE') as runtime_usage, has_schema_privilege('ontos_runtime', ${TAX_SCHEMA_NAME}, 'CREATE') as runtime_create, runtime_role.rolsuper as role_super, runtime_role.rolbypassrls as role_bypass_rls from pg_catalog.pg_class as relation inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace cross join pg_catalog.pg_roles as runtime_role where namespace.nspname = ${TAX_SCHEMA_NAME} and relation.relkind in ('r', 'p') and runtime_role.rolname = 'ontos_runtime' group by runtime_role.rolsuper, runtime_role.rolbypassrls`,
       'objects',
     )
     .pipe(Effect.mapError(() => new TaxVerificationError({ reason: 'Unable to verify Tax RLS and grants' })));
   if (
     infrastructure === undefined ||
+    !infrastructure.redemption_safe ||
     infrastructure.table_count !== TAX_TABLES.length ||
-    infrastructure.force_rls_count !== TAX_TABLES.length ||
+    infrastructure.force_rls_count !== TAX_TABLES.length - 1 ||
     infrastructure.policy_count !== expectedPolicyCount ||
-    infrastructure.append_only_trigger_count !== TAX_TABLES.length ||
+    infrastructure.append_only_trigger_count !== TAX_TABLES.length - 1 ||
     infrastructure.journal_count !== 1 ||
     !infrastructure.runtime_usage ||
     infrastructure.runtime_create ||

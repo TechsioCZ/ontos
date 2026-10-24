@@ -1,4 +1,5 @@
 import { PrivacySubjectSchema } from '@app/privacy/domain/privacy-subject';
+import type { PrivacyNoticeVersion } from '@app/privacy/domain/privacy-notice-version';
 import { Config, DateTime, Effect, Redacted, Schema } from 'effect';
 import type { ConsentScope } from '@app/consent-authority-contracts';
 import {
@@ -143,6 +144,58 @@ export const readCustomerPrivacySubject = Effect.fn('CustomerConsent.readSubject
   }
   return subject;
 });
+const matchesCustomerNewsletterNotice = (
+  scope: CustomerConsentScope,
+  { consentScope, template }: CustomerNewsletterCatalog,
+  notice: PrivacyNoticeVersion,
+): boolean => {
+  const expectedFacts = [
+    ['PRIVACY_SUBJECT', consentScope.privacySubjectRef.resourceId],
+    ['CONTROLLER_SCOPE', consentScope.controllerRef],
+    ['PROCESSING_PURPOSE', consentScope.processingPurposeRef.resourceId],
+    ['PROCESSING_PURPOSE_VERSION', consentScope.purposeVersionRef],
+    ['CHANNEL', 'EMAIL'],
+  ];
+  return (
+    notice.noticeRef.tenantId === scope.tenantId &&
+    notice.noticeRef.resourceId === scope.partyId &&
+    notice.wording === template.wording &&
+    notice.contentIdentity === template.contentIdentity &&
+    notice.language === template.language &&
+    notice.evidenceArtifactRef === template.evidenceArtifactRef &&
+    notice.effectiveFrom === template.effectiveFrom &&
+    notice.effectiveTo === template.effectiveTo &&
+    notice.applicableScope.operation === 'NEWSLETTER_CONSENT' &&
+    notice.applicableScope.processingScopeRef.scopeId === consentScope.scopeRef &&
+    notice.applicableScope.facts.length === expectedFacts.length &&
+    expectedFacts.every(([dimension, value]) =>
+      notice.applicableScope.facts.some((fact) => fact.dimension === dimension && fact.value === value),
+    )
+  );
+};
+
+/** Reuse only an unambiguous native owner record for this customer's exact current notice. */
+export const selectCustomerNewsletterNotice = (
+  scope: CustomerConsentScope,
+  catalog: CustomerNewsletterCatalog,
+  notices: readonly PrivacyNoticeVersion[],
+) => {
+  const matches = notices.filter((notice) => matchesCustomerNewsletterNotice(scope, catalog, notice));
+  return matches.length > 1 ? Effect.fail(consentConflict()) : Effect.succeed(matches[0]);
+};
+
+const readCustomerNoticeVersions = Effect.fn('CustomerConsent.readNoticeVersions')(function* readNoticeVersions(
+  scope: CustomerConsentScope,
+) {
+  const gateway = yield* acquireCustomerPrivacyGateway(scope);
+  return yield* executeNoticeVersionsWithAuthorization(
+    { asOf: DateTime.formatIso(yield* DateTime.now), languages: ['cs'], noticeRefs: [scope.partyId] },
+    Redacted.value(gateway.credential),
+    scope.requestCorrelation,
+    gateway.options,
+  ).pipe(Effect.mapError(consentUnavailable));
+});
+
 export const prepareCustomerNewsletterNotice = Effect.fn('CustomerConsent.prepareNotice')(function* prepareNotice(
   scope: CustomerConsentScope,
   catalog: CustomerNewsletterCatalog,
@@ -171,9 +224,14 @@ export const prepareCustomerNewsletterNotice = Effect.fn('CustomerConsent.prepar
       return yield* Effect.fail(consentUnavailable());
     }
   }
+  const notices = yield* readCustomerNoticeVersions(scope);
+  const existing = yield* selectCustomerNewsletterNotice(scope, catalog, notices.items);
+  if (existing !== undefined) {
+    return existing;
+  }
   const { consentScope, template } = catalog;
   const gateway = yield* acquireCustomerPrivacyGateway(scope);
-  // Caller supplies a real notice collection identity; only the native owner creates/returns the immutable version.
+  // Only a missing native record is created; a completed Action is not a repeat-read protocol.
   return yield* executeCreateNoticeVersionWithAuthorization(
     {
       input: {
@@ -190,6 +248,7 @@ export const prepareCustomerNewsletterNotice = Effect.fn('CustomerConsent.prepar
         },
         contentIdentity: template.contentIdentity,
         effectiveFrom: template.effectiveFrom,
+        effectiveTo: template.effectiveTo,
         evidenceArtifactRef: template.evidenceArtifactRef,
         language: template.language,
         wording: template.wording,
@@ -210,36 +269,10 @@ export const readExactCustomerNotice = Effect.fn('CustomerConsent.readExactNotic
   catalog: CustomerNewsletterCatalog,
   versionId: string,
 ) {
-  const gateway = yield* acquireCustomerPrivacyGateway(scope);
-  const result = yield* executeNoticeVersionsWithAuthorization(
-    { asOf: DateTime.formatIso(yield* DateTime.now), languages: ['cs'], noticeRefs: [scope.partyId] },
-    Redacted.value(gateway.credential),
-    scope.requestCorrelation,
-    gateway.options,
-  ).pipe(Effect.mapError(consentUnavailable));
+  const result = yield* readCustomerNoticeVersions(scope);
   const matches = result.items.filter((n) => n.versionId === versionId);
   const [notice] = matches;
-  const { consentScope, template } = catalog;
-  const expectedFacts = [
-    ['PRIVACY_SUBJECT', consentScope.privacySubjectRef.resourceId],
-    ['CONTROLLER_SCOPE', consentScope.controllerRef],
-    ['PROCESSING_PURPOSE', consentScope.processingPurposeRef.resourceId],
-    ['PROCESSING_PURPOSE_VERSION', consentScope.purposeVersionRef],
-    ['CHANNEL', 'EMAIL'],
-  ];
-  if (
-    matches.length !== 1 ||
-    notice === undefined ||
-    notice.noticeRef.tenantId !== scope.tenantId ||
-    notice.noticeRef.resourceId !== scope.partyId ||
-    notice.wording !== template.wording ||
-    notice.contentIdentity !== template.contentIdentity ||
-    notice.language !== template.language ||
-    notice.applicableScope.processingScopeRef.scopeId !== consentScope.scopeRef ||
-    expectedFacts.some(
-      ([dimension, value]) => !notice.applicableScope.facts.some((f) => f.dimension === dimension && f.value === value),
-    )
-  ) {
+  if (matches.length !== 1 || notice === undefined || !matchesCustomerNewsletterNotice(scope, catalog, notice)) {
     return yield* Effect.fail(consentConflict());
   }
   return notice;

@@ -33,7 +33,6 @@
       "location": "Umístění",
       "locationPlaceholder": "Budova, jednotka nebo zařízení",
       "note": "Poznámka",
-      "simulation": "Simulace",
       "demo": "DEMO",
       "readOnly": "Jen pro čtení",
       "revision": "Revize {{revision}}",

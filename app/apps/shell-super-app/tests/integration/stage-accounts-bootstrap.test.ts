@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { verifyPassword } from 'better-auth/crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Redacted } from 'effect';
 import { describe, expect, it, rstest } from 'effect-rstest';
 
@@ -15,6 +15,8 @@ import {
   bootstrapStageAccounts,
   ensureStageAccountAuthUser,
 } from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
+import { evaluateLiveChecks } from '../../api/oauth-connections/connection-service.ts';
+import { loadUserAccount } from '../../api/oauth-connections/grant-store.ts';
 
 /** A one-account stage accounts file with fresh identifiers, as the operator would write it. */
 const oneAccountFileSource = (): string =>
@@ -81,6 +83,7 @@ describe('stage-accounts-bootstrap', () => {
         const created = yield* ensureStageAccountAuthUser(configuration, configuration.accounts[0]).pipe(
           Effect.provideService(AuthDatabase, persistence),
         );
+        yield* database.update(user).set({ emailVerified: false }).where(eq(user.id, created.userId));
         yield* database.update(account).set({ password: randomUUID() }).where(eq(account.userId, created.userId));
         const sessionCreatedAt = yield* DateTime.nowAsDate;
         const sessionExpiresAt = DateTime.makeUnsafe(sessionCreatedAt).pipe(
@@ -122,11 +125,94 @@ describe('stage-accounts-bootstrap', () => {
         );
         expect(replacementMatches).toBe(true);
         expect(initialMatches).toBe(false);
+        const restoredUser = yield* loadUserAccount(created.userId).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        expect(restoredUser?.emailVerified).toBe(true);
         const remainingSessions = yield* database
           .select({ id: session.id })
           .from(session)
           .where(eq(session.userId, created.userId));
         expect(remainingSessions).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.live('verifies only exact operator accounts and repairs their live OAuth eligibility idempotently', () =>
+    Effect.scoped(
+      Effect.gen(function* verifiesOperatorAccount() {
+        const configuration = yield* loadAuthConfig();
+        const persistence = yield* makeAuthDatabase(configuration);
+        const database = persistence.executor;
+        const operator = {
+          displayName: 'Operator verification',
+          email: `stage-operator-${randomUUID()}@example.test`,
+          password: Redacted.make(randomUUID()),
+        };
+        const ordinaryEmail = `ordinary-user-${randomUUID()}@example.test`;
+        yield* Effect.addFinalizer(() =>
+          database
+            .delete(user)
+            .where(inArray(user.email, [operator.email, ordinaryEmail]))
+            .pipe(Effect.orDie),
+        );
+        yield* database.insert(user).values({
+          email: ordinaryEmail,
+          emailVerified: false,
+          id: randomUUID(),
+          name: 'Not in the operator file',
+        });
+        const authConfiguration = { authBaseUrl: configuration.baseUrl, authSecret: configuration.secret };
+        const created = yield* ensureStageAccountAuthUser(authConfiguration, operator).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        expect(created.status).toBe('created');
+        const createdUser = yield* loadUserAccount(created.userId).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        expect(createdUser?.emailVerified).toBe(true);
+
+        yield* database.update(user).set({ emailVerified: false }).where(eq(user.id, created.userId));
+        const conflict = yield* Effect.flip(
+          ensureStageAccountAuthUser(authConfiguration, { ...operator, displayName: 'Conflicting identity' }).pipe(
+            Effect.provideService(AuthDatabase, persistence),
+          ),
+        );
+        expect(conflict.code).toBe('stage_accounts_conflict');
+        const conflictedUser = yield* loadUserAccount(created.userId).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        expect(conflictedUser?.emailVerified).toBe(false);
+
+        const repaired = yield* ensureStageAccountAuthUser(authConfiguration, operator).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        expect(repaired).toEqual({ status: 'existing', userId: created.userId });
+        const liveUser = yield* loadUserAccount(created.userId).pipe(Effect.provideService(AuthDatabase, persistence));
+        expect(liveUser?.emailVerified).toBe(true);
+        expect(
+          evaluateLiveChecks({
+            actingKind: 'human',
+            actingPrincipalStatus: 'active',
+            agentInCompany: true,
+            bindingStatus: 'active',
+            grantStatus: 'active',
+            hasCompanyAccess: true,
+            operatorHolds: true,
+            userBanned: liveUser?.banned ?? true,
+            userEmailVerified: liveUser?.emailVerified ?? false,
+            userExists: liveUser !== undefined,
+            userPrincipalStatus: 'active',
+          }),
+        ).toEqual({ ok: true });
+        const [beforeRepeat] = yield* database.select().from(user).where(eq(user.id, created.userId));
+        yield* ensureStageAccountAuthUser(authConfiguration, operator).pipe(
+          Effect.provideService(AuthDatabase, persistence),
+        );
+        const [afterRepeat] = yield* database.select().from(user).where(eq(user.id, created.userId));
+        expect(afterRepeat).toEqual(beforeRepeat);
+        const [ordinary] = yield* database.select().from(user).where(eq(user.email, ordinaryEmail));
+        expect(ordinary?.emailVerified).toBe(false);
       }),
     ),
   );

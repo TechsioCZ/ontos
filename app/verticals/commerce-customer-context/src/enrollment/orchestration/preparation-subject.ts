@@ -17,6 +17,7 @@ import {
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
 import { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
 import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../../shared/portal-auth-enrollment-reference.ts';
+import { retailRestartIdentity } from '../journeys/retail-enrollment-restart.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../journeys/existing-account.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, PORTAL_AUTH_OWNER_MODULE_KEY } from './prepared-owner-authority.ts';
 import {
@@ -154,6 +155,7 @@ const PARTY_TRANSITION_IDENTITY = {
 const partyRefFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.partyRef')(function* partyRefForEffect(
   store: CommerceEnrollmentOwnerAttemptStore,
   attempt: EnrollmentAttemptSnapshot,
+  depth = 0,
 ): Effect.fn.Return<RetailSelfEnrollmentPreparationSubject['partyRef'], CommerceEnrollmentAttemptError> {
   const operation = yield* store
     .readOwnerOperation({
@@ -167,10 +169,36 @@ const partyRefFor = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.part
       Effect.catchTag('CommerceEnrollmentAttemptNotFound', () => Effect.succeedNone),
     );
   if (Option.isNone(operation)) {
-    return Option.none();
+    const restart = retailRestartIdentity(attempt);
+    if (Option.isNone(restart) || ![1, 3, 7].includes(restart.value.retainedMask) || depth >= 32) {
+      return Option.none();
+    }
+    const identity = yield* Schema.decodeUnknownEffect(ReadEnrollmentOwnerOperationInputSchema)({
+      ...PARTY_TRANSITION_IDENTITY,
+      portalEnrollmentAttemptId: restart.value.sourceAttemptId,
+      tenantId: attempt.tenantId,
+    }).pipe(Effect.mapError((cause) => rejected(attempt, 'The predecessor identity is invalid', cause)));
+    const source = yield* store.read({
+      portalEnrollmentAttemptId: identity.portalEnrollmentAttemptId,
+      tenantId: identity.tenantId,
+    });
+    if (
+      source.state !== 'FAILED' ||
+      source.createdByPrincipalId !== attempt.createdByPrincipalId ||
+      source.targetLegalEntityId !== attempt.targetLegalEntityId ||
+      source.accountSubject?.providerSubjectId !== attempt.accountSubject?.providerSubjectId ||
+      source.accountSubject?.authenticationNamespaceId !== attempt.accountSubject?.authenticationNamespaceId
+    ) {
+      return Option.none();
+    }
+    return yield* partyRefFor(store, source, depth + 1);
   }
   const { resultReference, status } = operation.value;
-  if (status !== 'SUCCEEDED' || resultReference === undefined) {
+  if (
+    status !== 'SUCCEEDED' ||
+    resultReference === undefined ||
+    operation.value.actorPrincipalId !== attempt.createdByPrincipalId
+  ) {
     return Option.none();
   }
   return Option.some(retailPartyRefFor(attempt.tenantId, resultReference));

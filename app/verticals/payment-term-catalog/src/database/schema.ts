@@ -9,6 +9,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -19,6 +20,7 @@ import {
 export const PAYMENT_TERM_CATALOG_SCHEMA_NAME = 'payment_term_catalog';
 
 export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'payment_term_aliases',
   'payment_term_lifecycle_events',
   'payment_term_revisions',
@@ -30,6 +32,21 @@ export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const paymentTermCatalogSchema = pgSchema(PAYMENT_TERM_CATALOG_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = paymentTermCatalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('payment_term_catalog_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 
@@ -445,6 +462,7 @@ export const paymentTermSourceAcceptanceLineage = paymentTermCatalogSchema.table
 );
 
 const paymentTermCatalogDatabaseSchema = {
+  gatewayAssertionRedemptions,
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
@@ -456,6 +474,7 @@ const paymentTermCatalogDatabaseSchema = {
 } as const;
 
 export const PAYMENT_TERM_CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,

@@ -208,19 +208,7 @@ describe("catalog stale-while-revalidate cache", () => {
     expect(store.put).not.toHaveBeenCalled();
     expect(waitUntil).not.toHaveBeenCalled();
   });
-  it("warms only values older than the given age", async () => {
-    vi.useFakeTimers();
-    const cache = catalogCache<string>("t", options);
-    const load = vi.fn(async () => "v1");
-    expect(await cache.warm("k", load, 30_000)).toBe("refreshed");
-    vi.advanceTimersByTime(20_000);
-    expect(await cache.warm("k", load, 30_000)).toBe("fresh");
-    expect(await cache.warm("j", async () => Promise.reject(new Error("503")), 30_000)).toBe(
-      "failed",
-    );
-    expect(load).toHaveBeenCalledTimes(1);
-  });
-  it("on Workers reads and writes the shared catalog store, so another isolate starts warm", async () => {
+  it("shares navigation read by a shopper with another Worker isolate", async () => {
     const stored = new Map<string, { value: string; metadata: unknown }>();
     const waits: Promise<unknown>[] = [];
     const store = {
@@ -235,7 +223,7 @@ describe("catalog stale-while-revalidate cache", () => {
       env: { STOREFRONT_CATALOG_CACHE: store },
       ctx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) },
     } as unknown as ReturnType<typeof getCloudflareContext>);
-    await catalogCache<string>("t", options).warm("k", async () => "v1", 30_000);
+    await catalogCache<string>("t", options).get("k", async () => "v1");
     await Promise.all(waits);
     expect(store.put).toHaveBeenCalledWith(expect.stringMatching(/^t\//u), expect.any(String), {
       expirationTtl: options.keepMs / 1000,

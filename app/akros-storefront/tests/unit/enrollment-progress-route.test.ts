@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { GET, POST } from "@/app/api/ontos/enrollment/route";
+import { GET, POST, PUT } from "@/app/api/ontos/enrollment/route";
 import { ownerRequest } from "@/ontos/gateway";
 
 vi.mock("@/ontos/gateway", () => ({ ownerRequest: vi.fn<typeof ownerRequest>() }));
@@ -85,3 +85,42 @@ it.each([401, 404, 429, 503])(
     expect(await response.json()).not.toHaveProperty("state");
   },
 );
+
+it("starts a native existing-account enrollment with only an empty verified-session request", async () => {
+  vi.mocked(ownerRequest)
+    .mockResolvedValueOnce(Response.json({}, { status: 403 }))
+    .mockResolvedValueOnce(
+      Response.json({ state: "IN_PROGRESS", revision: 2, portalEnrollmentAttemptId: "private" }),
+    );
+  const response = await PUT(
+    new Request(url, {
+      method: "PUT",
+      headers: { cookie, origin, "content-type": "application/json" },
+      body: "{}",
+    }),
+  );
+  expect(await response.json()).toEqual({ state: "IN_PROGRESS", revision: 2 });
+  const [, path, init] = vi.mocked(ownerRequest).mock.calls[1]!;
+  expect(path).toBe("/api/portal-auth/enrollment/current/restart");
+  expect(init.method).toBe("POST");
+  expect(init.body).toBe("{}");
+  expect(new Headers(init.headers).has("idempotency-key")).toBe(false);
+});
+
+it("refuses foreign or caller-selected restart authority before contacting the owner", async () => {
+  for (const body of [
+    '{"attemptId":"old"}',
+    '{"partyId":"foreign"}',
+    '{"email":"foreign@example.test"}',
+  ]) {
+    const response = await PUT(
+      new Request(url, {
+        method: "PUT",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body,
+      }),
+    );
+    expect(response.status).toBe(400);
+  }
+  expect(ownerRequest).not.toHaveBeenCalled();
+});

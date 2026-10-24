@@ -9,6 +9,7 @@ const authenticationDefaults: AuthenticationServiceContract = {
   availableTenants: () => unconfiguredEffect('availableTenants'),
   createFixtureUser: () => unconfiguredEffect('createFixtureUser'),
   currentSession: () => unconfiguredEffect('currentSession'),
+  resolveDocumentContext: () => unconfiguredEffect('resolveDocumentContext'),
   resolveShellContext: () => unconfiguredEffect('resolveShellContext'),
   resolveTenantContext: () => unconfiguredEffect('resolveTenantContext'),
   signIn: () => unconfiguredEffect('signIn'),

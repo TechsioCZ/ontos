@@ -30,6 +30,7 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number | s
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_routine_executable: boolean;
+  readonly redemption_safe: boolean;
   readonly role_bypass_rls: boolean;
   readonly role_super: boolean;
   readonly runtime_create: boolean;
@@ -52,7 +53,7 @@ const expectedColumns = EffectArray.sort(
 );
 
 const schemaInfrastructureIsValid = (infrastructure: InfrastructureRow): boolean =>
-  infrastructure.table_count === 8 &&
+  infrastructure.table_count === 9 &&
   infrastructure.force_rls_count === 8 &&
   infrastructure.wrong_owner_count === 0 &&
   infrastructure.policy_count === 32 &&
@@ -64,6 +65,7 @@ const schemaInfrastructureIsValid = (infrastructure: InfrastructureRow): boolean
   infrastructure.unexpected_runtime_routine_count === 0;
 
 const runtimePrivilegesAreValid = (infrastructure: InfrastructureRow): boolean =>
+  infrastructure.redemption_safe &&
   !infrastructure.runtime_create &&
   infrastructure.runtime_usage &&
   !infrastructure.runtime_select &&
@@ -157,6 +159,14 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
     .execute<InfrastructureRow>(
       sql`
         select
+      exists (select 1 from pg_catalog.pg_class redemption
+        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
+        where redemption_namespace.nspname = 'payment_term_catalog' and redemption.relname = 'gateway_assertion_redemptions'
+          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
+          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
           count(distinct relation.oid)::integer as table_count,
           count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count,
           count(distinct relation.oid) filter (where pg_catalog.pg_get_userbyid(relation.relowner) <> ${connections.admin.user})::integer as wrong_owner_count,
@@ -229,10 +239,10 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
             or has_function_privilege(${'ontos_runtime'}, ${'payment_term_catalog.enforce_revision_semantic_immutability()'}, ${'EXECUTE'}) as private_routine_executable,
           has_schema_privilege(${'ontos_runtime'}, ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}, ${'CREATE'}) as runtime_create,
           has_schema_privilege(${'ontos_runtime'}, ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}, ${'USAGE'}) as runtime_usage,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) as runtime_select,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) as runtime_insert,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) as runtime_update,
-          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) as runtime_delete,
+          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'SELECT'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_select,
+          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'INSERT'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_insert,
+          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'UPDATE'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_update,
+          bool_or(has_table_privilege(${'ontos_runtime'}, format('%I.%I', namespace.nspname, relation.relname), ${'DELETE'})) filter (where relation.relname <> ${'gateway_assertion_redemptions'}) as runtime_delete,
           runtime_role.rolsuper as role_super,
           runtime_role.rolbypassrls as role_bypass_rls
         from pg_catalog.pg_class as relation

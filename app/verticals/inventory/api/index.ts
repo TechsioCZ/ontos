@@ -26,7 +26,10 @@ import { FetchHttpClient } from 'effect/unstable/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -130,10 +133,18 @@ const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type InventoryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof inventoryReadRuntimeLive>>,
   actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof inventoryActionRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 type InventoryApiGroups = (typeof inventoryApi.groups)[keyof typeof inventoryApi.groups];
@@ -207,6 +218,10 @@ export const makeInventoryApiRuntime = (
 };
 
 const apiRuntime: EffectBffDefinition<typeof inventoryApi> & EffectBffRuntime<typeof inventoryApi> =
-  makeInventoryApiRuntime(inventoryReadRuntimeLive, inventoryActionRuntimeLive, GovernedGatewayAssertionRedemptionLive);
+  makeInventoryApiRuntime(
+    inventoryReadRuntimeLive,
+    inventoryActionRuntimeLive,
+    productionGatewayAssertionRedemptionLive,
+  );
 
 export default apiRuntime;

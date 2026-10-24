@@ -310,11 +310,6 @@ export const OrderDetailDialog = ({
                 DEMO
               </Badge>
             )}
-            {order.status === 'SHIPPED' && (
-              <Badge size="sm" variant="outline">
-                Simulace předání dopravci
-              </Badge>
-            )}
             {canEditOrders && isOrderEditable(order) && (
               <span className="ml-auto">
                 <Button

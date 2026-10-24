@@ -297,6 +297,8 @@ it('reconciles service grants and the isolated verification context after migrat
   const verification = script.indexOf('yield* ensureStageVerification(configuration)', apply);
   expect(native).toBeGreaterThan(apply);
   expect(verification).toBeGreaterThan(native);
+  expect(script.indexOf('yield* reconcileStagePermissionSchema(rpc, mode)')).toBeLessThan(apply);
+  expect(script).toContain("SPICEDB_ENDPOINT: 'spicedb:50051'");
   expect(script).toContain('...verificationGrants');
   const bootstrap = readFileSync(new URL('../demo/ensure-stage-verification.mts', import.meta.url), 'utf-8');
   expect(bootstrap).toContain('apps/shell-super-app/scripts/bootstrap-stage-accounts.mts');

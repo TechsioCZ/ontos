@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Clock, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rs } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 import {
@@ -674,6 +674,35 @@ it.effect('malformed Ed25519 public keys fail during configuration acquisition',
         }),
       { concurrency: 'unbounded' },
     );
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
+);
+
+it.effect('imports verification keys once for configuration and the first and later assertions', () =>
+  Effect.gen(function* reuseImportedVerificationKey() {
+    const fixture = yield* makeFixture('party-registry');
+    const verifier = bindGatewayPrincipalVerifier('party-registry', {
+      appId: 'party-registry',
+      buildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
+    });
+    const importKey = rs.spyOn(globalThis.crypto.subtle, 'importKey');
+    yield* Effect.addFinalizer(() => Effect.sync(() => importKey.mockRestore()));
+    const services = yield* Layer.build(
+      GatewayPrincipalVerifierLive.pipe(
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(fixture.environment))),
+      ),
+    );
+    const configuration = Context.get(services, GatewayPrincipalVerifierConfiguration);
+    yield* configuration.configuration;
+    expect(importKey).toHaveBeenCalledTimes(1);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const resolved = yield* verifier
+        .verify(Redacted.make(`Bearer ${fixture.token}`), {
+          currentTimeSeconds: Effect.succeed(currentTimeSeconds),
+        })
+        .pipe(Effect.provideService(GatewayPrincipalVerifierConfiguration, configuration));
+      expect(resolved).toEqual(principal);
+    }
+    expect(importKey).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 

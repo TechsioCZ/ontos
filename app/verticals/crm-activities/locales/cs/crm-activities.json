@@ -47,6 +47,15 @@
         "empty": "Zatím nejsou zaznamenané žádné aktivity.",
         "kind": "Typ aktivity",
         "partyType": "Typ kontaktu",
+        "partyTypes": {
+          "PERSON": "Osoba",
+          "ORGANIZATION": "Organizace",
+          "UNRESOLVED": "Neurčeno"
+        },
+        "roleTypes": {
+          "CUSTOMER": "Zákazník",
+          "SUPPLIER": "Dodavatel"
+        },
         "roles": "Role"
       }
     }

@@ -15,7 +15,7 @@ import {
 } from '../../src/database/schema.ts';
 
 describe('Commerce Market Catalog database contract', () => {
-  it('owns exactly the canonical Market administration tables', () => {
+  it('owns the Market administration tables and pre-scope replay evidence', () => {
     const qualifiedNames = EffectArray.sort(
       COMMERCE_MARKET_CATALOG_TABLES.map((table) => {
         const config = getTableConfig(table);
@@ -29,8 +29,11 @@ describe('Commerce Market Catalog database contract', () => {
     );
   });
 
-  it('enables Tenant-scoped RLS on every owner table so eligible sellers remain discoverable before seller selection', () => {
+  it('enables Tenant-scoped RLS on business tables so eligible sellers remain discoverable before seller selection', () => {
     for (const table of COMMERCE_MARKET_CATALOG_TABLES) {
+      if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+        continue;
+      }
       const config = getTableConfig(table);
       expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -185,4 +188,20 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).toContain('then v_retirement_impact else null end');
     expect(migration).not.toContain("v_retirement_impact->>'reservationToken'");
   });
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = COMMERCE_MARKET_CATALOG_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('commerce_market_catalog');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['commerce_market_catalog_redemption_expiry']);
 });

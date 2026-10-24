@@ -171,7 +171,7 @@ describe('Pricing Current Market evidence owner boundary', () => {
       const absent = yield* readPricingCurrentMarketEvidence(
         persistence({
           generation: 9,
-          nextApplicabilityBoundary: presentSnapshot.nextApplicabilityBoundary,
+          nextApplicabilityBoundary: Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(boundary),
           observedAt: presentSnapshot.observedAt,
           state: 'ABSENT',
         }),
@@ -257,7 +257,19 @@ describe('Pricing Current Market evidence owner boundary', () => {
       let routineKey = '';
       let input: unknown;
       const routineInvoker = scopedRoutineInvokerFromTransaction(
-        () => Effect.succeed([{ payload: presentSnapshot }]),
+        () =>
+          Effect.succeed([
+            {
+              // PostgreSQL JSONB carries encoded timestamps, not already-decoded DateTime values.
+              payload: {
+                ...presentSnapshot,
+                effectivePeriod: { endsAt: boundary, startsAt: '2026-01-01T00:00:00.000Z' },
+                market: Schema.encodeSync(MarketDefinitionSchema)(market),
+                nextApplicabilityBoundary: boundary,
+                observedAt,
+              },
+            },
+          ]),
         operationalScope,
       );
       const transactionService: OperationalScopeTransactionService = {
@@ -286,7 +298,8 @@ describe('Pricing Current Market evidence owner boundary', () => {
       const snapshot = yield* ownerPersistence.readCurrent(request);
       expect(routineKey).toBe('pricing-current-market-evidence.read-current');
       expect(input).toEqual({ channel: 'B2C', effectiveAt: operationTime, marketId });
-      expect(snapshot.state).toBe('PRESENT');
+      expect(snapshot).toEqual(presentSnapshot);
+      expect(DateTime.formatIso(snapshot.observedAt)).toBe(observedAt);
       expect(() => Schema.decodeUnknownSync(PricingCurrentMarketEvidenceResponseSchema)({})).toThrow();
     }),
   );

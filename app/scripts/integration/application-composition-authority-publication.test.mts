@@ -11,6 +11,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
   Match,
   Option,
   Ref,
@@ -42,6 +43,7 @@ import {
 import { canonicalizeApplicationComposition } from '../../packages/core-runtime/src/modules/application-composition.ts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
+  logApplicationCompositionDrainBlockers,
   publishApplicationCompositionAuthoritySnapshot,
   resumeApplicationCompositionDurableWork,
   runApplicationCompositionMigration,
@@ -664,6 +666,21 @@ it.live(
           workerKey: `publication.migration-${status}`,
         })),
       );
+      const drainDiagnostics: unknown[] = [];
+      yield* logApplicationCompositionDrainBlockers.pipe(
+        Effect.provide(Logger.layer([Logger.make(({ message }) => drainDiagnostics.push(message))])),
+      );
+      const serializedDiagnostics = JSON.stringify(drainDiagnostics);
+      expect(serializedDiagnostics).toContain('Application Composition drain blockers (up to 10 oldest per category)');
+      expect(serializedDiagnostics).toContain(`"work_id":"${durableWorkId}"`);
+      expect(serializedDiagnostics).toContain(`"owner_module_key":"${PRODUCER_MODULE}"`);
+      expect(serializedDiagnostics).toContain(`"outbox_message_id":"${messageId}"`);
+      expect(serializedDiagnostics).toContain(`"topic":"${PENDING_TOPIC}"`);
+      for (const status of migrationStatuses) {
+        expect(serializedDiagnostics).toContain(`"status":"${status}"`);
+        expect(serializedDiagnostics).toContain(`"worker_key":"publication.migration-${status}"`);
+      }
+      expect(JSON.stringify(drainDiagnostics)).not.toContain('payload_json');
       const migrationColumn = `publication_${randomUUID().replaceAll('-', '')}`;
       yield* Effect.addFinalizer(() =>
         observer.executor

@@ -46,6 +46,7 @@ export const CATALOG_TABLE_INVENTORY = [
   'configuration_units',
   'controlled_attribute_value_revisions',
   'controlled_attribute_values',
+  'gateway_assertion_redemptions',
   'manufacturer_relation_revisions',
   'manufacturer_relations',
   'package_content_revisions',
@@ -106,6 +107,21 @@ export const CATALOG_TABLE_INVENTORY = [
 ] as const;
 
 export const catalogSchema = pgSchema(CATALOG_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = catalogSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('catalog_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 
@@ -3932,6 +3948,7 @@ export const productConfigurationContinuityDecisions = catalogSchema.table.withR
 );
 
 const catalogDatabaseSchema = {
+  gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
   catalogLocalOverrideRevisions,
@@ -4015,6 +4032,7 @@ const catalogDatabaseSchema = {
 } as const;
 
 export const CATALOG_TABLES = [
+  gatewayAssertionRedemptions,
   catalogAcceptedSourceAssertions,
   catalogLocalOverrideHeads,
   catalogLocalOverrideRevisions,

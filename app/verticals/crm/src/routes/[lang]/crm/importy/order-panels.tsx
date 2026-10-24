@@ -453,7 +453,7 @@ export const OrderDetailPanel = ({
             </Badge>
           )}
           <Badge size="sm" variant="outline">
-            Import CSV – bez živého napojení
+            Importováno z CSV
           </Badge>
         </div>
         <DetailList

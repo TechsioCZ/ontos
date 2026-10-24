@@ -1,4 +1,10 @@
-import { v1 } from '@authzed/authzed-node';
+import { Consistency } from '@authzed/authzed-node/v1/permissions';
+import type {
+  CheckBulkPermissionsRequest,
+  CheckBulkPermissionsResponse,
+  CheckPermissionRequest,
+  CheckPermissionResponse,
+} from '@authzed/authzed-node/v1/permissions';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Data, Effect } from 'effect';
 import type { Scope } from 'effect';
@@ -7,7 +13,7 @@ import type { SpiceDbConfigValue } from './config.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
-export const fullyConsistent = v1.Consistency.create({
+export const fullyConsistent = Consistency.create({
   requirement: {
     fullyConsistent: true,
     oneofKind: 'fullyConsistent',
@@ -31,11 +37,11 @@ export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermission
 
 export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
   readonly checkBulkPermissions: (
-    request: v1.CheckBulkPermissionsRequest,
-  ) => Effect.Effect<v1.CheckBulkPermissionsResponse, SpiceDbPermissionClientError>;
+    request: CheckBulkPermissionsRequest,
+  ) => Effect.Effect<CheckBulkPermissionsResponse, SpiceDbPermissionClientError>;
   readonly checkPermission: (
-    request: v1.CheckPermissionRequest,
-  ) => Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>;
+    request: CheckPermissionRequest,
+  ) => Effect.Effect<CheckPermissionResponse, SpiceDbPermissionClientError>;
 }
 
 export const createSpiceDbPermissionClient = (

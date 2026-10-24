@@ -34,6 +34,24 @@ const capturedLogs = (entries: unknown[]) =>
   ]);
 
 describe('Shell gateway phase timing', () => {
+  it.effect('reports document session, composition, admission and signing phases', () =>
+    Effect.gen(function* documentPhases() {
+      const response = yield* handle(
+        Effect.gen(function* prepareDocument() {
+          yield* TestClock.adjust(20).pipe(observeGatewayPhase('session-read'));
+          yield* TestClock.adjust(30).pipe(observeGatewayPhase('session-principal'));
+          yield* TestClock.adjust(40).pipe(observeGatewayPhase('document-admission'));
+          yield* TestClock.adjust(50).pipe(observeGatewayPhase('document-composition'));
+          yield* TestClock.adjust(10).pipe(observeGatewayPhase('document-assertions'));
+          return HttpServerResponse.empty();
+        }).pipe(withGatewayTimings),
+      );
+      expect(response.headers['server-timing']).toBe(
+        'session-read;dur=20, session-principal;dur=30, document-admission;dur=40, document-composition;dur=50, document-assertions;dur=10',
+      );
+    }),
+  );
+
   it.effect('records distinct phase durations in structured logs and the real response header', () => {
     const entries: unknown[] = [];
     return Effect.gen(function* successfulGateway() {

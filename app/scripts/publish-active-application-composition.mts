@@ -64,6 +64,7 @@ import {
   runApplicationCompositionMigration,
   verifyInitialApplicationCompositionPublicationEnvironment,
   withApplicationCompositionPublicationLock,
+  withApplicationCompositionPublicationProgress,
 } from './application-composition-authority-publication.mts';
 import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
 import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
@@ -436,7 +437,10 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
   yield* publishApplicationCompositionAuthoritySnapshot(
     snapshot,
     Effect.gen(function* publishProviderPointer() {
-      const current = yield* readPublishedSnapshot;
+      const current = yield* withApplicationCompositionPublicationProgress(
+        'read current provider KV pointer',
+        readPublishedSnapshot,
+      );
       yield* assertNoConflictingPublication(current, snapshot);
       if (retainedShellRevision !== undefined) {
         if (Option.isNone(current)) {
@@ -472,6 +476,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
           ),
           Effect.flatMap(Schema.decodeUnknownEffect(ProviderWriteSchema)),
           Effect.mapError(providerFailure('composition storage write failed')),
+          (write) => withApplicationCompositionPublicationProgress('write provider KV pointer', write),
           Effect.timeoutOrElse({
             duration: ARTIFACT_FETCH_TIMEOUT,
             orElse: () =>
@@ -494,6 +499,7 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
           schedule: Schedule.spaced(PUBLICATION_READBACK_POLL),
           until: (value) => Option.contains(value, encoded),
         }),
+        (readback) => withApplicationCompositionPublicationProgress('read back exact provider KV pointer', readback),
         Effect.timeoutOrElse({
           duration: PUBLICATION_READBACK_TIMEOUT,
           orElse: () =>
@@ -576,6 +582,7 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
   environment: string,
   candidate: PublicationCandidate,
 ) {
+  yield* Effect.logInfo('Observing approved Application Composition artifacts', { modules: candidate.modules.length });
   const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
     [
       Effect.forEach(
@@ -601,6 +608,7 @@ export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeC
     ],
     { concurrency: 3 },
   );
+  yield* Effect.logInfo('Observed all approved Application Composition artifacts');
   const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
     environment,
     modules,
@@ -768,7 +776,10 @@ const refreshCommand = Command.make(
   },
   ({ environment }) =>
     Effect.gen(function* refreshComposition() {
-      const current = yield* readPublishedSnapshot;
+      const current = yield* withApplicationCompositionPublicationProgress(
+        'read current provider KV pointer',
+        readPublishedSnapshot,
+      );
       if (Option.isNone(current)) {
         return yield* new ActiveApplicationCompositionPublicationError({
           message: 'composition storage has no approved release to refresh',

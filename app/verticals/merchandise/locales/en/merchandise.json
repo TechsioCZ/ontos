@@ -23,7 +23,7 @@
           "cancel": "Cancel",
           "confirm": "Confirm",
           "deliver": "Complete",
-          "ship": "Hand over to carrier (simulation)",
+          "ship": "Hand over to carrier",
           "pack": "Start packing"
         },
         "bulk": {
@@ -125,7 +125,7 @@
           "open": "Open",
           "openHint": "New and confirmed",
           "total": "Orders total",
-          "shipped": "Handed to carrier"
+          "shipped": "Handed over to carrier"
         },
         "states": {
           "clearFilters": "Clear filters",
@@ -162,7 +162,7 @@
           "confirmed": "Order confirmed",
           "created": "Order created",
           "delivered": "Order completed",
-          "shipped": "Handed over to carrier (simulation)",
+          "shipped": "Handed over to carrier",
           "statusFailed": "The status could not be changed.",
           "packing": "Order is being packed"
         },

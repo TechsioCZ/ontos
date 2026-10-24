@@ -1,4 +1,12 @@
-import { v1 } from '@authzed/authzed-node';
+import {
+  ObjectReference,
+  Relationship,
+  RelationshipUpdate,
+  RelationshipUpdate_Operation,
+  SubjectReference,
+} from '@authzed/authzed-node/v1/core';
+import { WriteRelationshipsRequest } from '@authzed/authzed-node/v1/permissions';
+import type { WriteRelationshipsResponse } from '@authzed/authzed-node/v1/permissions';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Effect } from 'effect';
 import type { Scope } from 'effect';
@@ -10,8 +18,8 @@ import type { SpiceDbConfigError } from './config-error.ts';
 export interface PermissionRelationshipMutationClient<Failure> {
   readonly close: () => void;
   readonly writeRelationships: (
-    request: v1.WriteRelationshipsRequest,
-  ) => Effect.Effect<v1.WriteRelationshipsResponse, Failure>;
+    request: WriteRelationshipsRequest,
+  ) => Effect.Effect<WriteRelationshipsResponse, Failure>;
 }
 
 // oxlint-disable-next-line effect-native/no-wide-factory-signature -- The public generic constructor keeps configuration, deadline, and failure mapping explicit for existing cross-file adapters.
@@ -52,13 +60,13 @@ interface PermissionRelationshipMutationDefinition<Input extends PermissionRelat
   readonly unavailable: (cause?: unknown) => Failure;
 }
 
-const objectReference = (objectType: string, objectId: string) => v1.ObjectReference.create({ objectId, objectType });
+const objectReference = (objectType: string, objectId: string) => ObjectReference.create({ objectId, objectType });
 
 const relationship = (resourceType: string, resourceId: string, definition: PermissionRelationshipDefinition) =>
-  v1.Relationship.create({
+  Relationship.create({
     relation: definition.relation,
     resource: objectReference(resourceType, resourceId),
-    subject: v1.SubjectReference.create({
+    subject: SubjectReference.create({
       object: objectReference(definition.subjectType, definition.subjectId),
     }),
   });
@@ -79,17 +87,17 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
         return yield* Effect.fail(definition.unavailable());
       }
       const operation =
-        input.operation === 'grant' ? v1.RelationshipUpdate_Operation.TOUCH : v1.RelationshipUpdate_Operation.DELETE;
+        input.operation === 'grant' ? RelationshipUpdate_Operation.TOUCH : RelationshipUpdate_Operation.DELETE;
       const updates = [
         ...(input.operation === 'grant'
           ? prepared.scopeRelationships.map((scopeRelationship) =>
-              v1.RelationshipUpdate.create({
-                operation: v1.RelationshipUpdate_Operation.TOUCH,
+              RelationshipUpdate.create({
+                operation: RelationshipUpdate_Operation.TOUCH,
                 relationship: relationship(definition.resourceType, prepared.resourceId, scopeRelationship),
               }),
             )
           : []),
-        v1.RelationshipUpdate.create({
+        RelationshipUpdate.create({
           operation,
           relationship: relationship(definition.resourceType, prepared.resourceId, {
             relation: prepared.granteeRelation,
@@ -98,7 +106,7 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
           }),
         }),
       ];
-      return yield* client.writeRelationships(v1.WriteRelationshipsRequest.create({ updates })).pipe(Effect.asVoid);
+      return yield* client.writeRelationships(WriteRelationshipsRequest.create({ updates })).pipe(Effect.asVoid);
     }),
   });
 

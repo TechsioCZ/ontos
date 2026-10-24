@@ -15,7 +15,8 @@ import type {
   ReadLoadContext,
 } from '@app/core-runtime';
 import type { RelevantStockPositionSetRequest } from '../../shared/domain/current-relevant-stock-position-set.ts';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import type { Option } from 'effect';
 import {
   CurrentRelevantStockPositionSetRequestSchema,
   CurrentRelevantStockPositionSetResponseSchema,
@@ -131,9 +132,7 @@ export const currentRelevantStockPositionSetRead = defineRead(
     load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
       context.prepared.kind === 'RESULT'
         ? Effect.succeedNone
-        : context.services
-            .observe(input.scope)
-            .pipe(Effect.map(Option.some), Effect.mapError(mapPositionSetReadFailure)),
+        : context.services.observe(input.scope).pipe(Effect.asSome, Effect.mapError(mapPositionSetReadFailure)),
     finish: Effect.fn('CurrentRelevantStockPositionSetRead.finish')(
       function* finishPositionSetRead(
         input: RelevantStockPositionSetRequest,

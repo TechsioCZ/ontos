@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Stage-only additive service grants and native isolated verification account provisioning. */
+/** Stage-only canonical permission schema, additive grants and isolated verification provisioning. */
 import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
@@ -15,6 +15,7 @@ import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runt
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
 import type { SpiceDbRpc } from '../../packages/core-runtime/src/permissions/spicedb-rpc.ts';
 import { OpsShellLive } from '../ops/ops-shell.mts';
 import { readZeropsValue } from '../ops/stage-operations.mts';
@@ -38,6 +39,80 @@ export class ServiceGrantError extends Schema.TaggedError<ServiceGrantError>()('
 export type ServiceGrantRpc = Pick<SpiceDbRpc, 'readRelationships' | 'writeRelationships'>;
 export const ServiceGrantModeSchema = Schema.Literals(['apply', 'check', 'verify']);
 export type ServiceGrantMode = typeof ServiceGrantModeSchema.Type;
+export type StagePermissionSchemaRpc = Pick<SpiceDbRpc, 'diffSchema' | 'readSchema' | 'writeSchema'>;
+
+/** Native WriteSchema atomically refuses removals still used by live relationships, including subjects. */
+export const reconcileStagePermissionSchema = Effect.fn('Stage.reconcilePermissionSchema')(
+  function* reconcileStagePermissionSchemaEffect(rpc: StagePermissionSchemaRpc, mode: ServiceGrantMode) {
+    const read = rpc
+      .readSchema(v1.ReadSchemaRequest.create({}))
+      .pipe(
+        Effect.mapError(() => new ServiceGrantError({ reason: 'Unable to read the live stage permission schema' })),
+      );
+    // Compare the exact snapshot just read with the native compiler. Text comparison is unsafe:
+    // ReadSchema normalizes definition order, formatting and parentheses using SpiceDB precedence.
+    const readDiff = Effect.gen(function* readCanonicalSchemaDiff() {
+      const live = yield* read;
+      if (live.readAt === undefined || live.readAt.token.length === 0) {
+        return yield* new ServiceGrantError({ reason: 'Live stage permission schema has no verifiable read revision' });
+      }
+      return yield* rpc
+        .diffSchema(
+          v1.DiffSchemaRequest.create({
+            comparisonSchema: ONTOS_SPICEDB_SCHEMA,
+            consistency: { requirement: { atExactSnapshot: live.readAt, oneofKind: 'atExactSnapshot' } },
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            () => new ServiceGrantError({ reason: 'Unable to compare the live stage permission schema natively' }),
+          ),
+        );
+    });
+    const { diffs } = yield* readDiff;
+    const differs = diffs.length > 0;
+    yield* Console.log(`Stage permission schema ${mode}: differs=${String(differs)}`);
+    if (!differs) {
+      return { applied: false, differs: false };
+    }
+    if (mode === 'verify') {
+      return yield* new ServiceGrantError({ reason: 'Live stage permission schema differs from the canonical schema' });
+    }
+    if (mode === 'check') {
+      return { applied: false, differs: true };
+    }
+    const removals = diffs.flatMap(({ diff }) => {
+      if (diff.oneofKind === 'relationRemoved') {
+        return [`${diff.relationRemoved.parentDefinitionName}#${diff.relationRemoved.name}`];
+      }
+      if (diff.oneofKind === 'definitionRemoved') {
+        return [diff.definitionRemoved.name];
+      }
+      if (diff.oneofKind === 'relationSubjectTypeRemoved' && diff.relationSubjectTypeRemoved.relation !== undefined) {
+        const { relation } = diff.relationSubjectTypeRemoved;
+        return [`${relation.parentDefinitionName}#${relation.name} (subject type)`];
+      }
+      return [];
+    });
+    yield* rpc.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })).pipe(
+      Effect.mapError(
+        ({ code }) =>
+          new ServiceGrantError({
+            reason: Option.exists(code, (status) => status === 3 || status === 9)
+              ? `Native WriteSchema refused the canonical stage schema: incompatible schema or live relationships still use a removed relation/subject type. Proposed removals: ${removals.slice(0, 10).join(', ') || 'none'}. Reconcile explicitly; no relationships were deleted.`
+              : 'Native WriteSchema failed; stage grants were not applied and credentials were not logged',
+          }),
+      ),
+    );
+    if ((yield* readDiff).diffs.length > 0) {
+      return yield* new ServiceGrantError({
+        reason: 'Stage permission schema readback differs from the canonical schema; no grants applied',
+      });
+    }
+    yield* Console.log('Stage permission schema verified against the canonical schema');
+    return { applied: true, differs: false };
+  },
+);
 const consistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 // These are native SpiceDB object ids and relation names: none can contain a NUL separator.
 const tupleKey = (relationship: v1.Relationship): string =>
@@ -296,6 +371,7 @@ const command = Command.make(
         } else if (verify) {
           mode = 'verify';
         }
+        yield* reconcileStagePermissionSchema(rpc, mode);
         yield* assertServiceMembershipsCompatible(rpc);
         // Check/verify stay read-only; only apply invokes the guarded native stage installer.
         if (mode === 'apply') {

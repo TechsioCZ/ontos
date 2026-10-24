@@ -287,22 +287,22 @@ export interface DemoGuidePanelProps {
 
 const boundaryGroups = [
   { icon: 'icon-[mdi--check-circle-outline]', key: 'live', title: 'Živě z OntOS' },
-  { icon: 'icon-[mdi--theater]', key: 'simulated', title: 'Jen simulace' },
-  { icon: 'icon-[mdi--progress-wrench]', key: 'unfinished', title: 'Zatím není hotové' },
+  { icon: 'icon-[mdi--clipboard-text-outline]', key: 'operations', title: 'Zpracování objednávky' },
+  { icon: 'icon-[mdi--information-outline]', key: 'scope', title: 'Rozsah služeb' },
 ] as const satisfies readonly {
   readonly icon: IconType;
   readonly key: keyof DemoGuideBoundaries;
   readonly title: string;
 }[];
 
-/** One place that says what is real, what is simulated and what is unfinished, so nothing is promised by mistake. */
+/** Operational overview of the connected services and their scope. */
 const BoundariesSection = ({ boundaries }: { readonly boundaries: DemoGuideBoundaries }) => (
   <section aria-labelledby="demo-guide-boundaries" className="grid gap-150 border-border-primary border-t pt-250">
     <header className="grid gap-50">
       <h3 className="font-semibold text-fg-primary text-sm" id="demo-guide-boundaries">
-        Co je živé, co simulace a co není hotové
+        Jak fungují propojené služby
       </h3>
-      <p className="text-fg-secondary text-xs">Pro prezentujícího: tyto hranice ukázky neslibujte jinak.</p>
+      <p className="text-fg-secondary text-xs">Přehled zpracování objednávek a dostupných služeb.</p>
     </header>
     {boundaryGroups.map((group) =>
       boundaries[group.key].length === 0 ? null : (
@@ -428,7 +428,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               theme="borderless"
               variant="secondary"
             >
-              Co je živé, co simulace a co není hotové
+              Jak fungují propojené služby
             </Button>
           )}
           {summary.total > 0 && summary.nextStepId === undefined ? (

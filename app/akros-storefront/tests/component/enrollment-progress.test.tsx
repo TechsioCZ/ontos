@@ -46,7 +46,7 @@ it.each(["FAILED", "TERMINATED", "COMPLETE"])(
     expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toContain(
-      state === "COMPLETE" ? "přístup" : "nelze ji obnovit",
+      state === "COMPLETE" ? "přístup" : state === "FAILED" ? "nové přijetí" : "nelze ji obnovit",
     );
   },
 );
@@ -64,5 +64,70 @@ it("shows owner authentication/outage refusals without automatic retry loops", a
   render(<EnrollmentProgress />);
   expect((await screen.findByRole("alert")).textContent).toContain("Přihlaste se");
   expect(fetchProgress).toHaveBeenCalledOnce();
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("starts a new enrollment only on explicit FAILED restart, never repeating signup or the old Attempt", async () => {
+  fetchProgress.mockImplementation(async (_url, init) =>
+    Response.json({ state: init?.method === "PUT" ? "IN_PROGRESS" : "FAILED", revision: 2 }),
+  );
+  render(<EnrollmentProgress />);
+  const restart = await screen.findByRole("button", { name: "Zahájit nové přijetí účtu" });
+  expect(fetchProgress).toHaveBeenCalledOnce();
+  fireEvent.click(restart);
+  await screen.findByRole("button", { name: "Obnovit registraci" });
+  expect(fetchProgress.mock.calls[1]![1]).toMatchObject({ method: "PUT", body: "{}" });
+  expect(screen.queryByRole("button", { name: "Zahájit nové přijetí účtu" })).toBeNull();
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it.each(["IN_PROGRESS", "VERIFICATION_REQUIRED"])(
+  "automatically resumes %s once after login and checks real account admission before routing",
+  async (state) => {
+    fetchProgress
+      .mockResolvedValueOnce(Response.json({ state, revision: 3 }))
+      .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }))
+      .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
+    render(<EnrollmentProgress />);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/muj-ucet"));
+    expect(fetchProgress).toHaveBeenCalledTimes(3);
+    expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual([
+      "GET",
+      "POST",
+      "GET",
+    ]);
+    expect(fetchProgress.mock.calls[1]![1]).toMatchObject({ body: "{}", cache: "no-store" });
+  },
+);
+
+it("does not treat COMPLETE after automatic resume as account admission", async () => {
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }));
+  render(<EnrollmentProgress />);
+  await screen.findByRole("button", { name: "Ověřit stav" });
+  expect(fetchProgress).toHaveBeenCalledTimes(3);
+  expect(router.replace).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
+});
+
+it("makes only one automatic resume when an owner still cannot complete", async () => {
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }))
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }));
+  render(<EnrollmentProgress />);
+  await screen.findByRole("button", { name: "Obnovit registraci" });
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("does not retry an automatic resume after an outage or ambiguous failure", async () => {
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }))
+    .mockResolvedValueOnce(Response.json({ message: "Dočasně nedostupné." }, { status: 503 }));
+  render(<EnrollmentProgress />);
+  expect((await screen.findByRole("alert")).textContent).toContain("Dočasně nedostupné.");
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
   expect(router.replace).not.toHaveBeenCalled();
 });

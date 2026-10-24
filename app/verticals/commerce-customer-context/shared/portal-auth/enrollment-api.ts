@@ -173,6 +173,13 @@ const commercePortalAuthEnrollmentGroupDefinition = HttpApiGroup.make('portalAut
     }),
   )
   .add(
+    HttpApiEndpoint.post('restartCurrentEnrollment', '/api/portal-auth/enrollment/current/restart', {
+      error: startErrors,
+      payload: Schema.Struct({}),
+      success: CommercePortalAuthEnrollmentAttemptProjectionSchema,
+    }),
+  )
+  .add(
     HttpApiEndpoint.get('readEnrollment', '/api/portal-auth/enrollment/:attemptId', {
       error: readErrors,
       // The path parameter is the branded Attempt identity itself, so a value this vertical's

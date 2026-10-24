@@ -29,7 +29,7 @@ export class RetailEnrollmentBindingCapability extends Context.Service<
       actorPrincipalId: string,
     ) => Effect.Effect<RetailEnrollmentBindingTarget, ProfilePersistenceDependencyFailure>;
   }
->()('@app/commerce-customer-context/RetailEnrollmentBindingCapability') {}
+>()('@app/commerce-customer-context/integrations/retail-enrollment-binding/RetailEnrollmentBindingCapability') {}
 
 const sameBindingPayload = Schema.toEquivalence(BindRetailPortalProfilePayloadSchema);
 

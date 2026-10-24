@@ -1,3 +1,4 @@
+import { privacySubjectRefForParty } from '@app/privacy/domain/privacy-subject-identity';
 import { ConsentScopeSchema } from '@app/consent-authority-contracts';
 import type {
   ConsentScope,
@@ -36,12 +37,12 @@ export const customerNewsletterScope = (input: {
 }): ConsentScope => ({
   controllerRef: input.controllerRef,
   materialDimensions: [{ kind: 'COMMUNICATION_CHANNEL', value: 'EMAIL' }],
-  privacySubjectRef: {
-    moduleId: 'privacy.core',
-    resourceId: `retail-party:${input.partyId}`,
-    resourceType: 'privacy.core.privacy-subject',
+  privacySubjectRef: privacySubjectRefForParty({
+    moduleId: 'party.registry',
+    resourceId: input.partyId,
+    resourceType: 'party.registry.party',
     tenantId: input.tenantId,
-  },
+  }),
   processingPurposeRef: {
     moduleId: 'privacy.core',
     resourceId: input.purposeId,

@@ -5,7 +5,20 @@
  * tenant relations and its Action executor grants to the target principal, i.e. the same relationships the
  * demo permission scripts write, without re-implementing the role matrix.
  */
-import { v1 } from '@authzed/authzed-node';
+import {
+  ObjectReference,
+  Relationship,
+  RelationshipUpdate,
+  RelationshipUpdate_Operation,
+  SubjectReference,
+} from '@authzed/authzed-node/v1/core';
+import {
+  Consistency,
+  ReadRelationshipsRequest,
+  RelationshipFilter,
+  SubjectFilter,
+  WriteRelationshipsRequest,
+} from '@authzed/authzed-node/v1/permissions';
 import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
 import { Effect, Option, Schema } from 'effect';
 import { fromScopedRoleObjectId } from '../permissions/scoped-role.ts';
@@ -52,23 +65,19 @@ const belongsToCompany = (relationship: DemoAccountRelationship, legalEntityId: 
   demoAccountObjectIdParts(relationship.resourceId).includes(legalEntityId);
 
 const principalSubject = (principalId: string) =>
-  v1.SubjectReference.create({ object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }) });
+  SubjectReference.create({ object: ObjectReference.create({ objectId: principalId, objectType: 'principal' }) });
 
-const update = (
-  operation: v1.RelationshipUpdate_Operation,
-  principalId: string,
-  relationship: DemoAccountRelationship,
-) =>
-  v1.RelationshipUpdate.create({
+const update = (operation: RelationshipUpdate_Operation, principalId: string, relationship: DemoAccountRelationship) =>
+  RelationshipUpdate.create({
     operation,
-    relationship: v1.Relationship.create({
+    relationship: Relationship.create({
       relation: relationship.relation,
-      resource: v1.ObjectReference.create({ objectId: relationship.resourceId, objectType: relationship.resourceType }),
+      resource: ObjectReference.create({ objectId: relationship.resourceId, objectType: relationship.resourceType }),
       subject: principalSubject(principalId),
     }),
   });
 
-const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
+const fullyConsistent = Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
 
 const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
   Effect.forEach(
@@ -76,10 +85,10 @@ const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
     (resourceType) =>
       rpc
         .readRelationships(
-          v1.ReadRelationshipsRequest.create({
+          ReadRelationshipsRequest.create({
             consistency: fullyConsistent,
-            relationshipFilter: v1.RelationshipFilter.create({
-              optionalSubjectFilter: v1.SubjectFilter.create({
+            relationshipFilter: RelationshipFilter.create({
+              optionalSubjectFilter: SubjectFilter.create({
                 optionalSubjectId: principalId,
                 subjectType: 'principal',
               }),
@@ -114,7 +123,7 @@ export const readScopedRoleTemplatePolicy = Effect.fn('DemoAccountGrants.readSco
   function* readScopedRoleTemplatePolicy(rpc: SpiceDbRpc, principalId: string) {
     const memberships = yield* rpc
       .readRelationships(
-        v1.ReadRelationshipsRequest.create({
+        ReadRelationshipsRequest.create({
           consistency: fullyConsistent,
           relationshipFilter: {
             optionalRelation: 'member',
@@ -151,7 +160,7 @@ export const readScopedRoleTemplatePolicy = Effect.fn('DemoAccountGrants.readSco
       Effect.fn('DemoAccountGrants.readRolePolicy')(function* readPolicy({ resourceType, roleId }) {
         const responses = yield* rpc
           .readRelationships(
-            v1.ReadRelationshipsRequest.create({
+            ReadRelationshipsRequest.create({
               consistency: fullyConsistent,
               relationshipFilter: {
                 optionalSubjectFilter: {
@@ -197,7 +206,7 @@ export const readScopedRoleTemplatePolicy = Effect.fn('DemoAccountGrants.readSco
 
 const write = (
   rpc: SpiceDbRpc,
-  operation: v1.RelationshipUpdate_Operation,
+  operation: RelationshipUpdate_Operation,
   principalId: string,
   relationships: readonly DemoAccountRelationship[],
 ) =>
@@ -207,7 +216,7 @@ const write = (
     ),
     (chunk) =>
       rpc.writeRelationships(
-        v1.WriteRelationshipsRequest.create({
+        WriteRelationshipsRequest.create({
           updates: chunk.map((relationship) => update(operation, principalId, relationship)),
         }),
       ),
@@ -239,7 +248,7 @@ export interface DemoAccountGrants {
   ) => Effect.Effect<readonly DemoAccountRelationship[], IdentityPersistenceUnavailableError>;
   /** Atomically replaces one company's explicit agent role, its policy and membership. */
   readonly replaceAgentGrants: (input: {
-    readonly desired: readonly v1.Relationship[];
+    readonly desired: readonly Relationship[];
     readonly legalEntityId: string;
     readonly principalId: string;
     readonly tenantId: string;
@@ -284,8 +293,8 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
           );
         })
       : [];
-    yield* write(rpc, v1.RelationshipUpdate_Operation.DELETE, input.principalId, revoke);
-    yield* write(rpc, v1.RelationshipUpdate_Operation.TOUCH, input.principalId, desired);
+    yield* write(rpc, RelationshipUpdate_Operation.DELETE, input.principalId, revoke);
+    yield* write(rpc, RelationshipUpdate_Operation.TOUCH, input.principalId, desired);
     return { granted: desired.length, revoked: revoke.length };
   }),
   companiesOf: (principalId) =>
@@ -293,12 +302,12 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
   companyMembers: (tenantId, legalEntityId) =>
     rpc
       .readRelationships(
-        v1.ReadRelationshipsRequest.create({
+        ReadRelationshipsRequest.create({
           consistency: fullyConsistent,
-          relationshipFilter: v1.RelationshipFilter.create({
+          relationshipFilter: RelationshipFilter.create({
             optionalRelation: 'member',
             optionalResourceId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
-            optionalSubjectFilter: v1.SubjectFilter.create({ subjectType: 'principal' }),
+            optionalSubjectFilter: SubjectFilter.create({ subjectType: 'principal' }),
             resourceType: 'legal_entity',
           }),
         }),
@@ -317,9 +326,7 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
     return yield* replaceAgentScopedRolePolicy(rpc, {
       ...input,
       currentPrincipalRelationships: current
-        .map(
-          (relationship) => update(v1.RelationshipUpdate_Operation.TOUCH, input.principalId, relationship).relationship,
-        )
+        .map((relationship) => update(RelationshipUpdate_Operation.TOUCH, input.principalId, relationship).relationship)
         .filter((relationship) => relationship !== undefined),
     });
   }),

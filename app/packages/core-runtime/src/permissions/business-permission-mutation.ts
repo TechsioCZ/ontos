@@ -1,4 +1,14 @@
-import { v1 } from '@authzed/authzed-node';
+import { RelationshipUpdate, RelationshipUpdate_Operation } from '@authzed/authzed-node/v1/core';
+import {
+  Precondition,
+  Precondition_Operation,
+  ReadRelationshipsRequest,
+  RelationshipFilter,
+  SubjectFilter,
+  WriteRelationshipsRequest,
+} from '@authzed/authzed-node/v1/permissions';
+import type { WriteRelationshipsResponse } from '@authzed/authzed-node/v1/permissions';
+import type { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
 import {
@@ -57,8 +67,8 @@ export class BusinessPermissionRelationshipMutation extends Context.Service<
 export interface BusinessPermissionRelationshipMutationClient {
   readonly close: () => void;
   readonly writeRelationships: (
-    request: v1.WriteRelationshipsRequest,
-  ) => Effect.Effect<v1.WriteRelationshipsResponse, BusinessPermissionMutationUnavailable>;
+    request: WriteRelationshipsRequest,
+  ) => Effect.Effect<WriteRelationshipsResponse, BusinessPermissionMutationUnavailable>;
 }
 
 export const createBusinessPermissionRelationshipMutationClient = (
@@ -162,23 +172,22 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
   if (prepared === undefined || input.operation !== 'grant' || input.target.kind !== 'retail_profile') {
     return yield* unavailable();
   }
-  const filter = v1.RelationshipFilter.create({
+  const filter = RelationshipFilter.create({
     optionalRelation: 'grantee',
     optionalResourceId: prepared.resourceId,
-    optionalSubjectFilter: v1.SubjectFilter.create({
+    optionalSubjectFilter: SubjectFilter.create({
       optionalSubjectId: prepared.granteeId,
       subjectType: 'principal',
     }),
     resourceType: 'business_permission',
   });
-  const rows = yield* Effect.tryPromise(
-    async () =>
-      await client.readRelationships(
-        v1.ReadRelationshipsRequest.create({
-          consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
-          relationshipFilter: filter,
-        }),
-      ),
+  const rows = yield* Effect.tryPromise(() =>
+    client.readRelationships(
+      ReadRelationshipsRequest.create({
+        consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+        relationshipFilter: filter,
+      }),
+    ),
   ).pipe(
     Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),
     Effect.mapError(unavailable),
@@ -204,20 +213,19 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
   if (!apply) {
     return { existing: 1, migrated: 0 };
   }
-  yield* Effect.tryPromise(
-    async () =>
-      await client.writeRelationships(
-        v1.WriteRelationshipsRequest.create({
-          optionalPreconditions: [v1.Precondition.create({ filter, operation: v1.Precondition_Operation.MUST_MATCH })],
-          updates: [
-            v1.RelationshipUpdate.create({
-              operation: v1.RelationshipUpdate_Operation.TOUCH,
-              relationship: { ...previous, relation: 'self_service_grantee' },
-            }),
-            v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship: previous }),
-          ],
-        }),
-      ),
+  yield* Effect.tryPromise(() =>
+    client.writeRelationships(
+      WriteRelationshipsRequest.create({
+        optionalPreconditions: [Precondition.create({ filter, operation: Precondition_Operation.MUST_MATCH })],
+        updates: [
+          RelationshipUpdate.create({
+            operation: RelationshipUpdate_Operation.TOUCH,
+            relationship: { ...previous, relation: 'self_service_grantee' },
+          }),
+          RelationshipUpdate.create({ operation: RelationshipUpdate_Operation.DELETE, relationship: previous }),
+        ],
+      }),
+    ),
   ).pipe(
     Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),
     Effect.mapError(unavailable),

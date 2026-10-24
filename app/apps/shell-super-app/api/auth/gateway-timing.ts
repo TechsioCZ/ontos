@@ -3,6 +3,15 @@ import { Clock, Context, Effect, Exit, Option, Ref, Schema } from 'effect';
 
 /** Fixed names only: timing diagnostics must never contain credentials, identities or request data. */
 const GatewayPhaseSchema = Schema.Literals([
+  'document-authentication',
+  'document-admission',
+  'document-composition',
+  'document-home',
+  'document-assertions',
+  'session-read',
+  'session-principal',
+  'session-legal-entities',
+  'session-tenants',
   'gateway-release',
   'key-verify',
   'principal-resolve',

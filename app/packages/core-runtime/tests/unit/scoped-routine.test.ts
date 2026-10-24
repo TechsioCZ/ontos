@@ -2,7 +2,7 @@ import { PgTypes } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { Cause, Effect, Option, Result, Schema } from 'effect';
+import { Cause, DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UniqueViolation } from 'effect/unstable/sql/SqlError';
 
@@ -205,3 +205,51 @@ it('validates and deeply freezes routine allowlist declarations', () => {
     expect(() => defineScopedRoutine(definition)).toThrow();
   }
 });
+
+const decodedReceiptRow = defineScopedRoutine({
+  name: 'read_receipt',
+  ownerModuleKey: 'commerce.customer-context',
+  parameters: [{ source: 'tenantId', type: 'uuid' }],
+  resultSchema: Schema.Struct({
+    receipt: Schema.Struct({
+      acknowledgedAt: Schema.DateTimeUtcFromString,
+      evidence: Schema.OptionFromNullOr(Schema.String),
+    }),
+  }),
+  routineKey: 'receipt.read',
+  schema: 'commerce_customer_context',
+});
+
+it.effect('decodes owner-declared result transformations from database wire values', () =>
+  Effect.gen(function* decodeRoutineResult() {
+    const acknowledgedAt = '2026-10-23T23:00:50.163Z';
+    const invoker = scopedRoutineInvokerFromTransaction(
+      () =>
+        Effect.succeed([
+          { receipt: { acknowledgedAt, evidence: null } },
+          { receipt: { acknowledgedAt, evidence: 'notice:evidence' } },
+        ]),
+      scope,
+    );
+    const rows = yield* invoker.invoke(decodedReceiptRow, []);
+    expect(rows.map(({ receipt }) => DateTime.formatIso(receipt.acknowledgedAt))).toEqual([
+      acknowledgedAt,
+      acknowledgedAt,
+    ]);
+    expect(rows.map(({ receipt }) => receipt.evidence)).toEqual([Option.none(), Option.some('notice:evidence')]);
+  }),
+);
+
+it.effect('sanitizes failed result transformations instead of returning undecoded rows', () =>
+  Effect.gen(function* rejectMalformedRoutineResult() {
+    const invoker = scopedRoutineInvokerFromTransaction(
+      () => Effect.succeed([{ receipt: { acknowledgedAt: 'private malformed timestamp', evidence: null } }]),
+      scope,
+    );
+    const failure = yield* Effect.flip(invoker.invoke(decodedReceiptRow, []));
+    expect(Schema.is(ScopedRoutineInvocationError)(failure)).toBe(true);
+    expect(failure.code).toBe('scoped_routine_result_invalid');
+    expect(failure.reason).not.toContain('private');
+    expect('cause' in failure).toBe(false);
+  }),
+);

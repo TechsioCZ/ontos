@@ -28,6 +28,7 @@ import type {
   CommerceEnrollmentOwnerTransition,
 } from './owner-transition-driver.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../journeys/existing-account.ts';
+import { retainRetailResultsTransition } from '../journeys/retail-enrollment-restart.ts';
 import { retailSelfEnrollmentPrepareStep } from '../journeys/retail-self-enrollment-preparation.ts';
 import { retailSelfEnrollmentStepPlan } from '../journeys/retail-self-enrollment-contracts.ts';
 import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
@@ -74,7 +75,10 @@ interface RetailPreparationStep {
   readonly transitionKey: CommerceEnrollmentPreparedOwnerBinding['transitionKey'];
 }
 
-const RETAIL_PREPARATION_STEPS: readonly RetailPreparationStep[] = retailSelfEnrollmentStepPlan().map((step) => ({
+const RETAIL_PREPARATION_STEPS: readonly RetailPreparationStep[] = [
+  ...retailSelfEnrollmentStepPlan(),
+  retainRetailResultsTransition,
+].map((step) => ({
   ownerModuleKey: decodeModuleKey(step.ownerModuleKey),
   step,
   transitionKey: decodeTransitionKey(step.transitionKey),

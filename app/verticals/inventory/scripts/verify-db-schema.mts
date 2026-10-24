@@ -28,6 +28,7 @@ interface InfrastructureRow extends Readonly<Record<string, boolean | number>> {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly private_trigger_function_executable: boolean;
+  readonly redemption_safe: boolean;
   readonly required_index_count: number;
   readonly required_trigger_count: number;
   readonly role_bypass_rls: boolean;
@@ -99,6 +100,14 @@ const verification = Effect.gen(function* verifyDatabase() {
 
   const [infrastructure] = yield* database.executor.execute<InfrastructureRow>(
     sql`select
+      exists (select 1 from pg_catalog.pg_class redemption
+        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
+        where redemption_namespace.nspname = 'inventory' and redemption.relname = 'gateway_assertion_redemptions'
+          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
+          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
       count(distinct relation.oid)::integer as table_count,
       count(distinct relation.oid) filter (where relation.relrowsecurity and relation.relforcerowsecurity)::integer as force_rls_count,
       count(distinct relation.oid) filter (where pg_catalog.pg_get_userbyid(relation.relowner) <> ${connections.admin.user})::integer as wrong_owner_count,
@@ -209,11 +218,12 @@ const verification = Effect.gen(function* verifyDatabase() {
   );
   if (
     infrastructure === undefined ||
+    !infrastructure.redemption_safe ||
     !infrastructure.effect_ledger_contract_current ||
     infrastructure.table_count !== INVENTORY_TABLES.length ||
-    infrastructure.force_rls_count !== INVENTORY_TABLES.length ||
+    infrastructure.force_rls_count !== INVENTORY_TABLES.length - 1 ||
     infrastructure.wrong_owner_count !== 0 ||
-    infrastructure.policy_count !== INVENTORY_TABLES.length * 4 ||
+    infrastructure.policy_count !== (INVENTORY_TABLES.length - 1) * 4 ||
     infrastructure.required_index_count !== 1 ||
     infrastructure.required_trigger_count !== 69 ||
     infrastructure.commitment_protection_trigger_count !== 5 ||
@@ -224,7 +234,7 @@ const verification = Effect.gen(function* verifyDatabase() {
     !infrastructure.runtime_usage ||
     infrastructure.runtime_select_count !== INVENTORY_TABLES.length ||
     infrastructure.runtime_insert_count !== INVENTORY_TABLES.length ||
-    infrastructure.runtime_update_count !== INVENTORY_TABLES.length ||
+    infrastructure.runtime_update_count !== INVENTORY_TABLES.length - 1 ||
     infrastructure.runtime_delete_count !== INVENTORY_TABLES.length ||
     infrastructure.role_super ||
     infrastructure.role_bypass_rls

@@ -56,7 +56,7 @@ export class CommerceCustomerAuthority extends Context.Service<
       input: CustomerAuthorityInput,
     ) => Effect.Effect<CurrentCustomerAuthority, CustomerAuthorityRejected | CustomerAuthorityUnavailable>;
   }
->()('@app/commerce-customer-context/CommerceCustomerAuthority') {}
+>()('@app/commerce-customer-context/api/portal-auth/session/customer-authority/CommerceCustomerAuthority') {}
 
 const profileReadPermission = 'retail.profile.read';
 const unavailable = (cause: unknown) => Object.assign(new CustomerAuthorityUnavailableValue(), { cause });

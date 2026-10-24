@@ -124,7 +124,7 @@ export const siamparkGuide: DemoGuide = {
             'Otevře se faktura FV-2026-0007: sekce Úhrady, pod ní Upomínky. Nic nového neúčtujte ani neodesílejte.',
           id: 'siampark-castecna-uhrada',
           persona: finance,
-          say: 'Finance vidí doklad, evidovanou částečnou platbu i upomínky skutečně odeslané e-mailem; řádek SIMULACE je starší záznam z doby před napojením e-mailu. Platba je ruční evidence, ne napojení na banku.',
+          say: 'Finance vidí doklad, evidovanou částečnou platbu i upomínky odeslané e-mailem. Platba je ruční evidence, ne napojení na banku.',
           target: { kind: 'app', path: '/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b' },
           title: 'Částečná úhrada a upomínky',
         },

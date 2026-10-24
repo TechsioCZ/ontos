@@ -24,6 +24,7 @@ it('owns the exact Payment Term Catalog in one legal-entity-scoped schema', () =
 
   expect(PAYMENT_TERM_CATALOG_SCHEMA_NAME).toBe('payment_term_catalog');
   expect(PAYMENT_TERM_CATALOG_TABLE_INVENTORY).toEqual([
+    'gateway_assertion_redemptions',
     'payment_term_aliases',
     'payment_term_lifecycle_events',
     'payment_term_revisions',
@@ -57,6 +58,9 @@ it('stores source-record high-water state and accepted lineage without exposing 
 
 it('forces every governed table through tenant and legal-entity policy dimensions', () => {
   for (const table of PAYMENT_TERM_CATALOG_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -113,4 +117,20 @@ it('preserves stable identity, lifecycle evidence, and reconciliation aliases', 
       Order.String,
     ),
   ).toEqual(['payment_term_catalog_aliases_alias_fk', 'payment_term_catalog_aliases_canonical_fk']);
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = PAYMENT_TERM_CATALOG_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('payment_term_catalog');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['payment_term_catalog_redemption_expiry']);
 });

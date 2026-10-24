@@ -9,6 +9,7 @@ import {
   jsonb,
   pgPolicy,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -33,6 +34,7 @@ export const ASSORTMENT_TABLE_INVENTORY = [
   'assortment_decision_set_fences',
   'assortment_decision_evidence',
   'assortment_commitment_confirmations',
+  'gateway_assertion_redemptions',
 ] as const;
 
 export const DECISION_SET_FENCE_SOURCE_TABLES = [
@@ -49,6 +51,21 @@ export const DECISION_SET_FENCE_SOURCE_TABLES = [
 ] as const;
 
 export const assortmentSchema = pgSchema(ASSORTMENT_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = assortmentSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('assortment_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 const scopeColumns = () => ({
   tenantId: uuid('tenant_id').notNull(),
@@ -546,6 +563,7 @@ export const commitmentConfirmations = assortmentSchema.table.withRLS(
 );
 
 const databaseSchema = {
+  gatewayAssertionRedemptions,
   admissionSetEntries,
   admissionSets,
   applicabilityBindingEndFacts,
@@ -562,6 +580,7 @@ const databaseSchema = {
 } as const;
 
 export const ASSORTMENT_TABLES = [
+  gatewayAssertionRedemptions,
   stableRules,
   ruleRevisions,
   ruleRetirementFacts,

@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
-import { catalogCache, type WarmResult } from "./catalog-cache";
+import { catalogCache } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
 import { readRecords } from "./gateway";
 import {
@@ -53,7 +53,7 @@ export const CATALOG_CACHE_MS = 10_000;
 export const CATEGORY_CACHE_MS = 15 * 60_000;
 const CATEGORY_STALE_MS = 60 * 60_000;
 const CATEGORY_KEEP_MS = 24 * 60 * 60_000;
-/** Category listing page size (the category page and its warm-up read the same first page). */
+/** Category listing page size. */
 export const CATEGORY_PAGE_SIZE = 24;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
@@ -304,10 +304,3 @@ export const getCatalog = cache(
   async (categorySlug?: string): Promise<CatalogModel> =>
     (await getCatalogPage(homeQuery, { categorySlug })).model,
 );
-
-/** Warm only price-free navigation. Ten-second product values are read when a shopper needs them. */
-export async function warmCatalog(minAgeMs: number): Promise<Record<WarmResult, number>> {
-  const counts: Record<WarmResult, number> = { fresh: 0, refreshed: 0, failed: 0 };
-  counts[await categoryTrees.warm("", loadRootTree, minAgeMs)] += 1;
-  return counts;
-}

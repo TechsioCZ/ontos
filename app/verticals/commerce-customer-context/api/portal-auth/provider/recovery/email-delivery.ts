@@ -28,12 +28,8 @@ const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecov
     cause,
   );
 
-const expirationFrom = (now: Date): Date =>
-  DateTime.toDate(
-    DateTime.add(DateTime.makeUnsafe(now), {
-      seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds,
-    }),
-  );
+const expirationFrom = (now: Date, seconds: number): Date =>
+  DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds }));
 
 /**
  * Wrap the raw Better Auth callbacks at the provider boundary. Verification is recorded before
@@ -64,7 +60,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       const now = yield* DateTime.nowAsDate;
       const registered = yield* store.registerEmailVerificationToken({
         email: normalizeCommercePortalAuthEmail(metadata.email),
-        expiresAt: expirationFrom(now),
+        expiresAt: expirationFrom(now, COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds),
         providerSubjectId: metadata.providerSubjectId,
         token: Redacted.make(metadata.token),
       });
@@ -97,7 +93,7 @@ export const makeCommercePortalAuthEmailDelivery = Effect.fn('CommercePortalAuth
       const now = yield* DateTime.nowAsDate;
       const registered = yield* store.registerPasswordResetToken({
         email: normalizeCommercePortalAuthEmail(metadata.email),
-        expiresAt: expirationFrom(now),
+        expiresAt: expirationFrom(now, COMMERCE_PORTAL_AUTH_POLICY.password.resetTokenExpiresInSeconds),
         providerSubjectId: metadata.providerSubjectId,
         token: Redacted.make(metadata.token),
       });

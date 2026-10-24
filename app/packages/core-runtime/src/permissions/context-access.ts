@@ -1,4 +1,10 @@
-import { v1 } from '@authzed/authzed-node';
+import { ObjectReference, SubjectReference } from '@authzed/authzed-node/v1/core';
+import {
+  CheckBulkPermissionsRequest,
+  CheckBulkPermissionsRequestItem,
+  CheckPermissionResponse_Permissionship,
+} from '@authzed/authzed-node/v1/permissions';
+import type { CheckBulkPermissionsPair } from '@authzed/authzed-node/v1/permissions';
 import { createHash } from 'node:crypto';
 import { Cause, Clock, Context, Deferred, Effect, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
@@ -429,8 +435,8 @@ const AssortmentDigestParts = Schema.fromJsonString(
 const encodeAssortmentDigestParts = Schema.encodeResult(AssortmentDigestParts);
 
 const principalReference = (principalId: string) =>
-  v1.SubjectReference.create({
-    object: v1.ObjectReference.create({
+  SubjectReference.create({
+    object: ObjectReference.create({
       objectId: principalId,
       objectType: 'principal',
     }),
@@ -685,15 +691,15 @@ export const toIdentityNamespaceAccessObjectId = (
 const unavailable = (keys: readonly string[]): readonly ContextAccessResult[] =>
   keys.map((key) => ({ decision: 'unavailable' as const, key }));
 
-const classifyPair = (pair: v1.CheckBulkPermissionsPair): ContextAccessDecision => {
+const classifyPair = (pair: CheckBulkPermissionsPair): ContextAccessDecision => {
   if (pair.response.oneofKind !== 'item') {
     return 'unavailable';
   }
   const { permissionship } = pair.response.item;
-  if (permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
+  if (permissionship === CheckPermissionResponse_Permissionship.HAS_PERMISSION) {
     return 'allowed';
   }
-  if (permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION) {
+  if (permissionship === CheckPermissionResponse_Permissionship.NO_PERMISSION) {
     return 'denied';
   }
   return 'unavailable';
@@ -734,23 +740,21 @@ const resultsForBatchItems = (
   });
 
 const makeRequestItem = (item: BatchItem, principalId: string) =>
-  v1.CheckBulkPermissionsRequestItem.create({
+  CheckBulkPermissionsRequestItem.create({
     permission: item.permission,
-    resource: v1.ObjectReference.create({
+    resource: ObjectReference.create({
       objectId: item.resourceId,
       objectType: item.resourceType,
     }),
     subject: principalReference(principalId),
   });
 
-const sameObjectReference = (
-  expected: v1.ObjectReference | undefined,
-  actual: v1.ObjectReference | undefined,
-): boolean => actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
+const sameObjectReference = (expected: ObjectReference | undefined, actual: ObjectReference | undefined): boolean =>
+  actual?.objectId === expected?.objectId && actual?.objectType === expected?.objectType;
 
 const sameRequest = (
-  expected: v1.CheckBulkPermissionsRequestItem,
-  actual: v1.CheckBulkPermissionsRequestItem | undefined,
+  expected: CheckBulkPermissionsRequestItem,
+  actual: CheckBulkPermissionsRequestItem | undefined,
 ): boolean =>
   actual?.permission === expected.permission &&
   sameObjectReference(expected.resource, actual.resource) &&
@@ -783,13 +787,13 @@ export const withRequestPermissionDecisions = <Value, Failure, Requirements>(
   );
 
 /** SpiceDB's own relationship notation; object types, ids and relations never contain `:`, `#` or `@`. */
-const requestIdentity = (request: v1.CheckBulkPermissionsRequestItem): string =>
+const requestIdentity = (request: CheckBulkPermissionsRequestItem): string =>
   `${request.resource?.objectType}:${request.resource?.objectId}#${request.permission}@${request.subject?.object?.objectType}:${request.subject?.object?.objectId}#${request.subject?.optionalRelation ?? ''}`;
 
 interface OwnedDecision {
   readonly deferred: Deferred.Deferred<ContextAccessDecision>;
   readonly identity: string;
-  readonly request: v1.CheckBulkPermissionsRequestItem;
+  readonly request: CheckBulkPermissionsRequestItem;
 }
 
 /** Settles the checks this call asked for; an `unavailable` one is forgotten so a later check asks again. */
@@ -809,10 +813,7 @@ const settleOwnedDecisions = (
   });
 
 /** Claims every check of `requests` this request has not asked for yet; the rest join their pending decision. */
-const claimDecisions = (
-  memo: RequestPermissionDecisionMemo,
-  requests: readonly v1.CheckBulkPermissionsRequestItem[],
-) => {
+const claimDecisions = (memo: RequestPermissionDecisionMemo, requests: readonly CheckBulkPermissionsRequestItem[]) => {
   const owned: OwnedDecision[] = [];
   const pending = requests.map((request) => {
     const identity = requestIdentity(request);
@@ -831,7 +832,7 @@ const claimDecisions = (
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   /** One CheckBulkPermissions call: a decision per request, or every one `unavailable` when the answer does not match. */
   const decide = (
-    requests: readonly v1.CheckBulkPermissionsRequestItem[],
+    requests: readonly CheckBulkPermissionsRequestItem[],
   ): Effect.Effect<readonly ContextAccessDecision[]> =>
     Effect.gen(function* decideWithDiagnostics() {
       const startedAt = yield* Clock.currentTimeMillis;
@@ -859,7 +860,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         );
       return yield* client
         .checkBulkPermissions(
-          v1.CheckBulkPermissionsRequest.create({
+          CheckBulkPermissionsRequest.create({
             consistency: fullyConsistent,
             items: [...requests],
             withTracing: false,
@@ -894,7 +895,7 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
    */
   const decideWithin = Effect.fn('ContextAccess.decideWithinRequest')(function* decideWithinRequest(
     memo: RequestPermissionDecisionMemo,
-    requests: readonly v1.CheckBulkPermissionsRequestItem[],
+    requests: readonly CheckBulkPermissionsRequestItem[],
   ) {
     const { owned, pending } = claimDecisions(memo, requests);
     if (owned.length > 0) {

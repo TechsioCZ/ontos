@@ -60,7 +60,6 @@ import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../src/enrollment/
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../src/enrollment/orchestration/owner-effect-registry.ts';
 import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollment/orchestration/owner-transition-composition.ts';
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
-import { CommerceEnrollmentSweptContinuationLive } from '../src/workers/enrollment-continuation-sweeper.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
 import { CommercePortalAuthAccountLookupService } from './portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
@@ -740,15 +739,6 @@ const deploymentEnrollmentContinuationLive = Layer.unwrap(
   ),
 );
 /**
- * The continuation the routes are handed is the swept one: `advance` is the only thing that moves a
- * journey and its only callers are detached request forks, so a halted Attempt would otherwise wait
- * for a read that may never come. The sweeper records every halt and re-advances it once the lease
- * window has lapsed, for the lifetime of the services scope.
- */
-const deploymentEnrollmentSweptContinuationLive = CommerceEnrollmentSweptContinuationLive.pipe(
-  Layer.provide(deploymentEnrollmentContinuationLive),
-);
-/**
  * The provider account directory the Existing-account journey's start is verified against. It is
  * the same narrow lookup the owner reconciler reads — one yes/no about one address — and a
  * deployment without the realm has no directory to answer from, so it refuses retryably.
@@ -1029,7 +1019,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     // Converge an uncertain enrollment write from the original invocation, never by re-dispatching it.
     deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // The start route commits the Attempt and account, then hands the remaining journey to the continuation.
-    deploymentEnrollmentSweptContinuationLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
+    deploymentEnrollmentContinuationLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
     // Existing-account journeys verify the presented account without creating a provider transition.
     deploymentEnrollmentAccountLookupLive,
     // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.

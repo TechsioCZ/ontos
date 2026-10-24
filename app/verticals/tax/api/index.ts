@@ -26,7 +26,10 @@ import { taxApi, taxOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -47,6 +50,11 @@ import { taxMaterialityComparisonReadApiLive } from './tax-materiality-compariso
 import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
 
 const taxReadinessLayer = HttpApiBuilder.group(taxApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -138,7 +146,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
 const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
   // <generated-governed-http-handler-support-layers>
   GovernedReadLayer.provideMerge(
-    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
+    GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, productionGatewayAssertionRedemptionLive),
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provideMerge(compositionSourceLive),

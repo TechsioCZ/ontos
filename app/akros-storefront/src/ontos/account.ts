@@ -5,6 +5,15 @@ import { ownerRequest } from "./gateway";
 import { getConfig } from "./config";
 import { RequestError } from "./http";
 
+/** Public account transport; provider internals never reach the browser. */
+export type AccountSubmissionResponse =
+  | { readonly outcome: string; readonly message?: never; readonly code?: never }
+  | {
+      readonly outcome?: never;
+      readonly message: string;
+      readonly code?: "verification_required";
+    };
+
 export interface CustomerAccount {
   /** Stable owner-authenticated provider subject; never accepted from a browser request body. */
   readonly id: string;

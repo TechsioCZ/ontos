@@ -11,6 +11,8 @@ import {
 } from '../../shared/actions/create-privacy-subject.ts';
 import type { CreatePrivacySubjectPayload } from '../../shared/actions/create-privacy-subject.ts';
 
+import { privacySubjectRefForParty } from '../../shared/domain/privacy-subject-identity.ts';
+
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
 import {
@@ -31,6 +33,16 @@ const handleCreatePrivacySubject = Effect.fn('CreatePrivacySubjectAction.handle'
     return yield* new PrivacyActionRejected({
       code: 'privacy_action_rejected',
       reason: 'Privacy Subject must belong to the trusted Tenant',
+    });
+  }
+  if (
+    payload.subject.kind === 'DATA_SUBJECT' &&
+    (payload.subject.partyRef.tenantId !== scope.tenantId ||
+      payload.subjectRef.resourceId !== privacySubjectRefForParty(payload.subject.partyRef).resourceId)
+  ) {
+    return yield* new PrivacyActionRejected({
+      code: 'privacy_action_rejected',
+      reason: 'Privacy Subject identity must match its tenant-scoped external Party reference',
     });
   }
   const now = DateTime.formatIso(yield* DateTime.now);

@@ -51,14 +51,14 @@ export interface DemoGuideChapter {
   readonly steps: readonly DemoGuideStep[];
 }
 
-/** One honest statement of what the demo really does, what it only simulates and what is not finished yet. */
+/** What runs against OntOS, how operations work and which capabilities are included. */
 export interface DemoGuideBoundaries {
   /** Runs for real against OntOS (Czech sentences). */
   readonly live: readonly string[];
-  /** Shown in the demo but deliberately simulated; nothing happens outside the demo. */
-  readonly simulated: readonly string[];
-  /** Known unfinished parts the presenter should not promise. */
-  readonly unfinished: readonly string[];
+  /** Operational details, including steps handled outside OntOS. */
+  readonly operations: readonly string[];
+  /** Scope of available capabilities. */
+  readonly scope: readonly string[];
 }
 
 export interface DemoGuide {
@@ -69,7 +69,7 @@ export interface DemoGuide {
   /** One or two Czech sentences shown at the top of the guide and on the Home card. */
   readonly intro: string;
   readonly chapters: readonly DemoGuideChapter[];
-  /** Optional consolidated "živé / simulace / není hotové" section shown below the steps. */
+  /** Optional operational overview shown below the steps. */
   readonly boundaries?: DemoGuideBoundaries;
 }
 

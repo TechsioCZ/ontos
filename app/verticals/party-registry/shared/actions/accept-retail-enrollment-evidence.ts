@@ -10,7 +10,7 @@ export const RetailEnrollmentEvidenceSchema = Schema.Struct({
   candidateEvidenceRef: Schema.String.check(Schema.isUUID()),
   emailOwnership: Schema.Literal('VERIFIED'),
   enrollmentAttemptId: Schema.String.check(Schema.isUUID()),
-  journey: Schema.Literal('RETAIL_SELF_ENROLLMENT'),
+  journey: Schema.Literals(['RETAIL_SELF_ENROLLMENT', 'EXISTING_ACCOUNT']),
   providerOwnerInvocationId: ActionInvocationIdSchema,
   providerSubjectId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   sellingLegalEntityId: Schema.String.check(Schema.isUUID()),

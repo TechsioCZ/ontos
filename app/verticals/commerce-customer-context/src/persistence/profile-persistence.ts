@@ -1658,13 +1658,11 @@ function bindingServices(
       payload.principalRef.tenantId !== scope.tenantId ||
       payload.sellingLegalEntityRef.resourceId !== scope.legalEntityId
     ) {
-      return yield* Effect.fail(
-        new RetailPortalBindingActionRejected({
-          code: target.authBindingId === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'BINDING_CONFLICT',
-          reason: 'A current verified authentication binding and exact profile scope are required',
-          retryable: target.authBindingId === undefined,
-        }),
-      );
+      return yield* new RetailPortalBindingActionRejected({
+        code: target.authBindingId === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'BINDING_CONFLICT',
+        reason: 'A current verified authentication binding and exact profile scope are required',
+        retryable: target.authBindingId === undefined,
+      });
     }
     return yield* transaction
       .invoke(mutateBindingRoutine, [

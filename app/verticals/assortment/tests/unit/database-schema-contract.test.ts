@@ -25,7 +25,7 @@ const migrations = () =>
     .map((folder) => readFileSync(new URL(`${folder}/migration.sql`, migrationRoot), 'utf-8'))
     .join('\n');
 
-it('owns only the private, tenant/legal-entity-scoped Assortment policy catalog', () => {
+it('owns the Assortment policy catalog and scopes every business table with RLS', () => {
   const names = EffectArray.sort(
     ASSORTMENT_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -41,6 +41,9 @@ it('owns only the private, tenant/legal-entity-scoped Assortment policy catalog'
     ),
   );
   for (const table of ASSORTMENT_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} enables RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -183,4 +186,20 @@ it('keeps the tenant-owned Rule lineage reusable across Selling Legal Entities',
   const migration = migrations();
   expect(migration).toContain('ADD COLUMN "selector_target_owner_module_id" text');
   expect(migration).not.toMatch(/UPDATE\s+"assortment"\."assortment_rule_revisions"/u);
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = ASSORTMENT_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('assortment');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['assortment_redemption_expiry']);
 });

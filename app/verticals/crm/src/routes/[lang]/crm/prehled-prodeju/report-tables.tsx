@@ -429,8 +429,8 @@ export const ItemsCard = ({ report }: { readonly report: SalesReport }) => (
       <div className="flex flex-col gap-150">
         <p className="text-fg-secondary text-sm">
           Položky dodal zdroj u {formatNumber(report.items.ordersWithLines)} z {formatNumber(report.count)} započtených
-          objednávek; u ostatních položky neposkytnuty. Množství je součet řádků, jak je zdroj poslal (vratky a
-          dobropisy zatím nemají schválený význam).
+          objednávek; u ostatních položky chybí. Množství odpovídá importovaným řádkům objednávek, nikoli čistému
+          prodeji po odečtení vratek a dobropisů.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[30rem] border-collapse text-sm">

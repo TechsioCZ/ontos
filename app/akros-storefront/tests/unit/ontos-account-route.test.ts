@@ -124,6 +124,36 @@ describe("owner-backed customer account transport", () => {
       expect(response.headers.getSetCookie()).toEqual([]);
     },
   );
+  it("exposes only the typed verification-required code for a rejected login", async () => {
+    vi.mocked(ownerRequest).mockResolvedValue(
+      Response.json(
+        { code: "verification_required", providerSubjectId: "private", token: "private" },
+        { status: 403 },
+      ),
+    );
+    const response = await submit({
+      operation: "login",
+      email: registration.email,
+      password: registration.password,
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      code: "verification_required",
+      message: "Nejprve potvrďte e-mail odkazem, který jsme vám poslali.",
+    });
+    expect(response.headers.getSetCookie()).toEqual([]);
+  });
+  it("does not forward arbitrary provider error codes", async () => {
+    vi.mocked(ownerRequest).mockResolvedValue(
+      Response.json({ code: "provider_internal_error" }, { status: 503 }),
+    );
+    const response = await submit({
+      operation: "login",
+      email: registration.email,
+      password: registration.password,
+    });
+    expect(await response.json()).not.toHaveProperty("code");
+  });
   it("forwards a real admitted session cookie, never staff cookies or provider metadata", async () => {
     const upstream = new Headers();
     upstream.append("set-cookie", "commerce-portal.session_token=real; HttpOnly; SameSite=Lax");

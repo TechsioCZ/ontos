@@ -5,6 +5,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { readRetailEnrollmentRestartContext, RETAIL_RESTART_PREFIX } from '../journeys/retail-enrollment-restart.ts';
 import { writeRetailEnrollmentRegistration } from './registration-persistence.ts';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
@@ -16,6 +17,7 @@ import {
   CommerceEnrollmentAttemptNotFound,
   CommerceEnrollmentAttemptRejected,
   CommerceEnrollmentAttemptUnavailable,
+  attemptUnavailable,
 } from './errors.ts';
 import type { CommerceEnrollmentAttemptError } from './errors.ts';
 import type {
@@ -1188,6 +1190,20 @@ const authorizeRowsForInput =
   (input: typeof AuthorizeAccountCreationInputSchema.Type) => (rows: readonly AuthorizeAccountCreationRow[]) =>
     authorizeAccountCreationRows(input.portalEnrollmentAttemptId, input.ownerInvocationId, rows);
 
+const validateRestartPredecessor = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attempt: EnrollmentAttemptSnapshot,
+) =>
+  attempt.intentKey.startsWith(RETAIL_RESTART_PREFIX)
+    ? readRetailEnrollmentRestartContext(transaction, attempt.portalEnrollmentAttemptId, false).pipe(
+        Effect.flatMap((proof) =>
+          Option.isSome(proof)
+            ? Effect.void
+            : Effect.fail(attemptUnavailable('The immutable existing-account predecessor proof is invalid')),
+        ),
+      )
+    : Effect.void;
+
 export const commerceEnrollmentAttemptPersistenceForTransaction = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
   scope: CommerceEnrollmentOwnerScope,
@@ -1251,6 +1267,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ]).pipe(
             Effect.flatMap((rows) => requireAttemptRow(rows, 'create_portal_enrollment_attempt')),
             Effect.flatMap(mapCreateRow),
+            Effect.tap((result) => validateRestartPredecessor(transaction, result.attempt)),
             Effect.tap((result) =>
               input.retailRegistration === undefined
                 ? Effect.void
@@ -1470,4 +1487,32 @@ export const failRejectedEnrollmentAttempt = (
   transaction.invoke(failAttemptRoutine, [attemptId, transition.ownerModuleKey, transition.transitionKey]).pipe(
     Effect.mapError((cause) => unavailable(cause)),
     Effect.map((rows) => rows[0]?.failed === true),
+  );
+
+/** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
+const admitAttemptRoutine = defineScopedRoutine({
+  name: 'admit_portal_enrollment_attempt',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text()],
+  resultSchema: Schema.Struct({ admitted: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.admit',
+  schema: 'commerce_customer_context',
+});
+
+export const admitEnrollmentAttempt = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  input: ReadEnrollmentAttemptInput,
+  compositionRevision: string,
+): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
+  transaction.invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, compositionRevision]).pipe(
+    Effect.mapError((cause) => unavailable(cause)),
+    Effect.filterOrFail(
+      (rows) => rows[0]?.admitted === true,
+      () =>
+        attemptUnavailable(
+          'The parked Enrollment Attempt was not admitted under the current composition',
+          input.portalEnrollmentAttemptId,
+        ),
+    ),
+    Effect.asVoid,
   );

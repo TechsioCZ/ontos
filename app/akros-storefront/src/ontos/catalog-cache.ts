@@ -11,8 +11,8 @@ import { after } from "next/server";
  * Only price-free category/navigation entries use shared storage, stale refresh and failure retention.
  *
  * Level 1 is the isolate's bounded map. On Workers, level 2 is the colo's Cache API (every isolate of the
- * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center, so
- * the scheduled warm-up and a deploy's warm-up reach the colo a shopper lands on). The isolate's own value
+ * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center).
+ * Shopper requests populate these levels. The isolate's own value
  * renders without any lookup while it is younger than `staleMs`; otherwise the newest shared copy is taken.
  * Shared copies carry their timestamp outside the body (colo header, KV metadata), so only one is parsed.
  * - younger than `freshMs`: served as is;
@@ -53,8 +53,6 @@ export interface CatalogCacheOptions {
   readonly keepMs: number;
   readonly limit: number;
 }
-export type WarmResult = "fresh" | "refreshed" | "failed";
-
 const EDGE_ORIGIN = "https://akros-catalog.cache.internal";
 /** A background refresh of a key is not started again in this isolate within this window. */
 const REFRESH_GUARD_MS = 30_000;
@@ -194,7 +192,7 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     return value;
   };
 
-  /** A shared copy another isolate or the warm-up refreshed recently enough, else an owner read. */
+  /** A shared copy another isolate refreshed recently enough, else an owner read. */
   const refresh = async (key: string, load: () => Promise<T>, context: Runtime | undefined) => {
     const copy = await shared(key, context);
     if (copy !== undefined && Date.now() - copy.at < options.freshMs) {
@@ -237,18 +235,6 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
         if (entry !== undefined && age(entry) < options.keepMs) return entry.value;
         throw error;
       }
-    },
-    /** Reads `key` from the owner unless a cached value is younger than `minAgeMs` (scheduled warm-up). */
-    warm: async (key: string, load: () => Promise<T>, minAgeMs: number): Promise<WarmResult> => {
-      const context = options.storage === "shared" ? runtime() : undefined;
-      const own = local.get(key);
-      const copy = await shared(key, context);
-      const at = Math.max(own?.at ?? 0, copy?.at ?? 0);
-      if (Date.now() - at < minAgeMs) return "fresh";
-      return await read(key, load, context).then(
-        () => "refreshed" as const,
-        () => "failed" as const,
-      );
     },
   };
 };

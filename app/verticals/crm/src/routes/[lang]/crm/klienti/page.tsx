@@ -278,7 +278,7 @@ const ClientsList = ({
             hint={
               linkedCount === active.length
                 ? 'všichni aktivní klienti mají ověřenou identitu'
-                : `${formatNumber(active.length - linkedCount)} čeká na propojení`
+                : `${formatNumber(active.length - linkedCount)} bez přiřazeného zákazníka`
             }
             label="Propojeno s evidencí zákazníků"
             value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
