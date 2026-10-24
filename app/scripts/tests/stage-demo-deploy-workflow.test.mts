@@ -285,6 +285,7 @@ it('reconciles service grants and the isolated verification context after migrat
   expect(reconcile?.if).toBeUndefined();
   expect(reconcile?.['continue-on-error']).toBeUndefined();
   expect(reconcile?.env?.ZEROPS_TOKEN).toBe(secretReference('ZEROPS_TOKEN'));
+  expect(reconcile?.env?.ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN).toBe(secretReference('CLOUDFLARE_API_TOKEN'));
   expect(reconcile?.env?.BETTER_AUTH_URL).toBe(['${{', 'env.STAGE_SHELL_URL', '}}'].join(' '));
   expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual([
     '--zerops --check',

@@ -350,6 +350,8 @@ jobs:
         env:
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          # The job's composition URL is the Cloudflare KV REST value endpoint, which needs a bearer token.
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BETTER_AUTH_URL: ${{ env.STAGE_SHELL_URL }}
           # Only whole secrets are masked; a field read with fromJSON would print in the step's env block.
           ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
