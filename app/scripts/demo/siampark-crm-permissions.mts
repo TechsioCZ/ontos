@@ -20,9 +20,15 @@ import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/in
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { rentalDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
+import type { DemoAction } from './permissions.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
 const emails = new Set(['management@siampark.demo', 'external@siampark.demo']);
+
+export const siamparkCrmRelationships = (actions: readonly DemoAction[]) =>
+  siamparkRentalPersonas.filter((persona) => emails.has(persona.email)).flatMap((persona) =>
+    principalRelationships(persona.principalId, persona.role, actions.filter((action) => action.actionKey === 'demo.crm.apply-command'), rentalDemoLegalEntityId, demoTenantId, persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external'),
+  );
 
 const environmentLive = ConfigProvider.layer(
   Effect.gen(function* loadOperatorConfiguration() {
@@ -55,13 +61,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   if (actions.length !== 1) {
     return yield* Effect.fail(new Error('Required published Action is missing'));
   }
-  const all = yield* Effect.try(() =>
-    siamparkRentalPersonas
-      .filter((persona) => emails.has(persona.email))
-      .flatMap((persona) =>
-        principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId, demoTenantId, persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external'),
-      ),
-  );
+  const all = yield* Effect.try(() => siamparkCrmRelationships(actions));
   // SpiceDB rejects a write that names the same relationship twice (both personas share the company relations).
   const relationships = [
     ...new Map(
@@ -92,4 +92,6 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   Effect.provide(NodeServices.layer),
 );
 
-await Effect.runPromise(program);
+if (import.meta.main) {
+  await Effect.runPromise(program);
+}

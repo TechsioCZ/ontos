@@ -22,7 +22,13 @@ import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/c
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import type { DemoAction } from './permissions.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
+
+export const opsOperationalRelationships = (actions: readonly DemoAction[]) =>
+  siamparkRentalPersonas.filter((persona) => persona.email === 'external@siampark.demo').flatMap((persona) =>
+    principalRelationships(persona.principalId, persona.role, actions.filter((action) => action.actionKey === 'facility.operations.apply-command'), rentalDemoLegalEntityId, demoTenantId, 'operational-repair-external'),
+  );
 
 const environmentLive = ConfigProvider.layer(
   Effect.gen(function* loadOperatorConfiguration() {
@@ -59,9 +65,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   if (persona === undefined) {
     return yield* Effect.fail(new Error('External demo persona is missing'));
   }
-  const relationships = yield* Effect.try(() =>
-    principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId, demoTenantId, 'operational-repair-external'),
-  );
+  const relationships = yield* Effect.try(() => opsOperationalRelationships(actions));
   const client = yield* Effect.acquireRelease(
     Effect.try(() => openSpiceDbGrpcRpc(configuration, 5000)),
     (value) => Effect.sync(() => value.close()),
@@ -106,4 +110,6 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   Effect.provide(NodeServices.layer),
 );
 
-await Effect.runPromise(program);
+if (import.meta.main) {
+  await Effect.runPromise(program);
+}
