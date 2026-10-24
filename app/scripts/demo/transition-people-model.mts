@@ -77,7 +77,9 @@ import {
   demoPermissionRelationships,
   localDevelopmentAdministratorFixture,
   principalRelationships,
+  reviewedHumanActionAddonRelationships,
 } from './permissions.mts';
+import { ownTaskRelationships } from './accounts-admin-grants.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { readReviewedAgentProfiles, reviewedProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
 
@@ -525,6 +527,8 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
   const fixture = companyMembershipAdmissionRelationships(
     [
       ...demoPermissionRelationships(composition.actions),
+      ...reviewedHumanActionAddonRelationships(composition.actions),
+      ...ownTaskRelationships(),
       ...principalRelationships(
         local.principalId,
         local.role,
