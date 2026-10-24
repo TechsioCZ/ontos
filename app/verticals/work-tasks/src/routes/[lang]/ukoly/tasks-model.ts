@@ -1,6 +1,7 @@
 import { foldSearchText } from '@app/admin-ui';
 import { DateTime, Match, Option, Result, Schema, Struct } from 'effect';
-import type { Employee } from '@app/workforce/contracts/records';
+import { principalKey } from '../../../../shared/assignment.ts';
+import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { BulkTaskResult, BulkWorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { canTransition } from '../../../../shared/actions/task-transitions.ts';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../shared/apis/records.ts';
@@ -13,7 +14,7 @@ export const DueFilterSchema = Schema.Literals(['all', 'overdue', 'today', 'none
 export type DueFilter = typeof DueFilterSchema.Type;
 
 export interface TaskFilters {
-  /** `all`, `none` (unassigned) or an employee id. */
+  /** `all`, `none` (unassigned) or a principal key. */
   readonly assignee: string;
   readonly due: DueFilter;
   /** Termín od / do as ISO dates; '' leaves that end of the range open. */
@@ -82,7 +83,7 @@ export const commonTransitionTargets = (tasks: readonly Task[]): readonly TaskSt
 
 /**
  * A ui-kit select item. The kit's hidden native `<option>` takes its text from `displayValue`; without it the
- * option falls back to the raw value (an employee id or `none`), which then leaks into the page text.
+ * option falls back to the raw value (a principal key or `none`), which then leaks into the page text.
  */
 export const selectOption = (label: string, value: string) => ({ displayValue: label, label, value });
 
@@ -168,14 +169,7 @@ export const doneThisWeek = (tasks: readonly Task[], today: string) => {
 };
 
 export const unassignedOpenCount = (tasks: readonly Task[]) =>
-  tasks.filter((task) => isOpenTask(task) && task.assigneeEmployeeId === undefined).length;
-
-/**
- * "Moje úkoly": the employee bound to the signed-in principal. Undefined when no employee carries that
- * principal. In that case "mine" still matches explicit principal ownership, never everyone else's tasks.
- */
-export const employeeIdOf = (actorPrincipalId: string, employees: readonly Employee[]) =>
-  employees.find((employee) => employee.principalRef?.principalId === actorPrincipalId)?.id;
+  tasks.filter((task) => isOpenTask(task) && task.ownerPrincipalRef === undefined).length;
 
 const nameMatches = (name: string, needle: string) => foldSearchText(name).includes(needle);
 
@@ -216,10 +210,11 @@ const noNames: ReadonlyMap<string, string> = new Map();
 const matchesSearch = (
   task: Task,
   needle: string,
-  names: { readonly customerNames: ReadonlyMap<string, string>; readonly employeeNames: ReadonlyMap<string, string> },
+  names: { readonly customerNames: ReadonlyMap<string, string>; readonly principalNames: ReadonlyMap<string, string> },
 ) => {
   const customer = task.partyId === undefined ? undefined : names.customerNames.get(task.partyId);
-  const assignee = task.assigneeEmployeeId === undefined ? undefined : names.employeeNames.get(task.assigneeEmployeeId);
+  const assignee =
+    task.ownerPrincipalRef === undefined ? undefined : names.principalNames.get(principalKey(task.ownerPrincipalRef));
   return foldSearchText(task.title).includes(needle) || textMatches(customer, needle) || textMatches(assignee, needle);
 };
 
@@ -227,38 +222,39 @@ const matchesAssignee = (task: Task, assignee: string) => {
   if (assignee === 'all') {
     return true;
   }
-  return assignee === 'none' ? task.assigneeEmployeeId === undefined : task.assigneeEmployeeId === assignee;
+  return assignee === 'none'
+    ? task.ownerPrincipalRef === undefined
+    : task.ownerPrincipalRef !== undefined && principalKey(task.ownerPrincipalRef) === assignee;
 };
 
 export const filterTasks = (
   tasks: readonly Task[],
   {
     customerNames = noNames,
-    employeeNames = noNames,
     filters,
-    mineEmployeeId,
-    minePrincipalId,
+    minePrincipalRef,
+    principalNames = noNames,
     tab,
     today = todayIsoDate(),
     unitProperty = noNames,
   }: {
-    readonly unitProperty?: ReadonlyMap<string, string>;
     readonly customerNames?: ReadonlyMap<string, string>;
-    readonly employeeNames?: ReadonlyMap<string, string>;
     readonly filters: TaskFilters;
-    readonly mineEmployeeId?: string | undefined;
-    readonly minePrincipalId?: string | undefined;
+    readonly minePrincipalRef?: PrincipalRef | undefined;
+    readonly principalNames?: ReadonlyMap<string, string>;
     readonly tab: TaskTab;
     readonly today?: string;
+    readonly unitProperty?: ReadonlyMap<string, string>;
   },
 ) => {
   const needle = foldSearchText(filters.search.trim());
   return tasks.filter(
     (task) =>
       (tab === 'all' ||
-        (mineEmployeeId !== undefined && task.assigneeEmployeeId === mineEmployeeId) ||
-        (minePrincipalId !== undefined && task.ownerPrincipalRef?.principalId === minePrincipalId)) &&
-      (needle === '' || matchesSearch(task, needle, { customerNames, employeeNames })) &&
+        (minePrincipalRef !== undefined &&
+          task.ownerPrincipalRef !== undefined &&
+          principalKey(task.ownerPrincipalRef) === principalKey(minePrincipalRef))) &&
+      (needle === '' || matchesSearch(task, needle, { customerNames, principalNames })) &&
       matchesAssignee(task, filters.assignee) &&
       matchesDueFilter(task, filters.due, today) &&
       matchesDueRange(task, filters.dueFrom, filters.dueTo) &&
@@ -269,12 +265,8 @@ export const filterTasks = (
 };
 
 /** Selects only between rows already authorized by the owner; never grants access to team tasks. */
-export const defaultTaskTab = (
-  tasks: readonly Task[],
-  mineEmployeeId: string | undefined,
-  minePrincipalId: string | undefined,
-): TaskTab =>
-  filterTasks(tasks, { filters: initialTaskFilters, mineEmployeeId, minePrincipalId, tab: 'mine' }).some(
+export const defaultTaskTab = (tasks: readonly Task[], minePrincipalRef: PrincipalRef | undefined): TaskTab =>
+  filterTasks(tasks, { filters: initialTaskFilters, minePrincipalRef, tab: 'mine' }).some(
     (task) => task.state !== 'DONE' && task.state !== 'CANCELLED',
   )
     ? 'mine'
@@ -382,10 +374,13 @@ export const withBulkResult = <List extends TaskList>(
   const apply = (task: Task): Task =>
     Match.value(command).pipe(
       Match.tag('BulkChangeTaskState', ({ toState }): Task => ({ ...task, state: toState })),
-      Match.tag('BulkAssignTasks', ({ assigneeEmployeeId }) =>
-        Option.match(assigneeEmployeeId, {
-          onNone: (): Task => Struct.omit(task, ['assigneeEmployeeId']),
-          onSome: (employeeId): Task => ({ ...task, assigneeEmployeeId: employeeId }),
+      Match.tag('BulkAssignTasks', ({ ownerPrincipalRef }) =>
+        Option.match(ownerPrincipalRef, {
+          onNone: (): Task => Struct.omit(task, ['ownerPrincipalRef', 'assignmentNeedsReassignment']),
+          onSome: (principalRef): Task => ({
+            ...Struct.omit(task, ['assignmentNeedsReassignment']),
+            ownerPrincipalRef: principalRef,
+          }),
         }),
       ),
       Match.exhaustive,

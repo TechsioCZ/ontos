@@ -26,32 +26,31 @@ const task = Schema.decodeUnknownSync(TaskSchema)({
   updatedAt: '2026-10-05T10:00:00Z',
 });
 
-it('never expands My tasks to everyone when the login has no employee binding', () => {
+it('never expands My tasks to everyone when no work is assigned to the principal', () => {
   expect(filterTasks([task], { filters: initialTaskFilters, tab: 'mine' })).toHaveLength(0);
   expect(filterTasks([task], { filters: initialTaskFilters, tab: 'all' })).toHaveLength(1);
 });
 
-it('matches explicit principal ownership as well as employee assignment', () => {
+it('matches canonical principal ownership across assignment sources', () => {
   const owned = { ...task, ownerPrincipalRef: { principalId: tenantId, tenantId } };
   expect(
     filterTasks([owned, task], {
       filters: initialTaskFilters,
-      minePrincipalId: tenantId,
+      minePrincipalRef: { principalId: tenantId, tenantId },
       tab: 'mine',
     }),
   ).toStrictEqual([owned]);
   expect(
     filterTasks([owned], {
       filters: initialTaskFilters,
-      minePrincipalId: 'someone-else',
+      minePrincipalRef: { principalId: 'someone-else', tenantId },
       tab: 'mine',
     }),
   ).toHaveLength(0);
 });
 
-// The "all" tab ignores whose task it is, so any employee id works here.
-const search = (text: string) =>
-  filterTasks([task], { filters: { ...initialTaskFilters, search: text }, mineEmployeeId: 'someone-else', tab: 'all' });
+// The "all" tab does not narrow by the current principal.
+const search = (text: string) => filterTasks([task], { filters: { ...initialTaskFilters, search: text }, tab: 'all' });
 
 it('finds a task by title without diacritics or case', () => {
   expect(search('uklid sklad')).toHaveLength(1);
@@ -69,7 +68,6 @@ it('finds a task by its customer name, folded the same way as titles', () => {
     filterTasks([withCustomer], {
       customerNames,
       filters: { ...initialTaskFilters, search: text },
-      mineEmployeeId: 'someone-else',
       tab: 'all',
     });
   expect(byCustomer('plzenske')).toHaveLength(1);
@@ -91,9 +89,9 @@ it('narrows customer picker items by a query without diacritics and leaves unnam
 });
 
 it('opens available company work when there is no personal open work, without changing explicit mine filtering', () => {
-  expect(defaultTaskTab([task], undefined, tenantId)).toBe('all');
+  expect(defaultTaskTab([task], { principalId: tenantId, tenantId })).toBe('all');
   const owned = { ...task, ownerPrincipalRef: { principalId: tenantId, tenantId } };
-  expect(defaultTaskTab([task, owned], undefined, tenantId)).toBe('mine');
-  expect(defaultTaskTab([{ ...owned, state: 'DONE' }], undefined, tenantId)).toBe('all');
+  expect(defaultTaskTab([task, owned], { principalId: tenantId, tenantId })).toBe('mine');
+  expect(defaultTaskTab([{ ...owned, state: 'DONE' }], { principalId: tenantId, tenantId })).toBe('all');
   expect(filterTasks([task], { filters: initialTaskFilters, tab: 'mine' })).toEqual([]);
 });

@@ -82,11 +82,6 @@ const salesDemoCollectionRef = {
   tenantId: demoTenantId,
 };
 const salesDemoPriorities = ['NORMAL', 'HIGH', 'NORMAL', 'LOW', 'HIGH', 'NORMAL'] as const;
-const salesDemoEmployeeKeys = {
-  accountant: ['ucetni', 'martin-kucera'],
-  sales: ['obchod', 'obchodnik', 'lucie-dvorakova', 'tomas-cerny', 'katerina-prochazkova'],
-  warehouse: ['sklad', 'jiri-horak'],
-} as const;
 const salesDemoTitles = {
   accountant: [
     'Ověřit platbu faktury',
@@ -152,15 +147,8 @@ const salesDemoRoleFor = (i: number): keyof typeof salesDemoTitles => {
 
 const salesDemoHasOpportunity = (i: number) => i % 8 === 1 || i % 8 === 3 || i % 8 === 6;
 
-// Every 10th task is unassigned (8 in total); the rest rotate through the role's employees.
-const salesDemoAssigneeFields = (i: number) => {
-  if (i % 10 === 9) {
-    return {};
-  }
-  const employees = salesDemoEmployeeKeys[salesDemoRoleFor(i)];
-  const employeeKey = employees[Math.floor(i / 10) % employees.length];
-  return { assigneeEmployeeId: demoId('employee', employeeKey ?? employees[0]) };
-};
+// Every tenth task is unassigned; other tasks belong to the known demo principal.
+const salesDemoAssigneeFields = (i: number) => (i % 10 === 9 ? {} : { ownerPrincipalRef: salesDemoOwnerPrincipalRef });
 const salesDemoOpportunityKey = (i: number) => `o${pad2(((i * 3) % 30) + 1)}`;
 // Every 4th task has no customer (60 with a customer). A task linked to an opportunity takes that opportunity's
 // customer from the shared sales plan, so the pair stays consistent (the task form rejects a mismatched pair).
@@ -185,7 +173,6 @@ const salesDemoTask = (i: number) => {
     contextRefs: [],
     createdAt: DateTime.formatIso(createdAt),
     dueDate: DateTime.formatIsoDateUtc(dueDate),
-    ownerPrincipalRef: salesDemoOwnerPrincipalRef,
     priority: salesDemoPriorities[i % salesDemoPriorities.length],
     ref: {
       moduleId: salesDemoModuleId,
@@ -219,7 +206,7 @@ const salesDemoRawState = {
 const summarizeSalesDemo = (state: WorkState) => {
   const open = state.tasks.filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED');
   const overdue = open.filter((task) => task.dueDate !== undefined && task.dueDate < salesDemoAnchorDate);
-  const unassigned = state.tasks.filter((task) => task.assigneeEmployeeId === undefined).length;
+  const unassigned = state.tasks.filter((task) => task.ownerPrincipalRef === undefined).length;
   const withParty = state.tasks.filter((task) => task.partyId !== undefined).length;
   const withOpportunity = state.tasks.filter((task) => task.opportunityId !== undefined).length;
   return `${state.tasks.length} tasks (open ${open.length}, overdue ${overdue.length} vs ${salesDemoAnchorDate}, unassigned ${unassigned}, with customer ${withParty}, with opportunity ${withOpportunity})`;

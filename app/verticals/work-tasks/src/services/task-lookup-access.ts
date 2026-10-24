@@ -4,11 +4,10 @@ import { Effect } from 'effect';
 import type { LookupAccess } from '../../shared/apis/records.ts';
 
 const lookupModules = {
+  contracts: 'legal.agreements',
   customers: 'party.registry',
-  employees: 'demo.workforce',
   opportunities: 'demo.sales-pipeline',
   properties: 'property.portfolio',
-  contracts: 'legal.agreements',
 } as const;
 
 const combine = (decisions: readonly ContextAccessDecision[]): ContextAccessDecision =>
@@ -22,13 +21,14 @@ const combine = (decisions: readonly ContextAccessDecision[]): ContextAccessDeci
 export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* taskLookupAccess(scope: OperationalScope) {
   const access = yield* ContextAccess;
   const unavailable: LookupAccess = {
+    contracts: 'unavailable',
     customers: 'unavailable',
-    employees: 'unavailable',
     opportunities: 'unavailable',
     properties: 'unavailable',
-    contracts: 'unavailable',
   };
-  if (scope.legalEntityId === undefined) return unavailable;
+  if (scope.legalEntityId === undefined) {
+    return unavailable;
+  }
   const input = { legalEntityId: scope.legalEntityId, principalId: scope.principalId, tenantId: scope.tenantId };
   const modules = Object.values(lookupModules);
   // Core's read runtime resolves the special `module.access` entrypoint permission through modules(),
@@ -36,10 +36,10 @@ export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* tas
   const [moduleAccess, customerAccess] = yield* Effect.all([
     access.modules({ ...input, moduleIds: modules }),
     access.legalEntities({
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
       legalEntityIds: [scope.legalEntityId],
       permission: 'read_counterparty',
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
     }),
   ]);
   const decision = (name: keyof LookupAccess): ContextAccessDecision => {
@@ -53,10 +53,9 @@ export const taskLookupAccess = Effect.fn('Work.taskLookupAccess')(function* tas
     ]);
   };
   return {
+    contracts: decision('contracts'),
     customers: decision('customers'),
-    employees: decision('employees'),
     opportunities: decision('opportunities'),
     properties: decision('properties'),
-    contracts: decision('contracts'),
   };
 });

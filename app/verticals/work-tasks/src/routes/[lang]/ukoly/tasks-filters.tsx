@@ -1,12 +1,12 @@
 import { BulkActionBar } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import type { Employee } from '@app/workforce/contracts/records';
+import { assignmentOptions } from './assignment-options.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../shared/apis/records.ts';
-import type { TaskState } from '../../../../shared/apis/records.ts';
+import type { AssignmentPrincipal, TaskState } from '../../../../shared/apis/records.ts';
 import { DueFilterSchema, TASK_STATE_ORDER, selectOption } from './tasks-model.ts';
 import type { ObjectOption, TaskFilters } from './tasks-model.ts';
 
@@ -22,22 +22,18 @@ const filterLabelProps = { className: 'font-label text-label-sm' };
 // The bulk bar shows placeholders only; its Select labels exist for screen readers, so each trigger has a name.
 const bulkLabelProps = { className: 'sr-only' };
 
-const employeeItems = (employees: readonly Employee[]) =>
-  employees.map((employee) => selectOption(employee.fullName, employee.id));
-
 export const TaskFilterBar = ({
   active,
-  employees,
   canAssign,
   filters,
   objects,
   onChange,
   onClear,
   onShowHiddenChange,
+  principals,
   showHidden,
 }: {
   readonly active: boolean;
-  readonly employees: readonly Employee[];
   readonly canAssign: boolean;
   readonly filters: TaskFilters;
   /** Properties and units for the Objekt filter; undefined when the property directory is not available. */
@@ -45,6 +41,7 @@ export const TaskFilterBar = ({
   readonly onChange: (next: TaskFilters) => void;
   readonly onClear: () => void;
   readonly onShowHiddenChange?: ((next: boolean) => void) | undefined;
+  readonly principals: readonly AssignmentPrincipal[];
   readonly showHidden: boolean;
 }) => {
   const { t } = useModernI18n();
@@ -67,7 +64,7 @@ export const TaskFilterBar = ({
               items={[
                 selectOption(t(`${key}.filters.allAssignees`), ALL),
                 selectOption(t(`${key}.unassigned`), NONE),
-                ...employeeItems(employees),
+                ...assignmentOptions(principals),
               ]}
               label={t(`${key}.filters.assignee`)}
               labelProps={filterLabelProps}
@@ -218,21 +215,21 @@ export const TaskFilterBar = ({
 
 export const TaskBulkBar = ({
   busy,
-  count,
-  employees,
   canAssign,
+  count,
   onAssign,
   onChangeState,
   onClear,
+  principals,
   targets,
 }: {
   readonly busy: boolean;
-  readonly count: number;
-  readonly employees: readonly Employee[];
   readonly canAssign: boolean;
+  readonly count: number;
   readonly onAssign: (value: string) => void;
   readonly onChangeState: (state: TaskState) => void;
   readonly onClear: () => void;
+  readonly principals: readonly AssignmentPrincipal[];
   /** States every selected task can move to. Options outside this list are not offered. */
   readonly targets: readonly TaskState[];
 }) => {
@@ -261,7 +258,7 @@ export const TaskBulkBar = ({
       {canAssign && (
         <Select
           disabled={busy}
-          items={[selectOption(t(`${key}.unassigned`), NONE), ...employeeItems(employees)]}
+          items={[selectOption(t(`${key}.unassigned`), NONE), ...assignmentOptions(principals)]}
           label={t(`${key}.bulk.assign`)}
           labelProps={bulkLabelProps}
           onValueChange={({ value }) => {
