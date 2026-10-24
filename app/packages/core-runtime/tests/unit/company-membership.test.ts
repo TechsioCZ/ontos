@@ -60,8 +60,8 @@ it.effect('keeps human affiliation company-local and refuses technical workloads
 it.effect(
   'decodes a tenant-bound PrincipalRef and explicit affiliation absence without weakening membership revisions',
   () =>
-    Effect.sync(() => {
-      const member = Schema.decodeUnknownSync(CompanyMembershipSchema)({
+    Effect.gen(function* decodeCompanyMembership() {
+      const member = yield* Schema.decodeEffect(CompanyMembershipSchema)({
         affiliation: null,
         legalEntityId,
         principalRef: principal,
@@ -70,10 +70,8 @@ it.effect(
       });
       expect(Option.isNone(member.affiliation)).toBe(true);
       expect(member.principalRef).toEqual(principal);
-      expect(Schema.encodeSync(CompanyMembershipSchema)(member).affiliation).toBeNull();
-      expect(() =>
-        Schema.decodeUnknownSync(CompanyMembershipSchema)({ ...member, affiliation: null, revision: 0 }),
-      ).toThrow();
+      expect((yield* Schema.encodeEffect(CompanyMembershipSchema)(member)).affiliation).toBeNull();
+      expect(() => Schema.decodeSync(CompanyMembershipSchema)({ ...member, affiliation: null, revision: 0 })).toThrow();
       expect(() =>
         Schema.decodeUnknownSync(CompanyMembershipSchema)({ ...member, affiliation: 'salesperson' }),
       ).toThrow();
@@ -170,6 +168,7 @@ it.effect('decodes only canonical scoped-role graph identities without guessing 
     const companyRole = { legalEntityId, roleKey: 'superadmin', tenantId };
     expect(fromScopedRoleObjectId(toScopedRoleObjectId(tenantRole))).toEqual(Option.some(tenantRole));
     expect(fromScopedRoleObjectId(toScopedRoleObjectId(companyRole))).toEqual(Option.some(companyRole));
+    const malformedRoleJson = `["${tenantId}",null,"reader","extra"]`;
     for (const invalid of [
       'superadmin',
       'sr_not-json',
@@ -177,7 +176,7 @@ it.effect('decodes only canonical scoped-role graph identities without guessing 
       toScopedRoleObjectId({ roleKey: '', tenantId }),
       toScopedRoleObjectId({ roleKey: 'reader', tenantId: '' }),
       toScopedRoleObjectId({ legalEntityId: '', roleKey: 'reader', tenantId }),
-      `sr_${Buffer.from(JSON.stringify([tenantId, null, 'reader', 'extra'])).toString('base64url')}`,
+      `sr_${Buffer.from(malformedRoleJson).toString('base64url')}`,
     ]) {
       expect(Option.isNone(fromScopedRoleObjectId(invalid))).toBe(true);
     }
@@ -185,7 +184,7 @@ it.effect('decodes only canonical scoped-role graph identities without guessing 
 );
 
 it.effect('keeps selected company membership and observed graph projection distinct in directory wire results', () =>
-  Effect.sync(() => {
+  Effect.gen(function* decodeDirectoryWireResult() {
     const wire = {
       items: [
         {
@@ -209,13 +208,13 @@ it.effect('keeps selected company membership and observed graph projection disti
       scope: { _tag: 'company', legalEntityId },
       tenantId,
     };
-    const decoded = Schema.decodeUnknownSync(PeopleDirectoryResultSchema)(wire);
+    const decoded = yield* Schema.decodeUnknownEffect(PeopleDirectoryResultSchema)(wire);
     expect(decoded.items[0]?.selectedCompanyMembershipProjection).toEqual(
       Option.some({ expectedMember: false, observedMember: true }),
     );
-    expect(Schema.encodeSync(PeopleDirectoryResultSchema)(decoded)).toEqual(wire);
-    expect(() => Schema.decodeUnknownSync(PeopleDirectoryInputSchema)({ limit: 101, offset: 0 })).toThrow();
-    expect(() => Schema.decodeUnknownSync(PeopleDirectoryInputSchema)({ limit: 1, offset: -1 })).toThrow();
+    expect(yield* Schema.encodeEffect(PeopleDirectoryResultSchema)(decoded)).toEqual(wire);
+    expect(() => Schema.decodeSync(PeopleDirectoryInputSchema)({ limit: 101, offset: 0 })).toThrow();
+    expect(() => Schema.decodeSync(PeopleDirectoryInputSchema)({ limit: 1, offset: -1 })).toThrow();
   }),
 );
 
@@ -238,7 +237,7 @@ it.effect(
     Effect.gen(function* collectScopedRoleCommands() {
       const scopes = [{ _tag: 'tenant' }, { _tag: 'company', legalEntityId }] as const;
       for (const scope of scopes) {
-        const role = Schema.decodeUnknownSync(ScopedRoleMembershipRoleSchema)({ roleKey: 'reader', scope, tenantId });
+        const role = yield* Schema.decodeEffect(ScopedRoleMembershipRoleSchema)({ roleKey: 'reader', scope, tenantId });
         const collector = createActionCollector(
           { [outboxTopic]: OutboxPayloadSchema },
           'core.identity',

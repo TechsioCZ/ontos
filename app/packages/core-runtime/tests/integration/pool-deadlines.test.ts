@@ -10,7 +10,9 @@ import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } fr
 import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
-class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()('RuntimeDatabaseIdentity') {}
+class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()(
+  '@app/core-runtime/tests/integration/pool-deadlines.test/RuntimeDatabaseIdentity',
+) {}
 
 const currentDatabaseUser = Effect.gen(function* readDatabaseIdentity() {
   const database = yield* CoreDatabase;
@@ -25,9 +27,11 @@ const runtimeIdentityLive = Layer.effect(RuntimeDatabaseIdentity, currentDatabas
 it.live('keeps administrator and runtime identities distinct in one memoized operator composition', () =>
   Effect.gen(function* distinctOperatorClients() {
     const configuration = yield* loadDatabaseConnectionPair();
-    const [admin, runtime] = yield* Effect.gen(function* observeBothIdentities() {
-      return [yield* currentDatabaseUser, yield* RuntimeDatabaseIdentity] as const;
-    }).pipe(Effect.provide(Layer.mergeAll(runtimeIdentityLive, CoreAdminDatabaseLive)));
+    const context = yield* Layer.build(Layer.mergeAll(runtimeIdentityLive, CoreAdminDatabaseLive));
+    const admin = yield* currentDatabaseUser.pipe(
+      Effect.provideService(CoreDatabase, Context.get(context, CoreDatabase)),
+    );
+    const runtime = Context.get(context, RuntimeDatabaseIdentity);
     expect(admin).toBe(configuration.admin.user);
     expect(runtime).toBe(configuration.runtime.user);
     expect(admin).not.toBe(runtime);

@@ -939,7 +939,9 @@ it.effect(
       {
         actionKey: 'shell.counter.change',
         correlationId: 'correlation-intent-1',
+        legalEntityId: principal.legalEntityId,
         principalId: principal.principalId,
+        tenantId: principal.tenantId,
       },
     ]);
     expect(harness.gateCounts()).toEqual({

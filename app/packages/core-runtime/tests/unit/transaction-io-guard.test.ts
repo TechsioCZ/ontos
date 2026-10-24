@@ -2,7 +2,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import nodePath from 'node:path';
 
+import { Cause, Effect, Exit, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import { withPostgresSessionAdvisoryLock } from '../../src/db/session-advisory-lock.ts';
+import { IoInsideDatabaseTransaction, insideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const skippedDirectories = new Set(['.git', 'dist', 'node_modules', 'tests', 'test', 'fixtures', '.modern', 'build']);
@@ -56,3 +60,23 @@ it('creates the Core connection pool only behind the pool guard', () => {
     ),
   ).toEqual([]);
 });
+
+it.effect('refuses a private advisory-lock session before connection acquisition inside a marked transaction', () =>
+  Effect.gen(function* refusePrivateSessionAcquisition() {
+    let operationRan = false;
+    const result = yield* withPostgresSessionAdvisoryLock(
+      Redacted.make('postgresql://localhost:1/unused'),
+      'transaction-guard-private-session',
+      Effect.sync(() => {
+        operationRan = true;
+      }),
+    ).pipe(insideDatabaseTransaction('test.private-session'), Effect.exit);
+    if (!Exit.isFailure(result)) {
+      expect.unreachable('Private session acquisition must refuse a marked transaction');
+    }
+    const defect = Cause.squash(result.cause);
+    expect(defect).toBeInstanceOf(IoInsideDatabaseTransaction);
+    expect(defect).toMatchObject({ io: 'pool-acquisition', operationKey: 'test.private-session' });
+    expect(operationRan).toBe(false);
+  }),
+);

@@ -1,7 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Redacted, Schema } from 'effect';
-import type { Reactivity } from 'effect/unstable/reactivity';
 
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseConfig } from '../db/config.ts';
@@ -168,14 +167,14 @@ export class ScopedRoleMembershipLifecycle extends Context.Service<
       role: ScopedRoleIdentity,
       principalId: string,
       compositionRevision: string,
-    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError>;
     readonly reconcilePrincipal: (
       tenantId: string,
       principalId: string,
       compositionRevision: string,
-    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError>;
   }
->()('@app/core-runtime/permissions/ScopedRoleMembershipLifecycle') {}
+>()('@app/core-runtime/permissions/scoped-role-membership-lifecycle/ScopedRoleMembershipLifecycle') {}
 
 /** The only persisted command is ordinary audit/event evidence. SpiceDB remains live authority. */
 export const ScopedRoleMembershipLifecycleLive = Layer.effect(

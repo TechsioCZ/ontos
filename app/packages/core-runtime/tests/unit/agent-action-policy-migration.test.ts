@@ -389,9 +389,9 @@ it('reports empty audit IDs without producing an unencodable issue and rejects u
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
       expect(result.failure[0]?.code).toBe('invalid_audit_evidence');
-      expect(
-        Result.isSuccess(Schema.decodeUnknownResult(Schema.Array(AgentActionMigrationIssueSchema))(result.failure)),
-      ).toBe(true);
+      expect(Result.isSuccess(Schema.decodeResult(Schema.Array(AgentActionMigrationIssueSchema))(result.failure))).toBe(
+        true,
+      );
     }
   }
 });

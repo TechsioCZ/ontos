@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionAlreadyCommitted, ActionPermissionDenied } from '../../src/actions/errors.ts';
@@ -148,7 +147,7 @@ it.live(
       const agent = randomUUID();
       const service = randomUUID();
       const foreignHuman = randomUUID();
-      const namespace = Schema.decodeUnknownResult(AuthenticationNamespaceRegistrationSchema)({
+      const namespace = Schema.decodeResult(AuthenticationNamespaceRegistrationSchema)({
         allowedAudiences: ['core-runtime-test'],
         authenticationNamespaceId: 'test.membership.better-auth.v1',
         provider: 'test-provider',
@@ -454,21 +453,19 @@ it.live(
       expect(agentMembership.affiliation).toEqual(Option.none());
 
       const lifecycleForEndpoint = (endpoint: string) =>
-        ActionAuthorizationLifecycle.pipe(
-          Effect.provide(
-            ActionAuthorizationLifecycleLive.pipe(
-              Layer.provide(ScopedRoleMembershipLifecycleLive),
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.succeed(CoreDatabase, database),
-                  Layer.succeed(DatabaseConfig, pair.runtime),
-                  Layer.succeed(SpiceDbConfig, { ...configuration, endpoint }),
-                  Layer.succeed(ActiveApplicationCompositionService, authority),
-                ),
+        Layer.build(
+          ActionAuthorizationLifecycleLive.pipe(
+            Layer.provide(ScopedRoleMembershipLifecycleLive),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(CoreDatabase, database),
+                Layer.succeed(DatabaseConfig, pair.runtime),
+                Layer.succeed(SpiceDbConfig, { ...configuration, endpoint }),
+                Layer.succeed(ActiveApplicationCompositionService, authority),
               ),
             ),
           ),
-        );
+        ).pipe(Effect.map((context) => Context.get(context, ActionAuthorizationLifecycle)));
       const lifecycle = yield* lifecycleForEndpoint(configuration.endpoint);
       const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor));
       const drain = (
@@ -784,7 +781,7 @@ it.live(
       // Exercise the real operator against this owned TLS graph, never a fake client.
       const operatorClient: ActionAuthorizationProvisioningClient = {
         checkPermission: (request) =>
-          Effect.tryPromise(() => client.promises.checkPermission(request)).pipe(Effect.map(Option.some)),
+          Effect.tryPromise(() => client.promises.checkPermission(request)).pipe(Effect.asSome),
         diffSchema: (request) => Effect.tryPromise(() => client.promises.diffSchema(request)),
         readRelationships: (request) => Effect.tryPromise(() => client.promises.readRelationships(request)),
         readSchema: (request) => Effect.tryPromise(() => client.promises.readSchema(request)),
@@ -958,7 +955,7 @@ it.live(
         .delete(applicationCompositionAuthority)
         .where(eq(applicationCompositionAuthority.revision, composition.revision))
         .pipe(Effect.asVoid);
-    }).pipe(Effect.provide(Reactivity.layer)),
+    }),
 );
 
 it.live(

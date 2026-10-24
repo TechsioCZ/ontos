@@ -142,7 +142,11 @@ it.effect('losslessly maps Action keys and exact principal identities using full
       objectType: SPICEDB_ACTION_OBJECT_TYPE,
     });
     expect(Buffer.from(toSpiceDbActionObjectId(input).slice(3), 'base64url').toString('utf-8')).toBe(
-      JSON.stringify([input.tenantId, input.legalEntityId, input.actionKey]),
+      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))([
+        input.tenantId,
+        input.legalEntityId,
+        input.actionKey,
+      ]),
     );
     expect(toSpiceDbActionObjectId(input)).not.toBe(
       toSpiceDbActionObjectId({ ...input, actionKey: 'inventory-stock-reserve' }),

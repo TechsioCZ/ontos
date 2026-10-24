@@ -48,7 +48,6 @@ const graph = (initial: readonly v1.Relationship[] = []) => {
     checkPermission: () => Effect.die('unexpected permission check'),
     close: () => {},
     diffSchema: () => Effect.die('unexpected schema diff'),
-    readSchema: () => Effect.die('unexpected schema read'),
     readRelationships: (request) =>
       Effect.suspend(() => {
         reads.push(request);
@@ -65,8 +64,8 @@ const graph = (initial: readonly v1.Relationship[] = []) => {
               (item) =>
                 item.resource !== undefined &&
                 item.resource.objectType === filter.resourceType &&
-                (!filter.optionalResourceId || item.resource.objectId === filter.optionalResourceId) &&
-                (!filter.optionalRelation || item.relation === filter.optionalRelation) &&
+                (filter.optionalResourceId.length === 0 || item.resource.objectId === filter.optionalResourceId) &&
+                (filter.optionalRelation.length === 0 || item.relation === filter.optionalRelation) &&
                 (filter.optionalSubjectFilter === undefined ||
                   (item.subject?.object?.objectType === filter.optionalSubjectFilter.subjectType &&
                     item.subject.object.objectId === filter.optionalSubjectFilter.optionalSubjectId)),
@@ -74,6 +73,7 @@ const graph = (initial: readonly v1.Relationship[] = []) => {
             .map((relationship) => v1.ReadRelationshipsResponse.create({ relationship })),
         );
       }),
+    readSchema: () => Effect.die('unexpected schema read'),
     writeRelationships: (request) =>
       Effect.suspend(() => {
         writes.push(request);
@@ -157,8 +157,7 @@ it.effect('rejects foreign scopes and subjects before any graph I/O', () =>
   Effect.gen(function* rejectForeignPolicy() {
     const original = policy().at(3);
     if (original === undefined) {
-      yield* Effect.die('missing policy fixture');
-      return;
+      expect.unreachable('missing policy fixture');
     }
     const foreign = v1.Relationship.create({
       ...original,

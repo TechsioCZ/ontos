@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { Config, ConfigProvider, Deferred, Effect, Exit, Fiber, Predicate, Redacted } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { withPostgresSessionAdvisoryLock } from '../../src/db/session-advisory-lock.ts';
@@ -73,7 +72,7 @@ it.live(
       expect(yield* holders).toHaveLength(0);
       yield* awaitSessionClosed(holder?.pid);
       expect(yield* lock(Effect.succeed('retry'))).toBe('retry');
-    }).pipe(Effect.provide(Reactivity.layer)),
+    }),
 );
 
 it.live('closes the physical session and releases its lock when the operation fails', () =>
@@ -83,7 +82,7 @@ it.live('closes the physical session and releases its lock when the operation fa
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* holders).toHaveLength(0);
     expect(yield* lock(Effect.succeed('retry'))).toBe('retry');
-  }).pipe(Effect.provide(Reactivity.layer)),
+  }),
 );
 
 it.live('closes the physical session and releases its lock when the operation is interrupted', () =>
@@ -100,5 +99,5 @@ it.live('closes the physical session and releases its lock when the operation is
     expect(yield* holders).toHaveLength(0);
     yield* awaitSessionClosed(holder?.pid);
     expect(yield* lock(Effect.succeed('retry'))).toBe('retry');
-  }).pipe(Effect.provide(Reactivity.layer)),
+  }),
 );

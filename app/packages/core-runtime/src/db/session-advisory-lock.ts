@@ -1,8 +1,8 @@
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import type { Redacted } from 'effect';
 
-import { configureDatabasePool } from './pool-configuration.ts';
+import { guardedPgClientLayer } from './client.ts';
 
 const SessionAdvisoryLockUnavailable = Schema.TaggedError<Error>()('SessionAdvisoryLockUnavailable', {
   cause: Schema.optionalKey(Schema.Defect()),
@@ -23,18 +23,13 @@ export const withPostgresSessionAdvisoryLock = <Value, Failure, Requirements>(
 ) =>
   Effect.scoped(
     Effect.gen(function* sessionAdvisoryLock() {
-      const configuration = yield* configureDatabasePool(connectionString).pipe(
-        Effect.mapError(
-          (cause) =>
-            new SessionAdvisoryLockUnavailable({ cause, reason: 'Unable to configure the advisory-lock session' }),
-        ),
-      );
-      const client = yield* PgClient.make({ ...configuration, maxConnections: 1 }).pipe(
+      const context = yield* Layer.build(guardedPgClientLayer(connectionString, 1)).pipe(
         Effect.mapError(
           (cause) =>
             new SessionAdvisoryLockUnavailable({ cause, reason: 'Unable to acquire the advisory-lock session' }),
         ),
       );
+      const client = Context.get(context, PgClient.PgClient);
       const connection = yield* client.reserve.pipe(
         Effect.mapError(
           (cause) =>

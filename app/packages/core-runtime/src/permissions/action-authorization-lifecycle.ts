@@ -1,7 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Redacted } from 'effect';
-import type { Reactivity } from 'effect/unstable/reactivity';
 
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseConfig } from '../db/config.ts';
@@ -197,18 +196,18 @@ export class ActionAuthorizationLifecycle extends Context.Service<
       tenantId: string,
       principalId: string,
       compositionRevision: string,
-    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError>;
     readonly reconcileScopedRoleMembership: (
       role: ScopedRoleIdentity,
       principalId: string,
       compositionRevision: string,
-    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError>;
     readonly reconcileTenant: (
       tenantId: string,
       compositionRevision: string,
-    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError>;
   }
->()('@app/core-runtime/permissions/ActionAuthorizationLifecycle') {}
+>()('@app/core-runtime/permissions/action-authorization-lifecycle/ActionAuthorizationLifecycle') {}
 
 export const ActionAuthorizationLifecycleLive = Layer.effect(
   ActionAuthorizationLifecycle,

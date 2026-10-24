@@ -177,7 +177,7 @@ const rolesOf = Effect.fn('PeopleDirectory.rolesOf')(function* rolesOf(
       if (role.value.legalEntityId !== input.legalEntityId) {
         return [];
       }
-      const decoded = yield* Schema.decodeUnknownEffect(ScopedRoleMembershipRoleSchema)({
+      const decoded = yield* Schema.decodeEffect(ScopedRoleMembershipRoleSchema)({
         roleKey: role.value.roleKey,
         scope:
           role.value.legalEntityId === undefined

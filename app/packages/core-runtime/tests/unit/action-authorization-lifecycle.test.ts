@@ -1,6 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Result, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -121,7 +120,7 @@ const lifecycleContext: OutboxWorkerHandlerContext = {
   workerKey: 'core.authorization.reconcile-principal-lifecycle',
 };
 const principalWakeUp = Result.getOrThrow(
-  Schema.decodeUnknownResult(PrincipalLifecyclePayloadSchema)({
+  Schema.decodeResult(PrincipalLifecyclePayloadSchema)({
     data: { principalId: '20000000-0000-4000-8000-000000000001' },
   }),
 );
@@ -142,16 +141,12 @@ it.effect(
       const { 2: worker } = coreSystemOutboxWorkers;
       const handler = getOutboxWorkerHandler(worker);
       const unauthorized = yield* Effect.result(
-        handler(principalWakeUp, lifecycleContext).pipe(
-          Effect.provideService(ActionAuthorizationLifecycle, lifecycle),
-          Effect.provide(Reactivity.layer),
-        ),
+        handler(principalWakeUp, lifecycleContext).pipe(Effect.provideService(ActionAuthorizationLifecycle, lifecycle)),
       );
       expect(Result.isFailure(unauthorized)).toBe(true);
       expect(calls).toEqual([]);
       yield* handler(principalWakeUp, attestOutboxWorkerHandlerContext(lifecycleContext)).pipe(
         Effect.provideService(ActionAuthorizationLifecycle, lifecycle),
-        Effect.provide(Reactivity.layer),
       );
       expect(calls).toEqual([
         [lifecycleContext.tenantId, principalWakeUp.data.principalId, lifecycleContext.compositionRevision],

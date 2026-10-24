@@ -36,7 +36,7 @@ export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
   Partial<Record<'caCertificate' | 'deploymentEnvironment', string>>;
 
 export class SpiceDbConfig extends Context.Service<SpiceDbConfig, SpiceDbConfigValue>()(
-  '@app/core-runtime/permissions/SpiceDbConfig',
+  '@app/core-runtime/permissions/config/SpiceDbConfig',
 ) {}
 
 export type SpiceDbEnvironment = Readonly<
