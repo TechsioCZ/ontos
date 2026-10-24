@@ -36,7 +36,7 @@ import {
   Ref,
   Schema,
 } from 'effect';
-import { createLocalJWKSet, decodeProtectedHeader, importJWK, jwtVerify } from 'jose';
+import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import type { LocalJWKSet } from 'jose';
 import { HttpServerRequest } from 'effect/unstable/http';
 
@@ -220,6 +220,7 @@ const loadGatewayPrincipalVerificationConfiguration = (
             use,
             x,
           }));
+          const keySet = createLocalJWKSet({ keys });
           return Effect.tryPromise({
             // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
             catch: () => configurationError(),
@@ -227,8 +228,10 @@ const loadGatewayPrincipalVerificationConfiguration = (
             try: () =>
               Promise.all(
                 keys.map(
+                  // Validate through the resolver that verifies requests, retaining its imported keys.
+                  // A separate import discarded each key and forced another import on the first JWT.
                   // oxlint-disable-next-line sonarjs/no-nested-functions, typescript/promise-function-async -- Effect owns this cached configuration Promise boundary; key imports complete before request verification.
-                  (key) => importJWK(key, 'EdDSA'),
+                  (key) => keySet({ alg: key.alg, kid: key.kid }),
                 ),
               ),
           }).pipe(
@@ -238,9 +241,9 @@ const loadGatewayPrincipalVerificationConfiguration = (
             }),
             Effect.map((): VerificationConfiguration => {
               if (mapping === undefined) {
-                return { issuer, keySet: createLocalJWKSet({ keys }) };
+                return { issuer, keySet };
               }
-              return { issuer, keySet: createLocalJWKSet({ keys }), legacyNamespaceMapping: mapping };
+              return { issuer, keySet, legacyNamespaceMapping: mapping };
             }),
           );
         }),
