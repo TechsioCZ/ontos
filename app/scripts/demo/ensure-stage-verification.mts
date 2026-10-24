@@ -39,12 +39,13 @@ export const stageVerificationAccounts = Effect.fn('Stage.verificationAccounts')
     },
     retiredAccountEmails: [],
     retiredTenants: [],
-    schemaVersion: 3 as const,
+    schemaVersion: 4 as const,
     scopedRoles: [{ ...scope, principalIds: [verificationAccount.principalId], roleKey }],
     tenants: [
       {
         accounts: [
           {
+            affiliation: 'employee',
             authBindingId: verificationAccount.authBindingId,
             displayName: verificationAccount.displayName,
             email: verificationAccount.email,

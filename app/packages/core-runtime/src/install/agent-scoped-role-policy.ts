@@ -117,7 +117,9 @@ const validDesiredRelationship = (
 };
 
 /** Scope links belong to the permission object, not to any one agent's policy. */
-const namedPermissionScopeLinks = (input: AgentScopedRoleReplacement): readonly v1.Relationship[] => {
+export const agentNamedPermissionScopeRelationships = (
+  input: AgentScopedRoleReplacement,
+): readonly v1.Relationship[] => {
   const companyId = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
   const links = input.desired.flatMap((item) =>
     item.resource?.objectType === 'context_permission'
@@ -230,7 +232,7 @@ export const planAgentScopedRoleReplacement = Effect.fn('AgentScopedRolePolicy.p
       }
       rolePolicy.push(relationship);
     }
-    const sharedLinks = namedPermissionScopeLinks(input);
+    const sharedLinks = agentNamedPermissionScopeRelationships(input);
     const existingSharedLinks = yield* readNamedPermissionScopeLinks(rpc, sharedLinks);
     // A company writer never revokes the principal's other-company or other-tenant grants.
     // A tenant-global named grant is not owned by this company writer.

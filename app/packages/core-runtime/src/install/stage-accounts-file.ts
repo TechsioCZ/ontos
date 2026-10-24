@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Schema } from 'effect';
 
 import { ONTOS_SPICEDB_SCHEMA } from '../permissions/schema.ts';
+import { toScopedRoleObjectId } from '../permissions/scoped-role.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
@@ -11,6 +12,7 @@ const TenantIdSchema = uuid.pipe(Schema.brand('TenantId'));
 const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const ModuleStateIdSchema = uuid.pipe(Schema.brand('ModuleStateId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
+const RoleKeySchema = TrimmedNonEmptyString.pipe(Schema.brand('ScopedRoleKey'));
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const ModuleKeySchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u)).pipe(
   Schema.brand('ModuleKey'),
@@ -36,6 +38,7 @@ const StageAccountGrantsSchema = Schema.Struct({
 });
 
 const StageAccountSchema = Schema.Struct({
+  affiliation: Schema.Literals(['employee', 'external']),
   authBindingId: AuthBindingIdSchema,
   displayName: TrimmedNonEmptyString,
   email: AccountEmailSchema,
@@ -76,14 +79,14 @@ const StageRetiredTenantSchema = Schema.Struct({
 const ScopedRoleSchema = Schema.Struct({
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   principalIds: Schema.Array(PrincipalIdSchema),
-  roleKey: TrimmedNonEmptyString,
+  roleKey: RoleKeySchema,
   tenantId: TenantIdSchema,
 });
 
 const ScopedActionRoleGrantSchema = Schema.Struct({
   actionKey: ActionKeySchema,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  roleKey: TrimmedNonEmptyString,
+  roleKey: RoleKeySchema,
   tenantId: TenantIdSchema,
 });
 
@@ -106,7 +109,7 @@ export const StageAccountsFileSchema = Schema.Struct({
   }),
   retiredAccountEmails: Schema.Array(AccountEmailSchema),
   retiredTenants: Schema.Array(StageRetiredTenantSchema),
-  schemaVersion: Schema.Literal(3),
+  schemaVersion: Schema.Literal(4),
   scopedRoles: Schema.Array(ScopedRoleSchema),
   tenants: Schema.NonEmptyArray(StageTenantSchema),
 });
@@ -203,6 +206,22 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
     )
   ) {
     return yield* invalid('Stage account grants must name unique Tenant relations defined by the SpiceDB schema');
+  }
+  const roleIds = file.scopedRoles.map(toScopedRoleObjectId);
+  if (
+    new Set(roleIds).size !== roleIds.length ||
+    file.scopedRoles.some((role) => {
+      const tenant = file.tenants.find(({ tenantId }) => tenantId === role.tenantId);
+      return (
+        tenant === undefined ||
+        (role.legalEntityId !== undefined && role.legalEntityId !== tenant.legalEntity.legalEntityId) ||
+        role.principalIds.length === 0 ||
+        hasDuplicates(role.principalIds) ||
+        role.principalIds.some((principalId) => !tenant.accounts.some((account) => account.principalId === principalId))
+      );
+    })
+  ) {
+    return yield* invalid('Stage scoped roles require unique exact scopes and explicit tenant-local account members');
   }
   const retiredEmails = file.retiredAccountEmails.map((email) => email.toLowerCase());
   if (hasDuplicates(retiredEmails) || retiredEmails.some((email) => activeEmails.has(email))) {

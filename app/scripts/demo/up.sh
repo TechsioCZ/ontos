@@ -140,23 +140,6 @@ step db-migrate pnpm_ db:migrate
 step local-initialize pnpm_ local:initialize
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset
-  # Sales-demo owners include crm + facility-operations (reset-demo.mts dependency order); do not reseed them twice.
-  # The bot API key is issued later, once the shell and composition are running.
-  step demo-reset-sales pnpm_ demo:reset:sales
-  # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).
-  step demo-seed-eshop pnpm_ demo:seed:eshop
-  step demo-seed-akros pnpm_ demo:seed:akros
-  # Siampark CRM (0021): prospects entrusted to external@siampark.demo (S00); writes only when absent.
-  step demo-seed-siampark-crm "${WITH_ENV[@]}" node scripts/demo/seed-siampark-crm.mts
-fi
-# Verifiers of owners whose sales seed is still a placeholder report a missing seeded aggregate; that must
-# not block the demo. DEMO_STRICT_VERIFY=1 makes the verification fatal again.
-if [ "${DEMO_STRICT_VERIFY:-0}" = 1 ]; then
-  step db-verify pnpm_ db:verify
-else
-  say db-verify
-  pnpm_ db:verify >"$LOG_DIR/db-verify.log" 2>&1 ||
-    say "WARN db:verify failed (placeholder seeds?): $(grep -E "failed|must" "$LOG_DIR/db-verify.log" | tail -2 | tr "\n" " ")"
 fi
 # 4. Native development builds, only when missing, stale, or forced.
 SHARED_SOURCE_DIGEST="$(node "$APP/scripts/demo/shared-build-source-digest.mts")"
@@ -248,6 +231,23 @@ start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/developm
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
 
+# Sales reset discovers native Action ownership from the published composition, including its
+# permissions step after Workforce. Cold starts must publish first; no cached or guessed Action set.
+if [ "${DEMO_RESET:-1}" != 0 ]; then
+  step demo-reset-sales pnpm_ demo:reset:sales
+  step demo-seed-eshop pnpm_ demo:seed:eshop
+  step demo-seed-akros pnpm_ demo:seed:akros
+  step demo-seed-siampark-crm "${WITH_ENV[@]}" node scripts/demo/seed-siampark-crm.mts
+fi
+# Verify after all selected owner seeds, not before the composition-dependent sales reset.
+if [ "${DEMO_STRICT_VERIFY:-0}" = 1 ]; then
+  step db-verify pnpm_ db:verify
+else
+  say db-verify
+  pnpm_ db:verify >"$LOG_DIR/db-verify.log" 2>&1 ||
+    say "WARN db:verify failed (placeholder seeds?): $(grep -E "failed|must" "$LOG_DIR/db-verify.log" | tail -2 | tr "\n" " ")"
+fi
+
 say "starting the outbox worker host"
 start outbox-worker-host "${WITH_ENV[@]}" node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts
 sleep 3
@@ -280,7 +280,9 @@ step ai-profiles env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
 # Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).
 step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" node scripts/demo/seed-agent-entities.mts
 # SpiceDB is in-memory: re-add the company administrators as operators of the seeded agents (MCP „Za agenta“).
-step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
+step agent-operators env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
+  "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+  "${WITH_ENV[@]}" node scripts/demo/setup-agent-operators.mts --mode apply
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
 # AKROS customer accounts: publish the two workload identities/keys and Shell provider configuration first.

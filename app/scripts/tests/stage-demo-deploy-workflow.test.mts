@@ -316,3 +316,17 @@ it('never extracts a secret into the step environment and masks its value before
   expect(reconcile?.run).toContain('export BETTER_AUTH_SECRET');
   expect(reconcile?.run?.indexOf('::add-mask::')).toBeLessThan(reconcile?.run?.indexOf('mise exec') ?? 0);
 });
+
+it('publishes the cold-start composition before the sales reset discovers live Action ownership', () => {
+  const script = readFileSync(localBootstrapScript, 'utf-8');
+  const ready = script.indexOf('wait_http "http://127.0.0.1:$COMPOSITION_PORT/active"');
+  const sales = script.indexOf('step demo-reset-sales pnpm_ demo:reset:sales');
+  const verify = script.indexOf('step db-verify pnpm_ db:verify');
+  const worker = script.indexOf('start outbox-worker-host');
+  expect(ready).toBeGreaterThan(0);
+  expect(sales).toBeGreaterThan(ready);
+  expect(verify).toBeGreaterThan(sales);
+  expect(worker).toBeGreaterThan(sales);
+  expect(script.lastIndexOf('step demo-reset-sales')).toBe(sales);
+  expect(script.slice(ready, sales)).toContain(['[ "$', '{DEMO_RESET:-1}" != 0 ]'].join(''));
+});

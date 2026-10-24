@@ -88,12 +88,14 @@ const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
 /** Operator data is exact policy evidence, never permissions inferred from emails or role labels. */
 export const stageAccountsAuthorization = (file: StageAccountsFile): StageAccountsAuthorization => ({
   actionAssertions: file.actionAuthorization.actionAssertions,
-  contexts: file.tenants.flatMap(({ accounts, tenantId }) =>
-    accounts.map(({ principalId }) => ({ principalId, tenantId })),
+  contexts: file.tenants.flatMap(({ accounts, legalEntity, tenantId }) =>
+    accounts.flatMap(({ principalId }) => [
+      { principalId, tenantId },
+      { legalEntityId: legalEntity.legalEntityId, principalId, tenantId },
+    ]),
   ),
-  managedRoles: file.scopedRoles.map(({ legalEntityId, roleKey, tenantId }) =>
-    legalEntityId === undefined ? { roleKey, tenantId } : { legalEntityId, roleKey, tenantId },
-  ),
+  // Bootstrap installs these explicit principal memberships before provisioning the role's Action policy.
+  managedRoles: file.scopedRoles,
   roleGrants: file.actionAuthorization.roleGrants,
 });
 
@@ -222,7 +224,7 @@ export const deriveActionAuthorizationInstalledModuleScopes = (
   });
 };
 
-const loadCurrentActionAuthorizationComposition = (
+export const loadCurrentActionAuthorizationComposition = (
   tenantIds: readonly string[],
   mode: 'dry-run' | 'apply' | 'verify',
 ) =>
@@ -276,12 +278,14 @@ const loadCurrentActionAuthorizationComposition = (
       .pipe(Effect.mapError(discoveryFailure));
     return {
       actions,
+      authorityPhase: authority.phase,
       installedModuleScopes: deriveActionAuthorizationInstalledModuleScopes(
         snapshot.composition.modules.map(({ moduleId }) => moduleId),
         tenantIds,
         moduleStates,
         companies,
       ),
+      snapshot,
     };
   });
 

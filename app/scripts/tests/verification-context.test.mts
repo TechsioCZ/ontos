@@ -12,6 +12,7 @@ import {
   toSpiceDbActionGrantObjectId,
 } from '../../packages/core-runtime/src/permissions/service.ts';
 import { stageVerificationAccounts } from '../demo/ensure-stage-verification.mts';
+import { stageAccountsAuthorization } from '../provision-current-action-authorization.mts';
 import { demoPrincipalRoleKey } from '../demo/permissions.mts';
 import {
   verificationAccount,
@@ -120,14 +121,25 @@ it.effect('installs only the published scoped task Action and userset role grant
   }),
 );
 
-it.effect('generates a v3 stage accounts policy confined to the verification tenant and company', () =>
+it.effect('generates a v4 stage accounts policy confined to the verification tenant and company', () =>
   Effect.gen(function* validatesNativeStageFile() {
     const accounts = yield* stageVerificationAccounts(Redacted.make('verification-test-password'));
     const source = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toEncoded(StageAccountsFileSchema)))(
       accounts,
     );
     const file = yield* parseStageAccountsFile({ mode: 0o600, source });
-    expect(file.schemaVersion).toBe(3);
+    expect(file.schemaVersion).toBe(4);
+    const policy = stageAccountsAuthorization(file);
+    expect(policy.managedRoles).toEqual(file.scopedRoles);
+    expect(policy.managedRoles[0]).toMatchObject({ principalIds: [verificationAccount.principalId] });
+    expect(policy.contexts).toEqual([
+      { principalId: verificationAccount.principalId, tenantId: verificationTenantId },
+      {
+        legalEntityId: verificationLegalEntityId,
+        principalId: verificationAccount.principalId,
+        tenantId: verificationTenantId,
+      },
+    ]);
     expect(file.retiredAccountEmails).toEqual([]);
     expect(file.retiredTenants).toEqual([]);
     expect(file.tenants).toHaveLength(1);

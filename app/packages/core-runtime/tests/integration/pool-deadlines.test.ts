@@ -1,12 +1,38 @@
 import { Duplex } from 'node:stream';
 
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Function as Fn, Predicate, Redacted } from 'effect';
+import { Context, Effect, Function as Fn, Layer, Predicate, Redacted } from 'effect';
+import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/unstable/reactivity';
 
-import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
+
+class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()('RuntimeDatabaseIdentity') {}
+
+const currentDatabaseUser = Effect.gen(function* readDatabaseIdentity() {
+  const database = yield* CoreDatabase;
+  const rows = yield* database.executor.execute<{ current_user: string }>(sql`select current_user`, 'objects');
+  return rows[0]?.current_user ?? '';
+});
+const runtimeIdentityLive = Layer.effect(RuntimeDatabaseIdentity, currentDatabaseUser).pipe(
+  Layer.provide(CoreDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
+it.live('keeps administrator and runtime identities distinct in one memoized operator composition', () =>
+  Effect.gen(function* distinctOperatorClients() {
+    const configuration = yield* loadDatabaseConnectionPair();
+    const [admin, runtime] = yield* Effect.gen(function* observeBothIdentities() {
+      return [yield* currentDatabaseUser, yield* RuntimeDatabaseIdentity] as const;
+    }).pipe(Effect.provide(Layer.mergeAll(runtimeIdentityLive, CoreAdminDatabaseLive)));
+    expect(admin).toBe(configuration.admin.user);
+    expect(runtime).toBe(configuration.runtime.user);
+    expect(admin).not.toBe(runtime);
+  }),
+);
 
 /** A transport that accepts the startup packet and never answers, so only the connect deadline ends it. */
 const silentTransport = () =>

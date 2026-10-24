@@ -5,7 +5,7 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import type { DatabaseConfigValue } from './config.ts';
-import { DatabaseConfig } from './config.ts';
+import { DatabaseConfig, loadDatabaseConnectionPair } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
 import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { configureDatabasePool } from './pool-configuration.ts';
@@ -47,6 +47,15 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
     ),
   };
 });
+
+/** A distinct owning Layer prevents admin/runtime clients sharing a memoized database identity. */
+export const CoreAdminDatabaseLive = Layer.effect(
+  CoreDatabase,
+  Effect.gen(function* makeAdministrativeCoreDatabaseService() {
+    const configuration = yield* loadDatabaseConnectionPair();
+    return yield* makeCoreDatabase(configuration.admin);
+  }),
+);
 
 export const CoreDatabaseLive = Layer.effect(
   CoreDatabase,

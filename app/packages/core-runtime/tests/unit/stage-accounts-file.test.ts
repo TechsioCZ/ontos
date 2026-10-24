@@ -4,6 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 
 const account = (tenant: string, index: number, explicitActions: 'all' | readonly string[]) => ({
+  affiliation: 'employee',
   authBindingId: `30000000-0000-4000-8000-0000000000${tenant}${index}`,
   displayName: `Tenant ${tenant.toUpperCase()} account ${index}`,
   email: `account-${tenant}-${index}@example.invalid`,
@@ -30,7 +31,6 @@ const tenant = (suffix: string) => ({
 
 const validFile = {
   actionAuthorization: { actionAssertions: [], roleGrants: [] },
-  scopedRoles: [],
   retiredAccountEmails: ['retired-fixture@example.invalid'],
   retiredTenants: [
     {
@@ -40,7 +40,8 @@ const validFile = {
       tenantId: '10000000-0000-4000-8000-0000000000c0',
     },
   ],
-  schemaVersion: 3,
+  schemaVersion: 4,
+  scopedRoles: [],
   tenants: [tenant('a'), tenant('b')],
 };
 
@@ -54,7 +55,7 @@ it.effect('accepts any number of Tenants and accounts with grants as data', () =
     expect(parsed).toMatchObject({
       retiredAccountEmails: validFile.retiredAccountEmails,
       retiredTenants: validFile.retiredTenants,
-      schemaVersion: 3,
+      schemaVersion: 4,
       tenants: validFile.tenants.map(({ accounts, ...tenantData }) => ({
         ...tenantData,
         accounts: accounts.map(({ authBindingId, displayName, email, grants, principalId }) => ({
@@ -147,5 +148,41 @@ it.effect('rejects duplicate identities, unknown relations, and overlapping reti
         ],
       }),
     ).toMatch(/Retired/u);
+  }),
+);
+
+it.effect('requires an explicit human affiliation and exact tenant-local scoped-role members', () =>
+  Effect.gen(function* exactStageMembershipSelections() {
+    const first = tenant('a');
+    const second = tenant('b');
+    const [firstAccount] = first.accounts;
+    const [secondAccount] = second.accounts;
+    if (firstAccount === undefined || secondAccount === undefined) {
+      throw new Error('Missing stage account fixture');
+    }
+    const role = {
+      legalEntityId: first.legalEntity.legalEntityId,
+      principalIds: [firstAccount.principalId],
+      roleKey: 'stage:writer',
+      tenantId: first.tenantId,
+    };
+    const scoped = { ...validFile, scopedRoles: [role] };
+    expect((yield* parse(scoped)).scopedRoles).toEqual([role]);
+    for (const selected of [
+      { ...role, tenantId: '10000000-0000-4000-8000-0000000000c0' },
+      { ...role, legalEntityId: second.legalEntity.legalEntityId },
+      { ...role, principalIds: [secondAccount.principalId] },
+      { ...role, principalIds: [] },
+      { ...role, principalIds: [...role.principalIds, ...role.principalIds] },
+    ]) {
+      expect(yield* rejectionReason({ ...scoped, scopedRoles: [selected] })).toContain('tenant-local');
+    }
+    expect(yield* rejectionReason({ ...scoped, scopedRoles: [role, role] })).toContain('unique');
+    const { affiliation: omittedAffiliation, ...unclassified } = firstAccount;
+    expect(omittedAffiliation).toBe('employee');
+    expect(yield* rejectionReason({ ...validFile, tenants: [{ ...first, accounts: [unclassified] }] })).toContain(
+      'schema',
+    );
+    expect(yield* rejectionReason({ ...validFile, schemaVersion: 3 })).toContain('schema');
   }),
 );
