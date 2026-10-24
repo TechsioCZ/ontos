@@ -10,7 +10,7 @@ import {
 import type { AssignablePrincipalDirectory, AssignmentDirectoryMember } from '../../src/auth/assignable-principals.ts';
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
-import { toContextPermissionAccessObjectId } from '../../src/permissions/context-access.ts';
+import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -78,10 +78,31 @@ it.effect('offers humans and agents by active company membership and exact permi
       request?.items.every(
         (item) =>
           item.permission === 'access' &&
-          item.resource?.objectType === 'context_permission' &&
-          item.resource.objectId === toContextPermissionAccessObjectId(tenantId, legalEntityId, permission),
+          item.resource?.objectType === 'module_access' &&
+          item.resource.objectId === toModuleAccessObjectId(tenantId, legalEntityId, permission.moduleId),
       ),
     ).toBe(true);
+  }),
+);
+
+it.effect('preserves named context permission targets instead of treating them as module entrypoints', () =>
+  Effect.gen(function* namedPermission() {
+    const calls: v1.CheckBulkPermissionsRequest[] = [];
+    const target = { moduleId: 'work.tasks', permission: 'read_all' };
+    const service = makeAssignablePrincipals(
+      client({
+        checkBulkPermissions: (request) =>
+          Effect.sync(() => {
+            calls.push(request);
+            return response(request, []);
+          }),
+      }),
+    );
+    expect(yield* service.read(directory([member(1)]), target)).toHaveLength(1);
+    expect(calls[0]?.items[0]?.resource?.objectType).toBe('context_permission');
+    expect(calls[0]?.items[0]?.resource?.objectId).toBe(
+      toContextPermissionAccessObjectId(tenantId, legalEntityId, target),
+    );
   }),
 );
 
@@ -200,7 +221,8 @@ it.effect('resolves a target with one fresh exact native permission check', () =
       principalRef: target.principalRef,
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.resource?.objectId).toBe(toContextPermissionAccessObjectId(tenantId, legalEntityId, permission));
+    expect(calls[0]?.resource?.objectType).toBe('module_access');
+    expect(calls[0]?.resource?.objectId).toBe(toModuleAccessObjectId(tenantId, legalEntityId, permission.moduleId));
     expect(calls[0]?.subject?.object?.objectId).toBe(target.principalRef.principalId);
     expect(calls[0]?.consistency?.requirement.oneofKind).toBe('fullyConsistent');
   }),

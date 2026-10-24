@@ -19,7 +19,7 @@ import {
 } from '../permissions/client.ts';
 import type { SpiceDbPermissionClient } from '../permissions/client.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
-import { toContextPermissionAccessObjectId } from '../permissions/context-access.ts';
+import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
 import type { ContextPermissionAccessTarget } from '../permissions/context-access.ts';
 import type { PrincipalRef } from '../permissions/principal-ref.ts';
 
@@ -140,8 +140,14 @@ export const activeAssignmentMember = (
 };
 
 const resourceFor = (directory: AssignmentCompanyScope, requiredPermission: ContextPermissionAccessTarget) => {
-  const objectId = toContextPermissionAccessObjectId(directory.tenantId, directory.legalEntityId, requiredPermission);
-  return objectId === undefined ? undefined : v1.ObjectReference.create({ objectId, objectType: 'context_permission' });
+  // Core treats module.access as the module entrypoint alias, not a named context permission.
+  const moduleAccess = requiredPermission.permission === 'module.access';
+  const objectId = moduleAccess
+    ? toModuleAccessObjectId(directory.tenantId, directory.legalEntityId, requiredPermission.moduleId)
+    : toContextPermissionAccessObjectId(directory.tenantId, directory.legalEntityId, requiredPermission);
+  return objectId === undefined
+    ? undefined
+    : v1.ObjectReference.create({ objectId, objectType: moduleAccess ? 'module_access' : 'context_permission' });
 };
 const subjectFor = (principalId: string) =>
   v1.SubjectReference.create({ object: v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' }) });
