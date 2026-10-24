@@ -208,6 +208,200 @@ describe("catalog stale-while-revalidate cache", () => {
     expect(store.put).not.toHaveBeenCalled();
     expect(waitUntil).not.toHaveBeenCalled();
   });
+  it("serves fresh colo navigation without waiting for a pending KV lookup", async () => {
+    vi.useFakeTimers();
+    const at = Date.now() - options.freshMs + 1;
+    const pending = deferred<{ value: null; metadata: null }>();
+    const edge = {
+      match: vi.fn<() => Promise<Response>>(
+        async () =>
+          new Response(JSON.stringify({ at, value: "colo-navigation" }), {
+            headers: { "x-catalog-at": String(at) },
+          }),
+      ),
+      put: vi.fn<() => Promise<void>>(),
+    };
+    const store = {
+      getWithMetadata: vi.fn<() => typeof pending.promise>(() => pending.promise),
+      put: vi.fn<() => Promise<void>>(),
+    };
+    vi.stubGlobal("caches", { default: edge });
+    vi.mocked(getCloudflareContext).mockReturnValue({
+      env: { STOREFRONT_CATALOG_CACHE: store },
+      ctx: { waitUntil: vi.fn<(promise: Promise<unknown>) => void>() },
+    } as unknown as ReturnType<typeof getCloudflareContext>);
+    const load = vi.fn<() => Promise<string>>(async () => "owner-navigation");
+    let rendered: string | undefined;
+    const read = catalogCache<string>("navigation", options)
+      .get("k", load)
+      .then((value) => {
+        rendered = value;
+      });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(rendered).toBe("colo-navigation");
+      expect(store.getWithMetadata).toHaveBeenCalledTimes(1);
+      expect(load).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve({ value: null, metadata: null });
+      await read;
+    }
+  });
+  it("starts KV while a colo miss is still pending", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response | undefined>();
+    const at = Date.now();
+    const edge = {
+      match: vi.fn<() => typeof pending.promise>(() => pending.promise),
+      put: vi.fn<() => Promise<void>>(),
+    };
+    const store = {
+      getWithMetadata: vi.fn<() => Promise<{ value: string; metadata: { at: number } }>>(
+        async () => ({
+          value: JSON.stringify({ at, value: "kv-navigation" }),
+          metadata: { at },
+        }),
+      ),
+      put: vi.fn<() => Promise<void>>(),
+    };
+    vi.stubGlobal("caches", { default: edge });
+    vi.mocked(getCloudflareContext).mockReturnValue({
+      env: { STOREFRONT_CATALOG_CACHE: store },
+      ctx: { waitUntil: vi.fn<(promise: Promise<unknown>) => void>() },
+    } as unknown as ReturnType<typeof getCloudflareContext>);
+    const load = vi.fn<() => Promise<string>>(async () => "owner-navigation");
+    const read = catalogCache<string>("navigation", options).get("k", load);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getWithMetadata).toHaveBeenCalledTimes(1);
+      expect(load).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve(undefined);
+      await read;
+    }
+    expect(await read).toBe("kv-navigation");
+  });
+  it.each(["newer", "unavailable"])(
+    "prefers valid fresh colo navigation when KV is %s",
+    async (state) => {
+      vi.useFakeTimers();
+      const at = Date.now() - 1;
+      const edge = {
+        match: vi.fn<() => Promise<Response>>(
+          async () =>
+            new Response(JSON.stringify({ at, value: "colo-navigation" }), {
+              headers: { "x-catalog-at": String(at) },
+            }),
+        ),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      const store = {
+        getWithMetadata: vi.fn<() => Promise<{ value: string; metadata: { at: number } }>>(
+          async () => {
+            if (state === "unavailable") throw new Error("KV unavailable");
+            return {
+              value: JSON.stringify({ at: at + 1, value: "newer-kv-navigation" }),
+              metadata: { at: at + 1 },
+            };
+          },
+        ),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      vi.stubGlobal("caches", { default: edge });
+      vi.mocked(getCloudflareContext).mockReturnValue({
+        env: { STOREFRONT_CATALOG_CACHE: store },
+        ctx: { waitUntil: vi.fn<(promise: Promise<unknown>) => void>() },
+      } as unknown as ReturnType<typeof getCloudflareContext>);
+      const load = vi.fn<() => Promise<string>>(async () => "owner-navigation");
+      expect(await catalogCache<string>("navigation", options).get("k", load)).toBe(
+        "colo-navigation",
+      );
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["stream error", "truncated JSON"])(
+    "reads valid KV navigation when a fresh colo body has a %s",
+    async (state) => {
+      vi.useFakeTimers();
+      const at = Date.now() - 1;
+      const edge = {
+        match: vi.fn<() => Promise<Response>>(
+          async () =>
+            new Response(
+              state === "stream error"
+                ? new ReadableStream({
+                    start(controller) {
+                      controller.error(new Error("colo body unavailable"));
+                    },
+                  })
+                : '{"value":',
+              { headers: { "x-catalog-at": String(at) } },
+            ),
+        ),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      const store = {
+        getWithMetadata: vi.fn<() => Promise<{ value: string; metadata: { at: number } }>>(
+          async () => ({
+            value: JSON.stringify({ at: at + 1, value: "kv-navigation" }),
+            metadata: { at: at + 1 },
+          }),
+        ),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      vi.stubGlobal("caches", { default: edge });
+      vi.mocked(getCloudflareContext).mockReturnValue({
+        env: { STOREFRONT_CATALOG_CACHE: store },
+        ctx: { waitUntil: vi.fn<(promise: Promise<unknown>) => void>() },
+      } as unknown as ReturnType<typeof getCloudflareContext>);
+      const load = vi.fn<() => Promise<string>>(async () => {
+        throw new Error("owner unavailable");
+      });
+      expect(await catalogCache<string>("navigation", options).get("k", load)).toBe(
+        "kv-navigation",
+      );
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["expired", "missing", "unavailable", "unbound"])(
+    "reads KV when the colo navigation is %s",
+    async (state) => {
+      vi.useFakeTimers();
+      const at = Date.now();
+      const coloAt = at - options.freshMs;
+      const edge = {
+        match: vi.fn<() => Promise<Response | undefined>>(async () => {
+          if (state === "unavailable") throw new Error("Cache API unavailable");
+          return state === "missing"
+            ? undefined
+            : new Response(JSON.stringify({ at: coloAt, value: "old-navigation" }), {
+                headers: { "x-catalog-at": String(coloAt) },
+              });
+        }),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      const store = {
+        getWithMetadata: vi.fn<() => Promise<{ value: string; metadata: { at: number } }>>(
+          async () => ({
+            value: JSON.stringify({ at, value: "current-navigation" }),
+            metadata: { at },
+          }),
+        ),
+        put: vi.fn<() => Promise<void>>(),
+      };
+      vi.stubGlobal("caches", { default: state === "unbound" ? undefined : edge });
+      vi.mocked(getCloudflareContext).mockReturnValue({
+        env: { STOREFRONT_CATALOG_CACHE: store },
+        ctx: { waitUntil: vi.fn<(promise: Promise<unknown>) => void>() },
+      } as unknown as ReturnType<typeof getCloudflareContext>);
+      const load = vi.fn<() => Promise<string>>(async () => "owner-navigation");
+      expect(await catalogCache<string>("navigation", options).get("k", load)).toBe(
+        "current-navigation",
+      );
+      expect(store.getWithMetadata).toHaveBeenCalledTimes(1);
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
   it("shares navigation read by a shopper with another Worker isolate", async () => {
     const stored = new Map<string, { value: string; metadata: unknown }>();
     const waits: Promise<unknown>[] = [];

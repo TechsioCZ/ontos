@@ -13,8 +13,10 @@ import { after } from "next/server";
  * Level 1 is the isolate's bounded map. On Workers, level 2 is the colo's Cache API (every isolate of the
  * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center).
  * Shopper requests populate these levels. The isolate's own value
- * renders without any lookup while it is younger than `staleMs`; otherwise the newest shared copy is taken.
- * Shared copies carry their timestamp outside the body (colo header, KV metadata), so only one is parsed.
+ * renders without any lookup while it is younger than `staleMs`; otherwise a valid fresh colo copy is
+ * taken without waiting for the concurrent KV lookup. If the colo copy is not fresh or cannot be decoded,
+ * the newest remaining shared copy is taken. Shared copies carry their timestamp outside the body
+ * (colo header, KV metadata), so only the selected copy is parsed unless its body is unreadable.
  * - younger than `freshMs`: served as is;
  * - younger than `staleMs`: served at once while the background takes a shared copy younger than `freshMs`
  *   or reads the owner and refreshes every level (admin edits show on the next view after that);
@@ -106,33 +108,6 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
   const age = (entry: Entry<T>) => Date.now() - entry.at;
   const keyOf = (id: string) => new Request(`${EDGE_ORIGIN}/${id}`);
 
-  /** The newest shared copy of `key` (colo cache or KV) by its timestamp; nothing is parsed yet. */
-  const shared = async (
-    key: string,
-    context: Runtime | undefined,
-  ): Promise<SharedCopy | undefined> => {
-    if (context === undefined) return undefined;
-    const { edge, store } = context;
-    const id = hashed(key);
-    const [colo, global] = await Promise.all([
-      edge
-        ?.match(keyOf(id))
-        .then((response): SharedCopy | undefined => {
-          const at = atOf(Number(response?.headers.get(AT_HEADER)));
-          return response && at !== undefined ? { at, text: () => response.text() } : undefined;
-        })
-        .catch(() => undefined),
-      store
-        ?.getWithMetadata(id, { type: "text", cacheTtl: STORE_READ_TTL_S })
-        .then(({ value, metadata }): SharedCopy | undefined => {
-          const at = atOf((metadata as { at?: unknown } | null)?.at);
-          return value !== null && at !== undefined ? { at, text: async () => value } : undefined;
-        })
-        .catch(() => undefined),
-    ]);
-    return colo !== undefined && (global === undefined || colo.at >= global.at) ? colo : global;
-  };
-
   /** Adopts a shared copy newer than the isolate's own (parsing only that one copy). */
   const adopt = async (key: string, copy: SharedCopy): Promise<Entry<T> | undefined> => {
     const own = local.get(key);
@@ -146,16 +121,50 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     }
   };
 
+  /** Adopts a valid fresh colo copy of `key`, otherwise the newest shared copy. */
+  const shared = async (
+    key: string,
+    context: Runtime | undefined,
+  ): Promise<Entry<T> | undefined> => {
+    if (context === undefined) return undefined;
+    const { edge, store } = context;
+    const id = hashed(key);
+    // Start both reads before awaiting either, so colo misses do not serialize Cache API and KV I/O.
+    const globalRead = store
+      ?.getWithMetadata(id, { type: "text", cacheTtl: STORE_READ_TTL_S })
+      .then(({ value, metadata }): SharedCopy | undefined => {
+        const at = atOf((metadata as { at?: unknown } | null)?.at);
+        return value !== null && at !== undefined ? { at, text: async () => value } : undefined;
+      })
+      .catch(() => undefined);
+    let colo = await edge
+      ?.match(keyOf(id))
+      .then((response): SharedCopy | undefined => {
+        const at = atOf(Number(response?.headers.get(AT_HEADER)));
+        return response && at !== undefined ? { at, text: () => response.text() } : undefined;
+      })
+      .catch(() => undefined);
+    // A valid fresh colo copy can render without waiting for KV, even if KV holds a newer copy.
+    // Decode before returning: an unreadable colo body must not hide usable KV navigation.
+    if (colo !== undefined && Date.now() - colo.at < options.freshMs) {
+      const entry = await adopt(key, colo);
+      if (entry !== undefined && entry.at >= colo.at) return entry;
+      colo = undefined;
+    }
+    const global = await globalRead;
+    const copy =
+      colo !== undefined && (global === undefined || colo.at >= global.at) ? colo : global;
+    return copy === undefined ? undefined : adopt(key, copy);
+  };
+
   /**
-   * The isolate's own value while it may still render (younger than `staleMs`); otherwise the newest of the
-   * isolate's and the shared copies.
+   * The isolate's own value while it may still render (younger than `staleMs`); otherwise a fresh colo
+   * copy or the newest of the isolate's and shared copies.
    */
   const recall = async (key: string, context: Runtime | undefined) => {
     const own = local.get(key);
     if (own !== undefined && age(own) < options.staleMs) return own;
-    const copy = await shared(key, context);
-    const found =
-      copy !== undefined && (own === undefined || copy.at > own.at) ? await adopt(key, copy) : own;
+    const found = (await shared(key, context)) ?? own;
     return found === undefined || age(found) >= options.keepMs ? undefined : found;
   };
 
@@ -194,11 +203,8 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
 
   /** A shared copy another isolate refreshed recently enough, else an owner read. */
   const refresh = async (key: string, load: () => Promise<T>, context: Runtime | undefined) => {
-    const copy = await shared(key, context);
-    if (copy !== undefined && Date.now() - copy.at < options.freshMs) {
-      await adopt(key, copy);
-      return;
-    }
+    const entry = await shared(key, context);
+    if (entry !== undefined && age(entry) < options.freshMs) return;
     await read(key, load, context);
   };
 
