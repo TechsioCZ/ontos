@@ -8,6 +8,7 @@ import {
   PeopleModelTransitionError,
   planPeopleModelTransition,
   reviewedTransitionAgentNamedPermissions,
+  reviewedTransitionAgentProfiles,
   verifyPeopleModelTransitionGraph,
 } from '../../src/install/people-model-transition.ts';
 import type {
@@ -90,6 +91,44 @@ const input = (): PeopleModelTransitionInput => ({
   },
   reviewedInputSha256: 'a'.repeat(64),
   technicalPrincipalIds: [],
+});
+
+const profileReview = () => {
+  const profiles = Array.from({ length: 9 }, (_, i) => ({
+    description: i < 3 ? `Preserved description ${i}` : null,
+    legalEntityId,
+    modules: [{ access: 'read', moduleId: 'module-a' }],
+    ownerPrincipalId: i < 3 ? human : null,
+    principalId: `agent-${i}`,
+    tenantId,
+    writePolicy: 'read_only',
+  }));
+  return {
+    agents: profiles.map((profile) => ({ principalId: profile.principalId, tenantId: profile.tenantId })),
+    approved: profiles,
+    audited: profiles.slice(0, 3),
+    profiles,
+  };
+};
+it('replays all nine reviewed profiles even when three have legacy creation evidence', () => {
+  const review = profileReview();
+  expect(reviewedTransitionAgentProfiles(review)).toEqual(review.profiles);
+  expect(reviewedTransitionAgentProfiles(review)).toHaveLength(9);
+});
+it('refuses missing, duplicate, changed-metadata and later conflicting native agent profile evidence', () => {
+  const review = profileReview();
+  expect(() => reviewedTransitionAgentProfiles({ ...review, profiles: review.profiles.slice(0, 6) })).toThrow(
+    PeopleModelTransitionError,
+  );
+  expect(() =>
+    reviewedTransitionAgentProfiles({ ...review, approved: [...review.approved, ...review.approved] }),
+  ).toThrow(PeopleModelTransitionError);
+  const erased = review.profiles.map((profile) => ({ ...profile, description: null, ownerPrincipalId: null }));
+  expect(() => reviewedTransitionAgentProfiles({ ...review, profiles: erased })).toThrow(PeopleModelTransitionError);
+  const conflict = review.audited.map((profile) => ({ ...profile, writePolicy: 'direct' }));
+  expect(() => reviewedTransitionAgentProfiles({ ...review, audited: conflict })).toThrow(PeopleModelTransitionError);
+  const foreign = review.audited.map((profile) => ({ ...profile, legalEntityId: 'company-b' }));
+  expect(() => reviewedTransitionAgentProfiles({ ...review, audited: foreign })).toThrow(PeopleModelTransitionError);
 });
 
 it('requires native human self credentials and removes stale agent self structure without touching history', () => {

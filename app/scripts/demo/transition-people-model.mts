@@ -25,6 +25,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 
 import type { CoreTransaction } from '../../packages/core-runtime/src/db/types.ts';
 import { PrincipalRefSchema } from '../../packages/core-runtime/src/permissions/principal-ref.ts';
+import { ConfigureAgentPayloadSchema } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
 import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { withPostgresSessionAdvisoryLock } from '../../packages/core-runtime/src/db/session-advisory-lock.ts';
 import {
@@ -48,6 +49,7 @@ import {
   PeopleModelTransitionError,
   planPeopleModelTransition,
   reviewedTransitionAgentNamedPermissions,
+  reviewedTransitionAgentProfiles,
   verifyPeopleModelTransitionGraph,
 } from '../../packages/core-runtime/src/install/people-model-transition.ts';
 import type {
@@ -106,12 +108,19 @@ const RoleSchema = Schema.Struct({
 });
 const ProfileSchema = Schema.Struct({
   auditEventId: Schema.optionalKey(AuditEventIdSchema),
+  description: ConfigureAgentPayloadSchema.fields.description,
   legalEntityId: LegalEntityIdSchema,
   modules: Schema.Array(Schema.Struct({ access: Schema.Literals(['read', 'write']), moduleId: ModuleIdSchema })),
+  ownerPrincipalId: ConfigureAgentPayloadSchema.fields.ownerPrincipalId,
   principalId: PrincipalIdSchema,
-  source: Schema.Literals(['approved_six_row_file', 'successful_native_audit']),
   tenantId: TenantIdSchema,
   writePolicy: Schema.Literals(['read_only', 'approval', 'direct']),
+});
+const LegacyProfileMetadataSchema = Schema.Struct({
+  actionKey: Schema.Literal('core.identity.manage-demo-account'),
+  description: ProfileSchema.fields.description,
+  operation: Schema.Literal('create-agent'),
+  ownerPrincipalId: ProfileSchema.fields.ownerPrincipalId,
 });
 const MembershipFileSchema = Schema.Struct({
   compositionRevision: Schema.String,
@@ -322,7 +331,8 @@ const readSqlInventory = (document: MembershipDocument, mode: 'dry-run' | 'apply
       jsonb_strip_nulls(jsonb_build_object('actionKey',evidence_json->'actionKey','operation',evidence_json->'operation',
       'targetPrincipalId',evidence_json->'targetPrincipalId','legalEntityId',evidence_json->'legalEntityId',
       'modulesJson',evidence_json->'modulesJson','modules',evidence_json->'modules','writePolicy',evidence_json->'writePolicy',
-      'revision',evidence_json->'revision')) as "evidenceJson",legal_entity_id as "legalEntityId",
+      'revision',evidence_json->'revision','description',evidence_json->'description',
+      'ownerPrincipalId',evidence_json->'ownerPrincipalId')) as "evidenceJson",legal_entity_id as "legalEntityId",
       (extract(epoch from occurred_at)*1000000)::bigint::text as "occurredAtEpochMicrosecondsText",outcome,tenant_id as "tenantId"
       from core.audit_events where event_type='action.executed' and outcome='succeeded' and evidence_json->>'actionKey'
       in ('core.identity.manage-demo-account','core.identity.configure-agent') order by occurred_at,audit_event_id`,
@@ -430,25 +440,39 @@ const validateProfiles = (document: MembershipDocument, inventory: SqlInventory)
       yield* Config.String('ONTOS_PEOPLE_MODEL_AGENT_PROFILES'),
       yield* Config.String('ONTOS_PEOPLE_MODEL_AGENT_PROFILES_SHA256'),
     );
-    const deferred = profiles.filter((p) => p.source === 'approved_six_row_file');
-    if (deferred.length !== 6 || expectedProfiles.profiles.length !== deferred.length) {
-      return yield* fail('The exact approved six profiles are required');
-    }
-    for (const profile of profiles) {
-      const candidates = profile.source === 'approved_six_row_file' ? expectedProfiles.profiles : folded.success;
-      const actual = candidates.find(
+    const deferred = yield* Effect.try({
+      catch: (cause) => fail('Every agent must match the exact nine-profile replay review', cause),
+      try: () =>
+        reviewedTransitionAgentProfiles({
+          agents,
+          approved: expectedProfiles.profiles,
+          audited: folded.success,
+          profiles,
+        }),
+    });
+    for (const profile of profiles.filter((p) => p.auditEventId !== undefined)) {
+      const source = events.find((event) => event.auditEventId === profile.auditEventId);
+      if (source === undefined) {
+        return yield* fail('Reviewed legacy agent source audit is missing');
+      }
+      const sourceProfiles = foldAgentActionMigrationProfiles(agents, [source]);
+      if (Result.isFailure(sourceProfiles)) {
+        return yield* fail('Reviewed legacy agent source audit is ambiguous');
+      }
+      const actual = sourceProfiles.success.find(
         (p) =>
           p.principalId === profile.principalId &&
           p.legalEntityId === profile.legalEntityId &&
           p.tenantId === profile.tenantId,
       );
+      const metadata = yield* Schema.decodeUnknownEffect(LegacyProfileMetadataSchema)(source.evidenceJson);
       if (
         actual === undefined ||
         !sameProfile(actual, profile) ||
-        (profile.source === 'successful_native_audit' &&
-          (!('auditEventId' in actual) || actual.auditEventId !== profile.auditEventId))
+        metadata.description !== profile.description ||
+        metadata.ownerPrincipalId !== profile.ownerPrincipalId
       ) {
-        return yield* fail('Agent authority changed or disagrees with exact reviewed evidence');
+        return yield* fail('Legacy review provenance differs from preserved agent authority or metadata');
       }
     }
     return { deferred, expectedProfiles, profiles };
@@ -645,16 +669,16 @@ const nativeAuditedReplay = (ready: PreparedTransition) =>
           Match.tag(
             'AgentProfileSetupError',
             (failure) =>
-              `Native audited six-agent replay failed: ${failure.reason}; external traffic must remain stopped`,
+              `Native audited nine-agent replay failed: ${failure.reason}; external traffic must remain stopped`,
           ),
           Match.tag(
             'OperationContextUnavailable',
             (failure) =>
-              `Native audited six-agent replay failed: ${failure.reason}; external traffic must remain stopped`,
+              `Native audited nine-agent replay failed: ${failure.reason}; external traffic must remain stopped`,
           ),
           Match.orElse(
             (failure) =>
-              `Native audited six-agent replay failed (${failure._tag}); external traffic must remain stopped`,
+              `Native audited nine-agent replay failed (${failure._tag}); external traffic must remain stopped`,
           ),
         ),
         cause,

@@ -32,7 +32,7 @@ export interface PeopleModelTransitionInput {
   readonly compositionRevision: string;
   /** Approved profiles without native audit yet; only the native audited replay may activate their role policy. */
   readonly deferredAgentPrincipalIds: readonly string[];
-  /** Complete reviewed target, including the three audited and six explicitly approved agent policies. */
+  /** Complete reviewed target; every reviewed agent policy activates only through governed native replay. */
   readonly desired: readonly v1.Relationship[];
   readonly memberships: readonly PeopleModelTransitionMembership[];
   readonly observed: PeopleModelTransitionSnapshot;
@@ -60,6 +60,63 @@ export class PeopleModelTransitionError extends Schema.TaggedError<PeopleModelTr
 
 const invalid = (reason: string): never => {
   throw new PeopleModelTransitionError({ reason });
+};
+interface TransitionAgentAuthority {
+  readonly legalEntityId: string;
+  readonly modules: readonly { readonly access: string; readonly moduleId: string }[];
+  readonly principalId: string;
+  readonly tenantId: string;
+  readonly writePolicy: string;
+}
+interface TransitionAgentReview extends TransitionAgentAuthority {
+  readonly description: string | null;
+  readonly ownerPrincipalId: string | null;
+}
+const agentScope = (profile: { readonly principalId: string; readonly tenantId: string }): string =>
+  `${profile.tenantId}:${profile.principalId}`;
+const sameAgentAuthority = (left: TransitionAgentAuthority, right: TransitionAgentAuthority): boolean =>
+  left.legalEntityId === right.legalEntityId &&
+  left.writePolicy === right.writePolicy &&
+  left.modules.length === right.modules.length &&
+  left.modules.every((module) =>
+    right.modules.some((other) => module.moduleId === other.moduleId && module.access === other.access),
+  );
+/** Legacy create-agent evidence is review provenance, never a substitute for governed configure-agent replay. */
+export const reviewedTransitionAgentProfiles = <Profile extends TransitionAgentReview>(input: {
+  readonly agents: readonly { readonly principalId: string; readonly tenantId: string }[];
+  readonly approved: readonly TransitionAgentReview[];
+  readonly audited: readonly TransitionAgentAuthority[];
+  readonly profiles: readonly Profile[];
+}): readonly Profile[] => {
+  const selected = new Map(input.profiles.map((profile) => [agentScope(profile), profile]));
+  const approved = new Map(input.approved.map((profile) => [agentScope(profile), profile]));
+  if (
+    selected.size !== input.agents.length ||
+    input.profiles.length !== selected.size ||
+    input.approved.length !== approved.size ||
+    approved.size !== selected.size ||
+    input.agents.some((agent) => !selected.has(agentScope(agent)))
+  ) {
+    return invalid('Every native agent requires one exact reviewed replay profile');
+  }
+  for (const profile of input.profiles) {
+    const reviewed = approved.get(agentScope(profile));
+    if (
+      reviewed === undefined ||
+      !sameAgentAuthority(profile, reviewed) ||
+      profile.description !== reviewed.description ||
+      profile.ownerPrincipalId !== reviewed.ownerPrincipalId
+    ) {
+      return invalid('Agent profile or preserved metadata differs from the pinned review');
+    }
+  }
+  for (const actual of input.audited) {
+    const reviewed = selected.get(agentScope(actual));
+    if (reviewed === undefined || !sameAgentAuthority(actual, reviewed)) {
+      return invalid('Latest native agent authority disagrees with the pinned review');
+    }
+  }
+  return input.profiles;
 };
 /** One-time legacy cutover metadata comes only from reviewed target structural links, never persona grants. */
 export const reviewedTransitionAgentNamedPermissions = (
