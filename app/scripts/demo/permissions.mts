@@ -69,6 +69,7 @@ export const demoModuleIds = [
   'property.leasing',
   'legal.agreements',
   'demo.crm',
+  'crm.activities',
   operationsModule,
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
@@ -87,6 +88,7 @@ const contextPermissionModules: ReadonlySet<DemoModuleId> = new Set([
   'demo.tagging',
   workforceModule,
   'work.tasks',
+  'crm.activities',
   operationsModule,
 ]);
 export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAccess) =>
@@ -609,7 +611,7 @@ export const siamparkRentalPersonas = [
       return {
         ...base,
         contextPermissions: { 'demo.crm': [crmReadAll, crmWriteAll, 'demo.crm.assign'] },
-        modules: { ...base.modules, 'demo.crm': 'write' },
+        modules: { ...base.modules, 'crm.activities': 'write', 'demo.crm': 'write' },
       } satisfies DemoRole;
     })(),
   },

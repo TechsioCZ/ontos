@@ -451,6 +451,105 @@ it('limits the external Siampark role to real operational/assigned-only permissi
   }
 });
 
+it('grants Activities reads, writes and its installed Action only to rental management, not other personas or companies', () => {
+  const activitiesModule = 'crm.activities';
+  const activitiesAction = actionDescriptor('crm.activities.apply-command', activitiesModule);
+  const activityInstallation = {
+    ...installation,
+    moduleStates: [
+      ...installation.moduleStates,
+      { moduleKey: activitiesModule, state: 'active' as const, tenantId: demoTenantId },
+    ],
+    publishedModuleKeys: [...installation.publishedModuleKeys, activitiesModule],
+  };
+  const rows = demoPermissionRelationships([...descriptors, activitiesAction], activityInstallation);
+  const [management] = siamparkRentalPersonas;
+  expect(management.principalId).toBe('72000000-0000-4000-8000-000000000021');
+  expect(rentalDemoLegalEntityId).toBe('71000000-0000-4000-8000-000000000021');
+  const roleId = companyRole(management.principalId, rentalDemoLegalEntityId);
+  const moduleIds = new Set(
+    installation.companies.map(({ legalEntityId }) =>
+      toModuleAccessObjectId(demoTenantId, legalEntityId, activitiesModule),
+    ),
+  );
+  const permissionIds = new Set(
+    installation.companies.flatMap(({ legalEntityId }) =>
+      ['crm.activities.read_all', 'crm.activities.write_all'].map((permission) =>
+        toContextPermissionAccessObjectId(demoTenantId, legalEntityId, { moduleId: activitiesModule, permission }),
+      ),
+    ),
+  );
+  const actionGrantIds = new Set(
+    installation.companies.map(({ legalEntityId }) =>
+      toSpiceDbActionGrantObjectId(actionScope(activitiesAction, legalEntityId)),
+    ),
+  );
+  const roleGrant = { subjectId: roleId, subjectRelation: 'member', subjectType: 'scoped_role' };
+  expect(
+    rows.filter(
+      (row) =>
+        row.resourceType === 'module_access' && row.relation === 'accessor_role' && moduleIds.has(row.resourceId),
+    ),
+  ).toEqual([
+    {
+      ...roleGrant,
+      relation: 'accessor_role',
+      resourceId: toModuleAccessObjectId(demoTenantId, rentalDemoLegalEntityId, activitiesModule),
+      resourceType: 'module_access',
+    },
+  ]);
+  expect(
+    rows.filter(
+      (row) =>
+        row.resourceType === 'context_permission' &&
+        row.relation === 'role_grantee' &&
+        permissionIds.has(row.resourceId),
+    ),
+  ).toEqual(
+    ['crm.activities.read_all', 'crm.activities.write_all'].map((permission) => ({
+      ...roleGrant,
+      relation: 'role_grantee',
+      resourceId: toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
+        moduleId: activitiesModule,
+        permission,
+      }),
+      resourceType: 'context_permission',
+    })),
+  );
+  const actionIdentity = actionScope(activitiesAction, rentalDemoLegalEntityId);
+  expect(
+    rows.filter(
+      (row) => row.resourceType === 'action_grant' && row.relation === 'role' && actionGrantIds.has(row.resourceId),
+    ),
+  ).toEqual([
+    {
+      ...roleGrant,
+      relation: 'role',
+      resourceId: toSpiceDbActionGrantObjectId(actionIdentity),
+      resourceType: 'action_grant',
+    },
+  ]);
+  expect(rows).toContainEqual({
+    relation: 'grant',
+    resourceId: toSpiceDbActionObjectId(actionIdentity),
+    resourceType: 'action',
+    subjectId: toSpiceDbActionGrantObjectId(actionIdentity),
+    subjectType: 'action_grant',
+  });
+  // Catalog installation adds topology, not grants for baseline 0020, other companies or the shared rental roles.
+  const activityResourceIds = new Set([
+    ...moduleIds,
+    ...permissionIds,
+    ...actionGrantIds,
+    ...installation.companies.map(({ legalEntityId }) =>
+      toSpiceDbActionObjectId(actionScope(activitiesAction, legalEntityId)),
+    ),
+  ]);
+  expect(rows.filter((row) => !activityResourceIds.has(row.resourceId))).toEqual(
+    relationships.filter((row) => !activityResourceIds.has(row.resourceId)),
+  );
+});
+
 it('uses descriptor ownership instead of Action-key prefixes and grants optional Actions only in the selected company', () => {
   const misleading = actionDescriptor('demo.crm.looks-owned', partyModule, 'optional');
   expect(moduleActions([misleading], 'demo.crm')).toEqual([]);
