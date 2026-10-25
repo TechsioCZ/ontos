@@ -15,6 +15,12 @@ const factorySource = './factory.ts';
 const schemaImport = "import { Schema } from 'effect';";
 const dataFactoryConsumer = "import { makeData } from './factory.ts'; void makeData;";
 const lintConfig = nodePath.join(appRoot, 'oxlint.config.ts');
+const boundSchemaDeclaration = (bound: string) =>
+  [
+    'import { Schema as S } from "effect";',
+    bound,
+    'export const BoundSchema = S.Finite.check(S.isInt(), S.isLessThanOrEqualTo(ceiling));',
+  ].join('\n');
 
 const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
 const serviceConstructorMessage =
@@ -1078,6 +1084,90 @@ it('rejects typed effectful schema helpers and shadowed native assignments', () 
   });
 });
 
+it('proves imported native numeric bounds without trusting shadowed or opaque values', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    const boundedSchema = nodePath.join(directory, 'bounded-schema.ts');
+    writeFileSync(consumer, dataFactoryConsumer);
+    writeFileSync(
+      factory,
+      [
+        'import { Schema as S } from "effect";',
+        'import { BoundSchema } from "./bounded-schema.ts";',
+        'const decode = S.decodeUnknownSync(BoundSchema);',
+        'export const makeData = (value: number) => ({ revision: decode(value) });',
+      ].join('\n'),
+    );
+    for (const bound of [
+      'const ceiling = Number.MAX_SAFE_INTEGER;',
+      'const Numeric = Number; const ceiling = Numeric.MAX_SAFE_INTEGER;',
+      'const Number = { MAX_SAFE_INTEGER: 12 }; const ceiling = Number.MAX_SAFE_INTEGER;',
+    ]) {
+      writeFileSync(boundedSchema, boundSchemaDeclaration(bound));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), bound).toBe(true);
+    }
+    for (const bound of [
+      'const Number = { MAX_SAFE_INTEGER: () => fetch("runtime") }; const ceiling = Number.MAX_SAFE_INTEGER;',
+      'const Number = { get MAX_SAFE_INTEGER() { return fetch("runtime"); } }; const ceiling = Number.MAX_SAFE_INTEGER;',
+      'const ceiling = Number.parseInt("42");',
+      'const ceiling = Number.MISSING_BOUND;',
+      'const ceiling = () => Number.MAX_SAFE_INTEGER;',
+    ]) {
+      writeFileSync(boundedSchema, boundSchemaDeclaration(bound));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), bound).toBe(false);
+    }
+  });
+});
+
+it('proves omitted optional JSON fields without closing supplied opaque payloads', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const prefix = [
+      'import { Schema } from "effect";',
+      'const decode = Schema.decodeUnknownSync(Schema.Struct({',
+      '  entry: Schema.Struct({ id: Schema.String }),',
+      '  optionalPayload: Schema.optionalKey(Schema.Struct({ query: Schema.Json })),',
+      '}));',
+    ].join('\n');
+    writeFileSync(factory, `${prefix} export const makeData = (entry: { readonly id: string }) => decode({ entry });`);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const declaration of [
+      'export const makeData = (entry: { readonly id: string }) => decode({ entry, optionalPayload: { query: entry } });',
+      'export const makeData = (value: { readonly entry: { readonly id: string } }) => decode(value);',
+      'export const makeData = (entry: { readonly id: string }) => decode({ entry, optionalPayload: { query: { run: () => fetch("runtime") } } });',
+    ]) {
+      writeFileSync(factory, `${prefix} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('retains recursive data closure through native Object.values on arrays', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declaration = [
+      'import { Predicate } from "effect";',
+      'const freeze = <Value>(value: Value): Value => {',
+      '  if (!Predicate.isObjectKeyword(value) || value === null) return value;',
+      '  for (const nested of Object.values(value)) freeze(nested);',
+      '  return Object.freeze(value);',
+      '};',
+      'export const makeData = () => freeze([{ entries: [{ id: "data" }] }]);',
+    ].join('\n');
+    writeFileSync(factory, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    writeFileSync(factory, declaration.replace('freeze(nested);', 'fetch("runtime");'));
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+    writeFileSync(factory, declaration.replace('{ id: "data" }', '{ run: () => fetch("runtime") }'));
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+  });
+});
+
 it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
   const support = nodePath.join(appRoot, 'packages/core-runtime/tests/support/outbox-worker-composition.ts');
   const processFixture = nodePath.join(
@@ -1123,6 +1213,313 @@ it('allows service constructor calls only within proven native service factory c
         runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode).length,
         declaration,
       ).toBe(1);
+    }
+  });
+});
+
+it('proves validated, freshly linked Drizzle metadata without a factory-name exemption', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declaration = [
+      'import { sql as statement } from "drizzle-orm";',
+      'import { pgPolicy as policy, pgSchema, uuid, text } from "drizzle-orm/pg-core";',
+      'import type { PgPolicy, PgTable } from "drizzle-orm/pg-core";',
+      'import { Schema } from "effect";',
+      'const Invariant = Schema.TaggedError<Error>()("Invariant", { message: Schema.String });',
+      'const table = pgSchema("core").table("items", { tenantId: uuid("tenant_id").notNull(), moduleKey: text("module_key") });',
+      'const trustedTenant = statement`(select trust.current_tenant_id())`;',
+      'const canonical = /^[a-z][a-z0-9_]*$/u;',
+      'const literal = (key: string) => {',
+      '  if (!canonical.test(key)) throw new Invariant({ message: "invalid module key" });',
+      `  return statement.raw(\`'\${key}'\`);`,
+      '};',
+      'const linked = (target: PgTable, value: PgPolicy, scope: { readonly trustedTenant?: true } = {}) => {',
+      '  if (!canonical.test(value.name) || value.name.length > 63) throw new Invariant({ message: "invalid policy name" });',
+      '  if (Array.isArray(value.to)) Object.freeze(value.to);',
+      '  return Object.freeze({ ...scope, policy: Object.freeze(value.link(target)), table: target });',
+      '};',
+      'export const makeData = (keys: readonly string[]) => {',
+      '  const validated = keys.map((key) => key);',
+      '  if (keys.some((key, index) => key !== validated[index])) throw new Invariant({ message: "inconsistent enrollment" });',
+      `  const exclusions = validated.map((key) => statement\`\${table.moduleKey} <> \${literal(key)}\`);`,
+      `  const predicate = statement\`\${table.tenantId} = \${trustedTenant} and \${statement.join(exclusions, statement\` and \`)}\`;`,
+      '  const descriptors = [',
+      '    linked(table, policy("items_select", { for: "select", to: ["runtime"], using: keys.length === 0 ? undefined : predicate, withCheck: keys.length === 0 ? predicate : undefined })),',
+      `    ...validated.flatMap((key) => [linked(table, policy(\`items_\${key}_select\`, { for: "select", to: [key], using: predicate }), { trustedTenant: true })]),`,
+      '  ];',
+      '  if (new Set(descriptors.map(({ policy }) => policy.name)).size !== descriptors.length) throw new Invariant({ message: "duplicate names" });',
+      '  return Object.freeze(descriptors);',
+      '};',
+    ].join('\n');
+    writeFileSync(factory, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    expect(runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode)).toEqual(
+      [],
+    );
+    writeFileSync(
+      factory,
+      declaration.replace(`return statement.raw(\`'\${key}'\`);`, 'return statement.raw(fetch(key));'),
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+    expect(
+      runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode),
+    ).toHaveLength(1);
+  });
+});
+
+it('proves the actual enrollment, identity-policy and migration-schema graphs', () => {
+  const migration = nodePath.join(appRoot, 'database/core-schema.ts');
+  expect(
+    provesDataFactoryImport(
+      migration,
+      '../packages/core-runtime/src/db/database-identity-manifest.ts',
+      'defineDatabaseIdentityEnrollment',
+    ),
+  ).toBe(true);
+  expect(
+    provesDataFactoryImport(
+      migration,
+      '../packages/core-runtime/src/db/identity-policies.ts',
+      'makeCoreIdentityPolicies',
+    ),
+  ).toBe(true);
+  expect(
+    provesDataFactoryImport(
+      nodePath.join(appRoot, 'database/core-schema.cts'),
+      './core-schema.ts',
+      'makeCoreMigrationSchema',
+    ),
+  ).toBe(true);
+});
+
+it('proves branded Result and Option construction only through native data-only operations', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declaration = [
+      'import { Schema as S, Result as R, Option as O } from "effect";',
+      'const brand: unique symbol = Symbol("enrollment");',
+      'interface Input { readonly id: string; readonly detail: { readonly label: string } | null; }',
+      'class Invalid extends S.TaggedError<Invalid>()("Invalid", { cause: S.optionalKey(S.Unknown), reason: S.String }) {}',
+      'const decode = S.decodeUnknownResult(S.Struct({ id: S.String, detail: S.OptionFromNullOr(S.Struct({ label: S.String })) }));',
+      'export const makeData = (input: Input) => {',
+      '  const value = R.getOrThrow(decode(input).pipe(R.mapError((cause) => new Invalid({ cause, reason: "invalid" }))));',
+      '  return Object.freeze({ [brand]: true, id: value.id, detail: O.getOrNull(value.detail) });',
+      '};',
+    ].join('\n');
+    writeFileSync(factory, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    const emptyErrorBody = 'reason: S.String }) {}';
+    for (const [before, after] of [
+      ['from "effect"', 'from "foreign-runtime"'],
+      [
+        '(cause) => new Invalid({ cause, reason: "invalid" })',
+        '(cause) => { fetch(cause); return new Invalid({ cause, reason: "invalid" }); }',
+      ],
+      ['O.getOrNull(value.detail)', 'O.getOrNull({ run: () => fetch("runtime") })'],
+      ['[brand]: true', '[brand]: () => fetch("runtime")'],
+      ['[brand]: true', '[fetch("runtime")]: true'],
+      [emptyErrorBody, 'reason: S.String }) { constructor(input: unknown) { super(input); fetch("runtime"); } }'],
+      [emptyErrorBody, 'reason: S.String }) { run() { return fetch("runtime"); } }'],
+      [emptyErrorBody, 'reason: S.String }) { readonly run = fetch("runtime"); }'],
+      [
+        'const brand: unique symbol = Symbol("enrollment");',
+        'const Symbol = () => fetch("runtime"); const brand = Symbol("enrollment");',
+      ],
+      [
+        'id: S.String, detail:',
+        'id: S.String.check(S.makeFilter((value) => { fetch(value); return undefined; })), detail:',
+      ],
+    ]) {
+      writeFileSync(factory, declaration.replace(before, after));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), after).toBe(false);
+    }
+    for (const source of [
+      'import { Schema, Result } from "effect"; const decode = Schema.decodeUnknownResult(Schema.Json); export const makeData = (input: { readonly id: string }) => Result.getOrThrow(decode(input));',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownResult(Schema.Struct({ id: Schema.String })); export const makeData = (input: { readonly id: string }) => decode(input);',
+      'import { Result } from "effect"; export const makeData = (input: { readonly id: string }) => Result.getOrThrow(input);',
+    ]) {
+      writeFileSync(factory, source);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), source).toBe(false);
+    }
+  });
+});
+
+it('proves schema-builder callbacks without admitting runtime defaults or counterfeit metadata', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declaration = [
+      'import { sql, defineRelations } from "drizzle-orm";',
+      'import { pgSchema, uuid, timestamp, check, index, uniqueIndex, foreignKey, primaryKey, pgPolicy } from "drizzle-orm/pg-core";',
+      'const schema = pgSchema("data");',
+      'const sequence = schema.sequence("ids", { startWith: 1 });',
+      'const parent = schema.table("parents", { id: uuid("id").defaultRandom().primaryKey() }).enableRLS();',
+      'const items = schema.table.withRLS("items", {',
+      '  id: uuid("id").primaryKey(),',
+      '  parentId: uuid("parent_id").references(() => parent.id, { onDelete: "restrict" }),',
+      '  createdAt: timestamp("created_at").defaultNow().notNull(),',
+      '}, (table) => {',
+      `  const predicate = sql\`\${table.id} is not null\`;`,
+      '  return [primaryKey({ columns: [table.id], name: "items_pk" }),',
+      '    check("items_ck", predicate), index("items_idx").on(table.id).where(predicate),',
+      '    uniqueIndex("items_uk").on(table.parentId),',
+      '    foreignKey({ columns: [table.parentId], foreignColumns: [parent.id] }).onDelete("restrict"),',
+      '    pgPolicy("items_select", { using: predicate })];',
+      '});',
+      'const tables = { parent, items };',
+      'const relations = defineRelations(tables);',
+      'export const makeData = () => Object.freeze({ ...tables, schema, sequence, relations });',
+    ].join('\n');
+    writeFileSync(factory, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const [before, after] of [
+      ['from "drizzle-orm/pg-core"', 'from "foreign-runtime"'],
+      ['(table) => {', '(table) => { fetch("runtime");'],
+      ['() => parent.id', '() => { fetch("runtime"); return parent.id; }'],
+      ['() => parent.id', '() => ({ run: () => fetch("runtime") })'],
+      ['.defaultNow()', '.$defaultFn(() => fetch("runtime"))'],
+      ['.defaultRandom()', '.randomRuntimeMethod()'],
+      ['.on(table.id).where(predicate)', '.on(table.id).execute()'],
+      ['defineRelations(tables)', 'defineRelations(tables, () => { fetch("runtime"); return {}; })'],
+      ['columns: [table.id], name:', 'columns: [() => fetch("runtime")], name:'],
+      ['const parent = schema.table(', 'const parent = fetch('],
+    ]) {
+      writeFileSync(factory, declaration.replace(before, after));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), after).toBe(false);
+    }
+    writeFileSync(factory, `${declaration}\nparent.enableRLS();`);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+  });
+});
+
+it('keeps native metadata provenance through imports and rejects effectful module initialization', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const helper = nodePath.join(directory, 'metadata.ts');
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const metadata = [
+      'import { sql } from "drizzle-orm";',
+      'import { pgTable, uuid } from "drizzle-orm/pg-core";',
+      'export const table = pgTable("items", { id: uuid("id").primaryKey() });',
+      `export const predicate = sql\`\${table.id} is not null\`;`,
+    ].join('\n');
+    writeFileSync(helper, metadata);
+    writeFileSync(
+      factory,
+      [
+        'import { pgPolicy } from "drizzle-orm/pg-core";',
+        'import { table, predicate } from "./metadata.ts";',
+        'export const makeData = () => Object.freeze({ table, policy: pgPolicy("items_select", { using: predicate }).link(table) });',
+      ].join('\n'),
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const initializer of [
+      'fetch("module initializer");',
+      'const initialized = fetch("module initializer");',
+      'const source = { get predicate() { fetch("module initializer"); return true; } }; const initialized = source.predicate;',
+    ]) {
+      writeFileSync(helper, `${metadata}\n${initializer}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), initializer).toBe(false);
+    }
+  });
+});
+
+it('rejects executable SQL, arbitrary linking, counterfeit imports, and unproved table builders', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const imports = [
+      'import { sql } from "drizzle-orm";',
+      'import { pgPolicy, pgTable, uuid } from "drizzle-orm/pg-core";',
+      'import type { PgPolicy, PgTable } from "drizzle-orm/pg-core";',
+      'import { Effect, Layer } from "effect";',
+      'const table = pgTable("items", { id: uuid("id") });',
+    ].join('\n');
+    const controls = [
+      `export const makeData = () => sql\`\${Effect.runSync(Effect.succeed("runtime"))}\`;`,
+      `export const makeData = () => sql\`\${Layer.succeed("runtime")}\`;`,
+      `export const makeData = () => sql\`\${{ getSQL: () => fetch("runtime") }}\`;`,
+      'export const makeData = () => sql.raw(fetch("runtime"));',
+      'export const makeData = () => sql.raw(() => fetch("runtime"));',
+      'export const makeData = () => sql.join([sql`true`, fetch("runtime")]);',
+      'export const makeData = () => sql.join([() => fetch("runtime")]);',
+      'export const makeData = () => sql`true`.execute();',
+      'export const makeData = () => sql.execute("select 1");',
+      'export const makeData = () => pgPolicy("items_select", { using: sql`true`, to: [() => fetch("runtime")] });',
+      'export const makeData = () => pgPolicy("items_select", { using: sql`true`, withCheck: Effect.succeed("runtime") });',
+      'export const makeData = () => pgPolicy("items_select", { using: sql`true`, ignored: fetch("runtime") });',
+      'export const makeData = () => pgPolicy("items_select", { using: sql`true` }).link({ id: "not a native table" });',
+      'export const makeData = (policy: PgPolicy) => policy.link(table);',
+      'export const makeData = (target: PgTable) => pgPolicy("items_select", { using: sql`true` }).link(target);',
+      'const shared = pgPolicy("items_select", { using: sql`true` }); export const makeData = () => shared.link(table);',
+      'const shared = { policy: pgPolicy("items_select", { using: sql`true` }) }; export const makeData = () => shared.policy.link(table);',
+      'export const makeData = () => { const policy = pgPolicy("items_select", { using: sql`true` }); policy.link = () => fetch("runtime"); return policy.link(table); };',
+      `const wrap = (value: string) => { fetch(value); return value; }; export const makeData = () => sql\`\${wrap("runtime")}\`;`,
+      'export const makeData = (keys: readonly string[]) => sql.join(keys.map((key) => { fetch(key); return sql`true`; }));',
+      'export const makeData = (keys: readonly string[]) => keys.flatMap((key) => { fetch(key); return [pgPolicy("items_select", { using: sql`true` })]; });',
+      'export const makeData = (keys: readonly string[]) => { if (keys.some((key, index) => fetch(key) === keys[index])) throw new Error("invalid"); return sql`true`; };',
+      'export const makeData = () => pgTable("other", { id: uuid("id") }, () => { fetch("runtime"); return []; });',
+      'export const makeData = () => pgTable("other", { id: uuid("id").$defaultFn(() => fetch("runtime")) });',
+      'export const makeData = () => pgTable("other", { id: uuid("id").references(() => { fetch("runtime"); return table.id; }) });',
+      'export const makeData = () => table.enableRLS();',
+      'export const makeData = () => { const sql = { raw: () => fetch("runtime") }; return sql.raw(); };',
+      'export const makeData = (Array: { readonly isArray: () => boolean }) => { if (Array.isArray(table)) return sql`true`; return sql`false`; };',
+      'sql.raw = () => fetch("runtime"); export const makeData = () => sql.raw("safe");',
+      'let create = pgPolicy; create = () => fetch("runtime"); export const makeData = () => create("items_select", {});',
+    ];
+    for (const declaration of controls) {
+      writeFileSync(factory, `${imports}\n${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+    writeFileSync(nodePath.join(directory, 'type-only.ts'), 'export type { sql } from "drizzle-orm";');
+    for (const declaration of [
+      'import { sql } from "foreign-runtime"; export const makeData = () => sql`true`;',
+      'import type { sql } from "drizzle-orm"; export const makeData = () => sql`true`;',
+      'import { type sql } from "drizzle-orm"; export const makeData = () => sql`true`;',
+      'import { sql } from "./type-only.ts"; export const makeData = () => sql`true`;',
+      'import { pgPolicy } from "foreign-runtime"; export const makeData = () => pgPolicy("items_select", {});',
+      'import type { pgPolicy } from "drizzle-orm/pg-core"; export const makeData = () => pgPolicy("items_select", {});',
+      'const sql = (value: unknown) => fetch("runtime"); export const makeData = () => sql`true`;',
+      'export const makeData = () => ({ link: () => fetch("runtime") }).link({});',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('proves checked invariant throws without admitting arbitrary constructors or dropping fallthrough', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of [
+      'export const makeData = (value: string) => { if (value.length > 63) throw new Error("invalid"); return { value }; };',
+      'export const makeData = (value: string) => { if (value.length > 63) throw new TypeError(value); return { value }; };',
+      'import { Schema as S } from "effect"; const Invariant = S.TaggedError<Error>()("Invariant", { message: S.String }); export const makeData = (value: string) => { if (value.length > 63) throw new Invariant({ message: value }); return { value }; };',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of [
+      'export const makeData = (value: string) => { if (value.length > 63) throw new Error(fetch(value)); return { value }; };',
+      'class Invariant { constructor(value: string) { fetch(value); } } export const makeData = (value: string) => { if (value.length > 63) throw new Invariant(value); return { value }; };',
+      'const Error = class { constructor(value: string) { fetch(value); } }; export const makeData = (value: string) => { if (value.length > 63) throw new Error(value); return { value }; };',
+      'import { Schema } from "foreign-runtime"; const Invariant = Schema.TaggedError()("Invariant", { message: Schema.String }); export const makeData = (value: string) => { if (value.length > 63) throw new Invariant({ message: value }); return { value }; };',
+      'import { Schema } from "effect"; const Invariant = Schema.TaggedError()("Invariant", { message: Schema.String }); export const makeData = (value: string) => { if (value.length > 63) throw new Invariant({ message: fetch(value) }); return { value }; };',
+      'import { Schema } from "effect"; const Invariant = Schema.TaggedError()("Invariant", { message: Schema.String }); export const makeData = (value: string) => { if (value.length > 63) throw new Invariant({ message: value, run: () => fetch(value) }); return { value }; };',
+      'const choose = (flag: boolean) => { if (flag) return "safe"; }; export const makeData = (flag: boolean) => choose(flag) === "safe" ? "safe" : fetch("runtime");',
+      'export const makeData = (values: readonly string[]) => { for (const value of values) { return () => fetch(value); } return "safe"; };',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
     }
   });
 });

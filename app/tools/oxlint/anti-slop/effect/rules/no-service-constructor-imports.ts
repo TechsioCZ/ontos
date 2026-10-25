@@ -627,6 +627,8 @@ export const noServiceConstructorImportsRule = defineRule({
             return parent?.type === "CallExpression" && parent.callee === identifier &&
               isInsideNativeServiceFactoryCallback(context, identifier);
           })) continue;
+          // DTO and native migration-metadata construction share the binding-aware proof;
+          // Drizzle imports alone never exempt a constructor or one of its runtime operations.
           if (isPureDataFactoryImport(context.filename, node.source.value, importedName, cache) ||
             provesDataFactoryImport(context.filename, node.source.value, importedName)) continue;
           context.report({ node: specifier, messageId: "serviceConstructorImport", data: { name: importedName } });

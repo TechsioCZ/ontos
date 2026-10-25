@@ -7,9 +7,10 @@ import { parseSync } from 'oxc-parser';
 // reject malformed data and Object.freeze may freeze a data graph. Neither supplies executable
 // behavior or an environmental dependency. Unknown operations and executable payloads fail closed.
 type Node = Record<string, any>;
+type FieldKey = string | symbol;
 interface Model {
   readonly filename: string;
-  readonly imports: Map<string, { source: string; imported: string }>;
+  readonly imports: Map<string, { source: string; imported: string; typeOnly?: boolean }>;
   readonly values: Map<string, Node>;
   readonly types: Map<string, Node>;
   readonly exports: Map<string, string>;
@@ -28,9 +29,25 @@ interface Value {
     | 'function'
     | 'native'
     | 'transform'
-    | 'hash';
-  readonly fields?: ReadonlyMap<string, Value>;
-  readonly optionalFields?: ReadonlySet<string>;
+    | 'hash'
+    | 'sql'
+    | 'policy'
+    | 'table'
+    | 'column'
+    | 'column-builder'
+    | 'pg-schema'
+    | 'sequence'
+    | 'constraint'
+    | 'index-builder'
+    | 'index'
+    | 'relations'
+    | 'metadata-union'
+    | 'option'
+    | 'result'
+    | 'error-constructor'
+    | 'invariant-error';
+  readonly fields?: ReadonlyMap<FieldKey, Value>;
+  readonly optionalFields?: ReadonlySet<FieldKey>;
   readonly prototype?: 'object' | 'null';
   // Array elements or possible own dictionary values; an index signature never guarantees presence.
   readonly element?: Value;
@@ -44,15 +61,22 @@ interface Value {
   readonly native?: string;
   readonly apply?: (args: readonly Value[]) => Value;
   readonly literal?: unknown;
+  // Mutating native metadata methods require construction in the current call graph.
+  readonly fresh?: boolean;
+  readonly optionalSql?: boolean;
+  readonly failure?: Value;
+  readonly optionalKey?: boolean;
 }
 const BAD: Value = { kind: 'bad' };
 const DATA: Value = { kind: 'data' };
+const NUMBER: Value = { kind: 'data', native: 'number' };
+const SQL: Value = { kind: 'sql' };
 const UNDEFINED: Value = { kind: 'data', literal: undefined };
 // As with the native operations below, fresh object literals use the standard intrinsic
 // prototype. Enumerate its own keys without invoking getters; unknown prototypes fail closed.
 const objectPrototypeKeys = new Set(Reflect.ownKeys(Object.prototype));
 const objectPrototypeIsRoot = Object.getPrototypeOf(Object.prototype) === null;
-const inheritedField = (value: Value, name: string): Value =>
+const inheritedField = (value: Value, name: FieldKey): Value =>
   value.prototype === 'null' ||
   (value.prototype === 'object' && objectPrototypeIsRoot && !objectPrototypeKeys.has(name))
     ? UNDEFINED
@@ -60,9 +84,9 @@ const inheritedField = (value: Value, name: string): Value =>
 // Own-property projection (joins and spreads) excludes inherited values; optionalFields and
 // dictionary elements track possible absence separately. Ordinary lookup and destructuring must
 // include inheritance unless a named own field is required, even on a closed data record.
-const ownRecordField = (value: Value, name: string): Value =>
+const ownRecordField = (value: Value, name: FieldKey): Value =>
   value.fields?.get(name) ?? value.element ?? (value.open ? BAD : UNDEFINED);
-const recordField = (value: Value, name: string): Value => {
+const recordField = (value: Value, name: FieldKey): Value => {
   const field = value.fields?.get(name);
   if (field !== undefined && !value.optionalFields?.has(name)) return field;
   const possibleOwn = field ?? value.element ?? (value.open ? BAD : UNDEFINED);
@@ -75,10 +99,10 @@ const array = (element: Value, empty = false, items?: readonly Value[]): Value =
   items,
 });
 const record = (
-  fields: ReadonlyMap<string, Value>,
+  fields: ReadonlyMap<FieldKey, Value>,
   open = false,
   element?: Value,
-  optionalFields?: ReadonlySet<string>,
+  optionalFields?: ReadonlySet<FieldKey>,
   prototype?: Value['prototype'],
 ): Value => ({
   kind: 'record',
@@ -103,11 +127,42 @@ const isClosedData = (value: Value): boolean =>
     value.open !== true &&
     (value.element === undefined || isClosedData(value.element)) &&
     [...(value.fields?.values() ?? [])].every(isClosedData));
+// Metadata is not ordinary data: never erase its provenance into a string/DTO or admit its
+// executable methods via the generic data operations. Only the native operations below consume it.
+const isFactoryData = (value: Value, closed = false): boolean =>
+  value.kind === 'data' ||
+  (value.kind === 'metadata-union' && (value.items ?? []).every((part) => isFactoryData(part, closed))) ||
+  ['sql', 'policy', 'table', 'column', 'sequence', 'pg-schema', 'constraint', 'index-builder', 'index', 'relations'].includes(value.kind) ||
+  (value.kind === 'option' && isFactoryData(value.payload ?? BAD, closed)) ||
+  (value.kind === 'result' && !closed && isFactoryData(value.payload ?? BAD, closed) &&
+    (value.failure?.kind === 'invariant-error' || isClosedData(value.failure ?? BAD))) ||
+  (value.kind === 'array' && isFactoryData(value.element ?? BAD, closed)) ||
+  (value.kind === 'record' &&
+    (!closed || value.open !== true) &&
+    (value.element === undefined || isFactoryData(value.element, closed)) &&
+    [...(value.fields?.values() ?? [])].every((field) => isFactoryData(field, closed)));
+const isClosedFactoryData = (value: Value): boolean => isFactoryData(value, true);
+const isSqlChunk = (value: Value): boolean =>
+  value.kind === 'data' ||
+  ['sql', 'table', 'column'].includes(value.kind) ||
+  (value.kind === 'array' && isSqlChunk(value.element ?? BAD));
+// Module constants are shared, even when first resolved while inspecting a factory invocation.
+const sharedMetadata = (value: Value): Value => {
+  if (['policy', 'table', 'column-builder', 'constraint', 'index-builder', 'index'].includes(value.kind))
+    return { ...value, fresh: false };
+  if (value.kind === 'array')
+    return { ...array(sharedMetadata(value.element ?? BAD), value.empty, value.items?.map(sharedMetadata)), open: value.open };
+  if (value.kind === 'record')
+    return { ...value, fields: new Map([...(value.fields ?? [])].map(([name, field]) => [name, sharedMetadata(field)])),
+      element: value.element === undefined ? undefined : sharedMetadata(value.element) };
+  return value;
+};
 // Json validation preserves object identity, including nonenumerable and symbol-keyed callbacks.
 // A codec may contain JSON, but only closed inputs or fresh JSON parsing prove its output closed.
 const isCodecData = (value: Value): boolean =>
   value.kind === 'json' ||
   value.kind === 'data' ||
+  (value.kind === 'option' && isCodecData(value.payload ?? BAD)) ||
   (value.kind === 'array' && isCodecData(value.element ?? BAD)) ||
   (value.kind === 'record' &&
     value.open !== true &&
@@ -128,12 +183,19 @@ const closeCodecJson = (value: Value): Value =>
         ? array(closeCodecJson(value.element ?? BAD), value.empty)
         : value;
 const codecData = (payload: Value, input: Value): Value => {
+  if (payload.kind === 'option') return { kind: 'option', payload: codecData(payload.payload ?? BAD, input) };
   if (isData(payload)) return payload;
   if (isClosedData(input)) return closeCodecJson(payload);
   if (payload.kind === 'record' && input.kind === 'record') {
-    const fields = new Map<string, Value>();
-    for (const [name, field] of payload.fields ?? [])
-      fields.set(name, codecData(field, input.fields?.get(name) ?? input.element ?? BAD));
+    const fields = new Map<FieldKey, Value>();
+    for (const [name, field] of payload.fields ?? []) {
+      const source = recordField(input, name);
+      // An omitted optional JSON-bearing field has no value whose closure needs proving.
+      // Do not confuse absence with an open/inherited property or skip a supplied payload.
+      if (payload.optionalFields?.has(name) && source.kind === 'data' &&
+        'literal' in source && source.literal === undefined) continue;
+      fields.set(name, codecData(field, source));
+    }
     let element: Value | undefined;
     if (payload.element !== undefined) {
       for (const [name, field] of input.fields ?? [])
@@ -156,7 +218,7 @@ const openData = (value: Value): Value =>
         value.optionalFields,
       )
     : value.kind === 'array'
-      ? array(openData(value.element ?? BAD), value.empty)
+      ? { ...array(openData(value.element ?? BAD), value.empty), open: true }
       : value;
 const unwrap = (input: Node): Node => {
   let node = input;
@@ -182,6 +244,13 @@ const fnNode = (node: Node): boolean =>
 const merge = (values: readonly Value[]): Value => {
   if (values.length === 0) return DATA;
   if (values.some((value) => value.kind === 'bad')) return BAD;
+  // Null contributes no own fields to a spread. A property access on that alternative can only
+  // throw; it cannot supply a callable property or a foreign prototype. Keep the non-null shape.
+  const present = values.filter((value) => !(value.kind === 'data' && 'literal' in value && value.literal === null));
+  if (present.length > 0 && present.length < values.length && present.every((value) => value.kind === 'record'))
+    return merge(present);
+  if (values.every((value) => value.kind === 'option'))
+    return { kind: 'option', payload: merge(values.map((value) => value.payload ?? BAD)) };
   if (values.every((value) => value.kind === 'record')) {
     const names = new Set(values.flatMap((value) => [...(value.fields?.keys() ?? [])]));
     return record(
@@ -200,15 +269,29 @@ const merge = (values: readonly Value[]): Value => {
       values.every((value) => value.prototype === values[0].prototype) ? values[0].prototype : undefined,
     );
   }
+  if (values.some((value) => value.kind === 'sql') && values.every((value) =>
+    value.kind === 'sql' || (value.kind === 'data' && 'literal' in value && value.literal === undefined)))
+    return { kind: 'sql', optionalSql: values.some((value) => value.kind !== 'sql' || value.optionalSql === true) };
+  if (['column', 'table', 'policy'].includes(values[0].kind) &&
+    values.every((value) => value.kind === values[0].kind)) {
+    const fields = merge(values.map((value) => record(value.fields ?? new Map())));
+    return { kind: values[0].kind, fields: fields.fields, fresh: values.every((value) => value.fresh === true) };
+  }
   if (values.every((value) => value.kind === 'schema'))
     return schema(merge(values.map((value) => value.payload ?? BAD)));
   if (values.every((value) => value.kind === 'array'))
-    return array(
+    return { ...array(
       merge(values.filter((value) => !value.empty).map((value) => value.element ?? BAD)),
       values.every((value) => value.empty),
-    );
+    ), open: values.some((value) => value.open === true) };
   if (values.every((value) => value.kind === 'data' && 'literal' in value && value.literal === values[0].literal))
     return values[0];
+  const metadata = values.flatMap((value) => value.kind === 'metadata-union' ? value.items ?? [BAD] : [value]);
+  const isMetadata = (value: Value): boolean =>
+    ['policy', 'constraint', 'index', 'table', 'column', 'sequence', 'pg-schema', 'relations'].includes(value.kind);
+  if (metadata.some(isMetadata) && metadata.every((value) => isMetadata(value) ||
+    (value.kind === 'data' && 'literal' in value && value.literal === undefined)))
+    return { kind: 'metadata-union', items: metadata };
   // Erasing heterogeneous shapes is safe only after their entire payload is known closed.
   return values.every(isClosedData) ? DATA : BAD;
 };
@@ -222,7 +305,7 @@ const generalizeData = (value: Value): Value =>
         value.prototype,
       )
     : value.kind === 'array'
-      ? array(generalizeData(value.element ?? BAD), value.empty)
+      ? { ...array(generalizeData(value.element ?? BAD), value.empty), open: value.open }
       : value.kind === 'data'
         ? { kind: 'data', native: value.native }
         : BAD;
@@ -237,10 +320,13 @@ const dataState = (value: Value, visited = new Set<Value>()): string => {
       value.element === undefined ? null : dataState(value.element, next),
       [...(value.fields ?? [])].map(([name, field]) => [name, dataState(field, next)]),
     ]);
-  if (value.kind === 'array') return `array:${value.empty}:${dataState(value.element ?? BAD, next)}`;
+  if (value.kind === 'array') return `array:${value.empty}:${value.open}:${dataState(value.element ?? BAD, next)}`;
   return JSON.stringify([
     value.kind,
     value.native,
+    value.fresh,
+    value.optionalSql,
+    [...(value.fields ?? [])].map(([name, field]) => [name, dataState(field, next)]),
     'literal' in value,
     typeof value.literal,
     String(value.literal),
@@ -248,6 +334,8 @@ const dataState = (value: Value, visited = new Set<Value>()): string => {
     value.node?.start,
     [...(value.env ?? [])].map(([name, captured]) => [name, dataState(captured, next)]),
     value.payload === undefined ? null : dataState(value.payload, next),
+    value.failure === undefined ? null : dataState(value.failure, next),
+    value.items?.map((part) => dataState(part, next)),
   ]);
 };
 
@@ -283,7 +371,11 @@ class DataFactoryProof {
           if (node.specifiers.length === 0) return null;
           for (const specifier of node.specifiers) {
             if (specifier.type !== 'ImportSpecifier') return null;
-            model.imports.set(specifier.local.name, { source: node.source.value, imported: key(specifier.imported)! });
+            model.imports.set(specifier.local.name, {
+              source: node.source.value,
+              imported: key(specifier.imported)!,
+              typeOnly: node.importKind === 'type' || specifier.importKind === 'type',
+            });
           }
           continue;
         }
@@ -292,7 +384,11 @@ class DataFactoryProof {
           if (node.source !== null) {
             for (const specifier of node.specifiers) {
               const local = `@reexport:${key(specifier.exported)}`;
-              model.imports.set(local, { source: node.source.value, imported: key(specifier.local)! });
+              model.imports.set(local, {
+                source: node.source.value,
+                imported: key(specifier.local)!,
+                typeOnly: node.exportKind === 'type' || specifier.exportKind === 'type',
+              });
               model.exports.set(key(specifier.exported)!, local);
             }
             continue;
@@ -322,6 +418,9 @@ class DataFactoryProof {
           // a reachable factory; executable module statements still invalidate the entire model.
           model.values.set(node.id.name, node);
           if (exported) model.exports.set(node.id.name, node.id.name);
+        } else if (node.type === 'TSExportAssignment') {
+          model.values.set('@export=', node.expression);
+          model.exports.set('export=', '@export=');
         } else if (node.type === 'ExpressionStatement') executableInitialization = true;
         else if (!['EmptyStatement', 'TSDeclareFunction'].includes(node.type)) return null;
       }
@@ -382,6 +481,7 @@ class DataFactoryProof {
             'Literals',
             'fromJsonString',
             'decodeUnknownSync',
+            'decodeUnknownResult',
             'encodeSync',
             'String',
             'Trim',
@@ -407,6 +507,7 @@ class DataFactoryProof {
             'isInt',
             'isGreaterThan',
             'isGreaterThanOrEqualTo',
+            'isLessThanOrEqualTo',
             'isBetween',
             'isFinite',
             'isTrimmed',
@@ -425,17 +526,21 @@ class DataFactoryProof {
     const safe = (input: Node): boolean => {
       const node = unwrap(input);
       if (fnNode(node) || node.type === 'Identifier' || node.type === 'Literal') return true;
-      if (node.type === 'MemberExpression') return safe(node.object) && (!node.computed || safe(node.property));
+      if (node.type === 'MemberExpression')
+        return safe(node.object) && (!node.computed || safe(node.property)) &&
+          this.expression(node, model, new Map()).kind !== 'bad';
       if (node.type === 'ObjectExpression')
         return node.properties.every((property: Node) =>
-          property.type === 'SpreadElement' ? safe(property.argument) : !property.computed && safe(property.value),
+          property.type === 'SpreadElement' ? safe(property.argument) :
+            property.kind === 'init' && (!property.computed || this.fieldKey(property, model, new Map()) !== undefined) &&
+              safe(property.value),
         );
       if (node.type === 'ArrayExpression')
         return node.elements.every((element: Node | null) => element === null || safe(element));
       if (node.type === 'ClassDeclaration') {
-        if (node.superClass !== null && !safe(node.superClass)) return false;
+        if (node.decorators?.length || (node.superClass !== null && !safe(node.superClass))) return false;
         for (const member of node.body.body) {
-          if (member.type === 'StaticBlock' || (member.computed && !safe(member.key))) return false;
+          if (member.decorators?.length || member.type === 'StaticBlock' || (member.computed && !safe(member.key))) return false;
           if (member.static && member.value !== null && member.value !== undefined && !safe(member.value)) return false;
         }
         return true;
@@ -495,8 +600,14 @@ class DataFactoryProof {
     this.resolving.add(id);
     let result = BAD;
     const imported = model.imports.get(name);
-    if (imported !== undefined) {
-      if (imported.source === 'effect' && ['Schema', 'Predicate', 'Result', 'Order'].includes(imported.imported)) {
+    if (imported !== undefined && imported.typeOnly !== true) {
+      if (imported.source === 'drizzle-orm' && ['sql', 'defineRelations'].includes(imported.imported))
+        result = native(`drizzle:${imported.imported}`);
+      else if (imported.source === 'drizzle-orm/pg-core' &&
+        ['pgPolicy', 'pgTable', 'pgSchema', 'pgSequence', 'check', 'foreignKey', 'primaryKey', 'index', 'uniqueIndex',
+          'text', 'uuid', 'integer', 'boolean', 'bigint', 'timestamp', 'jsonb'].includes(imported.imported))
+        result = native(`drizzle:${imported.imported}`);
+      else if (imported.source === 'effect' && ['Schema', 'Predicate', 'Result', 'Option', 'Order'].includes(imported.imported)) {
         result = native(`effect:${imported.imported}`);
       } else if (imported.source === 'node:crypto' && imported.imported === 'createHash')
         result = native('crypto:createHash');
@@ -504,14 +615,14 @@ class DataFactoryProof {
         const owner = this.imported(model, imported.source);
         const exported = owner?.exports.get(imported.imported);
         if (owner !== null && exported !== undefined) {
-          const declaration = owner.values.get(exported);
-          if (declaration === undefined || !fnNode(declaration) || this.safeInitialization(owner))
-            result = this.value(exported, owner, new Map());
+          if (this.safeInitialization(owner)) result = this.value(exported, owner, new Map());
         }
       }
-    } else if (model.values.has(name)) result = this.expression(model.values.get(name)!, model, new Map());
-    else if (name === 'undefined') result = UNDEFINED;
-    else if (['Object', 'URL'].includes(name)) result = native(`global:${name}`);
+    } else if (imported === undefined && model.values.has(name))
+      result = sharedMetadata(this.expression(model.values.get(name)!, model, new Map()));
+    else if (imported === undefined && name === 'undefined') result = UNDEFINED;
+    else if (imported === undefined && ['Object', 'URL', 'Array', 'Symbol', 'Number', 'Error', 'TypeError', 'RangeError'].includes(name))
+      result = native(`global:${name}`);
     this.resolving.delete(id);
     this.values.set(id, result);
     return result;
@@ -519,6 +630,9 @@ class DataFactoryProof {
 
   type(node: Node | undefined | null, model: Model, generics = new Map<string, Value>()): Value {
     if (node === undefined || node === null) return BAD;
+    if (node.type === 'TSNumberKeyword') return NUMBER;
+    if (node.type === 'TSNullKeyword') return { kind: 'data', literal: null };
+    if (node.type === 'TSLiteralType') return this.expression(node.literal, model, new Map());
     if (
       [
         'TSStringKeyword',
@@ -590,7 +704,7 @@ class DataFactoryProof {
       const selected = new Set(keyNodes.map((part: Node) => part.literal.value));
       // Evaluate only the selected fields: a DTO projection can legitimately omit executable fields.
       return this.projectType(originNode, model, generics, (field) =>
-        name === 'Pick' ? selected.has(field) : !selected.has(field),
+        name === 'Pick' ? typeof field === 'string' && selected.has(field) : typeof field !== 'string' || !selected.has(field),
       );
     }
     let owner = model;
@@ -625,7 +739,7 @@ class DataFactoryProof {
     node: Node | undefined,
     model: Model,
     generics: Map<string, Value>,
-    include: (name: string) => boolean,
+    include: (name: FieldKey) => boolean,
   ): Value {
     if (node?.type === 'TSTypeReference') {
       const name = named(node.typeName);
@@ -675,11 +789,18 @@ class DataFactoryProof {
     return record(result);
   }
 
+  fieldKey(property: Node, model: Model, env: ReadonlyMap<string, Value>): FieldKey | undefined {
+    if (!property.computed) return key(property.key);
+    const value = this.expression(property.key, model, env);
+    return value.kind === 'data' && (typeof value.literal === 'symbol' || typeof value.literal === 'string')
+      ? value.literal : undefined;
+  }
+
   typeFields(properties: readonly Node[], model: Model, generics: Map<string, Value>): Value {
-    const fields = new Map<string, Value>();
+    const fields = new Map<FieldKey, Value>();
     for (const property of properties) {
-      const name = key(property.key);
-      if (property.type !== 'TSPropertySignature' || name === undefined || property.computed) return BAD;
+      const name = this.fieldKey(property, model, new Map());
+      if (property.type !== 'TSPropertySignature' || name === undefined) return BAD;
       fields.set(name, this.type(property.typeAnnotation?.typeAnnotation, model, generics));
     }
     return record(fields);
@@ -695,7 +816,7 @@ class DataFactoryProof {
   bind(pattern: Node, input: Value, model: Model, env: Map<string, Value>): boolean {
     if (pattern.type === 'AssignmentPattern') {
       const fallback = this.expression(pattern.right, model, env);
-      if (!isData(fallback)) return false;
+      if (!isFactoryData(fallback)) return false;
       const defaulted =
         input.kind === 'data' && 'literal' in input && input.literal === undefined ? fallback : merge([input, fallback]);
       return this.bind(pattern.left, defaulted, model, env);
@@ -703,10 +824,10 @@ class DataFactoryProof {
     if (pattern.type === 'Identifier') {
       env.set(pattern.name, input);
       // Native sets may be queried locally, but are never a closed DTO result or factory input.
-      return isData(input) || input.kind === 'set';
+      return isFactoryData(input) || input.kind === 'set';
     }
     if (pattern.type === 'ArrayPattern') {
-      if (input.kind !== 'array' || !isClosedData(input)) return false;
+      if (input.kind !== 'array' || !isClosedFactoryData(input)) return false;
       for (const element of pattern.elements) {
         if (element !== null && !this.bind(element, input.element ?? BAD, model, env)) return false;
       }
@@ -723,7 +844,7 @@ class DataFactoryProof {
     return true;
   }
 
-  invoke(function_: Value, args: readonly Value[]): Value {
+  invoke(function_: Value, args: readonly Value[], inferParameters = false): Value {
     if (function_.apply !== undefined) return function_.apply(args);
     const node = function_.node;
     const model = function_.model;
@@ -751,8 +872,10 @@ class DataFactoryProof {
       const pattern = parameter.type === 'AssignmentPattern' ? parameter.left : parameter;
       const annotation = pattern.typeAnnotation?.typeAnnotation;
       const input =
-        inputs[index] ?? (annotation === undefined ? BAD : openData(this.type(annotation, model, generics)));
-      if (!isData(input)) valid = false;
+        inputs[index] ?? (inferParameters
+          ? annotation === undefined ? BAD : openData(this.type(annotation, model, generics))
+          : UNDEFINED);
+      if (!isFactoryData(input)) valid = false;
       if (!this.bind(parameter, input, model, env)) valid = false;
     }
     const result = valid
@@ -762,30 +885,55 @@ class DataFactoryProof {
       : BAD;
     if (active === undefined) this.calls.delete(node);
     else this.calls.set(node, active);
-    if (!isData(result)) {
+    if (!isFactoryData(result)) {
       for (const call of this.validatedCalls) if (!previouslyValidated.has(call)) this.validatedCalls.delete(call);
     }
     return result;
   }
 
   statements(statements: readonly Node[], model: Model, env: Map<string, Value>): Value {
+    const flow = this.statementReturns(statements, model, env);
+    return flow === null ? BAD : merge([...flow.returns, ...(flow.fallsThrough ? [UNDEFINED] : [])]);
+  }
+
+  // A validation-only branch does not return a DTO. Keep its completion separate from actual
+  // return values so a checked throw/freeze cannot erase the metadata provenance of a later return.
+  statementReturns(
+    statements: readonly Node[], model: Model, env: Map<string, Value>,
+  ): { returns: Value[]; fallsThrough: boolean } | null {
     const returns: Value[] = [];
+    let fallsThrough = true;
     for (const node of statements) {
       if (node.type === 'VariableDeclaration' && node.kind === 'const') {
         for (const declaration of node.declarations) {
           const value = this.expression(declaration.init, model, env);
-          if (!this.bind(declaration.id, value, model, env)) return BAD;
+          if (!this.bind(declaration.id, value, model, env)) return null;
         }
-      } else if (node.type === 'ReturnStatement') returns.push(this.expression(node.argument, model, env));
-      else if (node.type === 'ExpressionStatement') {
-        if (!isData(this.expression(node.expression, model, env))) return BAD;
+      } else if (node.type === 'ReturnStatement') {
+        returns.push(node.argument === null ? UNDEFINED : this.expression(node.argument, model, env));
+        fallsThrough = false;
+      } else if (node.type === 'ThrowStatement') {
+        const error = this.expression(node.argument, model, env);
+        if (error.kind !== 'invariant-error' && !isClosedData(error)) return null;
+        fallsThrough = false;
+      } else if (node.type === 'ExpressionStatement') {
+        if (!isFactoryData(this.expression(node.expression, model, env))) return null;
       } else if (node.type === 'IfStatement') {
-        if (!isData(this.expression(node.test, model, env))) return BAD;
-        const branch = (part: Node | null): Value =>
-          part === null
-            ? DATA
-            : this.statements(part.type === 'BlockStatement' ? part.body : [part], model, new Map(env));
-        returns.push(branch(node.consequent), branch(node.alternate));
+        if (!isData(this.expression(node.test, model, env))) return null;
+        let branchFallsThrough = false;
+        for (const part of [node.consequent, node.alternate]) {
+          if (part === null) { branchFallsThrough = true; continue; }
+          const result = this.statementReturns(part.type === 'BlockStatement' ? part.body : [part], model, new Map(env));
+          if (result === null) return null;
+          returns.push(...result.returns);
+          branchFallsThrough ||= result.fallsThrough;
+        }
+        fallsThrough &&= branchFallsThrough;
+      } else if (node.type === 'BlockStatement') {
+        const result = this.statementReturns(node.body, model, new Map(env));
+        if (result === null) return null;
+        returns.push(...result.returns);
+        fallsThrough &&= result.fallsThrough;
       } else if (
         node.type === 'ForOfStatement' &&
         node.await !== true &&
@@ -793,19 +941,35 @@ class DataFactoryProof {
         node.left.kind === 'const'
       ) {
         const iterable = this.expression(node.right, model, env);
-        if (iterable.kind !== 'array') return BAD;
+        if (iterable.kind !== 'array' || !isFactoryData(iterable)) return null;
         const loop = new Map(env);
-        if (!this.bind(node.left.declarations[0].id, iterable.element ?? BAD, model, loop)) return BAD;
-        const result = this.statements(node.body.type === 'BlockStatement' ? node.body.body : [node.body], model, loop);
-        if (!isData(result)) return BAD;
-      } else return BAD;
+        if (!this.bind(node.left.declarations[0].id, iterable.element ?? BAD, model, loop)) return null;
+        const result = this.statementReturns(node.body.type === 'BlockStatement' ? node.body.body : [node.body], model, loop);
+        if (result === null) return null;
+        returns.push(...result.returns);
+      } else return null;
     }
-    return merge(returns);
+    return { returns, fallsThrough };
   }
 
-  property(input: Value, name: string, model: Model): Value {
+  property(input: Value, name: FieldKey, model: Model): Value {
     const value = this.normalizeNative(input);
     if (value.kind === 'record') return recordField(value, name);
+    if (typeof name !== 'string') return BAD;
+    if (value.kind === 'result') return name === 'pipe' ? { ...native('result:pipe'), payload: value } : BAD;
+    if (value.kind === 'table')
+      return name === 'enableRLS' && value.fresh === true
+        ? { ...native('drizzle:table.enableRLS'), payload: value } : value.fields?.get(name) ?? BAD;
+    if (['index-builder', 'index', 'constraint'].includes(value.kind))
+      return value.fresh === true ? { ...native(`drizzle:${value.kind}.${name}`), payload: value } : BAD;
+    if (value.kind === 'policy')
+      return name === 'link' && value.fresh === true
+        ? { ...native('drizzle:policy.link'), payload: value }
+        : value.fields?.get(name) ?? BAD;
+    if (value.kind === 'pg-schema')
+      return name === 'table' ? native('drizzle:pgTable') : name === 'sequence' ? native('drizzle:pgSequence') : BAD;
+    if (value.kind === 'column-builder')
+      return value.fresh === true ? { ...native(`drizzle:column.${name}`), payload: value } : BAD;
     if (value.kind === 'set') return name === 'size' ? DATA : name === 'has' ? native('set:has') : BAD;
     if (value.kind === 'data' && value.native === 'regexp') return native(`regexp:${name}`);
     if (value.kind === 'schema') {
@@ -828,19 +992,42 @@ class DataFactoryProof {
     if (input === undefined || input === null || ++this.steps > 30_000) return BAD;
     const node = unwrap(input);
     if (fnNode(node)) return { kind: 'function', node, model, env: new Map(env) };
+    if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
+      // Empty subclasses inherit the verified native constructor. Any custom constructor,
+      // initializer, decorator or method is executable behavior, not a data-only error.
+      if (node.superClass === null || node.body.body.length !== 0 || node.decorators?.length) return BAD;
+      const parent = this.expression(node.superClass, model, env);
+      return parent.kind === 'error-constructor' ? parent : BAD;
+    }
     if (node.type === 'Identifier') return this.value(node.name, model, env);
     if (node.type === 'Literal')
       return node.regex === undefined ? { kind: 'data', literal: node.value } : { kind: 'data', native: 'regexp' };
     if (node.type === 'TemplateLiteral')
       return node.expressions.every((part: Node) => isData(this.expression(part, model, env))) ? DATA : BAD;
+    if (node.type === 'TaggedTemplateExpression') {
+      const tag = this.expression(node.tag, model, env);
+      return tag.kind === 'native' && tag.native === 'drizzle:sql' &&
+        node.quasi.expressions.every((part: Node) => isSqlChunk(this.expression(part, model, env))) ? SQL : BAD;
+    }
     if (node.type === 'ArrayExpression') {
-      const elements = node.elements.filter(Boolean).map((part: Node) => this.expression(part, model, env));
-      if (elements.some((element: Value) => element.kind === 'bad')) return BAD;
-      return array(merge(elements), node.elements.length === 0, elements);
+      const elements: Value[] = [];
+      let exact = true;
+      for (const part of node.elements) {
+        if (part === null) { elements.push(UNDEFINED); continue; }
+        const value = this.expression(part.type === 'SpreadElement' ? part.argument : part, model, env);
+        if (value.kind === 'bad') return BAD;
+        if (part.type !== 'SpreadElement') elements.push(value);
+        else {
+          if (value.kind !== 'array' || !isFactoryData(value)) return BAD;
+          if (value.items !== undefined) elements.push(...value.items);
+          else { elements.push(value.element ?? BAD); exact = false; }
+        }
+      }
+      return array(merge(elements), elements.length === 0, exact ? elements : undefined);
     }
     if (node.type === 'ObjectExpression') {
-      const fields = new Map<string, Value>();
-      const optionalFields = new Set<string>();
+      const fields = new Map<FieldKey, Value>();
+      const optionalFields = new Set<FieldKey>();
       let prototype: Value['prototype'] = 'object';
       let open = false;
       let element: Value | undefined;
@@ -872,13 +1059,13 @@ class DataFactoryProof {
             ]);
           if (value.open) open = true;
         } else {
-          const name = key(property.key);
-          if (property.kind !== 'init' || property.method || property.computed || name === undefined) return BAD;
+          const name = this.fieldKey(property, model, env);
+          if (property.kind !== 'init' || property.method || name === undefined) return BAD;
           const value = this.expression(property.value, model, env);
           if (value.kind === 'bad') return BAD;
           // This object-literal syntax sets [[Prototype]], rather than creating an own field.
           // Arbitrary prototype graphs are outside the closed-data proof; null is fully known.
-          if (name === '__proto__' && !property.shorthand) {
+          if (name === '__proto__' && !property.shorthand && !property.computed) {
             if (value.kind !== 'data' || !('literal' in value) || value.literal !== null) return BAD;
             prototype = 'null';
             continue;
@@ -894,8 +1081,12 @@ class DataFactoryProof {
       if (!node.computed) return this.property(owner, node.property.name, model);
       if (node.property.type === 'Literal' && typeof node.property.value === 'string')
         return this.property(owner, node.property.value, model);
-      if (node.property.type === 'Literal' && typeof node.property.value === 'number' && owner.kind === 'array')
-        return owner.element ?? BAD;
+      const index = this.expression(node.property, model, env);
+      if (index.kind === 'data' && (typeof index.literal === 'symbol' || typeof index.literal === 'string'))
+        return this.property(owner, index.literal, model);
+      if (owner.kind === 'array' && index.kind === 'data' &&
+        (index.native === 'number' || typeof index.literal === 'number'))
+        return merge([owner.element ?? BAD, UNDEFINED]);
       return BAD;
     }
     if (
@@ -910,6 +1101,20 @@ class DataFactoryProof {
       return args.length === 0 || (args.length === 1 && args[0].kind === 'array' && isClosedData(args[0]))
         ? { kind: 'set' }
         : BAD;
+    }
+    if (node.type === 'NewExpression') {
+      const constructor = this.expression(node.callee, model, env);
+      const args: Value[] = node.arguments.map((part: Node) => this.expression(part, model, env));
+      if (constructor.kind === 'native' &&
+        ['global:Error', 'global:TypeError', 'global:RangeError'].includes(constructor.native ?? ''))
+        return args.length <= 1 && args.every((argument) => argument.kind === 'data')
+          ? { kind: 'invariant-error' } : BAD;
+      if (constructor.kind === 'error-constructor' && args.length === 1 && args[0].kind === 'record' &&
+        isClosedData(args[0]) && constructor.payload?.kind === 'record' &&
+        [...(constructor.payload.fields ?? [])].every(([field, payload]) => payload.kind === 'bad' ||
+          isClosedData(codecData(payload, ownRecordField(args[0], field)))))
+        return { kind: 'invariant-error' };
+      return BAD;
     }
     if (node.type === 'ConditionalExpression') {
       const test = this.expression(node.test, model, env);
@@ -942,12 +1147,122 @@ class DataFactoryProof {
     const args = node.arguments.map((argument: Node) => this.expression(argument, model, env));
     if (callee.kind === 'bad' || args.some((argument: Value) => argument.kind === 'bad')) return BAD;
     const result = callee.kind === 'native' ? this.nativeCall(callee, args) : this.invoke(callee, args);
-    if (isData(result)) this.validatedCalls.add(node);
+    if (isFactoryData(result)) this.validatedCalls.add(node);
     return result;
   }
 
   nativeCall(callee: Value, args: readonly Value[]): Value {
     const name = callee.native ?? '';
+    if (name === 'drizzle:sql.raw')
+      return args.length === 1 && args[0].kind === 'data' ? SQL : BAD;
+    if (name === 'drizzle:sql.join')
+      return args.length >= 1 && args.length <= 2 && args[0].kind === 'array' && isSqlChunk(args[0]) &&
+        (args.length === 1 || args[1].kind === 'sql') ? SQL : BAD;
+    if (name === 'drizzle:pgPolicy') {
+      const options = args[1];
+      if (args.length !== 2 || args[0].kind !== 'data' || options.kind !== 'record' ||
+        !isClosedFactoryData(options) || options.element !== undefined ||
+        [...(options.fields?.keys() ?? [])].some((field) => typeof field !== 'string' || !['as', 'for', 'to', 'using', 'withCheck'].includes(field)))
+        return BAD;
+      const fields = new Map<FieldKey, Value>([['name', args[0]]]);
+      for (const field of ['as', 'for', 'to', 'using', 'withCheck']) {
+        const value = recordField(options, field);
+        if (['using', 'withCheck'].includes(field)) {
+          if (value.kind !== 'sql' && !(value.kind === 'data' && 'literal' in value && value.literal === undefined))
+            return BAD;
+        } else if (!isClosedData(value)) return BAD;
+        fields.set(field, value);
+      }
+      return { kind: 'policy', fields, fresh: true };
+    }
+    if (name === 'drizzle:policy.link')
+      return callee.payload?.kind === 'policy' && callee.payload.fresh === true &&
+        args.length === 1 && args[0].kind === 'table' ? callee.payload : BAD;
+    if (name === 'drizzle:pgSchema')
+      return args.length === 1 && args[0].kind === 'data' ? { kind: 'pg-schema' } : BAD;
+    if (name === 'drizzle:pgSequence')
+      return args.length >= 1 && args.length <= 2 && args.every(isClosedData) ? { kind: 'sequence' } : BAD;
+    if (name === 'drizzle:pgTable' || name === 'drizzle:pgTable.withRLS') {
+      const columns = args[1];
+      if (args.length < 2 || args.length > 3 || args[0].kind !== 'data' || columns.kind !== 'record' ||
+        columns.open || columns.element !== undefined ||
+        [...(columns.fields?.values() ?? [])].some((column) => column.kind !== 'column-builder' || column.fresh !== true)) return BAD;
+      const table: Value = { kind: 'table', fresh: true,
+        fields: new Map<FieldKey, Value>([...(columns.fields ?? [])].map(([field]) => [field, { kind: 'column' }])) };
+      if (args.length === 3) {
+        const config = this.invoke(args[2], [table]);
+        const validConfig = (value: Value): boolean =>
+          ['constraint', 'index', 'policy'].includes(value.kind) ||
+          (value.kind === 'metadata-union' && (value.items ?? []).every(validConfig)) ||
+          (value.kind === 'array' && (value.empty === true || validConfig(value.element ?? BAD)));
+        if (!validConfig(config)) return BAD;
+      }
+      return table;
+    }
+    if (name === 'drizzle:table.enableRLS')
+      return args.length === 0 && callee.payload?.fresh === true ? callee.payload : BAD;
+    if (name === 'drizzle:check')
+      return args.length === 2 && args[0].kind === 'data' && args[1].kind === 'sql'
+        ? { kind: 'constraint', fresh: true } : BAD;
+    if (name === 'drizzle:primaryKey' || name === 'drizzle:foreignKey') {
+      const options = args[0];
+      if (args.length !== 1 || options.kind !== 'record' || options.open || options.element !== undefined ||
+        [...(options.fields?.keys() ?? [])].some((field) =>
+          typeof field !== 'string' || !['columns', 'foreignColumns', 'name'].includes(field))) return BAD;
+      for (const field of name === 'drizzle:foreignKey' ? ['columns', 'foreignColumns'] : ['columns']) {
+        const columns = recordField(options, field);
+        if (columns.kind !== 'array' || columns.element?.kind !== 'column') return BAD;
+      }
+      const label = recordField(options, 'name');
+      return isClosedData(label) ? { kind: 'constraint', native: name, fresh: true } : BAD;
+    }
+    if (name === 'drizzle:constraint.onDelete' || name === 'drizzle:constraint.onUpdate')
+      return callee.payload?.native === 'drizzle:foreignKey' && args.length === 1 && args[0].kind === 'data'
+        ? callee.payload : BAD;
+    if (name === 'drizzle:index' || name === 'drizzle:uniqueIndex')
+      return args.length === 1 && args[0].kind === 'data' ? { kind: 'index-builder', fresh: true } : BAD;
+    if (name === 'drizzle:index-builder.on')
+      return args.length > 0 && args.every((value) => value.kind === 'column' || value.kind === 'sql')
+        ? { kind: 'index', fresh: true } : BAD;
+    if (name === 'drizzle:index.where')
+      return args.length === 1 && args[0].kind === 'sql' ? callee.payload ?? BAD : BAD;
+    if (name === 'drizzle:defineRelations') {
+      const tables = args[0];
+      // The actual graph declares no navigational relations. A callback API needs a separate
+      // relation-helper proof rather than granting arbitrary methods on its context.
+      return args.length === 1 && tables.kind === 'record' && !tables.open && tables.element === undefined &&
+        [...(tables.fields?.values() ?? [])].every((table) => table.kind === 'table') ? { kind: 'relations' } : BAD;
+    }
+    if (/^drizzle:(text|uuid|integer|boolean|bigint|timestamp|jsonb)$/u.test(name))
+      return args.length <= 2 && args.every(isClosedData) ? { kind: 'column-builder', fresh: true } : BAD;
+    if (name.startsWith('drizzle:column.')) {
+      const operation = name.slice('drizzle:column.'.length);
+      if (operation === 'references') {
+        const reference = args.length >= 1 && args.length <= 2 ? this.invoke(args[0], []) : BAD;
+        return reference.kind === 'column' && (args.length === 1 || isClosedData(args[1])) ? callee.payload ?? BAD : BAD;
+      }
+      return (['notNull', 'primaryKey', 'unique', '$type', 'defaultNow', 'defaultRandom'].includes(operation) && args.length === 0) ||
+        (operation === 'default' && args.length === 1 && (isClosedData(args[0]) || args[0].kind === 'sql'))
+        ? callee.payload ?? BAD : BAD;
+    }
+    if (name === 'global:Symbol')
+      return args.length <= 1 && args.every((value) => value.kind === 'data' && typeof value.literal === 'string')
+        ? { kind: 'data', literal: Symbol(args[0]?.literal as string | undefined) } : BAD;
+    if (name === 'global:Object.keys')
+      return args.length === 1 && args[0].kind === 'record' && isClosedFactoryData(args[0]) ? array(DATA) : BAD;
+    if (name === 'global:Object.hasOwn')
+      return args.length === 2 && args[0].kind === 'record' && isClosedFactoryData(args[0]) && args[1].kind === 'data' ? DATA : BAD;
+    if (name === 'global:Object.fromEntries') {
+      const tuple = args[0]?.kind === 'array' ? args[0].element : undefined;
+      const parts = tuple?.kind === 'array' ? tuple.items : undefined;
+      if (args.length !== 1 || parts?.length !== 2 || parts[0].kind !== 'data' || !isClosedFactoryData(parts[1])) return BAD;
+      const name = parts[0].literal;
+      return typeof name === 'string' || typeof name === 'symbol'
+        ? record(new Map([[name, parts[1]]]), false, undefined, undefined, 'object')
+        : record(new Map(), false, parts[1], undefined, 'object');
+    }
+    if (name === 'global:Array.isArray')
+      return args.length === 1 && isFactoryData(args[0]) ? DATA : BAD;
     if (name === 'set:has') return args.length === 1 && isClosedData(args[0]) ? DATA : BAD;
     if (name === 'regexp:test' && args.every(isData)) return DATA;
     if (name === 'regexp:exec' && args.every(isData))
@@ -955,9 +1270,11 @@ class DataFactoryProof {
     if (name === 'crypto:createHash') return args.every(isData) ? { kind: 'hash' } : BAD;
     if (['hash:update', 'hash:digest'].includes(name))
       return args.every(isData) ? (name === 'hash:digest' ? DATA : { kind: 'hash' }) : BAD;
-    if (name === 'global:Object.freeze') return args.length === 1 && isData(args[0]) ? args[0] : BAD;
+    if (name === 'global:Object.freeze') return args.length === 1 && isFactoryData(args[0]) ? args[0] : BAD;
     if (name === 'global:Object.values')
-      return args[0]?.kind === 'record' && args[0].open !== true
+      return args.length === 1 && args[0]?.kind === 'array' && args[0].open !== true && isClosedFactoryData(args[0])
+        ? args[0]
+        : args[0]?.kind === 'record' && args[0].open !== true
         ? array(
             merge([...(args[0].fields?.values() ?? []), ...(args[0].element === undefined ? [] : [args[0].element])]),
           )
@@ -981,14 +1298,14 @@ class DataFactoryProof {
       if (operation === 'replace' && owner.kind === 'data' && args.length === 2 && args.every(isClosedData)) return DATA;
       if (operation === 'split' && owner.kind === 'data' && args.every(isData)) return array(DATA);
       if (operation === 'slice' && isData(owner) && args.every(isData)) return owner;
-      if (operation === 'flatMap' && owner.kind === 'array' && args.length === 1) {
-        const result = this.invoke(args[0], [owner.element ?? BAD]);
+      if (operation === 'flatMap' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1) {
+        const result = this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner]);
         return result.kind === 'array' ? result : BAD;
       }
-      if (operation === 'map' && owner.kind === 'array' && args.length === 1)
-        return array(this.invoke(args[0], [owner.element ?? BAD]));
-      if (operation === 'some' && owner.kind === 'array' && isData(owner) && args.length === 1)
-        return isClosedData(this.invoke(args[0], [owner.element ?? BAD, DATA, owner])) ? DATA : BAD;
+      if (operation === 'map' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
+        return array(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner]));
+      if (operation === 'some' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
+        return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner])) ? DATA : BAD;
       if (operation === 'toSorted' && owner.kind === 'array')
         return owner.empty ||
           args.length === 0 ||
@@ -1011,7 +1328,29 @@ class DataFactoryProof {
       args.every(isData)
     )
       return DATA;
-    if (name === 'effect:Result.getOrThrow' && args.every(isData)) return DATA;
+    if (name === 'effect:Option.getOrNull')
+      return args.length === 1 && args[0].kind === 'option' && isClosedFactoryData(args[0].payload ?? BAD)
+        ? merge([args[0].payload ?? BAD, { kind: 'data', literal: null }]) : BAD;
+    if (name === 'result:pipe') {
+      let value = callee.payload ?? BAD;
+      for (const transform of args) {
+        if (transform.kind !== 'transform' || transform.apply === undefined) return BAD;
+        value = transform.apply([value]);
+      }
+      return value;
+    }
+    if (name === 'effect:Result.mapError' && args.length === 1 && args[0].kind === 'function')
+      return { kind: 'transform', apply: (values) => {
+        const value = values[0];
+        if (values.length !== 1 || value?.kind !== 'result') return BAD;
+        const failure = this.invoke(args[0], [value.failure ?? BAD]);
+        return failure.kind === 'invariant-error' || isClosedData(failure) ? { ...value, failure } : BAD;
+      } };
+    if (name === 'effect:Result.getOrThrow') {
+      if (args.length === 1 && args[0].kind === 'result' && isFactoryData(args[0]) &&
+        isClosedFactoryData(args[0].payload ?? BAD)) return args[0].payload ?? BAD;
+      return BAD;
+    }
     if (name === 'effect:Order.mapInput' && args.length === 2 && args[0].kind === 'function')
       return {
         kind: 'function',
@@ -1048,7 +1387,21 @@ class DataFactoryProof {
     }
     if (!name.startsWith('effect:Schema.')) return BAD;
     const operation = name.slice('effect:Schema.'.length);
-    if (['decodeUnknownSync', 'decodeSync', 'encodeSync', 'encodeResult'].includes(operation)) {
+    if (operation === 'TaggedError' && args.length === 0)
+      return {
+        kind: 'function',
+        apply: (values) => {
+          const fields = values[1];
+          if (values.length !== 2 || values[0].kind !== 'data' || fields.kind !== 'record' ||
+            fields.open || fields.element !== undefined ||
+            [...(fields.fields?.values() ?? [])].some((field) => field.kind !== 'schema'))
+            return BAD;
+          return { kind: 'error-constructor', payload: record(new Map(
+            [...(fields.fields ?? [])].map(([field, value]) => [field, value.payload ?? BAD]),
+          )) };
+        },
+      };
+    if (['decodeUnknownSync', 'decodeUnknownResult', 'decodeSync', 'encodeSync', 'encodeResult'].includes(operation)) {
       const value = args[0];
       const payload = value?.payload ?? BAD;
       if (value?.kind !== 'schema' || !isCodecData(payload) || !args.slice(1).every(isData)) return BAD;
@@ -1057,18 +1410,22 @@ class DataFactoryProof {
         apply: (inputs) => {
           if (!inputs.every(isData)) return BAD;
           const result = codecData(payload, inputs[0] ?? BAD);
-          if (!isClosedData(result)) return BAD;
-          return operation === 'encodeSync' || operation === 'encodeResult' ? DATA : result;
+          if (!isClosedFactoryData(result)) return BAD;
+          if (operation === 'decodeUnknownResult' || operation === 'encodeResult')
+            return { kind: 'result', payload: operation === 'encodeResult' ? DATA : result, failure: DATA };
+          return operation === 'encodeSync' ? DATA : result;
         },
       };
     }
     if (operation === 'Struct' && args.length === 1 && args[0]?.kind === 'record') {
-      const fields = new Map<string, Value>();
+      const fields = new Map<FieldKey, Value>();
+      const optionalFields = new Set<FieldKey>();
       for (const [field, value] of args[0].fields ?? []) {
         if (value.kind !== 'schema') return BAD;
         fields.set(field, value.payload ?? BAD);
+        if (value.optionalKey === true) optionalFields.add(field);
       }
-      return schema(record(fields));
+      return schema(record(fields, false, undefined, optionalFields));
     }
     if (
       operation === 'Record' &&
@@ -1097,8 +1454,12 @@ class DataFactoryProof {
     }
     if (operation === 'Literal' && args.length === 1 && isData(args[0])) return schema(args[0]);
     if (operation === 'Literals' && args.every(isData)) return schema(DATA);
+    if (operation === 'OptionFromNullOr' && args.length === 1 && args[0].kind === 'schema')
+      return schema({ kind: 'option', payload: args[0].payload ?? BAD });
+    if (operation === 'optionalKey' && args.length === 1 && args[0].kind === 'schema')
+      return { ...args[0], optionalKey: true };
     if (
-      ['fromJsonString', 'optionalKey', 'NullOr', 'UndefinedOr'].includes(operation) &&
+      ['fromJsonString', 'NullOr', 'UndefinedOr'].includes(operation) &&
       args.length === 1 &&
       args[0]?.kind === 'schema'
     )
@@ -1119,6 +1480,7 @@ class DataFactoryProof {
         'isMaxLength',
         'isInt',
         'isGreaterThanOrEqualTo',
+        'isLessThanOrEqualTo',
         'isBetween',
         'isFinite',
         'isTrimmed',
@@ -1144,6 +1506,9 @@ class DataFactoryProof {
   normalizeNative(value: Value): Value {
     if (value.kind !== 'native') return value;
     const name = value.native ?? '';
+    // Resolve the intrinsic's immutable numeric field, never a similarly named local object.
+    if (name === 'global:Number.MAX_SAFE_INTEGER')
+      return { kind: 'data', native: 'number', literal: Number.MAX_SAFE_INTEGER };
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (name === 'effect:Schema.Json') return schema({ kind: 'json' });
     if (/^effect:Schema\.(String|NonEmptyString|Number|Int|Finite|Boolean|BigInt|Undefined|Null|Never)$/u.test(name))
@@ -1154,7 +1519,7 @@ class DataFactoryProof {
   }
 }
 
-/** Only calls reachable from verified concrete DTO factories may instantiate opaque generic data. */
+/** Prove closed DTO/native metadata construction; opaque generics require checked call sites. */
 export function provesDataFactoryImport(filename: string, source: string, importedName: string): boolean {
   const proof = new DataFactoryProof();
   const consumer = proof.load(filename);
@@ -1164,15 +1529,15 @@ export function provesDataFactoryImport(filename: string, source: string, import
   if (owner === null || exported === undefined || !proof.safeInitialization(owner)) return false;
   const target = proof.value(exported, owner, new Map());
   if (target.kind !== 'function' || target.node === undefined) return false;
-  const direct = proof.invoke(target, []);
-  if (isClosedData(direct)) return true;
+  const direct = proof.invoke(target, [], true);
+  if (isClosedFactoryData(direct)) return true;
   // A generic factory is checked with arguments propagated from each owning data factory. Any
   // escaped reference or unchecked use invalidates contextual admission.
   for (const local of consumer.exports.values()) {
     const candidate = proof.value(local, consumer, new Map());
     if (candidate.kind !== 'function') continue;
     const before = new Set(proof.validatedCalls);
-    if (isClosedData(proof.invoke(candidate, []))) continue;
+    if (isClosedFactoryData(proof.invoke(candidate, [], true))) continue;
     for (const call of proof.validatedCalls) if (!before.has(call)) proof.validatedCalls.delete(call);
   }
   const locals = [...consumer.imports]
