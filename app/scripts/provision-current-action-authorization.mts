@@ -279,12 +279,14 @@ export const loadCurrentActionAuthorizationComposition = (
     return {
       actions,
       authorityPhase: authority.phase,
+      companies,
       installedModuleScopes: deriveActionAuthorizationInstalledModuleScopes(
         snapshot.composition.modules.map(({ moduleId }) => moduleId),
         tenantIds,
         moduleStates,
         companies,
       ),
+      moduleStates,
       snapshot,
     };
   });

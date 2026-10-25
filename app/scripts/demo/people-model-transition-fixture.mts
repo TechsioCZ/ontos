@@ -1,5 +1,14 @@
 import { Effect } from 'effect';
-import { companyMembershipAdmissionRelationships } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import {
+  bootstrapRelationshipsFromNative,
+  companyMembershipAdmissionRelationships,
+} from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import {
+  buildActionAuthorizationRelationships,
+  deriveScopedActionAuthorization,
+} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
+import { deriveActionAuthorizationInstalledModuleScopes } from '../provision-current-action-authorization.mts';
 import { ownTaskRelationships } from './accounts-admin-grants.mts';
 import {
   demoPermissionRelationships,
@@ -7,7 +16,7 @@ import {
   principalRelationships,
   reviewedHumanActionAddonRelationships,
 } from './permissions.mts';
-import type { DemoAction } from './permissions.mts';
+import type { DemoAction, DemoPermissionInstallation } from './permissions.mts';
 import {
   verificationAccount,
   verificationContext,
@@ -19,6 +28,7 @@ import {
 export const peopleModelTransitionFixtureRelationships = Effect.fn('PeopleModelTransition.fixture')(function* fixture(
   actions: readonly DemoAction[],
   memberships: readonly { readonly legalEntityId: string; readonly principalId: string; readonly tenantId: string }[],
+  installation: DemoPermissionInstallation,
 ) {
   const verification = memberships.some(
     (row) =>
@@ -29,14 +39,39 @@ export const peopleModelTransitionFixtureRelationships = Effect.fn('PeopleModelT
     ? (yield* verificationContext(actions)).relationships
     : [];
   const local = localDevelopmentAdministratorFixture;
+  const policy = [
+    ...demoPermissionRelationships(actions, installation),
+    ...(yield* reviewedHumanActionAddonRelationships(actions)),
+    ...ownTaskRelationships(),
+    ...principalRelationships(local.principalId, local.role, actions, local.legalEntityId, local.tenantId),
+    ...verification,
+  ];
+  const published = new Set(installation.publishedModuleKeys);
+  const coreActionKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
+  const coreModuleKeys = new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey));
+  const scopes = deriveActionAuthorizationInstalledModuleScopes(
+    installation.publishedModuleKeys,
+    memberships.map(({ tenantId }) => tenantId),
+    installation.moduleStates,
+    installation.companies,
+  );
+  const structure = bootstrapRelationshipsFromNative(
+    buildActionAuthorizationRelationships(
+      deriveScopedActionAuthorization(
+        actions.filter(
+          ({ actionKey, owningModuleKey }) =>
+            coreActionKeys.has(actionKey) || (!coreModuleKeys.has(owningModuleKey) && published.has(owningModuleKey)),
+        ),
+        scopes,
+      ),
+    ),
+  ).map((relationship) => {
+    const { subjectRelation, ...directSubject } = relationship;
+    return subjectRelation === '' ? directSubject : relationship;
+  });
   return companyMembershipAdmissionRelationships(
-    [
-      ...demoPermissionRelationships(actions),
-      ...(yield* reviewedHumanActionAddonRelationships(actions)),
-      ...ownTaskRelationships(),
-      ...principalRelationships(local.principalId, local.role, actions, local.legalEntityId, local.tenantId),
-      ...verification,
-    ],
+    // Add-ons and verification roles retain grants, but cannot invent installed Action topology.
+    [...policy.filter(({ resourceType }) => resourceType !== 'action'), ...structure],
     memberships,
   );
 });

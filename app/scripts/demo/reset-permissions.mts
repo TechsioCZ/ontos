@@ -48,7 +48,7 @@ import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResp
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { legalEntities, principals, tenants } from '../../packages/core-runtime/src/db/schema.ts';
+import { legalEntities, principals, tenantModuleStates, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import {
@@ -261,10 +261,33 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const source = yield* ActiveApplicationCompositionService;
-  const actions = yield* discoverCurrentActions(yield* source.load);
+  const snapshot = yield* source.load;
+  const actions = yield* discoverCurrentActions(snapshot);
+  const { executor } = yield* AuthDatabase;
+  const moduleStates = yield* executor
+    .select({
+      moduleKey: tenantModuleStates.moduleKey,
+      state: tenantModuleStates.state,
+      tenantId: tenantModuleStates.tenantId,
+    })
+    .from(tenantModuleStates)
+    .where(eq(tenantModuleStates.tenantId, demoTenantId));
+  const companies = yield* executor
+    .select({
+      legalEntityId: legalEntities.legalEntityId,
+      status: legalEntities.status,
+      tenantId: legalEntities.tenantId,
+    })
+    .from(legalEntities)
+    .where(eq(legalEntities.tenantId, demoTenantId));
   const relationships = yield* Effect.try({
     catch: () => fail('Published scoped demo authorization policy is invalid'),
-    try: () => demoPermissionRelationships(actions),
+    try: () =>
+      demoPermissionRelationships(actions, {
+        companies,
+        moduleStates,
+        publishedModuleKeys: snapshot.composition.modules.map(({ moduleId }) => moduleId),
+      }),
   });
   const demoContext = {
     accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({

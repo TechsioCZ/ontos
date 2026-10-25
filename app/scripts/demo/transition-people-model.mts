@@ -575,7 +575,11 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
   const { deferred, expectedProfiles, profiles } = yield* validateProfiles(document, inventory, observed.relationships);
   const tenantIds = [...new Set(document.rows.map((row) => row.tenantId))];
   const composition = yield* loadCurrentActionAuthorizationComposition(tenantIds, provisioningMode);
-  const fixture = yield* peopleModelTransitionFixtureRelationships(composition.actions, document.rows);
+  const fixture = yield* peopleModelTransitionFixtureRelationships(composition.actions, document.rows, {
+    companies: composition.companies,
+    moduleStates: composition.moduleStates,
+    publishedModuleKeys: composition.snapshot.composition.modules.map(({ moduleId }) => moduleId),
+  });
   yield* validateFixture(
     document,
     fixture,

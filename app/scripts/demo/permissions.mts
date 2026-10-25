@@ -11,11 +11,6 @@ import {
   toModuleAccessObjectId,
 } from '@app/core-runtime';
 import {
-  additionalDemoCompanies,
-  commercialDemoCompany,
-  rentalDemoCompany,
-} from '@app/core-runtime/demo-company-profiles';
-import {
   bootstrapRelationshipsFromNative,
   companyMembershipAdmissionRelationships,
   scopedActionRoleBootstrapRelationships,
@@ -1038,18 +1033,26 @@ export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly
   return [...new Map(relationships.map((row) => [relationshipKey(row), row])).values()];
 };
 
-/** Installed Core topology is independent of role policy, including optional Actions in tenant context. */
-const demoCoreTopologyRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+/** Published composition and persisted installation evidence, never inferred from the demo role matrix. */
+export interface DemoPermissionInstallation {
+  readonly companies: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[3];
+  readonly moduleStates: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[2];
+  readonly publishedModuleKeys: Parameters<typeof deriveActionAuthorizationInstalledModuleScopes>[0];
+}
+
+/** Installed topology is independent of role policy, including optional Core Actions in tenant context. */
+const demoTopologyRelationships = (
+  actions: readonly DemoAction[],
+  installation: DemoPermissionInstallation,
+): readonly DemoRelationship[] => {
   const coreActionKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
+  const coreModuleKeys = new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey));
+  const published = new Set(installation.publishedModuleKeys);
   const scopes = deriveActionAuthorizationInstalledModuleScopes(
-    [],
+    installation.publishedModuleKeys,
     [demoTenantId],
-    [],
-    [commercialDemoCompany, rentalDemoCompany, ...additionalDemoCompanies].map(({ legalEntityId }) => ({
-      legalEntityId,
-      status: 'active',
-      tenantId: demoTenantId,
-    })),
+    installation.moduleStates,
+    installation.companies,
   );
   // Native module topology lets existing company roles inherit access; it grants no new accessor.
   const modules = scopes.flatMap(({ legalEntityId, moduleKeys, tenantId }): readonly DemoRelationship[] =>
@@ -1066,7 +1069,10 @@ const demoCoreTopologyRelationships = (actions: readonly DemoAction[]): readonly
   const actionStructure = bootstrapRelationshipsFromNative(
     buildActionAuthorizationRelationships(
       deriveScopedActionAuthorization(
-        actions.filter(({ actionKey }) => coreActionKeys.has(actionKey)),
+        actions.filter(
+          ({ actionKey, owningModuleKey }) =>
+            coreActionKeys.has(actionKey) || (!coreModuleKeys.has(owningModuleKey) && published.has(owningModuleKey)),
+        ),
         scopes,
       ),
     ),
@@ -1078,9 +1084,11 @@ const demoCoreTopologyRelationships = (actions: readonly DemoAction[]): readonly
 };
 
 /** Relationships for the four demo accounts and the bot, deduplicated. */
-export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const all = [
-    ...demoCoreTopologyRelationships(actions),
+export const demoPermissionRelationships = (
+  actions: readonly DemoAction[],
+  installation: DemoPermissionInstallation,
+): readonly DemoRelationship[] => {
+  const policy = [
     ...demoHumanAccounts.flatMap((account) =>
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),
@@ -1090,6 +1098,11 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
     ...commercePortalRelationships(actions),
     ...privacyConsentAuthorityRelationships(actions),
     ...crmIntakeRelationships(actions),
+  ];
+  const all = [
+    ...demoTopologyRelationships(actions, installation),
+    // Role policy survives uninstall, but only installation evidence may create Action objects.
+    ...policy.filter(({ resourceType }) => resourceType !== 'action'),
   ];
   return companyMembershipAdmissionRelationships(
     [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()],

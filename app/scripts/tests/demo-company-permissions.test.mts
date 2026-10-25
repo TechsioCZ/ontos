@@ -47,7 +47,7 @@ import {
   crmPartyIntakePrincipal,
   crmIntakeRelationships,
 } from '../demo/permissions.mts';
-import type { DemoAction, DemoRelationship } from '../demo/permissions.mts';
+import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
 
 import { demoBootstrapCompanyRows, ensureDemoCompanies } from '../demo/reset-permissions.mts';
 import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
@@ -117,7 +117,20 @@ const descriptors = [
   ...commerceActions,
   actionDescriptor('demo.crm.apply-command', 'demo.crm'),
 ];
-const relationships = demoPermissionRelationships(descriptors);
+// Explicit test publication and persisted installation; role policy is not installation evidence.
+const publishedModuleKeys = [partyModule, privacyModule, commerceModule, 'demo.crm'];
+const installation: DemoPermissionInstallation = {
+  companies: [
+    demoLegalEntityId,
+    rentalDemoLegalEntityId,
+    crmDemoLegalEntityId,
+    eshopDemoLegalEntityId,
+    akrosDemoLegalEntityId,
+  ].map((legalEntityId) => ({ legalEntityId, status: 'active', tenantId: demoTenantId })),
+  moduleStates: publishedModuleKeys.map((moduleKey) => ({ moduleKey, state: 'active', tenantId: demoTenantId })),
+  publishedModuleKeys,
+};
+const relationships = demoPermissionRelationships(descriptors, installation);
 const [administrator, salesRep, accountant, warehouse] = demoHumanAccounts;
 
 const hasModule = (principalId: string, legalEntityId: string, moduleId: string) =>
@@ -568,7 +581,9 @@ it('grants the Privacy authority reader exactly two Commerce facts and no Action
   expect(
     rows.some((row) => row.relation === 'admin' || row.relation === 'superadmin' || row.relation === 'identity_admin'),
   ).toBe(false);
-  expect(grantsFor(demoPermissionRelationships(privacyActions), storefrontPrincipal.principalId)).toEqual([]);
+  expect(grantsFor(demoPermissionRelationships(privacyActions, installation), storefrontPrincipal.principalId)).toEqual(
+    [],
+  );
 });
 
 it('installs scoped Action/grant links, never blanket tenant membership Action grants', () => {
@@ -763,14 +778,15 @@ it('uses only explicitly linked organizational names for demo logins and preserv
 });
 
 it('includes every technical service grant in both transition and fresh-bootstrap authority', () => {
-  const rows = demoPermissionRelationships(descriptors);
+  const rows = demoPermissionRelationships(descriptors, installation);
   const services = [commercePortalPrincipal, privacyConsentPrincipal, crmPartyIntakePrincipal];
   const expected = [
     ...commercePortalRelationships(descriptors),
     ...privacyConsentAuthorityRelationships(descriptors),
     ...crmIntakeRelationships(descriptors),
   ];
-  for (const relationship of expected) {
+  // Role producers contribute grants, not evidence that an Action is installed.
+  for (const relationship of expected.filter((row) => row.resourceType !== 'action')) {
     expect(rows).toContainEqual(relationship);
   }
   for (const { principalId } of services) {

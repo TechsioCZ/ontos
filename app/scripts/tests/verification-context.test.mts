@@ -21,6 +21,7 @@ import { stageVerificationAccounts } from '../demo/ensure-stage-verification.mts
 import { readReviewedAgentProfiles, ReviewedAgentProfilesSchema } from '../demo/agent-profile-setup.mts';
 import { stageAccountsAuthorization } from '../provision-current-action-authorization.mts';
 import { peopleModelTransitionFixtureRelationships } from '../demo/people-model-transition-fixture.mts';
+import { ownTaskRelationships } from '../demo/accounts-admin-grants.mts';
 import {
   verificationAccount,
   verificationContext,
@@ -206,11 +207,26 @@ it.effect(
         principalId: verificationAccount.principalId,
         tenantId: verificationTenantId,
       };
-      const target = yield* peopleModelTransitionFixtureRelationships(actions, [membership]);
+      const installation = {
+        companies: [{ legalEntityId: membership.legalEntityId, status: 'active', tenantId: membership.tenantId }],
+        moduleStates: [{ moduleKey: taskModule, state: 'active', tenantId: membership.tenantId }],
+        publishedModuleKeys: [taskModule],
+      };
+      const target = yield* peopleModelTransitionFixtureRelationships(actions, [membership], installation);
       const context = yield* verificationContext(actions);
-      for (const row of context.relationships) {
+      for (const row of [...context.relationships, ...ownTaskRelationships()]) {
         expect(target).toContainEqual(row);
       }
+      // Reviewed executor add-ons remain policy, not evidence that their modules are installed.
+      expect(
+        target
+          .filter((row) => row.resourceType === 'action')
+          .every((row) =>
+            [taskAction, 'work.tasks.unreviewed-command'].some(
+              (actionKey) => row.resourceId === toSpiceDbActionObjectId({ ...membership, actionKey }),
+            ),
+          ),
+      ).toBe(true);
       expect(target).toContainEqual({
         relation: 'role',
         resourceId: toSpiceDbActionGrantObjectId({ ...membership, actionKey: taskAction }),
@@ -234,8 +250,19 @@ it.effect(
         subjectId: membership.principalId,
         subjectType: 'principal',
       });
+      for (const unavailable of [
+        { ...installation, publishedModuleKeys: [] },
+        { ...installation, moduleStates: installation.moduleStates.map((row) => ({ ...row, state: 'inactive' })) },
+        { ...installation, companies: installation.companies.map((row) => ({ ...row, status: 'inactive' })) },
+      ]) {
+        const unavailableTarget = yield* peopleModelTransitionFixtureRelationships(actions, [membership], unavailable);
+        expect(unavailableTarget.filter((row) => row.resourceType === 'action')).toEqual([]);
+        expect(unavailableTarget.filter((row) => row.resourceType === 'action_grant')).toEqual(
+          target.filter((row) => row.resourceType === 'action_grant'),
+        );
+      }
       for (const rows of [[], [{ ...membership, tenantId: '70000000-0000-4000-8000-000000000020' }]]) {
-        const absent = yield* peopleModelTransitionFixtureRelationships(actions, rows);
+        const absent = yield* peopleModelTransitionFixtureRelationships(actions, rows, installation);
         expect(absent.some((row) => row.subjectId === membership.principalId || row.resourceId === roleId)).toBe(false);
       }
     }),

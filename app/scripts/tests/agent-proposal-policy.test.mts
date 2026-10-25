@@ -12,7 +12,7 @@ import {
   siamparkRentalPersonas,
   storefrontPrincipal,
 } from '../demo/permissions.mts';
-import type { DemoAction, DemoRelationship } from '../demo/permissions.mts';
+import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
 
 const principalId = 'operator-a';
 const lifecycleKey = 'core.identity.mutate-agent-proposals';
@@ -34,6 +34,16 @@ const actions = [
   descriptor(billingKey, 'finance.billing'),
   descriptor(merchandiseKey, 'demo.merchandise'),
 ];
+const publishedModuleKeys = [taskModule, 'finance.billing', 'demo.merchandise'];
+const installation: DemoPermissionInstallation = {
+  companies: [demoLegalEntityId, rentalDemoLegalEntityId].map((legalEntityId) => ({
+    legalEntityId,
+    status: 'active',
+    tenantId: demoTenantId,
+  })),
+  moduleStates: publishedModuleKeys.map((moduleKey) => ({ moduleKey, state: 'active', tenantId: demoTenantId })),
+  publishedModuleKeys,
+};
 const grantsFor = (rows: readonly DemoRelationship[], targetPrincipalId: string) => {
   const roles = new Set(
     rows
@@ -66,7 +76,7 @@ const hasGrant = (
   );
 
 it('provisions human lifecycle execution explicitly while retaining each actual operator business grant boundary', () => {
-  const rows = demoPermissionRelationships(actions);
+  const rows = demoPermissionRelationships(actions, installation);
   const [, sales, accounting, warehouse] = demoHumanAccounts;
   for (const human of demoHumanAccounts) {
     expect(hasGrant(rows, human.principalId, lifecycleKey)).toBe(true);
