@@ -17,6 +17,7 @@ it.live(
         Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-'))),
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
+      const secondDriverSource = "import { Pool } from 'pg';\n";
       const files = {
         // Auth persistence sits outside the governed paths, yet must not open a second driver pool.
         'apps/shell/api/auth/db/client.ts':
@@ -24,12 +25,11 @@ it.live(
         'apps/shell/api/auth/db/types.ts': "import type { Pool } from 'pg';\n",
         'apps/shell/api/routes/private.ts': "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
         'packages/core-runtime/src/testing/actions.ts': 'export const makeActionTestHarness = () => undefined;\n',
+        'verticals/stock/api/index.ts': secondDriverSource,
+        'verticals/stock/api/routes/export.ts': "import { coreDatabaseSchema } from '@app/core-runtime';\n",
         'verticals/stock/dist-cloudflare/api/generated.d.ts':
           "import type { CoreDatabase } from '@app/core-runtime';\n",
-        'verticals/stock/dist-cloudflare/src/actions/generated.action.ts': "import { Pool } from 'pg';\n",
-        'verticals/stock/src/dist-cloudflare-adapter/api/index.ts': "import { Pool } from 'pg';\n",
-        'verticals/stock/api/index.ts': "import { Pool } from 'pg';\n",
-        'verticals/stock/api/routes/export.ts': "import { coreDatabaseSchema } from '@app/core-runtime';\n",
+        'verticals/stock/dist-cloudflare/src/actions/generated.action.ts': secondDriverSource,
         'verticals/stock/src/actions/generated-safe.action.ts':
           "import { defineAction } from '@app/core-runtime/actions/definition';\n",
         'verticals/stock/src/actions/package-root.action.ts':
@@ -44,11 +44,12 @@ it.live(
         'verticals/stock/src/db/dynamic-core.ts': "const core = import(\n  '@app/core-runtime/db/schema'\n);\n",
         'verticals/stock/src/db/service-factory.ts':
           "import { makeWithDefaults } from 'drizzle-orm/effect-postgres';\n",
+        'verticals/stock/src/dist-cloudflare-adapter/api/index.ts': secondDriverSource,
         'verticals/stock/src/index.ts':
           "export { InventoryPersistence } from './infrastructure/inventory-persistence.ts';\n",
         'verticals/stock/src/infrastructure/inventory-persistence.ts':
           "import { Pool } from 'pg';\nexport class InventoryPersistence {}\n",
-        'verticals/stock/src/portal-auth/persistence/auth-database.ts': "import { Pool } from 'pg';\n",
+        'verticals/stock/src/portal-auth/persistence/auth-database.ts': secondDriverSource,
         'verticals/stock/src/reads/list.read.ts': "import { stock } from '../db/schema.ts';\n",
         'verticals/stock/src/reads/side-effect.read.ts': "import 'pg';\n",
         'verticals/stock/src/services/generated-action-service.ts':
