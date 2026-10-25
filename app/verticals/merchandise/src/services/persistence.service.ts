@@ -892,7 +892,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   } as const;
   const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
   const draftLines = lines.map((line) => ({
-    lineTotalMinor: line.quantity * line.unitPriceMinor,
+    lineTotalMinor: lineGrossMinor(line, true),
     name: line.productName,
     productId: line.productId,
     quantity: line.quantity,
@@ -925,6 +925,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     contact: value.contact,
     createdAt: input.now,
     deliveryAddress: value.deliveryAddress,
+    ...(value.deliveryRecipient === undefined ? {} : { deliveryRecipient: value.deliveryRecipient }),
     history: [
       {
         actorLabel: 'Zákazník – e-shop',

@@ -222,8 +222,9 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
         _tag: 'PlaceStorefrontOrder',
         partyId: 'test-customer-party',
         clientRequestId: `client-${randomUUID()}`,
-        contact: { email: 'jana@example.cz', name: 'Jana Nováková' },
+        contact: { email: 'jana@example.cz', name: 'Jana Nováková', phone: '+420777123456' },
         deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Hlavní 1' },
+        deliveryRecipient: { firstName: 'Petr', lastName: 'Novák', phone: '+420777987654' },
         lines: [{ expectedUnitPriceMinor: 121, productId: 'p1', quantity: 2, variantId: 'v1' }],
         shippingMethod: 'ZASILKOVNA',
       };
@@ -243,7 +244,14 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       expect(placed.clientRequestId).toBe(command.clientRequestId);
       expect(placed.status).toBe('NEW');
       expect(placed.removed).toBe(false);
+      expect(placed.document).toMatchObject({ deliveryRecipient: command.deliveryRecipient });
       const stored = decodeOrderDocument(placed.document);
+      expect(stored.deliveryRecipient).toEqual(command.deliveryRecipient);
+      expect(stored.contact).toEqual(command.contact);
+      const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      expect(snapshot?.state.orders.find((order) => order.id === orderId)?.deliveryRecipient).toEqual(
+        command.deliveryRecipient,
+      );
       const created = change.state.orders.find((order) => order.id === orderId)!;
       expect(encodeOrder(stored)).toEqual(encodeOrder(created));
       expect(placed.totalMinor).toBe(created.totalMinor);

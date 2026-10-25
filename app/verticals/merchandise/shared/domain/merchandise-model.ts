@@ -333,6 +333,14 @@ export const OrderContactSchema = Schema.Struct({
 });
 export type OrderContact = typeof OrderContactSchema.Type;
 
+/** Person receiving the delivery, independent of the billing/customer contact. */
+export const OrderDeliveryRecipientSchema = Schema.Struct({
+  firstName: TextSchema(200),
+  lastName: TextSchema(200),
+  phone: TextSchema(40),
+});
+export type OrderDeliveryRecipient = typeof OrderDeliveryRecipientSchema.Type;
+
 export const OrderAddressSchema = Schema.Struct({
   city: TextSchema(120),
   country: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(80))),
@@ -386,6 +394,7 @@ export const OrderSchema = Schema.Struct({
     }),
   ),
   deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  deliveryRecipient: Schema.optionalKey(OrderDeliveryRecipientSchema),
   history: Schema.optionalKey(Schema.Array(OrderHistoryEntrySchema)),
   id: OrderIdSchema,
   lines: Schema.Array(OrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),

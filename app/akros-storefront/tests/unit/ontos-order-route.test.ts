@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CheckoutDraft } from "@/features/checkout/checkout-state";
 import { createCheckoutDraft } from "@/features/checkout/checkout-state";
 import { callAction, readRecords } from "@/ontos/gateway";
 import { readAccount } from "@/ontos/account";
@@ -19,7 +20,11 @@ const account = {
   name: "Customer",
 };
 const clientRequestId = "akros-12345678-1234-4234-8234-123456789abc";
-async function submit(company = "Company", deliveryId = "PPL") {
+const submit = async (
+  company = "Company",
+  deliveryId = "PPL",
+  overrides: Partial<CheckoutDraft> = {},
+) => {
   const draft = {
     ...createCheckoutDraft(),
     deliveryId,
@@ -34,6 +39,7 @@ async function submit(company = "Company", deliveryId = "PPL") {
       country: "CZ",
       phone: "+420777123456",
     },
+    ...overrides,
   };
   return POST(
     new Request("http://localhost:3070/api/ontos/orders", {
@@ -51,7 +57,7 @@ async function submit(company = "Company", deliveryId = "PPL") {
       }),
     }),
   );
-}
+};
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(readAccount).mockResolvedValue(account);
@@ -94,6 +100,58 @@ describe("real order boundary", () => {
     });
     expect(JSON.stringify(payload)).not.toMatch(/DEMO|simulace|forged|attacker/);
   });
+  it.each([false, true])(
+    "sends the selected delivery recipient separately from billing contact (different address: %s)",
+    async (differentDeliveryAddress) => {
+      const delivery = {
+        city: "Praha",
+        country: "CZ",
+        firstName: "Jana",
+        lastName: "Nováková",
+        phone: "+420777987654",
+        postalCode: "11000",
+        street: "Delivery 2",
+      };
+      const response = await submit("Company", "PPL", { delivery, differentDeliveryAddress });
+      expect(response.status).toBe(200);
+      expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
+        command: {
+          contact: { email: account.email, name: "Customer Test", phone: "+420777123456" },
+          deliveryAddress: differentDeliveryAddress
+            ? {
+                city: delivery.city,
+                country: delivery.country,
+                postalCode: delivery.postalCode,
+                street: delivery.street,
+              }
+            : { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
+          deliveryRecipient: differentDeliveryAddress
+            ? { firstName: delivery.firstName, lastName: delivery.lastName, phone: delivery.phone }
+            : { firstName: "Customer", lastName: "Test", phone: "+420777123456" },
+        },
+      });
+    },
+  );
+  it.each(["firstName", "lastName", "phone"] as const)(
+    "rejects invalid separate recipient %s before placing an order",
+    async (field) => {
+      const delivery = {
+        city: "Praha",
+        country: "CZ",
+        firstName: "Jana",
+        lastName: "Nováková",
+        phone: "+420777987654",
+        postalCode: "11000",
+        street: "Delivery 2",
+      };
+      const response = await submit("Company", "PPL", {
+        delivery: { ...delivery, [field]: "" },
+        differentDeliveryAddress: true,
+      });
+      expect(response.status).toBe(400);
+      expect(callAction).not.toHaveBeenCalled();
+    },
+  );
   it("requires authentication before reading prices or writing an order", async () => {
     vi.mocked(readAccount).mockResolvedValue(null);
     expect((await submit()).status).toBe(401);

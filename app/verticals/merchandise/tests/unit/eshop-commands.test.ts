@@ -4,6 +4,7 @@ import {
   MerchandiseCommandSchema,
   MerchandiseLifecycleConflict,
   MerchandisePermissionDenied,
+  StorefrontOrderResultSchema,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
@@ -110,6 +111,60 @@ it.effect('PlaceStorefrontOrder saves once and replays the same order for the sa
     expect(again.storefrontOrder?.orderNumber).toBe('OBJ-2026-0001');
     expect(again.state).toBe(first.state);
     expect(again.state.orders).toHaveLength(1);
+  }),
+);
+
+it.effect('PlaceStorefrontOrder rounds fractional draft line totals consistently with placed and replayed orders', () =>
+  Effect.gen(function* fractionalLineTotals() {
+    const created = yield* apply(
+      empty,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'Materiál',
+        lowStockThreshold: 0,
+        name: 'Měřené zboží',
+        priceMinor: 101,
+        sku: 'LENGTH',
+        unit: 'm',
+        vatRate: 0,
+      },
+      'p2',
+    );
+    const stocked = yield* apply(
+      created.state,
+      { _tag: 'RecordStockMovement', delta: 10, productId: 'p2', reason: 'RECEIPT' },
+      'm2',
+    );
+    for (const [quantity, lineTotalMinor] of [
+      [1.25, 126],
+      [1.5, 152],
+      [1.75, 177],
+    ] as const) {
+      const lines = [{ expectedUnitPriceMinor: 101, productId: 'p2', quantity }];
+      const command = guestOrder({ lines });
+      for (const expectedShippingPriceMinor of [7900, 0]) {
+        const draft = yield* apply(
+          stocked.state,
+          guestOrder({ dryRun: true, expectedShippingPriceMinor, lines }),
+          'inv-draft',
+        );
+        const result = Schema.decodeUnknownSync(StorefrontOrderResultSchema)(draft.storefrontOrder);
+        expect(result.outcome).toBe(expectedShippingPriceMinor === 0 ? 'REJECTED' : 'VALID');
+        expect(result.lines[0]?.lineTotalMinor).toBe(lineTotalMinor);
+        expect(result.shippingPriceMinor).toBe(7900);
+        expect(result.totalMinor).toBe(lineTotalMinor + 7900);
+        expect(draft.state).toBe(stocked.state);
+      }
+      const placed = yield* apply(stocked.state, command, 'inv-placed');
+      const replayed = yield* apply(placed.state, command, 'inv-replayed');
+      for (const change of [placed, replayed]) {
+        const result = Schema.decodeUnknownSync(StorefrontOrderResultSchema)(change.storefrontOrder);
+        expect(result.lines[0]?.lineTotalMinor).toBe(lineTotalMinor);
+        expect(result.shippingPriceMinor).toBe(7900);
+        expect(result.totalMinor).toBe(lineTotalMinor + 7900);
+      }
+    }
   }),
 );
 

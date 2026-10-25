@@ -72,10 +72,15 @@ export async function POST(request: Request) {
         phone: draft.billing.phone,
       },
       deliveryAddress: {
-        street: address.street,
         city: address.city,
-        postalCode: address.postalCode,
         country: address.country,
+        postalCode: address.postalCode,
+        street: address.street,
+      },
+      deliveryRecipient: {
+        firstName: address.firstName,
+        lastName: address.lastName,
+        phone: address.phone,
       },
       shippingMethod: delivery.id,
       expectedShippingPriceMinor: delivery.priceMinor,
