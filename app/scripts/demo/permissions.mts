@@ -1039,7 +1039,7 @@ export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly
 };
 
 /** Installed Core topology is independent of role policy, including optional Actions in tenant context. */
-const demoCoreActionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+const demoCoreTopologyRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const coreActionKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
   const scopes = deriveActionAuthorizationInstalledModuleScopes(
     [],
@@ -1051,7 +1051,19 @@ const demoCoreActionRelationships = (actions: readonly DemoAction[]): readonly D
       tenantId: demoTenantId,
     })),
   );
-  return bootstrapRelationshipsFromNative(
+  // Native module topology lets existing company roles inherit access; it grants no new accessor.
+  const modules = scopes.flatMap(({ legalEntityId, moduleKeys, tenantId }): readonly DemoRelationship[] =>
+    legalEntityId === undefined
+      ? []
+      : moduleKeys.map((moduleId) => ({
+          relation: 'legal_entity',
+          resourceId: toModuleAccessObjectId(tenantId, legalEntityId, moduleId) ?? '',
+          resourceType: 'module_access',
+          subjectId: toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '',
+          subjectType: 'legal_entity',
+        })),
+  );
+  const actionStructure = bootstrapRelationshipsFromNative(
     buildActionAuthorizationRelationships(
       deriveScopedActionAuthorization(
         actions.filter(({ actionKey }) => coreActionKeys.has(actionKey)),
@@ -1062,12 +1074,13 @@ const demoCoreActionRelationships = (actions: readonly DemoAction[]): readonly D
     const { subjectRelation, ...directSubject } = relationship;
     return subjectRelation === '' ? directSubject : relationship;
   });
+  return [...modules, ...actionStructure];
 };
 
 /** Relationships for the four demo accounts and the bot, deduplicated. */
 export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const all = [
-    ...demoCoreActionRelationships(actions),
+    ...demoCoreTopologyRelationships(actions),
     ...demoHumanAccounts.flatMap((account) =>
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),

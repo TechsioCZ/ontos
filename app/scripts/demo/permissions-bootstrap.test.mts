@@ -12,6 +12,11 @@ import {
   deriveScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
+import {
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '../../packages/core-runtime/src/permissions/context-access.ts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import {
   akrosDemoLegalEntityId,
@@ -49,8 +54,14 @@ const coreActions = coreActionCatalog.map((descriptor): DemoAction => {
     provisioning: authorization.provisioning,
   };
 });
+const relationshipSet = (rows: readonly DemoRelationship[]) =>
+  new Set(bootstrapRelationshipRequest(rows).updates.map((row) => JSON.stringify(row)));
+const isModuleStructure = ({ relation, resourceType }: DemoRelationship) =>
+  resourceType === 'module_access' && relation === 'legal_entity';
 const authority = (rows: readonly DemoRelationship[]) =>
-  new Set(rows.filter(({ resourceType }) => resourceType !== 'action').map((row) => JSON.stringify(row)));
+  new Set(
+    rows.filter((row) => row.resourceType !== 'action' && !isModuleStructure(row)).map((row) => JSON.stringify(row)),
+  );
 const companyIds = [
   demoLegalEntityId,
   rentalDemoLegalEntityId,
@@ -58,6 +69,18 @@ const companyIds = [
   eshopDemoLegalEntityId,
   akrosDemoLegalEntityId,
 ];
+
+const identityModuleId = 'core.identity';
+const coreModuleIds = [...new Set(coreActionCatalog.map(({ owningModuleKey }) => owningModuleKey))];
+const coreModuleStructure = companyIds.flatMap((legalEntityId) =>
+  coreModuleIds.map((moduleId): DemoRelationship => ({
+    relation: 'legal_entity',
+    resourceId: toModuleAccessObjectId(demoTenantId, legalEntityId, moduleId) ?? '',
+    resourceType: 'module_access',
+    subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+    subjectType: 'legal_entity',
+  })),
+);
 
 // The bootstrap consumer accepts an omitted userset, but not protobuf's empty-string sentinel.
 const SubjectSchema = Schema.Struct({
@@ -134,7 +157,65 @@ it.effect('installs the canonical Core Action structure in exactly the demo tena
   }),
 );
 
-it('adds no memberships, capabilities, role grants or self-service authority with Core Action topology', () => {
+it.effect('installs exactly the catalogued Core module structure without depending on discovered Actions', () =>
+  Effect.gen(function* validatesCoreModuleTopology() {
+    expect(coreModuleIds).toContain(identityModuleId);
+    for (const actions of [[], coreActions]) {
+      const structure = demoPermissionRelationships(actions).filter(isModuleStructure);
+      const coreStructure = structure.filter(({ resourceId }) =>
+        coreModuleStructure.some((expected) => expected.resourceId === resourceId),
+      );
+      expect(relationshipSet(coreStructure)).toEqual(relationshipSet(coreModuleStructure));
+      yield* Schema.decodeUnknownEffect(Schema.Array(SubjectSchema))(coreStructure);
+      for (const row of coreStructure) {
+        expect(row).not.toHaveProperty('subjectRelation');
+      }
+    }
+  }),
+);
+
+it('keeps Core identity admission on the existing company-admin role, not a new accessor grant', () => {
+  const relationships = demoPermissionRelationships(coreActions);
+  const legal = toLegalEntityAccessObjectId(demoTenantId, rentalDemoLegalEntityId) ?? '';
+  const adminRole = toScopedRoleObjectId({
+    legalEntityId: rentalDemoLegalEntityId,
+    roleKey: 'admin',
+    tenantId: demoTenantId,
+  });
+  const principalId = '72000000-0000-4000-8000-000000000021';
+  expect(relationships).toContainEqual({
+    relation: 'member',
+    resourceId: adminRole,
+    resourceType: 'scoped_role',
+    subjectId: principalId,
+    subjectType: 'principal',
+  });
+  expect(relationships).toContainEqual({
+    relation: 'admin',
+    resourceId: legal,
+    resourceType: 'legal_entity',
+    subjectId: adminRole,
+    subjectRelation: 'member',
+    subjectType: 'scoped_role',
+  });
+  expect(relationships).toContainEqual({
+    relation: 'legal_entity',
+    resourceId: toModuleAccessObjectId(demoTenantId, rentalDemoLegalEntityId, identityModuleId),
+    resourceType: 'module_access',
+    subjectId: legal,
+    subjectType: 'legal_entity',
+  });
+  expect(
+    relationships.filter(
+      (row) =>
+        row.resourceType === 'module_access' &&
+        coreModuleStructure.some(({ resourceId }) => resourceId === row.resourceId) &&
+        row.relation !== 'legal_entity',
+    ),
+  ).toEqual([]);
+});
+
+it('adds no memberships, capabilities, role grants or self-service authority with Core topology', () => {
   const relationships = demoPermissionRelationships(coreActions);
   // Compare against the unchanged role-policy producers, including their explicit Core grants.
   const existingPolicy = companyMembershipAdmissionRelationships(
@@ -152,6 +233,9 @@ it('adds no memberships, capabilities, role grants or self-service authority wit
     demoCompanyMemberships.map(({ principalId }) => ({ principalId, tenantId: demoTenantId })),
   );
   expect(authority(relationships)).toEqual(authority(existingPolicy));
+  expect(relationshipSet(relationships.filter(isModuleStructure))).toEqual(
+    relationshipSet([...existingPolicy.filter(isModuleStructure), ...coreModuleStructure]),
+  );
   expect(relationships.filter(({ relation }) => relation === 'executor' || relation === 'self_credentials')).toEqual(
     [],
   );
@@ -167,8 +251,16 @@ it('does not install undiscovered Actions or infer Core ownership from an Action
   const notInCatalog: DemoAction = {
     actionKey: 'core.identity.not-in-native-catalog',
     legalEntityScope: 'optional',
-    owningModuleKey: 'core.identity',
+    owningModuleKey: identityModuleId,
     provisioning: 'explicit',
   };
-  expect(demoPermissionRelationships([...coreActions, notInCatalog])).toEqual(demoPermissionRelationships(coreActions));
+  const unknownModule: DemoAction = {
+    actionKey: 'core.unknown.not-in-native-catalog',
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.unknown',
+    provisioning: 'explicit',
+  };
+  expect(demoPermissionRelationships([...coreActions, notInCatalog, unknownModule])).toEqual(
+    demoPermissionRelationships(coreActions),
+  );
 });
