@@ -49,7 +49,7 @@ import {
 } from '../demo/permissions.mts';
 import type { DemoAction, DemoRelationship } from '../demo/permissions.mts';
 
-import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
+import { demoBootstrapCompanyRows, ensureDemoCompanies } from '../demo/reset-permissions.mts';
 import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
 import {
   commercePortalExternalIdentityDeployment,
@@ -166,6 +166,26 @@ it('retains stable fixture IDs and explicit human affiliations, never deriving m
   ).toBe('external');
   expect(demoCompanyMemberships.some((row) => row.principalId === storefrontPrincipal.principalId)).toBe(false);
   expect(demoCompanyMemberships.filter((row) => row.principalId === warehouse.principalId)).toHaveLength(1);
+});
+
+it('seeds every membership company before bootstrap on a fresh baseline, without waiting for the company Action', () => {
+  // The full Siampark reset creates only the commercial company; permissions must supply the remaining targets.
+  const baselineCompanyIds = new Set<string>([commercialDemoCompany.legalEntityId]);
+  for (const membership of demoCompanyMemberships) {
+    if (!baselineCompanyIds.has(membership.legalEntityId)) {
+      expect(demoBootstrapCompanyRows.find((row) => row.legalEntityId === membership.legalEntityId)).toMatchObject({
+        status: 'active',
+        tenantId: demoTenantId,
+      });
+    }
+  }
+  expect(demoBootstrapCompanyRows.find((row) => row.legalEntityId === rentalDemoLegalEntityId)).toEqual({
+    ...rentalDemoCompany,
+    registrationCountry: 'CZ',
+    registrationNumber: 'DEMO-SIAMPARK-RENTAL',
+    status: 'active',
+    tenantId: demoTenantId,
+  });
 });
 
 it('separates commercial stock, rental property, and warehouse membership through exact company roles', () => {

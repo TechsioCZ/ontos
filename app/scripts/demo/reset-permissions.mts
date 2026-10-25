@@ -85,6 +85,16 @@ const BOT_KEY_AUDIENCE = 'work-tasks';
 const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 /** Every human account: the Obchodní firma / Siampark accounts plus the CRM and e-shop company personas. */
 const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
+/** Membership targets must exist before bootstrap; the audited company Action runs only after its grants exist. */
+export const demoBootstrapCompanyRows = [
+  { ...rentalDemoCompany, registrationNumber: 'DEMO-SIAMPARK-RENTAL' },
+  ...additionalDemoCompanies,
+].map((company) => ({
+  ...company,
+  registrationCountry: 'CZ',
+  status: 'active' as const,
+  tenantId: demoCompanyTenantId,
+}));
 /** `demo.crm` is tenant-activated here so the CRM company works whatever the Siampark reset lists. */
 const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000-000000000201' } as const;
 const facilityOperationsModuleState = {
@@ -129,20 +139,9 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
         .update(tenants)
         .set({ name: 'OntOS DEMO', updatedAt: now })
         .where(eq(tenants.tenantId, demoTenantId));
-      // The CRM and e-shop companies exist before their personas' grants; the audited Core Action
-      // (`core.identity.configure-demo-companies`) creates the same rows when the shell is newer than this script.
-      for (const company of additionalDemoCompanies) {
-        yield* transaction
-          .insert(legalEntities)
-          .values({
-            legalEntityId: company.legalEntityId,
-            legalName: company.legalName,
-            registrationCountry: 'CZ',
-            registrationNumber: company.registrationNumber,
-            status: 'active',
-            tenantId: demoCompanyTenantId,
-          })
-          .onConflictDoNothing();
+      // Insert prerequisites only; never reactivate or rewrite an existing company.
+      for (const company of demoBootstrapCompanyRows) {
+        yield* transaction.insert(legalEntities).values(company).onConflictDoNothing();
       }
       for (const row of [...allHumanAccounts, verificationAccount]) {
         yield* transaction
