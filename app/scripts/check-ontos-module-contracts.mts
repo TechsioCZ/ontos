@@ -90,10 +90,11 @@ const ModulePackageSchema = Schema.Struct({
 
 export class OntosModuleContractCheckError extends Schema.TaggedError<OntosModuleContractCheckError>()(
   'OntosModuleContractCheckError',
-  { reason: Schema.String },
+  { cause: Schema.optional(Schema.Defect()), message: Schema.String },
 ) {}
 
-const failure = (reason: string): OntosModuleContractCheckError => new OntosModuleContractCheckError({ reason });
+const failure = (message: string, cause?: unknown): OntosModuleContractCheckError =>
+  new OntosModuleContractCheckError({ cause, message });
 
 const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx']);
 
@@ -352,7 +353,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     const derived = yield* deriveOntosModuleDeploymentContract({
       vertical: verticalName,
       workspaceRoot,
-    }).pipe(Effect.mapError(() => failure(`${appId} authored module contract could not be derived`)));
+    }).pipe(Effect.mapError((cause) => failure(`${appId} authored module contract could not be derived`, cause)));
     if (derived.deployment.appId !== appId || derived.manifest.module.id !== manifestModuleId) {
       return yield* failure(`${appId} authored module contract disagrees with generated owner metadata`);
     }
