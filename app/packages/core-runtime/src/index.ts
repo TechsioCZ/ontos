@@ -110,6 +110,15 @@ export { InvitePersonPayloadSchema, InvitePersonResultSchema } from './auth/pers
 export type { InvitePersonPayload, InvitePersonResult } from './auth/person-invitation.ts';
 export { invitePersonAction } from './modules/actions/invite-person.action.ts';
 export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
+export { OAuthAuthenticationAudit, OAuthAuthenticationAuditLive } from './auth/oauth-authentication-audit.ts';
+export { OAuthAuthenticationAuditUnavailable } from './auth/oauth-authentication-audit-unavailable.ts';
+export { OAuthConnectionCompanies, OAuthConnectionCompaniesLive } from './auth/oauth-connection-companies.ts';
+export { OAuthGrantOwners } from './auth/oauth-grant-owners.ts';
+export {
+  OAuthConnectionRevocationNotesInputSchema,
+  OAuthConnectionRevocationNotesResultSchema,
+  oauthConnectionRevocationNotesRead,
+} from './auth/oauth-connection-revocation-notes-read.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
@@ -982,6 +991,8 @@ export {
 } from './auth/agent-profile-projection.ts';
 export type { AgentProfile, AgentProfileAuditRow } from './auth/agent-profile-projection.ts';
 export { AgentProfilesInputSchema, AgentProfilesResultSchema, agentProfilesRead } from './auth/agent-profiles-read.ts';
+export { agentActivityRead } from './auth/agent-activity-read.ts';
+export { agentActivityActorsRead } from './auth/agent-activity-actors-read.ts';
 export {
   AgentOperatorCommandSchema,
   CompanyAgentDirectoryInputSchema,
