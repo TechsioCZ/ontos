@@ -94,7 +94,7 @@ import type { EmailTransportRuntime } from '../../../../packages/email-delivery/
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user, verification } from '../../api/auth/db/schema.ts';
-import { BetterAuthPersonInvitationIdentityProviderLive } from '../../api/auth/invitation/provider.ts';
+import { BetterAuthPersonInvitationIdentityProviderLive } from '../../api/auth/db/person-invitation-provider.ts';
 import { setInvitationPassword } from '../../api/auth/invitation/transport.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
 

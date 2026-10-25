@@ -11,7 +11,7 @@ import type { PersonInvitationIdentityInput, ScopedTransactionExecutor } from '@
 import { Effect, Layer, Schema } from 'effect';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 
-import { user, verification } from '../db/schema.ts';
+import { user, verification } from './schema.ts';
 
 // Better Auth's native sign-in uses z.email(): reject identifiers it cannot later authenticate.
 const LoginEmailSchema = Schema.String.check(
