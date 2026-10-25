@@ -20,6 +20,7 @@ const StepSchema = Schema.Struct({
 });
 const WorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
+    build: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     release: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     'release-script-tests': Schema.Struct({ steps: Schema.Array(StepSchema) }),
     verify: Schema.Struct({ steps: Schema.Array(StepSchema) }),
@@ -36,6 +37,20 @@ const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
 const indexOf = (steps: readonly { readonly name: string }[], name: string) =>
   steps.findIndex((step) => step.name === name);
+
+it('builds each unit reference graph before the native Cloudflare build on a fresh runner', () => {
+  const { steps } = readJobs().build;
+  const producerName = 'Build the unit typecheck reference graph';
+  const producer = steps.find(({ name }) => name === producerName);
+  expect(producer?.run).toBe(
+    'mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build "$UNIT_PATH/tsconfig.json"',
+  );
+  expect(producer?.['working-directory']).toBe('app');
+  expect(producer?.if).toBeUndefined();
+  expect(producer?.['continue-on-error']).toBeUndefined();
+  expect(indexOf(steps, producerName)).toBeGreaterThan(indexOf(steps, 'Install the app workspace'));
+  expect(indexOf(steps, 'Build and verify the unit for Cloudflare')).toBeGreaterThan(indexOf(steps, producerName));
+});
 
 it('migrates every owner schema through the private network before any upload or publication', () => {
   const { steps } = readJobs().release;
@@ -70,6 +85,7 @@ it('runs this workflow test with the release script tests that gate the release 
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
   for (const name of [
     'stage-demo-deploy-workflow',
+    'typecheck-project-references',
     'reconcile-stage-service-grants',
     'verification-context',
     'mcp-proof-transport',

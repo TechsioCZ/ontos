@@ -30,6 +30,9 @@ const WorkspaceScriptPlanModuleSchema = Schema.Struct({
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const packageJsonFile = 'package.json';
 const tsconfigFile = 'tsconfig.json';
+const fixturePackageJson = '{"private":true,"type":"module"}\n';
+const coreProject = 'core-runtime';
+const contractsProject = 'shared-contracts';
 const packageJson = Schema.decodeUnknownSync(Schema.fromJsonString(PackageJsonSchema))(
   readFileSync(path.join(workspaceRoot, packageJsonFile), 'utf-8'),
 );
@@ -83,7 +86,7 @@ it.live(
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
     );
     symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
-    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
+    writeFileSync(path.join(fixture, packageJsonFile), fixturePackageJson);
     writeFileSync(
       path.join(fixture, tsconfigFile),
       JSON.stringify({
@@ -113,6 +116,74 @@ it.live(
 );
 
 it.live(
+  'unit build produces cold transitive declarations before project typecheck and fails on dependency errors',
+  Effect.fn(function* checksColdUnitReferences() {
+    const fixture = yield* Effect.acquireRelease(
+      Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), 'ontos-unit-references-'))),
+      (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+    );
+    symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
+    writeFileSync(path.join(fixture, packageJsonFile), fixturePackageJson);
+    const projects = [
+      { name: coreProject, references: [], source: 'export const value: number = 1;\n' },
+      {
+        name: contractsProject,
+        references: [coreProject],
+        source: 'export { value } from "../core-runtime/index.ts";\n',
+      },
+      {
+        name: 'unit',
+        references: [contractsProject],
+        source: 'import { value } from "../shared-contracts/index.ts";\nexport const result: number = value;\n',
+      },
+      { name: 'unrelated', references: [], source: 'export const invalid: number = "unrelated";\n' },
+    ];
+    for (const project of projects) {
+      mkdirSync(path.join(fixture, project.name));
+      writeFileSync(path.join(fixture, project.name, 'index.ts'), project.source);
+      writeFileSync(
+        path.join(fixture, project.name, tsconfigFile),
+        JSON.stringify({
+          compilerOptions: {
+            allowImportingTsExtensions: true,
+            composite: true,
+            declaration: true,
+            emitDeclarationOnly: true,
+            module: 'preserve',
+            moduleResolution: 'bundler',
+            outDir: `../declarations/${project.name}`,
+            strict: true,
+            tsBuildInfoFile: `../declarations/${project.name}.tsbuildinfo`,
+            types: [],
+          },
+          files: ['./index.ts'],
+          references: project.references.map((name) => ({ path: `../${name}` })),
+        }),
+      );
+    }
+    writeFileSync(
+      path.join(fixture, tsconfigFile),
+      JSON.stringify({ files: [], references: projects.map(({ name }) => ({ path: name })) }),
+    );
+    const unitConfig = 'unit/tsconfig.json';
+    const cold = yield* runTypecheck(fixture, ['--project', unitConfig]);
+    expect(cold.status, 'project mode cannot produce missing dependency declarations').not.toBe(0);
+    expect(cold.stdout + cold.stderr).toContain('TS6305');
+    const built = yield* runTypecheck(fixture, ['--build', unitConfig]);
+    expect(built.status, built.stdout + built.stderr).toBe(0);
+    for (const name of [coreProject, contractsProject, 'unit']) {
+      expect(readFileSync(path.join(fixture, `declarations/${name}/index.d.ts`), 'utf-8')).toContain('export');
+    }
+    const checked = yield* runTypecheck(fixture, ['--project', unitConfig]);
+    expect(checked.status, checked.stdout + checked.stderr).toBe(0);
+    writeFileSync(path.join(fixture, 'core-runtime/index.ts'), 'export const value: number = "invalid";\n');
+    const invalid = yield* runTypecheck(fixture, ['--build', unitConfig]);
+    expect(invalid.status, 'a transitive dependency type error must stop the unit build').not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toMatch(/core-runtime[/\\]index\.ts.*TS2322/u);
+  }),
+);
+
+it.live(
   'root typecheck checks referenced projects and rejects a newly introduced type error',
   Effect.fn(function* testEffect4() {
     const fixture = yield* Effect.acquireRelease(
@@ -121,7 +192,7 @@ it.live(
     );
     mkdirSync(path.join(fixture, 'referenced'));
     symlinkSync(path.join(workspaceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
-    writeFileSync(path.join(fixture, packageJsonFile), '{"private":true,"type":"module"}\n');
+    writeFileSync(path.join(fixture, packageJsonFile), fixturePackageJson);
     writeFileSync(
       path.join(fixture, tsconfigFile),
       JSON.stringify({ files: [], references: [{ path: './referenced' }] }),

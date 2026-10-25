@@ -157,6 +157,11 @@ jobs:
               --plan-file ".codex/reports/releases/$UNIT_ID/plan.json"
           fi
 
+      # Project-mode checks in modern build consume declarations but do not build references.
+      - name: Build the unit typecheck reference graph
+        working-directory: app
+        run: mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build "$UNIT_PATH/tsconfig.json"
+
       - name: Build and verify the unit for Cloudflare
         working-directory: app
         env:
@@ -214,6 +219,7 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/typecheck-project-references.test.mts
           scripts/tests/database-identity-environment.test.mts
           scripts/tests/cloudflare-data-plane-bindings.test.mts
           scripts/tests/generate-zerops-provider-deployment.test.mts
