@@ -8,6 +8,8 @@
 //     customer (for example one made in the UI) is deleted.
 import { NodeServices } from '@effect/platform-node';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { customerSegmentDefinitions } from '@app/party-registry/api/client';
+import type { CustomerSegmentCode } from '@app/party-registry/api/client';
 import { PgClient } from '@effect/sql-pg';
 import { Console, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
@@ -20,8 +22,6 @@ import {
   salesDemoLegalEntityId as legalEntityId,
   salesDemoTenantId as tenantId,
 } from '../../party-registry/scripts/demo-customers.mts';
-import { customerSegmentDefinitions } from '../../party-registry/src/api/customer-segment-definitions.ts';
-import type { CustomerSegmentCode } from '../../party-registry/src/api/customer-segment-definitions.ts';
 
 class SegmentSeedError extends Schema.TaggedError<SegmentSeedError>()('SegmentSeedError', {
   reason: Schema.String,

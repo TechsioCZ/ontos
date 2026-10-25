@@ -51,6 +51,8 @@ export {
   PartyDetailResponseSchema,
 } from '../../shared/api.ts';
 export type { PartyDetailResponse } from '../../shared/api.ts';
+export { customerSegmentDefinitions } from '../../shared/api.ts';
+export type { CustomerSegmentCode, CustomerSegmentDefinition } from '../../shared/api.ts';
 
 export * from './ares-lookup-client.ts';
 export * from './counterparties-search-client.ts';

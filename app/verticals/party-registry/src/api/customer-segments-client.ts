@@ -25,10 +25,10 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';
-import { customerSegmentDefinitions } from './customer-segment-definitions.ts';
-import type { CustomerSegmentCode } from './customer-segment-definitions.ts';
+import { customerSegmentDefinitions } from '../../shared/domain/customer-segment-definitions.ts';
+import type { CustomerSegmentCode } from '../../shared/domain/customer-segment-definitions.ts';
 
-export { customerSegmentDefinitions } from './customer-segment-definitions.ts';
+export { customerSegmentDefinitions } from '../../shared/domain/customer-segment-definitions.ts';
 
 const OWNER_API_PREFIX = '/commerce-customer-context-api';
 const ownerGateway = makeOperationGateway('commerce-customer-context');

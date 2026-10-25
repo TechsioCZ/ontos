@@ -40,6 +40,8 @@ export * from './command-api.ts';
 export * from './engagement-profile-api.ts';
 export { normalizePhone } from './domain/contact-point.ts';
 export type { NormalizedPhone } from './domain/contact-point.ts';
+export { customerSegmentDefinitions } from './domain/customer-segment-definitions.ts';
+export type { CustomerSegmentCode, CustomerSegmentDefinition } from './domain/customer-segment-definitions.ts';
 
 export * from './apis/ares-lookup.ts';
 export * from './apis/counterparties-search.ts';
