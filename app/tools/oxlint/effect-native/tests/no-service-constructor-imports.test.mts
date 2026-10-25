@@ -1,14 +1,14 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import nodePath from 'node:path';
 
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
+import { appRoot, runOxlint } from './oxlint.mts';
 import type { LintRun } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
 
-const consumerSuffix = '/consumer.ts';
 const factoryFilename = 'factory.ts';
 const consumerFilename = 'consumer.ts';
 const factorySource = './factory.ts';
@@ -23,7 +23,7 @@ const serviceConstructorMessage =
 const expectServiceReports = (run: LintRun, description: string): void => {
   expect(
     run.diagnostics
-      .filter(({ code, filename }) => code === ruleCode && filename.endsWith(consumerSuffix))
+      .filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === consumerFilename)
       .map(({ message }) => message),
     description,
   ).toEqual([serviceConstructorMessage, serviceConstructorMessage]);
@@ -56,11 +56,11 @@ it('proves schema factory implementations and rejects the same export after it g
       ].join('\n'),
     );
 
-    const validRun = runOxlint(lintConfig, [consumer], appRoot);
+    const validRun = runOxlint(lintConfig, [consumer], directory);
     const validDiagnostics = validRun.diagnostics.filter(({ code }) => code === ruleCode);
 
     expect(
-      validDiagnostics.filter(({ filename }) => filename.endsWith(consumerSuffix)),
+      validDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
       'a direct and aliased import of a proven schema factory must be accepted',
     ).toEqual([]);
 
@@ -76,7 +76,7 @@ it('proves schema factory implementations and rejects the same export after it g
       ].join('\n'),
     );
 
-    const invalidRun = runOxlint(lintConfig, [consumer], appRoot);
+    const invalidRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(
       invalidRun,
       'changing the same export to a dependency-bearing constructor must restore both diagnostics',
@@ -92,7 +92,7 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const pipeRun = runOxlint(lintConfig, [consumer], appRoot);
+    const pipeRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(
       pipeRun,
       'an arbitrary local function passed to Schema.pipe must remain a service constructor diagnostic',
@@ -109,10 +109,10 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const pipeAliasRun = runOxlint(lintConfig, [consumer], appRoot);
+    const pipeAliasRun = runOxlint(lintConfig, [consumer], directory);
     const pipeAliasDiagnostics = pipeAliasRun.diagnostics.filter(({ code }) => code === ruleCode);
     expect(
-      pipeAliasDiagnostics.filter(({ filename }) => filename.endsWith(consumerSuffix)),
+      pipeAliasDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
       'an immutable alias of the pure HttpApiSchema JSON annotation must be accepted by Schema.pipe',
     ).toEqual([]);
 
@@ -127,7 +127,7 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const pipeAliasInvalidRun = runOxlint(lintConfig, [consumer], appRoot);
+    const pipeAliasInvalidRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(
       pipeAliasInvalidRun,
       'an alias initialized through a local service-producing transform must remain rejected by Schema.pipe',
@@ -146,7 +146,7 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const shadowRun = runOxlint(lintConfig, [consumer], appRoot);
+    const shadowRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(shadowRun, 'a function-local shadow must not resolve to a top-level schema helper');
 
     writeFileSync(
@@ -159,7 +159,7 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const mutationRun = runOxlint(lintConfig, [consumer], appRoot);
+    const mutationRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(mutationRun, 'a mutable exported binding and executable reassignment must fail closed');
 
     writeFileSync(
@@ -186,10 +186,10 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const genuineSchemaAliasRun = runOxlint(lintConfig, [consumer], appRoot);
+    const genuineSchemaAliasRun = runOxlint(lintConfig, [consumer], directory);
     const genuineSchemaAliasDiagnostics = genuineSchemaAliasRun.diagnostics.filter(({ code }) => code === ruleCode);
     expect(
-      genuineSchemaAliasDiagnostics.filter(({ filename }) => filename.endsWith(consumerSuffix)),
+      genuineSchemaAliasDiagnostics.filter(({ filename }) => nodePath.basename(filename) === consumerFilename),
       'a generic schema factory using an aliased genuine Effect Schema import must be accepted',
     ).toEqual([]);
 
@@ -205,12 +205,12 @@ it('proves schema factory implementations and rejects the same export after it g
         '',
       ].join('\n'),
     );
-    const counterfeitSchemaAliasRun = runOxlint(lintConfig, [consumer], appRoot);
+    const counterfeitSchemaAliasRun = runOxlint(lintConfig, [consumer], directory);
     expectServiceReports(
       counterfeitSchemaAliasRun,
       'a type-only counterfeit Schema.Struct.Fields root must not prove a schema factory',
     );
-  }, testsDirectory);
+  });
 });
 
 it('accepts literal data factories while preserving dependency, executable, and effectful controls', () => {
@@ -231,7 +231,7 @@ it('accepts literal data factories while preserving dependency, executable, and 
       'export const makeCustomerSchema = () => [{ label: "module" }];',
     ]) {
       writeFileSync(factory, declaration);
-      const run = runOxlint(lintConfig, [consumer], appRoot);
+      const run = runOxlint(lintConfig, [consumer], directory);
       expect(
         run.diagnostics.filter(({ code }) => code === ruleCode),
         declaration,
@@ -248,9 +248,9 @@ it('accepts literal data factories while preserving dependency, executable, and 
       'export const makeCustomerSchema = (tag: string) => ({ [fetch(tag)]: true });',
     ]) {
       writeFileSync(factory, declaration);
-      expectServiceReports(runOxlint(lintConfig, [consumer], appRoot), declaration);
+      expectServiceReports(runOxlint(lintConfig, [consumer], directory), declaration);
     }
-  }, testsDirectory);
+  });
 });
 
 it('proves closed DTO construction across imports and rejects executable reachable behavior', () => {
@@ -317,7 +317,7 @@ it('proves closed DTO construction across imports and rejects executable reachab
       writeFileSync(factory, control);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), control).toBe(false);
     }
-  }, testsDirectory);
+  });
 });
 
 it('proves native array predicates in DTO codecs without admitting executable callbacks', () => {
@@ -347,7 +347,7 @@ it('proves native array predicates in DTO codecs without admitting executable ca
       writeFileSync(factory, declaration);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
     }
-  }, testsDirectory);
+  });
 });
 
 it('proves native UUID and URL codecs with closed array bindings and rejects executable alternatives', () => {
@@ -382,7 +382,559 @@ it('proves native UUID and URL codecs with closed array bindings and rejects exe
       writeFileSync(factory, declaration);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
     }
-  }, testsDirectory);
+  });
+});
+
+it('proves closed native set queries without admitting mutation or executable members', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of [
+      'export const makeData = (value: string) => ({ reserved: new Set(["reserved"]).has(value) });',
+      'export const makeData = (values: readonly string[], value: string) => { const names = new Set(values); return { found: names.has(value), size: names.size }; };',
+      'export const makeData = () => ({ size: new Set().size });',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of [
+      'export const makeData = (value: string) => new Set([value]);',
+      'export const makeData = () => new Set([() => fetch("service")]).has("reserved");',
+      'export const makeData = (values: readonly unknown[]) => new Set(values).size;',
+      'export const makeData = (values: readonly { readonly id: string }[]) => new Set(values).has("reserved");',
+      'export const makeData = () => new Set(["reserved"]).has(() => fetch("service"));',
+      'export const makeData = (value: string) => { const names = new Set([value]); names.add("changed"); return { size: names.size }; };',
+      'export const makeData = (value: string) => { const names = new Set([value]); names.delete(value); return { size: names.size }; };',
+      'export const makeData = (value: string) => { const names = new Set([value]); names.clear(); return { size: names.size }; };',
+      'const Set = class { has(value: string) { fetch(value); return true; } }; export const makeData = (value: string) => new Set().has(value);',
+      'export const makeData = (Set: { readonly value: string }) => new Set().has("reserved");',
+      'export const makeData = (value: string) => new Set([fetch(value)]).has(value);',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('proves data-only string replacement without admitting replacement callbacks', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of [
+      'export const makeData = (value: string) => ({ label: value.replace("old", "new") });',
+      'export const makeData = (value: string) => ({ label: value.replace(/old/gu, "new") });',
+      'export const makeData = (value: string) => ({ label: value.replaceAll(/old/gu, "new") });',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of [
+      'export const makeData = (value: string) => value.replace(/old/gu, () => fetch(value));',
+      'export const makeData = (value: string) => value.replaceAll("old", () => fetch(value));',
+      'export const makeData = (value: string, replacement: unknown) => value.replace("old", replacement);',
+      'export const makeData = (value: string) => value.replace("old", fetch(value));',
+      'const source = { replace: (value: string) => fetch(value) }; export const makeData = (value: string) => source.replace(value);',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('proves closed schema dictionaries without erasing opaque or executable values', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of [
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.String); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => ({ labels: decode(value) });',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.Json); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => ({ payload: decode(value) });',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String })); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => Object.values(decode(value)).map(({ id }) => ({ id }));',
+      'import { Schema as S } from "effect"; const codec = S.Record(S.String, S.String); const decode = S.decodeUnknownSync(codec); export const makeData = (value: string) => ({ ...decode(value) });',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => ({ counts: decode(value) });',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of [
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown)); export const makeData = (value: string) => ({ payload: decode(value) });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown)); export const makeData = (value: string) => ({ ...decode(value) });',
+      'import { Schema } from "effect"; const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown)); export const makeData = (value: string) => Object.values(decode(value));',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.String.check(Schema.makeFilter((value) => { fetch(value); return undefined; }))); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.String, { decode: () => fetch("service") }); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.Record(Schema.String, Schema.Int.check(Schema.isGreaterThanOrEqualTo(fetch("service")))); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.Int.check(Schema.isGreaterThanOrEqualTo(() => fetch("service"))); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'const Schema = { Record: () => fetch("service") }; export const makeData = () => ({ value: Schema.Record() });',
+      'import { Schema } from "foreign-runtime"; const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String)); export const makeData = (value: string) => decode(value);',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
+});
+
+it('preserves dictionary element openness through local and parameter destructuring', () => {
+  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
+  const run = () => 'executable';
+  const value = { item: { id: 'data', run } };
+  const local = (input: typeof codec.Type) => {
+    const { item } = input;
+    return item;
+  };
+  const parameter = ({ item }: typeof codec.Type) => item;
+  expect(local(value)).toBe(value.item);
+  expect(parameter(value)).toBe(value.item);
+  expect(value.item.run()).toBe('executable');
+  let inheritedReads = 0;
+  const prototype = Object.defineProperty({}, 'item', {
+    get: () => {
+      inheritedReads += 1;
+      return value.item;
+    },
+  });
+  const inherited = { __proto__: prototype } as unknown as typeof codec.Type;
+  expect(local(inherited)).toBe(value.item);
+  expect(parameter(inherited)).toBe(value.item);
+  expect(inheritedReads).toBe(2);
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const codec = `${schemaImport} const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));`;
+    const outcomes = [
+      'export const makeData = (value: typeof codec.Type) => { const { item } = value; return item; };',
+      'export const makeData = ({ item }: typeof codec.Type) => item;',
+      'export const makeData = (value: typeof codec.Type) => value.item;',
+      'export const makeData = (value: typeof codec.Type) => { const { item } = value; return { id: item.id }; };',
+      'export const makeData = ({ item: { id } }: typeof codec.Type) => ({ id });',
+    ].map((declaration) => {
+      writeFileSync(factory, `${codec} ${declaration}`);
+      return provesDataFactoryImport(consumer, factorySource, 'makeData');
+    });
+    expect(outcomes, 'dictionary keys may be absent or inherited on external prototype graphs').toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    for (const declaration of [
+      'export const makeData = (value: { readonly item: { readonly id: string } }) => { const { item } = value; return { id: item.id }; };',
+      'export const makeData = ({ item: { id } }: { readonly item: { readonly id: string } }) => ({ id });',
+    ]) {
+      writeFileSync(factory, `${codec} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+  });
+});
+
+it('keeps unknown present values unsafe through local, nested, and parameter defaults', () => {
+  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
+  const decode = Schema.decodeUnknownSync(Schema.Json);
+  let calls = 0;
+  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
+    value: () => {
+      calls += 1;
+      return 'executed';
+    },
+  });
+  const unsafeMakeData = (value: typeof codec.Type) => {
+    const { item } = value;
+    if ('extra' in item) {
+      const { extra = 'safe' } = item;
+      return (decode(extra) as unknown as string).replace('old', 'new');
+    }
+    return 'safe';
+  };
+  const value = { item: { id: 'data', extra: replacement } };
+  expect(unsafeMakeData(value)).toBe('executed');
+  expect(calls).toBe(1);
+
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const prelude = `${schemaImport} const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String })); const decode = Schema.decodeUnknownSync(Schema.Json);`;
+    const controls = [
+      'export const makeData = (value: typeof codec.Type) => { const { item } = value; if ("extra" in item) { const { extra = "safe" } = item; return (decode(extra) as unknown as string).replace("old", "new"); } return "safe"; };',
+      'export const makeData = (value: typeof codec.Type) => { const { item: { extra = "safe" } } = value; return (decode(extra) as unknown as string).replace("old", "new"); };',
+      'export const makeData = ({ item: { extra = "safe" } }: typeof codec.Type) => (decode(extra) as unknown as string).replace("old", "new");',
+      'export const makeData = (value: typeof codec.Type) => { const { item: { extra: { label = "safe" } = {} } } = value; return (decode(label) as unknown as string).replace("old", "new"); };',
+      'export const makeData = ({ item: { extra: { label = "safe" } = {} } }: typeof codec.Type) => (decode(label) as unknown as string).replace("old", "new");',
+      'export const makeData = (value: typeof codec.Type) => { const project = ({ extra = "safe" }) => (decode(extra) as unknown as string).replace("old", "new"); return project(value.item); };',
+      'export const makeData = (value: typeof codec.Type) => { const { item = { id: "safe" } } = value; return item; };',
+      'export const makeData = ({ item = { id: "safe" } }: typeof codec.Type) => item;',
+      'export const makeData = ({ item: { id = "safe" } = { id: "fallback" } }: typeof codec.Type) => ({ id });',
+      'const optional = Schema.Struct({ item: Schema.optionalKey(Schema.Struct({ id: Schema.String })) }); export const makeData = ({ item = { id: "safe" } }: typeof optional.Type) => item;',
+    ];
+    expect(
+      controls.map((declaration) => {
+        writeFileSync(factory, `${prelude} ${declaration}`);
+        return provesDataFactoryImport(consumer, factorySource, 'makeData');
+      }),
+      controls.join('\n'),
+    ).toEqual(controls.map(() => false));
+    for (const declaration of [
+      'export const makeData = (value: { readonly label?: string }) => { const { label = "safe" } = value; return { label: label.replace("old", "new") }; };',
+      'export const makeData = ({ item: { id = "safe" } = { id: "fallback" } }: { readonly item: { readonly id: string } }) => ({ id });',
+      'export const makeData = () => { const { item: { id = "safe" } = { id: "fallback" } } = {}; return { id }; };',
+      'export const makeData = () => { const { label = "safe" } = { label: undefined }; return { label }; };',
+      'export const makeData = (label: string = "safe") => ({ label });',
+    ]) {
+      writeFileSync(factory, `${prelude} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+  });
+});
+
+it('joins every record branch when projecting named fields and dictionary elements', () => {
+  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
+  const decode = Schema.decodeUnknownSync(Schema.Json);
+  let calls = 0;
+  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
+    value: () => {
+      calls += 1;
+      return 'executed';
+    },
+  });
+  const unsafeMakeData = (value: typeof codec.Type, flag: boolean) => {
+    const selected = flag ? value : { item: { id: 'safe' } };
+    return (decode(selected.item) as unknown as string).replace('old', 'new');
+  };
+  expect(unsafeMakeData({ item: replacement }, true)).toBe('executed');
+  expect(calls).toBe(1);
+
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const prelude = `${schemaImport} const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String })); const decode = Schema.decodeUnknownSync(Schema.Json);`;
+    const controls = [
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const selected = flag ? value : { item: { id: "safe" } }; return (decode(selected.item) as unknown as string).replace("old", "new"); };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const selected = flag ? value : { item: { id: "safe" } }; return selected.item; };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const { item } = flag ? value : { item: { id: "safe" } }; return item; };',
+      'export const makeData = (value: { readonly id: string }, flag: boolean) => { const selected = flag ? value : { item: { id: "safe" } }; return selected.item; };',
+      'export const makeData = (value: { readonly id: string }, flag: boolean) => { const { item = { id: "safe" } } = flag ? value : {}; return item; };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const selected = flag ? { nested: value } : { nested: { item: { id: "safe" } } }; return selected.nested.item; };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const selected = flag ? value : { item: { id: "safe" } }; const { item: { extra = "safe" } } = selected; return (decode(extra) as unknown as string).replace("old", "new"); };',
+      'export const makeData = (value: typeof codec.Type, other: { readonly id: string }, flag: boolean) => { const selected = flag ? value : other; return selected.item; };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => { const selected = flag ? value : {}; const { item = { id: "safe" } } = selected; return item; };',
+      'export const makeData = (flag: boolean) => { const selected = flag ? { label: true } : {}; return selected.label === true ? { safe: true } : { run: () => "executable" }; };',
+      'const strings = Schema.Record(Schema.String, Schema.String); export const makeData = (value: typeof strings.Type, other: { readonly id: string }, flag: boolean) => { const selected = flag ? value : other; return (decode(selected.item) as unknown as string).replace("old", "new"); };',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => flag ? { id: value.item.id } : { id: "safe" };',
+      'const strings = Schema.Record(Schema.String, Schema.String); export const makeData = (value: typeof strings.Type, flag: boolean) => { const selected = flag ? value : { label: "safe" }; return selected.label.replace("old", "new"); };',
+      'const strings = Schema.Record(Schema.String, Schema.String); export const makeData = (value: typeof strings.Type, other: typeof strings.Type, flag: boolean) => { const selected = flag ? value : other; return selected.item.replace("old", "new"); };',
+    ];
+    expect(
+      controls.map((declaration) => {
+        writeFileSync(factory, `${prelude} ${declaration}`);
+        return provesDataFactoryImport(consumer, factorySource, 'makeData');
+      }),
+      controls.join('\n'),
+    ).toEqual(controls.map(() => false));
+    for (const declaration of [
+      'export const makeData = (flag: boolean) => { const selected = flag ? { item: { id: "first" } } : { item: { id: "second" } }; return selected.item; };',
+      'export const makeData = (flag: boolean) => { const { label = "safe" } = flag ? { label: "old" } : {}; return { label: label.replace("old", "new") }; };',
+      'export const makeData = (value: { readonly item: { readonly id: string } }, flag: boolean) => flag ? { id: value.item.id } : { id: "safe" };',
+      'export const makeData = (value: { readonly label: string }, flag: boolean) => { const selected = flag ? value : { label: "safe" }; return selected.label.replace("old", "new"); };',
+      'export const makeData = (value: { readonly item: string }, other: { readonly item: string }, flag: boolean) => { const selected = flag ? value : other; return selected.item.replace("old", "new"); };',
+      'export const makeData = (flag: boolean) => { const selected = flag ? { label: true } : {}; return selected.label === true ? { safe: true } : { safe: false }; };',
+    ]) {
+      writeFileSync(factory, `${prelude} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+  });
+});
+
+it('preserves uncertainty when later object spreads can overwrite closed named fields', () => {
+  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
+  const decode = Schema.decodeUnknownSync(Schema.Json);
+  let calls = 0;
+  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
+    value: () => {
+      calls += 1;
+      return 'executed';
+    },
+  });
+  const unsafeMakeData = (value: typeof codec.Type) => {
+    const selected = { item: { id: 'safe' }, ...value };
+    return (decode(selected.item) as unknown as string).replace('old', 'new');
+  };
+  expect(unsafeMakeData({ item: replacement })).toBe('executed');
+  expect(calls).toBe(1);
+
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const prelude = `${schemaImport} const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String })); const decode = Schema.decodeUnknownSync(Schema.Json);`;
+    const controls = [
+      'export const makeData = (value: typeof codec.Type) => { const selected = { item: { id: "safe" }, ...value }; return (decode(selected.item) as unknown as string).replace("old", "new"); };',
+      'export const makeData = (value: typeof codec.Type) => { const { item } = { item: { id: "safe" }, ...value }; return item; };',
+      'export const makeData = (value: { readonly id: string }) => ({ item: { id: "safe" }, ...value }).item;',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => ({ ...value, ...(flag ? { item: { id: "safe" } } : {}) }).item;',
+      'export const makeData = (value: typeof codec.Type, flag: boolean) => ({ item: { id: "safe" }, ...(flag ? value : {}) }).item;',
+      'export const makeData = (value: typeof codec.Type, other: { readonly id: string }) => ({ item: { id: "safe" }, ...value, ...other }).item;',
+      'const strings = Schema.Record(Schema.String, Schema.String); export const makeData = (value: typeof strings.Type, other: { readonly id: string }) => { const selected = { ...value, ...other }; return (decode(selected.item) as unknown as string).replace("old", "new"); };',
+    ];
+    expect(
+      controls.map((declaration) => {
+        writeFileSync(factory, `${prelude} ${declaration}`);
+        return provesDataFactoryImport(consumer, factorySource, 'makeData');
+      }),
+      controls.join('\n'),
+    ).toEqual(controls.map(() => false));
+    for (const declaration of [
+      'export const makeData = (value: typeof codec.Type) => ({ ...value, item: { id: "safe" } }).item;',
+      'export const makeData = (value: typeof codec.Type) => ({ item: { id: "safe" }, ...value }).item.id;',
+      'export const makeData = (flag: boolean) => ({ item: { id: "safe" }, ...(flag ? { item: { id: "other" } } : {}) }).item;',
+      'export const makeData = () => ({ ...{ item: { id: "first" } }, ...{ item: { id: "second" } } }).item;',
+      'const strings = Schema.Record(Schema.String, Schema.String); export const makeData = (value: typeof strings.Type) => ({ label: "safe", ...value }).label.replace("old", "new");',
+    ]) {
+      writeFileSync(factory, `${prelude} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+  });
+});
+
+it('does not prove inherited property lookups undefined through defaults, joins, or spreads', () => {
+  const decode = Schema.decodeUnknownSync(Schema.Json);
+  let calls = 0;
+  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
+    value: () => {
+      calls += 1;
+      return 'executed';
+    },
+  });
+  const execute = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
+  const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Literal('safe')));
+  expect(decodeDictionary({}).label).toBeUndefined();
+  expect(decodeDictionary({ label: 'safe' }).label).toBe('safe');
+  expect(Reflect.get(decodeDictionary({ toString: 'safe' }), 'toString')).toBe('safe');
+  expect(Reflect.get(decodeDictionary({ constructor: 'safe' }), 'constructor')).toBe('safe');
+  expect(Object.getPrototypeOf(decodeDictionary({ __proto__: null }))).toBe(Object.prototype);
+  expect(Object.getPrototypeOf(/(?<name>safe)/u.exec('safe')!.groups)).toBeNull();
+  const variants = [
+    (value: { readonly id: string }) => {
+      const dict = decodeDictionary({});
+      return (dict.toString as unknown) === 'safe' ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const dict = decodeDictionary({});
+      const { constructor = 'safe' } = dict;
+      return (constructor as unknown) === 'safe' ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const dict = decodeDictionary({});
+      const selected = replacement.id === 'data' ? dict : { constructor: 'safe' };
+      return selected.constructor === 'safe' ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const dict = decodeDictionary({});
+      return dict.label === 'safe' ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const empty = {};
+      return empty.toString === undefined ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const { toString = undefined } = {};
+      return toString === undefined ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const selected: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
+      return selected.toString === undefined ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const selected = { ...{} };
+      return selected.toString === undefined ? 'safe' : execute(value);
+    },
+    (value: { readonly id: string }) => {
+      const branch: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
+      const selected = { ...branch };
+      const { toString = undefined } = selected;
+      return toString === undefined ? 'safe' : execute(value);
+    },
+  ];
+  expect(variants.map((makeData) => makeData(replacement))).toEqual(variants.map(() => 'executed'));
+  expect(calls).toBe(variants.length);
+  expect({}.constructor).toBe(Object);
+  expect(Reflect.get({}, '__proto__')).toBe(Object.prototype);
+  let getterCalls = 0;
+  const prototype = Object.defineProperty({ id: 'prototype' }, 'extra', {
+    get: () => {
+      getterCalls += 1;
+      return 'inherited';
+    },
+  });
+  const inherited: { readonly extra?: string } = { __proto__: prototype } as { readonly extra?: string };
+  expect(inherited.extra === undefined ? 'safe' : execute(replacement)).toBe('executed');
+  expect(getterCalls).toBe(1);
+  expect(calls).toBe(variants.length + 1);
+
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const prelude = `${schemaImport} const decode = Schema.decodeUnknownSync(Schema.Json);`;
+    const unsafe = '(decode(value) as unknown as string).replace("old", "new")';
+    const dictionary = 'Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Literal("safe")))({})';
+    const bodies = [
+      `const dict = ${dictionary}; return dict.toString === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const { constructor = "safe" } = dict; return constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = flag ? dict : { constructor: "safe" }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; return dict.label === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = flag ? dict : { label: "safe" }; return selected.label === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = { ...dict }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = { ...(flag ? dict : { constructor: "safe" }) }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = { __proto__: null, ...dict }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = flag ? { __proto__: null, ...dict } : { __proto__: null, constructor: "safe" }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const selected = flag ? value : { constructor: "safe" }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const empty = {}; return empty.toString === undefined ? "safe" : ${unsafe};`,
+      `const { toString = undefined } = {}; return toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = flag ? {} : { toString: undefined }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { ...{} }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { ...(flag ? {} : { toString: undefined }) }; const { toString = undefined } = selected; return toString === undefined ? "safe" : ${unsafe};`,
+      `const empty = {}; return empty.constructor === undefined ? "safe" : ${unsafe};`,
+      `const { constructor = undefined } = {}; return constructor === undefined ? "safe" : ${unsafe};`,
+      `const empty = {}; return empty.__proto__ === undefined ? "safe" : ${unsafe};`,
+      `const { __proto__ = undefined } = {}; return __proto__ === undefined ? "safe" : ${unsafe};`,
+      `const selected = { ...(flag ? { constructor: undefined } : {}) }; return selected.constructor === undefined ? "safe" : ${unsafe};`,
+      `const selected = { __proto__: value }; return selected.extra === undefined ? "safe" : ${unsafe};`,
+      `const selected = flag ? { toString: undefined } : {}; return { ...selected }.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { ...{ __proto__: null } }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = flag ? { __proto__: null } : {}; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = Object.freeze(flag ? {} : { toString: undefined }); return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { __proto__: value }; const { extra = "safe" } = selected; return extra === "safe" ? "safe" : ${unsafe};`,
+      `const selected = { __proto__: { get extra() { return value; } } }; return selected.extra === undefined ? "safe" : ${unsafe};`,
+    ];
+    expect(
+      bodies.map((body, index) => {
+        const parameters =
+          index === 0 ? 'value: { readonly id: string }' : 'value: { readonly id: string }, flag: boolean';
+        writeFileSync(factory, `${prelude} export const makeData = (${parameters}) => { ${body} };`);
+        return provesDataFactoryImport(consumer, factorySource, 'makeData');
+      }),
+      bodies.join('\n'),
+    ).toEqual(bodies.map(() => false));
+    for (const body of [
+      'const groups = /(?<name>safe)/u.exec("safe").groups; return { name: groups.name, missing: groups.missing, constructor: groups.constructor };',
+      `const dict = ${dictionary}; return { label: dict.label };`,
+      `const dict = ${dictionary}; const { label = "safe" } = dict; return { label };`,
+      `const dict = ${dictionary}; return { ...dict };`,
+      `const dict = ${dictionary}; const selected = { __proto__: null, ...(flag ? dict : { constructor: "safe" }) }; const { constructor = "safe" } = selected; return { constructor };`,
+      `const dict = ${dictionary}; const selected = { constructor: "safe", ...dict }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = { ...dict, constructor: "safe" }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const dict = ${dictionary}; const selected = { ...(flag ? dict : { constructor: "safe" }), constructor: "safe" }; return selected.constructor === "safe" ? "safe" : ${unsafe};`,
+      `const selected = { toString: undefined }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const { toString = "safe" } = { toString: undefined }; return toString === "safe" ? "safe" : ${unsafe};`,
+      `const selected = { toString: undefined, ...(flag ? {} : { toString: undefined }) }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { ...(flag ? {} : { toString: undefined }), toString: undefined }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      `const selected = { __proto__: null }; return selected.toString === undefined ? "safe" : ${unsafe};`,
+      'return { ...(flag ? {} : { toString: undefined }) };',
+      'return flag ? { first: "data" } : { second: "data" };',
+      'const { missing = "safe" } = { ...{} }; return { missing };',
+      'const selected = { __proto__: null, ...(flag ? {} : { toString: undefined }) }; const { toString = "safe" } = selected; return { toString };',
+    ]) {
+      writeFileSync(
+        factory,
+        `${prelude} export const makeData = (value: { readonly id: string }, flag: boolean) => { ${body} };`,
+      );
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), body).toBe(true);
+    }
+  });
+});
+
+it('does not treat Schema.Json validation as closure of opaque object inputs', () => {
+  const run = () => 'executable';
+  const hidden = Object.defineProperty({ id: 'data' }, 'run', { value: run });
+  const symbol = Symbol('run');
+  const symbolValue = Object.defineProperty({ id: 'data' }, symbol, { value: run });
+  const decode = Schema.decodeUnknownSync(Schema.Json);
+  expect(decode(hidden)).toBe(hidden);
+  expect(Object.getOwnPropertyDescriptor(decode(hidden), 'run')?.value).toBe(run);
+  expect(Object.getOwnPropertyDescriptor(decode(symbolValue), symbol)?.value).toBe(run);
+  const dictionary = { item: hidden };
+  expect(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(dictionary).item).toBe(hidden);
+  let calls = 0;
+  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
+    value: () => {
+      calls += 1;
+      return 'executed';
+    },
+  });
+  const unsafeMakeData = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
+  expect(unsafeMakeData(replacement)).toBe('executed');
+  const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
+  const unsafeDictionaryMakeData = (value: { readonly item: { readonly id: string } }) =>
+    (decodeDictionary(value).item as unknown as string).replace('old', 'new');
+  expect(unsafeDictionaryMakeData({ item: replacement })).toBe('executed');
+  expect(calls).toBe(2);
+
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const controls = [
+      'const decode = Schema.decodeUnknownSync(Schema.Json); export const makeData = (value: { readonly id: string }) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json)); export const makeData = (value: { readonly item: { readonly id: string } }) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.Json); export const makeData = (value: { readonly id: string }) => decode(value).replace("old", "new");',
+      'const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json)); export const makeData = (value: { readonly item: { readonly id: string } }) => decode(value).item.replace("old", "new");',
+      'const codec = Schema.Json; export const makeData = (value: typeof codec.Type) => value;',
+      'const decode = Schema.decodeUnknownSync(Schema.Struct({ payload: Schema.Json })); export const makeData = (value: { readonly payload: { readonly id: string } }) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.Array(Schema.Json)); export const makeData = (value: readonly { readonly id: string }[]) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Struct({ payload: Schema.Json }))); export const makeData = (value: { readonly item: { readonly payload: { readonly id: string } } }) => decode(value);',
+      'const encode = Schema.encodeSync(Schema.Json); export const makeData = (value: { readonly id: string }) => encode(value);',
+      'const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Json)); export const makeData = (value: { readonly id: string }) => encode(value);',
+      'const encode = Schema.encodeSync(Schema.Struct({ payload: Schema.fromJsonString(Schema.Json) })); export const makeData = (value: { readonly payload: { readonly id: string } }) => encode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json)); export const makeData = () => decode("true") === "true" ? { safe: true } : { run: () => "executable" };',
+    ];
+    const outcomes = controls.map((declaration) => {
+      writeFileSync(factory, `${schemaImport} ${declaration}`);
+      return provesDataFactoryImport(consumer, factorySource, 'makeData');
+    });
+    expect(outcomes, controls.join('\n')).toEqual(controls.map(() => false));
+    for (const declaration of [
+      'const decode = Schema.decodeUnknownSync(Schema.Json); export const makeData = () => decode({ id: "data" });',
+      'const decode = Schema.decodeUnknownSync(Schema.Json); export const makeData = (value: { readonly id: string }) => decode({ id: value.id });',
+      'const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json)); export const makeData = () => decode({ item: { id: "data" } });',
+      'const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json)); export const makeData = (value: string) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))); export const makeData = (value: string) => decode(value);',
+      'const decode = Schema.decodeUnknownSync(Schema.Struct({ payload: Schema.Json, entry: Schema.Struct({ id: Schema.String }) })); export const makeData = (value: { readonly id: string }) => decode({ payload: { id: value.id }, entry: value });',
+      'const decode = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Struct({ payload: Schema.Json, entry: Schema.Struct({ id: Schema.String }) }))); export const makeData = (value: { readonly id: string }) => decode({ item: { payload: { id: value.id }, entry: value } });',
+      'const decode = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ payload: Schema.Json, entry: Schema.Struct({ id: Schema.String }) }))); export const makeData = (value: { readonly id: string }) => decode([{ payload: { id: value.id }, entry: value }]);',
+    ]) {
+      writeFileSync(factory, `${schemaImport} ${declaration}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+  });
+});
+
+it('proves data-only template literal codecs without hiding executable schema parts', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    for (const declaration of [
+      'import { Schema } from "effect"; const codec = Schema.TemplateLiteral(["prefix-[", Schema.String, "]"]).check(Schema.isMaxLength(120)); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => ({ label: decode(value) });',
+      'import { Schema as S } from "effect"; const parts = ["prefix-", S.Number]; const codec = S.TemplateLiteral(parts); const decode = S.decodeUnknownSync(codec); export const makeData = (value: string) => ({ label: decode(value) });',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(true);
+    }
+    for (const declaration of [
+      'import { Schema } from "effect"; const codec = Schema.TemplateLiteral(["prefix-", Schema.Unknown]); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.TemplateLiteral(["prefix-", () => fetch("service")]); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.TemplateLiteral(["prefix-", Schema.String.check(Schema.makeFilter((value) => { fetch(value); return undefined; }))]); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'import { Schema } from "effect"; const codec = Schema.TemplateLiteral(["prefix-", fetch("service")]); const decode = Schema.decodeUnknownSync(codec); export const makeData = (value: string) => decode(value);',
+      'const Schema = { TemplateLiteral: () => fetch("service") }; export const makeData = () => ({ value: Schema.TemplateLiteral() });',
+    ]) {
+      writeFileSync(factory, declaration);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+  });
 });
 
 it('requires concrete data calls for opaque generic payloads', () => {
@@ -415,7 +967,7 @@ it('requires concrete data calls for opaque generic payloads', () => {
       'import { makePayload } from "./factory.ts"; export const makeEnvelope = () => makePayload({ id: "data", read: () => fetch("service") });',
     );
     expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
-  }, testsDirectory);
+  });
 });
 
 it('rejects typed effectful schema helpers and shadowed native assignments', () => {
@@ -431,9 +983,9 @@ it('rejects typed effectful schema helpers and shadowed native assignments', () 
       'import { Schema } from "effect"; const Object = { assign: (value: string) => fetch(value) }; export const makeCustomerSchema = (tag: string) => Schema.Struct({ value: Object.assign(tag) });',
     ]) {
       writeFileSync(factory, declaration);
-      expectServiceReports(runOxlint(lintConfig, [consumer], appRoot), declaration);
+      expectServiceReports(runOxlint(lintConfig, [consumer], directory), declaration);
     }
-  }, testsDirectory);
+  });
 });
 
 it('proves the concrete Outbox fixture imports without an ownership or name exemption', () => {
@@ -464,7 +1016,7 @@ it('allows service constructor calls only within proven native service factory c
     ]) {
       writeFileSync(consumer, declaration);
       expect(
-        runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode),
+        runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode),
         declaration,
       ).toEqual([]);
     }
@@ -478,11 +1030,11 @@ it('allows service constructor calls only within proven native service factory c
     ]) {
       writeFileSync(consumer, declaration);
       expect(
-        runOxlint(lintConfig, [consumer], appRoot).diagnostics.filter(({ code }) => code === ruleCode).length,
+        runOxlint(lintConfig, [consumer], directory).diagnostics.filter(({ code }) => code === ruleCode).length,
         declaration,
       ).toBe(1);
     }
-  }, testsDirectory);
+  });
 });
 
 it('accepts reference factories beside native domain contracts but rejects executable initializers', () => {
@@ -516,5 +1068,5 @@ it('accepts reference factories beside native domain contracts but rejects execu
       writeFileSync(factory, declaration);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(expected);
     }
-  }, testsDirectory);
+  });
 });
