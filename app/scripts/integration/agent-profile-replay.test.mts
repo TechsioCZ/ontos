@@ -15,10 +15,14 @@ import {
   Redacted,
   Schema,
 } from 'effect';
+import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpServer, HttpServerResponse } from 'effect/unstable/http';
 import { NetAddress } from 'effect/unstable/net';
-import { ActiveApplicationCompositionSnapshotSchema } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 
 import {
   ActionRuntime,
@@ -27,7 +31,12 @@ import {
 } from '../../packages/core-runtime/src/actions/runtime.ts';
 import { ActionAuthorityLive } from '../../packages/core-runtime/src/permissions/action-authority.ts';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
-import { makeReadRuntime } from '../../packages/core-runtime/src/reads/runtime.ts';
+import { makeReadRuntime, ReadRuntime } from '../../packages/core-runtime/src/reads/runtime.ts';
+import {
+  ActionAuthorizationLifecycle,
+  ActionAuthorizationLifecycleLive,
+  ScopedRoleMembershipLifecycleLive,
+} from '../../packages/core-runtime/src/outbox/core-system-worker-entry.ts';
 import { managedPrincipalsRead } from '../../packages/core-runtime/src/auth/principal-administration-reads.ts';
 import { bindManagedApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-managed-api-key.action.ts';
 import { bindSelfApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-self-api-key.action.ts';
@@ -40,8 +49,8 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { staffAuthenticationNamespaceRegistration } from '../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
-import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { DatabaseConfig, loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import {
   applicationCompositionAuthority,
   auditEvents,
@@ -59,6 +68,7 @@ import {
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { buildPrincipalSelfCredentialUpdates } from '../../packages/core-runtime/src/permissions/action-authorization-lifecycle.ts';
 import { configureAgentAction } from '../../packages/core-runtime/src/modules/actions/configure-agent.action.ts';
+import { replaceAgentOperatorsAction } from '../../packages/core-runtime/src/modules/actions/replace-agent-operators.action.ts';
 import { makeModuleEntrypointGateway } from '../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -68,7 +78,7 @@ import {
 } from '../../packages/core-runtime/src/operations/context.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../../packages/core-runtime/src/outbox/core-system-subscriptions.ts';
 import { createSpiceDbPermissionClient } from '../../packages/core-runtime/src/permissions/client.ts';
-import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
+import { loadSpiceDbConfig, SpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import {
   ContextAccess,
   makeContextAccess,
@@ -88,7 +98,12 @@ import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/a
 import { apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { makeApiKeyService } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
-import { loadAgentProfiles } from '../../apps/shell-super-app/api/auth/agent-store.ts';
+import { agentProfilesRead } from '../../packages/core-runtime/src/auth/agent-profiles-read.ts';
+import type { AgentProfile } from '../../packages/core-runtime/src/auth/agent-profile-projection.ts';
+import {
+  LegalEntityContext,
+  makeLegalEntityContext,
+} from '../../packages/core-runtime/src/auth/legal-entity-context.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import { makeInstalledModuleCatalogLayer } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { runAgentOperatorSetup } from '../demo/setup-agent-operators.mts';
@@ -100,6 +115,11 @@ import {
   reviewedProfileInputs,
   runAgentProfileSetup,
 } from '../demo/agent-profile-setup.mts';
+
+const isOperatorEvidence = Schema.is(
+  Schema.Struct({ actionKey: Schema.Literal('core.identity.replace-agent-operators') }),
+);
+const hasOperatorEvidence = (row: typeof auditEvents.$inferSelect) => isOperatorEvidence(row.evidenceJson);
 
 const relationship = (
   type: string,
@@ -364,7 +384,12 @@ it.live(
         ),
         ...buildActionAuthorizationRelationships(
           companies.flatMap((legalEntityId) =>
-            [configureAgentAction, bindManagedApiKeyAction, setManagedApiKeyBindingStatusAction].map((action) => ({
+            [
+              configureAgentAction,
+              replaceAgentOperatorsAction,
+              bindManagedApiKeyAction,
+              setManagedApiKeyBindingStatusAction,
+            ].map((action) => ({
               actionKey: action.descriptor.actionKey,
               legalEntityId,
               tenantId,
@@ -395,6 +420,26 @@ it.live(
           resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
         },
       );
+      const readRuntime = makeReadRuntime(
+        database,
+        makeModuleEntrypointGateway(gate),
+        makeOperationalScopeResolver(makeOperationalScopeRepository(database), access),
+        access,
+      );
+      const lifecycleContext = yield* Layer.build(
+        ActionAuthorizationLifecycleLive.pipe(
+          Layer.provide(ScopedRoleMembershipLifecycleLive),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(CoreDatabase, database),
+              Layer.succeed(DatabaseConfig, pair.runtime),
+              Layer.succeed(SpiceDbConfig, config),
+              Layer.succeed(ActiveApplicationCompositionService, authority),
+            ),
+          ),
+        ),
+      );
+      const authorizationLifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
       const proof = Effect.gen(function* applyAndVerify() {
         const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
           session.close.pipe(Effect.ignore),
@@ -439,17 +484,29 @@ it.live(
         const applied = yield* runAgentProfileSetup(operator.principal, inputs, 'apply', sourceFingerprint);
         expect(applied.applied).toBe(9);
         expect(yield* auditCount()).toBe(before + inputs.length);
-        const companyProfiles = yield* Effect.forEach(
-          companies,
-          (legalEntityId) =>
-            loadAgentProfiles(
-              tenantId,
-              legalEntityId,
-              inputs.filter((input) => input.legalEntityId === legalEntityId).map((input) => input.principalId),
-            ).pipe(Effect.provideService(AuthDatabase, authDatabase)),
-          { concurrency: 1 },
-        );
-        const visibleProfiles = new Map(companyProfiles.flatMap((profiles) => [...profiles]));
+        const visibleProfiles = new Map<string, AgentProfile>();
+        // Company selection changes the same authenticated session, so these reads are intentionally ordered.
+        for (const legalEntityId of companies) {
+          yield* authentication.switchLegalEntity(legalEntityId, operator.requestHeaders);
+          const selected = yield* authentication.resolveShellContext(operator.requestHeaders);
+          if (selected.state !== 'authenticated' || selected.principal.legalEntityId !== legalEntityId) {
+            return yield* Effect.die('The native operator did not select the requested company');
+          }
+          const readProfiles = readRuntime.runRead({
+            input: {
+              principalIds: inputs.flatMap((input) =>
+                input.legalEntityId === legalEntityId ? [input.principalId] : [],
+              ),
+            },
+            principal: selected.principal,
+            registration: agentProfilesRead,
+            transport: { correlationId: randomUUID() },
+          }) satisfies Effect.Effect<unknown, unknown>;
+          const result = yield* readProfiles;
+          for (const { principalId, ...profile } of result.profiles) {
+            visibleProfiles.set(principalId, profile);
+          }
+        }
         expect([...visibleProfiles.values()].filter((profile) => profile.hasProfile)).toHaveLength(9);
         for (const input of inputs) {
           expect(visibleProfiles.get(input.principalId)).toEqual({
@@ -495,12 +552,6 @@ it.live(
           Effect.provideService(AuthDatabase, authDatabase),
         );
         const lifecycle = makeIdentityLifecycleService(runtime, keys, resolver);
-        const readRuntime = makeReadRuntime(
-          database,
-          makeModuleEntrypointGateway(gate),
-          makeOperationalScopeResolver(makeOperationalScopeRepository(database), access),
-          access,
-        );
         const adminId = randomUUID();
         const adminEmail = `company-admin-${randomUUID()}@example.org`;
         const adminPassword = randomBytes(32).toString('base64url');
@@ -903,18 +954,81 @@ it.live(
             operatorPrincipalIds: [adminId],
           },
         ];
-        expect((yield* runAgentOperatorSetup(operator.principal, operatorInputs, 'dry-run')).applied).toBe(0);
-        expect((yield* runAgentOperatorSetup(operator.principal, operatorInputs, 'apply')).applied).toBe(1);
         const operatorAudits = () =>
           admin.executor
             .select()
             .from(auditEvents)
             .where(
-              and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'identity.agent_operators_changed')),
-            );
+              and(
+                eq(auditEvents.tenantId, tenantId),
+                eq(auditEvents.eventType, 'action.executed'),
+                eq(auditEvents.outcome, 'succeeded'),
+              ),
+            )
+            .pipe(Effect.map((rows) => rows.filter(hasOperatorEvidence)));
+        const beforeOperators = yield* auditCount();
+        expect((yield* runAgentOperatorSetup(operator, operatorInputs, 'dry-run')).applied).toBe(0);
+        expect(yield* auditCount()).toBe(beforeOperators);
+        expect(yield* runAgentOperatorSetup(operator, operatorInputs, 'verify').pipe(Effect.flip)).toBeInstanceOf(
+          AgentProfileSetupError,
+        );
+        expect(yield* auditCount()).toBe(beforeOperators);
+        // A bad final requested input must prevent the first native operator Action too.
+        expect(
+          yield* runAgentOperatorSetup(
+            operator,
+            [
+              ...operatorInputs,
+              {
+                agentPrincipalId: randomUUID(),
+                legalEntityId: original.legalEntityId,
+                operatorPrincipalIds: [adminId],
+              },
+            ],
+            'apply',
+          ).pipe(Effect.flip),
+        ).toBeInstanceOf(AgentProfileSetupError);
+        expect(yield* operatorAudits()).toHaveLength(0);
+        // Repeated company requests for the same agent still produce one principal-global command.
+        expect((yield* runAgentOperatorSetup(operator, [...operatorInputs, ...operatorInputs], 'apply')).applied).toBe(
+          1,
+        );
+        const committedOperatorAudits = yield* operatorAudits();
+        expect(committedOperatorAudits).toHaveLength(1);
+        expect(committedOperatorAudits[0]).toMatchObject({
+          authBindingId: bindingId,
+          authContextRef: operator.principal.authContextRef,
+          authMethod: 'session',
+          legalEntityId: original.legalEntityId,
+          principalId: actorId,
+        });
+        expect((yield* runAgentOperatorSetup(operator, operatorInputs, 'apply')).applied).toBe(0);
+        // Omitting an existing operator from setup is NOT a request to remove it.
+        const noAdditions = operatorInputs.map((input) => ({ ...input, operatorPrincipalIds: [] }));
+        expect((yield* runAgentOperatorSetup(operator, noAdditions, 'apply')).applied).toBe(0);
+        yield* runAgentOperatorSetup(operator, operatorInputs, 'verify');
         expect(yield* operatorAudits()).toHaveLength(1);
-        expect((yield* runAgentOperatorSetup(operator.principal, operatorInputs, 'apply')).applied).toBe(0);
-        yield* runAgentOperatorSetup(operator.principal, operatorInputs, 'verify');
+        // Simulate interrupted projection after the native command committed. Setup must resume it,
+        // confirm the graph, and never emit a second native Action/audit for the matching command.
+        yield* Effect.promise(() =>
+          graph.promises.writeRelationships(
+            v1.WriteRelationshipsRequest.create({
+              updates: [
+                {
+                  operation: v1.RelationshipUpdate_Operation.DELETE,
+                  relationship: relationship('principal', original.principalId, 'operator', 'principal', adminId),
+                },
+              ],
+            }),
+          ),
+        );
+        expect((yield* runAgentOperatorSetup(operator, operatorInputs, 'dry-run')).pending).toBe(1);
+        expect(yield* runAgentOperatorSetup(operator, operatorInputs, 'verify').pipe(Effect.flip)).toBeInstanceOf(
+          AgentProfileSetupError,
+        );
+        expect(yield* operatorAudits()).toHaveLength(1);
+        expect((yield* runAgentOperatorSetup(operator, operatorInputs, 'apply')).applied).toBe(1);
+        yield* runAgentOperatorSetup(operator, operatorInputs, 'verify');
         expect(yield* operatorAudits()).toHaveLength(1);
 
         return yield* Effect.void;
@@ -922,12 +1036,16 @@ it.live(
         Effect.provide(ActionAuthorityLive),
         Effect.provide(OAuthFlowLive),
         Effect.provideService(ActionRuntime, runtime),
+        Effect.provideService(ReadRuntime, readRuntime),
+        Effect.provideService(ActionAuthorizationLifecycle, authorizationLifecycle),
+        Effect.provideService(ActiveApplicationCompositionService, authority),
         Effect.provideService(ActionPermission, actionPermission),
         Effect.provideService(AgentProfileReadDatabase, { executor: admin.executor }),
         Effect.provideService(AuthDatabase, authDatabase),
         Effect.provideService(AuthConfig, authConfig),
         Effect.provideService(AuthenticationService, authentication),
         Effect.provideService(ContextAccess, access),
+        Effect.provideService(LegalEntityContext, makeLegalEntityContext(database)),
         Effect.provideService(AuthenticationNamespaceRegistry, registry),
         Effect.provide(makeInstalledModuleCatalogLayer(authority.load)),
         Effect.provide(
@@ -938,7 +1056,7 @@ it.live(
             ),
           ),
         ),
-      );
+      ) satisfies Effect.Effect<void, unknown, Scope.Scope>;
       yield* proof;
       // Exercise the exported CLI composition, without the handcrafted proof's registry/runtime injections.
       const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
@@ -956,6 +1074,12 @@ it.live(
         const operator = yield* Effect.acquireRelease(authenticateAgentProfileOperator, (session) =>
           session.close.pipe(Effect.ignore),
         );
+        const nativeAuthentication = yield* AuthenticationService;
+        yield* nativeAuthentication.switchLegalEntity(first.legalEntityId, operator.requestHeaders);
+        const selected = yield* nativeAuthentication.resolveShellContext(operator.requestHeaders);
+        if (selected.state !== 'authenticated' || selected.principal.legalEntityId !== first.legalEntityId) {
+          return yield* Effect.die('The exported native operator did not select the requested company');
+        }
         const nativeRuntime = yield* ActionRuntime;
         const configured = yield* nativeRuntime.runAction({
           payload: {
@@ -967,11 +1091,25 @@ it.live(
             principalId: first.principalId,
             writePolicy: first.writePolicy,
           },
-          principal: { ...operator.principal, legalEntityId: first.legalEntityId },
+          principal: selected.principal,
           registration: configureAgentAction,
           transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
         });
         expect(configured.principalId).toBe(first.principalId);
+        expect(
+          (yield* runAgentOperatorSetup(
+            operator,
+            [
+              {
+                agentPrincipalId: first.principalId,
+                legalEntityId: first.legalEntityId,
+                operatorPrincipalIds: [],
+              },
+            ],
+            'verify',
+          )).applied,
+        ).toBe(0);
+        return yield* Effect.void;
       }).pipe(
         Effect.provide(AgentProfileOperatorLive),
         Effect.provide(

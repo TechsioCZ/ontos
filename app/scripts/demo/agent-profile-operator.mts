@@ -6,7 +6,9 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  LegalEntityContextLive,
   PrincipalResolverLive,
+  ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
@@ -23,6 +25,11 @@ import {
   ActiveApplicationCompositionService,
 } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import {
+  ActionAuthorizationLifecycleLive,
+  ScopedRoleMembershipLifecycleLive,
+  SpiceDbConfigLive,
+} from '@app/core-runtime/outbox/core-system-worker';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This operator composition root binds the approved deployment identity to the native Action runtime.
 import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/runtime.ts';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This composition root opens the privileged SELECT-only audit/membership reader; native Actions use the separate runtime-role pool.
@@ -77,6 +84,12 @@ const reads = Layer.effect(
     return { executor: database.executor };
   }),
 );
+const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
+const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
+const authorizationLifecycle = ActionAuthorizationLifecycleLive.pipe(
+  Layer.provide(ScopedRoleMembershipLifecycleLive),
+  Layer.provide(Layer.mergeAll(persistence, DatabaseConfigLive, SpiceDbConfigLive, composition)),
+);
 const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase)));
 const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
 export const AgentProfileOperatorLive = Layer.mergeAll(
@@ -87,6 +100,10 @@ export const AgentProfileOperatorLive = Layer.mergeAll(
   OAuthFlowLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase))),
   authentication,
   actionRuntime,
+  readRuntime,
+  legalEntityContext,
+  authorizationLifecycle,
+  composition,
   ActionPermissionLive,
   reads,
   authDatabase,
