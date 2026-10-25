@@ -119,6 +119,9 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'duplicate-candidate-detail': {
       title: { cs: 'Detail možného duplicitního subjektu', en: 'Duplicate candidate details' },
     },
+    'duplicate-candidate-list': {
+      title: { cs: 'Seznam možných duplicitních subjektů', en: 'Duplicate candidate list' },
+    },
     'guest-party-resolution': 'hidden',
     'organization-engagement-profile': {
       title: { cs: 'Profil spolupráce s firmou', en: 'Organization engagement profile' },
