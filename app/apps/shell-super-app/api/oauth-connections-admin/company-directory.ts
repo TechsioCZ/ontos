@@ -26,9 +26,9 @@ export interface CompanyDirectoryPort<R> {
     readonly revokedConnections: number;
     readonly snapshot: CompanyDirectorySnapshot;
   }) => Effect.Effect<void, ConnectionsAdminError, R>;
-  readonly snapshot: () => Effect.Effect<CompanyDirectorySnapshot, ConnectionsAdminError, R>;
+  readonly snapshot: Effect.Effect<CompanyDirectorySnapshot, ConnectionsAdminError, R>;
 }
 
 export class CompanyDirectory extends Context.Service<CompanyDirectory, CompanyDirectoryPort<never>>()(
-  '@app/shell-super-app/api/oauth-connections-admin/CompanyDirectory',
+  '@app/shell-super-app/api/oauth-connections-admin/company-directory/CompanyDirectory',
 ) {}

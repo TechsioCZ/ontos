@@ -5,6 +5,7 @@ import { AssigneeIneligible } from './assignee-ineligible.ts';
 import { AssignablePrincipalsUnavailable } from './assignable-principals-unavailable.ts';
 
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { principalCompanyMemberships, principals } from '../db/schema.ts';
@@ -109,13 +110,16 @@ export const loadAssignmentPreflightSnapshot = Effect.fn('Core.loadAssignmentPre
     loadOwner: (transaction: Pick<ScopedTransactionExecutor, 'select'>) => Effect.Effect<A, E>,
   ) {
     const database = yield* Effect.serviceOption(CoreDatabase);
-    if (Option.isNone(database)) {
+    const enrollment = yield* Effect.serviceOption(DatabaseIdentityEnrollmentContext);
+    if (Option.isNone(database) || Option.isNone(enrollment)) {
       return yield* unavailable();
     }
     return yield* database.value.executor
       .transaction(
         Effect.fn('Core.assignmentPreflightTransaction')(function* preflight(transaction) {
-          const scoped = yield* installOperationalScope(transaction, scope).pipe(Effect.mapError(unavailable));
+          const scoped = yield* installOperationalScope(transaction, scope, enrollment.value).pipe(
+            Effect.mapError(unavailable),
+          );
           return yield* Effect.all(
             {
               directory: loadAssignablePrincipalDirectory(scoped, scope),

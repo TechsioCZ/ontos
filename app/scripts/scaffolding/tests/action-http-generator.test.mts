@@ -304,6 +304,11 @@ export default apiRuntime;
     'Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption)',
   );
   expect(generated).toContain('services: requestServicesLive');
+  expect(generated).toContain('defineActionHttpDatabaseIdentityEnrollment([])');
+  expect(generated).toContain('Layer.provide(actionHttpDatabaseIdentitiesLive)');
+  expect(generated).toMatch(
+    /const productionReadRuntimeLive = pricingPolicyReadRuntimeLive\.pipe\(\s*Layer\.provide\(actionHttpDatabaseIdentitiesLive\),/u,
+  );
   expect(patchRuntimeRoot(generated, vertical, 'changeRateActionApiLive')).toBe(generated);
   expect(() =>
     patchRuntimeRoot(

@@ -6,7 +6,41 @@ import { Config, Effect, FileSystem, Schedule, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
-import { verifyOwnerSchema } from '../verify-application-db-schema.mts';
+import { ownerVerifierPaths, verifyOwnerSchema } from '../verify-application-db-schema.mts';
+
+it('retains all 28 owner verifiers and invokes Core through the application enrollment wrapper', () => {
+  expect(ownerVerifierPaths).toHaveLength(28);
+  expect(ownerVerifierPaths).toEqual([
+    './verify-core-db-schema.mts',
+    '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
+    '../verticals/assortment/scripts/verify-db-schema.mts',
+    '../verticals/party-registry/scripts/verify-db-schema.mts',
+    '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
+    '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
+    '../verticals/price-group-catalog/scripts/verify-db-schema.mts',
+    '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
+    '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+    '../verticals/catalog/scripts/verify-db-schema.mts',
+    '../verticals/inventory/scripts/verify-db-schema.mts',
+    '../verticals/pricing/scripts/verify-db-schema.mts',
+    '../verticals/privacy/scripts/verify-db-schema.mts',
+    '../verticals/legal-agreements/scripts/verify-db-schema.mts',
+    '../verticals/finance-billing/scripts/verify-db-schema.mts',
+    '../verticals/property-leasing/scripts/verify-db-schema.mts',
+    '../verticals/property-portfolio/scripts/verify-db-schema.mts',
+    '../verticals/crm-activities/scripts/verify-db-schema.mts',
+    '../verticals/work-tasks/scripts/verify-db-schema.mts',
+    '../verticals/workforce/scripts/verify-db-schema.mts',
+    '../verticals/tagging/scripts/verify-db-schema.mts',
+    '../verticals/crm/scripts/verify-db-schema.mts',
+    '../verticals/sales-pipeline/scripts/verify-db-schema.mts',
+    '../verticals/merchandise/scripts/verify-db-schema.mts',
+    '../verticals/sales-insights/scripts/verify-db-schema.mts',
+    '../verticals/facility-operations/scripts/verify-db-schema.mts',
+    '../verticals/storefront-registry/scripts/verify-db-schema.mts',
+    '../verticals/tax/scripts/verify-db-schema.mts',
+  ]);
+});
 
 const ownerFixture = (source: string) =>
   Effect.gen(function* createOwnerFixture() {

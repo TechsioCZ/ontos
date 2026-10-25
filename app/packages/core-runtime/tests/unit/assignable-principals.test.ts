@@ -5,6 +5,7 @@ import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import {
   activeAssignmentMember,
@@ -64,7 +65,7 @@ const loadDirectory = (
     });
     const result = yield* Effect.result(
       database.transaction((transaction) =>
-        installOperationalScope(transaction, installed).pipe(
+        installOperationalScope(transaction, installed, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scoped) => loadAssignablePrincipalDirectory(scoped, requested)),
         ),
       ),

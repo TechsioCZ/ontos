@@ -5,6 +5,7 @@ import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { recoverSqlTransactionError } from '../actions/repository.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import { auditEvents } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { OperationalScopeResolver } from '../operations/context.ts';
@@ -112,6 +113,7 @@ export const IdentityAdministrationDeniedAuditLive = Layer.effect(
   IdentityAdministrationDeniedAudit,
   Effect.gen(function* makeIdentityAdministrationDeniedAudit() {
     const { executor } = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const resolver = yield* OperationalScopeResolver;
     const access = yield* ContextAccess;
     return {
@@ -177,7 +179,7 @@ export const IdentityAdministrationDeniedAuditLive = Layer.effect(
           const row = identityAdministrationDeniedAuditRow(scope, attempt);
           return yield* executor
             .transaction((transaction) =>
-              installOperationalScope(transaction, scope).pipe(
+              installOperationalScope(transaction, scope, enrollment).pipe(
                 Effect.flatMap((scoped) => scoped.insert(auditEvents).values(row)),
               ),
             )

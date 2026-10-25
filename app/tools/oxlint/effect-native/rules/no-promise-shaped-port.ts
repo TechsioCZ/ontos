@@ -487,7 +487,23 @@ export const rule = defineRule({
       parent.type === 'Property' && parent.value === current && parent.parent?.type === 'ObjectExpression';
     const authPropertyKey = (parent: any): unknown =>
       parent.computed ? computedKey(parent.key) : (parent.key.name ?? parent.key.value);
-    const atAuthHook = (node: any): boolean => {
+    /** Named SDK imports and immutable aliases only; shadowed/reassigned bindings are not proof. */
+    const authConstructor = (raw: any, seen = new Set<any>()): string | null => {
+      const node = unwrap(raw);
+      if (node?.type !== 'Identifier' || seen.has(node)) return null;
+      seen.add(node);
+      const variable = variableFor(node, node.name);
+      if (variable?.defs.length !== 1 || variable.references.some((ref: any) => ref.isWrite() && !ref.init))
+        return null;
+      const [def] = variable.defs;
+      if (def.type === 'ImportBinding') return importBindingPath(def);
+      return immutableDefinition(def, variable) ? authConstructor(def.node.init, seen) : null;
+    };
+    /** McpOptions extends OAuthOptions: these exact slots take one context and return Awaitable. */
+    const isMcpCallbackPath = (keys: readonly string[]): boolean =>
+      (keys.length === 1 && keys[0] === 'customAccessTokenClaims') ||
+      (keys.length === 2 && keys[0] === 'postLogin' && ['consentReferenceId', 'shouldRedirect'].includes(keys[1]!));
+    const atAuthCallback = (node: any): boolean => {
       let current = node;
       const keys: string[] = [];
       while (current.parent) {
@@ -496,18 +512,25 @@ export const rule = defineRule({
           current = parent;
           continue;
         }
-        if (!isObjectValue(parent, current)) break;
+        if (!isObjectValue(parent, current) || parent.kind !== 'init') break;
         const key = authPropertyKey(parent);
         if (typeof key !== 'string') return false;
         keys.unshift(key);
         current = parent.parent;
       }
       const call = current.parent;
+      if (call?.type !== 'CallExpression' || call.arguments.length !== 1 || call.arguments[0] !== current)
+        return false;
+      const constructor = authConstructor(call.callee);
+      const databaseHook =
+        ['better-auth:betterAuth', 'better-auth/minimal:betterAuth'].includes(constructor ?? '') &&
+        isAuthHookPath(keys);
+      const mcpCallback = constructor === '@better-auth/mcp:mcp' && isMcpCallbackPath(keys);
+      // BetterAuthOptions hooks take (record, context); OAuthOptions callbacks take (context).
       return (
-        call?.type === 'CallExpression' &&
-        call.arguments[0] === current &&
-        imported(call.callee) === 'better-auth:betterAuth' &&
-        isAuthHookPath(keys)
+        (databaseHook || mcpCallback) &&
+        node.params.length <= (databaseHook ? 2 : 1) &&
+        node.params.every((parameter: any) => parameter.type !== 'RestElement')
       );
     };
 
@@ -819,7 +842,7 @@ export const rule = defineRule({
       /(?:^|\/)src\/routes\//u.test(path) &&
       ['VariableDeclarator', 'FunctionDeclaration'].includes(namedOwner(node).type);
     const atImplementationBoundary = (node: AnyNode): boolean =>
-      atDriverEdge(node) || atAuthHook(node) || atTestBoundary(node) || exemptHelper(node);
+      atDriverEdge(node) || atAuthCallback(node) || atTestBoundary(node) || exemptHelper(node);
     const reportImplementation = (node: AnyNode, member: string, isAsync: boolean, wrapper: string | null): void => {
       reportedFunctions.add(node.start);
       report(node as ESTree.Node, isAsync ? 'asyncPort' : 'promiseReturningImplementation', {

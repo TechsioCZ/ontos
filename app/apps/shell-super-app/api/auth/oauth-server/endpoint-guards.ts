@@ -1,27 +1,15 @@
 /**
- * Checks the OAuth mount runs before Better Auth (ONTOS-MCP-AUTH-DESIGN.md §2.5, §3.1).
- *
- * - Refresh token reuse. Better Auth 1.7.12 answers a reused refresh token by deleting every refresh token of the
- *   (client, user) pair, so one company's connection would kill the user's other connections with the same app.
- *   Here the token family is the connection grant (`referenceId`): reuse after the 30 s grace revokes that one grant
- *   and writes audit `oauth.token.refresh_reuse`; a token that is merely dead is refused without side effects.
- * - Consent order. A code is issued only after "Povolit přístup" activated the draft grant of this browser session.
+ * Checks run before Better Auth. Refresh reuse revokes only the retained grant's token family, never the user's
+ * other company connections. The native Auth producer owns credential SQL; Core owns denied observations.
  */
 import { createHash } from 'node:crypto';
 
-import { eq } from 'drizzle-orm';
-import { jsonb, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
-import { Clock, Effect } from 'effect';
+import { OAuthAuthenticationAudit } from '@app/core-runtime';
+import { Clock, Context, Effect, Layer, Option, Redacted } from 'effect';
 
-import {
-  findGrant,
-  findSessionGrant,
-  setGrantBindingStatus,
-  setGrantStatus,
-} from '../../oauth-connections/grant-store.ts';
-import { AuthDatabase } from '../db/client.ts';
-import { oauthAccessToken, oauthConsent, oauthRefreshToken } from '../db/schema.ts';
-import type { OAuthEndpointGuards, RefreshTokenVerdict } from './policy.ts';
+import { OAuthEndpointGuardData } from '../../oauth-connections/grant-store.ts';
+import { OAuthGuardSessions } from './guard-sessions.ts';
+import type { OAuthEndpointGuards as OAuthEndpointGuardsContract, RefreshTokenVerdict } from './policy.ts';
 
 /** Better Auth stores refresh tokens as unpadded base64url SHA-256 (`storeTokens: 'hashed'`, no prefix). */
 export const refreshTokenStorageKey = (token: string): string => createHash('sha256').update(token).digest('base64url');
@@ -32,10 +20,7 @@ export interface StoredRefreshToken {
   readonly rotationReplayExpiresAt: Date | null;
 }
 
-/**
- * Pure: `pass` lets Better Auth answer (live token, or a rotated token still inside the replay grace); `dead` is a
- * revoked token that was never rotated; `reused` is a rotated token presented after the grace period.
- */
+/** `pass`: live/unknown token or replay grace; `dead`: never rotated; `reused`: rotated after grace. */
 export const classifyRefreshToken = (row: StoredRefreshToken | undefined, nowMillis: number): RefreshTokenVerdict => {
   if (row === undefined || row.revoked === null) {
     return 'pass';
@@ -46,123 +31,56 @@ export const classifyRefreshToken = (row: StoredRefreshToken | undefined, nowMil
   return row.rotationReplayExpiresAt !== null && row.rotationReplayExpiresAt.getTime() >= nowMillis ? 'pass' : 'reused';
 };
 
-const coreAuditEvents = pgSchema('core').table('audit_events', {
-  auditProfile: text('audit_profile').notNull(),
-  authBindingId: uuid('auth_binding_id'),
-  authMethod: text('auth_method').notNull(),
-  eventType: text('event_type').notNull(),
-  evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
-  legalEntityId: uuid('legal_entity_id'),
-  outcome: text('outcome').notNull(),
-  outcomeCode: text('outcome_code').notNull(),
-  outcomeStage: text('outcome_stage').notNull(),
-  principalId: uuid('principal_id'),
-  targetModuleKey: text('target_module_key'),
-  tenantId: uuid('tenant_id').notNull(),
-});
+export class OAuthEndpointGuards extends Context.Service<OAuthEndpointGuards, OAuthEndpointGuardsContract>()(
+  '@app/shell-super-app/api/auth/oauth-server/endpoint-guards/OAuthEndpointGuards',
+) {}
 
-/** Revokes the one grant whose rotated refresh token came back, with its tokens and binding, and audits it. */
-const revokeReusedGrant = Effect.fn('OAuthEndpointGuards.revokeReusedGrant')(function* revokeReusedGrantEffect(row: {
-  readonly clientId: string;
-  readonly id: string;
-  readonly referenceId: string | null;
-  readonly userId: string;
-}) {
-  const { executor } = yield* AuthDatabase;
-  if (row.referenceId === null) {
-    // No grant to cut off: drop only this token's own chain member.
-    yield* executor.delete(oauthAccessToken).where(eq(oauthAccessToken.refreshId, row.id));
-    yield* executor.delete(oauthRefreshToken).where(eq(oauthRefreshToken.id, row.id));
-    return;
-  }
-  const grantId = row.referenceId;
-  yield* executor.delete(oauthAccessToken).where(eq(oauthAccessToken.referenceId, grantId));
-  yield* executor.delete(oauthRefreshToken).where(eq(oauthRefreshToken.referenceId, grantId));
-  yield* executor.delete(oauthConsent).where(eq(oauthConsent.referenceId, grantId));
-  const grant = yield* findGrant(grantId);
-  if (grant === undefined) {
-    return;
-  }
-  if (grant.status === 'active') {
-    yield* setGrantStatus({ grantId, revokedByPrincipalId: null, revokeReason: null, status: 'revoked' });
-    if (grant.authBindingId !== null) {
-      yield* setGrantBindingStatus({
-        authBindingId: grant.authBindingId,
-        status: 'disabled',
-        tenantId: grant.tenantId,
-      });
-    }
-  }
-  yield* executor.insert(coreAuditEvents).values({
-    auditProfile: 'sensitive',
-    authBindingId: grant.authBindingId,
-    authMethod: 'oauth_refresh_token',
-    eventType: 'oauth.token.refresh_reuse',
-    evidenceJson: {
-      clientId: row.clientId,
-      clientName: grant.clientName,
-      grantId,
-      grantStatusBefore: grant.status,
-      refreshTokenId: row.id,
+/** Capture real native producers once at authentication composition, not a transport-visible global database. */
+const makeOAuthEndpointGuards = Effect.fn('OAuthEndpointGuards.make')(function* makeOAuthEndpointGuards() {
+  const data = yield* OAuthEndpointGuardData;
+  const audit = yield* OAuthAuthenticationAudit;
+  const sessions = yield* OAuthGuardSessions;
+  const refreshTokenStatus = Effect.fn('OAuthEndpointGuards.refreshTokenStatus')(
+    function* checkRefreshToken(refreshToken: Redacted.Redacted, options: { readonly revokeOnReuse: boolean }) {
+      const row = yield* data.loadRefresh(refreshTokenStorageKey(Redacted.value(refreshToken)));
+      const verdict = classifyRefreshToken(Option.getOrUndefined(row), yield* Clock.currentTimeMillis);
+      if (verdict === 'reused' && Option.isSome(row) && options.revokeOnReuse) {
+        const { grant } = row.value;
+        const observe = Option.isSome(grant)
+          ? audit.record({
+              authBindingId: grant.value.authBindingId,
+              authMethod: 'oauth_refresh_token',
+              eventType: 'oauth.token.refresh_reuse',
+              evidence: {
+                clientId: row.value.clientId,
+                grantStatusBefore: grant.value.status,
+                refreshTokenId: row.value.id,
+              },
+              grant: grant.value,
+              outcome: 'denied',
+              outcomeCode: 'refresh_reuse',
+              principalId: grant.value.userPrincipalId,
+            })
+          : Effect.void;
+        // Cleanup is attempted even if auditing is unavailable; denial is observed after commit/rollback even
+        // when cleanup fails. Disabled bindings do not gate this native observer and failures are not swallowed.
+        yield* data.revokeFamily(row.value).pipe(Effect.ensuring(observe.pipe(Effect.orDie)));
+      }
+      return verdict;
     },
-    legalEntityId: grant.legalEntityId,
-    outcome: 'denied',
-    outcomeCode: 'refresh_reuse',
-    outcomeStage: 'authn',
-    principalId: grant.userPrincipalId,
-    targetModuleKey: 'core.identity',
-    tenantId: grant.tenantId,
-  });
+    // A failed lookup, observation or cleanup must not enter Better Auth's global refresh-reuse path.
+    Effect.orDie,
+  );
+  return {
+    consentApproved: Effect.fn('OAuthEndpointGuards.consentApproved')(
+      function* consentApproved(headers: Headers) {
+        const session = yield* sessions.read(headers);
+        return Option.isNone(session) ? false : yield* data.consentApproved(session.value);
+      },
+      Effect.orElseSucceed(() => false),
+    ),
+    refreshTokenStatus,
+  } satisfies OAuthEndpointGuardsContract;
 });
 
-export interface OAuthGuardSession {
-  readonly sessionId: string;
-  readonly userId: string;
-}
-
-export const makeOAuthEndpointGuards = (input: {
-  readonly database: (typeof AuthDatabase)['Service'];
-  /** The Better Auth session of the request cookies, or undefined when signed out. */
-  readonly readSession: (headers: Headers) => Effect.Effect<OAuthGuardSession | undefined>;
-}): OAuthEndpointGuards => {
-  const withDatabase = Effect.provideService(AuthDatabase, input.database);
-  return {
-    consentApproved: (headers) =>
-      input.readSession(headers).pipe(
-        Effect.flatMap((session) =>
-          session === undefined
-            ? Effect.succeed(false)
-            : findSessionGrant(session).pipe(Effect.map((grant) => grant?.status === 'active')),
-        ),
-        withDatabase,
-        // Fail closed: without a readable grant no code is issued.
-        Effect.orElseSucceed(() => false),
-      ),
-    refreshTokenStatus: (refreshToken, options) =>
-      Effect.gen(function* checkRefreshToken() {
-        const { executor } = yield* AuthDatabase;
-        const [row] = yield* executor
-          .select({
-            clientId: oauthRefreshToken.clientId,
-            id: oauthRefreshToken.id,
-            referenceId: oauthRefreshToken.referenceId,
-            revoked: oauthRefreshToken.revoked,
-            rotatedAt: oauthRefreshToken.rotatedAt,
-            rotationReplayExpiresAt: oauthRefreshToken.rotationReplayExpiresAt,
-            userId: oauthRefreshToken.userId,
-          })
-          .from(oauthRefreshToken)
-          .where(eq(oauthRefreshToken.token, refreshTokenStorageKey(refreshToken)))
-          .limit(1);
-        const verdict = classifyRefreshToken(row, yield* Clock.currentTimeMillis);
-        if (verdict === 'reused' && row !== undefined && options.revokeOnReuse) {
-          yield* revokeReusedGrant(row);
-        }
-        return verdict;
-      }).pipe(
-        withDatabase,
-        // A lookup failure leaves the decision to Better Auth.
-        Effect.orElseSucceed((): RefreshTokenVerdict => 'pass'),
-      ),
-  };
-};
+export const OAuthEndpointGuardsLive = Layer.effect(OAuthEndpointGuards, makeOAuthEndpointGuards());

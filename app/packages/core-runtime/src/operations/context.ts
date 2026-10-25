@@ -20,7 +20,8 @@ import {
   readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
+import { DatabaseIdentityEnrollmentContext, gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
@@ -96,6 +97,7 @@ const operationContextUnavailable = (cause?: unknown) => {
 const selectPersistedScope = <Row, E>(
   database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
   principal: TrustedPrincipalContext,
+  enrollment: DatabaseIdentityEnrollment,
   select: (executor: Pick<CoreTransaction, 'select'>) => Effect.Effect<readonly Row[], E>,
 ) =>
   Effect.suspend(() =>
@@ -105,20 +107,22 @@ const selectPersistedScope = <Row, E>(
           installOperationalScope(
             transaction,
             preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' }),
+            enrollment,
           ).pipe(Effect.andThen(() => select(transaction))),
         ),
   );
 
-export const makeOperationalScopeRepository = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
-}): OperationalScopeRepository => ({
+export const makeOperationalScopeRepository = (
+  database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
+  enrollment: DatabaseIdentityEnrollment,
+): OperationalScopeRepository => ({
   load: (principal) =>
-    selectPersistedScope(database, principal, (executor) => {
+    selectPersistedScope(database, principal, enrollment, (executor) => {
       const impersonators = alias(principals, 'impersonators');
       const bindingAudit = alias(auditEvents, 'binding_creation_audit');
       const assertion = readVerifiedGatewayScopeAssertion(principal);
       const gatewayScoped =
-        assertion !== undefined && Option.isSome(gatewayScopeGrantRoleForAudience(assertion.audience));
+        assertion !== undefined && Option.isSome(gatewayScopeGrantRoleForAudience(enrollment, assertion.audience));
       const query = executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
@@ -598,7 +602,10 @@ export const makeOperationalScopeResolver = (
 };
 
 const inactiveOperationDenial =
-  (database: { readonly executor: Pick<CoreDatabaseExecutor, 'transaction'> }) =>
+  (
+    database: { readonly executor: Pick<CoreDatabaseExecutor, 'transaction'> },
+    enrollment: DatabaseIdentityEnrollment,
+  ) =>
   (input: ResolveOperationalScopeInput): Effect.Effect<void> =>
     database.executor
       .transaction((transaction) =>
@@ -608,6 +615,7 @@ const inactiveOperationDenial =
             ...input.principal,
             correlationId: input.correlationId,
           }),
+          enrollment,
         ).pipe(
           Effect.andThen(() =>
             transaction.insert(auditEvents).values({
@@ -638,7 +646,11 @@ const inactiveOperationDenial =
 
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,
-  CoreDatabase.pipe(Effect.map(makeOperationalScopeRepository)),
+  Effect.gen(function* makeOperationalScopeRepositoryService() {
+    const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
+    return makeOperationalScopeRepository(database, enrollment);
+  }),
 );
 
 export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
@@ -647,10 +659,11 @@ export const OperationalScopeResolverFromRepositoryLive = Layer.effect(
     const repository = yield* OperationalScopeRepositoryContext;
     const contextAccess = yield* ContextAccess;
     const database = yield* Effect.serviceOption(CoreDatabase);
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     return makeOperationalScopeResolver(
       repository,
       contextAccess,
-      Option.isSome(database) ? inactiveOperationDenial(database.value) : undefined,
+      Option.isSome(database) ? inactiveOperationDenial(database.value, enrollment) : undefined,
     );
   }),
 );
@@ -659,11 +672,12 @@ export const OperationalScopeResolverLive = Layer.effect(
   OperationalScopeResolver,
   Effect.gen(function* createLiveOperationalScopeResolverService() {
     const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const contextAccess = yield* ContextAccess;
     return makeOperationalScopeResolver(
-      makeOperationalScopeRepository(database),
+      makeOperationalScopeRepository(database, enrollment),
       contextAccess,
-      inactiveOperationDenial(database),
+      inactiveOperationDenial(database, enrollment),
     );
   }),
 );

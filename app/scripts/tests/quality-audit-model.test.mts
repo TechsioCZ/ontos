@@ -1585,16 +1585,19 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
           'work-tasks',
         ].map((owner) => `verticals/${owner}/scripts/reset-demo.mts`),
       ];
-      const checked = ['legal-agreements', 'property-leasing'].map(
-        (owner) => `verticals/${owner}/scripts/verify-db-schema.mts`,
-      );
-      checked.push('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
+      const checked = [
+        'scripts/verify-core-db-schema.mts',
+        ...['legal-agreements', 'property-leasing'].map((owner) => `verticals/${owner}/scripts/verify-db-schema.mts`),
+        'verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts',
+      ];
       for (const file of [...valid, ...checked]) {
-        write(
-          root,
-          `${file.split('/').slice(0, 2).join('/')}/package.json`,
-          '{"name":"@fixture/owner","type":"module"}',
-        );
+        if (!file.startsWith('scripts/')) {
+          write(
+            root,
+            `${file.split('/').slice(0, 2).join('/')}/package.json`,
+            '{"name":"@fixture/owner","type":"module"}',
+          );
+        }
         write(root, file, 'export const unusedOwnerNeighbor = 1;');
       }
       const dead = 'scripts/inert-port.mts';

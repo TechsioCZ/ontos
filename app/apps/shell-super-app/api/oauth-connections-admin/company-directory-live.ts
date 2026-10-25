@@ -52,23 +52,23 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
       const lifecycle = yield* ActionAuthorizationLifecycle;
       const catalog = yield* ShellInstalledModuleCatalog;
 
-      const snapshot = Effect.fn('CompanyDirectory.snapshot')(function* directorySnapshot() {
-        return yield* reads
-          .runRead({
-            input: {},
-            principal: request.principal,
-            registration: companyAgentDirectoryRead,
-            transport: { correlationId: request.transport.correlationId },
-          })
-          .pipe(Effect.mapError(fromRuntimeError));
-      });
+      const snapshot = Effect.suspend(() =>
+        reads.runRead({
+          input: {},
+          principal: request.principal,
+          registration: companyAgentDirectoryRead,
+          transport: { correlationId: request.transport.correlationId },
+        }),
+      ).pipe(Effect.mapError(fromRuntimeError), Effect.withSpan('CompanyDirectory.snapshot'));
 
       const reconcile = Effect.fn('CompanyDirectory.reconcile')(function* reconcileOperators(agentPrincipalId: string) {
-        const installed = yield* catalog.load.pipe(Effect.mapError(unavailable));
-        yield* lifecycle
-          .reconcilePrincipal(request.principal.tenantId, agentPrincipalId, installed.composition.revision)
-          .pipe(Effect.mapError(unavailable));
-      });
+        const installed = yield* catalog.load;
+        yield* lifecycle.reconcilePrincipal(
+          request.principal.tenantId,
+          agentPrincipalId,
+          installed.composition.revision,
+        );
+      }, Effect.mapError(unavailable));
 
       const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function* replaceOperatorsEffect(
         input: Parameters<CompanyDirectoryPort<never>['replaceOperators']>[0],
@@ -127,7 +127,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         }
         // A matching committed command is resumed rather than written/audited again.
         yield* reconcile(agent.principalId);
-        const confirmed = (yield* snapshot()).agents.find((candidate) => candidate.principalId === agent.principalId);
+        const confirmed = (yield* snapshot).agents.find((candidate) => candidate.principalId === agent.principalId);
         if (
           confirmed?.status !== 'active' ||
           confirmed.operatorCommand?.revision !== revision ||

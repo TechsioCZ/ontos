@@ -1,8 +1,8 @@
-import { Effect, Predicate } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, FileSystem, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  ROOT_ENV_PATH,
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
   loadDatabaseIdentityConnections,
@@ -10,12 +10,12 @@ import {
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
 import type { DatabaseEnvironment } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-  SHARED_RUNTIME_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../src/db/database-identities.ts';
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  FIXTURE_REQUEST_IDENTITY,
+  FIXTURE_WORKER_IDENTITY,
+} from '../support/database-identities.ts';
 
 /** No dotenv file, so each test sees only the environment it passes. */
 const missingEnvPath = '/nonexistent/ontos-config-test/.env';
@@ -30,30 +30,39 @@ const identityEnvironment = {
 
 const identityFailure = (overrides: DatabaseEnvironment) =>
   Effect.flip(
-    loadDatabaseIdentityConnections({ environment: { ...identityEnvironment, ...overrides }, envPath: missingEnvPath }),
+    loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      environment: { ...identityEnvironment, ...overrides },
+      envPath: missingEnvPath,
+    }),
   ).pipe(Effect.map((error) => error.reason));
 
-it.effect('loads the root environment independently of the invocation directory', () =>
-  Effect.gen(function* migratedTest() {
-    const originalDirectory = process.cwd();
-    const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
+it.layer(NodeServices.layer)((suite) => {
+  suite.effect('loads an absolute configuration fixture independently of the invocation directory', () =>
+    Effect.gen(function* absoluteConfigurationFixture() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-database-config-' });
+      const fixturePath = `${directory}/database.fixture`;
+      const connectionString = 'postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos';
+      yield* fileSystem.writeFileString(fixturePath, `DATABASE_URL=${connectionString}\n`);
+      const originalDirectory = process.cwd();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          process.chdir(originalDirectory);
+        }),
+      );
+      process.chdir('/');
+      const configuration = yield* loadDatabaseConfig({
+        environment: {},
+        envPath: fixturePath,
+        identity: SHARED_RUNTIME_IDENTITY,
+      });
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        process.chdir(originalDirectory);
-      }),
-    );
-    process.chdir('/');
-    const configuration = yield* loadDatabaseConfig({
-      environment: {},
-      envPath: rootExamplePath,
-      identity: SHARED_RUNTIME_IDENTITY,
-    });
-
-    expect(ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-    expect(configuration.connectionString).toBe('postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos');
-  }),
-);
+      expect(configuration.user).toBe(SHARED_RUNTIME_IDENTITY.role);
+      expect(configuration.connectionString).toBe(connectionString);
+    }),
+  );
+});
 
 it.effect('parses valid local PostgreSQL connection settings', () =>
   Effect.gen(function* migratedTest() {
@@ -134,14 +143,14 @@ it.effect('each runtime identity loads from its own URL key and names that key w
   Effect.gen(function* identityKeysAreRead() {
     const environment = { environment: identityEnvironment, envPath: missingEnvPath };
     const issuer = yield* loadDatabaseConfig({ ...environment, identity: SHELL_GATEWAY_ISSUER_IDENTITY });
-    const party = yield* loadDatabaseConfig({ ...environment, identity: PARTY_REGISTRY_REQUEST_IDENTITY });
-    const workerPair = yield* loadDatabaseConnectionPair({ ...environment, identity: PARTY_REGISTRY_WORKER_IDENTITY });
+    const party = yield* loadDatabaseConfig({ ...environment, identity: FIXTURE_REQUEST_IDENTITY });
+    const workerPair = yield* loadDatabaseConnectionPair({ ...environment, identity: FIXTURE_WORKER_IDENTITY });
     const shared = yield* loadDatabaseConfig({ ...environment, identity: SHARED_RUNTIME_IDENTITY });
     const missing = yield* Effect.flip(
       loadDatabaseConfig({
         environment: { DATABASE_URL: identityEnvironment.DATABASE_URL },
         envPath: missingEnvPath,
-        identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+        identity: FIXTURE_REQUEST_IDENTITY,
       }),
     );
 
@@ -159,11 +168,11 @@ it.effect('a runtime identity URL must connect as that identity role', () =>
     const mismatches = [
       [SHARED_RUNTIME_IDENTITY, { DATABASE_URL: 'postgresql://party_registry_runtime:secret@localhost:5433/ontos' }],
       [
-        PARTY_REGISTRY_REQUEST_IDENTITY,
+        FIXTURE_REQUEST_IDENTITY,
         { PARTY_REGISTRY_DATABASE_URL: 'postgresql://ontos_runtime:secret@localhost:5433/ontos' },
       ],
       [
-        PARTY_REGISTRY_REQUEST_IDENTITY,
+        FIXTURE_REQUEST_IDENTITY,
         {
           PARTY_REGISTRY_DATABASE_URL:
             'postgresql://party_registry_runtime:secret@localhost:5433/ontos?user=ontos_runtime',
@@ -180,7 +189,9 @@ it.effect('a runtime identity URL must connect as that identity role', () =>
 it.effect('loads every checked-in identity against the admin database', () =>
   Effect.gen(function* identityConnectionsLoad() {
     const connections = yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       environment: identityEnvironment,
+
       envPath: missingEnvPath,
     });
 

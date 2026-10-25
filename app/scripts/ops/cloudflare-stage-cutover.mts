@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as Arr,
@@ -21,7 +22,6 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identities.ts';

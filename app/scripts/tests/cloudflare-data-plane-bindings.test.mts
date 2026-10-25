@@ -1,3 +1,7 @@
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry/database-identities';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -6,8 +10,6 @@ import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';

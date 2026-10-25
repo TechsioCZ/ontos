@@ -1,5 +1,4 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import type { SQL } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -17,15 +16,11 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Schema } from 'effect';
+import type { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
 
-import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-  SHARED_RUNTIME_IDENTITY,
-} from './database-identity-manifest.ts';
+import { SHARED_RUNTIME_IDENTITY } from './database-identity-manifest.ts';
 
 export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
 
@@ -103,32 +98,7 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultN
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
-const CANONICAL_MODULE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
-
-const CorePolicyDefinitionInvariantError = Schema.TaggedError<Error>()('CorePolicyDefinitionInvariantError', {
-  message: Schema.String,
-});
-
-/** Renders a module key (or its action-key prefix) as a SQL literal only after proving it is canonical. */
-const moduleKeyPolicyLiteral = (moduleKey: string | null, suffix: '' | '.'): SQL => {
-  if (moduleKey === null || !CANONICAL_MODULE_KEY_PATTERN.test(moduleKey)) {
-    throw new CorePolicyDefinitionInvariantError({ message: 'Core policy module key is not canonical' });
-  }
-  return sql.raw(`'${moduleKey}${suffix}'`);
-};
-
 const SHARED_RUNTIME_ROLE = SHARED_RUNTIME_IDENTITY.role;
-const PARTY_REGISTRY_REQUEST_ROLE = PARTY_REGISTRY_REQUEST_IDENTITY.role;
-const PARTY_REGISTRY_WORKER_ROLE = PARTY_REGISTRY_WORKER_IDENTITY.role;
-const PARTY_REGISTRY_ROLES = [PARTY_REGISTRY_REQUEST_ROLE, PARTY_REGISTRY_WORKER_ROLE];
-const PARTY_REGISTRY_MODULE_KEY = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '');
-const PARTY_REGISTRY_ACTION_KEY_PREFIX = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '.');
-const TRUSTED_TENANT_ID = sql`(select trust.current_tenant_id())`;
-const SESSION_TENANT_ID = sql`nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
-
-/** A sealed legal entity narrows non-global rows; an unselected scope is tenant-wide. */
-const trustedTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntityColumn: AnyPgColumn) =>
-  sql`${tenantColumn} = ${TRUSTED_TENANT_ID} and ((select trust.current_legal_entity_id()) is null or ${legalEntityColumn} is null or ${legalEntityColumn} = (select trust.current_legal_entity_id()))`;
 
 /** The shared runtime keeps its pre-pilot unrestricted access once RLS guards a Core table. */
 const sharedRuntimeAllPolicy = (tableName: string) =>
@@ -163,11 +133,6 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
         'core_application_composition_authority_phase_ck',
         sql`${table.phase} in ('active', 'draining', 'sealed', 'migrated')`,
       ),
-      pgPolicy('core_application_composition_authority_select', {
-        for: 'select',
-        to: [SHARED_RUNTIME_ROLE, ...PARTY_REGISTRY_ROLES],
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -218,19 +183,6 @@ export const tenants = enableCoreGovernedRls(
       uniqueIndex('core_tenants_slug_uk').on(table.slug),
       check('core_tenants_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
       sharedRuntimeAllPolicy('tenants'),
-      pgPolicy('core_tenants_party_registry_select', { for: 'select', to: PARTY_REGISTRY_ROLES, using: sql`true` }),
-      pgPolicy('core_tenants_party_registry_request_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-        withCheck: sql`false`,
-      }),
-      pgPolicy('core_tenants_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -267,16 +219,6 @@ export const legalEntities = enableCoreGovernedRls(
       check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
       check('core_legal_entities_welcome_ck', sql`length(${table.welcome}) between 1 and 400`),
       sharedRuntimeAllPolicy('legal_entities'),
-      pgPolicy('core_legal_entities_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
-      pgPolicy('core_legal_entities_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -299,11 +241,6 @@ export const principals = enableCoreGovernedRls(
       check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
       check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
       sharedRuntimeAllPolicy('principals'),
-      pgPolicy('core_principals_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
     ],
   ),
 );
@@ -366,11 +303,6 @@ export const principalAuthBindings = enableCoreGovernedRls(
         sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
       ),
       sharedRuntimeAllPolicy('principal_auth_bindings'),
-      pgPolicy('core_principal_auth_bindings_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
-      }),
     ],
   ),
 );
@@ -489,17 +421,6 @@ export const tenantModuleStates = enableCoreGovernedRls(
         sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
       ),
       sharedRuntimeAllPolicy('tenant_module_states'),
-      pgPolicy('core_tenant_module_states_party_registry_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_ROLES,
-        using: sql`true`,
-      }),
-      pgPolicy('core_tenant_module_states_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -580,27 +501,6 @@ export const actionInvocations = enableCoreGovernedRls(
         sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
       ),
       sharedRuntimeAllPolicy('action_invocations'),
-      pgPolicy('core_action_invocations_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_request_update', {
-        for: 'update',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
-      }),
-      pgPolicy('core_action_invocations_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
     ],
   ),
 );
@@ -687,16 +587,6 @@ export const auditEvents = enableCoreGovernedRls(
       ),
       check('core_audit_events_profile_ck', sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`),
       sharedRuntimeAllPolicy('audit_events'),
-      pgPolicy('core_audit_events_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
-      }),
-      pgPolicy('core_audit_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
-      }),
     ],
   ),
 );
@@ -764,11 +654,6 @@ export const dataAccessEvents = enableCoreGovernedRls(
         sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`,
       ),
       sharedRuntimeAllPolicy('data_access_events'),
-      pgPolicy('core_data_access_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.servingModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
     ],
   ),
 );
@@ -819,22 +704,6 @@ export const domainEvents = enableCoreGovernedRls(
         name: 'core_domain_events_tenant_invocation_fk',
       }).onDelete('restrict'),
       sharedRuntimeAllPolicy('domain_events'),
-      pgPolicy('core_domain_events_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_domain_events_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
-      pgPolicy('core_domain_events_party_registry_worker_lock', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`false`,
-      }),
     ],
   ),
 );
@@ -866,22 +735,6 @@ export const outboxMessages = enableCoreGovernedRls(
         name: 'core_outbox_messages_tenant_domain_event_fk',
       }).onDelete('restrict'),
       sharedRuntimeAllPolicy('outbox_messages'),
-      pgPolicy('core_outbox_messages_party_registry_request_insert', {
-        for: 'insert',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_outbox_messages_party_registry_worker_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-      }),
-      pgPolicy('core_outbox_messages_party_registry_worker_update', {
-        for: 'update',
-        to: PARTY_REGISTRY_WORKER_ROLE,
-        using: sql`true`,
-        withCheck: sql`true`,
-      }),
     ],
   ),
 );
@@ -1130,32 +983,6 @@ export const evidenceReferences = coreSchema.table(
   ],
 );
 
-/** The Party Registry worker maintains only Party Registry projections under its session tenant setting. */
-const partyRegistryWorkerSearchPolicies = (
-  prefix: string,
-  table: { readonly sourceModuleKey: AnyPgColumn; readonly tenantId: AnyPgColumn },
-) => {
-  const predicate = sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`;
-  return [
-    pgPolicy(`${prefix}_party_registry_worker_select`, {
-      for: 'select',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      using: predicate,
-    }),
-    pgPolicy(`${prefix}_party_registry_worker_insert`, {
-      for: 'insert',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      withCheck: predicate,
-    }),
-    pgPolicy(`${prefix}_party_registry_worker_update`, {
-      for: 'update',
-      to: PARTY_REGISTRY_WORKER_ROLE,
-      using: predicate,
-      withCheck: predicate,
-    }),
-  ];
-};
-
 export const searchIndexEntries = enableCoreGovernedRls(
   coreSchema.table(
     'search_index_entries',
@@ -1202,33 +1029,6 @@ export const searchIndexEntries = enableCoreGovernedRls(
         sql`${table.deleted} or (length(btrim(${table.title})) > 0 and length(${table.title}) <= 300 and length(${table.bodyText}) <= 40000)`,
       ),
       check('core_search_index_entries_version_ck', sql`${table.projectionVersion} > 0`),
-      pgPolicy('core_search_index_entries_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_tenant_delete', {
-        for: 'delete',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_index_entries_party_registry_request_select', {
-        for: 'select',
-        to: PARTY_REGISTRY_REQUEST_ROLE,
-        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_index_entries', table),
     ],
   ),
 );
@@ -1250,23 +1050,6 @@ export const searchProjectionGenerations = enableCoreGovernedRls(
         columns: [table.tenantId, table.sourceModuleKey],
       }),
       check('core_search_projection_generations_positive_ck', sql`${table.generation} > 0`),
-      pgPolicy('core_search_projection_generations_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_generations_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_generations_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_projection_generations', table),
     ],
   ),
 );
@@ -1290,23 +1073,6 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
       }),
       check('core_search_projection_rebuilds_version_ck', sql`${table.rebuildVersion} > 0`),
       check('core_search_projection_rebuilds_fingerprint_ck', sql`${table.fingerprint} ~ '^[a-f0-9]{64}$'`),
-      pgPolicy('core_search_projection_rebuilds_tenant_select', {
-        for: 'select',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_rebuilds_tenant_insert', {
-        for: 'insert',
-        to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      pgPolicy('core_search_projection_rebuilds_tenant_update', {
-        for: 'update',
-        to: 'ontos_runtime',
-        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
-      }),
-      ...partyRegistryWorkerSearchPolicies('core_search_projection_rebuilds', table),
     ],
   ),
 );

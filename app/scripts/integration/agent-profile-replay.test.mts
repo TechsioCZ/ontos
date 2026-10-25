@@ -1,3 +1,4 @@
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
@@ -30,7 +31,13 @@ import {
   makeActionRuntime,
 } from '../../packages/core-runtime/src/actions/runtime.ts';
 import { ActionAuthorityLive } from '../../packages/core-runtime/src/permissions/action-authority.ts';
+import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
+import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
+import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthAuthenticationAuditLive } from '../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { makeReadRuntime, ReadRuntime } from '../../packages/core-runtime/src/reads/runtime.ts';
 import {
   ActionAuthorizationLifecycle,
@@ -51,6 +58,7 @@ import {
 import { staffAuthenticationNamespaceRegistration } from '../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   applicationCompositionAuthority,
   auditEvents,
@@ -104,6 +112,8 @@ import {
   LegalEntityContext,
   makeLegalEntityContext,
 } from '../../packages/core-runtime/src/auth/legal-entity-context.ts';
+import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import { makeInstalledModuleCatalogLayer } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { runAgentOperatorSetup } from '../demo/setup-agent-operators.mts';
@@ -240,7 +250,21 @@ it.live(
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: registration.authenticationNamespaceId,
       });
-      const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+      const oauthAuthenticationLayer = Layer.mergeAll(
+        BetterAuthRuntimeLive,
+        OAuthAuthenticationAuditLive,
+        OAuthEndpointGuardDataLive,
+        OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+      ).pipe(
+        Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+        Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(AuthDatabase, authDatabase))),
+      );
+      const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+        Layer.provideMerge(oauthAuthenticationLayer),
+      );
+      const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+      const authentication = yield* makeAuthenticationService().pipe(
+        Effect.provide(authenticationGuards),
         Effect.provideService(AuthConfig, authConfig),
         Effect.provideService(AuthDatabase, authDatabase),
         Effect.provideService(PrincipalResolver, resolver),
@@ -412,9 +436,13 @@ it.live(
         database,
         makeActionRepository(),
         actionPermission,
-        makeOperationalScopeResolver(makeOperationalScopeRepository(database), access),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
+          access,
+        ),
         {
           contextAccess: access,
+          databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
           moduleEntrypointGateway: makeModuleEntrypointGateway(gate),
           moduleStateGate: gate,
           resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
@@ -423,8 +451,12 @@ it.live(
       const readRuntime = makeReadRuntime(
         database,
         makeModuleEntrypointGateway(gate),
-        makeOperationalScopeResolver(makeOperationalScopeRepository(database), access),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
+          access,
+        ),
         access,
+        { databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT },
       );
       const lifecycleContext = yield* Layer.build(
         ActionAuthorizationLifecycleLive.pipe(
@@ -768,7 +800,10 @@ it.live(
           principalId: original.principalId,
           tenantId,
         };
-        const keyScope = makeOperationalScopeResolver(makeOperationalScopeRepository(database), access);
+        const keyScope = makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
+          access,
+        );
         yield* keyScope.resolve({
           correlationId: randomUUID(),
           legalEntityScope: 'required',
@@ -1126,6 +1161,10 @@ it.live(
         ),
       );
       return yield* Effect.void;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
+    ),
   120_000,
 );

@@ -38,6 +38,7 @@ import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
 const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure', {
@@ -345,8 +346,12 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
       const runtime = makeReadRuntime(
         { executor: runtimeDatabase },
         openModuleEntrypointGateway,
-        makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: runtimeDatabase }), contextAccess),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository({ executor: runtimeDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          contextAccess,
+        ),
         contextAccess,
+        { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
       );
       return runtime
         .runRead({

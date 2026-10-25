@@ -3,13 +3,14 @@
  * Better Auth runs with basePath OAUTH_BASE_PATH; only the endpoints below are reachable over HTTP. CIMD only: dynamic
  * client registration (/oauth2/register) is never mounted (NO-COMPAT rule).
  */
-import type { Effect } from 'effect';
+import { Duration, Schema } from 'effect';
+import type { Cause, Effect, Redacted } from 'effect';
 
 export const OAUTH_BFF_PREFIX = '/shell-super-app-api';
 export const OAUTH_BASE_PATH = '/shell-super-app-api/oauth';
 export const OAUTH_SCOPES = ['openid', 'profile', 'email', 'offline_access', 'ontos'] as const;
 export const OAUTH_ACCESS_TOKEN_TTL_SECONDS = 600;
-export const OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 3600;
+export const OAUTH_REFRESH_TOKEN_TTL_SECONDS = Duration.toSeconds(Duration.days(30));
 export const OAUTH_LOGIN_PAGE = '/cs/login';
 export const OAUTH_CONNECT_PAGE = '/cs/pripojit';
 export const OAUTH_CONSENT_PAGE = '/cs/pripojit/souhlas';
@@ -24,18 +25,19 @@ export interface OAuthEndpointGuards {
    * `dead`: revoked without rotation. `pass`: Better Auth decides (live token, replay grace, unknown token).
    */
   readonly refreshTokenStatus: (
-    refreshToken: string,
+    refreshToken: Redacted.Redacted,
     options: { readonly revokeOnReuse: boolean },
   ) => Effect.Effect<RefreshTokenVerdict>;
 }
 
-export type RefreshTokenVerdict = 'dead' | 'pass' | 'reused';
+export const RefreshTokenVerdictSchema = Schema.Literals(['dead', 'pass', 'reused']);
+export type RefreshTokenVerdict = typeof RefreshTokenVerdictSchema.Type;
 
 /** What the authentication service exposes to the HTTP mount. */
 export interface OAuthServerEndpoint {
   readonly guards?: OAuthEndpointGuards;
-  /** Better Auth `auth.handler`; receives absolute issuer-prefixed URLs. */
-  readonly handler: (request: Request) => Promise<Response>;
+  /** Deferred Better Auth dispatch; receives absolute issuer-prefixed URLs and retains native rejection evidence. */
+  readonly handler: (request: Request) => Effect.Effect<Response, Cause.UnknownError>;
   /** Exact issuer string, e.g. http://localhost:3020/shell-super-app-api/oauth (no trailing slash). */
   readonly issuer: string;
 }
@@ -59,7 +61,8 @@ const METADATA_PATHS: ReadonlySet<string> = new Set([
   '/.well-known/openid-configuration',
 ]);
 
-export type OAuthRouteKind = 'blocked' | 'endpoint' | 'metadata';
+export const OAuthRouteKindSchema = Schema.Literals(['blocked', 'endpoint', 'metadata']);
+export type OAuthRouteKind = typeof OAuthRouteKindSchema.Type;
 
 /** The BFF transport may see the path without the `/shell-super-app-api` prefix; this restores it. */
 export const fullOAuthPath = (pathname: string): string =>
@@ -108,7 +111,8 @@ export const withOAuthResponseHeaders = (kind: 'endpoint' | 'metadata', response
   return new Response(response.body, { headers, status: response.status, statusText: response.statusText });
 };
 
-export const oauthPreflightResponse = (): Response => new Response(null, { headers: METADATA_CORS_HEADERS, status: 204 });
+export const oauthPreflightResponse = (): Response =>
+  new Response(null, { headers: METADATA_CORS_HEADERS, status: 204 });
 
 export const oauthNotFoundResponse = (): Response =>
   new Response('{"error":"not_found"}', {
@@ -183,32 +187,39 @@ export const withOfflineAccess = (search: string): string => {
   return `?${params.toString()}`;
 };
 
-const UNSERVED_METADATA_FIELDS = [
-  'introspection_endpoint',
-  'introspection_endpoint_auth_methods_supported',
-  'introspection_endpoint_auth_signing_alg_values_supported',
-] as const;
 const PUBLIC_CLIENT_AUTH_METHODS = ['none', 'private_key_jwt'] as const;
+
+/** OIDC method fields are owned here; provider-specific discovery extensions remain opaque JSON. */
+export const OAuthMetadataDocumentSchema = Schema.StructWithRest(
+  Schema.Struct({
+    issuer: Schema.optionalKey(Schema.String),
+    revocation_endpoint_auth_methods_supported: Schema.optionalKey(Schema.Array(Schema.String)),
+    token_endpoint_auth_methods_supported: Schema.optionalKey(Schema.Array(Schema.String)),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 
 /**
  * Metadata advertises only what this CIMD-only public AS serves: no introspection endpoint (§2.1) and no client
  * secret authentication methods. Every other field stays as Better Auth wrote it.
  */
-export const publicMetadataDocument = (document: Readonly<Record<string, unknown>>): Record<string, unknown> => {
-  const result: Record<string, unknown> = { ...document };
-  for (const field of UNSERVED_METADATA_FIELDS) {
-    delete result[field];
+export const publicMetadataDocument = (document: typeof OAuthMetadataDocumentSchema.Type) => {
+  const result = { ...document };
+  delete result['introspection_endpoint'];
+  delete result['introspection_endpoint_auth_methods_supported'];
+  delete result['introspection_endpoint_auth_signing_alg_values_supported'];
+  if (document.token_endpoint_auth_methods_supported !== undefined) {
+    result.token_endpoint_auth_methods_supported = [...PUBLIC_CLIENT_AUTH_METHODS];
   }
-  for (const field of ['token_endpoint_auth_methods_supported', 'revocation_endpoint_auth_methods_supported']) {
-    if (Array.isArray(result[field])) {
-      result[field] = [...PUBLIC_CLIENT_AUTH_METHODS];
-    }
+  if (document.revocation_endpoint_auth_methods_supported !== undefined) {
+    result.revocation_endpoint_auth_methods_supported = [...PUBLIC_CLIENT_AUTH_METHODS];
   }
   return result;
 };
 
 /** Error codes the login page explains in Czech (`/cs/login?oauth_error=<code>`). */
-export type OAuthErrorPageCode = 'invalid_client' | 'invalid_redirect' | 'request_failed';
+export const OAuthErrorPageCodeSchema = Schema.Literals(['invalid_client', 'invalid_redirect', 'request_failed']);
+export type OAuthErrorPageCode = typeof OAuthErrorPageCodeSchema.Type;
 
 /** Better Auth error code (`invalid_redirect`, `invalid_client`, `invalid_request` ...) -> code of the error page. */
 export const oauthErrorPageCode = (error: string | null | undefined): OAuthErrorPageCode => {
@@ -236,7 +247,10 @@ export const oauthErrorPageRedirect = (error: string | null | undefined): Respon
 
 /** RFC 6749 JSON error with no-store (token and consent guards). */
 export const oauthJsonError = (status: number, error: string, description: string): Response =>
-  new Response(JSON.stringify({ error, error_description: description }), {
-    headers: { 'cache-control': 'no-store', 'content-type': 'application/json', pragma: 'no-cache' },
-    status,
-  });
+  Response.json(
+    { error, error_description: description },
+    {
+      headers: { 'cache-control': 'no-store', 'content-type': 'application/json', pragma: 'no-cache' },
+      status,
+    },
+  );

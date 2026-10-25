@@ -1,3 +1,5 @@
+import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/unstable/process';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
@@ -13,8 +15,6 @@ import { findPostgresFailure } from '../../packages/core-runtime/src/database/po
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import {
   BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
@@ -180,7 +180,7 @@ const verifyOwner = (owner: (typeof owners)[number], env: Environment) =>
 
 it.live('D1 owner migrations alone grant exact runtime access, and readiness rejects drift', () =>
   Effect.gen(function* migratorRuntimeAccess() {
-    const connections = yield* loadDatabaseIdentityConnections();
+    const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT });
     const admin = yield* makeTestPgClient(connections.admin.connectionString);
     // Only this uniquely named test database is created, mutated and removed.
     const database = `ontos_acl_${randomUUID().replaceAll('-', '')}`;
@@ -188,15 +188,18 @@ it.live('D1 owner migrations alone grant exact runtime access, and readiness rej
       admin.unsafe(`drop database "${database}" with (force)`).pipe(Effect.orDie),
     );
     // The bootstrap provisions every database identity, so each login targets the throwaway database.
+    const sharedConnection = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+    assert.isOk(sharedConnection !== undefined);
     const env: Environment = {
       ...Object.fromEntries(
-        DATABASE_IDENTITIES.map(({ id, urlKey }) => [
-          urlKey,
-          databaseUrl(connections.runtime[id].connectionString, database),
-        ]),
+        DATABASE_IDENTITIES.map(({ id, urlKey }) => {
+          const connection = connections.runtime[id];
+          assert.isOk(connection !== undefined, `The enrolled ${id} database connection must be present`);
+          return [urlKey, databaseUrl(connection.connectionString, database)];
+        }),
       ),
       DATABASE_ADMIN_URL: databaseUrl(connections.admin.connectionString, database),
-      DATABASE_URL: databaseUrl(connections.runtime[SHARED_RUNTIME_IDENTITY.id].connectionString, database),
+      DATABASE_URL: databaseUrl(sharedConnection.connectionString, database),
     };
     // The deployment bootstraps the role before owner migrations; its fixed schema list does not
     // cover these owners, so every grant verified below must come from the owner migrations.

@@ -4,7 +4,12 @@ import { Context, Duration, Effect, Layer, Option, Redacted } from 'effect';
 import { loadDatabaseConfig } from '../db/config.ts';
 import type { DatabaseConfigError } from '../db/config-error.ts';
 import { DatabaseConnectionError } from '../db/connection-error.ts';
-import { gatewayScopeGrantRoleForAudience, SHELL_GATEWAY_ISSUER_IDENTITY } from '../db/database-identities.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  gatewayScopeGrantRoleForAudience,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { configureDatabasePool } from '../db/pool-configuration.ts';
 import { GatewayScopeGrantUnavailableError } from './gateway-scope-grant-unavailable-error.ts';
 
@@ -52,11 +57,14 @@ const unavailableError = (cause?: unknown): GatewayScopeGrantUnavailableError =>
  * are a no-op; enrolled audiences run one autocommit call, so the grant is durable before the token
  * leaves the issuer.
  */
-export const makeGatewayScopeGrantRegistrar = (client: PgClient.PgClient): GatewayScopeGrantRegistrarService => ({
+export const makeGatewayScopeGrantRegistrar = (
+  client: PgClient.PgClient,
+  enrollment: DatabaseIdentityEnrollment,
+): GatewayScopeGrantRegistrarService => ({
   register: Effect.fn('GatewayScopeGrantRegistrar.register')(function* registerGatewayScopeGrantEffect(
     input: GatewayScopeGrantInput,
   ) {
-    if (Option.isNone(gatewayScopeGrantRoleForAudience(input.audience))) {
+    if (Option.isNone(gatewayScopeGrantRoleForAudience(enrollment, input.audience))) {
       return;
     }
     yield* client`select trust.register_gateway_scope_grant(${Redacted.value(input.assertion)}, ${input.audience}, ${input.jti}::uuid, ${input.principalId}::uuid, ${input.tenantId}::uuid, ${input.legalEntityId ?? null}::uuid, to_timestamp(${input.expiresAtEpochSeconds}))`.pipe(
@@ -81,15 +89,17 @@ const connectionFailure = (cause: unknown): DatabaseConnectionError =>
  */
 export const GatewayScopeGrantRegistrarLive: Layer.Layer<
   GatewayScopeGrantRegistrar,
-  DatabaseConfigError | DatabaseConnectionError
+  DatabaseConfigError | DatabaseConnectionError,
+  DatabaseIdentityEnrollmentContext
 > = Layer.effect(
   GatewayScopeGrantRegistrar,
   Effect.gen(function* makeGatewayScopeGrantRegistrarService() {
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const configuration = yield* loadDatabaseConfig({ identity: SHELL_GATEWAY_ISSUER_IDENTITY });
     const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
     const services = yield* Layer.build(
       PgClient.layer({ ...poolConfiguration, maxConnections: REGISTRAR_MAX_CONNECTIONS }),
     ).pipe(Effect.mapError(connectionFailure));
-    return makeGatewayScopeGrantRegistrar(Context.get(services, PgClient.PgClient));
+    return makeGatewayScopeGrantRegistrar(Context.get(services, PgClient.PgClient), enrollment);
   }),
 );

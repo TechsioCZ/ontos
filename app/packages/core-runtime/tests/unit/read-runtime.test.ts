@@ -56,6 +56,7 @@ import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeOutboxWorkerComposition } from '../support/outbox-worker-composition.ts';
 import { testSqlConnection } from '../support/sql-connection.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const scope: OperationalScope = Object.freeze({
   ...Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -69,13 +70,14 @@ const scope: OperationalScope = Object.freeze({
 });
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
 
-/** The Read installs its scope and reads the start time in one statement; `set_config` echoes what it set. */
+/** The enrolled shared role reports its installed scope and transaction time in the same exchange. */
 const transactionTimeRow = (text: string, values: readonly unknown[]) =>
   text.includes('set_config')
     ? {
         isolation: 'read committed',
         legal_entity_id: values[1],
         operation_at: transactionOperationAt,
+        role: 'ontos_runtime',
         tenant_id: values[0],
       }
     : { operation_at: transactionOperationAt };
@@ -403,6 +405,8 @@ const makeHarness = Effect.fn(function* makeHarness(
     {
       onStage: (stage) => stages.push(stage),
       ...ownerAuthorizationOptions,
+
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     },
   );
   return {

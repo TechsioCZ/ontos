@@ -56,6 +56,7 @@ import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
@@ -139,7 +140,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
     const contextAccess = makeContextAccess(permissionClient);
     const actionPermission = makeActionPermissionService(permissionClient);
     const operationalScope = makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: runtimeDatabase }),
+      makeOperationalScopeRepository({ executor: runtimeDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       contextAccess,
     );
     const actionRuntime = makeActionRuntime(
@@ -154,6 +155,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       openModuleEntrypointGateway,
       operationalScope,
       contextAccess,
+      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
     );
     const principal = {
       authBindingId: administratorAuthBindingId,

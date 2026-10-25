@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
 /* eslint-disable anti-slop/no-chained-type-assertions, anti-slop/no-unsafe-dictionary-type -- This harness implements the narrow Drizzle Effect boundary exercised by the owner-local matching service. expires: 2026-12-31. */
 import { ActionRuntime } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
@@ -1443,7 +1444,9 @@ for (const created of [true, false]) {
     `retail acceptance ${created ? 'emits its single real Party event' : 'does not re-emit creation on a recovered resolution'}`,
     () =>
       Effect.gen(function* eventOnce() {
-        const native = yield* makeActionTestHarness();
+        const native = yield* makeActionTestHarness({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        });
         const collector = createActionCollector(
           acceptRetailEnrollmentEvidenceAction.descriptor.domainEvents,
           'party.registry',
@@ -1511,6 +1514,7 @@ for (const scenario of [
   it.effect(`native retail evidence acceptance checks original invocation ownership: ${scenario}`, () =>
     Effect.gen(function* nativeOwnership() {
       const native = yield* makeActionTestHarness({
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         legalEntityAccess: 'allowed',
@@ -1601,6 +1605,7 @@ for (const actionPermission of ['allowed', 'denied'] as const) {
     Effect.gen(function* narrowGrant() {
       let called = false;
       const native = yield* makeActionTestHarness({
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         actionPermission,
         tenantPermission: actionPermission === 'allowed' ? 'denied' : 'allowed',
         legalEntityAccess: 'allowed',

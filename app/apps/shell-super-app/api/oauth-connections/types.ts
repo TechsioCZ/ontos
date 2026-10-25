@@ -3,6 +3,8 @@
  * imports these; it never writes the grant table directly). Table: `core.oauth_connection_grants` (migration in
  * packages/core-runtime/drizzle, same database as the Better Auth tables).
  */
+import type { Option } from 'effect';
+
 import type {
   ConnectionActingKind,
   ConnectionClientKind,
@@ -22,9 +24,9 @@ export interface GrantRow {
   readonly clientKind: ConnectionClientKind;
   readonly clientLogoUri: string | null;
   readonly clientName: string;
+  readonly consentedAt: Date | null;
   /** Better Auth consent id (fallback lookup only). */
   readonly consentId: string | null;
-  readonly consentedAt: Date | null;
   readonly createdAt: Date;
   readonly grantId: string;
   readonly lastUsedAt: Date | null;
@@ -32,9 +34,9 @@ export interface GrantRow {
   /** Requested ceiling. */
   readonly modules: ConnectionModulesRequest;
   readonly profileId: string;
-  readonly revokeReason: ConnectionRevokeReason | null;
   readonly revokedAt: Date | null;
   readonly revokedByPrincipalId: string | null;
+  readonly revokeReason: ConnectionRevokeReason | null;
   /** Better Auth session that created the draft. */
   readonly sessionId: string | null;
   readonly status: ConnectionGrantStatus;
@@ -43,6 +45,17 @@ export interface GrantRow {
   readonly userId: string;
   readonly userPrincipalId: string;
   readonly writePolicy: ConnectionWritePolicy;
+}
+
+/** Retained native token/grant facts, without the token or token hash crossing into audit evidence. */
+export interface OAuthRefreshGuardRow {
+  readonly clientId: string;
+  readonly grant: Option.Option<GrantRow>;
+  readonly id: string;
+  readonly referenceId: string | null;
+  readonly revoked: Date | null;
+  readonly rotatedAt: Date | null;
+  readonly rotationReplayExpiresAt: Date | null;
 }
 
 /** Who performs a management change (for the audit row); null for system-initiated revocation. */

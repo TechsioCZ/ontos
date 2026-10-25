@@ -11,6 +11,8 @@ import {
 } from '../../src/auth/identity-administration-audit-denied.ts';
 import { IdentityAdministrationDeniedAuditUnavailable } from '../../src/auth/identity-administration-audit-unavailable.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { OperationalScopeResolver } from '../../src/operations/context.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
@@ -151,6 +153,7 @@ for (const failInsert of [false, true]) {
               Layer.mergeAll(
                 harness.layer,
                 Layer.succeed(CoreDatabase, { executor }),
+                Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
                 Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
               ),
             ),
@@ -196,6 +199,7 @@ it.effect('an allowed administrator cannot manufacture a denied observation and 
           Layer.mergeAll(
             harness.layer,
             Layer.succeed(CoreDatabase, { executor }),
+            Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
             Layer.succeed(OperationalScopeResolver, testOperationalScopeResolver),
           ),
         ),

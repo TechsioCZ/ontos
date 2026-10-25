@@ -737,6 +737,8 @@ export default apiRuntime;
         expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
         expect(runtime).toContain('GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive)');
         expect(runtime).toContain('GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive)');
+        expect(runtime).toContain('defineGovernedDatabaseIdentityEnrollment([])');
+        expect(runtime).toContain('GovernedReadLayer.provideMerge(governedDatabaseIdentitiesLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);

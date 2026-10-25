@@ -1,4 +1,6 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
@@ -37,6 +39,8 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { propertyPortfolioApi, propertyPortfolioOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
@@ -146,6 +150,7 @@ const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
   GovernedReadLayer.provideMerge(ActiveApplicationCompositionConfigLive),
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provideMerge(databaseIdentitiesLive),
   GovernedReadLayer.provideMerge(telemetryLive),
   GovernedReadLayer.orDie,
 );

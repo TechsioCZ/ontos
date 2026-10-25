@@ -20,6 +20,9 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import type { CoreTransaction } from '../../../../packages/core-runtime/src/db/types.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'd3300000-0000-4000-8000-000000000001';
 const otherTenantId = 'd3300000-0000-4000-8000-000000000002';
@@ -958,7 +961,11 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
         runtime,
         (transaction) =>
           Effect.gen(function* verifyUninitializedPolicyReads() {
-            const executor = yield* installOperationalScope(transaction, replacementScope);
+            const executor = yield* installOperationalScope(
+              transaction,
+              replacementScope,
+              FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+            );
             const repository = yield* customerCommercePolicyRepositoryForScope(executor, replacementScope);
             const reads = [
               repository.loadMarketBootstrapPolicyState,
@@ -1007,7 +1014,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
           (transaction) =>
             Effect.gen(function* replacePersistedPolicy() {
               const service = yield* customerCommercePolicyAdministrationServiceFactory(
-                yield* installOperationalScope(transaction, replacementScope),
+                yield* installOperationalScope(transaction, replacementScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
                 replacementScope,
                 'a'.repeat(64),
               );
@@ -1033,7 +1040,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
               replacementScope,
             );
             const service = yield* customerCommercePolicyAdministrationServiceFactory(
-              yield* installOperationalScope(transaction, replacementScope),
+              yield* installOperationalScope(transaction, replacementScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
               replacementScope,
               readVerifiedGatewayCompositionRevision(replacementScope),
             );

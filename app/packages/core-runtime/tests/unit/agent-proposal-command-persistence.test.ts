@@ -27,6 +27,7 @@ import {
   scope,
   tenantId,
 } from '../support/agent-proposal-command-fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeTestDatabase } from '../support/database.ts';
 
 const claim = { batchId, operation: 'claim-approval' as const, proposalId };
@@ -56,7 +57,7 @@ for (const changed of ['tenantId', 'legalEntityId'] as const) {
       const failure = yield* database
         .transaction((transaction) =>
           Effect.gen(function* recover() {
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             return yield* loadProposalCommandRecovery(
               scoped,
               { ...scope, [changed]: batchId },
@@ -87,7 +88,7 @@ it.effect('a foreign caller cannot resolve another person’s retained result wi
     });
     const result = yield* database.transaction((transaction) =>
       Effect.gen(function* recover() {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         return yield* loadProposalCommandRecovery(
           scoped,
           { ...scope, principalId: otherHumanId },
@@ -132,7 +133,7 @@ for (const operation of ['claim-approval', 'claim-batch-revert'] as const) {
       });
       const result = yield* database.transaction((transaction) =>
         Effect.gen(function* reservations() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const row =
             operation === 'claim-approval'
               ? proposalRow({ decidedAt: operationTime, decidedByPrincipalId: humanId })
@@ -186,7 +187,7 @@ it.effect('locks the proposer, rereads the admitted snapshot and scopes every mu
     });
     const result = yield* database.transaction((transaction) =>
       Effect.gen(function* mutate() {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const snapshot = yield* loadProposalCommandSnapshot(scoped, scope, claim);
         return yield* proposalCommandsFromTransaction(scoped).execute(claim, {
           actionInvocationId: nextInvocationId,
@@ -240,7 +241,7 @@ for (const [name, patch] of [
       const failure = yield* database
         .transaction((transaction) =>
           Effect.gen(function* race() {
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const snapshot = yield* loadProposalCommandSnapshot(scoped, scope, claim);
             return yield* proposalCommandsFromTransaction(scoped).execute(claim, {
               actionInvocationId: nextInvocationId,
@@ -312,7 +313,7 @@ it.effect('uses canonical successful native audit evidence for exact approval re
     });
     const result = yield* database.transaction((transaction) =>
       Effect.gen(function* complete() {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const snapshot = yield* loadProposalCommandSnapshot(scoped, scope, payload);
         return yield* proposalCommandsFromTransaction(scoped).execute(payload, {
           actionInvocationId: nextInvocationId,
@@ -359,7 +360,7 @@ it.effect(
       });
       const result = yield* database.transaction((transaction) =>
         Effect.gen(function* close() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const snapshot = yield* loadProposalCommandSnapshot(scoped, scope, payload);
           return yield* proposalCommandsFromTransaction(scoped).execute(payload, {
             actionInvocationId: nextInvocationId,
@@ -419,7 +420,7 @@ it.effect('deduplicates the complete ordered run and never replays a run with ch
     });
     yield* database.transaction((transaction) =>
       Effect.gen(function* replay() {
-        const scoped = yield* installOperationalScope(transaction, agentScope);
+        const scoped = yield* installOperationalScope(transaction, agentScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const snapshot = yield* loadProposalCommandSnapshot(scoped, agentScope, payload);
         const result = yield* proposalCommandsFromTransaction(scoped).execute(payload, {
           actionInvocationId: nextInvocationId,
@@ -506,7 +507,7 @@ it.effect('serializes batch identity across proposers and inserts only native sc
     });
     const result = yield* database.transaction((transaction) =>
       Effect.gen(function* persist() {
-        const scoped = yield* installOperationalScope(transaction, agentScope);
+        const scoped = yield* installOperationalScope(transaction, agentScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const snapshot = yield* loadProposalCommandSnapshot(scoped, agentScope, payload);
         return yield* proposalCommandsFromTransaction(scoped).execute(payload, {
           actionInvocationId: nextInvocationId,
@@ -538,7 +539,7 @@ it.effect('rejects a caller scope different from the installed Core transaction 
     });
     yield* database.transaction((transaction) =>
       Effect.gen(function* rejectMismatchedScope() {
-        const scoped = yield* installOperationalScope(transaction, scope);
+        const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const failure = yield* loadProposalCommandSnapshot(
           scoped,
           { ...scope, legalEntityId: '20000000-0000-4000-8000-000000000002' },
@@ -591,7 +592,7 @@ it.effect('does not mistake a run-filtered subset for the complete stored batch'
     });
     yield* database.transaction((transaction) =>
       Effect.gen(function* refusePartial() {
-        const scoped = yield* installOperationalScope(transaction, agentScope);
+        const scoped = yield* installOperationalScope(transaction, agentScope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
         const failure = yield* loadProposalCommandSnapshot(scoped, agentScope, payload).pipe(Effect.flip);
         expect(failure.code).toBe('agent_proposal_conflict');
       }),

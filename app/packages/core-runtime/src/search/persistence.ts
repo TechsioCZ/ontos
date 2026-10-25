@@ -3,6 +3,8 @@ import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
@@ -169,7 +171,7 @@ const rowMatchesDocument = (
     Result.mapError((cause) => invalid('Core Search persisted payload is invalid', cause)),
   );
 
-const makeTransactionOperations = () => {
+const makeTransactionOperations = (databaseIdentities: DatabaseIdentityEnrollment) => {
   const installTenantScope = Effect.fn('CoreSearchPersistence.installTenantScope')(function* installTenantScopeEffect(
     transaction: CoreTransaction,
     tenantId: string,
@@ -553,7 +555,7 @@ const makeTransactionOperations = () => {
         return yield* unavailable();
       }
       // The scope's own authority (session setting or gateway grant) decides which rows are visible.
-      yield* installOperationalScope(transaction, scope).pipe(
+      yield* installOperationalScope(transaction, scope, databaseIdentities).pipe(
         Effect.catchTag('OperationContextUnavailable', (failure) => Effect.fail(unavailable(failure))),
       );
       const query = transaction.query.searchIndexEntries.findMany({
@@ -596,11 +598,11 @@ const makeTransactionOperations = () => {
   });
 };
 
-const transactionOperations = makeTransactionOperations();
-
 export const makePostgresCoreSearchProjectionStore = (
   database: CoreSearchPersistenceDatabase,
+  databaseIdentities: DatabaseIdentityEnrollment,
 ): CoreSearchProjectionStoreService => {
+  const transactionOperations = makeTransactionOperations(databaseIdentities);
   const runTransaction = <Value, Failure>(body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>) =>
     database.executor.transaction(body).pipe(
       Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
@@ -656,7 +658,8 @@ export const CoreSearchProjectionStoreLive = Layer.effect(
   CoreSearchProjectionStore,
   Effect.gen(function* makeCoreSearchProjectionStoreLive() {
     const database = yield* CoreDatabase;
-    return makePostgresCoreSearchProjectionStore(database);
+    const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
+    return makePostgresCoreSearchProjectionStore(database, databaseIdentities);
   }),
 );
 

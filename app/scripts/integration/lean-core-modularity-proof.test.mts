@@ -1,3 +1,4 @@
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
@@ -46,7 +47,10 @@ import {
   PrincipalManagementRepository,
   principalManagementRepositoryFromTransaction,
 } from '../../packages/core-runtime/src/auth/principal-management.ts';
+import { OAuthAuthenticationAuditLive } from '../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { PrincipalResolver, makePrincipalResolver } from '../../packages/core-runtime/src/auth/principal-resolver.ts';
+import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import {
   SupportRecoveryPrincipalContextResolver,
   makeSupportRecoveryPrincipalContextResolver,
@@ -82,6 +86,10 @@ import {
 } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
+import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
 import {
   account,
   apikey,
@@ -98,6 +106,8 @@ import {
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
 } from '../../apps/shell-super-app/api/auth/impersonation-service.ts';
+import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 
 const gatewayAudience = 'party-registry';
@@ -478,7 +488,27 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
-    const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -505,7 +535,11 @@ it.live(
     if (legalEntityAccessObjectId === undefined) {
       return yield* Effect.die('The modularity fixture legal-entity object ID could not be encoded');
     }
-    const bindSelfApiKeyActionObjectId = toSpiceDbActionObjectId('core.identity.bind-self-api-key');
+    const bindSelfApiKeyActionObjectId = toSpiceDbActionObjectId({
+      actionKey: 'core.identity.bind-self-api-key',
+      legalEntityId,
+      tenantId,
+    });
     const spiceDbRelationships = [
       relationship('tenant', tenantId, 'member', 'principal', principalId),
       relationship('legal_entity', legalEntityAccessObjectId, 'tenant', 'tenant', tenantId),
@@ -769,7 +803,7 @@ it.live(
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
     const operationalScope = makeOperationalScopeResolver(
-      makeOperationalScopeRepository({ executor: coreDatabase }),
+      makeOperationalScopeRepository({ executor: coreDatabase }, APP_DATABASE_IDENTITY_ENROLLMENT),
       allowedContextAccess,
     );
     const supportActionRuntime = makeActionRuntime(
@@ -777,14 +811,21 @@ it.live(
       makeActionRepository(),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
-      { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
+      {
+        ...openActionRuntimeOptions,
+        contextAccess: allowedContextAccess,
+        databaseIdentities: APP_DATABASE_IDENTITY_ENROLLMENT,
+      },
     );
     const supportRecoveryPrincipal = makeSupportRecoveryPrincipalContextResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
     );
     const supportConfiguration = { ...configuration, supportUserIds: [betterAuthUserId] };
-    const supportAuthentication = yield* makeAuthenticationService({}).pipe(
+    const supportFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
+    const supportGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(supportFramework));
+    const supportAuthentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(supportGuards),
       Effect.provideService(AuthConfig, supportConfiguration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),

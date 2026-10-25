@@ -1,4 +1,6 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
@@ -35,6 +37,8 @@ import type { OperationContext } from '../shared/api.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
@@ -132,6 +136,7 @@ const runtimeObservabilityLive = GovernedReadLayer.mergeAll(
 const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provideMerge(databaseIdentitiesLive),
   GovernedReadLayer.provideMerge(runtimeObservabilityLive),
   GovernedReadLayer.orDie,
 );

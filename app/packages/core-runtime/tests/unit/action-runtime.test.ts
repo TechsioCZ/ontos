@@ -73,6 +73,7 @@ import {
 } from '../../src/permissions/context-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   authBindingId: '00000000-0000-4000-8000-000000000004',
@@ -556,6 +557,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       },
     },
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
     ...ownerAuthorizationOptions,

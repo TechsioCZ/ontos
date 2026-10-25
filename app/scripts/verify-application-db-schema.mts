@@ -176,8 +176,8 @@ const verifyApplicationCatalog = (client: PgClient.PgClient, expected: Applicati
     }
   });
 
-const ownerVerifierPaths = [
-  '../packages/core-runtime/scripts/verify-db-schema.mts',
+export const ownerVerifierPaths = [
+  './verify-core-db-schema.mts',
   '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
   '../verticals/assortment/scripts/verify-db-schema.mts',
   '../verticals/party-registry/scripts/verify-db-schema.mts',

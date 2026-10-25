@@ -19,6 +19,10 @@ import {
 } from '../../src/testing/gateway-scope-grant.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, testDatabaseClients } from '../support/database.ts';
 import { installSearchTestAuthority } from '../support/search-authority.ts';
+import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  testDatabaseIdentityConnection,
+} from '../support/database-identities.ts';
 
 const queryEffect = <Row extends object>(
   client: PgClient.PgClient,
@@ -36,12 +40,16 @@ const partyRequestScope = Effect.fn('SearchPersistenceTest.partyRequestScope')(f
   legalEntityId?: string,
 ) {
   const legalEntity = legalEntityId === undefined ? {} : { legalEntityId };
-  const grant = yield* registerTestGatewayScopeGrant(issuer, {
-    audience: 'party-registry',
-    principalId,
-    tenantId,
-    ...legalEntity,
-  });
+  const grant = yield* registerTestGatewayScopeGrant(
+    issuer,
+    {
+      audience: 'party-registry',
+      principalId,
+      tenantId,
+      ...legalEntity,
+    },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const context = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
     authBindingId: '40000000-0000-4000-8000-000000000009',
     authContextRef: 'better-auth-session:core-search-persistence',
@@ -63,10 +71,16 @@ const searchPersistenceProgram = Effect.gen(function* searchPersistenceIntegrati
   const { admin, runtime } = yield* testDatabaseClients;
   // Party rows are hidden from the shared runtime: the Party worker writes them and the Party
   // request role reads them only under a registered gateway grant.
-  const identities = yield* loadDatabaseIdentityConnections();
-  const worker = yield* makeTestPgClient(identities.runtime.party_registry_worker.connectionString);
-  const partyRequest = yield* makeTestPgClient(identities.runtime.party_registry_request.connectionString);
-  const issuer = yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString);
+  const identities = yield* loadDatabaseIdentityConnections({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT });
+  const worker = yield* makeTestPgClient(
+    testDatabaseIdentityConnection(identities, 'party_registry_worker').connectionString,
+  );
+  const partyRequest = yield* makeTestPgClient(
+    testDatabaseIdentityConnection(identities, 'party_registry_request').connectionString,
+  );
+  const issuer = yield* makeTestPgClient(
+    testDatabaseIdentityConnection(identities, 'shell_gateway_issuer').connectionString,
+  );
   yield* installSearchTestAuthority();
   const tenantId = randomUUID();
   const otherTenantId = randomUUID();
@@ -99,12 +113,14 @@ const searchPersistenceProgram = Effect.gen(function* searchPersistenceIntegrati
     resourceType: 'party.registry.party',
     tenantId,
   };
-  const store = makePostgresCoreSearchProjectionStore({
-    executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
-  });
-  const queryStore = makePostgresCoreSearchProjectionStore({
-    executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
-  });
+  const store = makePostgresCoreSearchProjectionStore(
+    { executor: yield* makeTestDatabaseFromClient(worker, coreRelations) },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
+  const queryStore = makePostgresCoreSearchProjectionStore(
+    { executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations) },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, queryStore));
   const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
     aliases: [
@@ -278,15 +294,17 @@ const searchPersistenceProgram = Effect.gen(function* searchPersistenceIntegrati
   };
   yield* store.replace(emptyRebuild, context);
   // A fresh service instance must observe the durable floor, not process-local state.
-  const restarted = makePostgresCoreSearchProjectionStore({
-    executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
-  });
+  const restarted = makePostgresCoreSearchProjectionStore(
+    { executor: yield* makeTestDatabaseFromClient(worker, coreRelations) },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
     Effect.provideService(
       CoreSearchProjectionStore,
-      makePostgresCoreSearchProjectionStore({
-        executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
-      }),
+      makePostgresCoreSearchProjectionStore(
+        { executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations) },
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      ),
     ),
   );
   const floorSearch = () =>

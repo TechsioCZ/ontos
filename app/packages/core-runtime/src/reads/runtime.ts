@@ -11,6 +11,8 @@ import {
 } from '../auth/system-principal-context-provenance.ts';
 import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/oauth-connection-scope.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope, installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
@@ -132,6 +134,7 @@ export const READ_RUNTIME_STAGES = [
 export type ReadRuntimeStage = (typeof READ_RUNTIME_STAGES)[number];
 
 export interface ReadRuntimeOptions {
+  readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly onStage?: (stage: ReadRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
 }
@@ -1179,7 +1182,7 @@ const readRuntimeFromDependencies = <
   scopeResolver: ScopeValue,
   contextAccess: AccessValue,
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- Runtime construction keeps the optional owner seam injectable for Core unit and integration harnesses.
-  options: ReadRuntimeOptions = {},
+  options: ReadRuntimeOptions,
 ) => {
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
@@ -1343,7 +1346,7 @@ const readRuntimeFromDependencies = <
     ) =>
       readTransaction(
         Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, options.databaseIdentities);
           if (compositionRevision !== undefined) {
             yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
               Effect.mapError(compositionNoLongerAdmits),
@@ -1612,11 +1615,13 @@ const readRuntimeFromDependencies = <
       const finishOwner = yield* readTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
           const { operationAt, scoped } = yield* compositionRevision === undefined
-            ? installOperationalScopeAt(transaction, scope).pipe(observe('read-rls'))
-            : lockApplicationCompositionReadScope(transaction, compositionRevision, scope).pipe(
-                Effect.mapError(compositionNoLongerAdmits),
-                observe('read-authority'),
-              );
+            ? installOperationalScopeAt(transaction, scope, options.databaseIdentities).pipe(observe('read-rls'))
+            : lockApplicationCompositionReadScope(
+                transaction,
+                compositionRevision,
+                scope,
+                options.databaseIdentities,
+              ).pipe(Effect.mapError(compositionNoLongerAdmits), observe('read-authority'));
           stage('scope_installed');
           const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
@@ -1721,6 +1726,7 @@ const readRuntimeFromDependencies = <
             ...evidenceTarget,
           },
         ),
+        options.databaseIdentities,
       ).pipe(observe('read-audit'));
       stage('evidence_persisted');
       return result;
@@ -1743,6 +1749,7 @@ const readRuntimeFromDependencies = <
           outcomeStage: 'authz',
           policyKey,
         }),
+        options.databaseIdentities,
       ),
     );
     return yield* Effect.failCause(Exit.isFailure(evidenceExit) ? Cause.combine(evidenceExit.cause, cause) : cause);
@@ -1762,12 +1769,14 @@ export class ReadRuntime extends Context.Service<ReadRuntime, ReadRuntimeService
 export const ReadRuntimeLive = Layer.effect(
   ReadRuntime,
   Effect.gen(function* makeReadRuntimeService() {
+    const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
     const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
     const database = yield* CoreDatabase;
     const gateway = yield* ModuleEntrypointGateway;
     const scopeResolver = yield* OperationalScopeResolver;
     const contextAccess = yield* ContextAccess;
     return readRuntimeFromDependencies(database, gateway, scopeResolver, contextAccess, {
+      databaseIdentities,
       ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
         ? ownerAuthorizationOverlay.value
         : failClosedOwnerAuthorizationOverlay,

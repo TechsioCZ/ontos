@@ -8,6 +8,9 @@ import { makeTestDatabase } from '../../../../packages/core-runtime/tests/suppor
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { customerGroupDetailRead } from '../../src/api/customer-group-detail.read.ts';
 import { customerGroupHistoryRead } from '../../src/api/customer-group-history.read.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -124,6 +127,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
   );
   return {
     dataAccessEvidence: () => dataAccessEvidence,

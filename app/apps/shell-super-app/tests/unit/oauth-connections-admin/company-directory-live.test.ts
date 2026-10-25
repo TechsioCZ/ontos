@@ -243,13 +243,31 @@ it.effect('uses the tenant-global command revision with the original selected-co
   }),
 );
 
+it.effect('keeps snapshots lazy and reruns the governed Read on each evaluation', () =>
+  Effect.gen(function* lazySnapshots() {
+    const current = snapshot([]);
+    const test = yield* fixture(current);
+    expect(test.principals).toEqual([]);
+    expect(test.transports).toEqual([]);
+    expect(yield* test.directory.snapshot).toEqual(current);
+    expect(yield* test.directory.snapshot).toEqual(current);
+    expect(test.principals).toEqual([principal, principal]);
+    expect(test.principals[0]).toBe(principal);
+    expect(test.principals[1]).toBe(principal);
+    expect(test.transports).toEqual([
+      { correlationId: transport.correlationId },
+      { correlationId: transport.correlationId },
+    ]);
+  }),
+);
+
 it.effect('keeps request-bound services isolated across selected companies', () =>
   Effect.gen(function* requestIsolation() {
     const otherPrincipal = { ...principal, legalEntityId: '00000000-0000-4000-8000-000000000006' };
     const first = yield* fixture(snapshot([]));
     const second = yield* fixture(snapshot([]), { principal: otherPrincipal, transport });
-    yield* second.directory.snapshot();
-    yield* first.directory.snapshot();
+    yield* second.directory.snapshot;
+    yield* first.directory.snapshot;
     expect(first.principals).toEqual([principal]);
     expect(second.principals).toEqual([otherPrincipal]);
     expect(first.principals[0]).toBe(principal);

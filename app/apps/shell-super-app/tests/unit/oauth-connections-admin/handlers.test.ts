@@ -157,9 +157,9 @@ const makeDeps = (state: Fixture) => {
       state.operators[input.agentPrincipalId] = [...input.operatorPrincipalIds];
       return Effect.void;
     },
-    snapshot: () => {
+    snapshot: Effect.sync(() => {
       calls.snapshots += 1;
-      return Effect.succeed({
+      return {
         agents: state.agents
           .filter((agent) => agent.legalEntityId === companyA.legalEntityId)
           .map((agent) => ({
@@ -173,8 +173,8 @@ const makeDeps = (state: Fixture) => {
         people: state.people
           .filter((person) => person.legalEntityId === companyA.legalEntityId)
           .map(({ displayName, principalId }) => ({ displayName, principalId })),
-      });
-    },
+      };
+    }),
   };
   const grants: GrantAdminPort<never> = {
     get: (grantId) =>

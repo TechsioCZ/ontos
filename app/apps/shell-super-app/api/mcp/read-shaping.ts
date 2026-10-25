@@ -2,21 +2,35 @@
  * Keeps MCP read results small (a module read can be hundreds of kilobytes): lists are paged, and while the JSON is
  * over budget the largest parts are replaced by `{ _omitted, count, path }` markers the client can drill into.
  */
-import { Data, Result } from 'effect';
+import { Array as Arr, Data, Option, Predicate, Record as Rec, Result, Schema } from 'effect';
 
 export interface TruncatedPath {
-  readonly path: string;
-  readonly total: number;
   readonly offset: number;
+  readonly path: string;
   readonly returned: number;
+  readonly total: number;
 }
 
 /** A part of the read result left out to keep the answer small; fetch it with ontos_read {id, path}. */
 export interface OmittedPath {
-  readonly path: string;
-  readonly kind: 'list' | 'object';
   /** List length or number of object keys in the original. */
   readonly count: number;
+  readonly kind: 'list' | 'object';
+  readonly path: string;
+}
+
+export interface ReadPaginationOptions {
+  /** Where `value` sits in the full read result (ontos_read path); reported paths are prefixed with it. */
+  readonly basePath?: string;
+  readonly budget?: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface PaginatedReadResult {
+  readonly data: Schema.Json;
+  readonly omitted: readonly OmittedPath[];
+  readonly truncated: readonly TruncatedPath[];
 }
 
 /** About 8-10k tokens of JSON: well below the MCP output caps of Claude (25k tokens) and ChatGPT. */
@@ -26,53 +40,83 @@ export const NESTED_LIST_LIMIT = 5;
 const LONG_STRING = 400;
 const MAX_WALK_DEPTH = 24;
 
-const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isJsonObject = Schema.is(Schema.JsonObject);
+const isJsonArray = Arr.isArray<Schema.Json>;
+const encodeReadResult = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
 
-const sizeOf = (value: unknown): number => JSON.stringify(value)?.length ?? 0;
+// Read payloads are opaque JSON; an encoding defect stays owned by the outer SDK/HTTP boundary.
+const sizeOf = (value: Schema.Json): number => Result.getOrThrow(encodeReadResult(value)).length;
 const joinPath = (prefix: string, key: string): string => (prefix === '' ? key : `${prefix}.${key}`);
 
 /** The requested path is not in the read result; `message` is Czech and lists what is there. */
 export class ReadPathError extends Data.TaggedError('ReadPathError')<{ readonly message: string }> {}
 
+const valueAt = (value: Schema.Json, key: string): Option.Option<Schema.Json> => {
+  if (isJsonArray(value) && /^\d+$/u.test(key) && Number(key) < value.length) {
+    return Arr.get(value, Number(key));
+  }
+  if (isJsonObject(value) && Object.hasOwn(value, key)) {
+    return Rec.get<string, Schema.Json>(value, key);
+  }
+  return Option.none();
+};
+
+const availableKeys = (value: Schema.Json): string => {
+  if (isJsonObject(value)) {
+    return Object.keys(value).slice(0, 30).join(', ');
+  }
+  if (isJsonArray(value)) {
+    return `indexy 0–${Math.max(value.length - 1, 0)}`;
+  }
+  return 'žádné';
+};
+
 /** Resolves `a.b[2].c` (or `a.b.2.c`) inside a read result. */
-export const selectPath = (value: unknown, path: string): Result.Result<unknown, ReadPathError> => {
+export const selectPath = (value: Schema.Json, path: string): Result.Result<Schema.Json, ReadPathError> => {
   const segments = path
-    .replace(/\[(\d+)\]/gu, '.$1')
+    .replaceAll(/\[(?<index>\d+)\]/gu, '.$<index>')
     .split('.')
     .map((segment) => segment.trim())
     .filter((segment) => segment !== '');
-  let current: unknown = value;
+  let current: Schema.Json = value;
   let walked = '';
   for (const segment of segments) {
-    if (Array.isArray(current) && /^\d+$/u.test(segment) && Number(segment) < current.length) {
-      current = current[Number(segment)];
-    } else if (isPlainObject(current) && Object.hasOwn(current, segment)) {
-      current = current[segment];
-    } else {
-      const keys = isPlainObject(current)
-        ? Object.keys(current).slice(0, 30).join(', ')
-        : Array.isArray(current)
-          ? `indexy 0–${Math.max(current.length - 1, 0)}`
-          : 'žádné';
+    const next = valueAt(current, segment);
+    if (Option.isNone(next)) {
+      const parent = walked === '' ? '' : ` pod „${walked}“`;
       return Result.fail(
         new ReadPathError({
-          message: `Cesta „${path}“ ve výsledku neexistuje (chybí „${segment}“${walked === '' ? '' : ` pod „${walked}“`}). Dostupné: ${keys}.`,
+          message: `Cesta „${path}“ ve výsledku neexistuje (chybí „${segment}“${parent}). Dostupné: ${availableKeys(current)}.`,
         }),
       );
     }
+    current = next.value;
     walked = joinPath(walked, segment);
   }
   return Result.succeed(current);
 };
 
-type Mutable = Record<string, unknown> | unknown[];
 interface Slot {
-  readonly parent: Mutable;
   readonly key: string | number;
+  readonly parent: Schema.JsonObject | Schema.JsonArray;
   readonly path: string;
-  readonly value: unknown;
+  readonly value: Schema.Json;
 }
+
+const setSlot = (slot: Slot, next: Schema.Json): void => {
+  // Every visited parent is a container created by slice; depth-limited input children are never mutated.
+  Reflect.set(slot.parent, slot.key, next);
+};
+
+const containerCount = (value: Schema.Json, fallback: number): number => {
+  if (isJsonArray(value)) {
+    return value.length;
+  }
+  if (isJsonObject(value)) {
+    return Object.keys(value).length;
+  }
+  return fallback;
+};
 
 /**
  * Keeps a read result small (design §5.3, critic: Provoz read was 390 KB):
@@ -81,45 +125,31 @@ interface Slot {
  *    is replaced by an `{_omitted, count, path}` marker; a list at the root is shortened from the end.
  * Returns a new value; the input is never mutated.
  */
-export const shapeReadResult = (
-  value: unknown,
-  options: {
-    readonly limit: number;
-    readonly offset: number;
-    readonly budget?: number;
-    /** Where `value` sits in the full read result (ontos_read path); reported paths are prefixed with it. */
-    readonly basePath?: string;
-  },
-): {
-  readonly data: unknown;
-  readonly truncated: readonly TruncatedPath[];
-  readonly omitted: readonly OmittedPath[];
-} => {
+export const paginateReadResult = (value: Schema.Json, options: ReadPaginationOptions): PaginatedReadResult => {
   const budget = options.budget ?? READ_CHAR_BUDGET;
   const base = options.basePath?.trim() ?? '';
-  const display = (inner: string): string =>
-    base === ''
-      ? inner === ''
-        ? '(kořen)'
-        : inner
-      : inner === ''
-        ? base
-        : inner.startsWith('[')
-          ? `${base}${inner}`
-          : `${base}.${inner}`;
+  const display = (inner: string): string => {
+    if (base === '') {
+      return inner === '' ? '(kořen)' : inner;
+    }
+    if (inner === '') {
+      return base;
+    }
+    return inner.startsWith('[') ? `${base}${inner}` : `${base}.${inner}`;
+  };
   const truncated = new Map<string, TruncatedPath>();
   const omitted: OmittedPath[] = [];
 
-  const slice = (node: unknown, path: string, insideList: boolean, depth: number): unknown => {
+  const slice = (node: Schema.Json, path: string, insideList: boolean, depth: number): Schema.Json => {
     if (depth > MAX_WALK_DEPTH) {
       return node;
     }
-    if (Array.isArray(node)) {
+    if (isJsonArray(node)) {
       const offset = insideList ? 0 : options.offset;
       const limit = insideList ? Math.min(options.limit, NESTED_LIST_LIMIT) : options.limit;
       const kept = node.slice(offset, offset + limit);
       if (node.length > limit || offset > 0) {
-        const pattern = insideList ? path.replace(/\[\d+\]/gu, '[]') : path;
+        const pattern = insideList ? path.replaceAll(/\[\d+\]/gu, '[]') : path;
         const previous = truncated.get(pattern);
         truncated.set(pattern, {
           offset,
@@ -130,38 +160,39 @@ export const shapeReadResult = (
       }
       return kept.map((item, index) => slice(item, `${path}[${offset + index}]`, true, depth + 1));
     }
-    if (isPlainObject(node)) {
-      const out: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(node)) {
-        out[key] = slice(child, joinPath(path, key), insideList, depth + 1);
-      }
-      return out;
+    if (isJsonObject(node)) {
+      return Object.fromEntries(
+        Object.entries(node).map(([key, child]): [string, Schema.Json] => [
+          key,
+          slice(child, joinPath(path, key), insideList, depth + 1),
+        ]),
+      );
     }
     return node;
   };
 
   const root = { value: slice(value, '', false, 0) };
-  const slots = (predicate: (value: unknown) => boolean): Slot[] => {
+  const slots = (predicate: (value: Schema.Json) => boolean): Slot[] => {
     const found: Slot[] = [];
     // Paths use the indexes of the original result: lists outside list items start at `offset`.
-    const visit = (node: unknown, path: string, insideList: boolean, depth: number): void => {
+    const visit = (node: Schema.Json, path: string, insideList: boolean, depth: number): void => {
       if (depth > MAX_WALK_DEPTH) {
         return;
       }
-      if (Array.isArray(node)) {
+      if (isJsonArray(node)) {
         const shift = insideList ? 0 : options.offset;
-        node.forEach((item, index) => {
+        for (const [index, item] of node.entries()) {
           const itemPath = `${path}[${index + shift}]`;
           if (predicate(item)) {
             found.push({ key: index, parent: node, path: itemPath, value: item });
           }
           visit(item, itemPath, true, depth + 1);
-        });
-      } else if (isPlainObject(node) && !Object.hasOwn(node, '_omitted')) {
+        }
+      } else if (isJsonObject(node) && !Object.hasOwn(node, '_omitted')) {
         for (const [key, child] of Object.entries(node)) {
           const childPath = joinPath(path, key);
           if (predicate(child)) {
-            found.push({ key, parent: node as Record<string, unknown>, path: childPath, value: child });
+            found.push({ key, parent: node, path: childPath, value: child });
           }
           visit(child, childPath, insideList, depth + 1);
         }
@@ -170,71 +201,70 @@ export const shapeReadResult = (
     visit(root.value, '', false, 0);
     return found;
   };
-  const setSlot = (slot: Slot, next: unknown): void => {
-    if (Array.isArray(slot.parent)) {
-      slot.parent[slot.key as number] = next;
-    } else {
-      slot.parent[slot.key as string] = next;
-    }
-  };
   const originalCount = (path: string, fallback: number): number =>
     Result.match(selectPath(value, path), {
       onFailure: () => fallback,
-      onSuccess: (original) =>
-        Array.isArray(original) ? original.length : isPlainObject(original) ? Object.keys(original).length : fallback,
+      onSuccess: (original) => containerCount(original, fallback),
     });
   const collapseLargest = (kind: 'list' | 'object'): boolean => {
-    const candidates = slots((node) =>
-      kind === 'list'
-        ? Array.isArray(node) && node.length > 0
-        : isPlainObject(node) && !Object.hasOwn(node, '_omitted'),
-    )
-      .map((slot) => ({ size: sizeOf(slot.value), slot }))
-      .filter((candidate) => candidate.size > 200)
-      .sort((left, right) => right.size - left.size);
-    const [largest] = candidates;
+    let largest: { readonly size: number; readonly slot: Slot } | undefined;
+    for (const slot of slots((node) =>
+      kind === 'list' ? isJsonArray(node) && node.length > 0 : isJsonObject(node) && !Object.hasOwn(node, '_omitted'),
+    )) {
+      const size = sizeOf(slot.value);
+      if (size > 200 && (largest === undefined || size > largest.size)) {
+        largest = { size, slot };
+      }
+    }
     if (largest === undefined) {
       return false;
     }
     const { slot } = largest;
-    const count = originalCount(
-      slot.path,
-      Array.isArray(slot.value) ? slot.value.length : Object.keys(slot.value as object).length,
-    );
-    const marker =
+    const keys = isJsonObject(slot.value) ? Object.keys(slot.value) : [];
+    const count = originalCount(slot.path, isJsonArray(slot.value) ? slot.value.length : keys.length);
+    const marker: Schema.JsonObject =
       kind === 'list'
         ? { _omitted: 'list', count, path: display(slot.path) }
-        : { _omitted: 'object', count, keys: Object.keys(slot.value as object).slice(0, 15), path: display(slot.path) };
+        : { _omitted: 'object', count, keys: keys.slice(0, 15), path: display(slot.path) };
     setSlot(slot, marker);
     omitted.push({ count, kind, path: display(slot.path) });
     return true;
   };
 
-  let guard = 0;
-  while (sizeOf(root.value) > budget && guard < 400) {
-    guard += 1;
+  const shrink = (): boolean => {
     if (collapseLargest('list')) {
-      continue;
+      return true;
     }
-    const long = slots((node) => typeof node === 'string' && node.length > LONG_STRING);
+    const long = slots((node) => Predicate.isString(node) && node.length > LONG_STRING);
     if (long.length > 0) {
-      long.forEach((slot) => setSlot(slot, `${(slot.value as string).slice(0, LONG_STRING)}…`));
-      continue;
+      for (const slot of long) {
+        if (Predicate.isString(slot.value)) {
+          setSlot(slot, `${slot.value.slice(0, LONG_STRING)}…`);
+        }
+      }
+      return true;
     }
     if (collapseLargest('object')) {
-      continue;
+      return true;
     }
-    if (Array.isArray(root.value) && root.value.length > 1) {
-      root.value.pop();
+    if (isJsonArray(root.value) && root.value.length > 1) {
+      root.value = root.value.slice(0, -1);
       truncated.set('', {
         offset: options.offset,
         path: display(''),
         returned: root.value.length,
-        total: Array.isArray(value) ? value.length : root.value.length,
+        total: isJsonArray(value) ? value.length : root.value.length,
       });
-      continue;
+      return true;
     }
-    break;
+    return false;
+  };
+  let guard = 0;
+  while (sizeOf(root.value) > budget && guard < 400) {
+    guard += 1;
+    if (!shrink()) {
+      break;
+    }
   }
   const omittedPaths = new Set(omitted.map((item) => item.path));
   return {

@@ -13,6 +13,9 @@ import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.t
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-market-catalog.ts';
 import { marketCatalogReadPersistenceForScope } from '../../src/persistence/market-catalog-read-persistence.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e3470000-0000-4000-8000-000000000001';
 const sellerId = 'e3470000-0000-4000-8000-000000000003';
@@ -79,7 +82,7 @@ const storefrontRef = { appId: 'czech-storefront', tenantId };
 const currentAt = (database: MarketCatalogTestDatabase, at: string) =>
   scoped(database, (transaction) =>
     Effect.gen(function* readCurrentCatalog() {
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
       const input = Schema.decodeUnknownSync(CurrentMarketCatalogRequestSchema)({ at });
       return yield* persistence.current(input);
@@ -252,7 +255,11 @@ it.live('reads scheduled Current state and immutable retained history through ru
 
       const historyBeforeRetirement = yield* scoped(runtime, (transaction) =>
         Effect.gen(function* readHistory() {
-          const ownerTransaction = yield* installOperationalScope(transaction, scope);
+          const ownerTransaction = yield* installOperationalScope(
+            transaction,
+            scope,
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
           return yield* persistence.history(marketId);
         }),
@@ -327,7 +334,11 @@ it.live('reads scheduled Current state and immutable retained history through ru
 
       const retainedHistory = yield* scoped(runtime, (transaction) =>
         Effect.gen(function* readRetainedHistory() {
-          const ownerTransaction = yield* installOperationalScope(transaction, scope);
+          const ownerTransaction = yield* installOperationalScope(
+            transaction,
+            scope,
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
           return yield* persistence.history(marketId);
         }),

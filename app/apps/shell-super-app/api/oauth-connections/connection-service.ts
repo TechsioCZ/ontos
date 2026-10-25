@@ -5,17 +5,23 @@
  * the connection applies to the very next request. Pure checks live in
  * `evaluateLiveChecks`; the database, SpiceDB and catalog reads live in the effects below.
  */
-import { ContextAccess, openDemoAccountGrants, openPrincipalOperators } from '@app/core-runtime';
 import {
-  type ConnectionActingKind,
-  type ConnectionDescription,
-  type ConnectionGrantStatus,
-  type ConnectionModule,
-  type ConnectionModulesRequest,
-  type ConnectionRevokeReason,
-  type ConnectionSummary,
-  type ConnectionWritePolicy,
-  ConnectionModulesRequestSchema,
+  ContextAccess,
+  OAuthAuthenticationAudit,
+  OAuthConnectionCompanies,
+  openDemoAccountGrants,
+  openPrincipalOperators,
+} from '@app/core-runtime';
+import { ConnectionModulesRequestSchema } from '@app/shared-contracts/oauth-connections';
+import type {
+  ConnectionActingKind,
+  ConnectionDescription,
+  ConnectionGrantStatus,
+  ConnectionModule,
+  ConnectionModulesRequest,
+  ConnectionRevokeReason,
+  ConnectionSummary,
+  ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
@@ -23,34 +29,21 @@ import { callerModuleAccess } from '../agent-platform/caller.ts';
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
-import {
-  ConnectionForbidden,
-  ConnectionInvalid,
-  ConnectionUnauthorized,
-  type ConnectionUnauthorizedCode,
-  ConnectionUnavailable,
-} from './errors.ts';
+import { ConnectionForbidden, ConnectionInvalid, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
+import type { ConnectionUnauthorizedCode } from './errors.ts';
 import { OAuthFlow } from './oauth-flow.ts';
-import {
-  type LiveRights,
-  effectiveAuthority,
-  isModulesRequestWithin,
-  isPolicyWithin,
-  offeredModules,
-} from './effective-authority.ts';
+import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, offeredModules } from './effective-authority.ts';
+import type { LiveRights } from './effective-authority.ts';
 import {
   findGrant,
-  listGrants,
   loadBindingStatus,
-  loadLegalNames,
   loadPrincipals,
   loadUserAccount,
-  recordConnectionAudit,
   setGrantBindingStatus,
   setGrantStatus,
   updateGrantAccess,
 } from './grant-store.ts';
-import type { GrantListFilter, GrantRow } from './types.ts';
+import type { GrantRow } from './types.ts';
 
 /** Facts gathered by `loadLiveConnection` for one grant; every check of `evaluateLiveChecks` reads these. */
 export interface LiveFacts {
@@ -114,7 +107,7 @@ const toUnavailable = (cause: unknown): ConnectionUnavailable =>
 const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(value));
 
 const ModulesJson = Schema.fromJsonString(ConnectionModulesRequestSchema);
-const modulesJson = (modules: ConnectionModulesRequest): string => Schema.encodeSync(ModulesJson)(modules);
+const modulesJson = Schema.encodeEffect(ModulesJson);
 
 type PrincipalNames = ReadonlyMap<
   string,
@@ -122,26 +115,33 @@ type PrincipalNames = ReadonlyMap<
 >;
 
 /** Current graph authority; connection consent can narrow these rights but profiles cannot grant them. */
-export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingAuthority')(function* (input: {
-  readonly actingKind: ConnectionActingKind;
-  readonly actingPrincipalId: string;
-  readonly legalEntityId: string;
-  readonly tenantId: string;
-}) {
-  const sets = yield* callerModuleAccess({
-    principal: {
-      legalEntityId: input.legalEntityId,
-      principalId: input.actingPrincipalId,
-      tenantId: input.tenantId,
-    },
-  });
-  const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
-  const labelOf = composedModulesOf(mcpModulesOf(catalog.composition)).labelOf;
-  const live: LiveRights = { read: sets.access, write: sets.propose };
-  const policyCap: ConnectionWritePolicy =
-    input.actingKind === 'human' || sets.write.size > 0 ? 'direct' : sets.propose.size > 0 ? 'approval' : 'read_only';
-  return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
-}, Effect.mapError(toUnavailable));
+export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingAuthority')(
+  function* loadActingAuthority(input: {
+    readonly actingKind: ConnectionActingKind;
+    readonly actingPrincipalId: string;
+    readonly legalEntityId: string;
+    readonly tenantId: string;
+  }) {
+    const sets = yield* callerModuleAccess({
+      principal: {
+        legalEntityId: input.legalEntityId,
+        principalId: input.actingPrincipalId,
+        tenantId: input.tenantId,
+      },
+    });
+    const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
+    const { labelOf } = composedModulesOf(mcpModulesOf(catalog.composition));
+    const live: LiveRights = { read: sets.access, write: sets.propose };
+    let policyCap: ConnectionWritePolicy = 'read_only';
+    if (input.actingKind === 'human' || sets.write.size > 0) {
+      policyCap = 'direct';
+    } else if (sets.propose.size > 0) {
+      policyCap = 'approval';
+    }
+    return { labelOf, live, offered: offeredModules(live, policyCap, labelOf), policyCap };
+  },
+  Effect.mapError(toUnavailable),
+);
 
 export interface LiveConnection {
   readonly description: ConnectionDescription;
@@ -149,17 +149,88 @@ export interface LiveConnection {
 }
 
 /**
+ * Side effects after a grant left `active` (its row and binding are already updated): drops its OAuth tokens and
+ * consent, forgets the cached live check and writes `oauth.connection.revoked`.
+ */
+export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocation')(function* finishRevocation(input: {
+  readonly actorPrincipalId: string | null;
+  readonly grant: GrantRow;
+  readonly note: string | null;
+  readonly reason: ConnectionRevokeReason;
+}) {
+  yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
+  yield* (yield* OAuthAuthenticationAudit)
+    .record({
+      authBindingId: null,
+      authMethod: input.actorPrincipalId === null ? 'system' : 'session',
+      eventType: 'oauth.connection.revoked',
+      evidence: { note: input.note, reason: input.reason, revokedByPrincipalId: input.actorPrincipalId },
+      grant: input.grant,
+      outcome: 'succeeded',
+      outcomeCode: input.reason,
+      principalId: input.actorPrincipalId,
+    })
+    .pipe(Effect.mapError(toUnavailable));
+});
+
+/**
+ * Revokes (or denies a draft of) a grant: status, binding, Better Auth tokens and audit row.
+ * Grants that are already revoked, superseded or denied are returned unchanged.
+ */
+export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnection')(function* revokeConnection(input: {
+  readonly actorPrincipalId: string | null;
+  readonly grantId: string;
+  readonly note: string | null;
+  readonly reason: ConnectionRevokeReason;
+}) {
+  const grant = yield* findGrant(input.grantId);
+  if (grant === undefined) {
+    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
+  }
+  if (grant.status === 'revoked' || grant.status === 'superseded' || grant.status === 'denied') {
+    return grant;
+  }
+  if (grant.status === 'draft') {
+    const denied = yield* setGrantStatus({
+      grantId: input.grantId,
+      revokedByPrincipalId: input.actorPrincipalId,
+      revokeReason: null,
+      status: 'denied',
+    });
+    return denied ?? grant;
+  }
+  const updated = yield* setGrantStatus({
+    grantId: input.grantId,
+    revokedByPrincipalId: input.actorPrincipalId,
+    revokeReason: input.reason,
+    status: revokedStatusFor(input.reason),
+  });
+  if (updated === undefined) {
+    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
+  }
+  if (grant.authBindingId !== null) {
+    yield* setGrantBindingStatus({ authBindingId: grant.authBindingId, status: 'disabled', tenantId: grant.tenantId });
+  }
+  yield* finishRevocation({ actorPrincipalId: input.actorPrincipalId, grant, note: input.note, reason: input.reason });
+  return updated;
+});
+
+/**
  * Live check and description of an active grant, on every call. A failed check revokes the grant when the verdict
  * says so and then fails with `ConnectionUnauthorized`.
  */
-export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConnection')(function* (grantId: string) {
+export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConnection')(function* loadLiveConnection(
+  grantId: string,
+) {
   const grant = yield* findGrant(grantId);
   if (grant === undefined) {
     return yield* new ConnectionUnauthorized({ code: 'grant_inactive' });
   }
   const agent = grant.actingKind === 'agent';
-  const user = yield* loadUserAccount(grant.userId);
-  const names: PrincipalNames = yield* loadPrincipals(grant.tenantId, [grant.userPrincipalId, grant.actingPrincipalId]);
+  const [user, names] = yield* Effect.all(
+    [loadUserAccount(grant.userId), loadPrincipals(grant.tenantId, [grant.userPrincipalId, grant.actingPrincipalId])],
+    { concurrency: 2 },
+  );
   const bindingStatus =
     grant.authBindingId === null
       ? undefined
@@ -176,15 +247,17 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
   let agentInCompany = true;
   let operatorHolds = true;
   if (agent) {
-    const companies = yield* Effect.scoped(
-      Effect.flatMap(openDemoAccountGrants, (grants) => grants.companiesOf(grant.actingPrincipalId)),
-    ).pipe(Effect.mapError(toUnavailable));
+    const companies = yield* openDemoAccountGrants.pipe(
+      Effect.flatMap((grants) => grants.companiesOf(grant.actingPrincipalId)),
+      Effect.scoped,
+      Effect.mapError(toUnavailable),
+    );
     agentInCompany = companies.includes(grant.legalEntityId);
-    operatorHolds = yield* Effect.scoped(
-      Effect.flatMap(openPrincipalOperators, (operators) =>
-        operators.canOperate(grant.actingPrincipalId, grant.userPrincipalId),
-      ),
-    ).pipe(Effect.mapError(toUnavailable));
+    operatorHolds = yield* openPrincipalOperators.pipe(
+      Effect.flatMap((operators) => operators.canOperate(grant.actingPrincipalId, grant.userPrincipalId)),
+      Effect.scoped,
+      Effect.mapError(toUnavailable),
+    );
   }
   const verdict = evaluateLiveChecks({
     actingKind: grant.actingKind,
@@ -220,7 +293,9 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
     requested: grant.modules,
     requestedPolicy: grant.writePolicy,
   });
-  const legalName = (yield* loadLegalNames(grant.tenantId, [grant.legalEntityId])).get(grant.legalEntityId);
+  const legalName = (yield* (yield* OAuthConnectionCompanies)
+    .names(grant.tenantId, [grant.legalEntityId])
+    .pipe(Effect.mapError(toUnavailable))).get(grant.legalEntityId);
   const catalog = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(toUnavailable));
   const description: ConnectionDescription = {
     acting: {
@@ -250,155 +325,6 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
   };
   const live: LiveConnection = { description, grant };
   return live;
-});
-
-/**
- * Revokes (or denies a draft of) a grant: status, binding, Better Auth tokens and audit row.
- * Grants that are already revoked, superseded or denied are returned unchanged.
- */
-export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnection')(function* (input: {
-  readonly actorPrincipalId: string | null;
-  readonly grantId: string;
-  readonly note: string | null;
-  readonly reason: ConnectionRevokeReason;
-}) {
-  const grant = yield* findGrant(input.grantId);
-  if (grant === undefined) {
-    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
-  }
-  if (grant.status === 'revoked' || grant.status === 'superseded' || grant.status === 'denied') {
-    return grant;
-  }
-  if (grant.status === 'draft') {
-    const denied = yield* setGrantStatus({
-      grantId: input.grantId,
-      revokeReason: null,
-      revokedByPrincipalId: input.actorPrincipalId,
-      status: 'denied',
-    });
-    return denied ?? grant;
-  }
-  const updated = yield* setGrantStatus({
-    grantId: input.grantId,
-    revokeReason: input.reason,
-    revokedByPrincipalId: input.actorPrincipalId,
-    status: revokedStatusFor(input.reason),
-  });
-  if (updated === undefined) {
-    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
-  }
-  if (grant.authBindingId !== null) {
-    yield* setGrantBindingStatus({ authBindingId: grant.authBindingId, status: 'disabled', tenantId: grant.tenantId });
-  }
-  yield* finishRevocation({ actorPrincipalId: input.actorPrincipalId, grant, note: input.note, reason: input.reason });
-  return updated;
-});
-
-/**
- * Side effects after a grant left `active` (its row and binding are already updated): drops its OAuth tokens and
- * consent, forgets the cached live check and writes `oauth.connection.revoked`.
- */
-export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocation')(function* (input: {
-  readonly actorPrincipalId: string | null;
-  readonly grant: GrantRow;
-  readonly note: string | null;
-  readonly reason: ConnectionRevokeReason;
-}) {
-  yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
-  yield* recordConnectionAudit({
-    authBindingId: null,
-    authMethod: input.actorPrincipalId === null ? 'system' : 'session',
-    eventType: 'oauth.connection.revoked',
-    evidence: { note: input.note, reason: input.reason, revokedByPrincipalId: input.actorPrincipalId },
-    grant: input.grant,
-    outcome: 'succeeded',
-    outcomeCode: input.reason,
-    principalId: input.actorPrincipalId,
-  });
-});
-
-/** Changes the module ceiling and write policy of an active grant; both must stay within the actor's authority. */
-export const updateConnection = Effect.fn('OAuthConnectionService.updateConnection')(function* (input: {
-  readonly actorPrincipalId: string;
-  readonly grantId: string;
-  readonly modules: ConnectionModulesRequest;
-  readonly writePolicy: ConnectionWritePolicy;
-}) {
-  const grant = yield* findGrant(input.grantId);
-  if (grant === undefined || grant.status !== 'active') {
-    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
-  }
-  const authority = yield* loadActingAuthority({
-    actingKind: grant.actingKind,
-    actingPrincipalId: grant.actingPrincipalId,
-    legalEntityId: grant.legalEntityId,
-    tenantId: grant.tenantId,
-  });
-  if (!isModulesRequestWithin(input.modules, authority.offered)) {
-    return yield* new ConnectionForbidden({
-      code: 'modules_forbidden',
-      reason: 'Připojení může mít jen moduly, které jednající smí používat.',
-    });
-  }
-  if (!isPolicyWithin(input.writePolicy, authority.policyCap)) {
-    return yield* new ConnectionForbidden({
-      code: 'write_policy_forbidden',
-      reason: 'Tento způsob zápisu nastavení agenta nedovoluje.',
-    });
-  }
-  const updated = yield* updateGrantAccess({
-    grantId: input.grantId,
-    modules: input.modules,
-    writePolicy: input.writePolicy,
-  });
-  if (updated === undefined) {
-    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
-  }
-  yield* recordConnectionAudit({
-    authBindingId: null,
-    authMethod: 'session',
-    eventType: 'oauth.connection.updated',
-    evidence: {
-      modulesAfter: modulesJson(input.modules),
-      modulesBefore: modulesJson(grant.modules),
-      writePolicyAfter: input.writePolicy,
-      writePolicyBefore: grant.writePolicy,
-    },
-    grant,
-    outcome: 'succeeded',
-    outcomeCode: 'updated',
-    principalId: input.actorPrincipalId,
-  });
-  const summary = yield* getConnectionSummary(input.grantId);
-  if (summary === undefined) {
-    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
-  }
-  return summary;
-});
-
-/** Summary rows for grants: live modules for active grants (fallback: the requested ceiling). */
-const summariesOf = Effect.fn('OAuthConnectionService.summariesOf')(function* (
-  tenantId: string,
-  rows: readonly GrantRow[],
-) {
-  const names: PrincipalNames = yield* loadPrincipals(tenantId, [
-    ...new Set(rows.flatMap((row) => [row.userPrincipalId, row.actingPrincipalId])),
-  ]);
-  const legalNames = yield* loadLegalNames(tenantId, [...new Set(rows.map((row) => row.legalEntityId))]);
-  const catalog = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(toUnavailable));
-  const labelOf = composedModulesOf(mcpModulesOf(catalog.composition)).labelOf;
-  return yield* Effect.forEach(
-    rows,
-    (row) =>
-      row.status === 'active'
-        ? loadLiveConnection(row.grantId).pipe(
-            Effect.option,
-            Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
-          )
-        : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
-    // loadLiveConnection eventually opens two authority reads; keep room for the PostgreSQL connection.
-    { concurrency: 2 },
-  );
 });
 
 const summaryOf = (
@@ -449,22 +375,96 @@ const summaryOf = (
   };
 };
 
-/** Management list ("Připojené aplikace"); every status except draft unless the filter names statuses. */
-export const listConnectionSummaries = Effect.fn('OAuthConnectionService.listConnectionSummaries')(function* (
-  filter: GrantListFilter,
-) {
-  const rows = yield* listGrants(filter);
-  return yield* summariesOf(filter.tenantId, rows);
-});
+/** Summarizes retained grant rows without querying the same management selection twice. */
+export const connectionSummariesOf = Effect.fn('OAuthConnectionService.connectionSummariesOf')(
+  function* connectionSummariesOf(tenantId: string, rows: readonly GrantRow[]) {
+    const companies = yield* OAuthConnectionCompanies;
+    const [names, legalNames] = yield* Effect.all(
+      [
+        loadPrincipals(tenantId, [...new Set(rows.flatMap((row) => [row.userPrincipalId, row.actingPrincipalId]))]),
+        companies
+          .names(tenantId, [...new Set(rows.map((row) => row.legalEntityId))])
+          .pipe(Effect.mapError(toUnavailable)),
+      ],
+      { concurrency: 2 },
+    );
+    const catalog = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(toUnavailable));
+    const { labelOf } = composedModulesOf(mcpModulesOf(catalog.composition));
+    return yield* Effect.forEach(
+      rows,
+      (row) =>
+        row.status === 'active'
+          ? loadLiveConnection(row.grantId).pipe(
+              Effect.option,
+              Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
+            )
+          : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
+      // loadLiveConnection eventually opens two authority reads; keep room for the PostgreSQL connection.
+      { concurrency: 2 },
+    );
+  },
+);
 
-/** One summary by grant id; undefined for unknown grants and drafts. */
-export const getConnectionSummary = Effect.fn('OAuthConnectionService.getConnectionSummary')(function* (
-  grantId: string,
-) {
-  const grant = yield* findGrant(grantId);
-  if (grant === undefined || grant.status === 'draft') {
-    return undefined;
+/** Changes the module ceiling and write policy of an active grant; both must stay within the actor's authority. */
+export const updateConnection = Effect.fn('OAuthConnectionService.updateConnection')(function* updateConnection(input: {
+  readonly actorPrincipalId: string;
+  readonly grantId: string;
+  readonly modules: ConnectionModulesRequest;
+  readonly writePolicy: ConnectionWritePolicy;
+}) {
+  const grant = yield* findGrant(input.grantId);
+  if (grant === undefined || grant.status !== 'active') {
+    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
   }
-  const [summary] = yield* summariesOf(grant.tenantId, [grant]);
+  const authority = yield* loadActingAuthority({
+    actingKind: grant.actingKind,
+    actingPrincipalId: grant.actingPrincipalId,
+    legalEntityId: grant.legalEntityId,
+    tenantId: grant.tenantId,
+  });
+  if (!isModulesRequestWithin(input.modules, authority.offered)) {
+    return yield* new ConnectionForbidden({
+      code: 'modules_forbidden',
+      reason: 'Připojení může mít jen moduly, které jednající smí používat.',
+    });
+  }
+  if (!isPolicyWithin(input.writePolicy, authority.policyCap)) {
+    return yield* new ConnectionForbidden({
+      code: 'write_policy_forbidden',
+      reason: 'Tento způsob zápisu nastavení agenta nedovoluje.',
+    });
+  }
+  const [modulesAfter, modulesBefore] = yield* Effect.all([modulesJson(input.modules), modulesJson(grant.modules)], {
+    concurrency: 2,
+  }).pipe(Effect.mapError(toUnavailable));
+  const updated = yield* updateGrantAccess({
+    grantId: input.grantId,
+    modules: input.modules,
+    writePolicy: input.writePolicy,
+  });
+  if (updated === undefined) {
+    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
+  }
+  yield* (yield* OAuthAuthenticationAudit)
+    .record({
+      authBindingId: null,
+      authMethod: 'session',
+      eventType: 'oauth.connection.updated',
+      evidence: {
+        modulesAfter,
+        modulesBefore,
+        writePolicyAfter: input.writePolicy,
+        writePolicyBefore: grant.writePolicy,
+      },
+      grant,
+      outcome: 'succeeded',
+      outcomeCode: 'updated',
+      principalId: input.actorPrincipalId,
+    })
+    .pipe(Effect.mapError(toUnavailable));
+  const [summary] = yield* connectionSummariesOf(grant.tenantId, [updated]);
+  if (summary === undefined) {
+    return yield* new ConnectionInvalid({ code: 'grant_not_found' });
+  }
   return summary;
 });

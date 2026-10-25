@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
@@ -7,7 +8,7 @@ import { Config, Console, Effect, Exit, FileSystem, Path, Redacted, Schema } fro
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseIdentityConnections } from '../packages/core-runtime/src/db/config.ts';
-import { DATABASE_IDENTITIES } from '../packages/core-runtime/src/db/database-identities.ts';
+
 import {
   collectGlobalSnapshot,
   collectSnapshot,
@@ -74,7 +75,7 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
   Reactivity.Reactivity
 > =>
   Effect.gen(function* auditDatabaseTrustBoundariesEffect() {
-    const connections = yield* loadDatabaseIdentityConnections().pipe(
+    const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT }).pipe(
       Effect.mapError(
         () =>
           new DatabaseTrustBoundaryAuditError({
@@ -91,7 +92,11 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
       DATABASE_IDENTITIES,
       (identity) =>
         Effect.gen(function* openIdentityConnection() {
-          const url = Redacted.make(connections.runtime[identity.id].connectionString);
+          const connection = connections.runtime[identity.id];
+          if (connection === undefined) {
+            return yield* collectionFailure();
+          }
+          const url = Redacted.make(connection.connectionString);
           const endpoint = yield* Effect.fromResult(getEffectiveDatabaseEndpoint(url));
           // makeClient holds one connection, which the BEGIN / SET / COMMIT trusted-context probes rely on.
           const client = yield* PgClient.makeClient({ url }).pipe(Effect.mapError(collectionFailure));

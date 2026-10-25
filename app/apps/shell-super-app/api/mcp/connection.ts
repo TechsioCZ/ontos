@@ -4,64 +4,79 @@
  * (`loadLiveConnection`) so a revoked connection, a removed right or a narrowed grant applies to the very next
  * request. The resulting principal is the trusted `oauth_connection` context gateway assertions are issued for.
  */
+import { OAuthAuthenticationAudit } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import {
   OAUTH_GRANT_CLAIM,
   OAUTH_GRANT_CONTEXT_PREFIX,
   OAUTH_MCP_SCOPE,
 } from '@app/shared-contracts/oauth-connections';
-import { Effect } from 'effect';
+import { Context, Effect, Layer, Option, Schema, SynchronizedRef } from 'effect';
 import { createLocalJWKSet, jwtVerify } from 'jose';
-import type { JSONWebKeySet, JWTVerifyGetKey } from 'jose';
+import type { JWTVerifyGetKey } from 'jose';
 
 import type { OAuthServerEndpoint } from '../auth/oauth-server/policy.ts';
 import { AuthenticationService } from '../auth/service.ts';
-import { type LiveConnection, loadLiveConnection } from '../oauth-connections/connection-service.ts';
+import type { LiveConnection } from '../oauth-connections/connection-service.ts';
+import { loadLiveConnection } from '../oauth-connections/connection-service.ts';
 import { ConnectionUnauthorized, ConnectionUnavailable } from '../oauth-connections/errors.ts';
-import { recordConnectionAudit, touchGrantLastUsed } from '../oauth-connections/grant-store.ts';
-import { type OAuthServerConfig, loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
+import { touchGrantLastUsed } from '../oauth-connections/grant-store.ts';
+import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
 
 export interface VerifiedAccessToken {
   readonly grantId: string;
   readonly sub: string;
 }
 
-/** Verifies the EdDSA user token: exact issuer, exact MCP audience, `ontos` scope and a grant claim. */
-export const makeAccessTokenVerifier = (config: OAuthServerConfig, keys: JWTVerifyGetKey) => {
-  const invalid = () => new ConnectionUnauthorized({ code: 'token_invalid' });
-  return (token: string): Effect.Effect<VerifiedAccessToken, ConnectionUnauthorized> =>
-    Effect.tryPromise({
-      catch: invalid,
-      try: () =>
-        jwtVerify(token, keys, {
-          algorithms: ['EdDSA'],
-          audience: config.resource,
-          clockTolerance: 60,
-          issuer: config.issuer,
-        }),
-    }).pipe(
-      Effect.flatMap(({ payload }) => {
-        const grantId = payload[OAUTH_GRANT_CLAIM];
-        const scopes: readonly unknown[] =
-          typeof payload['scope'] === 'string'
-            ? payload['scope'].split(' ')
-            : Array.isArray(payload['scp'])
-              ? payload['scp']
-              : [];
-        if (typeof payload.sub !== 'string' || typeof grantId !== 'string' || !scopes.includes(OAUTH_MCP_SCOPE)) {
-          return Effect.fail(invalid());
-        }
-        return Effect.succeed({ grantId, sub: payload.sub });
-      }),
-    );
+const AccessTokenClaims = Schema.Struct({
+  [OAUTH_GRANT_CLAIM]: Schema.String,
+  scope: Schema.optional(Schema.String),
+  scp: Schema.optional(Schema.Array(Schema.String)),
+  sub: Schema.String,
+});
+const SigningKeys = Schema.Struct({
+  keys: Schema.Array(
+    Schema.StructWithRest(Schema.Struct({ kty: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)]),
+  ),
+});
+const invalidToken = (cause: unknown): ConnectionUnauthorized => {
+  const failure = { cause, code: 'token_invalid' as const };
+  return new ConnectionUnauthorized(failure);
 };
 
-/** Loads the local AS keys in-process: Workers must never fetch their own public hostname. */
-export const loadOAuthJwks = (endpoint: OAuthServerEndpoint): Effect.Effect<JWTVerifyGetKey, ConnectionUnavailable> =>
-  Effect.tryPromise({
-    catch: (cause) => new ConnectionUnavailable({ cause }),
-    try: () => endpoint.handler(new Request(`${endpoint.issuer}/jwks`)),
+/** Local crypto still has a deadline; verification failures retain JOSE/Schema evidence. */
+const verifyAccessToken = Effect.fn('Mcp.verifyAccessToken')(function* verifyAccessToken(
+  token: string,
+  issuer: string,
+  audience: string,
+  keys: JWTVerifyGetKey,
+) {
+  const { payload } = yield* Effect.tryPromise({
+    catch: invalidToken,
+    try: jwtVerify.bind(undefined, token, keys, {
+      algorithms: ['EdDSA'],
+      audience,
+      clockTolerance: 60,
+      issuer,
+    }),
   }).pipe(
+    Effect.timeoutOrElse({
+      duration: '5 seconds',
+      orElse: () => Effect.fail(new ConnectionUnavailable({ cause: 'Token verification timed out' })),
+    }),
+  );
+  const claims = yield* Schema.decodeUnknownEffect(AccessTokenClaims)(payload).pipe(Effect.mapError(invalidToken));
+  const scopes = claims.scope === undefined ? (claims.scp ?? []) : claims.scope.split(' ');
+  if (!scopes.includes(OAUTH_MCP_SCOPE)) {
+    return yield* invalidToken('Required MCP scope missing');
+  }
+  return { grantId: claims[OAUTH_GRANT_CLAIM], sub: claims.sub } satisfies VerifiedAccessToken;
+});
+
+/** Loads local AS keys in-process: Workers must never fetch their own public hostname. */
+const readOAuthJwks = (endpoint: OAuthServerEndpoint): Effect.Effect<string, ConnectionUnavailable> =>
+  endpoint.handler(new Request(`${endpoint.issuer}/jwks`)).pipe(
+    Effect.mapError((cause) => new ConnectionUnavailable({ cause })),
     Effect.filterOrFail(
       (response) => response.ok,
       (response) => new ConnectionUnavailable({ cause: `OAuth signing keys answered HTTP ${response.status}` }),
@@ -69,25 +84,75 @@ export const loadOAuthJwks = (endpoint: OAuthServerEndpoint): Effect.Effect<JWTV
     Effect.flatMap((response) =>
       Effect.tryPromise({
         catch: (cause) => new ConnectionUnavailable({ cause }),
-        try: (): Promise<JSONWebKeySet> => response.json(),
+        try: response.text.bind(response),
       }),
     ),
-    Effect.map((keys) => createLocalJWKSet(keys)),
     Effect.timeoutOrElse({
       duration: '5 seconds',
       orElse: () => Effect.fail(new ConnectionUnavailable({ cause: 'OAuth signing keys timed out' })),
     }),
   );
 
+export class OAuthAccessTokens extends Context.Service<
+  OAuthAccessTokens,
+  {
+    readonly verify: (
+      token: string,
+    ) => Effect.Effect<VerifiedAccessToken, ConnectionUnauthorized | ConnectionUnavailable, AuthenticationService>;
+  }
+>()('@app/shell-super-app/api/mcp/connection/OAuthAccessTokens') {}
+
+interface ImportedSigningKeys {
+  readonly keys: JWTVerifyGetKey;
+  readonly serialized: string;
+}
+
+const importSigningKeys = Effect.fn('Mcp.importSigningKeys')(function* importSigningKeys(serialized: string) {
+  const document = yield* Schema.decodeEffect(Schema.fromJsonString(SigningKeys))(serialized).pipe(
+    Effect.mapError((cause) => new ConnectionUnavailable({ cause })),
+  );
+  return yield* Effect.try({
+    catch: (cause) => new ConnectionUnavailable({ cause }),
+    try: () => createLocalJWKSet({ keys: [...document.keys] }),
+  });
+});
+
+/** Keep only imported public key material in the runtime, never another Worker's request-bound endpoint or sockets. */
+export const OAuthAccessTokensLive = Layer.effect(
+  OAuthAccessTokens,
+  Effect.gen(function* oauthAccessTokens() {
+    const config = yield* loadOAuthServerConfig;
+    const imported = yield* SynchronizedRef.make(Option.none<ImportedSigningKeys>());
+    const verify = Effect.fn('Mcp.verify')(function* verify(token: string) {
+      const authentication = yield* AuthenticationService;
+      if (authentication.oauth === undefined || authentication.oauth.issuer !== config.issuer) {
+        return yield* new ConnectionUnavailable({ cause: 'OAuth issuer unavailable or mismatched' });
+      }
+      // Read live AS keys on this request's database, so removal/rotation never waits on a cache TTL.
+      const serialized = yield* readOAuthJwks(authentication.oauth);
+      const keys = yield* SynchronizedRef.modifyEffect(imported, (previous) => {
+        if (Option.isSome(previous) && previous.value.serialized === serialized) {
+          return Effect.succeed([previous.value.keys, previous] as const);
+        }
+        return importSigningKeys(serialized).pipe(
+          Effect.map((resolver) => [resolver, Option.some({ keys: resolver, serialized })] as const),
+        );
+      });
+      return yield* verifyAccessToken(token, config.issuer, config.resource, keys);
+    });
+    return { verify };
+  }),
+);
+
 /** Trusted principal context of a connection (`oauth_connection`, delegated when an agent acts). */
 export const connectionPrincipalContext = (live: LiveConnection) => {
   const { description, grant } = live;
   const agent = grant.actingKind === 'agent';
-  return {
+  const principal = {
     authBindingId: grant.authBindingId ?? '',
     authContextRef: `${OAUTH_GRANT_CONTEXT_PREFIX}${grant.grantId}`,
-    authMethod: 'oauth_connection' as const,
     authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+    authMethod: 'oauth_connection' as const,
     connection: {
       clientId: grant.clientId,
       clientName: grant.clientName.slice(0, 200),
@@ -101,16 +166,16 @@ export const connectionPrincipalContext = (live: LiveConnection) => {
     legalEntityId: grant.legalEntityId,
     principalId: grant.actingPrincipalId,
     tenantId: grant.tenantId,
-    ...(agent ? { delegatedByPrincipalId: grant.userPrincipalId } : {}),
   };
+  return agent ? { ...principal, delegatedByPrincipalId: grant.userPrincipalId } : principal;
 };
 export type ConnectionPrincipal = ReturnType<typeof connectionPrincipalContext>;
 
 /** The throttled `authn.connector_exchange` audit row (at most once a minute per grant). */
-const auditUse = (live: LiveConnection) =>
-  Effect.gen(function* auditUseEffect() {
-    if (yield* touchGrantLastUsed(live.grant.grantId)) {
-      yield* recordConnectionAudit({
+const auditUse = Effect.fn('Mcp.auditUse')(function* auditUse(live: LiveConnection) {
+  if (yield* touchGrantLastUsed(live.grant.grantId)) {
+    yield* (yield* OAuthAuthenticationAudit)
+      .record({
         authBindingId: live.grant.authBindingId,
         authMethod: 'oauth_connection',
         eventType: 'authn.connector_exchange',
@@ -119,18 +184,14 @@ const auditUse = (live: LiveConnection) =>
         outcome: 'succeeded',
         outcomeCode: 'connector_exchange',
         principalId: live.grant.actingPrincipalId,
-      });
-    }
-  });
+      })
+      .pipe(Effect.mapError((cause) => new ConnectionUnavailable({ cause })));
+  }
+});
 
 /** Bearer token -> live connection. Unauthorized means HTTP 401 with a challenge; Unavailable means 503. */
 export const authenticateMcpRequest = Effect.fn('Mcp.authenticate')(function* authenticateMcpRequest(token: string) {
-  const config = yield* loadOAuthServerConfig;
-  const authentication = yield* AuthenticationService;
-  if (authentication.oauth === undefined || authentication.oauth.issuer !== config.issuer) {
-    return yield* new ConnectionUnavailable({ cause: 'OAuth issuer unavailable or mismatched' });
-  }
-  const claims = yield* makeAccessTokenVerifier(config, yield* loadOAuthJwks(authentication.oauth))(token);
+  const claims = yield* (yield* OAuthAccessTokens).verify(token);
   const live = yield* loadLiveConnection(claims.grantId);
   if (live.grant.userId !== claims.sub) {
     return yield* new ConnectionUnauthorized({ code: 'token_invalid' });

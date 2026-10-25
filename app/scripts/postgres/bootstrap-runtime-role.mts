@@ -1,11 +1,12 @@
 /// <reference types="node" />
+import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 
 import { Effect, Exit, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue } from '../../packages/core-runtime/src/db/config.ts';
-import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
+
 import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { RuntimeRoleBootstrapError } from './database-login-roles.mts';
 import { bootstrapFailure, bootstrapRuntimeRoles, connectAdmin } from './runtime-role-bootstrap.mts';
@@ -34,16 +35,21 @@ const readRuntimePassword = (
   );
 
 const main = Effect.gen(function* mainEffect() {
-  const connections = yield* loadDatabaseIdentityConnections().pipe(
+  const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT }).pipe(
     Effect.mapError((failure) => bootstrapFailure(failure.reason)),
   );
   const passwords = new Map<string, Redacted.Redacted>();
   for (const identity of DATABASE_IDENTITIES) {
-    passwords.set(identity.role, yield* readRuntimePassword(identity, connections.runtime[identity.id]));
+    const connection = connections.runtime[identity.id];
+    if (connection === undefined) {
+      return yield* bootstrapFailure(`The enrolled ${identity.id} database connection is unavailable`);
+    }
+    passwords.set(identity.role, yield* readRuntimePassword(identity, connection));
   }
   const client = yield* connectAdmin(Redacted.make(connections.admin.connectionString));
   yield* bootstrapRuntimeRoles(client, connections.admin.database, passwords);
   yield* Effect.sync(() => console.log(`Verified least-privilege PostgreSQL roles ${RUNTIME_ROLES.join(', ')}`));
+  return yield* Effect.void;
 }).pipe(
   Effect.scoped,
   Effect.provide(Reactivity.layer),

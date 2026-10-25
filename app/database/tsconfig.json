@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../node_modules/.cache/tsgo/declarations/application__database",
+    "tsBuildInfoFile": "../node_modules/.cache/tsgo/application__database.tsbuildinfo"
+  },
+  "include": ["identity-enrollment.ts"],
+  "references": [
+    { "path": "../packages/core-runtime" },
+    { "path": "../verticals/party-registry" }
+  ]
+}

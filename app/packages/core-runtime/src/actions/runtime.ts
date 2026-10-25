@@ -11,6 +11,8 @@ import {
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
@@ -350,6 +352,7 @@ export interface ActionRuntimeService {
 export interface ActionRuntimeOptions {
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly contextAccess?: (typeof ContextAccess)['Service'];
+  readonly databaseIdentities: DatabaseIdentityEnrollment;
   readonly installScope?: typeof installOperationalScope;
   readonly lockCompositionAuthority?: typeof lockApplicationCompositionAuthority;
   readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
@@ -1047,7 +1050,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const invocationScopeExecutor = (scope: OperationalScope): ActionInvocationScopeExecutor => ({
     transaction: (body) =>
       database.executor.transaction((transaction) =>
-        installScope(transaction, scope).pipe(Effect.andThen(() => body(transaction))),
+        installScope(transaction, scope, options.databaseIdentities).pipe(Effect.andThen(() => body(transaction))),
       ),
   });
   const loadRecordedRejectionInScope = (scope: OperationalScope, invocationId: string) =>
@@ -1893,7 +1896,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ActionCoreError | DomainErrorSchema['Type'],
           HandlerRequirements
         > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-          const scopedTransaction = yield* installScope(drizzleTransaction, scope);
+          const scopedTransaction = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
           notifyStage('database_scope_installed');
           yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
             Effect.mapError((cause) =>
@@ -2335,6 +2338,7 @@ export const makeActionRuntimeLive = (expectedDeployment: typeof OntosDeployment
   Layer.effect(
     ActionRuntime,
     Effect.gen(function* makeActionRuntimeService() {
+      const databaseIdentities = yield* DatabaseIdentityEnrollmentContext;
       const applicationComposition = yield* ActiveApplicationCompositionService;
       const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
       const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
@@ -2353,6 +2357,7 @@ export const makeActionRuntimeLive = (expectedDeployment: typeof OntosDeployment
         );
       let runtimeOptions: ActionRuntimeOptions = {
         contextAccess,
+        databaseIdentities,
         moduleEntrypointGateway,
         moduleStateGate,
         ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)

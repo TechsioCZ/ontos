@@ -52,7 +52,7 @@ export type ReviseStorefrontAssociationServices = MarketAdministrationService & 
 const makeReviseStorefrontAssociationServices: ActionServiceFactory<ReviseStorefrontAssociationServices> = Effect.fn(
   'ReviseStorefrontAssociationAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
-  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+  const catalog = yield* marketAdministrationService(transaction, scope);
   return {
     ...catalog,
     ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, legalEntityId: scope.legalEntityId }),

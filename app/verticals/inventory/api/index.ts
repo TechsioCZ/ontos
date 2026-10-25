@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -70,6 +72,8 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { inventoryApi, inventoryOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const inventoryReadinessLayer = HttpApiBuilder.group(inventoryApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
     Effect.succeed({
@@ -125,12 +129,14 @@ const inventoryActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const inventoryReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -197,7 +203,12 @@ export const makeInventoryApiRuntime = (
     governedActionRuntimeLive,
     actionPrincipalVerifierLive,
     gatewayAssertionRedemption,
-  ).pipe(Layer.provideMerge(compositionSourceLive), Layer.provideMerge(runtimeObservabilityLive), Layer.orDie);
+  ).pipe(
+    Layer.provideMerge(compositionSourceLive),
+    Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(databaseIdentitiesLive),
+    Layer.orDie,
+  );
   type InventoryHandlerRequirements =
     | (typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
         ? Requirements

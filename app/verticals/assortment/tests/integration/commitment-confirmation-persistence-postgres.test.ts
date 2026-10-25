@@ -41,6 +41,9 @@ import {
 import { makeAssortmentCommitmentConfirmationService } from '../../src/services/assortment-commitment-confirmation.service.ts';
 import { assortmentCommitmentConfirmationRepositoryForScope } from '../../src/services/assortment-commitment-confirmation.repository.ts';
 import { assortmentDecisionEvidenceRepositoryForScope } from '../../src/services/decision-evidence.repository.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
@@ -234,7 +237,11 @@ const runRepositoryScoped = <Value>(
     Effect.gen(function* runRepositoryOperation() {
       // SAFETY: The assortment and Core transactions expose the same Drizzle transaction
       // protocol; the shared scope installer only consumes that structural database boundary.
-      const scopedTransaction = yield* installOperationalScope(transaction, operationScope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        operationScope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

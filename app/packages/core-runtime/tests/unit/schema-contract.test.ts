@@ -3,7 +3,9 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
+import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
 import * as schemaExports from '../../src/db/schema.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import {
   ACTION_INVOCATION_STATUSES,
   CORE_SCHEMA_NAME,
@@ -53,10 +55,16 @@ it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
 });
 it('keeps publication authority singleton state admin-owned with one read-only runtime policy', () => {
   const config = getTableConfig(applicationCompositionAuthority);
+  const policies = [
+    ...config.policies,
+    ...makeCoreIdentityPolicies(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+      .filter(({ table }) => table === applicationCompositionAuthority)
+      .map(({ policy }) => policy),
+  ];
   const columns = new Map(config.columns.map((column) => [column.name, column]));
   expect(config.enableRLS).toBe(true);
-  expect(config.policies).toHaveLength(1);
-  const [policy] = config.policies;
+  expect(policies).toHaveLength(1);
+  const [policy] = policies;
   expect(policy?.name).toBe('core_application_composition_authority_select');
   expect(policy?.for).toBe('select');
   expect(policy?.to).toEqual(['ontos_runtime', 'party_registry_runtime', 'party_registry_worker']);

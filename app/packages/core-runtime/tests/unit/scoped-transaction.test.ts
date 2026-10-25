@@ -1,15 +1,18 @@
 import { PgDialect, getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
 import {
   OperationalScopeTransaction,
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,
   installOperationalScope,
+  installOperationalScopeAt,
   installOperationalScopeFromTransactionService,
   sessionScopedTenantLegalEntityReadRlsPolicy,
   sessionScopedTenantReadRlsPolicy,
@@ -20,6 +23,7 @@ import type { OperationalScopeTransactionService } from '../../src/db/scoped-tra
 import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_DESCRIPTOR } from '../support/database-identities.ts';
 
 const unusedOperation = (): never => {
   throw new Error('CRUD operations are not used by this test');
@@ -150,7 +154,9 @@ const recordScopeInstallation = (scope: OperationalScope, settingRow: ScopeSetti
       return Effect.succeed([settingRow]);
     });
     const result = yield* Effect.exit(
-      database.transaction((transaction) => installOperationalScope(transaction, scope)),
+      database.transaction((transaction) =>
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+      ),
     );
     return { result, statements };
   });
@@ -252,6 +258,71 @@ it.effect('a session-setting role cannot verify a gateway grant scope', () =>
   }),
 );
 
+const ledgerDescriptor = {
+  moduleKey: 'ledger.owner',
+  policyPrefix: 'ledger',
+  request: {
+    cloudflareHyperdrive: null,
+    gatewayScopeAudiences: ['ledger-api'],
+    handlesBearerAssertions: true,
+    id: 'ledger_request',
+    ownerModuleKey: 'ledger.owner',
+    registersGatewayScopeGrants: false,
+    role: 'ledger_runtime',
+    scopeAuthority: 'gateway_grant',
+    urlKey: 'LEDGER_DATABASE_URL',
+  },
+  schemas: ['ledger_private'],
+  worker: {
+    cloudflareHyperdrive: null,
+    gatewayScopeAudiences: [],
+    handlesBearerAssertions: false,
+    id: 'ledger_worker',
+    ownerModuleKey: 'ledger.owner',
+    registersGatewayScopeGrants: false,
+    role: 'ledger_worker',
+    scopeAuthority: 'session_setting',
+    urlKey: 'LEDGER_WORKER_DATABASE_URL',
+  },
+} as const;
+
+for (const installer of ['scope', 'timestamp'] as const) {
+  for (const [audience, connectedRole] of [
+    ['party-registry', 'ledger_runtime'],
+    ['ledger-api', 'party_registry_runtime'],
+  ] as const) {
+    it.effect(`${installer} installation rejects ${connectedRole} for another owner's audience ${audience}`, () =>
+      Effect.gen(function* crossAudienceRoleIsRejected() {
+        const enrollment = defineDatabaseIdentityEnrollment([FIXTURE_DESCRIPTOR, ledgerDescriptor]);
+        const statements: string[] = [];
+        const scope = gatewayScope(audience);
+        const database = yield* makeTestDatabase((statement) => {
+          statements.push(statement);
+          return Effect.succeed([
+            {
+              legal_entity_id: '',
+              operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+              role: connectedRole,
+              tenant_id: tenantId,
+            },
+          ]);
+        });
+        const result = yield* Effect.exit(
+          database.transaction((transaction) =>
+            installer === 'scope'
+              ? installOperationalScope(transaction, scope, enrollment).pipe(Effect.asVoid)
+              : installOperationalScopeAt(transaction, scope, enrollment).pipe(Effect.asVoid),
+          ),
+        );
+        expectOperationContextUnavailable(result);
+        expect(statements.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(true);
+        expect(statements.some((statement) => statement.includes('set_config'))).toBe(false);
+        expect(statements.at(-1)).toBe('ROLLBACK');
+      }),
+    );
+  }
+}
+
 it.effect('a role without operational scope authority fails closed', () =>
   Effect.gen(function* roleWithoutScopeAuthority() {
     const { result } = yield* recordScopeInstallation(transactionScope(false), {
@@ -263,14 +334,43 @@ it.effect('a role without operational scope authority fails closed', () =>
   }),
 );
 
-it.effect('a login outside the runtime identities keeps session-setting scope', () =>
-  Effect.gen(function* migrationAdminSessionScope() {
-    const { result } = yield* recordScopeInstallation(transactionScope(false), {
-      legal_entity_id: '',
-      role: 'ontos_admin',
-      tenant_id: tenantId,
-    });
-    expect(Exit.isSuccess(result)).toBe(true);
+it.effect('a login outside the enrolled identities cannot authorize domain SQL even with matching scope', () =>
+  Effect.gen(function* unenrolledLoginHasNoScopeAuthority() {
+    for (const installer of ['scope', 'timestamp'] as const) {
+      const statements: RecordedStatement[] = [];
+      const scope = transactionScope(true);
+      const database = yield* makeTestDatabase((statement, params) => {
+        statements.push({ params, sql: statement });
+        return Effect.succeed([
+          {
+            legal_entity_id: scope.legalEntityId,
+            operation_at: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+            role: 'ontos_admin',
+            tenant_id: scope.tenantId,
+          },
+        ]);
+      });
+      const result = yield* Effect.exit(
+        database.transaction((transaction) =>
+          Effect.gen(function* installBeforeDomainSql() {
+            if (installer === 'scope') {
+              yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+            } else {
+              yield* installOperationalScopeAt(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
+            }
+            yield* transaction.execute(sql`select * from private_owner_data`, 'objects');
+          }),
+        ),
+      );
+      expectOperationContextUnavailable(result);
+      expect(statements[0]?.sql).toBe('BEGIN');
+      expect(statements[1]?.sql).toContain("set_config('ontos.tenant_id'");
+      expect(statements[1]?.params).toEqual([scope.tenantId, scope.legalEntityId]);
+      expect(statements.some(({ sql }) => sql.includes('current_user::text as role'))).toBe(true);
+      expect(statements.some(({ sql }) => sql.includes('private_owner_data'))).toBe(false);
+      expect(statements).toHaveLength(installer === 'scope' ? 4 : 3);
+      expect(statements.at(-1)?.sql).toBe('ROLLBACK');
+    }
   }),
 );
 

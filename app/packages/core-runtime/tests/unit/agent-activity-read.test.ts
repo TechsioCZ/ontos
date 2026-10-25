@@ -22,6 +22,7 @@ import type { ActionPermissionDecision } from '../../src/permissions/service.ts'
 import { getReadPermissionTargetResolver } from '../../src/reads/definition.ts';
 import { ReadInputValidationError, ReadPermissionDenied } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { makeOutboxWorkerComposition, outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
@@ -263,7 +264,7 @@ it.effect(
         moduleKey: 'work.tasks',
       });
       const result = yield* database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scoped) =>
             activityFromTransaction(scoped).load(request, {
               nativeModules: ['work.tasks'],

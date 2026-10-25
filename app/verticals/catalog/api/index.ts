@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -249,6 +251,8 @@ import {
   resolveCatalogShellOrigin,
 } from './runtime-support.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const catalogReadinessLayer = HttpApiBuilder.group(catalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
     // The marker comes from JSON, so its literal fields are decoded against the published schema.
@@ -329,6 +333,7 @@ const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const catalogReadRuntime = ReadRuntimeLive.pipe(
   Layer.provide(catalogExternalCorrelationResolverLive),
@@ -336,6 +341,7 @@ const catalogReadRuntime = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -574,7 +580,12 @@ export const makeCatalogApiRuntime = (
     catalogSourceActionPersistenceLive,
     actionPrincipalVerifierLive,
     gatewayAssertionRedemption,
-  ).pipe(Layer.provideMerge(nativeCompositionSourceLive), Layer.provideMerge(runtimeObservabilityLive), Layer.orDie);
+  ).pipe(
+    Layer.provideMerge(nativeCompositionSourceLive),
+    Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(databaseIdentitiesLive),
+    Layer.orDie,
+  );
   type CatalogHandlerRequirements =
     | (typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
         ? Requirements

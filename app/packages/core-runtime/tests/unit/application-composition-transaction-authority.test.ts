@@ -9,6 +9,7 @@ import {
 } from '../../src/modules/application-composition-authority.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const scope = {
   ...Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -49,13 +50,14 @@ it.effect('reads install RLS and acquire the fence in one exchange, then admit f
               isolation: 'read committed',
               legal_entity_id: values[1],
               operation_at: operationAt,
+              role: 'ontos_runtime',
               tenant_id: values[0],
             },
           ])
         : scriptedRows(statement, [admittedRow]);
     });
     const installed = yield* database.transaction((transaction) =>
-      lockApplicationCompositionReadScope(transaction, revision, scope),
+      lockApplicationCompositionReadScope(transaction, revision, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
     );
     expect(installed.scoped.scope).toEqual({ legalEntityId: scope.legalEntityId, tenantId: scope.tenantId });
     expect(DateTime.toEpochMillis(installed.operationAt)).toBe(0);
@@ -80,6 +82,7 @@ it.effect('combined read scope rejects unsupported isolation, bad settings and s
                 isolation: scenario === 'isolation' ? 'repeatable read' : 'read committed',
                 legal_entity_id: values[1],
                 operation_at: operationAt,
+                role: 'ontos_runtime',
                 tenant_id: scenario === 'scope' ? 'different-tenant' : values[0],
               },
             ])
@@ -93,14 +96,29 @@ it.effect('combined read scope rejects unsupported isolation, bad settings and s
             ]);
       });
       const failure = yield* database
-        .transaction((transaction) => lockApplicationCompositionReadScope(transaction, revision, scope))
+        .transaction((transaction) =>
+          lockApplicationCompositionReadScope(transaction, revision, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        )
         .pipe(Effect.flip);
       expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       expect(statements.at(-1)).toMatch(/rollback/iu);
       if (scenario === 'isolation' || scenario === 'scope') {
+        expect(failure).toMatchObject({
+          cause: { _tag: 'OperationContextUnavailable', code: 'operation_context_unavailable' },
+          reason: 'Application Composition read scope could not be installed',
+        });
         expect(
           statements.some((statement) => statement.includes('from "core"."application_composition_authority"')),
         ).toBe(false);
+      } else {
+        expect(statements).toHaveLength(4);
+        expect(statements[2]).toContain('from "core"."application_composition_authority"');
+        expect(failure).toMatchObject({
+          reason:
+            scenario === 'draining'
+              ? 'Application Composition promotion is draining outstanding work'
+              : 'The requested Application Composition is missing, expired, or no longer active',
+        });
       }
     }
   }),

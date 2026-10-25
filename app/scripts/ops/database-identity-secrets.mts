@@ -1,8 +1,8 @@
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-  SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+} from '@app/party-registry/database-identities';
+import { SHELL_GATEWAY_ISSUER_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
 
 /**

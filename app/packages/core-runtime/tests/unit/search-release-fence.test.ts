@@ -9,6 +9,7 @@ import {
 } from '../../src/search/worker-snapshot.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { defineCoreSearchIngestionRegistrations } from '../../src/search/ingestion-registry.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const registrations = defineCoreSearchIngestionRegistrations(
   ['party-updated', 'official-identifier-updated'].map((event) => ({
@@ -68,7 +69,7 @@ it.effect('native projection writes retain the worker release fence through each
       }
       return Effect.succeed([]);
     });
-    const store = makePostgresCoreSearchProjectionStore({ executor });
+    const store = makePostgresCoreSearchProjectionStore({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
     yield* store.apply({ document, kind: 'upsert' }, context);
     yield* store.replace(
       {

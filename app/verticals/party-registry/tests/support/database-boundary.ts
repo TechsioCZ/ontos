@@ -1,8 +1,12 @@
 import {
-  findPostgresFailure,
-  loadDatabaseIdentityConnections,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
+} from '../../shared/database-identities.ts';
+import {
+  DatabaseConfigError,
+  findPostgresFailure,
+  loadDatabaseIdentityConnections,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '@app/core-runtime';
@@ -47,23 +51,35 @@ export interface PartyBoundaryClientOptions {
 export const openPartyBoundaryClients = Effect.fn('PartyBoundary.openClients')(function* openPartyBoundaryClients(
   options: PartyBoundaryClientOptions = {},
 ) {
-  const connections = yield* loadDatabaseIdentityConnections();
+  const connections = yield* loadDatabaseIdentityConnections({
+    enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  });
+  const issuerConnection = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+  const requestConnection = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+  if (issuerConnection === undefined || requestConnection === undefined) {
+    return yield* new DatabaseConfigError({ reason: 'Party boundary database connections are unavailable' });
+  }
   return {
     admin: yield* acquireBoundaryPgClient(connections.admin.connectionString),
-    issuer: yield* acquireBoundaryPgClient(connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString, 1),
-    runtime: yield* acquireBoundaryPgClient(
-      connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString,
-      options.runtimeMaxConnections,
-    ),
+    issuer: yield* acquireBoundaryPgClient(issuerConnection.connectionString, 1),
+    runtime: yield* acquireBoundaryPgClient(requestConnection.connectionString, options.runtimeMaxConnections),
   };
 });
 
 /** Connection strings of the shared runtime and Party worker identities, for identity-separation checks. */
-export const loadSeparatedIdentityConnectionStrings = loadDatabaseIdentityConnections().pipe(
-  Effect.map((connections) => ({
-    sharedRuntime: connections.runtime[SHARED_RUNTIME_IDENTITY.id].connectionString,
-    worker: connections.runtime[PARTY_REGISTRY_WORKER_IDENTITY.id].connectionString,
-  })),
+export const loadSeparatedIdentityConnectionStrings = loadDatabaseIdentityConnections({
+  enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+}).pipe(
+  Effect.flatMap((connections) => {
+    const sharedConnection = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+    const workerConnection = connections.runtime[PARTY_REGISTRY_WORKER_IDENTITY.id];
+    return sharedConnection === undefined || workerConnection === undefined
+      ? Effect.fail(new DatabaseConfigError({ reason: 'Separated Party database connections are unavailable' }))
+      : Effect.succeed({
+          sharedRuntime: sharedConnection.connectionString,
+          worker: workerConnection.connectionString,
+        });
+  }),
 );
 
 export interface PartyGatewayScope {
@@ -110,11 +126,15 @@ export const registerPartyGatewayScope = Effect.fn('PartyBoundary.registerGatewa
         }
       }).pipe(Effect.orDie),
     );
-    const { assertion } = yield* registerTestGatewayScopeGrant(issuer, {
-      audience: PARTY_REGISTRY_GATEWAY_AUDIENCE,
-      principalId,
-      ...scope,
-    });
+    const { assertion } = yield* registerTestGatewayScopeGrant(
+      issuer,
+      {
+        audience: PARTY_REGISTRY_GATEWAY_AUDIENCE,
+        principalId,
+        ...scope,
+      },
+      PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+    );
     return assertion;
   },
 );

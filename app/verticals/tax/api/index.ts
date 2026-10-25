@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -51,6 +53,8 @@ import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
 // </generated-governed-http-handler-imports>
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
   Layer.provide(DatabaseConfigLive),
@@ -97,6 +101,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 /** Read runtime bound by generated governed HTTP handlers mounted in the slot below. */
 export const governedReadRuntimeLive = readRuntimeLive;
@@ -118,6 +123,7 @@ const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 /** Action runtime bound by generated governed Action HTTP handlers mounted in the slot below. */
 export const governedActionRuntimeLive = actionRuntimeLive;
@@ -151,6 +157,7 @@ const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActi
   // </generated-governed-http-handler-support-layers>
   Layer.provideMerge(compositionSourceLive),
   Layer.provideMerge(runtimeObservabilityLive),
+  Layer.provideMerge(databaseIdentitiesLive),
   Layer.orDie,
 );
 const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

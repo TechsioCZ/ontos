@@ -1,6 +1,6 @@
 import { expect, test } from 'effect-rstest';
 
-import { DEFAULT_AGENT_PROFILE, foldAgentProfiles } from '../../api/auth/agent-store-model.ts';
+import { DEFAULT_AGENT_PROFILE, foldAgentProfiles } from '@app/core-runtime';
 import { demoAgentProfileSetup } from '../../api/auth/demo-seed/agent-profiles.ts';
 
 const principalId = '6300a06d-e532-5f52-8f66-5f1d4752a75e';

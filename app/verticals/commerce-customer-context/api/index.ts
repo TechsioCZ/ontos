@@ -11,6 +11,8 @@ import {
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionRuntime,
   ActionAuthorizationPreflight,
   makeActionRuntimeLive,
@@ -278,6 +280,8 @@ import { verifyRetailPurchasingSubjectCurrentV1ReadApiLive } from './verify-reta
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { commerceCustomerContextApi, commerceCustomerContextOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const commercePortalAuthRecoveryStoreLive = CommercePortalAuthRecoveryStoreLive.pipe(
   Layer.provideMerge(CommercePortalAuthDatabaseLive),
@@ -779,6 +783,7 @@ const actionRuntimeAwaitingOwnerPreparation = enrollmentAwareActionRuntimeLive.p
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provideMerge(purchaseApprovalCurrentnessFactoryLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
 const commerceCustomerContextActionRuntime = actionRuntimeAwaitingOwnerPreparation.pipe(
@@ -790,6 +795,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
   Layer.provide(activeApplicationCompositionLive),
@@ -1049,6 +1055,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     // Source HTTP, admission and gateway verification share the deployment's configuration references.
     Layer.provideMerge(gatewayVerification),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

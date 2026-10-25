@@ -6,6 +6,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/party-registry-client.ts",
+    "./database-identities": "./shared/database-identities.ts",
     "./locales/cs": "./locales/cs/party-registry.json",
     "./locales/en": "./locales/en/party-registry.json",
     "./outbox/party-registry-contact-point-added-v1": "./shared/outbox/party-registry-contact-point-added-v1.ts",

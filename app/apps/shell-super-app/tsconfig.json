@@ -28,6 +28,9 @@
   ],
   "references": [
     {
+      "path": "../../database"
+    },
+    {
       "path": "../../packages/shared-contracts"
     },
     {

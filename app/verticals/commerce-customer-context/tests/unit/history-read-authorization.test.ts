@@ -27,6 +27,9 @@ import type {
 } from '../../src/persistence/profile-persistence.ts';
 import { profilePersistenceServicesForTransaction } from '../../src/persistence/profile-persistence.ts';
 import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const scope = {
@@ -332,7 +335,10 @@ it.effect('executes exact business and Resource gates before resolving unavailab
         },
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
-      { ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay },
+      {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      },
     );
     const failure = yield* runtime
       .runRead({

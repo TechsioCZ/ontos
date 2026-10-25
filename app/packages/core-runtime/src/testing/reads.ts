@@ -1,11 +1,17 @@
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Context, Deferred, Effect, Layer, Schema, Stream } from 'effect';
+import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { Connection } from 'effect/unstable/sql/SqlConnection';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
+import {
+  defineDatabaseIdentityEnrollment,
+  gatewayScopeGrantRoleForAudience,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/module-state-gate.ts';
@@ -32,6 +38,7 @@ export interface ReadTestOwnerQuery {
 export interface ReadTestHarnessOptions {
   readonly businessPermissionDecision?: (target: BusinessPermissionAccessTarget) => ContextAccessDecision;
   readonly compositionRevision?: string;
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   /** Explicit driver rows for owner SQL; unexpected statements must fail rather than supply empty. */
   readonly executeOwnerQuery: (query: ReadTestOwnerQuery) => Effect.Effect<readonly object[], SqlError>;
   readonly operationTime: Date;
@@ -52,6 +59,7 @@ const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
 export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* makeReadTestHarness(
   options: ReadTestHarnessOptions,
 ) {
+  const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
   const stages: ReadRuntimeStage[] = [];
   const statements: string[] = [];
   const ownerQueries: ReadTestOwnerQuery[] = [];
@@ -114,9 +122,17 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)"
       ) {
         // Models a gateway grant that Shell registered for the harness scope.
+        const assertion = readVerifiedGatewayScopeAssertion(options.scope);
+        const role =
+          assertion === undefined
+            ? Option.none<string>()
+            : gatewayScopeGrantRoleForAudience(databaseIdentities, assertion.audience);
+        if (Option.isNone(role)) {
+          return yield* Effect.die('The Read test gateway audience has no enrolled database identity');
+        }
         scope.tenantId = options.scope.tenantId;
         scope.legalEntityId = options.scope.legalEntityId ?? '';
-        connection.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+        connection.role = role.value;
         return [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }];
       }
       if (
@@ -239,6 +255,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     recheckWrite: () => Effect.void,
   });
   const runtime = makeReadRuntime({ executor }, gateway, scopeResolver, contextAccess, {
+    databaseIdentities,
     onStage: (stage) => {
       stages.push(stage);
     },

@@ -107,6 +107,7 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -616,9 +617,14 @@ it.live(
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
-      makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), contextAccess),
+      makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        contextAccess,
+      ),
     );
-    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess);
+    const readRuntime = makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    });
     const keyPair = yield* Effect.tryPromise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.privateKey));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(keyPair.publicKey));
@@ -1247,13 +1253,17 @@ it.live(
     ]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
-      makeOperationalScopeResolver(makeOperationalScopeRepository(runtimeDatabase), unavailableContextAccess),
+      makeOperationalScopeResolver(
+        makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        unavailableContextAccess,
+      ),
     );
     const unavailableRuntime = makeReadRuntime(
       runtimeDatabase,
       moduleGateway,
       unavailableResolver,
       unavailableContextAccess,
+      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
     );
     const unavailableOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1276,7 +1286,9 @@ it.live(
       /postgres|spicedb|permission check|row-level/iu,
     );
     const evidenceFailureRuntime = failingEvidenceRuntime(
-      makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess),
+      makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess, {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      }),
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,
@@ -1302,8 +1314,10 @@ it.live(
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         moduleEntrypointGateway: moduleGateway,
         moduleStateGate,
+
         resolveCompositionRevision: (verifiedPrincipal) => {
           const revision = readVerifiedGatewayCompositionRevision(verifiedPrincipal);
           return revision === undefined

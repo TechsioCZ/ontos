@@ -88,6 +88,7 @@ import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type MembershipWirePayload = typeof setCompanyMembershipAction.descriptor.payloadSchema.Encoded;
 
@@ -285,19 +286,28 @@ it.live(
         database,
         makeActionRepository(),
         makeActionPermissionService(permission),
-        makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          contextAccess,
+        ),
         {
           contextAccess,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           moduleEntrypointGateway: makeModuleEntrypointGateway(stateGate),
           moduleStateGate: stateGate,
+
           resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
         },
       );
       const readRuntime = makeReadRuntime(
         database,
         makeModuleEntrypointGateway(stateGate),
-        makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          contextAccess,
+        ),
         contextAccess,
+        { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
       );
       const readPeople = (id: string, company?: string, offset = 0, limit = 100) =>
         readRuntime

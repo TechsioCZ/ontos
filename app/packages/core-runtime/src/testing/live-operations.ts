@@ -26,6 +26,8 @@ import {
 } from '../auth/external-identity/verifier.ts';
 import { CoreDatabase, makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
+import { DatabaseIdentityEnrollmentContext, defineDatabaseIdentityEnrollment } from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -87,6 +89,10 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   adminConnectionString: Schema.optional(Schema.Redacted(Schema.String)),
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  /** Owner-authored relations granted to the fixture manager; Core adds no business grants. */
+  tenantManagerRelations: Schema.optional(Schema.Array(Schema.String)),
+  /** Owner-authored relations granted to both Legal Entity fixture members. */
+  legalEntityManagerRelations: Schema.optional(Schema.Array(Schema.String)),
   /** The module under test: the fixture activates it and grants its module access. */
   moduleKey: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u)).pipe(
     Schema.brand('ModuleKey'),
@@ -94,7 +100,9 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
-export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
+export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded & {
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
+};
 
 class LiveOperationFixtureError extends Data.TaggedError('LiveOperationFixtureError')<{
   readonly cause?: unknown;
@@ -192,11 +200,13 @@ const fixtureAuthorizationRelationships = (input: {
   readonly actors: readonly FixtureActor[];
   readonly entityObject: string;
   readonly legalEntityId: string;
+  readonly legalEntityManagerRelations: readonly string[];
   readonly legalEntityOnly: FixtureActor;
   readonly manager: FixtureActor;
   readonly moduleKey: string;
   readonly moduleObject: string;
   readonly tenantId: string;
+  readonly tenantManagerRelations: readonly string[];
 }) => {
   // Acceptance fixtures exercise both tenant and company Actions. Neither scope
   // inherits the other's grant, and only the manager joins the explicit roles.
@@ -210,12 +220,12 @@ const fixtureAuthorizationRelationships = (input: {
     ...input.actors.map((principal) =>
       relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
     ),
-    ...['party_identity_manager', 'party_identity_reader', 'party_identity_reviewer', 'party_relationship_manager'].map(
-      (relation) => relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
+    ...input.tenantManagerRelations.map((relation) =>
+      relationship('tenant', input.tenantId, relation, 'principal', input.manager.principalId),
     ),
     relationship('legal_entity', input.entityObject, 'tenant', 'tenant', input.tenantId),
     ...[input.manager, input.legalEntityOnly].flatMap((principal) =>
-      ['member', 'counterparty_manager', 'counterparty_reader'].map((relation) =>
+      ['member', ...input.legalEntityManagerRelations].map((relation) =>
         relationship('legal_entity', input.entityObject, relation, 'principal', principal.principalId),
       ),
     ),
@@ -247,11 +257,13 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly authenticationNamespaceId: string;
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
+    readonly legalEntityManagerRelations: readonly string[];
     readonly legalEntityOnly: FixtureActor;
     readonly manager: FixtureActor;
     readonly moduleKey: string;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
+    readonly tenantManagerRelations: readonly string[];
   }) {
     yield* input.executor
       .insert(tenants)
@@ -300,11 +312,13 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       actors: input.actors,
       entityObject,
       legalEntityId: input.legalEntityId,
+      legalEntityManagerRelations: input.legalEntityManagerRelations,
       legalEntityOnly: input.legalEntityOnly,
       manager: input.manager,
       moduleKey: input.moduleKey,
       moduleObject,
       tenantId: input.tenantId,
+      tenantManagerRelations: input.tenantManagerRelations,
     });
     const writeRelationshipsRequest = v1.WriteRelationshipsRequest.create({
       updates: relations.map((item) =>
@@ -341,7 +355,7 @@ const makeFaultActionRepository = (state: FixtureFaultState): ActionRepositorySe
 
 /**
  * Reads Core evidence rows for the fixture tenant through the caller's executor. Callers pass the
- * admin client: dedicated request roles (for example the Party request role) cannot read events.
+ * admin client: dedicated request roles cannot read events.
  */
 const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
   (executor: FixtureExecutor, tenantId: string) =>
@@ -430,6 +444,7 @@ const parseFixtureDatabaseConfig = (connectionString: Redacted.Redacted) =>
 /** Real Core persistence and SpiceDB. Call only against a disposable local database. */
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
+    const databaseIdentities = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
     const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
@@ -493,11 +508,13 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           authenticationNamespaceId: configuration.authenticationNamespaceId,
           executor: admin.executor,
           legalEntityId,
+          legalEntityManagerRelations: configuration.legalEntityManagerRelations ?? [],
           legalEntityOnly,
           manager,
           moduleKey: configuration.moduleKey,
           spice,
           tenantId,
+          tenantManagerRelations: configuration.tenantManagerRelations ?? [],
         });
       }),
     ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));
@@ -534,13 +551,13 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
         const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
         const actionScopeResolver = makeOperationalScopeResolver(
-          makeOperationalScopeRepository(actionDatabase),
+          makeOperationalScopeRepository(actionDatabase, databaseIdentities),
           contextAccess,
         );
         const readModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(readDatabase));
         const readModuleEntrypointGateway = makeModuleEntrypointGateway(readModuleStateGate);
         const readScopeResolver = makeOperationalScopeResolver(
-          makeOperationalScopeRepository(readDatabase),
+          makeOperationalScopeRepository(readDatabase, databaseIdentities),
           contextAccess,
         );
         const baseActionRuntime = makeActionRuntime(
@@ -550,6 +567,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           actionScopeResolver,
           {
             contextAccess,
+            databaseIdentities,
             // This fixture owns authorization and commit-fault acceptance. Release publication
             // is exercised separately against its own disposable composition authority.
             lockCompositionAuthority: () => Effect.succeed([]),
@@ -590,11 +608,13 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           readModuleEntrypointGateway,
           readScopeResolver,
           contextAccess,
+          { databaseIdentities },
         );
         return Context.empty().pipe(
           Context.add(ActionRuntime, actionRuntime),
           Context.add(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
           Context.add(CoreDatabase, readDatabase),
+          Context.add(DatabaseIdentityEnrollmentContext, databaseIdentities),
           Context.add(ReadRuntime, readRuntime),
         );
       }),

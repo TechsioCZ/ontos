@@ -500,8 +500,13 @@ const AgentStatusDialog = ({ action, onChanged, onClose, onNotify }: AgentStatus
   const [reasonMissing, setReasonMissing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const requestIdentity = useRef<{ readonly reason: string; readonly token: string } | null>(null);
 
   const confirm = () => {
+    if (agent.status === 'archived') {
+      return;
+    }
+    const expectedStatus = agent.status;
     const trimmed = reason.trim();
     if (copy.reasonKey !== null && trimmed.length === 0) {
       setReasonMissing(true);
@@ -521,14 +526,31 @@ const AgentStatusDialog = ({ action, onChanged, onClose, onNotify }: AgentStatus
         operation: STATUS_OPERATION,
         principalId: agent.principalId,
       })),
-      Match.when('delete', () => ({ operation: 'delete' as const, principalId: agent.principalId, reason: trimmed })),
+      Match.when('delete', () => ({
+        expectedStatus,
+        operation: 'delete' as const,
+        principalId: agent.principalId,
+        reason: trimmed,
+      })),
       Match.exhaustive,
     );
     setBusy(true);
     setFailure(null);
+    // A failed response may follow a committed Action. Retry the exact command with its original key.
+    const identity = requestIdentity.current;
+    const token =
+      identity !== null && identity.reason === trimmed
+        ? Effect.succeed(identity.token)
+        : newRequestToken.pipe(
+            Effect.tap((value) =>
+              Effect.sync(() => {
+                requestIdentity.current = { reason: trimmed, token: value };
+              }),
+            ),
+          );
     browserRuntime.runFork(
-      newRequestToken.pipe(
-        Effect.flatMap((token) => runAgentCommand(request, `agent-${token}`)),
+      token.pipe(
+        Effect.flatMap((value) => runAgentCommand(request, `agent-${value}`)),
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
@@ -629,7 +651,10 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
       });
       return t(`${key}.audit.denied`, { action });
     }
-    if (entry.eventType === 'identity.agent_operators_changed') {
+    if (
+      entry.eventType === 'identity.agent_operators_changed' ||
+      entry.details['operation'] === 'replace-agent-operators'
+    ) {
       const revoked = Number(entry.details['revokedConnections'] ?? '0');
       if (entry.details['context'] === 'agent-created') {
         return t(`${key}.audit.operatorsCreated`, { target });
@@ -838,6 +863,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
       {statusAction !== null && (
         <AgentStatusDialog
           action={statusAction}
+          key={`${statusAction.agent.principalId}:${statusAction.kind}`}
           onChanged={fetchOverview}
           onClose={() => setStatusAction(null)}
           onNotify={onNotify}

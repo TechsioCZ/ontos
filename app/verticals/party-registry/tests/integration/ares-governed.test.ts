@@ -1,15 +1,19 @@
 // @rstest-environment happy-dom
 // @rstest-environment-options {"url":"https://party.ontos.test"}
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../../shared/database-identities.ts';
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
+  DatabaseIdentityEnrollmentContext,
   GatewayScopeGrantRegistrar,
   GatewayScopeGrantRegistrarLive,
   loadDatabaseConnectionPair,
   makeDatabaseConfigLive,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -112,12 +116,23 @@ it.live(
         identity: PARTY_REGISTRY_REQUEST_IDENTITY,
       });
       const grantRegistrar = Context.get(
-        yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(Effect.orDie),
+        yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(
+          Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
+          Effect.orDie,
+        ),
         GatewayScopeGrantRegistrar,
       );
       const compositionSnapshot = yield* partyCompositionSnapshot;
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+          tenantManagerRelations: [
+            'party_identity_manager',
+            'party_identity_reader',
+            'party_identity_reviewer',
+            'party_relationship_manager',
+          ],
           actionKeys: [
             addContactPointAction,
             addPartyOfficialIdentifierAction,

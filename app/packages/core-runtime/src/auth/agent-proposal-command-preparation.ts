@@ -3,6 +3,7 @@ import { Clock, Context, Effect, Layer, Match, Option, Predicate, Ref, Schema } 
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { computeCanonicalValueHash, recoverSqlTransactionError } from '../actions/repository.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../db/database-identities.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import {
   ActiveApplicationCompositionService,
@@ -156,6 +157,7 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
   AgentProposalCommandPreparation,
   Effect.gen(function* makeProposalPreparation() {
     const database = yield* CoreDatabase;
+    const enrollment = yield* DatabaseIdentityEnrollmentContext;
     const composition = yield* ActiveApplicationCompositionService;
     const authority = yield* ActionAuthority;
     const contextAccess = yield* ContextAccess;
@@ -198,7 +200,7 @@ export const AgentProposalCommandPreparationLive = Layer.effect(
           buildApplicationCompositionCatalog(active.composition).pipe(Effect.mapError(preflightUnavailable)),
           database.executor
             .transaction((transaction) =>
-              installOperationalScope(transaction, input.scope).pipe(
+              installOperationalScope(transaction, input.scope, enrollment).pipe(
                 Effect.flatMap((scoped) => loadProposalCommandSnapshot(scoped, input.scope, payload)),
               ),
             )

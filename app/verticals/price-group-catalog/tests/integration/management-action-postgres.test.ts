@@ -36,6 +36,9 @@ import {
   priceGroupRetirements,
   priceGroups,
 } from '../../src/database/schema.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
@@ -178,6 +181,8 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
         {
           ...openActionRuntimeOptions,
           contextAccess,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
           ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
         },
       );

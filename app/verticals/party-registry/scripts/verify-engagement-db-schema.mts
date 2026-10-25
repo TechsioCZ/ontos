@@ -1,10 +1,6 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../shared/database-identities.ts';
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
-import {
-  DatabaseConfig,
-  loadDatabaseConfig,
-  loadDatabaseConnectionPair,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '@app/core-runtime';
+import { DatabaseConfig, loadDatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 

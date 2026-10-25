@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
 import {
   CoreSearchProjectionStore,
   makeCoreSearchIngestion,
@@ -213,6 +214,7 @@ it.effect('CreateParty MATCHED_EXISTING publishes an attached identifier and ind
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(createPartyAction, {
@@ -267,6 +269,7 @@ it.effect('reviewed MATCH_EXISTING publishes an attached identifier and indexes 
     const search = makeSearchFixture([]);
     yield* search.seed;
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(resolveDuplicateCandidateMatchAction, {
@@ -324,6 +327,7 @@ it.effect('END_VALIDITY refreshes search only after its committed identifier mes
     } as const;
     const after = { ...before, state: 'ENDED', validTo } as const;
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(updatePartyOfficialIdentifierAction, {

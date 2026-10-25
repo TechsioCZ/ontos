@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema, Predicate } from 'effect';
@@ -43,6 +44,7 @@ it.effect('tenant rebuild requests require Party administration and canonical id
 it.effect('authorized rebuild commits one linked request without reading identity or running the projector', () =>
   Effect.gen(function* authorizedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });
@@ -79,6 +81,7 @@ it.effect('authorized rebuild commits one linked request without reading identit
 it.effect('denied Party administration cannot queue a rebuild even with Action execution permission', () =>
   Effect.gen(function* deniedRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'denied',
     });
@@ -94,6 +97,7 @@ it.effect('denied Party administration cannot queue a rebuild even with Action e
 it.effect('replaying the same authorized rebuild request queues only once', () =>
   Effect.gen(function* replayRebuildRequest() {
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });

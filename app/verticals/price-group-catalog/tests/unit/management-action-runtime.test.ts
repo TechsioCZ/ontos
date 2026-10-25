@@ -48,6 +48,9 @@ import { createPriceGroupDefinitionRevisionAction } from '../../src/actions/crea
 import { createPriceGroupAction } from '../../src/actions/create-price-group.action.ts';
 import { retirePriceGroupAction } from '../../src/actions/retire-price-group.action.ts';
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '77777777-7777-4777-8777-777777777777';
@@ -450,6 +453,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     scopeResolver,
     {
       contextAccess,
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
@@ -457,6 +461,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         { load: Effect.succeed(approvedComposition) },
         ultramodernApiMarker,
       ),
+
       resolveHandler: (registration) => {
         handlerResolutionCount += 1;
         return getActionHandler(registration);

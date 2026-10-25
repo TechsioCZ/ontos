@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { companyCatalog } from '../../api/auth/agent-entities.ts';
 import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
-import { ConnectionsUnavailable } from '../../api/oauth-connections-admin/ports.ts';
+import { ConnectionsUnavailable } from '../../api/oauth-connections-admin/connections-unavailable.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const roles = Array.from({ length: 6 }, (_, index) => ({

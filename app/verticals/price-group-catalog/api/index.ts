@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -48,6 +50,8 @@ import {
   priceGroupCatalogCorsAllowedOrigins,
   resolvePriceGroupCatalogShellOrigin,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const priceGroupCatalogReadinessLayer = HttpApiBuilder.group(priceGroupCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -111,12 +115,14 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
@@ -152,6 +158,7 @@ export const makePriceGroupCatalogApiRuntime = (
   const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
     Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

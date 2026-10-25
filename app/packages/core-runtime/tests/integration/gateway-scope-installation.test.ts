@@ -6,7 +6,7 @@ import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { loadDatabaseConnectionPair, loadDatabaseIdentityConnections } from '../../src/db/config.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../src/db/database-identities.ts';
+
 import { coreRelations, searchIndexEntries } from '../../src/db/schema.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';
@@ -20,6 +20,11 @@ import {
 } from '../../src/testing/gateway-scope-grant.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { installSearchTestAuthority } from '../support/search-authority.ts';
+import {
+  FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  FIXTURE_REQUEST_IDENTITY,
+  testDatabaseIdentityConnection,
+} from '../support/database-identities.ts';
 
 const compositionRevision = 'a'.repeat(64);
 const audience = 'party-registry';
@@ -44,7 +49,11 @@ const grantScope = Effect.fn('GatewayScopeInstallationTest.grantScope')(function
   grantTenantId: string,
   scopeTenantId: string = grantTenantId,
 ) {
-  const grant = yield* registerTestGatewayScopeGrant(issuer, { audience, principalId, tenantId: grantTenantId });
+  const grant = yield* registerTestGatewayScopeGrant(
+    issuer,
+    { audience, principalId, tenantId: grantTenantId },
+    FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+  );
   // Provenance is attached to the exact scope object, so the gateway marking comes last.
   const scope: OperationalScope = trustVerifiedGatewayPrincipalContext(
     sessionScope(principalId, scopeTenantId),
@@ -91,13 +100,17 @@ const workerContext = (tenantId: string) =>
 
 /** Party request login (the gateway-grant identity), Shell issuer login, Party worker and admin clients. */
 const gatewayScopeClients = Effect.gen(function* acquireGatewayScopeClients() {
-  const party = yield* loadDatabaseConnectionPair({ identity: PARTY_REGISTRY_REQUEST_IDENTITY });
-  const identities = yield* loadDatabaseIdentityConnections();
+  const party = yield* loadDatabaseConnectionPair({ identity: FIXTURE_REQUEST_IDENTITY });
+  const identities = yield* loadDatabaseIdentityConnections({ enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT });
   return {
     admin: yield* makeTestPgClient(party.admin.connectionString),
-    issuer: yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString),
+    issuer: yield* makeTestPgClient(
+      testDatabaseIdentityConnection(identities, 'shell_gateway_issuer').connectionString,
+    ),
     party: yield* makeTestPgClient(party.runtime.connectionString),
-    worker: yield* makeTestPgClient(identities.runtime.party_registry_worker.connectionString),
+    worker: yield* makeTestPgClient(
+      testDatabaseIdentityConnection(identities, 'party_registry_worker').connectionString,
+    ),
   };
 });
 
@@ -140,7 +153,7 @@ const installAndReadTrustedTenant = Effect.fn('GatewayScopeInstallationTest.inst
     transaction: Parameters<typeof installOperationalScope>[0],
     scope: OperationalScope,
   ) {
-    const executor = yield* installOperationalScope(transaction, scope);
+    const executor = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
     const rows = yield* transaction.execute<{ tenant_id: string | null }>(
       sql`select trust.current_tenant_id()::text as tenant_id`,
       'objects',
@@ -188,9 +201,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
       const principalId = yield* crypto.randomUUIDv4;
       const tenants = [tenantId, otherTenantId];
       yield* insertGrantFixture(admin, tenantId, otherTenantId, principalId);
-      const workerStore = makePostgresCoreSearchProjectionStore({
-        executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
-      });
+      const workerStore = makePostgresCoreSearchProjectionStore(
+        {
+          executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
+        },
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       yield* workerStore.apply(
         { document: partyDocument(tenantId, partyId, 'Acme gateway'), kind: 'upsert' },
         workerContext(tenantId),
@@ -204,7 +220,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
       const search = yield* createCoreSearchQueryRuntime.pipe(
         Effect.provideService(
           CoreSearchProjectionStore,
-          makePostgresCoreSearchProjectionStore({ executor: partyDatabase }),
+          makePostgresCoreSearchProjectionStore({ executor: partyDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         ),
       );
       const scope = yield* grantScope(issuer, principalId, tenantId);
@@ -227,7 +243,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('gateway scope install
       // Row security, not the query filter, hides the other tenant: an unfiltered read sees one tenant.
       const visibleTenants = yield* partyDatabase.transaction((transaction) =>
         Effect.gen(function* readVisibleTenants() {
-          const executor = yield* installOperationalScope(transaction, scope);
+          const executor = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           return yield* executor
             .select({ tenantId: searchIndexEntries.tenantId })
             .from(searchIndexEntries)

@@ -46,6 +46,9 @@ import type {
   ProductPriceBulkTargetIntent,
 } from '../../src/services/product-price-bulk-command.port.ts';
 import { productPriceBulkActionInvocationIdFor } from '../../src/services/product-price-bulk-command.port.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7550000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7550000-0000-4000-8000-000000000002';
@@ -446,7 +449,11 @@ const withPersistence = <Value, Failure>(
                    set_config('ontos.legal_entity_id', ${selectedLegalEntityId}, true)`,
         'objects',
       );
-      const ownerTransaction = yield* installOperationalScope(transaction, operationalScope);
+      const ownerTransaction = yield* installOperationalScope(
+        transaction,
+        operationalScope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       const persistence = yield* pricePersistenceForScope(ownerTransaction, operationalScope);
       return yield* operation({
         ...persistence,

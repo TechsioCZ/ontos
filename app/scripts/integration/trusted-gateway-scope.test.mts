@@ -1,3 +1,12 @@
+import {
+  DATABASE_IDENTITIES,
+  TRUST_ROUTINES,
+  APP_DATABASE_IDENTITY_ENROLLMENT,
+} from '../../database/identity-enrollment.ts';
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+} from '@app/party-registry/database-identities';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { PgAuth, PgProtocol } from '@effect/sql-pg';
@@ -5,7 +14,7 @@ import type { PgClient } from '@effect/sql-pg';
 import { NodeSocket } from '@effect/platform-node';
 import { Array as EffectArray, Clock, Data, Effect, Match, Option, Order, Redacted, Schema } from 'effect';
 import type { Result } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import type { Writer } from 'effect/unstable/socket/Socket';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
@@ -24,12 +33,8 @@ import {
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import {
   BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  TRUST_ROUTINES,
 } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { coreRelations } from '../../packages/core-runtime/src/db/schema.ts';
 import {
@@ -404,12 +409,20 @@ const simpleQuery = (connectionString: string, text: string) =>
   }).pipe(Effect.scoped);
 
 const fixture = Effect.gen(function* trustedScopeFixture() {
-  const connections = yield* loadDatabaseIdentityConnections();
+  const connections = yield* loadDatabaseIdentityConnections({ enrollment: APP_DATABASE_IDENTITY_ENROLLMENT });
+  const issuerConnection = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+  const partyConnection = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+  const sharedConnection = connections.runtime[SHARED_RUNTIME_IDENTITY.id];
+  const workerConnection = connections.runtime[PARTY_REGISTRY_WORKER_IDENTITY.id];
+  assert.isOk(issuerConnection !== undefined);
+  assert.isOk(partyConnection !== undefined);
+  assert.isOk(sharedConnection !== undefined);
+  assert.isOk(workerConnection !== undefined);
   const urls = {
-    issuer: connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
-    party: connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString,
-    shared: connections.runtime[SHARED_RUNTIME_IDENTITY.id].connectionString,
-    worker: connections.runtime[PARTY_REGISTRY_WORKER_IDENTITY.id].connectionString,
+    issuer: issuerConnection.connectionString,
+    party: partyConnection.connectionString,
+    shared: sharedConnection.connectionString,
+    worker: workerConnection.connectionString,
   };
   const admin = yield* makeTestPgClient(connections.admin.connectionString);
   const tenants = [tenantId, otherTenantId];
@@ -538,7 +551,7 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
       );
     }
     const executor = yield* makeTestDatabaseFromClient(partyPool, coreRelations);
-    const repository = makeOperationalScopeRepository({ executor });
+    const repository = makeOperationalScopeRepository({ executor }, APP_DATABASE_IDENTITY_ENROLLMENT);
     const resolver = makeOperationalScopeResolver(repository, {
       legalEntities: ({ legalEntityIds }) =>
         Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
@@ -611,7 +624,10 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
     // Audiences without a gateway-grant identity retain their manifest's shared authority.
     // They must not call the Party-only attestation routine merely because provenance is retained.
     const sharedExecutor = yield* makeTestDatabaseFromClient(shared, coreRelations);
-    const sharedRepository = makeOperationalScopeRepository({ executor: sharedExecutor });
+    const sharedRepository = makeOperationalScopeRepository(
+      { executor: sharedExecutor },
+      APP_DATABASE_IDENTITY_ENROLLMENT,
+    );
     for (const binding of bindings) {
       const principal = trustVerifiedGatewayPrincipalContext(principalFor(binding, legalEntityId), 'a'.repeat(64), {
         assertion: Redacted.make('verified-non-party-assertion'),

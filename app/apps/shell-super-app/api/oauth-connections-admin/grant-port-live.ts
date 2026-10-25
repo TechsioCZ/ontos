@@ -1,75 +1,42 @@
-/**
- * Live `GrantAdminPort` (lane mcp-connections-ui): an adapter over the grant store and connection service of lane
- * connection-grants (api/oauth-connections/**). It never reads or writes grant, binding or Better Auth tables itself;
- * it joins the service's summary with the grant row (user, revocation) and the acting principal's live authority.
- */
-import type { ConnectionLimits, ConnectionStatus, ConnectionSummary } from '@app/shared-contracts/agent-access';
-import type {
-  ConnectionGrantStatus,
-  ConnectionSummary as ServiceConnectionSummary,
-} from '@app/shared-contracts/oauth-connections';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { Effect } from 'effect';
-
-import { AuthDatabase } from '../auth/db/client.ts';
-
+/** Joins retained grants, live connection authority and Core-owned revocation notes for management. */
 import {
-  getConnectionSummary,
-  listConnectionSummaries,
+  ContextAccess,
+  OAuthAuthenticationAudit,
+  OAuthConnectionCompanies,
+  OAuthGrantOwners,
+  OAuthGrantRegistry,
+  oauthConnectionRevocationNotesRead,
+  ReadRuntime,
+} from '@app/core-runtime';
+import type { OperationalScopeRequest } from '@app/core-runtime';
+import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
+import { ConnectionStatusSchema } from '@app/shared-contracts/agent-access';
+import type { ConnectionLimits, ConnectionSummary } from '@app/shared-contracts/agent-access';
+import type { ConnectionSummary as ServiceConnectionSummary } from '@app/shared-contracts/oauth-connections';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
+
+import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
+import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
+import {
+  connectionSummariesOf,
   loadActingAuthority,
   revokeConnection,
   updateConnection,
 } from '../oauth-connections/connection-service.ts';
-import { findGrant, listGrants } from '../oauth-connections/grant-store.ts';
+import { OAuthFlow } from '../oauth-connections/oauth-flow.ts';
 import type { GrantRow } from '../oauth-connections/types.ts';
-import { ConnectionsUnavailable } from './ports.ts';
-import type { GrantAdminPort, GrantListFilter } from './ports.ts';
+import { ConnectionsUnavailable } from './connections-unavailable.ts';
+import { GrantAdmin } from './ports.ts';
+import type { ConnectionsCaller, GrantAdminPort, GrantListFilter } from './ports.ts';
 
 const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
 
-/** Read-only view of `core.audit_events`, used for the free-text reason of `oauth.connection.revoked`. */
-const auditEvents = pgSchema('core').table('audit_events', {
-  eventType: text('event_type').notNull(),
-  evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
-  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
-  tenantId: uuid('tenant_id').notNull(),
-});
+export interface GrantAdminRequest {
+  readonly principal: ConnectionsCaller['principal'];
+  readonly transport: OperationalScopeRequest;
+}
 
-/** Administrator notes of revoked grants (newest audit row per grant wins). */
-const revokeNotesOf = Effect.fn('GrantAdminPortLive.revokeNotesOf')(function* (rows: readonly GrantRow[]) {
-  const revoked = rows.filter((row) => row.status === 'revoked');
-  const notes = new Map<string, string>();
-  const tenantId = revoked[0]?.tenantId;
-  if (tenantId === undefined) {
-    return notes;
-  }
-  const { executor } = yield* AuthDatabase;
-  const grantIdOf = sql<string>`${auditEvents.evidenceJson} ->> 'grantId'`;
-  const found = yield* executor
-    .select({ evidence: auditEvents.evidenceJson, grantId: grantIdOf })
-    .from(auditEvents)
-    .where(
-      and(
-        eq(auditEvents.tenantId, tenantId),
-        eq(auditEvents.eventType, 'oauth.connection.revoked'),
-        inArray(
-          grantIdOf,
-          revoked.map((row) => row.grantId),
-        ),
-      ),
-    )
-    .orderBy(desc(auditEvents.occurredAt));
-  for (const item of found) {
-    const note = item.evidence['note'];
-    if (!notes.has(item.grantId) && typeof note === 'string' && note.trim() !== '') {
-      notes.set(item.grantId, note.trim());
-    }
-  }
-  return notes;
-});
-
-const isListed = (status: ConnectionGrantStatus): status is ConnectionStatus => status !== 'draft';
+const isListed = Schema.is(ConnectionStatusSchema);
 
 const actingKey = (row: GrantRow): string =>
   `${row.tenantId}|${row.legalEntityId}|${row.actingKind}|${row.actingPrincipalId}`;
@@ -103,7 +70,7 @@ const toAdminSummary = (
   limits: ConnectionLimits,
   revokeNote: string | null,
 ): ConnectionSummary | undefined => {
-  const status = summary.status;
+  const { status } = summary;
   if (!isListed(status)) {
     return undefined;
   }
@@ -113,8 +80,8 @@ const toAdminSummary = (
     client: summary.client,
     createdAt: summary.createdAt,
     delegatedBy: summary.delegatedBy,
-    grantId: summary.grantId,
     granted: { modules: row.modules === 'all' ? [] : [...row.modules], writePolicy: row.writePolicy },
+    grantId: summary.grantId,
     lastUsedAt: summary.lastUsedAt,
     legalEntityId: summary.legalEntityId,
     legalName: summary.legalName,
@@ -131,80 +98,110 @@ const toAdminSummary = (
   };
 };
 
-const joinSummaries = Effect.fn('GrantAdminPortLive.joinSummaries')(function* (
-  rows: readonly GrantRow[],
-  summaries: readonly ServiceConnectionSummary[],
-) {
-  const rowsById = new Map(rows.map((row) => [row.grantId, row]));
-  const listed = rows.filter((row) => isListed(row.status));
-  const limits = yield* limitsOf(listed);
-  const notes = yield* revokeNotesOf(listed);
-  return summaries.flatMap((summary) => {
-    const row = rowsById.get(summary.grantId);
-    const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
-    const result =
-      row === undefined || rowLimits === undefined
-        ? undefined
-        : toAdminSummary(summary, row, rowLimits, notes.get(row.grantId) ?? null);
-    return result === undefined ? [] : [result];
-  });
-});
+/** Capture native connection and governed Read dependencies once for this original request. */
+export const GrantAdminLive = (request: GrantAdminRequest) =>
+  Layer.effect(
+    GrantAdmin,
+    Effect.gen(function* grantAdminService() {
+      const registry = yield* OAuthGrantRegistry;
+      const reads = yield* ReadRuntime;
+      const services = Context.make(OAuthGrantRegistry, registry).pipe(
+        Context.add(ActionAuthority, yield* ActionAuthority),
+        Context.add(ContextAccess, yield* ContextAccess),
+        Context.add(OAuthAuthenticationAudit, yield* OAuthAuthenticationAudit),
+        Context.add(OAuthConnectionCompanies, yield* OAuthConnectionCompanies),
+        Context.add(OAuthCredentials, yield* OAuthCredentials),
+        Context.add(OAuthFlow, yield* OAuthFlow),
+        Context.add(OAuthGrantOwners, yield* OAuthGrantOwners),
+        Context.add(ShellInstalledModuleCatalog, yield* ShellInstalledModuleCatalog),
+      );
 
-const list = (filter: GrantListFilter) =>
-  Effect.gen(function* listLive() {
-    const storeFilter = {
-      ...(filter.actingPrincipalId === undefined ? {} : { actingPrincipalId: filter.actingPrincipalId }),
-      ...(filter.legalEntityId === undefined ? {} : { legalEntityId: filter.legalEntityId }),
-      ...(filter.userPrincipalId === undefined ? {} : { userPrincipalId: filter.userPrincipalId }),
-      statuses: filter.statuses,
-      tenantId: filter.tenantId,
-    };
-    const rows = yield* listGrants(storeFilter);
-    const summaries = yield* listConnectionSummaries(storeFilter);
-    const joined: readonly ConnectionSummary[] = yield* joinSummaries(rows, summaries);
-    return joined;
-  }).pipe(Effect.mapError(unavailable));
+      /** Core verifies exact company, retained owners and current admin rights using the original ingress carrier. */
+      const revokeNotesOf = Effect.fn('GrantAdmin.revokeNotesOf')(function* revokeNotesOf(rows: readonly GrantRow[]) {
+        const revoked = rows.filter((row) => row.status === 'revoked');
+        if (revoked.length === 0) {
+          return new Map<string, string>();
+        }
+        if (
+          revoked.some(
+            (row) =>
+              row.tenantId !== request.principal.tenantId || row.legalEntityId !== request.principal.legalEntityId,
+          )
+        ) {
+          return yield* unavailable('Revocation notes require the original exact-company context');
+        }
+        const result = yield* reads
+          .runRead({
+            input: { grantIds: revoked.map((row) => row.grantId) },
+            principal: request.principal,
+            registration: oauthConnectionRevocationNotesRead,
+            transport: request.transport,
+          })
+          .pipe(Effect.mapError(unavailable));
+        return new Map(result.notes.map((note) => [note.grantId, note.note]));
+      });
 
-const get = (grantId: string) =>
-  Effect.gen(function* getLive() {
-    const row = yield* findGrant(grantId);
-    if (row === undefined || !isListed(row.status)) {
-      return undefined;
-    }
-    const summary = yield* getConnectionSummary(grantId);
-    if (summary === undefined) {
-      return undefined;
-    }
-    const [joined] = yield* joinSummaries([row], [summary]);
-    const result: ConnectionSummary | undefined = joined;
-    return result;
-  }).pipe(Effect.mapError(unavailable));
+      const joinSummaries = Effect.fn('GrantAdmin.joinSummaries')(function* joinSummaries(
+        rows: readonly GrantRow[],
+        summaries: readonly ServiceConnectionSummary[],
+      ) {
+        const rowsById = new Map(rows.map((row) => [row.grantId, row]));
+        const listed = rows.filter((row) => isListed(row.status));
+        const limits = yield* limitsOf(listed);
+        const notes = yield* revokeNotesOf(listed);
+        return summaries.flatMap((summary) => {
+          const row = rowsById.get(summary.grantId);
+          const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
+          const result =
+            row === undefined || rowLimits === undefined
+              ? undefined
+              : toAdminSummary(summary, row, rowLimits, notes.get(row.grantId) ?? null);
+          return result === undefined ? [] : [result];
+        });
+      });
 
-const update: GrantAdminPortLiveShape['update'] = (input) =>
-  updateConnection({
-    actorPrincipalId: input.actorPrincipalId,
-    grantId: input.grantId,
-    modules: input.modules === 'all' ? 'all' : [...input.modules],
-    writePolicy: input.writePolicy,
-  }).pipe(Effect.asVoid, Effect.mapError(unavailable));
+      const list = Effect.fn('GrantAdmin.list')(
+        function* list(filter: GrantListFilter) {
+          const rows = yield* registry.listGrants(filter);
+          const summaries = yield* connectionSummariesOf(filter.tenantId, rows);
+          const joined: readonly ConnectionSummary[] = yield* joinSummaries(rows, summaries);
+          return joined;
+        },
+        Effect.mapError(unavailable),
+        Effect.provideContext(services),
+      );
 
-const revoke: GrantAdminPortLiveShape['revoke'] = (input) =>
-  revokeConnection({
-    actorPrincipalId: input.actorPrincipalId,
-    grantId: input.grantId,
-    note: input.reasonText,
-    reason: input.reasonCode,
-  }).pipe(Effect.asVoid, Effect.mapError(unavailable));
+      const get = Effect.fn('GrantAdmin.get')(
+        function* get(grantId: string) {
+          const retained = yield* registry.findGrant(grantId);
+          if (Option.isNone(retained) || !isListed(retained.value.status)) {
+            return Option.none<ConnectionSummary>();
+          }
+          const row = retained.value;
+          const summaries = yield* connectionSummariesOf(row.tenantId, [row]);
+          const [joined] = yield* joinSummaries([row], summaries);
+          return Option.fromUndefinedOr(joined);
+        },
+        Effect.mapError(unavailable),
+        Effect.provideContext(services),
+      );
 
-type ServicesOf<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never;
+      const update: GrantAdminPort<never>['update'] = (input) =>
+        updateConnection({
+          actorPrincipalId: input.actorPrincipalId,
+          grantId: input.grantId,
+          modules: input.modules === 'all' ? 'all' : [...input.modules],
+          writePolicy: input.writePolicy,
+        }).pipe(Effect.asVoid, Effect.mapError(unavailable), Effect.provideContext(services));
 
-/** Services the connection-grants functions need (database, SpiceDB, context access, module catalog, OAuth flow). */
-export type GrantAdminPortServices =
-  | ServicesOf<ReturnType<typeof list>>
-  | ServicesOf<ReturnType<typeof get>>
-  | ServicesOf<ReturnType<typeof updateConnection>>
-  | ServicesOf<ReturnType<typeof revokeConnection>>;
+      const revoke: GrantAdminPort<never>['revoke'] = (input) =>
+        revokeConnection({
+          actorPrincipalId: input.actorPrincipalId,
+          grantId: input.grantId,
+          note: input.reasonText,
+          reason: input.reasonCode,
+        }).pipe(Effect.asVoid, Effect.mapError(unavailable), Effect.provideContext(services));
 
-type GrantAdminPortLiveShape = GrantAdminPort<GrantAdminPortServices>;
-
-export const grantAdminPortLive: GrantAdminPort<GrantAdminPortServices> = { get, list, revoke, update };
+      return { get, list, revoke, update } satisfies GrantAdminPort<never>;
+    }),
+  );

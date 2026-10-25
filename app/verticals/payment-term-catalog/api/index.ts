@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -53,6 +55,8 @@ import { retirePaymentTermActionApiLive } from './retire-payment-term-action-ser
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { paymentTermCatalogApi, paymentTermCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const paymentTermCatalogReadinessLayer = HttpApiBuilder.group(paymentTermCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -119,6 +123,7 @@ const paymentTermCatalogActionRuntime = makeActionRuntimeLive(ultramodernDeliver
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const productionActionRuntimeLive = paymentTermCatalogActionRuntime.pipe(
   Layer.provideMerge(unavailableCustomerContextGatewayCredentialLive),
@@ -128,6 +133,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -169,6 +175,7 @@ export const makePaymentTermCatalogApiRuntime = (
   const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
     Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

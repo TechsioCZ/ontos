@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -39,6 +41,8 @@ import {
   storefrontRegistryCorsAllowedMethods,
   storefrontRegistryCorsAllowedOrigins,
 } from './runtime-support.ts';
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const storefrontRegistryReadinessLayer = HttpApiBuilder.group(storefrontRegistryApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -92,6 +96,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 
 const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
@@ -133,6 +138,7 @@ export const makeStorefrontRegistryApiRuntime = (
         ),
       ),
     ),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

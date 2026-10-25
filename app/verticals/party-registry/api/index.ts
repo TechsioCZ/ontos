@@ -1,6 +1,10 @@
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../shared/database-identities.ts';
 import { NodeCrypto } from '@effect/platform-node';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -76,6 +80,10 @@ const readShellOrigin = () => {
 const shellOrigin = readShellOrigin();
 
 const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+const partyRegistryDatabaseIdentityEnrollmentLive = Layer.succeed(
+  DatabaseIdentityEnrollmentContext,
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+);
 
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
@@ -88,13 +96,17 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(
+    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, NodeCrypto.layer),
+  ),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
-  Layer.provide(partyRegistryDatabaseConfigLive),
+  Layer.provide(Layer.merge(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive)),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(
+    Layer.mergeAll(partyRegistryDatabaseConfigLive, partyRegistryDatabaseIdentityEnrollmentLive, NodeCrypto.layer),
+  ),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [

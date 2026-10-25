@@ -10,6 +10,7 @@ import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
+import { BetterAuthNativeAdapter } from '../better-auth-native-adapter.ts';
 import { AuthConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
 import { AuthDatabaseConnectionError } from './connection-error.ts';
@@ -79,6 +80,15 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
   );
   return { adapter, executor };
 });
+
+/** Project only the native SDK factory from this request's Auth persistence; never expose its executor. */
+export const BetterAuthNativeAdapterLive = Layer.effect(
+  BetterAuthNativeAdapter,
+  Effect.gen(function* makeBetterAuthNativeAdapter() {
+    const database = yield* AuthDatabase;
+    return { forOptions: database.adapter };
+  }),
+);
 
 export const AuthDatabaseLive = Layer.effect(
   AuthDatabase,

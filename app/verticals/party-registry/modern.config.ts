@@ -1,4 +1,5 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from './shared/database-identities.ts';
+
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';

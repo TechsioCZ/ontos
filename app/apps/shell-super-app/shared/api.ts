@@ -760,6 +760,13 @@ const identityErrors = [
 const AgentApiKeyHeadersSchema = Schema.Struct({
   'x-api-key': Schema.optionalKey(Schema.String),
 });
+export const AgentActionRequestHeadersSchema = Schema.Struct({
+  'idempotency-key': Schema.requiredKey(IdentityRequestHeadersSchema.fields['idempotency-key']),
+});
+export const AgentProposalRequestHeadersSchema = Schema.Struct({
+  ...AgentApiKeyHeadersSchema.fields,
+  ...AgentActionRequestHeadersSchema.fields,
+});
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: LegalEntityIdSchema });
 
 /**
@@ -1096,7 +1103,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('submitAgentProposals', '/agent-platform/proposals', {
           error: identityErrors,
-          headers: AgentApiKeyHeadersSchema,
+          headers: AgentProposalRequestHeadersSchema,
           payload: AgentProposalSubmitRequestSchema,
           success: AgentProposalSubmitResponseSchema,
         }),
@@ -1119,6 +1126,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('agentDecide', '/agent-platform/decide', {
           error: identityErrors,
+          headers: AgentActionRequestHeadersSchema,
           payload: AgentDecideRequestSchema,
           success: AgentDecideResponseSchema,
         }),
@@ -1126,6 +1134,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('agentRevert', '/agent-platform/revert', {
           error: identityErrors,
+          headers: AgentActionRequestHeadersSchema,
           payload: AgentRevertRequestSchema,
           success: AgentRevertResponseSchema,
         }),

@@ -1,5 +1,7 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   ActionAuthorizationPreflightDatabaseLive,
   makeActionRuntimeLive,
   ContextAccessLive,
@@ -52,6 +54,8 @@ import { replaceClosedAssortmentBoundaryActionApiLive } from './replace-closed-a
 import { retireRuleActionApiLive } from './retire-rule-action-server.ts';
 import { visibilityReadApiLive } from './visibility-read-server.ts';
 // </generated-governed-http-handler-imports>
+
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -111,6 +115,7 @@ export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentO
 const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
@@ -135,7 +140,10 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
     ),
   ),
 );
-const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(Layer.provide(DatabaseConfigLive));
+const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
+);
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -187,7 +195,12 @@ export const makeAssortmentApiRuntime = (...args: AssortmentApiRuntimeArguments)
     governedActionRuntimeLive,
     actionPrincipalVerifierLive,
     gatewayAssertionRedemption,
-  ).pipe(Layer.provideMerge(runtimeObservabilityLive), Layer.provideMerge(compositionSourceLive), Layer.orDie);
+  ).pipe(
+    Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(compositionSourceLive),
+    Layer.provideMerge(databaseIdentitiesLive),
+    Layer.orDie,
+  );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
 
   return assembleEffectBffRuntime({

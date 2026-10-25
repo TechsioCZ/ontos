@@ -20,6 +20,9 @@ import type {
   QuantityTierSetProofPersistence,
 } from '../../src/services/quantity-tier-persistence.service.ts';
 import { quantityTierPersistenceForScope } from '../../src/services/quantity-tier-persistence.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7660000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7660000-0000-4000-8000-000000000002';
@@ -118,7 +121,7 @@ const withPersistence = <Value, Failure>(
         'objects',
       );
       const scope = scopeFor(selectedLegalEntityId);
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* quantityTierPersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
     }),

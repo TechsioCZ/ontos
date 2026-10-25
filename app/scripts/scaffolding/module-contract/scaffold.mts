@@ -205,6 +205,8 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
   ContextAccessLive as GovernedContextAccessLive,
   CorePersistenceLive as GovernedCorePersistenceLive,
   DatabaseConfigLive as GovernedDatabaseConfigLive,
+  defineDatabaseIdentityEnrollment as defineGovernedDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as makeGovernedDatabaseIdentityEnrollmentLive,
   ReadRuntimeLive as GovernedReadRuntimeLive,
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
@@ -222,6 +224,9 @@ ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END}
 
+const governedDatabaseIdentitiesLive = makeGovernedDatabaseIdentityEnrollmentLive(
+  defineGovernedDatabaseIdentityEnrollment([]),
+);
 const governedTenantModuleStateServiceLive = GovernedTenantModuleStateServiceLive.pipe(
   GovernedReadLayer.provide(GovernedCorePersistenceLive),
 );
@@ -281,6 +286,7 @@ const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRunti
   const servicesEntry = `services: ${requestServices}.pipe(
       GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
       GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+      GovernedReadLayer.provideMerge(governedDatabaseIdentitiesLive),
       GovernedReadLayer.orDie,
     )`;
   const appendedServices = servicesProperty === undefined ? `,\n    ${servicesEntry}` : '';

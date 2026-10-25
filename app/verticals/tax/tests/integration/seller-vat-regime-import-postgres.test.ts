@@ -21,6 +21,9 @@ import { SellerVatRegimeHistoryResponseContractSchema } from '../../shared/domai
 import type { SellerVatRegimeAtInstantSelection } from '../../shared/domain/seller-vat-regime-contracts.ts';
 import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database/schema.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
@@ -45,7 +48,11 @@ const runScoped = <Value, Failure>(
 ) =>
   database.transaction((transaction) =>
     Effect.gen(function* runTaxOwnerScopedOperation() {
-      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const scopedTransaction = yield* installOperationalScope(
+        transaction,
+        scope,
+        FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      );
       return yield* operation(scopedTransaction);
     }),
   );

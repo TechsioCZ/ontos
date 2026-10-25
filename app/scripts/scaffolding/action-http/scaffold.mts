@@ -847,9 +847,24 @@ export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadat
   );
   const tuple = `type ${appType}ApiRuntimeArguments = readonly [\n`;
   const readRuntimeDefinition = `const productionReadRuntimeLive = ${readLive}.pipe(`;
-  const actionRuntimeDefinition = `const productionActionRuntimeLive = ${actionLive}.pipe(\n  Layer.provide(DatabaseConfigLive),\n);\n`;
+  const actionRuntimeDefinition = `const actionHttpDatabaseIdentitiesLive = makeActionHttpDatabaseIdentityEnrollmentLive(
+  defineActionHttpDatabaseIdentityEnrollment([]),
+);
+const productionActionRuntimeLive = ${actionLive}.pipe(
+  Layer.provide(DatabaseConfigLive),
+  Layer.provide(actionHttpDatabaseIdentitiesLive),
+);
+`;
   if (nextContent.includes(readRuntimeDefinition) && !nextContent.includes('const productionActionRuntimeLive =')) {
-    nextContent = nextContent.replace(readRuntimeDefinition, `${actionRuntimeDefinition}${readRuntimeDefinition}`);
+    nextContent = `import {
+  defineDatabaseIdentityEnrollment as defineActionHttpDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive as makeActionHttpDatabaseIdentityEnrollmentLive,
+} from '@app/core-runtime';
+${nextContent}`;
+    nextContent = nextContent.replace(
+      readRuntimeDefinition,
+      `${actionRuntimeDefinition}${readRuntimeDefinition}\n  Layer.provide(actionHttpDatabaseIdentitiesLive),`,
+    );
   }
   nextContent = nextContent.replace(
     `actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof ${actionLive}>>,`,

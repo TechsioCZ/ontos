@@ -65,6 +65,7 @@ import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const namespaceId = Schema.decodeSync(AuthenticationNamespaceRegistrationSchema.fields.authenticationNamespaceId)(
   'test.integration.provider',
@@ -152,7 +153,7 @@ const makeRunPrepare =
   ) =>
   (invocationId: string) =>
     database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).prepare({
             invocationId,
@@ -345,7 +346,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
     };
     const runDeniedRead = (input: typeof ReadPrincipalBindingPayloadSchema.Type) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) =>
             runReadOwnerSteps(readPrincipalBinding, input, {
               readKey: readPrincipalBinding.descriptor.readKey,
@@ -376,7 +377,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
 
     const runActivate = (expectedRevision: number, invocationId: string) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) =>
             externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
               authBindingId: preparedA.authBindingId,
@@ -399,7 +400,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
       activated.bindingRevision,
     );
     const resolved = yield* database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
+      installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
         Effect.flatMap((scopedTransaction) =>
           externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).resolve({
             admission: boundAdmission,
@@ -428,7 +429,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
       }>,
     ) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) => {
             const baseStatusInput = {
               authBindingId: preparedA.authBindingId,
@@ -470,7 +471,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
     );
     const revokedResolution = yield* database
       .transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) =>
             externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).resolve({
               admission: revokedAdmission,
@@ -515,7 +516,7 @@ it.live('rolls back a neutral reservation as one transaction and leaves no Princ
 
     const failure = yield* database
       .transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) =>
             externalIdentityRepositoryFromTransaction(scopedTransaction, { registry })
               .prepare({ invocationId: randomUUID(), subject, tenantId })
@@ -724,7 +725,7 @@ it.live('rejects every changeStatus transition out of revoked and leaves the res
     const runPrepare = makeRunPrepare(database, scope, subject, tenantId);
     const runActivate = (authBindingId: string, expectedRevision: number, invocationId: string) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) =>
             externalIdentityRepositoryFromTransaction(scopedTransaction, { registry }).activate({
               authBindingId,
@@ -746,7 +747,7 @@ it.live('rejects every changeStatus transition out of revoked and leaves the res
       }>,
     ) =>
       database.transaction((transaction) =>
-        installOperationalScope(transaction, scope).pipe(
+        installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
           Effect.flatMap((scopedTransaction) => {
             const baseStatusInput = {
               authBindingId,
@@ -859,7 +860,7 @@ it.live(
         displayName: string,
       ) =>
         database.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((scopedTransaction) =>
               externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).prepare({
                 displayName,
@@ -877,7 +878,7 @@ it.live(
         invocationId: string,
       ) =>
         database.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((scopedTransaction) =>
               externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).activate({
                 authBindingId,
@@ -896,7 +897,7 @@ it.live(
         invocationId: string,
       ) =>
         database.transaction((transaction) =>
-          installOperationalScope(transaction, scope).pipe(
+          installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).pipe(
             Effect.flatMap((scopedTransaction) =>
               externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: activeRegistry }).changeStatus({
                 authBindingId,

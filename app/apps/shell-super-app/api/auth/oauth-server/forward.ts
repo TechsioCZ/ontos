@@ -1,9 +1,10 @@
-import { Effect, Option } from 'effect';
+import { Effect, Option, Redacted, Schema } from 'effect';
 
 import {
   classifyOAuthPath,
   fullOAuthPath,
   OAUTH_BASE_PATH,
+  OAuthMetadataDocumentSchema,
   oauthErrorPageRedirect,
   oauthJsonError,
   oauthNotFoundResponse,
@@ -19,182 +20,172 @@ const CONSENT_PATH = `${OAUTH_BASE_PATH}/oauth2/consent`;
 const ERROR_PATH = `${OAUTH_BASE_PATH}/error`;
 const REVOKE_PATH = `${OAUTH_BASE_PATH}/oauth2/revoke`;
 const TOKEN_PATH = `${OAUTH_BASE_PATH}/oauth2/token`;
+const BODY_READ_TIMEOUT = '10 seconds';
 
 /** The request Better Auth sees: full issuer-prefixed path on the configured issuer origin (never X-Forwarded-*). */
-export const toBetterAuthRequest = (issuer: string, request: Request, body: ArrayBuffer | undefined): Request => {
+export const toBetterAuthRequest = (issuer: string, request: Request, body?: ArrayBuffer): Request => {
   const incoming = new URL(request.url);
   const path = fullOAuthPath(incoming.pathname);
   const search = path === AUTHORIZE_PATH ? withOfflineAccess(incoming.search) : incoming.search;
   const target = new URL(`${path}${search}`, issuer);
-  return new Request(target, {
-    ...(body === undefined ? {} : { body }),
+  const init: RequestInit = {
     headers: request.headers,
     method: request.method,
     redirect: 'manual',
-  });
+    signal: request.signal,
+  };
+  if (body !== undefined) {
+    init.body = body;
+  }
+  return new Request(target, init);
 };
 
 const serverError = (): Response =>
-  new Response('{"error":"server_error"}', {
-    headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
-    status: 500,
-  });
+  Response.json({ error: 'server_error' }, { headers: { 'cache-control': 'no-store' }, status: 500 });
 
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+// Only the fields owned by the pre-dispatch guards are decoded here. Better Auth owns the rest of the request.
+const GuardBody = Schema.Struct({
+  accept: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.String])),
+  grant_type: Schema.optionalKey(Schema.String),
+  refresh_token: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+  token: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+});
+const decodeGuardJson = Schema.decodeEffect(Schema.fromJsonString(GuardBody));
+const decodeGuardForm = Schema.decodeUnknownEffect(GuardBody);
+const decodeMetadata = Schema.decodeUnknownOption(Schema.fromJsonString(OAuthMetadataDocumentSchema));
+const decodeAuthorizeError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.optionalKey(Schema.String) })),
+);
 
-const parseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-};
+const decodeText = (body: ArrayBuffer | undefined): string =>
+  body === undefined ? '' : new TextDecoder().decode(body);
 
-/** Form or JSON body fields as strings (Better Auth accepts both on consent). */
-export const bodyFields = (contentType: string | null, text: string): ReadonlyMap<string, string> => {
-  if (contentType?.includes('application/json') === true) {
-    const parsed = parseJson(text);
-    return new Map(isObject(parsed) ? Object.entries(parsed).map(([key, value]) => [key, String(value)]) : []);
-  }
-  return new Map(new URLSearchParams(text));
-};
-
-const decodeText = (body: ArrayBuffer | undefined): string => (body === undefined ? '' : new TextDecoder().decode(body));
-
-/** A response that replaces Better Auth's, or none to let Better Auth answer. */
-const guardRequest = (
+/** A response that replaces Better Auth's, or none to let Better Auth answer. Invalid guard input fails closed. */
+const guardRequest = Effect.fn('OAuth.guardRequest')(function* guardRequest(
   guards: OAuthEndpointGuards | undefined,
   path: string,
   request: Request,
   body: ArrayBuffer | undefined,
-): Effect.Effect<Option.Option<Response>> => {
+) {
   if (guards === undefined || request.method !== 'POST') {
-    return Effect.succeedNone;
+    return Option.none<Response>();
   }
-  // Better Auth would answer a dead or reused refresh token by deleting all of the user's tokens for this client,
-  // across companies; the guard refuses it here and limits the reaction to the one grant.
+  if (path !== TOKEN_PATH && path !== REVOKE_PATH && path !== CONSENT_PATH) {
+    return Option.none<Response>();
+  }
+  const text = decodeText(body);
+  const fields = yield* request.headers.get('content-type')?.includes('application/json') === true
+    ? decodeGuardJson(text)
+    : decodeGuardForm(Object.fromEntries(new URLSearchParams(text)));
+  // Better Auth's refresh-reuse reaction deletes tokens across companies. The guard limits it to this grant.
   if (path === TOKEN_PATH) {
-    const fields = bodyFields(request.headers.get('content-type'), decodeText(body));
-    const refreshToken = fields.get('refresh_token');
-    if (fields.get('grant_type') !== 'refresh_token' || refreshToken === undefined || refreshToken === '') {
-      return Effect.succeedNone;
+    const credential = fields.refresh_token;
+    if (fields.grant_type !== 'refresh_token' || credential === undefined || Redacted.value(credential) === '') {
+      return Option.none<Response>();
     }
-    return guards
-      .refreshTokenStatus(refreshToken, { revokeOnReuse: true })
-      .pipe(
-        Effect.map((verdict) =>
-          verdict === 'pass' ? Option.none() : Option.some(oauthJsonError(400, 'invalid_grant', 'invalid refresh token')),
-        ),
-      );
+    const verdict = yield* guards.refreshTokenStatus(credential, { revokeOnReuse: true });
+    return verdict === 'pass'
+      ? Option.none<Response>()
+      : Option.some(oauthJsonError(400, 'invalid_grant', 'invalid refresh token'));
   }
   if (path === REVOKE_PATH) {
-    const token = bodyFields(request.headers.get('content-type'), decodeText(body)).get('token');
-    if (token === undefined || token === '') {
-      return Effect.succeedNone;
+    const credential = fields.token;
+    if (credential === undefined || Redacted.value(credential) === '') {
+      return Option.none<Response>();
     }
     // RFC 7009 §2.2: revoking an already invalid token answers 200.
-    return guards
-      .refreshTokenStatus(token, { revokeOnReuse: false })
-      .pipe(
-        Effect.map((verdict) =>
-          verdict === 'pass'
-            ? Option.none()
-            : Option.some(new Response(null, { headers: { 'cache-control': 'no-store' }, status: 200 })),
-        ),
-      );
+    const verdict = yield* guards.refreshTokenStatus(credential, { revokeOnReuse: false });
+    return verdict === 'pass'
+      ? Option.none<Response>()
+      : Option.some(new Response(null, { headers: { 'cache-control': 'no-store' }, status: 200 }));
   }
-  if (path === CONSENT_PATH) {
-    const fields = bodyFields(request.headers.get('content-type'), decodeText(body));
-    if (fields.get('accept') !== 'true') {
-      return Effect.succeedNone;
+  if (fields.accept !== true && fields.accept !== 'true') {
+    return Option.none<Response>();
+  }
+  // The code is issued only after the draft has been approved by /oauth-connections/approve.
+  const approved = yield* guards.consentApproved(request.headers);
+  return approved
+    ? Option.none<Response>()
+    : Option.some(oauthJsonError(400, 'invalid_request', 'connection not approved'));
+});
+
+/** Metadata without unserved endpoints and methods; malformed JSON remains Better Auth's original response. */
+const rewriteMetadata = Effect.fn('OAuth.rewriteMetadata')(function* rewriteMetadata(response: Response) {
+  if (!response.ok) {
+    return response;
+  }
+  const copy = yield* Effect.try(response.clone.bind(response));
+  const text = yield* Effect.tryPromise(copy.text.bind(copy)).pipe(Effect.timeout(BODY_READ_TIMEOUT));
+  const parsed = decodeMetadata(text);
+  if (Option.isNone(parsed)) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  return Response.json(publicMetadataDocument(parsed.value), {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+});
+
+/** Authorize errors without a safe client redirect go to the Czech error card, never the client's redirect. */
+const authorizeFailureToErrorPage = Effect.fn('OAuth.authorizeFailureToErrorPage')(
+  function* authorizeFailureToErrorPage(response: Response) {
+    if (response.status < 400 || response.headers.has('location')) {
+      return response;
     }
-    // The code is issued only after "Povolit přístup" approved the draft (/oauth-connections/approve).
-    return guards
-      .consentApproved(request.headers)
-      .pipe(
-        Effect.map((approved) =>
-          approved ? Option.none() : Option.some(oauthJsonError(400, 'invalid_request', 'connection not approved')),
-        ),
-      );
-  }
-  return Effect.succeedNone;
-};
+    const copy = yield* Effect.try(response.clone.bind(response));
+    const text = yield* Effect.tryPromise(copy.text.bind(copy)).pipe(Effect.timeout(BODY_READ_TIMEOUT));
+    const parsed = decodeAuthorizeError(text);
+    return oauthErrorPageRedirect(Option.isSome(parsed) ? parsed.value.error : null);
+  },
+);
 
-/** Metadata without the endpoints and methods this AS does not serve (unparseable bodies pass unchanged). */
-const rewriteMetadata = (response: Response): Effect.Effect<Response> =>
-  Effect.promise(() => response.clone().text()).pipe(
-    Effect.map((text) => {
-      const parsed = parseJson(text);
-      if (!response.ok || !isObject(parsed)) {
-        return response;
-      }
-      const headers = new Headers(response.headers);
-      headers.delete('content-length');
-      return new Response(JSON.stringify(publicMetadataDocument(parsed)), {
-        headers,
-        status: response.status,
-        statusText: response.statusText,
-      });
-    }),
-  );
-
-/**
- * An authorize request Better Auth refuses without redirecting to the client (unknown client, unregistered redirect)
- * answers JSON; a browser would show raw English. It goes to the Czech error card instead (§3.4).
- */
-const authorizeFailureToErrorPage = (response: Response): Effect.Effect<Response> => {
-  if (response.status < 400 || response.headers.has('location')) {
-    return Effect.succeed(response);
-  }
-  return Effect.promise(() => response.clone().text()).pipe(
-    Effect.map((text) => {
-      const parsed = parseJson(text);
-      const error = isObject(parsed) && typeof parsed['error'] === 'string' ? parsed['error'] : null;
-      return oauthErrorPageRedirect(error);
-    }),
-  );
-};
-
-/** Serves only the allow-listed OAuth routes (policy.ts); everything else under the basePath is 404. */
-export const forwardOAuthRequest =
-  (endpoint: OAuthServerEndpoint) =>
-  (request: Request): Effect.Effect<Response> => {
+/** Serves only allow-listed OAuth routes. Typed read/dispatch failures produce HTTP errors, never authorization. */
+export const forwardOAuthRequest = (endpoint: OAuthServerEndpoint) =>
+  Effect.fn('OAuth.forwardRequest')(function* forwardRequest(request: Request) {
     const url = new URL(request.url);
     const path = fullOAuthPath(url.pathname);
     const kind = classifyOAuthPath(path);
     if (kind === 'blocked') {
-      return Effect.succeed(oauthNotFoundResponse());
+      return oauthNotFoundResponse();
     }
     if (kind === 'metadata' && request.method === 'OPTIONS') {
-      return Effect.succeed(oauthPreflightResponse());
+      return oauthPreflightResponse();
     }
-    // Better Auth's own error page sends the browser to "/" (English); the Czech error card explains it instead.
     if (path === ERROR_PATH) {
-      return Effect.succeed(oauthErrorPageRedirect(url.searchParams.get('error')));
+      return oauthErrorPageRedirect(url.searchParams.get('error'));
     }
-    const body = Effect.tryPromise(() =>
-      request.method === 'GET' || request.method === 'HEAD' ? Promise.resolve(undefined) : request.arrayBuffer(),
-    );
-    return body.pipe(
-      Effect.flatMap((payload) =>
-        guardRequest(endpoint.guards, path, request, payload).pipe(
-          Effect.flatMap((guarded) =>
-            Option.isNone(guarded)
-              ? Effect.tryPromise(() => endpoint.handler(toBetterAuthRequest(endpoint.issuer, request, payload))).pipe(
-                  Effect.flatMap((response) =>
-                    kind === 'metadata' && path.includes('/.well-known/')
-                      ? rewriteMetadata(response)
-                      : path === AUTHORIZE_PATH && request.method === 'GET'
-                        ? authorizeFailureToErrorPage(response)
-                        : Effect.succeed(response),
-                  ),
-                )
-              : Effect.succeed(guarded.value),
+    const dispatch = Effect.gen(function* dispatchOAuthRequest() {
+      const payload =
+        request.method === 'GET' || request.method === 'HEAD'
+          ? undefined
+          : yield* Effect.tryPromise(request.arrayBuffer.bind(request)).pipe(Effect.timeout(BODY_READ_TIMEOUT));
+      const guarded = yield* guardRequest(endpoint.guards, path, request, payload).pipe(
+        Effect.catchTag('SchemaError', (failure) =>
+          Effect.logWarning('Invalid OAuth guard request', failure._tag).pipe(
+            Effect.as(Option.some(oauthJsonError(400, 'invalid_request', 'invalid request body'))),
           ),
         ),
-      ),
+      );
+      if (Option.isSome(guarded)) {
+        return guarded.value;
+      }
+      const response = yield* endpoint.handler(toBetterAuthRequest(endpoint.issuer, request, payload));
+      if (kind === 'metadata' && path.includes('/.well-known/')) {
+        return yield* rewriteMetadata(response);
+      }
+      if (path === AUTHORIZE_PATH && request.method === 'GET') {
+        return yield* authorizeFailureToErrorPage(response);
+      }
+      return response;
+    });
+    return yield* dispatch.pipe(
       Effect.map((response) => withOAuthResponseHeaders(kind, response)),
-      Effect.orElseSucceed(serverError),
+      Effect.matchEffect({
+        onFailure: (cause) => Effect.logError('OAuth request failed', cause).pipe(Effect.as(serverError())),
+        onSuccess: Effect.succeed,
+      }),
     );
-  };
+  });

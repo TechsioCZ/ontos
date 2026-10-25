@@ -64,6 +64,10 @@ import type { CommercePortalAccountSubject } from '../../shared/enrollment-contr
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 /** The Commerce portal namespace as Core knows it, owned here as this fixture's deployment input. */
 const AcceptanceNamespaceRegistryLive = Layer.effect(
@@ -174,12 +178,16 @@ const withRepository = <Value, Failure>(
   operation: (repository: ExternalIdentityRepositoryService) => Effect.Effect<Value, Failure>,
 ) =>
   database.executor.transaction((transaction) =>
-    installOperationalScope(transaction, {
-      authMethod: 'system',
-      correlationId: scope.correlationId,
-      principalId: scope.principalId,
-      tenantId: scope.tenantId,
-    }).pipe(
+    installOperationalScope(
+      transaction,
+      {
+        authMethod: 'system',
+        correlationId: scope.correlationId,
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      },
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    ).pipe(
       Effect.flatMap((scopedTransaction) =>
         operation(externalIdentityRepositoryFromTransaction(scopedTransaction, { registry: scope.registry })),
       ),
@@ -272,11 +280,18 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       Layer.provide(runtimeDatabaseLive),
     );
     const scopeResolverLive = OperationalScopeResolverLive.pipe(
-      Layer.provide(Layer.mergeAll(runtimeDatabaseLive, AcceptanceContextAccessLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          runtimeDatabaseLive,
+          AcceptanceContextAccessLive,
+          Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        ),
+      ),
     );
     const actionRuntimeLive = makeActionRuntimeLive(compositionSnapshot.composition.shell.deployment).pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           ActionRepositoryLive,
           AcceptanceActionPermissionLive,
           Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(compositionSnapshot) }),

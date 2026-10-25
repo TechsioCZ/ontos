@@ -1,43 +1,44 @@
-// @effect-diagnostics asyncFunction:off -- Better Auth calls these OAuth hooks as Promise callbacks. expires: 2027-03-31.
-/**
- * Real Better Auth OAuth hooks of the MCP connection grant (replaces `stubOAuthConnectionHooks` in
- * api/auth/oauth-server/connection-hooks.ts). The grant id is the consent reference and the access-token claim.
- */
+/** Native connection hooks resolve the retained grant through the request-owned issuer registry. */
+import { OAuthGrantRegistry } from '@app/core-runtime';
 import { OAUTH_GRANT_CLAIM } from '@app/shared-contracts/oauth-connections';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
-import { AuthDatabase } from '../auth/db/client.ts';
-import { type OAuthConnectionHooksContract, OAuthConnectionHooks } from '../auth/oauth-server/connection-hooks.ts';
-import { findSessionGrant } from './grant-store.ts';
+import { OAuthConnectionHooks } from '../auth/oauth-server/connection-hooks.ts';
+import type {
+  OAuthAccessTokenClaimsInput,
+  OAuthConnectionHooksContract,
+  OAuthConsentReferenceContext,
+  OAuthPostLoginContext,
+} from '../auth/oauth-server/connection-hooks.ts';
+import { ConnectionInvalid } from './errors.ts';
 
-export const makeOAuthConnectionHooks = (database: (typeof AuthDatabase)['Service']): OAuthConnectionHooksContract => {
-  const sessionGrant = (session: { readonly id: string; readonly userId: string }) =>
-    Effect.runPromise(
-      findSessionGrant({ sessionId: session.id, userId: session.userId }).pipe(
-        Effect.provideService(AuthDatabase, database),
-      ),
-    );
-  return {
-    consentReferenceId: async ({ session }) => {
-      const grant = await sessionGrant(session);
-      if (grant === undefined) {
-        throw new Error('oauth_connection_draft_missing');
+export const makeOAuthConnectionHooks = Effect.fn('OAuthConnectionHooks.make')(function* makeOAuthConnectionHooks() {
+  const registry = yield* OAuthGrantRegistry;
+  const sessionGrant = (session: OAuthConsentReferenceContext['session']) =>
+    registry.findSessionGrant({ sessionId: session.id, userId: session.userId });
+  const consentReferenceId = Effect.fn('OAuthConnectionHooks.consentReferenceId')(function* consentReferenceId(
+    input: OAuthConsentReferenceContext,
+  ) {
+    const grant = yield* sessionGrant(input.session);
+    if (Option.isNone(grant)) {
+      return yield* new ConnectionInvalid({ code: 'draft_not_found' });
+    }
+    return grant.value.grantId;
+  });
+  const customAccessTokenClaims = Effect.fn('OAuthConnectionHooks.customAccessTokenClaims')(
+    function* customAccessTokenClaims(input: OAuthAccessTokenClaimsInput) {
+      if (input.referenceId === undefined || input.referenceId.length === 0) {
+        return yield* new ConnectionInvalid({ code: 'grant_not_found' });
       }
-      return grant.grantId;
+      return { [OAUTH_GRANT_CLAIM]: input.referenceId };
     },
-    customAccessTokenClaims: async ({ referenceId }) => {
-      if (referenceId === undefined || referenceId.length === 0) {
-        throw new Error('oauth_connection_grant_missing');
-      }
-      return { [OAUTH_GRANT_CLAIM]: referenceId };
-    },
-    shouldRedirect: async ({ isContinuation, session }) =>
-      !isContinuation || (await sessionGrant(session)) === undefined,
-  };
-};
+  );
+  const shouldRedirect = Effect.fn('OAuthConnectionHooks.shouldRedirect')(function* shouldRedirect(
+    input: OAuthPostLoginContext,
+  ) {
+    return !input.isContinuation || Option.isNone(yield* sessionGrant(input.session));
+  });
+  return { consentReferenceId, customAccessTokenClaims, shouldRedirect } satisfies OAuthConnectionHooksContract;
+});
 
-/** Real hooks for lane mcp-oauth-as (replaces `stubOAuthConnectionHooks`). */
-export const OAuthConnectionHooksLive = Layer.effect(
-  OAuthConnectionHooks,
-  AuthDatabase.pipe(Effect.map(makeOAuthConnectionHooks)),
-);
+export const OAuthConnectionHooksLive = Layer.effect(OAuthConnectionHooks, makeOAuthConnectionHooks());

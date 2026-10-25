@@ -203,19 +203,19 @@ export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabaseIdentityConnections } from './db/config.ts';
 export {
   BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-  DEDICATED_IDENTITY_MODULE_KEYS,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
+  defineDatabaseIdentityEnrollment,
+  DatabaseIdentityEnrollmentError,
+  trustRoutinesForIdentities,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-  TRUST_ROUTINES,
 } from './db/database-identity-manifest.ts';
 export type {
   CloudflareHyperdriveBinding,
   DatabaseAcceptedFinding,
   DatabaseIdentity,
   DatabaseIdentityId,
+  DatabaseIdentityEnrollment,
+  DatabaseOwnerIdentityDescriptor,
   DatabaseRoleGrants,
   DatabaseScopeAuthority,
   DatabaseSequenceGrant,
@@ -223,7 +223,12 @@ export type {
   DatabaseTablePrivilege,
   DatabaseUrlKey,
 } from './db/database-identity-manifest.ts';
-export { gatewayScopeGrantRoleForAudience } from './db/database-identities.ts';
+export {
+  DatabaseIdentityEnrollmentContext,
+  makeDatabaseIdentityEnrollmentLive,
+  databaseIdentityForRole,
+  gatewayScopeGrantRoleForAudience,
+} from './db/database-identities.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export { parseSpiceDbConfig } from './permissions/config.ts';

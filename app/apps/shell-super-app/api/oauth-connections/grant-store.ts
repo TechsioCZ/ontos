@@ -1,161 +1,30 @@
-/**
- * Shell database store of MCP connection grants (core.oauth_connection_grants), their auth binding
- * (core.principal_auth_bindings, subject type `oauth_grant`) and the connection audit trail. Pure row mapping stays in
- * this file; the wire shapes live in @app/shared-contracts/oauth-connections.
- */
-import { randomUUID } from 'node:crypto';
-
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
+/** Shell domain mapping. Core owns grant/binding state; Auth owns credential families. */
 import {
-  ConnectionModulesRequestSchema,
-  type ConnectionActingKind,
-  type ConnectionClientKind,
-  type ConnectionGrantStatus,
-  type ConnectionModulesRequest,
-  type ConnectionRevokeReason,
-  type ConnectionWritePolicy,
+  OAuthAuthenticationAuditUnavailable,
+  OAuthGrantOwners,
+  OAuthGrantRegistry,
+  OAuthGrantModulesSchema,
+} from '@app/core-runtime';
+import type { OAuthGrantRecord } from '@app/core-runtime';
+import type {
+  ConnectionModulesRequest,
+  ConnectionRevokeReason,
+  ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
-import { and, asc, desc, eq, inArray, isNull, ne, or, type SQL, sql } from 'drizzle-orm';
-import { integer, jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { Effect, Option, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
-import { AuthDatabase } from '../auth/db/client.ts';
-import { user } from '../auth/db/schema.ts';
+import { OAuthCredentials } from '../auth/db/oauth-credentials.ts';
 import { ConnectionUnavailable } from './errors.ts';
-import type { GrantListFilter, GrantRow, NewDraftGrant } from './types.ts';
-
-const core = pgSchema('core');
-
-const grants = core.table('oauth_connection_grants', {
-  actingKind: text('acting_kind').notNull(),
-  actingPrincipalId: uuid('acting_principal_id').notNull(),
-  authBindingId: uuid('auth_binding_id'),
-  clientHost: text('client_host').notNull(),
-  clientId: text('client_id').notNull(),
-  clientKind: text('client_kind').notNull(),
-  clientLogoUri: text('client_logo_uri'),
-  clientName: text('client_name').notNull(),
-  consentId: text('consent_id'),
-  consentedAt: timestamp('consented_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  grantId: uuid('grant_id').notNull().defaultRandom(),
-  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
-  legalEntityId: uuid('legal_entity_id').notNull(),
-  modulesJson: jsonb('modules_json').$type<unknown>().notNull(),
-  profileId: uuid('profile_id').notNull(),
-  revokeReason: text('revoke_reason'),
-  revokedAt: timestamp('revoked_at', { withTimezone: true }),
-  revokedByPrincipalId: uuid('revoked_by_principal_id'),
-  sessionId: text('session_id'),
-  status: text('status').notNull(),
-  tenantId: uuid('tenant_id').notNull(),
-  userId: text('user_id').notNull(),
-  userPrincipalId: uuid('user_principal_id').notNull(),
-  writePolicy: text('write_policy').notNull(),
-});
-
-const bindings = core.table('principal_auth_bindings', {
-  authenticationNamespaceId: text('authentication_namespace_id').notNull(),
-  bindingRevision: integer('binding_revision').notNull(),
-  principalAuthBindingId: uuid('principal_auth_binding_id').notNull(),
-  principalId: uuid('principal_id').notNull(),
-  provider: text('provider').notNull(),
-  providerSubjectId: text('provider_subject_id').notNull(),
-  revokedAt: timestamp('revoked_at', { withTimezone: true }),
-  status: text('status').notNull(),
-  subjectType: text('subject_type').notNull(),
-  tenantId: uuid('tenant_id').notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
-});
-
-const principals = core.table('principals', {
-  displayName: text('display_name').notNull(),
-  kind: text('kind').notNull(),
-  principalId: uuid('principal_id').notNull(),
-  status: text('status').notNull(),
-  tenantId: uuid('tenant_id').notNull(),
-});
-
-const legalEntities = core.table('legal_entities', {
-  legalEntityId: uuid('legal_entity_id').notNull(),
-  legalName: text('legal_name').notNull(),
-  tenantId: uuid('tenant_id').notNull(),
-});
-
-const coreAuditEventsWrite = core.table('audit_events', {
-  auditProfile: text('audit_profile').notNull(),
-  authBindingId: uuid('auth_binding_id'),
-  authMethod: text('auth_method').notNull(),
-  eventType: text('event_type').notNull(),
-  evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
-  legalEntityId: uuid('legal_entity_id'),
-  outcome: text('outcome').notNull(),
-  outcomeCode: text('outcome_code').notNull(),
-  outcomeStage: text('outcome_stage').notNull(),
-  principalId: uuid('principal_id'),
-  targetModuleKey: text('target_module_key'),
-  tenantId: uuid('tenant_id').notNull(),
-});
-
-const ACTING_KINDS: readonly ConnectionActingKind[] = ['human', 'agent'];
-const CLIENT_KINDS: readonly ConnectionClientKind[] = ['cimd', 'loopback'];
-const GRANT_STATUSES: readonly ConnectionGrantStatus[] = ['draft', 'active', 'denied', 'revoked', 'superseded'];
-const WRITE_POLICIES: readonly ConnectionWritePolicy[] = ['read_only', 'approval', 'direct'];
-const REVOKE_REASONS: readonly ConnectionRevokeReason[] = [
-  'user',
-  'admin',
-  'superseded',
-  'operator_removed',
-  'agent_disabled',
-  'user_disabled',
-  'password_changed',
-];
-
-const GRANT_ID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
-const DRAFT_TTL = sql`interval '30 minutes'`;
-
-const isOneOf = <T extends string>(values: readonly T[], value: string): value is T =>
-  (values as readonly string[]).includes(value);
+import type { GrantListFilter, GrantRow, NewDraftGrant, OAuthRefreshGuardRow } from './types.ts';
 
 const unavailable = (cause: unknown) => new ConnectionUnavailable({ cause });
+/** Structural mapping is checked against both native owner and Shell wire types. */
+const toGrantRow = (record: OAuthGrantRecord): GrantRow => ({ ...record, modules: record.modules });
+const optionalGrant = (record: Option.Option<OAuthGrantRecord>): GrantRow | undefined =>
+  Option.getOrUndefined(Option.map(toGrantRow)(record));
+const nativeModules = (modules: ConnectionModulesRequest) =>
+  Schema.decodeEffect(OAuthGrantModulesSchema)(modules).pipe(Effect.mapError(unavailable));
 
-type DbGrant = typeof grants.$inferSelect;
-
-/** Maps a database row to the grant row; unknown literals fall back to the safest value. */
-const toGrantRow = (row: DbGrant): GrantRow => ({
-  actingKind: isOneOf(ACTING_KINDS, row.actingKind) ? row.actingKind : 'human',
-  actingPrincipalId: row.actingPrincipalId,
-  authBindingId: row.authBindingId,
-  clientHost: row.clientHost,
-  clientId: row.clientId,
-  clientKind: isOneOf(CLIENT_KINDS, row.clientKind) ? row.clientKind : 'cimd',
-  clientLogoUri: row.clientLogoUri,
-  clientName: row.clientName,
-  consentId: row.consentId,
-  consentedAt: row.consentedAt,
-  createdAt: row.createdAt,
-  grantId: row.grantId,
-  lastUsedAt: row.lastUsedAt,
-  legalEntityId: row.legalEntityId,
-  modules: Option.getOrElse(Schema.decodeUnknownOption(ConnectionModulesRequestSchema)(row.modulesJson), () => []),
-  profileId: row.profileId,
-  revokeReason: row.revokeReason !== null && isOneOf(REVOKE_REASONS, row.revokeReason) ? row.revokeReason : null,
-  revokedAt: row.revokedAt,
-  revokedByPrincipalId: row.revokedByPrincipalId,
-  sessionId: row.sessionId,
-  status: isOneOf(GRANT_STATUSES, row.status) ? row.status : 'revoked',
-  tenantId: row.tenantId,
-  userId: row.userId,
-  userPrincipalId: row.userPrincipalId,
-  writePolicy: isOneOf(WRITE_POLICIES, row.writePolicy) ? row.writePolicy : 'read_only',
-});
-
-const firstGrant = (rows: readonly DbGrant[]): GrantRow | undefined => {
-  const row = rows[0];
-  return row === undefined ? undefined : toGrantRow(row);
-};
-
-/** Same-key lookup of the "one profile per (user, company, acting principal, client)" rule. */
 export interface GrantKey {
   readonly actingPrincipalId: string;
   readonly clientId: string;
@@ -163,395 +32,200 @@ export interface GrantKey {
   readonly userId: string;
 }
 
-const sameKey = (key: GrantKey): SQL[] => [
-  eq(grants.actingPrincipalId, key.actingPrincipalId),
-  eq(grants.clientId, key.clientId),
-  eq(grants.legalEntityId, key.legalEntityId),
-  eq(grants.userId, key.userId),
-];
-
-/** Drops expired drafts, then inserts the new draft. */
-export const insertDraftGrant = Effect.fn('OAuthGrantStore.insertDraftGrant')(function* (input: NewDraftGrant) {
-  const { executor } = yield* AuthDatabase;
-  yield* executor
-    .delete(grants)
-    .where(and(eq(grants.status, 'draft'), sql`${grants.createdAt} < now() - ${DRAFT_TTL}`))
-    .pipe(Effect.mapError(unavailable));
-  const rows = yield* executor
-    .insert(grants)
-    .values({
-      actingKind: input.actingKind,
-      actingPrincipalId: input.actingPrincipalId,
-      clientHost: input.clientHost,
-      clientId: input.clientId,
-      clientKind: input.clientKind,
-      clientLogoUri: input.clientLogoUri,
-      clientName: input.clientName,
-      legalEntityId: input.legalEntityId,
-      modulesJson: input.modules,
-      profileId: input.profileId,
-      sessionId: input.sessionId,
-      status: 'draft',
-      tenantId: input.tenantId,
-      userId: input.userId,
-      userPrincipalId: input.userPrincipalId,
-      writePolicy: input.writePolicy,
-    })
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows) as GrantRow;
+export const insertDraftGrant = Effect.fn('OAuthGrantStore.insertDraftGrant')(function* insertDraftGrant(
+  input: NewDraftGrant,
+) {
+  return toGrantRow(
+    yield* (yield* OAuthGrantRegistry)
+      .insertDraftGrant({ ...input, modules: yield* nativeModules(input.modules) })
+      .pipe(Effect.mapError(unavailable)),
+  );
 });
-
-export const findGrant = Effect.fn('OAuthGrantStore.findGrant')(function* (grantId: string) {
-  if (!GRANT_ID_PATTERN.test(grantId)) {
-    return undefined;
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select()
-    .from(grants)
-    .where(eq(grants.grantId, grantId))
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows);
+export const findGrant = Effect.fn('OAuthGrantStore.findGrant')(function* findGrant(grantId: string) {
+  return optionalGrant(yield* (yield* OAuthGrantRegistry).findGrant(grantId).pipe(Effect.mapError(unavailable)));
 });
-
-/** Newest draft or active grant of this Better Auth session and user (the consent reference of the flow). */
-export const findSessionGrant = Effect.fn('OAuthGrantStore.findSessionGrant')(function* (input: {
+export const findSessionGrant = Effect.fn('OAuthGrantStore.findSessionGrant')(function* findSessionGrant(input: {
   readonly sessionId: string;
   readonly userId: string;
 }) {
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select()
-    .from(grants)
-    .where(
-      and(
-        eq(grants.sessionId, input.sessionId),
-        eq(grants.userId, input.userId),
-        inArray(grants.status, ['draft', 'active']),
-        sql`${grants.createdAt} > now() - ${DRAFT_TTL}`,
-      ),
-    )
-    .orderBy(desc(grants.createdAt))
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows);
+  return optionalGrant(yield* (yield* OAuthGrantRegistry).findSessionGrant(input).pipe(Effect.mapError(unavailable)));
 });
-
-export const findPreviousProfileId = Effect.fn('OAuthGrantStore.findPreviousProfileId')(function* (input: GrantKey) {
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select({ profileId: grants.profileId })
-    .from(grants)
-    .where(and(...sameKey(input), inArray(grants.status, ['active', 'superseded', 'revoked'])))
-    .orderBy(desc(grants.createdAt))
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  return rows[0]?.profileId;
+export const findPreviousProfileId = Effect.fn('OAuthGrantStore.findPreviousProfileId')(function* findPreviousProfileId(
+  input: GrantKey,
+) {
+  return Option.getOrUndefined(
+    yield* (yield* OAuthGrantRegistry).findPreviousProfileId(input).pipe(Effect.mapError(unavailable)),
+  );
 });
-
-/**
- * Activates a draft in one transaction under a per-key advisory lock, so at most one grant per (user, company,
- * acting principal, client) is active: moves the draft to active, supersedes the other active grants of the same
- * key, disables their bindings and creates the draft's `oauth_grant` binding. Returns undefined when the row is no
- * longer a draft (another approval of the same draft won); the caller finishes the superseded grants' side effects.
- */
-export const approveDraftGrant = Effect.fn('OAuthGrantStore.approveDraftGrant')(function* (input: {
+export const approveDraftGrant = Effect.fn('OAuthGrantStore.approveDraftGrant')(function* approveDraftGrant(input: {
   readonly actorPrincipalId: string;
   readonly grant: GrantRow;
 }) {
-  const { grant } = input;
-  if (!GRANT_ID_PATTERN.test(grant.grantId)) {
-    return undefined;
-  }
-  const lockKey = `oauth-connection-grant:${grant.tenantId}:${grant.userId}:${grant.legalEntityId}:${grant.actingPrincipalId}:${grant.clientId}`;
-  const { executor } = yield* AuthDatabase;
-  return yield* executor
-    .transaction((transaction) =>
-      Effect.gen(function* approveInTransaction() {
-        yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
-        const authBindingId = randomUUID();
-        const active = firstGrant(
-          yield* transaction
-            .update(grants)
-            .set({ authBindingId, consentedAt: sql`now()`, status: 'active' })
-            .where(and(eq(grants.grantId, grant.grantId), eq(grants.status, 'draft')))
-            .returning(),
-        );
-        if (active === undefined) {
-          return undefined;
-        }
-        const superseded = (yield* transaction
-          .update(grants)
-          .set({
-            revokeReason: 'superseded',
-            revokedAt: sql`now()`,
-            revokedByPrincipalId: input.actorPrincipalId,
-            status: 'superseded',
-          })
-          .where(and(...sameKey(grant), eq(grants.status, 'active'), ne(grants.grantId, grant.grantId)))
-          .returning()).map(toGrantRow);
-        const supersededBindingIds = superseded.flatMap((old) =>
-          old.authBindingId === null ? [] : [old.authBindingId],
-        );
-        if (supersededBindingIds.length > 0) {
-          yield* transaction
-            .update(bindings)
-            .set({ bindingRevision: sql`${bindings.bindingRevision} + 1`, status: 'disabled', updatedAt: sql`now()` })
-            .where(
-              and(
-                inArray(bindings.principalAuthBindingId, supersededBindingIds),
-                eq(bindings.tenantId, grant.tenantId),
-              ),
-            );
-        }
-        yield* transaction.insert(bindings).values({
-          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-          bindingRevision: 1,
-          principalAuthBindingId: authBindingId,
-          principalId: grant.actingPrincipalId,
-          provider: 'better_auth',
-          providerSubjectId: grant.grantId,
-          status: 'active',
-          subjectType: 'oauth_grant',
-          tenantId: grant.tenantId,
-          updatedAt: sql`now()`,
-        });
-        return { active, superseded };
-      }),
-    )
+  const result = yield* (yield* OAuthGrantRegistry)
+    .approveDraftGrant({ ...input, grant: { ...input.grant, modules: yield* nativeModules(input.grant.modules) } })
     .pipe(Effect.mapError(unavailable));
+  return Option.getOrUndefined(
+    result.pipe(
+      Option.map((activation) => ({
+        active: toGrantRow(activation.active),
+        superseded: activation.superseded.map(toGrantRow),
+      })),
+    ),
+  );
 });
-
-export const setGrantStatus = Effect.fn('OAuthGrantStore.setGrantStatus')(function* (input: {
+export const setGrantStatus = Effect.fn('OAuthGrantStore.setGrantStatus')(function* setGrantStatus(input: {
   readonly grantId: string;
-  readonly revokeReason: ConnectionRevokeReason | null;
   readonly revokedByPrincipalId: string | null;
+  readonly revokeReason: ConnectionRevokeReason | null;
   readonly status: 'denied' | 'revoked' | 'superseded';
 }) {
-  if (!GRANT_ID_PATTERN.test(input.grantId)) {
-    return undefined;
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .update(grants)
-    .set({
-      revokeReason: input.revokeReason,
-      revokedAt: input.status === 'denied' ? null : sql`now()`,
-      revokedByPrincipalId: input.revokedByPrincipalId,
-      status: input.status,
-    })
-    .where(eq(grants.grantId, input.grantId))
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows);
+  return optionalGrant(yield* (yield* OAuthGrantRegistry).setGrantStatus(input).pipe(Effect.mapError(unavailable)));
 });
-
-/** Changes the requested ceiling and write policy of an active grant. */
-export const updateGrantAccess = Effect.fn('OAuthGrantStore.updateGrantAccess')(function* (input: {
+export const updateGrantAccess = Effect.fn('OAuthGrantStore.updateGrantAccess')(function* updateGrantAccess(input: {
   readonly grantId: string;
   readonly modules: ConnectionModulesRequest;
   readonly writePolicy: ConnectionWritePolicy;
 }) {
-  if (!GRANT_ID_PATTERN.test(input.grantId)) {
-    return undefined;
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .update(grants)
-    .set({ modulesJson: input.modules, writePolicy: input.writePolicy })
-    .where(and(eq(grants.grantId, input.grantId), eq(grants.status, 'active')))
-    .returning()
-    .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows);
-});
-
-/** Writes `last_used_at` at most once per minute. Returns true when the row was written. */
-export const touchGrantLastUsed = Effect.fn('OAuthGrantStore.touchGrantLastUsed')(function* (grantId: string) {
-  if (!GRANT_ID_PATTERN.test(grantId)) {
-    return false;
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .update(grants)
-    .set({ lastUsedAt: sql`now()` })
-    .where(
-      and(
-        eq(grants.grantId, grantId),
-        or(isNull(grants.lastUsedAt), sql`${grants.lastUsedAt} < now() - interval '1 minute'`),
-      ),
-    )
-    .returning({ grantId: grants.grantId })
-    .pipe(Effect.mapError(unavailable));
-  return rows.length > 0;
-});
-
-export const listGrants = Effect.fn('OAuthGrantStore.listGrants')(function* (filter: GrantListFilter) {
-  const conditions: SQL[] = [eq(grants.tenantId, filter.tenantId)];
-  if (filter.actingPrincipalId !== undefined) {
-    conditions.push(eq(grants.actingPrincipalId, filter.actingPrincipalId));
-  }
-  if (filter.clientId !== undefined) {
-    conditions.push(eq(grants.clientId, filter.clientId));
-  }
-  if (filter.legalEntityId !== undefined) {
-    conditions.push(eq(grants.legalEntityId, filter.legalEntityId));
-  }
-  if (filter.userId !== undefined) {
-    conditions.push(eq(grants.userId, filter.userId));
-  }
-  if (filter.userPrincipalId !== undefined) {
-    conditions.push(eq(grants.userPrincipalId, filter.userPrincipalId));
-  }
-  conditions.push(
-    filter.statuses !== undefined && filter.statuses.length > 0
-      ? inArray(grants.status, filter.statuses)
-      : ne(grants.status, 'draft'),
+  return optionalGrant(
+    yield* (yield* OAuthGrantRegistry)
+      .updateGrantAccess({ ...input, modules: yield* nativeModules(input.modules) })
+      .pipe(Effect.mapError(unavailable)),
   );
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select()
-    .from(grants)
-    .where(and(...conditions))
-    .orderBy(desc(grants.createdAt))
-    .limit(500)
-    .pipe(Effect.mapError(unavailable));
-  return rows.map(toGrantRow);
 });
-
-export const setGrantBindingStatus = Effect.fn('OAuthGrantStore.setGrantBindingStatus')(function* (input: {
-  readonly authBindingId: string;
-  readonly status: 'active' | 'disabled';
-  readonly tenantId: string;
-}) {
-  const { executor } = yield* AuthDatabase;
-  yield* executor
-    .update(bindings)
-    .set({
-      bindingRevision: sql`${bindings.bindingRevision} + 1`,
-      revokedAt: null,
-      status: input.status,
-      updatedAt: sql`now()`,
-    })
-    .where(and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)))
-    .pipe(Effect.mapError(unavailable));
+export const touchGrantLastUsed = Effect.fn('OAuthGrantStore.touchGrantLastUsed')(function* touchGrantLastUsed(
+  grantId: string,
+) {
+  return yield* (yield* OAuthGrantRegistry).touchGrantLastUsed(grantId).pipe(Effect.mapError(unavailable));
 });
-
-export const loadBindingStatus = Effect.fn('OAuthGrantStore.loadBindingStatus')(function* (input: {
+export const listGrants = Effect.fn('OAuthGrantStore.listGrants')(function* listGrants(filter: GrantListFilter) {
+  return (yield* (yield* OAuthGrantRegistry).listGrants(filter).pipe(Effect.mapError(unavailable))).map(toGrantRow);
+});
+export const setGrantBindingStatus = Effect.fn('OAuthGrantStore.setGrantBindingStatus')(
+  function* setGrantBindingStatus(input: {
+    readonly authBindingId: string;
+    readonly status: 'active' | 'disabled';
+    readonly tenantId: string;
+  }) {
+    yield* (yield* OAuthGrantRegistry).setGrantBindingStatus(input).pipe(Effect.mapError(unavailable));
+  },
+);
+export const loadBindingStatus = Effect.fn('OAuthGrantStore.loadBindingStatus')(function* loadBindingStatus(input: {
   readonly authBindingId: string;
   readonly tenantId: string;
 }) {
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select({ status: bindings.status })
-    .from(bindings)
-    .where(and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)))
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  return rows[0]?.status;
+  return Option.getOrUndefined(
+    yield* (yield* OAuthGrantRegistry).loadBindingStatus(input).pipe(Effect.mapError(unavailable)),
+  );
 });
-
-export const loadUserAccount = Effect.fn('OAuthGrantStore.loadUserAccount')(function* (userId: string) {
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select({ banned: user.banned, emailVerified: user.emailVerified, name: user.name })
-    .from(user)
-    .where(eq(user.id, userId))
-    .limit(1)
-    .pipe(Effect.mapError(unavailable));
-  const row = rows[0];
-  return row === undefined
-    ? undefined
-    : { banned: row.banned === true, emailVerified: row.emailVerified, name: row.name };
+export const loadUserAccount = Effect.fn('OAuthGrantStore.loadUserAccount')(function* loadUserAccount(userId: string) {
+  return Option.getOrUndefined(
+    yield* (yield* OAuthCredentials).loadUserAccount(userId).pipe(Effect.mapError(unavailable)),
+  );
 });
-
-export const loadPrincipals = Effect.fn('OAuthGrantStore.loadPrincipals')(function* (
+export const loadPrincipals = Effect.fn('OAuthGrantStore.loadPrincipals')(function* loadPrincipals(
   tenantId: string,
   principalIds: readonly string[],
 ) {
-  if (principalIds.length === 0) {
-    return new Map<string, { displayName: string; kind: string; status: string }>();
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select({
-      displayName: principals.displayName,
-      kind: principals.kind,
-      principalId: principals.principalId,
-      status: principals.status,
-    })
-    .from(principals)
-    .where(and(eq(principals.tenantId, tenantId), inArray(principals.principalId, principalIds)))
-    .pipe(Effect.mapError(unavailable));
-  return new Map(
-    rows.map((row) => [row.principalId, { displayName: row.displayName, kind: row.kind, status: row.status }]),
-  );
+  return yield* (yield* OAuthGrantRegistry).loadPrincipals(tenantId, principalIds).pipe(Effect.mapError(unavailable));
 });
-
-export const listAgentPrincipals = Effect.fn('OAuthGrantStore.listAgentPrincipals')(function* (tenantId: string) {
-  const { executor } = yield* AuthDatabase;
-  return yield* executor
-    .select({ displayName: principals.displayName, principalId: principals.principalId })
-    .from(principals)
-    .where(and(eq(principals.tenantId, tenantId), eq(principals.kind, 'agent'), eq(principals.status, 'active')))
-    .orderBy(asc(principals.displayName))
-    .pipe(Effect.mapError(unavailable));
-});
-
-export const loadLegalNames = Effect.fn('OAuthGrantStore.loadLegalNames')(function* (
+export const listAgentPrincipals = Effect.fn('OAuthGrantStore.listAgentPrincipals')(function* listAgentPrincipals(
   tenantId: string,
-  legalEntityIds: readonly string[],
 ) {
-  if (legalEntityIds.length === 0) {
-    return new Map<string, string>();
-  }
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select({ legalEntityId: legalEntities.legalEntityId, legalName: legalEntities.legalName })
-    .from(legalEntities)
-    .where(and(eq(legalEntities.tenantId, tenantId), inArray(legalEntities.legalEntityId, legalEntityIds)))
-    .pipe(Effect.mapError(unavailable));
-  return new Map(rows.map((row) => [row.legalEntityId, row.legalName]));
+  return yield* (yield* OAuthGrantRegistry).listAgentPrincipals(tenantId).pipe(Effect.mapError(unavailable));
 });
 
-/** Writes a Core audit row for a connection event. Auditing never fails the request. */
-export const recordConnectionAudit = Effect.fn('OAuthGrantStore.recordConnectionAudit')(function* (input: {
-  readonly authBindingId: string | null;
-  readonly authMethod: string;
-  readonly eventType:
-    | 'oauth.connection.created'
-    | 'oauth.connection.updated'
-    | 'oauth.connection.revoked'
-    | 'oauth.connection.denied'
-    | 'authn.connector_exchange';
-  readonly evidence: Readonly<Record<string, string | null>>;
-  readonly grant: GrantRow;
-  readonly outcome: 'succeeded' | 'denied';
-  readonly outcomeCode: string;
-  readonly principalId: string | null;
-}) {
-  const { executor } = yield* AuthDatabase;
-  yield* executor
-    .insert(coreAuditEventsWrite)
-    .values({
-      auditProfile: 'sensitive',
-      authBindingId: input.authBindingId,
-      authMethod: input.authMethod,
-      eventType: input.eventType,
-      evidenceJson: {
-        grantId: input.grant.grantId,
-        clientId: input.grant.clientId,
-        clientName: input.grant.clientName,
-        ...input.evidence,
-      },
-      legalEntityId: input.grant.legalEntityId,
-      outcome: input.outcome,
-      outcomeCode: input.outcomeCode,
-      outcomeStage: input.eventType === 'authn.connector_exchange' ? 'authn' : 'execution',
-      principalId: input.principalId,
-      targetModuleKey: 'core.identity',
-      tenantId: input.grant.tenantId,
-    })
-    .pipe(Effect.ignore);
-});
+export class OAuthEndpointGuardData extends Context.Service<
+  OAuthEndpointGuardData,
+  {
+    readonly consentApproved: (session: {
+      readonly sessionId: string;
+      readonly userId: string;
+    }) => Effect.Effect<boolean, ConnectionUnavailable>;
+    readonly loadRefresh: (
+      storageKey: string,
+    ) => Effect.Effect<Option.Option<OAuthRefreshGuardRow>, ConnectionUnavailable>;
+    readonly revokeFamily: (row: OAuthRefreshGuardRow) => Effect.Effect<void, ConnectionUnavailable>;
+  }
+>()('@app/shell-super-app/api/oauth-connections/grant-store/OAuthEndpointGuardData') {}
+
+/** Native composition of two real owner producers; no transport can acquire a global database. */
+export const OAuthEndpointGuardDataLive = Layer.effect(
+  OAuthEndpointGuardData,
+  Effect.gen(function* oauthEndpointGuardDataService() {
+    const registry = yield* OAuthGrantRegistry;
+    const credentials = yield* OAuthCredentials;
+    return {
+      consentApproved: Effect.fn('OAuthEndpointGuardData.consentApproved')(function* consentApproved(session: {
+        readonly sessionId: string;
+        readonly userId: string;
+      }) {
+        return (yield* registry.findSessionGrant(session).pipe(Effect.mapError(unavailable))).pipe(
+          Option.exists((grant) => grant.status === 'active'),
+        );
+      }),
+      loadRefresh: Effect.fn('OAuthEndpointGuardData.loadRefresh')(function* loadRefresh(storageKey: string) {
+        const token = yield* credentials.loadRefresh(storageKey);
+        if (Option.isNone(token)) {
+          return Option.none<OAuthRefreshGuardRow>();
+        }
+        const row = token.value;
+        const retained =
+          row.referenceId === null ? Option.none<OAuthGrantRecord>() : yield* registry.findGrant(row.referenceId);
+        // A malformed cross-client/user reference must not grant authority over that other grant or binding.
+        const grant = retained.pipe(
+          Option.filter((candidate) => candidate.clientId === row.clientId && candidate.userId === row.userId),
+        );
+        return Option.some<OAuthRefreshGuardRow>({
+          clientId: row.clientId,
+          grant: Option.map(toGrantRow)(grant),
+          id: row.id,
+          referenceId: row.referenceId,
+          revoked: row.revoked,
+          rotatedAt: row.rotatedAt,
+          rotationReplayExpiresAt: row.rotationReplayExpiresAt,
+        });
+      }, Effect.mapError(unavailable)),
+      revokeFamily: Effect.fn('OAuthEndpointGuardData.revokeFamily')(function* revokeFamily(row: OAuthRefreshGuardRow) {
+        // Commit authorization disablement FIRST. Auth cleanup is a separate commit and its failures must propagate.
+        if (Option.isSome(row.grant)) {
+          const grant = row.grant.value;
+          if (row.referenceId !== grant.grantId || row.clientId !== grant.clientId) {
+            return yield* unavailable('Refresh family does not match retained grant');
+          }
+          const disabled = yield* registry
+            .setGrantStatus({
+              grantId: grant.grantId,
+              revokedByPrincipalId: null,
+              revokeReason: null,
+              status: 'revoked',
+            })
+            .pipe(Effect.mapError(unavailable));
+          if (Option.isNone(disabled)) {
+            return yield* unavailable('Retained grant disappeared before authorization disablement');
+          }
+        }
+        return yield* credentials.revokeFamily(row).pipe(Effect.mapError(unavailable));
+      }),
+    };
+  }),
+);
+
+/** Retained owners come from Core's real grant registry; governed note authorization is unchanged. */
+export const OAuthGrantOwnersLive = Layer.effect(
+  OAuthGrantOwners,
+  Effect.gen(function* oauthGrantOwnersService() {
+    const registry = yield* OAuthGrantRegistry;
+    return {
+      owners: (input: Parameters<(typeof OAuthGrantOwners)['Service']['owners']>[0]) =>
+        registry.owners(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OAuthAuthenticationAuditUnavailable({
+                cause,
+                reason: 'Unable to verify retained OAuth grant owners',
+              }),
+          ),
+        ),
+    };
+  }),
+);

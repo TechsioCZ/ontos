@@ -12,6 +12,8 @@ import {
   AgentProposalCommandPreparationLive,
 } from '../../src/auth/agent-proposal-command-preparation.ts';
 import { CoreDatabase } from '../../src/db/client.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import { canonicalizeApplicationComposition } from '../../src/modules/application-composition.ts';
 import { OntosModuleDeploymentContractSchema } from '../../src/modules/manifest.ts';
 import { ActionAuthority } from '../../src/permissions/action-authority.ts';
@@ -117,6 +119,7 @@ const makePreparation = Effect.fn('AgentProposalCommandPreparationTest.make')(fu
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(CoreDatabase, { executor: database }),
+          Layer.succeed(DatabaseIdentityEnrollmentContext, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
           outboxWorkerCompositionLayer(composition),
           Layer.succeed(ContextAccess, contextAccess),
           Layer.succeed(ActionAuthority, authority),

@@ -54,7 +54,7 @@ export type AssociateStorefrontServices = MarketAdministrationService & CurrentS
 const makeAssociateStorefrontServices: ActionServiceFactory<AssociateStorefrontServices> = Effect.fn(
   'AssociateStorefrontAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
-  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+  const catalog = yield* marketAdministrationService(transaction, scope);
   return {
     ...catalog,
     ...makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, legalEntityId: scope.legalEntityId }),

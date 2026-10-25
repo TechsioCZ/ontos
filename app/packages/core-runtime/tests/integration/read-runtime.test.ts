@@ -26,6 +26,7 @@ import { ReadHandlerUnavailable, ReadPermissionDenied, ReadPolicyDenied } from '
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const readDatabaseClients = Effect.gen(function* acquireReadDatabaseClients() {
   const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -117,8 +118,12 @@ it.live('commits live allowed evidence before releasing a governed read result',
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
       openModuleEntrypointGateway,
-      makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: runtimeDatabase }), contextAccess),
+      makeOperationalScopeResolver(
+        makeOperationalScopeRepository({ executor: runtimeDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        contextAccess,
+      ),
       contextAccess,
+      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
     );
     expect(
       yield* runtime.runRead({
@@ -313,6 +318,8 @@ it.live('holds native Read authority through owner work and commits denial evide
       testOperationalScopeResolver,
       contextAccess,
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
         ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => Effect.sync(() => ownerAuthorizationDecision)),
       },
     );

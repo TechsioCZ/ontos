@@ -64,6 +64,7 @@ import { makeAcceptanceGatewayIssuer } from '../support/enrollment-acceptance-id
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { jsonBody } from '../support/response.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const ORIGIN = 'http://commerce-customer-context.retirement.test';
 const AUDIENCE = 'commerce-customer-context';
@@ -453,9 +454,18 @@ it.live(
           actionKeys: [ACTION_KEY],
           audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          moduleKey: 'party.registry',
+
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          tenantManagerRelations: [
+            'party_identity_manager',
+            'party_identity_reader',
+            'party_identity_reviewer',
+            'party_relationship_manager',
+          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>
@@ -637,9 +647,18 @@ it.live(
           actionKeys: [ACTION_KEY],
           audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          moduleKey: 'party.registry',
+
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          tenantManagerRelations: [
+            'party_identity_manager',
+            'party_identity_reader',
+            'party_identity_reviewer',
+            'party_relationship_manager',
+          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>
@@ -789,9 +808,18 @@ it.live(
           actionKeys: [ACTION_KEY],
           audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          moduleKey: 'party.registry',
+
           compositionRevision: snapshot.composition.revision,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          tenantManagerRelations: [
+            'party_identity_manager',
+            'party_identity_reader',
+            'party_identity_reviewer',
+            'party_relationship_manager',
+          ],
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
         yield* Effect.addFinalizer(() =>

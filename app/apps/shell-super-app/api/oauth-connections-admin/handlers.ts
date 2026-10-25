@@ -132,7 +132,7 @@ export const replaceAgentOperators = Effect.fn('ConnectionsAdmin.replaceAgentOpe
     if (!caller.isCompanyAdmin) {
       return yield* new ConnectionsForbidden({ reason: 'Kdo smí agenta připojit, nastavuje jen správce firmy.' });
     }
-    const snapshot = yield* deps.directory.snapshot();
+    const snapshot = yield* deps.directory.snapshot;
     const { people } = snapshot;
     const { agentPrincipalId } = request;
     const agent = snapshot.agents.find((candidate) => candidate.principalId === agentPrincipalId);

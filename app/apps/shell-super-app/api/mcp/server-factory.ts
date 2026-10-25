@@ -1,13 +1,12 @@
-import type * as McpSdk from '@modelcontextprotocol/server';
 import type {
-  fromJsonSchema as makeJsonSchema,
-  McpServer,
   CallToolResult,
-  JsonSchemaType,
-  JsonSchemaValidator,
-  jsonSchemaValidator,
+  McpServer as SdkMcpServer,
+  RegisteredTool,
+  ResourceLink,
+  StandardSchemaWithJSON,
+  ToolCallback,
 } from '@modelcontextprotocol/server';
-import { Effect } from 'effect';
+import { Effect, Function as Fn, Schema } from 'effect';
 
 import type { ToolResult, ToolSpec } from './types.ts';
 
@@ -19,57 +18,72 @@ export const SERVER_INSTRUCTIONS = [
   'OntOS je firemní systém (zákazníci, zakázky, fakturace, úkoly a další moduly). Toto připojení jedná za jednu firmu a jednu identitu.',
   '1. Nejdřív zavolej ontos_whoami: firma, za koho jednáš, moduly a režim zápisu.',
   '2. Co umíš, najdeš přes ontos_capabilities {query: "zákazník"}; vstupní schéma přes ontos_capabilities {id}.',
-  '3. Čtení: ontos_read {id, input}. Odpověď je zkrácená: další položky přes offset, vynechané části (omitted) přes path. Zápis: ontos_execute {id, input, reason}.',
+  '3. Čtení: ontos_read {id, input}. Odpověď je zkrácená: další položky přes offset, vynechané části (omitted) přes path. Zápis: ontos_execute {id, input, reason, idempotencyKey}.',
+  'Každý zápis vyžaduje vlastní idempotencyKey (1–200 tisknutelných ASCII znaků bez mezer). Před odesláním uchovej klíč i celý vstup. Při opakování stejné změny po chybě nebo nejisté odpovědi použij přesně stejný klíč i vstup; nový klíč patří jen nové změně. Platí i pro ontos_propose a typované nástroje zápisu.',
   '4. Režim „ke schválení“: zápis se neprovede hned, vznikne návrh, který schválí člověk v OntOS (Nastavení › Ke schválení). Uživateli vrať reviewUrl. Stav návrhů: ontos_list_proposals.',
-  'Příklady: „najdi zákazníka“ → ontos_capabilities {query: "zákazník"} a ontos_read; změna → ontos_capabilities {id} pro vstupní schéma, pak ontos_execute {id, input, reason}.',
-  'English: OntOS business system. Call ontos_whoami first, discover with ontos_capabilities, read with ontos_read, write with ontos_execute. In approval mode writes become proposals a person approves; share the reviewUrl.',
+  'Příklady: „najdi zákazníka“ → ontos_capabilities {query: "zákazník"} a ontos_read; změna → ontos_capabilities {id} pro vstupní schéma, pak ontos_execute {id, input, reason, idempotencyKey}.',
+  'English: OntOS business system. Call ontos_whoami first, discover with ontos_capabilities, read with ontos_read, write with ontos_execute {id, input, reason, idempotencyKey}. Every mutation requires a caller idempotencyKey (1–200 printable ASCII characters without spaces). Retain the key and complete input before sending; retry uncertain responses with that exact key and input, using a new key only for a new intent. This also applies to ontos_propose and typed mutation tools. In approval mode writes become proposals a person approves; share the reviewUrl.',
 ].join('\n');
 
 /**
- * Advertises the schema but lets every value through: tools.ts validates arguments itself (input-check.ts) so a wrong
+ * The SDK boundary accepts unknown, not a falsely asserted generic T. Tools validate their own arguments so a wrong
  * call gets a Czech tool error instead of the SDK's English "Input validation error"; output shapes are unit-tested.
  */
-export const PASS_THROUGH_VALIDATOR: jsonSchemaValidator = {
-  getValidator:
-    <T>(): JsonSchemaValidator<T> =>
-    (input: unknown) => ({
-      data: input as T,
-      errorMessage: undefined,
-      valid: true as const,
-    }),
-};
+export const PASS_THROUGH_VALIDATOR = Schema.toStandardSchemaV1(Schema.Unknown);
 
 /** Catalog schemas are draft 2020-12 documents; drop $schema and fall back to a permissive object. */
-const toolInputSchema = (schema: Readonly<Record<string, unknown>>, fromJsonSchema: typeof makeJsonSchema) => {
+const toolInputSchema = (schema: ToolSpec['inputSchema']): StandardSchemaWithJSON => {
   const { $schema: _dialect, ...rest } = schema;
   const candidate = rest['type'] === 'object' ? rest : PERMISSIVE_OBJECT;
-  try {
-    return fromJsonSchema(candidate as JsonSchemaType, PASS_THROUGH_VALIDATOR);
-  } catch {
-    return fromJsonSchema(PERMISSIVE_OBJECT as JsonSchemaType, PASS_THROUGH_VALIDATOR);
-  }
+  return {
+    '~standard': {
+      ...PASS_THROUGH_VALIDATOR['~standard'],
+      jsonSchema: {
+        input: () => candidate,
+        output: () => candidate,
+      },
+    },
+  };
 };
 
-const toCallToolResult = (result: ToolResult): CallToolResult => ({
-  content: result.content.map((item) =>
-    item.type === 'text'
-      ? { text: item.text, type: 'text' as const }
-      : {
-          name: item.name,
-          type: 'resource_link' as const,
-          uri: item.uri,
-          ...(item.title === undefined ? {} : { title: item.title }),
-          ...(item.description === undefined ? {} : { description: item.description }),
-          ...(item.mimeType === undefined ? {} : { mimeType: item.mimeType }),
-        },
-  ),
-  ...(result.structuredContent === undefined ? {} : { structuredContent: { ...result.structuredContent } }),
-  ...(result.isError === true ? { isError: true } : {}),
-  ...(result._meta === undefined ? {} : { _meta: { ...result._meta } }),
-});
+const toCallToolResult = (result: ToolResult): CallToolResult => {
+  const response: CallToolResult = {
+    content: result.content.map((item): CallToolResult['content'][number] => {
+      if (item.type === 'text') {
+        return { text: item.text, type: 'text' };
+      }
+      const link: ResourceLink = { name: item.name, type: 'resource_link', uri: item.uri };
+      if (item.title !== undefined) {
+        link.title = item.title;
+      }
+      if (item.description !== undefined) {
+        link.description = item.description;
+      }
+      if (item.mimeType !== undefined) {
+        link.mimeType = item.mimeType;
+      }
+      return link;
+    }),
+  };
+  if (result.structuredContent !== undefined) {
+    response.structuredContent = Object.fromEntries(Object.entries(result.structuredContent));
+  }
+  if (result.isError === true) {
+    response.isError = true;
+  }
+  if (result._meta !== undefined) {
+    response._meta = Object.fromEntries(Object.entries(result._meta));
+  }
+  return response;
+};
 
-/** Runs a tool's Effect with the services of the request being served. */
-export type McpToolRunner = <A>(effect: Effect.Effect<A>) => Promise<A>;
+/** The request's Effect runner returns the SDK callback's native sync/async result at this framework edge. */
+export type McpToolRunner = (effect: Effect.Effect<CallToolResult>) => ReturnType<ToolCallback<StandardSchemaWithJSON>>;
+
+type McpToolConfiguration = Pick<
+  RegisteredTool,
+  '_meta' | 'annotations' | 'description' | 'inputSchema' | 'outputSchema' | 'title'
+>;
 
 /** One McpServer per request: the tool list always reflects the current grant (no list_changed needed). */
 export const buildMcpServer = (
@@ -79,29 +93,37 @@ export const buildMcpServer = (
     sdk,
   }: {
     readonly run: McpToolRunner;
-    readonly sdk: Pick<typeof McpSdk, 'fromJsonSchema' | 'McpServer'>;
+    readonly sdk: { readonly McpServer: typeof SdkMcpServer };
   },
-): McpServer => {
+): SdkMcpServer => {
   // The HTTP adapter loads SDK values only for this request. A static value import here
   // would be hoisted by Rspack even when the factory itself is imported lazily.
-  const { fromJsonSchema, McpServer } = sdk;
+  const { McpServer } = sdk;
   const server = new McpServer({ ...SERVER_INFO }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of tools) {
+    const configuration: McpToolConfiguration = {
+      _meta: { securitySchemes: CHATGPT_SECURITY_SCHEMES },
+      annotations: { ...tool.annotations, title: tool.title },
+      description: tool.description,
+      inputSchema: toolInputSchema(tool.inputSchema),
+      title: tool.title,
+    };
+    if (tool.outputSchema !== undefined) {
+      configuration.outputSchema = toolInputSchema(tool.outputSchema);
+    }
     server.registerTool(
       tool.name,
-      {
-        _meta: { securitySchemes: CHATGPT_SECURITY_SCHEMES },
-        annotations: { ...tool.annotations, title: tool.title },
-        description: tool.description,
-        inputSchema: toolInputSchema(tool.inputSchema, fromJsonSchema),
-        ...(tool.outputSchema === undefined
-          ? {}
-          : { outputSchema: toolInputSchema(tool.outputSchema, fromJsonSchema) }),
-        title: tool.title,
-      },
-      // The SDK awaits a Promise; the tool handler never fails (failures are `isError` results).
-      (args): Promise<CallToolResult> =>
-        run(tool.handler((args ?? {}) as Readonly<Record<string, unknown>>).pipe(Effect.map(toCallToolResult))),
+      configuration,
+      // Expected failures are Czech `isError` results; defects remain owned by the SDK/HTTP boundary.
+      Fn.compose(
+        (args: Parameters<ToolCallback<StandardSchemaWithJSON>>[0]) =>
+          Schema.decodeUnknownEffect(Schema.JsonObject)(args ?? {}).pipe(
+            Effect.flatMap(tool.handler),
+            Effect.map(toCallToolResult),
+            Effect.orDie,
+          ),
+        run,
+      ),
     );
   }
   return server;

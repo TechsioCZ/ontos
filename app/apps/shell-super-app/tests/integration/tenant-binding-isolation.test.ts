@@ -44,6 +44,7 @@ import type {
   TenantBindingIsolationOwnerHttp,
   TenantBindingIsolationProviderState,
 } from '../support/tenant-binding-isolation-fixture.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const namespaceId = 'test.tenant-binding-isolation.provider';
 const audience = 'shell-super-app.tenant-binding-isolation';
@@ -206,7 +207,10 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       providerSnapshots,
       () => currentOperation,
     );
-    const canonicalRepository = makeOperationalScopeRepository({ executor: database });
+    const canonicalRepository = makeOperationalScopeRepository(
+      { executor: database },
+      FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    );
     const canonicalLoads: { readonly operation: string; readonly tenantId: string }[] = [];
     const scopeResolver = makeOperationalScopeResolver(
       {
@@ -223,7 +227,11 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       makeActionRepository(),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       scopeResolver,
-      { ...openActionRuntimeOptions, contextAccess: actionContextAccess },
+      {
+        ...openActionRuntimeOptions,
+        contextAccess: actionContextAccess,
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      },
     );
     const cleanup = Effect.fnUntraced(function* cleanupTenantBindingIsolation() {
       yield* admin.delete(outboxMessages).where(inArray(outboxMessages.tenantId, [tenantOneId, tenantTwoId]));

@@ -10,6 +10,7 @@ import type { OperationContextUnavailable } from '../../src/operations/errors.ts
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
 import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   {
@@ -44,7 +45,7 @@ for (const [audience, role, gatewayGrant] of [
         );
       });
 
-      yield* makeOperationalScopeRepository({ executor }).load(principal);
+      yield* makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT).load(principal);
 
       const lookup = statements.find((statement) => statement.includes('from "core"."tenants"'));
       expect(lookup).toBeDefined();
@@ -60,19 +61,25 @@ for (const boundary of ['context', 'evidence'] as const) {
     executor: CoreDatabaseExecutor,
   ): Effect.Effect<void, OperationContextUnavailable | ReadEvidencePersistenceError> =>
     boundary === 'context'
-      ? makeOperationalScopeRepository({ executor }).load(scopedPrincipal).pipe(Effect.asVoid)
-      : persistScopedReadEvidence(executor, {
-          accessKind: 'list',
-          captureMode: 'metadata_only',
-          outcome: 'denied',
-          outcomeCode: 'permission_denied',
-          outcomeStage: 'authz',
-          policyKey: 'test.read.v1',
-          readKey: 'test.read',
-          resultCount: 0,
-          scope: scopedPrincipal,
-          servingModuleKey: 'core.shell',
-        });
+      ? makeOperationalScopeRepository({ executor }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT)
+          .load(scopedPrincipal)
+          .pipe(Effect.asVoid)
+      : persistScopedReadEvidence(
+          executor,
+          {
+            accessKind: 'list',
+            captureMode: 'metadata_only',
+            outcome: 'denied',
+            outcomeCode: 'permission_denied',
+            outcomeStage: 'authz',
+            policyKey: 'test.read.v1',
+            readKey: 'test.read',
+            resultCount: 0,
+            scope: scopedPrincipal,
+            servingModuleKey: 'core.shell',
+          },
+          FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+        );
 
   for (const phase of ['BEGIN', 'COMMIT', 'ROLLBACK', 'RELEASE SAVEPOINT', 'ROLLBACK TO SAVEPOINT'] as const) {
     it.effect(`scoped ${boundary} maps native ${phase} failures to its declared persistence error`, () =>

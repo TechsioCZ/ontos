@@ -19,6 +19,9 @@ import { currentSupportedCurrenciesRead } from '../../src/api/current-supported-
 import { exactPriceResolutionRead } from '../../src/api/exact-price-resolution.read.ts';
 import { priceDefinitionRead } from '../../src/api/price-definition.read.ts';
 import { priceScheduleRead } from '../../src/api/price-schedule.read.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const foreignTenantId = '10000000-0000-4000-8000-000000000002';
@@ -141,6 +144,8 @@ const makeHarness = Effect.fn(function* makePricingReadAccessHarness(options: Ha
     { resolve: () => Effect.succeed(operationalScope) },
     contextAccess,
     {
+      databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
       onStage: (stage) => {
         stages.push(stage);
       },

@@ -21,6 +21,7 @@ import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-
 import { ModuleStateDeniedError } from '../../src/modules/module-state-gate-errors.ts';
 import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
 import { TENANT_MODULE_STATES, makeTenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type DatabaseService = (typeof CoreDatabase)['Service'];
 
@@ -268,8 +269,12 @@ it.live('allows nested governed-read evidence under the write fence while serial
     const readRuntime = makeReadRuntime(
       { executor: childDatabase },
       openModuleEntrypointGateway,
-      makeOperationalScopeResolver(makeOperationalScopeRepository({ executor: childDatabase }), access),
+      makeOperationalScopeResolver(
+        makeOperationalScopeRepository({ executor: childDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+        access,
+      ),
       access,
+      { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
     );
     const gate = makeModuleStateGate(makeTenantModuleStateService({ executor: parentDatabase }));
     const write = defineTenantModuleEntrypoint({

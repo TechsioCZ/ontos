@@ -72,6 +72,7 @@ import {
   freshOutboxWorkerCompositionSnapshot,
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const relationship = (
   type: string,
@@ -209,11 +210,16 @@ it.layer(Reactivity.layer, { excludeTestServices: true })('native agent profile 
           database,
           makeActionRepository(),
           makeActionPermissionService(permissions),
-          makeOperationalScopeResolver(makeOperationalScopeRepository(database), access),
+          makeOperationalScopeResolver(
+            makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+            access,
+          ),
           {
             contextAccess: access,
+            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
             moduleEntrypointGateway: makeModuleEntrypointGateway(gate),
             moduleStateGate: gate,
+
             resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
           },
         );

@@ -21,6 +21,9 @@ import type {
   ManageContractualDiscountPersistenceCommand,
 } from '../../src/services/contractual-discount-persistence.service.ts';
 import { contractualDiscountPersistenceForScope } from '../../src/services/contractual-discount-persistence.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7970000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7970000-0000-4000-8000-000000000002';
@@ -85,7 +88,7 @@ const withPersistence = <Value, Failure>(
         'objects',
       );
       const scope = scopeFor(actingPrincipalId);
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* contractualDiscountPersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
     }),
@@ -99,7 +102,7 @@ const verifySetGenerationRaw = (database: PricingTestDatabase, input: RawContrac
                    set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
         'objects',
       );
-      yield* installOperationalScope(transaction, scopeFor());
+      yield* installOperationalScope(transaction, scopeFor(), FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const encodedInput = yield* encodeJson(input);
       return yield* transaction.execute<{ readonly payload: unknown }>(
         sql`select payload from pricing.verify_contractual_discount_set_generation_v1(

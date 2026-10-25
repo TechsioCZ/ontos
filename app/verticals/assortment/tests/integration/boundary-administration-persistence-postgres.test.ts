@@ -32,6 +32,9 @@ import {
   boundaryAdministrationPersistenceForScope,
   boundaryRef,
 } from '../../src/services/boundary-administration.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 type OwnerDatabase = TestDatabaseFromClient<typeof coreRelations>;
 interface PersistedBoundaryLifecycleFixture {
@@ -54,7 +57,7 @@ const runScoped = <Value>(
 ) =>
   fixture.database.transaction((transaction) =>
     Effect.gen(function* runBoundaryOperation() {
-      const scoped = yield* installOperationalScope(transaction, fixture.scope);
+      const scoped = yield* installOperationalScope(transaction, fixture.scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       return yield* operation(scoped);
     }),
   );

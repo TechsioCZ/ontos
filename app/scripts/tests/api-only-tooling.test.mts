@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -19,7 +20,7 @@ import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensio
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
+
 import { createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
@@ -167,7 +168,9 @@ const microVerticalApiBaselineViolation = Effect.fn(function* inspectMicroVertic
     additionalPaths: {},
     apiPrefix: `/${stem}-api`,
     baselinePackage: frameworkBaselinePackage,
-    baselinePackageDirectory: frameworkBaselinePackageDirectory,
+    // pnpm can install distinct peer-context owners for the workspace and a vertical.
+    // Check the framework identity installed for this contract, not the test runner's owner.
+    baselinePackageDirectory: path.dirname(createRequire(contractPath).resolve('@modern-js/bff-effect/package.json')),
     basePath: `/${stem}-api/${stem}`,
     effectClientPackage,
     ownerId: stem,
@@ -2204,6 +2207,7 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       readFile(path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'), 'utf-8'),
     );
     const effectModuleUrl = pathToFileURL(require.resolve('effect', { paths: [workspaceRoot] })).href;
+    const databaseIdentitiesUrl = pathToFileURL(require.resolve('@app/party-registry/database-identities')).href;
     const { code } = yield* Effect.promise(() =>
       transform(configSource, {
         define: {
@@ -2219,6 +2223,7 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       writeFile(
         harnessPath,
         `import * as effect from ${JSON.stringify(effectModuleUrl)};
+import * as databaseIdentities from ${JSON.stringify(databaseIdentitiesUrl)};
 import * as sharedBuild from ${JSON.stringify(pathToFileURL(path.join(workspaceRoot, 'packages/shared-contracts/tooling/modern-config.ts')).href)};
 import { runInNewContext } from 'node:vm';
 import * as nodeUrl from 'node:url';
@@ -2245,7 +2250,14 @@ runInNewContext(${JSON.stringify(code)}, {
   exports: module.exports,
   module,
   URL,
-  require: specifier => specifier === 'effect' ? effect : specifier === 'node:url' ? nodeUrl : specifier === 'node:path' ? nodePath : framework,
+  require: specifier => ({
+    effect,
+    'effect/Result': effect.Result,
+    'effect/Schema': effect.Schema,
+    './shared/database-identities.ts': databaseIdentities,
+    'node:url': nodeUrl,
+    'node:path': nodePath,
+  }[specifier] ?? framework),
 });
 process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
@@ -2480,12 +2492,16 @@ const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
   const buildIdentityUrl = pathToFileURL(
     createRequire(path.join(partyRoot, fileName)).resolve('@app/shared-contracts/ultramodern-build'),
   ).href;
+  const databaseIdentityManifestUrl = pathToFileURL(
+    createRequire(path.join(partyRoot, fileName)).resolve('@app/core-runtime/db/database-identity-manifest'),
+  ).href;
   return runNode([
     '--input-type=module',
     '-e',
     `
 import * as effect from ${JSON.stringify(effectUrl)};
 import * as buildIdentity from ${JSON.stringify(buildIdentityUrl)};
+import * as databaseIdentityManifest from ${JSON.stringify(databaseIdentityManifestUrl)};
 import * as nodeModule from 'node:module';
 import * as nodePath from 'node:path';
 import * as nodeUrl from 'node:url';
@@ -2524,6 +2540,7 @@ runInNewContext(${JSON.stringify(code)}, {
     'effect/Schema': effect.Schema,
     'effect/SchemaTransformation': effect.SchemaTransformation,
     '@app/shared-contracts/ultramodern-build': buildIdentity,
+    '@app/core-runtime/db/database-identity-manifest': databaseIdentityManifest,
     'node:module': moduleShim,
     'node:path': nodePath,
     'node:url': nodeUrl,

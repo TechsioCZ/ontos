@@ -92,11 +92,20 @@ import { dispatchEmailBatchWith } from '../../../../packages/email-delivery/src/
 import { makeSmtpEmailDelivery } from '../../../../packages/email-delivery/src/smtp.ts';
 import type { EmailTransportRuntime } from '../../../../packages/email-delivery/src/transport-runtime.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, user, verification } from '../../api/auth/db/schema.ts';
 import { BetterAuthPersonInvitationIdentityProviderLive } from '../../api/auth/db/person-invitation-provider.ts';
 import { setInvitationPassword } from '../../api/auth/invitation/transport.ts';
+import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
 import { makeAuthenticationService } from '../../api/auth/service.ts';
+import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 const CapturedMailSchema = Schema.Struct({ ID: Schema.String, Subject: Schema.String });
 const MailSearchSchema = Schema.fromJsonString(Schema.Struct({ messages: Schema.Array(CapturedMailSchema) }));
@@ -302,11 +311,16 @@ it.live(
         database,
         makeActionRepository(),
         makeActionPermissionService(permission),
-        makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
+        makeOperationalScopeResolver(
+          makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+          contextAccess,
+        ),
         {
           contextAccess,
+          databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
           moduleEntrypointGateway: makeModuleEntrypointGateway(stateGate),
           moduleStateGate: stateGate,
+
           resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
         },
       );
@@ -327,7 +341,20 @@ it.live(
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       });
+      const oauthAuthenticationLayer = Layer.mergeAll(
+        BetterAuthRuntimeLive,
+        BetterAuthNativeAdapterLive,
+        OAuthAuthenticationAuditLive,
+        OAuthEndpointGuardDataLive,
+        OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+      ).pipe(
+        Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+        Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(AuthDatabase, authDatabase))),
+      );
+      const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
+      const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
       const authentication = yield* makeAuthenticationService().pipe(
+        Effect.provide(authenticationGuards),
         Effect.provideService(AuthConfig, configuration),
         Effect.provideService(AuthDatabase, authDatabase),
         Effect.provideService(PrincipalResolver, resolver),

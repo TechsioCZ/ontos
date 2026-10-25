@@ -21,6 +21,9 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import type { DefinePricePersistenceCommand, PricePersistence } from '../../src/services/price-persistence.service.ts';
 import { pricePersistenceForScope } from '../../src/services/price-persistence.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'e7600000-0000-4000-8000-000000000001';
 const legalEntityId = 'e7600000-0000-4000-8000-000000000002';
@@ -156,7 +159,7 @@ const withPersistence = <Value, Failure>(
                    set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
         'objects',
       );
-      const ownerTransaction = yield* installOperationalScope(transaction, scope);
+      const ownerTransaction = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
       const persistence = yield* pricePersistenceForScope(ownerTransaction, scope);
       return yield* operation(persistence);
     }),

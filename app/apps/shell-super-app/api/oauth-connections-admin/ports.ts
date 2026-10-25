@@ -1,7 +1,7 @@
 /**
  * Management contracts for Připojené aplikace. Grant persistence stays behind GrantAdminPort;
  * the governed company directory is supplied by its request-bound Context service.
- * R is the live implementation's Effect requirement; unit fixtures use R = never.
+ * Live Layers capture their internal dependencies; management methods require no additional services.
  */
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type {
@@ -76,7 +76,7 @@ export interface GrantAdminPort<R> {
 }
 
 export class GrantAdmin extends Context.Service<GrantAdmin, GrantAdminPort<never>>()(
-  '@app/shell-super-app/api/oauth-connections-admin/GrantAdmin',
+  '@app/shell-super-app/api/oauth-connections-admin/ports/GrantAdmin',
 ) {}
 
 /** An agent entity (Core principal kind agent) of one company with its current profile. */

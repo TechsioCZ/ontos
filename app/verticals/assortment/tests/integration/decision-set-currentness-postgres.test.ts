@@ -43,6 +43,9 @@ import {
 import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
 import { assortmentDecisionEvidenceRepositoryForScope } from '../../src/services/decision-evidence.repository.ts';
 import { assortmentDecisionExplanationReadService } from '../../src/services/decision-explanation-read.service.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const historicalEvidenceUnavailable = () =>
   new AssortmentPolicyPersistenceUnavailable({
@@ -116,7 +119,7 @@ it.live('invalidates empty Assortment Candidate and Boundary sets when matching 
       ) =>
         ownerDatabase.transaction((transaction) =>
           Effect.gen(function* scopedAssortmentOperation() {
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             return yield* operation(scoped);
           }),
         );
@@ -369,7 +372,11 @@ for (const audienceKind of ['SHARED', 'COMMERCE_CUSTOMER_GROUP', 'SUBJECT'] as c
         ) =>
           database.transaction((transaction) =>
             Effect.gen(function* retirementScopedOperation() {
-              const scoped = yield* installOperationalScope(transaction, scenarioScope);
+              const scoped = yield* installOperationalScope(
+                transaction,
+                scenarioScope,
+                FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              );
               return yield* operation(scoped);
             }),
           );

@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -533,7 +534,7 @@ it.live(
   () =>
     Effect.gen(function* rejectInvalidMountedCommands() {
       const assertion = yield* makeAssertion();
-      const harness = yield* makeActionTestHarness();
+      const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
       const app = yield* mountApp(harness, assertion.environment);
 
       expect(Object.keys(partyRegistryApi.groups.partyCommands.endpoints).toSorted()).toEqual(
@@ -617,7 +618,9 @@ it.live(
       ];
       yield* forEachSequential(cases, ({ assertion, token }) =>
         Effect.gen(function* rejectInvalidAssertionCase() {
-          const harness = yield* makeActionTestHarness();
+          const harness = yield* makeActionTestHarness({
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+          });
           const app = yield* mountApp(harness, assertion.environment);
           const response = yield* handle(
             app,
@@ -654,7 +657,9 @@ it.live('missing and malformed verification configuration are retryable and neve
       ],
       (environment) =>
         Effect.gen(function* rejectInvalidConfigurationCase() {
-          const harness = yield* makeActionTestHarness();
+          const harness = yield* makeActionTestHarness({
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+          });
           const app = yield* mountApp(harness, environment);
           const response = yield* handle(
             app,
@@ -677,7 +682,7 @@ it.live('missing and malformed verification configuration are retryable and neve
 it.live('redemption storage outages return safe retryable problems before Action and Read lifecycles', () =>
   Effect.gen(function* reportRedemptionOutages() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
     const app = yield* mountApp(harness, assertion.environment, readRuntime, {
       consume: () =>
@@ -726,7 +731,7 @@ it.live('redemption storage outages return safe retryable problems before Action
 it.live('generated governed reads authenticate through the shared adapter before starting ReadRuntime', () =>
   Effect.gen(function* authenticateGovernedReads() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     let reads = 0;
     const receivedPrincipals: unknown[] = [];
     const readRuntime: ReadRuntimeService = {
@@ -912,7 +917,7 @@ it.live('the complete generated governed Read seam maps every Core failure to it
         return Effect.fail(failure);
       },
     };
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const app = yield* mountApp(harness, assertion.environment, readRuntime);
     yield* forEachSequential(cases, ([nextFailure, expectedStatus, expectedTag]) =>
       Effect.gen(function* verifyGovernedReadFailure() {
@@ -943,7 +948,7 @@ it.live('the generated governed Read seam sanitizes unexpected runtime defects',
     const readRuntime: ReadRuntimeService = {
       runRead: () => Effect.die('private governed Read defect'),
     };
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const app = yield* mountApp(harness, assertion.environment, readRuntime);
     const response = yield* handle(app, decisionRequest(randomUUID(), assertion.token));
     expect(response.status).toBe(500);
@@ -958,7 +963,7 @@ it.live('the generated governed Read seam sanitizes unexpected runtime defects',
 it.live('valid reused assertions still enter each Action and generated Read lifecycle', () =>
   Effect.gen(function* reuseAssertionsWithoutBypassingLifecycles() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const { readRuntime, readCount } = makeMissingDecisionReadRuntime();
     const app = yield* mountApp(harness, assertion.environment, readRuntime, makeSingleUseRedemption());
     const firstAction = yield* handle(
@@ -997,7 +1002,7 @@ it.live('valid reused assertions still enter each Action and generated Read life
 it.live('correlation and idempotency are mandatory before the Core Action lifecycle', () =>
   Effect.gen(function* validateActionTransport() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     let runtimeCalls = 0;
     const observingRuntime: ActionRuntimeService = {
       resolveActionExecution: harness.runtime.resolveActionExecution,
@@ -1045,6 +1050,7 @@ it.live('the governed runner passes safe transport metadata through one complete
     const assertion = yield* makeAssertion();
     const correlationId = 'x'.repeat(200);
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });
@@ -1075,7 +1081,7 @@ it.live('the governed runner passes safe transport metadata through one complete
 it.live('a decoded relationship timestamp reaches the Action runtime exactly once', () =>
   Effect.gen(function* decodeRelationshipTimestampOnce() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const failure = new ActionPayloadValidationError({
       code: 'action_payload_invalid',
       reason: 'runtime observation fixture',
@@ -1106,7 +1112,7 @@ it.live('a decoded relationship timestamp reaches the Action runtime exactly onc
 it.live('an unexpected runtime defect is sanitized by the governed outer HTTP seam', () =>
   Effect.gen(function* sanitizeActionRuntimeDefect() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const defectiveRuntime: ActionRuntimeService = {
       resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       resolveActionCommit: () => Effect.die('private resolution defect'),
@@ -1254,7 +1260,9 @@ it.live('the endpoint-owned mapper preserves representative Core failure semanti
 
     yield* forEachSequential(cases, ([failure, expectedStatus, expectedTag]) =>
       Effect.gen(function* verifyActionFailureMapping() {
-        const harness = yield* makeActionTestHarness();
+        const harness = yield* makeActionTestHarness({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+        });
         const failingRuntime: ActionRuntimeService = {
           resolveActionExecution: harness.runtime.resolveActionExecution,
           resolveActionCommit: harness.runtime.resolveActionCommit,
@@ -1322,6 +1330,7 @@ it.live('real Core permission denial is a durable 403 and does not execute the c
   Effect.gen(function* persistPermissionDenial() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'denied',
       tenantPermission: 'allowed',
     });
@@ -1345,6 +1354,7 @@ it.live('the real handler translates domain conflicts and rolls back without suc
   Effect.gen(function* rollBackDomainConflict() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
       services: [
@@ -1382,6 +1392,7 @@ it.live('alias conflicts preserve only safe canonical recovery metadata', () =>
       resourceId: 'a4000000-0000-4000-8000-000000000002',
     };
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
       services: [
@@ -1422,6 +1433,7 @@ it.live('committed request replay stays a terminal 409 and does not execute or e
   Effect.gen(function* rejectCommittedCommandReplay() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });
@@ -1491,6 +1503,7 @@ it.live('declared not-found, capability-unavailable and unexpected defects retai
     yield* forEachSequential(cases, (item) =>
       Effect.gen(function* verifySafeFailureResponse() {
         const harness = yield* makeActionTestHarness({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           actionPermission: 'allowed',
           tenantPermission: 'allowed',
           services: [item.service],
@@ -1524,6 +1537,7 @@ it.live('semantically insufficient Party evidence is a declared 422, not a serve
   Effect.gen(function* rejectInsufficientPartyEvidence() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
       services: [
@@ -1562,6 +1576,7 @@ it.live('the Core request hash rejects reuse of an idempotency key for a differe
     const assertion = yield* makeAssertion();
     let executions = 0;
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
       services: [
@@ -1615,7 +1630,7 @@ it.live('the Core request hash rejects reuse of an idempotency key for a differe
 it.live('commit resolution requires authentication and a valid invocation without creating an Action', () =>
   Effect.gen(function* validateCommitResolutionRequest() {
     const assertion = yield* makeAssertion();
-    const harness = yield* makeActionTestHarness();
+    const harness = yield* makeActionTestHarness({ databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT });
     const app = yield* mountApp(harness, assertion.environment);
 
     const missingAuth = yield* handle(app, recoveryRequest(randomUUID()));
@@ -1644,6 +1659,7 @@ for (const reviewCommand of [true, false]) {
       Effect.gen(function* recoverWithReviewerOnlyPermission() {
         const assertion = yield* makeAssertion();
         const harness = yield* makeActionTestHarness({
+          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
           actionPermission: 'allowed',
           tenantPermission: 'allowed',
           services: [
@@ -1756,6 +1772,7 @@ it.live('a still-running invocation resolves without authorizing duplicate dispa
   Effect.gen(function* resolveOpenInvocationWithoutRetry() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       services: [
         bindActionTestServices(archivePartyAction, {
@@ -1796,6 +1813,7 @@ it.live(
       const decisions = new Map<string, typeof PartyMatchDecisionRecordSchema.Type>();
       let executions = 0;
       const harness = yield* makeActionTestHarness({
+        databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
         actionPermission: 'allowed',
         tenantPermission: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
@@ -1963,6 +1981,7 @@ it.live('full browser headers reach the Read and the Action; only the Idempotenc
   Effect.gen(function* acceptBrowserHeaders() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
+      databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
       actionPermission: 'allowed',
       tenantPermission: 'allowed',
     });

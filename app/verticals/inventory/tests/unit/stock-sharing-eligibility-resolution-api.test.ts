@@ -29,6 +29,9 @@ import {
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -256,9 +259,11 @@ it.effect('denies the exact Stock Position before owner services are resolved', 
         tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
       },
       {
+        databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
         onStage: (stage) => {
           stages.push(stage);
         },
+
         ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
       },
     );

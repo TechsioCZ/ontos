@@ -2,6 +2,8 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -72,6 +74,8 @@ import { setSupportedCurrenciesActionApiLive } from './set-supported-currencies-
 import { zeroFloorAuthorizationResultLookupReadApiLive } from './zero-floor-authorization-result-lookup-read-server.ts';
 // </generated-governed-http-handler-imports>
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 const pricingReadinessLayer = HttpApiBuilder.group(pricingApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
     Effect.succeed({
@@ -125,6 +129,7 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
@@ -153,6 +158,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 const governedReadRuntimeLive = readRuntimeLive;
 const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
@@ -199,6 +205,7 @@ const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActi
   GovernedReadLayer.provideMerge(activeApplicationCompositionLive),
   Layer.provideMerge(compositionSourceLive),
   Layer.provideMerge(runtimeObservabilityLive),
+  Layer.provideMerge(databaseIdentitiesLive),
   Layer.orDie,
 );
 type PricingApiGroups = (typeof pricingApi.groups)[keyof typeof pricingApi.groups];
@@ -212,10 +219,7 @@ const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
   PricingApiGroups,
   PricingHandlerRequirements,
   Layer.Success<typeof requestServicesLive>
->['handlers'] = governedReadApiHandlersLive.pipe(
-  Layer.provide(RequestSchemaProblemLive),
-  Layer.orDie,
-);
+>['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive), Layer.orDie);
 
 export const makePricingApiRuntime = (): EffectBffDefinition<typeof pricingApi> & EffectBffRuntime<typeof pricingApi> =>
   assembleEffectBffRuntime({

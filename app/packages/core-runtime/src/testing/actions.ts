@@ -27,7 +27,12 @@ import type {
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
+import {
+  defineDatabaseIdentityEnrollment,
+  gatewayScopeGrantRoleForAudience,
+  SHARED_RUNTIME_IDENTITY,
+} from '../db/database-identities.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
@@ -45,6 +50,7 @@ const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
 const gatewayAssertionValuesSchema = Schema.Tuple([Schema.String]);
 /** The principal claim Shell registers as the gateway scope grant for an issued assertion. */
 const gatewayAssertionClaimsSchema = Schema.Struct({
+  aud: Schema.String,
   principal: Schema.Struct({
     legalEntityId: Schema.optional(Schema.String.pipe(Schema.brand('LegalEntityId'))),
     tenantId: Schema.String.pipe(Schema.brand('TenantId')),
@@ -112,6 +118,7 @@ export interface ActionTestHarnessOptions {
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
   readonly compositionRevision?: string;
+  readonly databaseIdentities?: DatabaseIdentityEnrollment;
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
   readonly moduleState?: TenantModuleState;
@@ -155,6 +162,7 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
 const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTestHarness(
   options: ActionTestHarnessOptions = {},
 ) {
+  const databaseIdentities = options.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
   const invocations = new Map<string, ActionTestInvocation>();
   const idempotency = new Map<string, string>();
   const committed: FlushActionSuccessInput[] = [];
@@ -309,10 +317,14 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       // Models the grant Shell registered for this assertion: the database derives the scope
       // from the redeemed assertion's principal claim, never from the request.
       const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
-      const { principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+      const { aud, principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+      const role = gatewayScopeGrantRoleForAudience(databaseIdentities, aud);
+      if (Option.isNone(role)) {
+        return yield* Effect.die('The Action test gateway audience has no enrolled database identity');
+      }
       scope.tenantId = principal.tenantId;
       scope.legalEntityId = principal.legalEntityId ?? '';
-      scope.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+      scope.role = role.value;
       return {
         rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
       };
@@ -486,6 +498,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
   const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
   let runtimeOptions: ActionRuntimeOptions = {
     contextAccess,
+    databaseIdentities,
     // This scripted harness rejects owner SQL and tests the Action lifecycle only.
     lockCompositionAuthority: () => Effect.succeed([]),
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),

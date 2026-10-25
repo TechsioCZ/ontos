@@ -1,15 +1,18 @@
 import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../../shared/database-identities.ts';
+import {
   GatewayAssertionRedemptionService,
   loadDatabaseIdentityConnections,
   makeDatabaseConfigLive,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '@app/core-runtime';
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import type { PgClient } from '@effect/sql-pg';
 import { Context, Data, Effect, Layer, Predicate, Redacted } from 'effect';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { NodeCrypto } from '@effect/platform-node';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/unstable/sql/SqlConnection';
 
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -179,7 +182,9 @@ const seedFixture = (admin: Client) =>
   });
 
 const openFixture = Effect.gen(function* openFixtureEffect() {
-  const connections = yield* loadDatabaseIdentityConnections();
+  const connections = yield* loadDatabaseIdentityConnections({
+    enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  });
   const clients = yield* openPartyBoundaryClients({ runtimeMaxConnections: 1 });
   const separated = yield* loadSeparatedIdentityConnectionStrings;
   const worker = yield* makeTestPgClient(separated.worker, { maxConnections: 1 });
@@ -432,8 +437,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           statement,
         });
       }
-      const connections = yield* loadDatabaseIdentityConnections();
-      const fresh = yield* makeTestPgClient(connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString, {
+      const connections = yield* loadDatabaseIdentityConnections({
+        enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+      });
+      const requestConnection = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+      assert.isOk(requestConnection !== undefined);
+      const fresh = yield* makeTestPgClient(requestConnection.connectionString, {
         maxConnections: 1,
       });
       expect(yield* fresh.unsafe('select trust.current_tenant_id()::text as trusted')).toEqual([{ trusted: null }]);

@@ -9,6 +9,7 @@ import {
   outboxMessages,
 } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identity-manifest.ts';
 import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
@@ -135,8 +136,9 @@ export const lockApplicationCompositionReadScope = Effect.fn('ApplicationComposi
     transaction: CoreTransaction,
     expectedRevision: string,
     scope: OperationalScope,
+    enrollment: DatabaseIdentityEnrollment,
   ) {
-    const installed = yield* installOperationalScopeAt(transaction, scope, {
+    const installed = yield* installOperationalScopeAt(transaction, scope, enrollment, {
       acquire: sql`pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))`,
       isolation: READ_COMMITTED_ISOLATION,
     }).pipe(

@@ -6,7 +6,11 @@ import {
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   LegalEntityContextLive,
+  OAuthAuthenticationAuditLive,
+  OAuthGrantRegistryLive,
   PrincipalResolverLive,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
@@ -36,25 +40,46 @@ import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/r
 import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
+import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
+import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
 import { ApiKeyServiceLive } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { IdentityLifecycleLive } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { AgentProfileReadDatabase, AgentProfileSetupError } from './agent-profile-setup.mts';
 
 const persistence = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 const access = ContextAccessLive;
 const authConfig = AuthConfigLive;
 const authDatabase = AuthDatabaseLive.pipe(Layer.provide(authConfig));
 const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
   Layer.provide(persistence),
 );
-const authentication = AuthenticationServiceLive.pipe(
-  Layer.provide(Layer.mergeAll(authConfig, authDatabase, resolver, StaffAuthenticationNamespaceRegistryLive)),
+const oauthRegistry = OAuthGrantRegistryLive.pipe(Layer.provide(persistence));
+const oauthCredentials = OAuthCredentialsLive.pipe(Layer.provide(authDatabase));
+const oauthGuards = OAuthEndpointGuardDataLive.pipe(Layer.provide(Layer.merge(oauthRegistry, oauthCredentials)));
+const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence));
+const authenticationDependencies = Layer.mergeAll(
+  authConfig,
+  authDatabase,
+  resolver,
+  StaffAuthenticationNamespaceRegistryLive,
+  BetterAuthRuntimeLive,
+  oauthGuards,
+  oauthAudit,
+  OAuthConnectionHooksLive.pipe(Layer.provide(oauthRegistry)),
 );
+const authenticationFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(authenticationDependencies));
+const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+const authentication = AuthenticationServiceLive.pipe(Layer.provide(authenticationGuards));
 const composition = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
 );
@@ -111,7 +136,7 @@ export const AgentProfileOperatorLive = Layer.mergeAll(
   access,
   ShellInstalledModuleCatalogLive.pipe(Layer.provide(composition)),
   NodeServices.layer,
-);
+).pipe(Layer.provide(databaseIdentitiesLive));
 
 /** Real Better Auth sign-in and native principal binding resolution; no synthetic session context or default password. */
 export const authenticateAgentProfileOperator = Effect.gen(function* authenticateOperator() {

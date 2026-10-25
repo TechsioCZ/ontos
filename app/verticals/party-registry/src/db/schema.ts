@@ -1,8 +1,7 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY, PARTY_REGISTRY_WORKER_IDENTITY } from '../../shared/database-identities.ts';
 import {
   gatewayScopedTenantLegalEntityRlsPolicies,
   gatewayScopedTenantRlsPolicies,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
   sessionScopedTenantLegalEntityReadRlsPolicy,
   sessionScopedTenantReadRlsPolicy,
 } from '@app/core-runtime';

@@ -1,13 +1,17 @@
+import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+} from '../../shared/database-identities.ts';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
   OutboxRuntime,
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   runAction,
+  DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
 import { extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
@@ -36,6 +40,7 @@ import { PartySearchProjectionGatewayLive } from '../../src/search/parties.provi
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
+  outboxWorkerDatabaseIdentityEnrollmentLive,
   outboxWorkerHandlerLayers,
   outboxWorkerLayer,
   outboxWorkerRepositoryLive,
@@ -98,6 +103,7 @@ const partyWorkerRuntimeLive = outboxWorkerLayer.pipe(
   Layer.provide(outboxWorkerRepositoryLive),
   Layer.provide(outboxWorkerCorePersistenceLive),
   Layer.provide(outboxWorkerDatabaseConfigLive),
+  Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
   Layer.provide(NodeCrypto.layer),
 );
 
@@ -192,12 +198,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* requestIdentityRuntimeEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
-          const partyRuntimeConnectionString = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id].connectionString;
-          const issuerClient = yield* makeTestPgClient(
-            connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id].connectionString,
-            { maxConnections: 1 },
-          );
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
+          const requestConnection = connections.runtime[PARTY_REGISTRY_REQUEST_IDENTITY.id];
+          const issuerConnection = connections.runtime[SHELL_GATEWAY_ISSUER_IDENTITY.id];
+          assert.isOk(requestConnection !== undefined);
+          assert.isOk(issuerConnection !== undefined);
+          const partyRuntimeConnectionString = requestConnection.connectionString;
+          const issuerClient = yield* makeTestPgClient(issuerConnection.connectionString, { maxConnections: 1 });
           const compositionSnapshot = yield* partyCompositionSnapshot;
           const compositionRevision = compositionSnapshot.composition.revision;
           const actionKeys = [createPartyAction, counterpartyCreateAction, addContactPointAction].map(
@@ -205,6 +215,14 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
+              databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+              legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+              tenantManagerRelations: [
+                'party_identity_manager',
+                'party_identity_reader',
+                'party_identity_reviewer',
+                'party_relationship_manager',
+              ],
               actionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               audience: 'party-registry',
@@ -242,6 +260,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             const { assertion } = yield* registerTestGatewayScopeGrant(
               issuerClient,
               context.legalEntityId === undefined ? grant : { ...grant, legalEntityId: context.legalEntityId },
+              PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
             ).pipe(Effect.orDie);
             return trustVerifiedGatewayPrincipalContext(context, compositionRevision, {
               assertion,
@@ -352,7 +371,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               Layer.provide(CoreSearchQueryRuntimeLive),
               Layer.provide(CoreSearchProjectionStoreLive),
             ),
-          ).pipe(Effect.provideContext(fixtureContext));
+          ).pipe(
+            Effect.provideContext(fixtureContext),
+            Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
+          );
           const hits = yield* Effect.all([ReadRuntime, freshReadTransport]).pipe(
             Effect.flatMap(([runtime, transport]) =>
               runtime.runRead({
@@ -379,7 +401,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
     () =>
       Effect.scoped(
         Effect.gen(function* workerIdentityRuntimeEffect() {
-          const connections = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+          const connections = yield* loadDatabaseIdentityConnections({
+            enrollment: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            envPath: '/dev/null',
+          });
           const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
           const compositionRevision = (yield* partyCompositionSnapshot).composition.revision;
           const [tenantId, partyId] = yield* Effect.all([nextUuid, nextUuid]);

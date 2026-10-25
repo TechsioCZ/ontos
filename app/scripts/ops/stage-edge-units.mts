@@ -1,7 +1,7 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
 import { Effect, Schema } from 'effect';
 
 import {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identities.ts';

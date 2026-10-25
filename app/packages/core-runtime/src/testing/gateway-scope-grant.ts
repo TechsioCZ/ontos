@@ -4,6 +4,7 @@ import type { PlatformError } from 'effect';
 
 import { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
 import type { GatewayScopeGrantUnavailableError } from '../auth/gateway-scope-grant.ts';
+import type { DatabaseIdentityEnrollment } from '../db/database-identities.ts';
 
 export interface SyntheticGatewayAssertionInput {
   readonly audience: string;
@@ -67,6 +68,7 @@ export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting
   function* registerTestGatewayScopeGrantEffect(
     issuer: PgClient.PgClient,
     input: RegisterTestGatewayScopeGrantInput,
+    enrollment: DatabaseIdentityEnrollment,
   ): Effect.fn.Return<
     RegisteredTestGatewayScopeGrant,
     GatewayScopeGrantUnavailableError | PlatformError.PlatformError | Schema.SchemaError,
@@ -88,7 +90,7 @@ export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting
         ? tenantScopedInput
         : { ...tenantScopedInput, legalEntityId: input.legalEntityId };
     const assertion = yield* makeSyntheticGatewayAssertion(assertionInput);
-    yield* makeGatewayScopeGrantRegistrar(issuer).register({ ...assertionInput, assertion });
+    yield* makeGatewayScopeGrantRegistrar(issuer, enrollment).register({ ...assertionInput, assertion });
     return { assertion, expiresAtEpochSeconds, jti };
   },
 );

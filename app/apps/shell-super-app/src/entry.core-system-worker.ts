@@ -1,3 +1,4 @@
+import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ActionAuthorizationLifecycleLive,
@@ -20,6 +21,7 @@ import { Reactivity } from 'effect/unstable/reactivity';
 
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
 const compositionLive = ActiveApplicationCompositionConfigLive.pipe(
   Layer.provide(
     ActiveApplicationCompositionSourceLive.pipe(
@@ -43,7 +45,12 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
       Layer.provide(SpiceDbConfigLive),
     ),
     Reactivity.layer,
-  ).pipe(Layer.provideMerge(compositionLive), Layer.provide(CorePersistenceLive), Layer.provide(DatabaseConfigLive)),
+  ).pipe(
+    Layer.provideMerge(compositionLive),
+    Layer.provide(CorePersistenceLive),
+    Layer.provide(DatabaseConfigLive),
+    Layer.provideMerge(databaseIdentitiesLive),
+  ),
   registrations: coreSystemOutboxWorkers,
   subscriptions: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
 });

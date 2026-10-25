@@ -1,19 +1,22 @@
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';
+import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import { readFileSync } from 'node:fs';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  BEARER_ASSERTION_ROLE_SETTINGS,
-  DATABASE_IDENTITIES,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+import { BEARER_ASSERTION_ROLE_SETTINGS } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   DATABASE_ROLE_GRANT_MANIFEST,
+  DatabaseRoleGrantManifestConfigurationError,
   TRUST_ROUTINES,
+  defineDatabaseRoleGrantManifest,
   manifestEntryForRole,
 } from '../postgres/database-role-manifest.mts';
 
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
+const FIXTURE_OWNER_MODULE_KEY = 'fixture.owner';
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
 
 it('gives every database identity exactly one grant manifest entry', () => {
@@ -23,6 +26,117 @@ it('gives every database identity exactly one grant manifest entry', () => {
     expect(manifestEntryForRole(identity.role)?.identity).toBe(identity);
   }
   expect(manifestEntryForRole('ontos_admin')).toBeUndefined();
+});
+
+it('rejects an enrolled owner without explicit application grant descriptors', () => {
+  const enrollment = defineDatabaseIdentityEnrollment([
+    PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR,
+    {
+      moduleKey: FIXTURE_OWNER_MODULE_KEY,
+      policyPrefix: 'fixture_owner',
+      request: {
+        ...PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request,
+        cloudflareHyperdrive: null,
+        gatewayScopeAudiences: ['fixture-owner'],
+        id: 'fixture_request',
+        ownerModuleKey: FIXTURE_OWNER_MODULE_KEY,
+        role: 'fixture_runtime',
+        urlKey: 'FIXTURE_DATABASE_URL',
+      },
+      schemas: ['fixture_owner'],
+      worker: {
+        ...PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.worker,
+        id: 'fixture_worker',
+        ownerModuleKey: FIXTURE_OWNER_MODULE_KEY,
+        role: 'fixture_worker',
+        urlKey: 'FIXTURE_WORKER_DATABASE_URL',
+      },
+    },
+  ]);
+  const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+    entry.kind === 'legacy_shared'
+      ? { ...entry, revokedSchemas: enrollment.owners.flatMap(({ schemas }) => schemas) }
+      : entry,
+  );
+  expect(() => defineDatabaseRoleGrantManifest(enrollment, entries)).toThrow(
+    new DatabaseRoleGrantManifestConfigurationError({
+      reason: 'Enrolled identity fixture_request (fixture_runtime) has no grant descriptor',
+    }),
+  );
+});
+
+it('rejects duplicate or missing grant descriptors instead of publishing a partial catalog', () => {
+  expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, [])).toThrow(
+    DatabaseRoleGrantManifestConfigurationError,
+  );
+  expect(() =>
+    defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, [
+      ...DATABASE_ROLE_GRANT_MANIFEST,
+      ...DATABASE_ROLE_GRANT_MANIFEST,
+    ]),
+  ).toThrow(DatabaseRoleGrantManifestConfigurationError);
+});
+
+it('rejects grant identities whose roles or authority facts differ from application enrollment', () => {
+  for (const replacement of [
+    { role: 'unregistered_runtime' },
+    { id: 'unregistered_request' },
+    { ownerModuleKey: FIXTURE_OWNER_MODULE_KEY },
+    { urlKey: 'UNREGISTERED_DATABASE_URL' },
+    { scopeAuthority: 'session_setting' as const },
+  ]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+        ? { ...entry, identity: { ...entry.identity, ...replacement } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
+});
+
+it('rejects schemas outside the enrolled owner mapping', () => {
+  const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+    entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+      ? { ...entry, grants: { ...entry.grants, schemas: [...entry.grants.schemas, 'foreign_owner'] } }
+      : entry,
+  );
+  expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+    DatabaseRoleGrantManifestConfigurationError,
+  );
+});
+
+it('rejects table, sequence, and routine grants without their declared schema usage', () => {
+  for (const grants of [
+    { tables: [{ privileges: ['select'] as const, reason: 'invalid fixture', table: 'contacts.unmapped' }] },
+    {
+      sequences: [{ privileges: ['usage'] as const, reason: 'invalid fixture', sequence: 'contacts.unmapped' }],
+    },
+    { routines: ['contacts.unmapped()'] },
+  ]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.worker.id
+        ? { ...entry, grants: { ...entry.grants, ...grants } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
+});
+
+it('rejects undeclared trust executors and missing enrolled trust routines', () => {
+  for (const routines of [[], ['trust.register_gateway_scope_grant(text,text,uuid,uuid,uuid,uuid,timestamptz)']]) {
+    const entries = DATABASE_ROLE_GRANT_MANIFEST.map((entry) =>
+      entry.kind === 'explicit' && entry.identity.id === PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request.id
+        ? { ...entry, grants: { ...entry.grants, routines } }
+        : entry,
+    );
+    expect(() => defineDatabaseRoleGrantManifest(APP_DATABASE_IDENTITY_ENROLLMENT, entries)).toThrow(
+      DatabaseRoleGrantManifestConfigurationError,
+    );
+  }
 });
 
 it('names explicit tables once each as schema.table inside the granted schemas', () => {

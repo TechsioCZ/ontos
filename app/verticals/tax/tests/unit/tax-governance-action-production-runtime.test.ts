@@ -28,6 +28,11 @@ import { openModuleStateGate } from '../../../../packages/core-runtime/tests/sup
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
 
+import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const authBindingId = '40000000-0000-4000-8000-000000000001';
@@ -161,6 +166,7 @@ const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(fun
   const actionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     Layer.provide(
       Layer.mergeAll(
+        makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
         Layer.succeed(CoreDatabase, database),
         Layer.succeed(ActionRepository, repository),

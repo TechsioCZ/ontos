@@ -42,15 +42,12 @@ export const setInvitationPassword = Effect.fn('Invitation.setPassword')(functio
     headers.set('origin', origin);
   }
   // Native reset owns its transaction and one-use consumption. Never retry a password mutation.
-  // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the native Better Auth handler Promise boundary.
-  return yield* Effect.tryPromise(() =>
-    authentication.handler(
-      new Request(`${authentication.issuer}/reset-password`, {
-        body: nativeBody,
-        headers,
-        method: 'POST',
-      }),
-    ),
+  return yield* authentication.handler(
+    new Request(`${authentication.issuer}/reset-password`, {
+      body: nativeBody,
+      headers,
+      method: 'POST',
+    }),
   ).pipe(Effect.timeout('15 seconds'), Effect.orElseSucceed(unavailable));
 }, Effect.orElseSucceed(invalidRequest));
 

@@ -16,6 +16,9 @@ import {
   assortmentProductClassificationV1SourceForScope,
   observeOrVerifyAssortmentProductClassificationV1,
 } from '../../src/persistence/assortment-product-classification-v1.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = randomUUID();
 const productId = randomUUID();
@@ -47,7 +50,7 @@ it.live('invalidates an empty Product classification proof when a category assig
       ) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* scopedCatalogOperation() {
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             return yield* operation(scoped);
           }),
         );

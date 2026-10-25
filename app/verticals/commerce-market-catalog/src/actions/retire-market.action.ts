@@ -55,8 +55,8 @@ export type RetireMarketServices = MarketAdministrationService &
 
 const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices> = Effect.fn(
   'RetireMarketAction.makeServices',
-)(function* makeServices(transaction, scope, compositionRevision) {
-  const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
+)(function* makeServices(transaction, scope) {
+  const catalog = yield* marketAdministrationService(transaction, scope);
   const retirementImpact: MarketRetirementImpactAuthority<MarketRetirementImpactAuthorityService> = {
     assessRetirementImpact: (input) =>
       MarketRetirementImpactAuthorityService.pipe(

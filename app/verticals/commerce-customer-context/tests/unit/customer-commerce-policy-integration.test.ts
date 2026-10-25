@@ -46,6 +46,9 @@ import { customerCommercePolicyAdministrationServiceFactory } from '../../src/se
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -157,6 +160,7 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
     openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(scope) },
     contextAccess,
+    { databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT },
   );
   return {
     businessPermissionCalls: () => businessPermissionCalls,

@@ -28,6 +28,9 @@ import {
 import { observeRelevantStockPositionSet } from '../../src/persistence/current-relevant-stock-position-set-repository.ts';
 import { evaluateRelevantStockPositionSet } from '../../src/services/current-relevant-stock-position-set.service.ts';
 import { observation, request, sharing } from '../support/current-relevant-stock-position-set.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 it.live('runtime-role atomic query includes a concurrent unknown Position insert on owner revalidation', () =>
   Effect.scoped(
@@ -99,7 +102,7 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
       yield* admin.insert(inventoryStockLocations).values({ ...location, stockLocationId: locationId, tenantId });
       const empty = yield* runtime.transaction((transaction) =>
         Effect.gen(function* proveEmptyPredicate() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
           return yield* evaluateRelevantStockPositionSet(input, snapshot, scope);
         }),
@@ -121,7 +124,7 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
       yield* admin.insert(inventoryStockPositions).values(firstPosition);
       const first = yield* runtime.transaction((transaction) =>
         Effect.gen(function* observeBeforeInsert() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
           const secondLocationId = randomUUID();
           // Separate admin connection commits a phantom while the original read transaction remains open.
@@ -162,7 +165,7 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
       expect(first.positionRefs).toHaveLength(1);
       const next = yield* runtime.transaction((transaction) =>
         Effect.gen(function* revalidateAfterInsert() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
           return yield* evaluateRelevantStockPositionSet(
             { ...input, previousCompleteness: first.completeness },
@@ -182,7 +185,7 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
       const revalidate = (previousCompleteness: typeof next.completeness) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* verifyMaterialChanges() {
-            const scoped = yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
             const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
             return yield* evaluateRelevantStockPositionSet({ ...input, previousCompleteness }, snapshot, scope);
           }),
@@ -310,7 +313,7 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
         .where(eq(inventoryStockPositions.stockPositionId, positionId));
       const aggregated = yield* runtime.transaction((transaction) =>
         Effect.gen(function* verifyIndependentAggregates() {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const scoped = yield* installOperationalScope(transaction, scope, FIXTURE_DATABASE_IDENTITY_ENROLLMENT);
           const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
           expect(snapshot.positions).toHaveLength(2);
           expect(snapshot.sharing).toHaveLength(3);

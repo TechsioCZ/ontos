@@ -3,19 +3,27 @@ import {
   ScopedRoleMembershipLifecycleLive,
   SpiceDbConfigLive,
 } from '@app/core-runtime/outbox/core-system-worker';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type {
   ActionCoreError,
   ContextAccess,
   PrincipalManagementError,
   PrincipalResolutionError,
+  OperationalScopeRequest,
   ReadCoreError,
   TenantModuleStateService,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
+  ActionTransportMetadataSchema,
   makeActionRuntimeLive,
+  AgentProposalCommandPreparationLive,
+  AgentProposalCommandAuthorizationPreflightLive,
+  IdentityAdministrationDeniedAuditLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -23,9 +31,13 @@ import {
   LegalEntityContextLive,
   legalEntityDetailRead,
   makeTenantModuleStateService,
+  makeDatabaseIdentityEnrollmentLive,
   managedPrincipalsRead,
   OutboxRepositoryLive,
   OutboxRuntimeLive,
+  OAuthAuthenticationAuditLive,
+  OAuthConnectionCompaniesLive,
+  OAuthGrantRegistryLive,
   OperationalScopeResolver,
   PrincipalResolver,
   PrincipalResolverLive,
@@ -34,6 +46,7 @@ import {
   selfApiKeyBindingsRead,
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
+  TrustedCompanyPrincipalContextSchema,
   withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import {
@@ -52,11 +65,13 @@ import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {
   Cause,
+  Context,
   Crypto,
   Effect,
   Exit,
   Fiber,
   Logger,
+  ManagedRuntime,
   Match,
   Option,
   pipe,
@@ -68,8 +83,10 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import type { Types } from 'effect';
+import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/unstable/http';
 import { Reactivity } from 'effect/unstable/reactivity';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import { EmailTransportLive } from './email/transport.ts';
@@ -83,6 +100,7 @@ import {
   CurrentSessionSchema,
   ConfigureDemoCompaniesResponseSchema,
   DemoAccountCapabilitySchema,
+  IdentityRequestHeadersSchema,
   ManagedApiKeyListResponseSchema,
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
@@ -150,7 +168,7 @@ import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-
 import { AuthConfigLive } from './auth/config.ts';
 import { OAuthFlowLive } from './auth/db/oauth-flow-live.ts';
 import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
-import { McpTransportLive } from './mcp/transport.ts';
+import { McpEndpointTransportLive, McpMetadataTransportLive } from './mcp/transport.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   ExternalIdentityProviderContextAccessLive,
@@ -184,13 +202,20 @@ import type { SupportImpersonationError } from './auth/impersonation-service.ts'
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { canSelectTenantContext, validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
 import { InvitationTransportLive } from './auth/invitation/transport.ts';
-import { AuthPersistenceLive, BetterAuthPersonInvitationIdentityProviderLive } from './auth/runtime-infrastructure.ts';
+import {
+  AuthPersistenceLive,
+  BetterAuthNativeAdapterLive,
+  BetterAuthPersonInvitationIdentityProviderLive,
+} from './auth/runtime-infrastructure.ts';
+import { BetterAuthFrameworkLive } from './auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from './auth/better-auth-runtime.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
+import { OAuthEndpointGuardsLive } from './auth/oauth-server/endpoint-guards.ts';
+import { OAuthAccessTokensLive } from './mcp/connection.ts';
 import { forwardOAuthRequest } from './auth/oauth-server/forward.ts';
 import { oauthNotFoundResponse } from './auth/oauth-server/policy.ts';
 import type { ShellContextResult } from './auth/service.ts';
-import type { AgentPlatformCaller, AgentPlatformForbidden, AgentPlatformInvalid } from './agent-platform/caller.ts';
-import type { AgentStoreUnavailable } from './agent-platform/proposal-store.ts';
+import type { AgentPlatformCaller } from './agent-platform/caller.ts';
 import { decideAgentItems, revertAgentBatch } from './agent-platform/service-decide.ts';
 import {
   listOwnAgentBatches,
@@ -206,11 +231,22 @@ import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalo
 import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import { OAuthConnectionHooksLive } from './oauth-connections/better-auth-hooks.ts';
-import { companyDirectoryLive } from './oauth-connections-admin/company-directory-live.ts';
+import { OAuthEndpointGuardDataLive, OAuthGrantOwnersLive } from './oauth-connections/grant-store.ts';
+import { OAuthCredentialsLive } from './auth/db/oauth-credentials-live.ts';
+import {
+  StaffAccountDirectoryLive,
+  BetterAuthStaffRoleTemplateAccountProviderLive,
+} from './auth/db/staff-account-directory-live.ts';
+import { AgentProposalQueueModuleReviewLive } from './agent-platform/module-review.ts';
+import { AgentActionRequestIdentity } from './auth/agent-action-request-identity.ts';
+import { AgentReadRequestIdentity } from './auth/agent-request-identity.ts';
+import { CompanyDirectoryLive } from './oauth-connections-admin/company-directory-live.ts';
+import { CompanyDirectory } from './oauth-connections-admin/company-directory.ts';
 import { mcpResourceUrl } from './oauth-connections-admin/config.ts';
 import { isSameOriginRequest } from './oauth-connections/request-origin.ts';
 import { loadOAuthServerConfig } from './oauth-connections/server-config.ts';
-import { grantAdminPortLive } from './oauth-connections-admin/grant-port-live.ts';
+import { GrantAdminLive } from './oauth-connections-admin/grant-port-live.ts';
+import { GrantAdmin } from './oauth-connections-admin/ports.ts';
 import {
   listForAdmin,
   listMine,
@@ -218,7 +254,11 @@ import {
   revokeConnection,
   updateConnection,
 } from './oauth-connections-admin/handlers.ts';
-import type { ConnectionsAdminError, ConnectionsCaller } from './oauth-connections-admin/ports.ts';
+import type {
+  ConnectionsAdminDeps,
+  ConnectionsAdminError,
+  ConnectionsCaller,
+} from './oauth-connections-admin/ports.ts';
 import {
   attachShellMedia,
   ShellProviderUnavailableError,
@@ -343,6 +383,8 @@ const failApiKeyGatewayProblem = <Failure extends GatewayContextProblem>(gateway
   (Predicate.isTagged(gatewayProblem, 'GatewayAuthenticationRequiredProblem') ? apiKeyChallenge : Effect.void).pipe(
     Effect.andThen(Effect.fail(gatewayProblem)),
   );
+
+const hasCompanyScope = Schema.is(TrustedCompanyPrincipalContextSchema);
 
 const failIdentityProblem = (problem: IdentityProblem) =>
   (Predicate.isTagged(problem, 'ShellAuthenticationRequiredProblem') ? bearerChallenge : Effect.void).pipe(
@@ -1272,12 +1314,16 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
             };
           }
           const { legalEntityId } = context.identity;
+          const { principal } = context;
+          if (!hasCompanyScope(principal) || principal.legalEntityId !== legalEntityId) {
+            return yield* Effect.fail(authenticationInternalProblem());
+          }
           const capability = yield* Effect.forkChild(
             demoAccountCapability({
               legalName:
                 context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
                 legalEntityId,
-              principal: { ...context.principal, legalEntityId },
+              principal,
             }).pipe(
               Effect.map(({ canManage }) => canManage),
               Effect.orElseSucceed(() => false),
@@ -1338,7 +1384,7 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
               ? yield* resolveDocumentHome({
                   canManagePeople,
                   composition: documentComposition,
-                  principal: { ...context.principal, legalEntityId },
+                  principal,
                 }).pipe(
                   observeGatewayPhase('document-home'),
                   Effect.provideService(CapturedShellCompositionCatalog, captured.catalog),
@@ -1539,6 +1585,11 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
     ),
 );
 
+const requiredIdempotencyKey = (headers: RequestHeaders) => {
+  const value = headerValue(headers, 'idempotency-key');
+  return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
+};
+
 const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity', (handlers) => {
   const authenticated = Effect.fn('shell.identity.authenticated')((request: RequestWithHeaders) =>
     Effect.gen(function* authenticatedIdentity() {
@@ -1553,10 +1604,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       return resolved;
     }),
   );
-  const requiredIdempotencyKey = (headers: RequestHeaders) => {
-    const value = headerValue(headers, 'idempotency-key');
-    return value === undefined ? failIdentityProblem(shellPreconditionRequiredProblem()) : Effect.succeed(value);
-  };
   const safeIdentity = <Value, Error, Requirements>(
     request: RequestWithHeaders,
     effect: Effect.Effect<Value, Error, Requirements>,
@@ -1588,11 +1635,15 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
     }
     const { legalEntityId } = session.identity;
+    const { principal } = session;
+    if (!hasCompanyScope(principal) || principal.legalEntityId !== legalEntityId) {
+      return yield* failIdentityProblem(shellTargetForbiddenProblem());
+    }
     return {
       legalName:
         session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
         legalEntityId,
-      principal: { ...session.principal, legalEntityId },
+      principal,
     };
   });
   const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
@@ -2226,9 +2277,43 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
   ),
 );
 
+/** Refuse cross-site origins before session mutations. */
+const requireShellOrigin = Effect.fn('shell.connectionsAdmin.requireShellOrigin')(function* requireShellOrigin(
+  request: RequestWithHeaders,
+) {
+  const config = yield* loadOAuthServerConfig;
+  const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
+  if (!isSameOriginRequest(request.headers, issuerOrigin)) {
+    return yield* failIdentityProblem(
+      problemDetails(
+        'ShellTargetForbiddenProblem',
+        'Žádost nepřišla z OntOS. Otevřete aplikaci v OntOS a zkuste to znovu.',
+        403,
+        'Module target forbidden',
+        'https://ontos.dev/problems/module-target-forbidden',
+      ),
+    );
+  }
+  return yield* Effect.void;
+});
+
 // Platform approval layer for AI agents (lane approvals-platform). Agents use their API key; people their session.
-const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) =>
-  Match.value(error).pipe(
+type AgentPlatformError = Effect.Error<
+  ReturnType<
+    | typeof submitAgentProposals
+    | typeof listOwnAgentBatches
+    | typeof loadAgentActivity
+    | typeof loadAgentQueue
+    | typeof decideAgentItems
+    | typeof revertAgentBatch
+  >
+>;
+
+const agentPlatformFailure = (error: AgentPlatformError) => {
+  if (Schema.isSchemaError(error)) {
+    return failIdentityProblem(shellInvalidRequestProblem());
+  }
+  return Match.value(error).pipe(
     Match.tags({
       AgentPlatformForbidden: ({ reason }) =>
         failIdentityProblem(
@@ -2250,10 +2335,20 @@ const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInval
             'https://ontos.dev/problems/policy-violation',
           ),
         ),
+      AgentProposalCommandError: ({ code }) =>
+        failIdentityProblem(
+          Match.value(code).pipe(
+            Match.when('agent_proposal_conflict', shellPolicyConflictProblem),
+            Match.when('agent_proposal_invalid', shellPolicyUnprocessableProblem),
+            Match.when('agent_proposal_unavailable', shellCapabilityUnavailableProblem),
+            Match.exhaustive,
+          ),
+        ),
       AgentStoreUnavailable: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
     }),
-    Match.exhaustive,
+    Match.orElse((nativeError) => pipe(nativeError, identityProblem, failIdentityProblem)),
   );
+};
 
 const agentPlatformSessionCaller = Effect.fn('shell.agentPlatform.sessionCaller')(function* agentPlatformSessionCaller(
   request: RequestWithHeaders,
@@ -2267,10 +2362,14 @@ const agentPlatformSessionCaller = Effect.fn('shell.agentPlatform.sessionCaller'
     return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
   }
   const { legalEntityId } = session.identity;
+  const { principal } = session;
+  if (!hasCompanyScope(principal) || principal.legalEntityId !== legalEntityId) {
+    return yield* failIdentityProblem(shellTargetForbiddenProblem());
+  }
   const caller: AgentPlatformCaller = {
     legalName:
       session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ?? legalEntityId,
-    principal: { ...session.principal, legalEntityId },
+    principal,
   };
   return caller;
 });
@@ -2362,7 +2461,15 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
         // An API-key agent is always shown under its own principal name; only MCP connections name the acting party.
         const { agentLabel: _agentLabel, ...submission } = payload;
-        const response = yield* submitAgentProposals(agent, submission).pipe(Effect.catch(agentPlatformFailure));
+        const transport = {
+          correlationId: correlationFromRequest(request),
+          idempotencyKey: yield* requiredIdempotencyKey(headers),
+        };
+        const response = yield* submitAgentProposals(agent, submission).pipe(
+          Effect.provideService(AgentReadRequestIdentity, transport),
+          Effect.provideService(AgentActionRequestIdentity, transport),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
@@ -2370,7 +2477,10 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     .handle('listOwnAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* listOwnAgentProposalsHandler() {
         const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
-        const response = yield* listOwnAgentBatches(agent).pipe(Effect.catch(agentPlatformFailure));
+        const response = yield* listOwnAgentBatches(agent).pipe(
+          Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
@@ -2378,23 +2488,44 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     .handle('agentQueue', ({ payload, request }) =>
       Effect.gen(function* agentQueueHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentQueue(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        const response = yield* loadAgentQueue(caller, payload).pipe(
+          Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
     )
-    .handle('agentDecide', ({ payload, request }) =>
+    .handle('agentDecide', ({ headers, payload, request }) =>
       Effect.gen(function* agentDecideHandler() {
+        yield* requireShellOrigin(request);
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* decideAgentItems(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        const transport = {
+          correlationId: correlationFromRequest(request),
+          idempotencyKey: yield* requiredIdempotencyKey(headers),
+        };
+        const response = yield* decideAgentItems(caller, payload).pipe(
+          Effect.provideService(AgentReadRequestIdentity, transport),
+          Effect.provideService(AgentActionRequestIdentity, transport),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
     )
-    .handle('agentRevert', ({ payload, request }) =>
+    .handle('agentRevert', ({ headers, payload, request }) =>
       Effect.gen(function* agentRevertHandler() {
+        yield* requireShellOrigin(request);
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* revertAgentBatch(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        const transport = {
+          correlationId: correlationFromRequest(request),
+          idempotencyKey: yield* requiredIdempotencyKey(headers),
+        };
+        const response = yield* revertAgentBatch(caller, payload).pipe(
+          Effect.provideService(AgentReadRequestIdentity, transport),
+          Effect.provideService(AgentActionRequestIdentity, transport),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
@@ -2402,7 +2533,13 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     .handle('agentActivity', ({ payload, request }) =>
       Effect.gen(function* agentActivityHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentActivity(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        const transport = { correlationId: correlationFromRequest(request) };
+        const services = yield* Layer.build(CompanyDirectoryLive({ principal: caller.principal, transport }));
+        const response = yield* loadAgentActivity(caller, payload).pipe(
+          Effect.provideService(AgentReadRequestIdentity, transport),
+          Effect.provide(services),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
@@ -2477,29 +2614,11 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
     isCompanyAdmin,
     legalEntityId: caller.principal.legalEntityId,
     legalName: caller.legalName,
+    principal: caller.principal,
     principalId: caller.principal.principalId,
     tenantId: caller.principal.tenantId,
   };
   return result;
-});
-
-/** CSRF defense in depth for the session mutations: refuse a cross-site `Origin` (design §3.4, like connect POSTs). */
-const requireShellOrigin = Effect.fn('shell.connectionsAdmin.requireShellOrigin')(function* requireShellOrigin(
-  request: RequestWithHeaders,
-) {
-  const config = yield* loadOAuthServerConfig;
-  const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
-  if (!isSameOriginRequest(request.headers, issuerOrigin)) {
-    return yield* failIdentityProblem(
-      problemDetails(
-        'ShellTargetForbiddenProblem',
-        'Žádost nepřišla z OntOS. Otevřete Připojené aplikace v OntOS a zkuste to znovu.',
-        403,
-        'Module target forbidden',
-        'https://ontos.dev/problems/module-target-forbidden',
-      ),
-    );
-  }
 });
 
 const connectionsAdminDefect = (request: RequestWithHeaders) =>
@@ -2525,7 +2644,10 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
         if (session.state !== 'authenticated') {
           return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
         }
-        return { ...session.principal, legalEntityId: session.identity.legalEntityId };
+        if (!hasCompanyScope(session.principal) || session.principal.legalEntityId !== session.identity.legalEntityId) {
+          return yield* failIdentityProblem(shellTargetForbiddenProblem());
+        }
+        return session.principal;
       }
       const session = yield* authentication
         .resolveTenantContext(requestHeaders(request.headers))
@@ -2534,9 +2656,11 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
       if (session.state !== 'authenticated') {
         return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
       }
-      // Explicit tenant endpoint: never let a selected company leak into a tenant role's scope.
-      const { legalEntityId: _selectedCompany, ...principal } = session.principal;
-      return principal;
+      // Tenant admission must issue the original tenant carrier, never a modified company carrier.
+      if (session.principal.legalEntityId !== undefined) {
+        return yield* failIdentityProblem(shellTargetForbiddenProblem());
+      }
+      return session.principal;
     });
     const commandContext = Effect.fn('shell.peopleAdministration.commandContext')(function* peopleCommandContext(
       request: RequestWithHeaders,
@@ -2623,13 +2747,22 @@ const peopleAdministrationGroupLive = HttpApiBuilder.group(
   },
 );
 
-const connectionsAdminDeps = mcpResourceUrl.pipe(
-  Effect.map((mcpUrl) => ({
-    directory: companyDirectoryLive,
-    grants: grantAdminPortLive,
+const connectionsAdminDeps = Effect.fn('shell.connectionsAdmin.dependencies')(function* connectionsAdminDeps(
+  caller: Pick<ConnectionsCaller, 'principal'>,
+  transport: OperationalScopeRequest & { readonly idempotencyKey?: string },
+) {
+  const request = { principal: caller.principal, transport };
+  const services = yield* Layer.build(Layer.merge(CompanyDirectoryLive(request), GrantAdminLive(request)));
+  const directory = Context.get(services, CompanyDirectory);
+  const grants = Context.get(services, GrantAdmin);
+  const mcpUrl = yield* mcpResourceUrl;
+  const deps: ConnectionsAdminDeps<never> = {
+    directory,
+    grants,
     mcpUrl,
-  })),
-);
+  };
+  return deps;
+});
 
 const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
@@ -2640,7 +2773,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listMyConnectionsHandler() {
           yield* noStore;
           const caller = yield* connectionsCaller(request, false);
-          const deps = yield* connectionsAdminDeps;
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
           const response = yield* listMine(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
@@ -2649,7 +2782,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listCompanyConnectionsHandler() {
           yield* noStore;
           const caller = yield* connectionsCaller(request, true);
-          const deps = yield* connectionsAdminDeps;
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
           const response = yield* listForAdmin(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
@@ -2659,7 +2792,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, false);
-          const deps = yield* connectionsAdminDeps;
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
           const response = yield* updateConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
@@ -2669,7 +2802,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, true);
-          const deps = yield* connectionsAdminDeps;
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
           const response = yield* revokeConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
@@ -2678,8 +2811,11 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
         Effect.gen(function* listAgentEntitiesHandler() {
           yield* noStore;
           const caller = yield* agentPlatformSessionCaller(request);
-          const deps = yield* connectionsAdminDeps;
-          const response = yield* listAgentEntities(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
+          const response = yield* listAgentEntities(caller, deps).pipe(
+            Effect.provideService(AgentReadRequestIdentity, { correlationId: correlationFromRequest(request) }),
+            Effect.catch(connectionsAdminFailure),
+          );
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
@@ -2692,13 +2828,13 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
             return yield* failIdentityProblem(shellPreconditionRequiredProblem());
           }
           const caller = yield* agentPlatformSessionCaller(request);
-          const deps = yield* connectionsAdminDeps;
-          const response = yield* manageAgentEntity(
-            caller,
-            payload,
-            { correlationId: correlationFromRequest(request), idempotencyKey },
-            deps,
-          ).pipe(Effect.catch(connectionsAdminFailure));
+          const transport = { correlationId: correlationFromRequest(request), idempotencyKey };
+          const deps = yield* connectionsAdminDeps(caller, transport);
+          const response = yield* manageAgentEntity(caller, payload, deps).pipe(
+            Effect.provideService(AgentReadRequestIdentity, transport),
+            Effect.provideService(AgentActionRequestIdentity, transport),
+            Effect.catch(connectionsAdminFailure),
+          );
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
@@ -2707,7 +2843,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           yield* noStore;
           yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, true);
-          const deps = yield* connectionsAdminDeps;
+          const deps = yield* connectionsAdminDeps(caller, { correlationId: correlationFromRequest(request) });
           const response = yield* replaceAgentOperators(caller, deps, payload).pipe(
             Effect.catch(connectionsAdminFailure),
           );
@@ -2716,25 +2852,49 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
       ),
 );
 
+// Only static configuration, ready Better Auth instances and imported public keys survive request scopes.
+// Pools, adapters, session callbacks and JWKS reads remain bound to the current request.
+const authenticationIsolateRuntime = ManagedRuntime.make(Layer.merge(BetterAuthRuntimeLive, OAuthAccessTokensLive));
+const authenticationIsolateLive = Layer.effectContext(authenticationIsolateRuntime.contextEffect);
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
+const betterAuthNativeAdapterLive = BetterAuthNativeAdapterLive.pipe(Layer.provide(authPersistenceLive));
+const oauthAuthenticationAuditLive = OAuthAuthenticationAuditLive.pipe(Layer.provide(corePersistenceLive));
+const oauthConnectionCompaniesLive = OAuthConnectionCompaniesLive.pipe(Layer.provide(corePersistenceLive));
+const oauthGrantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePersistenceLive));
+const oauthCredentialsLive = OAuthCredentialsLive.pipe(Layer.provide(authPersistenceLive));
+const oauthGrantOwnersLive = OAuthGrantOwnersLive.pipe(Layer.provide(oauthGrantRegistryLive));
+const oauthEndpointGuardDataLive = OAuthEndpointGuardDataLive.pipe(
+  Layer.provide(Layer.merge(oauthGrantRegistryLive, oauthCredentialsLive)),
+);
 const principalResolverLive = PrincipalResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
 }).pipe(Layer.provide(corePersistenceLive));
 const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(corePersistenceLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(corePersistenceLive));
 const authenticationDependenciesLive = Layer.mergeAll(
+  authenticationIsolateLive,
   authPersistenceLive,
+  betterAuthNativeAdapterLive,
+  oauthGrantRegistryLive,
+  oauthCredentialsLive,
+  oauthAuthenticationAuditLive,
+  oauthEndpointGuardDataLive,
   defaultContextAccessLive,
   legalEntityContextLive,
   principalResolverLive,
 );
-// The MCP connection grant's Better Auth hooks (consent reference = grant id, access-token grant claim).
+// Framework dispatch, native session callbacks and guards stay in the same request scope.
+const oauthConnectionHooksLive = OAuthConnectionHooksLive.pipe(Layer.provide(oauthGrantRegistryLive));
+const betterAuthFrameworkLive = BetterAuthFrameworkLive().pipe(
+  Layer.provide(Layer.merge(authenticationDependenciesLive, oauthConnectionHooksLive)),
+);
+const oauthEndpointGuardsLive = OAuthEndpointGuardsLive.pipe(
+  Layer.provide(Layer.merge(authenticationDependenciesLive, betterAuthFrameworkLive)),
+);
 const authenticationServiceLive = AuthenticationServiceLive.pipe(
-  Layer.provide(
-    Layer.merge(authenticationDependenciesLive, OAuthConnectionHooksLive.pipe(Layer.provide(authPersistenceLive))),
-  ),
+  Layer.provide(Layer.mergeAll(authenticationDependenciesLive, betterAuthFrameworkLive, oauthEndpointGuardsLive)),
 );
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
@@ -2792,9 +2952,11 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT);
 const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
   Layer.provide(approvedModuleCatalogLive),
   Layer.provide(GatewayScopeGrantRegistrarLive),
+  Layer.provide(databaseIdentitiesLive),
 );
 type ShellGatewayIssuerLayer = Layer.Layer<GatewayIssuer, Layer.Error<typeof approvedGatewayIssuerLive>>;
 
@@ -2812,6 +2974,51 @@ type ShellAuthenticationApiRuntimeArguments = readonly [
   scopedModuleStateFactory?: ShellScopedModuleStateFactory,
   externalIdentityDeploymentLayer?: ExternalIdentityDeploymentLayer,
 ];
+
+const mcpRequestHeadersSchema = Schema.Struct({
+  ...IdentityRequestHeadersSchema.fields,
+  'x-correlation-id': Schema.optionalKey(ActionTransportMetadataSchema.fields.correlationId),
+  'x-trace-id': ActionTransportMetadataSchema.fields.traceId,
+});
+
+// Own each HTTP request's correlation before SDK callbacks capture services; standard MCP clients need no custom header.
+// Invalid supplied metadata stays unbound. Only the caller can supply an Action's durable idempotency key.
+export const mcpRequestIdentityMiddleware = HttpRouter.middleware()(
+  Effect.gen(function* makeMcpRequestIdentityMiddleware() {
+    const crypto = yield* Crypto.Crypto;
+    return Effect.fn('Mcp.bindRequestIdentity')(function* bindMcpRequestIdentity(
+      handler: Effect.Effect<HttpServerResponse.HttpServerResponse, Types.unhandled>,
+    ) {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const headers = yield* Schema.decodeUnknownEffect(mcpRequestHeadersSchema)(request.headers).pipe(Effect.option);
+      if (Option.isNone(headers)) {
+        return yield* handler;
+      }
+      const correlationId =
+        headers.value['x-correlation-id'] === undefined
+          ? yield* crypto.randomUUIDv4.pipe(Effect.option)
+          : Option.some(headers.value['x-correlation-id']);
+      if (Option.isNone(correlationId)) {
+        return yield* handler;
+      }
+      let identity: OperationalScopeRequest = { correlationId: correlationId.value };
+      if (headers.value['x-trace-id'] !== undefined) {
+        identity = { ...identity, traceId: headers.value['x-trace-id'] };
+      }
+      const forwarded = request.modify({
+        headers: HttpHeaders.set(request.headers, 'x-correlation-id', correlationId.value),
+      });
+      const readHandler = handler.pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, forwarded),
+        Effect.provideService(AgentReadRequestIdentity, identity),
+      );
+      const idempotencyKey = headers.value['idempotency-key'];
+      return yield* idempotencyKey === undefined
+        ? readHandler
+        : readHandler.pipe(Effect.provideService(AgentActionRequestIdentity, { ...identity, idempotencyKey }));
+    });
+  }),
+);
 
 export const makeShellAuthenticationApiRuntime = (
   ...args: ShellAuthenticationApiRuntimeArguments
@@ -2837,6 +3044,7 @@ export const makeShellAuthenticationApiRuntime = (
   const moduleEntrypointGatewayLayer = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLayer));
   const operationalScopeResolverLayer = OperationalScopeResolverLive.pipe(
     Layer.provide(Layer.mergeAll(corePersistenceLive, contextAccessLayer)),
+    Layer.provide(databaseIdentitiesLive),
   );
   const sharedOperationLayers = Layer.mergeAll(
     corePersistenceLive,
@@ -2856,7 +3064,37 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.merge(lifecycleDependencies, ScopedRoleMembershipLifecycleLive.pipe(Layer.provide(lifecycleDependencies))),
     ),
   );
-  const readRuntimeLayer = ReadRuntimeLive.pipe(Layer.provide(sharedOperationLayers));
+  const readRuntimeLayer = ReadRuntimeLive.pipe(
+    Layer.provide(sharedOperationLayers),
+    Layer.provide(databaseIdentitiesLive),
+  );
+  const proposalPreparationLayer = AgentProposalCommandPreparationLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(corePersistenceLive, activeApplicationCompositionLive, contextAccessLayer, ActionAuthorityLive),
+    ),
+  );
+  const proposalAuthorizationPreflightLayer = AgentProposalCommandAuthorizationPreflightLive.pipe(
+    Layer.provide(proposalPreparationLayer),
+  );
+  const proposalModuleReviewLayer = Layer.unwrap(
+    Effect.gen(function* proposalModuleReviewServices() {
+      const composition = yield* ActiveApplicationCompositionService;
+      const issuer = yield* GatewayIssuer;
+      return AgentProposalQueueModuleReviewLive((program, transport) =>
+        program.pipe(
+          Effect.provideService(ActiveApplicationCompositionService, composition),
+          Effect.provideService(GatewayIssuer, issuer),
+          Effect.provideService(AgentReadRequestIdentity, transport),
+        ),
+      );
+    }),
+  ).pipe(Layer.provide(Layer.merge(activeApplicationCompositionLive, issuerLayer)));
+  const identityDeniedAuditLayer = IdentityAdministrationDeniedAuditLive.pipe(
+    Layer.provide(Layer.mergeAll(corePersistenceLive, operationalScopeResolverLayer, contextAccessLayer)),
+  );
+  const staffAccountProviderLayer = BetterAuthStaffRoleTemplateAccountProviderLive.pipe(
+    Layer.provide(StaffAccountDirectoryLive.pipe(Layer.provide(authPersistenceLive))),
+  );
   const actionRuntimeLayer = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -2864,9 +3102,11 @@ export const makeShellAuthenticationApiRuntime = (
         activeApplicationCompositionLive,
         ActionRepositoryLive,
         ActionPermissionLive,
+        proposalAuthorizationPreflightLayer,
         BetterAuthPersonInvitationIdentityProviderLive,
       ),
     ),
+    Layer.provide(databaseIdentitiesLive),
   );
   const identityLifecycleLayer = IdentityLifecycleLive.pipe(
     Layer.provide(Layer.mergeAll(actionRuntimeLayer, apiKeyServiceLive, principalResolverLive)),
@@ -2957,9 +3197,19 @@ export const makeShellAuthenticationApiRuntime = (
       )
     : Layer.empty;
   const handlerDependenciesLive = Layer.mergeAll(
+    authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
     authenticationLayer,
     authPersistenceLive,
+    oauthGrantRegistryLive,
+    oauthCredentialsLive,
+    oauthAuthenticationAuditLive,
+    oauthConnectionCompaniesLive,
+    oauthGrantOwnersLive,
+    proposalPreparationLayer,
+    proposalModuleReviewLayer,
+    identityDeniedAuditLayer,
+    staffAccountProviderLayer,
     actionRuntimeLayer,
     apiKeyServiceLive,
     identityLifecycleLayer,
@@ -3008,6 +3258,7 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provideMerge(compositionSourceLive),
     Layer.provideMerge(ActionAuthorityLive),
     Layer.provideMerge(Reactivity.layer),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
 
@@ -3022,7 +3273,10 @@ export const makeShellAuthenticationApiRuntime = (
       OAuthServerTransportLive,
       InvitationTransportLive,
       // The MCP endpoint runs tools as the connection's principal, with the agent platform's request services.
-      McpTransportLive,
+      McpEndpointTransportLive.pipe(
+        Layer.provide(mcpRequestIdentityMiddleware.layer.pipe(Layer.provide(ShellCryptoLive))),
+      ),
+      McpMetadataTransportLive,
     ),
   });
 };
@@ -3049,32 +3303,31 @@ const rootRouteHandler = Ref.makeUnsafe<Option.Option<ReturnType<typeof apiRunti
  * Node: the root `/mcp` and `/.well-known/oauth-protected-resource[/mcp]` middleware serves the canonical BFF route
  * in-process (the request path is already rewritten to the BFF route without its prefix).
  */
-// @effect-diagnostics-next-line asyncFunction:off -- Required Node HTTP middleware Promise adapter; application work stays in the scoped BFF runtime.
-export const handleRootRoute = async (request: Request): Promise<Response> =>
-  await runEffectRequest(
-    Effect.gen(function* handleRootRouteRequest() {
-      const resolved = yield* Ref.modify(rootRouteHandler, (handler) => {
-        const instance = Option.getOrElse(handler, () => apiRuntime.createHandler());
-        return [instance, Option.some(instance)] as const;
-      });
-      // The BFF owns the request scope; this Node adapter awaits its native Promise.
-      return yield* Effect.promise(() => resolved.handler(request));
-    }),
-  );
+export const handleRootRoute = Effect.fn('Shell.handleRootRoute')(
+  function* handleRootRoute(request: Request) {
+    const resolved = yield* Ref.modify(rootRouteHandler, (handler) => {
+      const instance = Option.getOrElse(handler, () => apiRuntime.createHandler());
+      return [instance, Option.some(instance)] as const;
+    });
+    // The BFF owns the request scope; the Node edge forwards cancellation and never retries a request.
+    const signal = yield* Effect.abortSignal;
+    const forwarded = new Request(request, { signal: AbortSignal.any([request.signal, signal]) });
+    return yield* Effect.promise(resolved.handler.bind(resolved, forwarded, undefined));
+  },
+  Effect.scoped,
+  Effect.timeout('30 seconds'),
+  runEffectRequest,
+);
 
 /** The Node root aliases use the same scoped Better Auth service as the canonical BFF route. */
-// @effect-diagnostics-next-line asyncFunction:off -- Required Node HTTP middleware Promise adapter; the service program remains an Effect.
-export const handleOAuthMetadata = async (request: Request): Promise<Response> =>
-  await runEffectRequest(
-    Effect.scoped(
-      AuthenticationService.pipe(
-        Effect.flatMap((service) =>
-          service.oauth === undefined
-            ? Effect.succeed(oauthNotFoundResponse())
-            : forwardOAuthRequest(service.oauth)(request),
-        ),
-        // @effect-diagnostics-next-line strictEffectProvide:off -- Node entry point: the root OAuth metadata alias runs outside the BFF runtime, so it provides its own scoped authentication service.
-        Effect.provide(authenticationServiceLive),
-      ),
-    ),
-  );
+export const handleOAuthMetadata = Effect.fn('Shell.handleOAuthMetadata')(
+  function* handleOAuthMetadata(request: Request) {
+    const services = yield* Layer.build(authenticationServiceLive);
+    const service = Context.get(services, AuthenticationService);
+    return yield* service.oauth === undefined
+      ? Effect.succeed(oauthNotFoundResponse())
+      : forwardOAuthRequest(service.oauth)(request);
+  },
+  Effect.scoped,
+  runEffectRequest,
+);

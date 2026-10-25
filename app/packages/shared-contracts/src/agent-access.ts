@@ -28,6 +28,7 @@ export const AgentModuleGrantSchema = Schema.Struct({
 });
 export type AgentModuleGrant = typeof AgentModuleGrantSchema.Type;
 
+const AgentExpectedStatusSchema = Schema.Literals(['active', 'disabled']);
 export const AgentStatusSchema = Schema.Literals(['active', 'disabled', 'archived']);
 export type AgentStatus = typeof AgentStatusSchema.Type;
 
@@ -314,13 +315,15 @@ export const ManageAgentEntityRequestSchema = Schema.Union([
     writePolicy: AgentWritePolicySchema,
   }),
   Schema.Struct({
-    expectedStatus: Schema.Literals(['active', 'disabled']),
-    newStatus: Schema.Literals(['active', 'disabled']),
+    expectedStatus: AgentExpectedStatusSchema,
+    newStatus: AgentExpectedStatusSchema,
     operation: Schema.Literal('change-status'),
     principalId: Schema.String,
     reason: Schema.optionalKey(Text(AGENT_REASON_MAX)),
   }),
   Schema.Struct({
+    /** Original expected-before state, retained with the idempotency key even after archive removes the agent. */
+    expectedStatus: AgentExpectedStatusSchema,
     operation: Schema.Literal('delete'),
     principalId: Schema.String,
     reason: Text(AGENT_REASON_MAX),

@@ -42,8 +42,8 @@ import {
 } from '../../../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue, DatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
-  DATABASE_IDENTITIES,
   SHARED_RUNTIME_IDENTITY,
+  makeDatabaseIdentityEnrollmentLive,
 } from '../../../../packages/core-runtime/src/db/database-identities.ts';
 import {
   dataAccessEvents,
@@ -81,6 +81,8 @@ import {
   makeAcceptanceGatewayIssuer,
 } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
+import { testDatabaseIdentityConnection } from '../../../../packages/core-runtime/tests/support/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../support/database-identities.ts';
 
 /**
  * A customer session that holds no business Permission for the profile it selects is answered
@@ -115,12 +117,15 @@ const bootstrapPermissionRuntimeRole = Effect.fn('PermissionAcceptance.bootstrap
   function* bootstrapPermissionRuntimeRole(connections: DatabaseConnectionPair) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     // The bootstrap provisions every database identity, so each dedicated login targets this database too.
-    const identities = yield* loadDatabaseIdentityConnections({ envPath: '/dev/null' });
+    const identities = yield* loadDatabaseIdentityConnections({
+      enrollment: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
     const database = new URL(connections.admin.connectionString).pathname.slice(1);
     const dedicatedIdentityUrls = Object.fromEntries(
       DATABASE_IDENTITIES.filter(({ id }) => id !== SHARED_RUNTIME_IDENTITY.id).map(({ id, urlKey }) => [
         urlKey,
-        connectionStringForDatabase(identities.runtime[id].connectionString, database),
+        connectionStringForDatabase(testDatabaseIdentityConnection(identities, id).connectionString, database),
       ]),
     );
     const bootstrap = yield* spawner.spawn(
@@ -371,7 +376,10 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const contextAccess = yield* makeContextAccessLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' }));
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-  const scopeResolver = makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+  const scopeResolver = makeOperationalScopeResolver(
+    makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+    contextAccess,
+  );
   const ownerServices = yield* Layer.build(
     commerceCustomerContextOwnerAuthorizationOverlayLive.pipe(
       Layer.provide(profileRetailPermissionReaderFactoryLive),
@@ -380,11 +388,14 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   );
   const ownerAuthorizationOverlay = Context.get(ownerServices, OwnerAuthorizationOverlay);
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+
     ownerAuthorizationOverlay,
   });
   const actionRuntime = makeActionRuntimeLive(ultramodernApiMarker).pipe(
     Layer.provide(
       Layer.mergeAll(
+        makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         ActionRepositoryLive,
         Layer.effect(
           ActionPermission,

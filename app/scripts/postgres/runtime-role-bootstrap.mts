@@ -1,13 +1,11 @@
 /// <reference types="node" />
+import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Order, Predicate } from 'effect';
 import type { Redacted } from 'effect';
 
-import {
-  DATABASE_IDENTITIES,
-  SHARED_RUNTIME_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identities.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type {
   DatabaseIdentity,
   DatabaseRoleGrants,

@@ -34,6 +34,9 @@ import { noticeProvisionRepositoryForScope } from '../../src/persistence/notice-
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-persistence-error.ts';
 import { processingPurposeRepositoryForScope } from '../../src/persistence/processing-purpose-postgres-repository.ts';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+
+const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
 const tenantId = 'd7000000-0000-4000-8000-000000000001';
 const otherTenantId = 'd7000000-0000-4000-8000-000000000009';
@@ -82,7 +85,11 @@ it.live(
         Effect.fn('scopedOperation')(function* scopedOperation(
           transaction: Parameters<Parameters<typeof runtime.transaction>[0]>[0],
         ) {
-          const scoped = yield* installOperationalScope(transaction, trustedScope(scopedTenantId));
+          const scoped = yield* installOperationalScope(
+            transaction,
+            trustedScope(scopedTenantId),
+            FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+          );
           return yield* operation(scoped);
         }),
       );

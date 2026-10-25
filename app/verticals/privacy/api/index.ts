@@ -1,4 +1,6 @@
 import {
+  defineDatabaseIdentityEnrollment,
+  makeDatabaseIdentityEnrollmentLive,
   makeActionRuntimeLive,
   ActionAuthorizationPreflight,
   ActionRuntime,
@@ -118,6 +120,8 @@ import {
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
 import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
 
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabaseIdentityEnrollment([]));
+
 /** Build the native runtime with fresh pre-transaction evidence for each invocation. */
 const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
   ActionRuntime,
@@ -232,6 +236,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
 const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pipe(
@@ -251,6 +256,7 @@ const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pip
     ),
   ),
   Layer.provide(DatabaseConfigLive),
+  Layer.provide(databaseIdentitiesLive),
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
@@ -338,6 +344,7 @@ export const makePrivacyApiRuntime = (
   const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
     Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
+    Layer.provideMerge(databaseIdentitiesLive),
     Layer.orDie,
   );
   return assembleEffectBffRuntime({

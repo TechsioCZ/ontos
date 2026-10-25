@@ -46,19 +46,31 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, apikey, authRelations, session, user } from '../../api/auth/db/schema.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
+import { BetterAuthFrameworkLive } from '../../api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../api/auth/better-auth-runtime.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { OAuthCredentialsLive } from '../../api/auth/db/oauth-credentials-live.ts';
+import { OAuthEndpointGuardsLive } from '../../api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthConnectionHooksLive } from '../../api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../api/oauth-connections/grant-store.ts';
+import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { OAuthAuthenticationAuditLive } from '../../../../packages/core-runtime/src/auth/oauth-authentication-audit.ts';
+import { OAuthGrantRegistryLive } from '../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
 import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import { ShellProviderUnavailableError } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { ShellDocumentContextSchema } from '../../shared/api.ts';
 import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
+
+import { makeDatabaseIdentityEnrollmentLive } from '../../../../packages/core-runtime/src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 
 type AuthenticationRuntimeHandler = ReturnType<ReturnType<typeof makeShellAuthenticationApiRuntime>['createHandler']>;
 const email = 'better-auth-runtime@example.test';
@@ -346,9 +358,28 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
-      allowFixtureSignUp: true,
-    }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -1498,7 +1529,13 @@ it.live(
           audiences: new Map([['party-registry', 'integration-build']]),
           revision: testRevision,
         }),
-      }).pipe(Layer.provide(GatewayScopeGrantRegistrarLive)),
+      }).pipe(
+        Layer.provide(
+          GatewayScopeGrantRegistrarLive.pipe(
+            Layer.provide(makeDatabaseIdentityEnrollmentLive(FIXTURE_DATABASE_IDENTITY_ENROLLMENT)),
+          ),
+        ),
+      ),
       moduleStateLayer,
       installedCatalog(['testing.one']),
       false,
@@ -1721,9 +1758,28 @@ it.live(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },
     );
-    const authentication = yield* makeAuthenticationService({
-      allowFixtureSignUp: true,
-    }).pipe(
+    const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
+    const oauthAuthenticationLayer = Layer.mergeAll(
+      betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
+      OAuthAuthenticationAuditLive,
+      OAuthEndpointGuardDataLive,
+      OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
+    ).pipe(
+      Layer.provide(Layer.mergeAll(OAuthGrantRegistryLive, OAuthCredentialsLive)),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(CoreDatabase, { executor: coreDatabase }),
+          Layer.succeed(AuthDatabase, authPersistence),
+        ),
+      ),
+    );
+    const authenticationFramework = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+      Layer.provideMerge(oauthAuthenticationLayer),
+    );
+    const authenticationGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(authenticationFramework));
+    const authentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(authenticationGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, resolver),
@@ -1970,7 +2026,11 @@ it.live(
       .update(principals)
       .set({ status: 'active' })
       .where(eq(principals.principalId, secondPrincipalId));
-    const resolverUnavailableAuthentication = yield* makeAuthenticationService({}).pipe(
+    // The framework captures the same overridden resolver as the service; only ready SDK instances are shared.
+    const resolverUnavailableFramework = BetterAuthFrameworkLive().pipe(Layer.provideMerge(oauthAuthenticationLayer));
+    const resolverUnavailableGuards = OAuthEndpointGuardsLive.pipe(Layer.provideMerge(resolverUnavailableFramework));
+    const resolverUnavailableAuthentication = yield* makeAuthenticationService().pipe(
+      Effect.provide(resolverUnavailableGuards),
       Effect.provideService(AuthConfig, configuration),
       Effect.provideService(AuthDatabase, authPersistence),
       Effect.provideService(PrincipalResolver, {
