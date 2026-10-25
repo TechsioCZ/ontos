@@ -164,7 +164,7 @@ export const decodeCommitmentConfirmationRecoveryOutcome = (
     : { confirmationRef: requestedConfirmationRef, outcome: 'CORRUPT', reason: 'NORMALIZED_BINDING_MISMATCH' };
 };
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+type ScopedTransaction = Pick<Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0], 'invoke'>;
 
 export const commitmentConfirmationPersistenceForScope = (
   transaction: ScopedTransaction,

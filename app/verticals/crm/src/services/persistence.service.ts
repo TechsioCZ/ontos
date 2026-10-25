@@ -299,10 +299,9 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       }
       const targets = assignmentPrincipalIds(command, snapshot.state, scope.principalId);
       if (targets.length > 0) {
-        const directory = yield* loadAssignablePrincipalDirectory(transaction, {
-          legalEntityId,
-          tenantId: scope.tenantId,
-        }).pipe(Effect.mapError(referenceUnavailable));
+        const directory = yield* loadAssignablePrincipalDirectory(transaction, scope).pipe(
+          Effect.mapError(referenceUnavailable),
+        );
         yield* Effect.forEach(
           new Set(targets),
           (principalId) =>
@@ -361,9 +360,7 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           .pipe(Effect.map(([row]): LoadedCrmRecords => row));
       }).pipe(Effect.mapError(unavailable));
     const loadAssignmentDirectory = () =>
-      loadAssignablePrincipalDirectory(transaction, { legalEntityId, tenantId: scope.tenantId }).pipe(
-        Effect.mapError(unavailable),
-      );
+      loadAssignablePrincipalDirectory(transaction, scope).pipe(Effect.mapError(unavailable));
     return { apply, loadAssignmentDirectory, loadRecords };
   },
   Effect.mapError((cause) =>

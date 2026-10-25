@@ -31,7 +31,7 @@ import type {
   ReadHandlerExecutionError,
   ReadHandlerUnavailable,
   ReadOwnerTransaction,
-  ReadServiceFactory,
+  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 
 import {
@@ -1233,7 +1233,7 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
 
 /** Same governed transaction and trusted operational scope as the current Pricing evaluation. */
 export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope = (
-  transaction: Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0],
+  transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
   compositionRevision: string,
 ): Effect.Effect<PricingOwnerMaterialEvidenceFenceGateway, OperationContextUnavailable> =>
@@ -1279,8 +1279,6 @@ export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead = (
 ): PricingOwnerMaterialEvidenceFenceGateway => {
   const unavailableShortTransaction = (cause: unknown) =>
     Effect.fail(pricingOwnerUnavailable('The short Pricing owner transaction could not be completed', cause));
-  const fenceIn = (transaction: Parameters<Parameters<ReadOwnerTransaction>[0]>[0]) =>
-    pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(transaction, scope, compositionRevision);
   const shortTransactionUnavailable = <Value>(
     effect: Effect.Effect<
       Value,
@@ -1300,11 +1298,15 @@ export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead = (
   return {
     confirmObservedGenerationsThrough: (request) =>
       ownerTransaction((transaction) =>
-        fenceIn(transaction).pipe(Effect.flatMap((fence) => fence.confirmObservedGenerationsThrough(request))),
+        pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(transaction, scope, compositionRevision).pipe(
+          Effect.flatMap((fence) => fence.confirmObservedGenerationsThrough(request)),
+        ),
       ).pipe(shortTransactionUnavailable),
     verifyOpaqueProofsAgainstCurrentState: (request) =>
       ownerTransaction((transaction) =>
-        fenceIn(transaction).pipe(Effect.flatMap((fence) => fence.verifyOpaqueProofsAgainstCurrentState(request))),
+        pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(transaction, scope, compositionRevision).pipe(
+          Effect.flatMap((fence) => fence.verifyOpaqueProofsAgainstCurrentState(request)),
+        ),
       ).pipe(shortTransactionUnavailable),
   };
 };

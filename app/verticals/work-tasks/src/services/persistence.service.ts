@@ -733,10 +733,9 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
     // The Action policy checks target permissions before Core opens the transaction. Recheck
     // mutable lifecycle/company membership here, in the same snapshot that commits the owner state.
     const resolveAssignee = Effect.fn('Work.revalidateAssignee')(function* revalidateAssignee(principal: PrincipalRef) {
-      const directory = yield* loadAssignablePrincipalDirectory(transaction, {
-        legalEntityId,
-        tenantId: scope.tenantId,
-      }).pipe(Effect.mapError(referenceUnavailable));
+      const directory = yield* loadAssignablePrincipalDirectory(transaction, scope).pipe(
+        Effect.mapError(referenceUnavailable),
+      );
       return yield* activeAssignmentMember(directory, principal).pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
@@ -783,10 +782,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
      * mentions. Decoding and visibility filtering run after commit in {@link finishWorkRecords}.
      */
     const loadRecords = Effect.fn('Work.loadRecords')(function* loadRecords() {
-      const assignmentDirectory = yield* loadAssignablePrincipalDirectory(transaction, {
-        legalEntityId,
-        tenantId: scope.tenantId,
-      });
+      const assignmentDirectory = yield* loadAssignablePrincipalDirectory(transaction, scope);
       const [row] = yield* transaction
         .select({ revision: workStates.revision, state: workStates.state })
         .from(workStates)

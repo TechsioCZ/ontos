@@ -1,10 +1,16 @@
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
+import { makeTestDatabase } from '../support/database.ts';
 import {
   activeAssignmentMember,
   AssigneeIneligible,
   AssignablePrincipalsUnavailable,
+  loadAssignablePrincipalDirectory,
   makeAssignablePrincipals,
 } from '../../src/auth/assignable-principals.ts';
 import type { AssignablePrincipalDirectory, AssignmentDirectoryMember } from '../../src/auth/assignable-principals.ts';
@@ -27,6 +33,100 @@ const directory = (members: readonly AssignmentDirectoryMember[]): AssignablePri
   members,
   tenantId,
 });
+const selectedCompany = { legalEntityId };
+const operationalScope = (company: { readonly legalEntityId?: string } = selectedCompany): OperationalScope => ({
+  ...Schema.decodeSync(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:assignment-directory',
+    authMethod: 'session',
+    principalId: member(1).principalRef.principalId,
+    tenantId,
+    ...company,
+  }),
+  correlationId: 'assignment-directory',
+});
+
+const loadDirectory = (
+  installed: OperationalScope,
+  requested: OperationalScope,
+  rows: Effect.Effect<readonly object[], SqlError> = Effect.succeed([]),
+) =>
+  Effect.gen(function* scriptedDirectory() {
+    const queries: { readonly params: readonly unknown[]; readonly sql: string }[] = [];
+    const database = yield* makeTestDatabase((sql, params) => {
+      if (sql.includes('principal_company_memberships')) {
+        queries.push({ params, sql });
+        return rows;
+      }
+      return Effect.succeed([
+        { legal_entity_id: installed.legalEntityId ?? '', role: 'ontos_runtime', tenant_id: installed.tenantId },
+      ]);
+    });
+    const result = yield* Effect.result(
+      database.transaction((transaction) =>
+        installOperationalScope(transaction, installed).pipe(
+          Effect.flatMap((scoped) => loadAssignablePrincipalDirectory(scoped, requested)),
+        ),
+      ),
+    );
+    return { queries, result };
+  });
+
+for (const [name, installed, requested] of [
+  ['no selected company', operationalScope({}), operationalScope({})],
+  ['no selected company against a company snapshot', operationalScope(), operationalScope({})],
+  ['a tenant mismatch', { ...operationalScope(), tenantId: legalEntityId }, operationalScope()],
+  ['a company mismatch', operationalScope({ legalEntityId: tenantId }), operationalScope()],
+  ['a missing installed company', operationalScope({}), operationalScope()],
+] as const) {
+  it.effect(`rejects ${name} before querying the assignment directory`, () =>
+    Effect.gen(function* rejectsScope() {
+      const { queries, result } = yield* loadDirectory(installed, requested);
+      expect(Result.isFailure(result) && Schema.is(AssignablePrincipalsUnavailable)(result.failure)).toBe(true);
+      expect(queries).toEqual([]);
+    }),
+  );
+}
+
+it.effect('loads the same-snapshot directory without exposing operational scope metadata', () =>
+  Effect.gen(function* loadsDirectory() {
+    const target = member(2, { membershipStatus: 'departed', principalStatus: 'disabled' });
+    const { queries, result } = yield* loadDirectory(
+      operationalScope(),
+      operationalScope(),
+      Effect.succeed([
+        {
+          displayName: target.displayName,
+          membershipStatus: target.membershipStatus,
+          principalId: target.principalRef.principalId,
+          principalStatus: target.principalStatus,
+          tenantId,
+        },
+      ]),
+    );
+    expect(Result.isSuccess(result) && result.success).toEqual(directory([target]));
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.params).toEqual([tenantId, legalEntityId]);
+    expect(queries[0]?.sql).toContain('"principal_company_memberships"."tenant_id" = $1');
+    expect(queries[0]?.sql).toContain('"principal_company_memberships"."legal_entity_id" = $2');
+    expect(queries[0]?.sql).toContain(
+      'order by "core"."principals"."display_name", "core"."principals"."principal_id"',
+    );
+  }),
+);
+
+it.effect('keeps assignment directory SQL failures unavailable instead of returning an empty directory', () =>
+  Effect.gen(function* directoryUnavailable() {
+    const { queries, result } = yield* loadDirectory(
+      operationalScope(),
+      operationalScope(),
+      Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled outage' }) })),
+    );
+    expect(Result.isFailure(result) && Schema.is(AssignablePrincipalsUnavailable)(result.failure)).toBe(true);
+    expect(queries).toHaveLength(1);
+  }),
+);
+
 const has = v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION;
 const none = v1.CheckPermissionResponse_Permissionship.NO_PERMISSION;
 const response = (

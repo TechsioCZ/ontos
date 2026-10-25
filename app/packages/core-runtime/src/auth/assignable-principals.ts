@@ -56,8 +56,13 @@ const ineligible = () => new AssigneeIneligible({ reason: 'The target is not an 
 
 /** Runs inside the caller's trusted scoped transaction; performs no remote I/O. */
 export const loadAssignablePrincipalDirectory = Effect.fn('Core.loadAssignablePrincipalDirectory')(
-  function* loadAssignablePrincipalDirectory(transaction: ScopedTransactionExecutor, scope: AssignmentCompanyScope) {
-    if (transaction.scope.tenantId !== scope.tenantId || transaction.scope.legalEntityId !== scope.legalEntityId) {
+  function* loadAssignablePrincipalDirectory(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+    const { legalEntityId } = scope;
+    if (
+      legalEntityId === undefined ||
+      transaction.scope.tenantId !== scope.tenantId ||
+      transaction.scope.legalEntityId !== legalEntityId
+    ) {
       return yield* unavailable();
     }
     const rows = yield* transaction
@@ -79,19 +84,20 @@ export const loadAssignablePrincipalDirectory = Effect.fn('Core.loadAssignablePr
       .where(
         and(
           eq(principalCompanyMemberships.tenantId, scope.tenantId),
-          eq(principalCompanyMemberships.legalEntityId, scope.legalEntityId),
+          eq(principalCompanyMemberships.legalEntityId, legalEntityId),
         ),
       )
       .orderBy(principals.displayName, principals.principalId)
       .pipe(Effect.mapError(unavailable));
     return {
-      ...scope,
+      legalEntityId,
       members: rows.map(({ displayName, membershipStatus, principalId, principalStatus, tenantId }) => ({
         displayName,
         membershipStatus,
         principalRef: { principalId, tenantId },
         principalStatus,
       })),
+      tenantId: scope.tenantId,
     } satisfies AssignablePrincipalDirectory;
   },
 );
