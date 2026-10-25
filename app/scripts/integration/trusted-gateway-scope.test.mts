@@ -211,6 +211,28 @@ const currentSeal = (session: PgClient.PgClient) =>
 
 class SimpleQueryFailure extends Data.TaggedError('SimpleQueryFailure')<{ readonly message: string }> {}
 
+const AdmissionProbeFailure = Data.TaggedError('AdmissionProbeFailure')<{
+  readonly cause: unknown;
+  readonly message: string;
+}>;
+
+const admissionProbe = function admissionProbe<Value, Failure, Services>(
+  stage:
+    | `dedicated-${'session' | 'oauth_connection' | 'api_key'}`
+    | `shared-${'session' | 'oauth_connection' | 'api_key'}`,
+  operation: Effect.Effect<Value, Failure, Services>,
+) {
+  return operation.pipe(
+    Effect.mapError(
+      (cause) =>
+        new AdmissionProbeFailure({
+          cause,
+          message: `admission-stage: ${stage}; SQLSTATE: ${Option.getOrUndefined(findPostgresFailure(cause))?.code ?? 'unavailable'}`,
+        }),
+    ),
+  );
+};
+
 type BackendMessage = PgProtocol.BackendMessage<string | null>;
 type SimpleQueryRow = readonly (string | null)[];
 
@@ -561,7 +583,7 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
     });
     for (const binding of bindings) {
       const principal = yield* gatewayPrincipal(binding);
-      const resolved = yield* resolve(principal);
+      const resolved = yield* admissionProbe(`dedicated-${binding.authMethod}`, resolve(principal));
       expect(resolved.principalId).toBe(binding.principalId);
       expect(resolved.authMethod).toBe(binding.authMethod);
     }
@@ -583,7 +605,7 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
         'a'.repeat(64),
         { assertion: Redacted.make('verified-non-party-assertion'), audience: 'catalog' },
       );
-      const persisted = yield* sharedRepository.load(principal);
+      const persisted = yield* admissionProbe(`shared-${binding.authMethod}`, sharedRepository.load(principal));
       expect(persisted.principalTenantId).toBe(tenantId);
       expect(persisted.bindingPrincipalId).toBe(binding.principalId);
       expect(persisted.bindingIssuingLegalEntityId).toBe(legalEntityId);
