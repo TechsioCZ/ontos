@@ -24,6 +24,10 @@ it.live(
         'apps/shell/api/auth/db/types.ts': "import type { Pool } from 'pg';\n",
         'apps/shell/api/routes/private.ts': "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
         'packages/core-runtime/src/testing/actions.ts': 'export const makeActionTestHarness = () => undefined;\n',
+        'verticals/stock/dist-cloudflare/api/generated.d.ts':
+          "import type { CoreDatabase } from '@app/core-runtime';\n",
+        'verticals/stock/dist-cloudflare/src/actions/generated.action.ts': "import { Pool } from 'pg';\n",
+        'verticals/stock/src/dist-cloudflare-adapter/api/index.ts': "import { Pool } from 'pg';\n",
         'verticals/stock/api/index.ts': "import { Pool } from 'pg';\n",
         'verticals/stock/api/routes/export.ts': "import { coreDatabaseSchema } from '@app/core-runtime';\n",
         'verticals/stock/src/actions/generated-safe.action.ts':
@@ -85,6 +89,7 @@ it.live(
         'verticals/stock/src/db/billing-leak.ts:1',
         'verticals/stock/src/db/cross-owner.ts:1',
         'verticals/stock/src/db/dynamic-core.ts:1',
+        'verticals/stock/src/dist-cloudflare-adapter/api/index.ts:1',
         'verticals/stock/src/infrastructure/inventory-persistence.ts:1',
         'verticals/stock/src/portal-auth/persistence/auth-database.ts:1',
         'verticals/stock/src/reads/list.read.ts:1',

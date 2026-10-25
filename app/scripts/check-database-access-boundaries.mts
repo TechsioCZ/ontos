@@ -11,7 +11,7 @@ export interface DatabaseAccessViolation {
 }
 
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
-const ignoredDirectories = new Set(['dist', 'node_modules', 'repos', '.output', '.codex']);
+const ignoredDirectories = new Set(['dist', 'dist-cloudflare', 'node_modules', 'repos', '.output', '.codex']);
 const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
 
 const collect = (root: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
