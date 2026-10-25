@@ -80,6 +80,8 @@ const relationship = (
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  /** Exact subset of actionKeys granted only to the Legal Entity-only actor in its company scope. */
+  legalEntityOnlyActionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
   /** Deployment app id whose gateway assertions the fixture namespace accepts. */
   audience: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*$/u)),
   /**
@@ -201,6 +203,7 @@ const fixtureAuthorizationRelationships = (input: {
   readonly entityObject: string;
   readonly legalEntityId: string;
   readonly legalEntityManagerRelations: readonly string[];
+  readonly legalEntityOnlyActionKeys: readonly string[];
   readonly legalEntityOnly: FixtureActor;
   readonly manager: FixtureActor;
   readonly moduleKey: string;
@@ -208,14 +211,17 @@ const fixtureAuthorizationRelationships = (input: {
   readonly tenantId: string;
   readonly tenantManagerRelations: readonly string[];
 }) => {
-  // Acceptance fixtures exercise both tenant and company Actions. Neither scope
-  // inherits the other's grant, and only the manager joins the explicit roles.
-  const scopes = [
-    { moduleKeys: [input.moduleKey], tenantId: input.tenantId },
-    { legalEntityId: input.legalEntityId, moduleKeys: [input.moduleKey], tenantId: input.tenantId },
-  ];
+  // Neither scope inherits the other's grant. The manager receives the published
+  // catalog; the Legal Entity-only actor receives only its explicit company subset.
+  const companyScope = {
+    legalEntityId: input.legalEntityId,
+    moduleKeys: [input.moduleKey],
+    tenantId: input.tenantId,
+  };
+  const scopes = [{ moduleKeys: [input.moduleKey], tenantId: input.tenantId }, companyScope];
   const actions = scopes.flatMap((scope) => input.actionKeys.map((actionKey) => ({ ...scope, actionKey })));
   const roleKey = 'live-fixture-manager';
+  const legalEntityOnlyRole = { ...companyScope, roleKey: 'live-fixture-legal-entity-only' };
   return [
     ...input.actors.map((principal) =>
       relationship('tenant', input.tenantId, 'member', 'principal', principal.principalId),
@@ -235,9 +241,23 @@ const fixtureAuthorizationRelationships = (input: {
     ),
     ...buildActionAuthorizationRelationships(actions),
     ...buildActionAuthorizationRoleGrantRelationships(
-      actions.map((action) => ({ ...action, roleKey })),
+      [
+        ...actions.map((action) => ({ ...action, roleKey })),
+        ...input.legalEntityOnlyActionKeys.map((actionKey) => ({ ...legalEntityOnlyRole, actionKey })),
+      ],
       scopes,
     ),
+    ...(input.legalEntityOnlyActionKeys.length === 0
+      ? []
+      : [
+          relationship(
+            'scoped_role',
+            toScopedRoleObjectId(legalEntityOnlyRole),
+            'member',
+            'principal',
+            input.legalEntityOnly.principalId,
+          ),
+        ]),
     ...scopes.map((scope) =>
       relationship(
         'scoped_role',
@@ -258,6 +278,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityManagerRelations: readonly string[];
+    readonly legalEntityOnlyActionKeys: readonly string[];
     readonly legalEntityOnly: FixtureActor;
     readonly manager: FixtureActor;
     readonly moduleKey: string;
@@ -313,6 +334,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       entityObject,
       legalEntityId: input.legalEntityId,
       legalEntityManagerRelations: input.legalEntityManagerRelations,
+      legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
       legalEntityOnly: input.legalEntityOnly,
       manager: input.manager,
       moduleKey: input.moduleKey,
@@ -448,6 +470,11 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
+    const actionKeys = configuration.actionKeys ?? [];
+    const legalEntityOnlyActionKeys = configuration.legalEntityOnlyActionKeys ?? [];
+    if (legalEntityOnlyActionKeys.some((actionKey) => !actionKeys.includes(actionKey))) {
+      return yield* fixtureFailure('Legal Entity-only fixture Action keys must be included in actionKeys');
+    }
     const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
@@ -503,12 +530,13 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           Effect.mapError((cause) => fixtureFailure('Unable to initialize the fixture admin database', cause)),
         );
         yield* setupLiveOperationFixture({
-          actionKeys: configuration.actionKeys ?? [],
+          actionKeys,
           actors,
           authenticationNamespaceId: configuration.authenticationNamespaceId,
           executor: admin.executor,
           legalEntityId,
           legalEntityManagerRelations: configuration.legalEntityManagerRelations ?? [],
+          legalEntityOnlyActionKeys,
           legalEntityOnly,
           manager,
           moduleKey: configuration.moduleKey,

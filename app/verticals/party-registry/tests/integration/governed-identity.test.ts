@@ -134,6 +134,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             archivePartyAction,
             unarchivePartyAction,
           ].map(({ descriptor }) => descriptor.actionKey);
+          const legalEntityOnlyActionKeys = [
+            counterpartyCreateAction,
+            counterpartyRoleAddAction,
+            counterpartyRoleEndAction,
+          ].map(({ descriptor }) => descriptor.actionKey);
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
@@ -145,6 +150,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 'party_relationship_manager',
               ],
               actionKeys,
+              legalEntityOnlyActionKeys,
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               audience: 'party-registry',
               authenticationNamespaceId: testAuthenticationNamespaceId,
