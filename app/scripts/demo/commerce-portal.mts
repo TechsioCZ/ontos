@@ -285,12 +285,11 @@ const liftKeyRateLimit = (apiKeyName: string) =>
 
 const workspaceRoot = new URL('../..', import.meta.url);
 
-const main = (envFileOption: string | undefined) =>
+const main = (existing: ReadonlyMap<string, string>, configuration?: Readonly<Record<string, string>>) =>
   Effect.gen(function* runCommercePortal() {
     const path = yield* Path.Path;
-    const fs = yield* FileSystem.FileSystem;
     const root = yield* path.fromFileUrl(workspaceRoot);
-    const environment = resetChildEnvironment(yield* resetEnvironment);
+    const environment = { ...configuration, ...resetChildEnvironment(yield* resetEnvironment) };
     yield* validateResetEnvironment(environment);
     const { executor } = yield* AuthDatabase;
     yield* executor
@@ -317,10 +316,6 @@ const main = (envFileOption: string | undefined) =>
     yield* Console.log(
       `commerce-portal: principal ${commercePortalPrincipal.principalId}, ${relationships.length} relationships`,
     );
-    const envFile = envFileOption ?? path.join(root, '.env');
-    const existing = (yield* fs.exists(envFile))
-      ? readEnv(yield* fs.readFileString(envFile))
-      : new Map<string, string>();
     yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
     const previous = existing.get(KEY_VARIABLE);
     const key = Redacted.value(
@@ -362,19 +357,15 @@ const main = (envFileOption: string | undefined) =>
     const verificationGrants = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
       commercePortalVerificationWorkloadGrants(),
     );
-    yield* writeEnv(
-      envFile,
-      new Map([
-        ['COMMERCE_CORE_IDENTITY_BASE_URL', `${shellUrl}/shell-super-app-api`],
-        [KEY_VARIABLE, key],
-        ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', key],
-        ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
-        ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
-        ['ONTOS_PRIVACY_GATEWAY_API_KEY', privacyKey],
-        ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
-      ]),
-    );
-    return yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
+    return new Map([
+      ['COMMERCE_CORE_IDENTITY_BASE_URL', `${shellUrl}/shell-super-app-api`],
+      [KEY_VARIABLE, key],
+      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', key],
+      ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
+      ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
+      ['ONTOS_PRIVACY_GATEWAY_API_KEY', privacyKey],
+      ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
+    ]);
   });
 
 const environmentLive = ConfigProvider.layer(
@@ -400,12 +391,38 @@ const servicesLive = Layer.mergeAll(
   ),
 );
 
+/** Provision the native service principals, grants and managed keys without reading or writing dotenv. */
+export const provisionCommercePortal = (
+  environment: Readonly<Record<string, string>>,
+  existing: ReadonlyMap<string, string> = new Map(),
+) =>
+  main(existing, environment).pipe(
+    Effect.provide(servicesLive),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    Effect.scoped,
+  );
+
+const persistConfiguration = (envFileOption: string | undefined) =>
+  Effect.gen(function* persistConfiguration() {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* path.fromFileUrl(workspaceRoot);
+    const envFile = envFileOption ?? path.join(root, '.env');
+    const existing = (yield* fs.exists(envFile))
+      ? readEnv(yield* fs.readFileString(envFile))
+      : new Map<string, string>();
+    yield* writeEnv(envFile, yield* main(existing));
+    yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
+  });
+
 const command = Command.make(
   commercePortalPrincipal.apiKeyName,
   { envFile: Flag.String('env-file').pipe(Flag.optional) },
   ({ envFile }) =>
     Layer.build(
-      Layer.effectDiscard(main(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive)),
+      Layer.effectDiscard(persistConfiguration(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(
+        Layer.provide(servicesLive),
+      ),
     ).pipe(
       Effect.scoped,
       Effect.asVoid,

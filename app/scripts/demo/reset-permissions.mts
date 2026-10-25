@@ -480,15 +480,18 @@ const readEnvFile = (text: string): ReadonlyMap<string, string> =>
     }),
   );
 
-const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureBotKey(root: string) {
+const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureBotKey(
+  root: string,
+  suppliedKeys?: ReadonlyMap<string, string>,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const client = yield* HttpClient.HttpClient;
   const { compositionUrl, shellUrl } = yield* demoAgentConfig;
   const envFile = path.join(root, ENV_FILE);
-  const existing = (yield* fs.exists(envFile))
-    ? readEnvFile(yield* fs.readFileString(envFile))
-    : new Map<string, string>();
+  const existing =
+    suppliedKeys ??
+    ((yield* fs.exists(envFile)) ? readEnvFile(yield* fs.readFileString(envFile)) : new Map<string, string>());
   const shellUp = yield* client.get(`${shellUrl}/.well-known/ontos-shell-runtime.json`).pipe(
     Effect.timeout(readinessTimeout),
     Effect.map(({ status }) => status === 200),
@@ -563,6 +566,7 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
     ['ONTOS_LEGAL_ENTITY_ID', demoLegalEntityId],
     ...Option.toArray(revision).map((current) => ['ONTOS_COMPOSITION_REVISION', current] as const),
   ]);
+  if (suppliedKeys !== undefined) return values;
   const text = [
     '# Sales demo agent (scripts/demo/reset-permissions.mts). Local secrets; gitignored. Never commit.',
     ...[...values.entries()].map(([key, value]) => `${key}=${value}`),
@@ -592,11 +596,15 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
   );
 });
 
-const main = (skipBot: boolean) =>
+const main = (
+  skipBot: boolean,
+  suppliedKeys?: ReadonlyMap<string, string>,
+  configuration?: Readonly<Record<string, string>>,
+) =>
   Effect.gen(function* resetSalesDemoPermissions() {
     const path = yield* Path.Path;
     const root = yield* path.fromFileUrl(workspaceRoot);
-    const environment = resetChildEnvironment(yield* resetEnvironment);
+    const environment = { ...configuration, ...resetChildEnvironment(yield* resetEnvironment) };
     yield* validateResetEnvironment(environment);
     yield* upsertIdentityRows;
     yield* runBootstrapPort(root, environment);
@@ -604,8 +612,9 @@ const main = (skipBot: boolean) =>
     yield* ensureDemoCompanies(shellUrl);
     if (!skipBot) {
       yield* liftBotKeyRateLimit;
-      yield* ensureBotKey(root);
+      const keys = yield* ensureBotKey(root, suppliedKeys);
       yield* liftBotKeyRateLimit;
+      return keys;
     }
   });
 
@@ -631,6 +640,17 @@ const servicesLive = Layer.mergeAll(
     Layer.provide(NodeHttpClient.layerUndici),
   ),
 );
+
+/** Canonical accounts/roles and managed keys, with no environment-file IO. Secrets stay with the caller. */
+export const resetDemoPermissions = (
+  environment: Readonly<Record<string, string>>,
+  options: { readonly skipKeys?: boolean; readonly existingKeys?: ReadonlyMap<string, string> } = {},
+) =>
+  main(options.skipKeys ?? false, options.existingKeys ?? new Map<string, string>(), environment).pipe(
+    Effect.provide(servicesLive),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    Effect.scoped,
+  );
 
 const command = Command.make(
   'sales-demo-permissions',

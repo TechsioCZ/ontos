@@ -82,6 +82,7 @@ const shellJson = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 export const validateDevelopmentDatabase = Effect.fn('SiamparkComposition.validateDatabase')(function* validateDatabase(
   environment: string,
   urls: { readonly DATABASE_ADMIN_URL: string; readonly DATABASE_URL: string },
+  databaseName = 'siampark_demo',
 ) {
   if (environment !== 'development') {
     return yield* fail('An explicit development environment is required');
@@ -92,12 +93,13 @@ export const validateDevelopmentDatabase = Effect.fn('SiamparkComposition.valida
   if (
     !isLoopbackHostname(pair.admin.host) ||
     !isLoopbackHostname(pair.runtime.host) ||
-    pair.admin.database !== 'siampark_demo' ||
-    pair.runtime.database !== 'siampark_demo' ||
+    databaseName.length === 0 ||
+    pair.admin.database !== databaseName ||
+    pair.runtime.database !== databaseName ||
     pair.admin.host !== pair.runtime.host ||
     pair.admin.port !== pair.runtime.port
   ) {
-    return yield* fail('Both database identities must target the same loopback siampark_demo database');
+    return yield* fail('Both database identities must target the explicitly selected loopback demo database');
   }
   return pair;
 });
@@ -213,34 +215,63 @@ const environmentLive = ConfigProvider.layer(
 export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve')(function* serve(
   environment: string,
   encodedPort: string,
+  configuration: {
+    readonly databaseName?: string;
+    readonly ownerOrigins?: Readonly<Record<string, string>>;
+    readonly statePath?: string;
+  } = {},
 ) {
   const port = yield* Schema.decodeEffect(portSchema)(encodedPort);
   yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Config.withDefault('development'),
   );
   const [runtime, admin] = yield* Effect.all([Config.Redacted('DATABASE_URL'), Config.Redacted('DATABASE_ADMIN_URL')]);
-  const connections = yield* validateDevelopmentDatabase(environment, {
-    DATABASE_ADMIN_URL: Redacted.value(admin),
-    DATABASE_URL: Redacted.value(runtime),
-  });
+  const databaseName = configuration.databaseName ?? 'siampark_demo';
+  const connections = yield* validateDevelopmentDatabase(
+    environment,
+    {
+      DATABASE_ADMIN_URL: Redacted.value(admin),
+      DATABASE_URL: Redacted.value(runtime),
+    },
+    databaseName,
+  );
   const fs = yield* FileSystem.FileSystem;
   const topology = yield* Schema.decodeEffect(topologySchema)(
     yield* fs.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json')),
   );
   // Sales demo: ONTOS_DEMO_VERTICALS (comma-separated owner IDs) composes only the owners actually running.
   const selection = yield* Config.option(Config.String('ONTOS_DEMO_VERTICALS'));
-  const owners = Option.match(selection, {
+  const selectedOwners = Option.match(selection, {
     onNone: () => topology.verticals,
     onSome: (value) => {
       const ids = new Set(value.split(',').map((id) => id.trim()));
       return topology.verticals.filter((owner) => ids.has(owner.id));
     },
   });
+  const owners = yield* Effect.forEach(selectedOwners, (owner) =>
+    Effect.gen(function* configuredOwner() {
+      if (configuration.ownerOrigins === undefined) return owner;
+      const origin = configuration.ownerOrigins[owner.id];
+      if (origin === undefined) return yield* fail(`Missing explicit origin for ${owner.id}`);
+      const url = yield* Effect.try({ try: () => new URL(origin), catch: () => fail('Invalid explicit owner origin') });
+      yield* validateDevelopmentArtifactUrl(url);
+      if (url.origin !== origin) return yield* fail('Explicit owner origins must not contain a path');
+      return {
+        ...owner,
+        moduleFederation: { ...owner.moduleFederation, manifestUrl: new URL('/mf-manifest.json', url) },
+      };
+    }),
+  );
   const shellPort = yield* Config.schema(portSchema, topology.shell.portEnv).pipe(Config.withDefault(3020));
   const shellOrigin = `http://127.0.0.1:${shellPort}`;
   const origin = `http://127.0.0.1:${port}`;
-  const ownerPorts = topology.verticals.map(({ moduleFederation }) => moduleFederation.manifestUrl.port);
-  if (port === shellPort || ownerPorts.includes(String(port)) || new Set(ownerPorts).size !== ownerPorts.length) {
+  const ownerPorts = owners.map(({ moduleFederation }) => moduleFederation.manifestUrl.port);
+  if (
+    port === shellPort ||
+    ownerPorts.includes(String(shellPort)) ||
+    ownerPorts.includes(String(port)) ||
+    new Set(ownerPorts).size !== ownerPorts.length
+  ) {
     return yield* fail('Composition, Shell, and every owner must use distinct ports');
   }
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -320,7 +351,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
     });
   });
   const pointer = yield* makeDevelopmentCompositionPointer(
-    path.join(workspaceRoot, '.scratch/development-composition-pointer.json'),
+    configuration.statePath ?? path.join(workspaceRoot, '.scratch/development-composition-pointer.json'),
   );
   yield* HttpServer.serveEffect(developmentCompositionApplication(pointer.load));
   const database = yield* CoreDatabase;
@@ -330,7 +361,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
         sql`select current_database() as database, current_user as admin`,
         'objects',
       );
-      if (actual?.database !== 'siampark_demo' || actual.admin !== connections.admin.user) {
+      if (actual?.database !== databaseName || actual.admin !== connections.admin.user) {
         return yield* fail('The actual administrative session is not the validated isolated demo database');
       }
       // Re-observe every local provider at the cutover, rather than treating isolation as proof of its binaries.

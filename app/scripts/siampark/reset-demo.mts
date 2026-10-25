@@ -224,7 +224,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
   ];
   return ports;
 });
-const main = (validateOnly: boolean) =>
+export const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
   Effect.gen(function* resetSiamparkDemo() {
     yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
       Config.withDefault('development'),
@@ -236,11 +236,16 @@ const main = (validateOnly: boolean) =>
 
     const path = yield* Path.Path;
     const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
-    const fileProvider = yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') });
-    const provider = ConfigProvider.orElse(ConfigProvider.fromEnv(), fileProvider);
+    const provider =
+      configuration === undefined
+        ? ConfigProvider.orElse(
+            ConfigProvider.fromEnv(),
+            yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') }),
+          )
+        : ConfigProvider.fromUnknown(configuration);
     const environment = yield* resetEnvironment.parse(provider);
 
-    const childEnvironment = resetChildEnvironment(environment);
+    const childEnvironment = { ...configuration, ...resetChildEnvironment(environment) };
     yield* validateResetEnvironment(childEnvironment);
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-demo-' });
@@ -270,17 +275,19 @@ const main = (validateOnly: boolean) =>
     );
   });
 const reportFailure = Effect.fn('SiamparkDemo.reportFailure')(function* reportFailure(
-  failure: Effect.Error<ReturnType<typeof main>>,
+  failure: Effect.Error<ReturnType<typeof resetSiamparkDemo>>,
 ) {
   return yield* Console.error(`Siampark reset failed (${failure._tag}); inspect the failing owner port.`);
 });
 const command = Command.make(
   'siampark-demo-reset',
   { validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)) },
-  ({ validateOnly }) => main(validateOnly).pipe(Effect.scoped, Effect.tapError(reportFailure)),
+  ({ validateOnly }) => resetSiamparkDemo(validateOnly).pipe(Effect.scoped, Effect.tapError(reportFailure)),
 );
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(NodeServices.layer),
 );
-const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtimeLive)));
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+}
