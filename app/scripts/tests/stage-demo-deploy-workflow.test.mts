@@ -52,14 +52,21 @@ it('builds each unit reference graph before the native Cloudflare build on a fre
   expect(indexOf(steps, 'Build and verify the unit for Cloudflare')).toBeGreaterThan(indexOf(steps, producerName));
 });
 
-it('migrates every owner schema through the private network before any upload or publication', () => {
+it('runs every owner migration through the native lifecycle on the private network before upload or publication', () => {
   const { steps } = readJobs().release;
   const migrate = steps.find(({ name }) => name === MIGRATE);
-  expect(migrate?.run).toBe('mise exec -- pnpm db:migrate');
+  expect(migrate?.run).toBe('mise exec -- pnpm exec node scripts/stage-demo-migrate.mts');
   expect(migrate?.['working-directory']).toBe('app');
   expect(migrate?.['timeout-minutes']).toBeGreaterThan(0);
-  // A failed migration fails the job: the step is unconditional and never continues on error.
-  expect(migrate?.if).toBeUndefined();
+  // Every full release must migrate successfully; only the exact-published-revision outbox retry skips it.
+  expect(migrate?.if).toBe(['${{', '!inputs.outbox_only', '}}'].join(' '));
+  expect(migrate?.['continue-on-error']).toBeUndefined();
+  expect(indexOf(steps, 'Write the initial cutover receipt')).toBeGreaterThanOrEqual(0);
+  expect(indexOf(steps, 'Write the initial cutover receipt')).toBeLessThan(indexOf(steps, MIGRATE));
+  expect(indexOf(steps, MIGRATE)).toBeGreaterThan(
+    indexOf(steps, 'Bootstrap every database identity before migrations'),
+  );
+  expect(indexOf(steps, 'Bootstrap every database identity after migrations')).toBeGreaterThan(indexOf(steps, MIGRATE));
   const connect = steps.findIndex(({ id }) => id === 'composition-vpn');
   expect(connect).toBeGreaterThanOrEqual(0);
   expect(indexOf(steps, MIGRATE)).toBeGreaterThan(connect);
@@ -70,6 +77,28 @@ it('migrates every owner schema through the private network before any upload or
     'Deploy the AKROS storefront',
   ]) {
     expect(indexOf(steps, later)).toBeGreaterThan(indexOf(steps, MIGRATE));
+  }
+});
+
+it('keeps exact-published-revision outbox retries out of the schema migration and identity bootstrap lifecycle', () => {
+  const { steps } = readJobs().release;
+  const outboxRetry = 'Require the exact published revision for an outbox-only retry';
+  const verifyRevision = steps.find(({ name }) => name === outboxRetry);
+  expect(verifyRevision?.if).toBe('inputs.outbox_only');
+  expect(verifyRevision?.['continue-on-error']).toBeUndefined();
+  expect(verifyRevision?.run).toContain('"$published" != "$GITHUB_SHA"');
+  expect(indexOf(steps, outboxRetry)).toBeGreaterThanOrEqual(0);
+  expect(indexOf(steps, 'Push the outbox worker host')).toBeGreaterThan(indexOf(steps, outboxRetry));
+  for (const name of [
+    'Bootstrap every database identity before migrations',
+    MIGRATE,
+    'Bootstrap every database identity after migrations',
+  ]) {
+    const step = steps.find((candidate) => candidate.name === name);
+    expect(step?.if).toBe(['${{', '!inputs.outbox_only', '}}'].join(' '));
+    expect(step?.['continue-on-error']).toBeUndefined();
+    expect(indexOf(steps, name)).toBeGreaterThan(indexOf(steps, outboxRetry));
+    expect(step?.if).toBe(steps.find(({ name: later }) => later === 'Publish the Application Composition')?.if);
   }
 });
 
@@ -85,6 +114,7 @@ it('runs this workflow test with the release script tests that gate the release 
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
   for (const name of [
     'stage-demo-deploy-workflow',
+    'stage-demo-migrate',
     'typecheck-project-references',
     'reconcile-stage-service-grants',
     'verification-context',

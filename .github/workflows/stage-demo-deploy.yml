@@ -219,6 +219,7 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/stage-demo-migrate.test.mts
           scripts/tests/typecheck-project-references.test.mts
           scripts/tests/database-identity-environment.test.mts
           scripts/tests/cloudflare-data-plane-bindings.test.mts
@@ -377,24 +378,36 @@ jobs:
           --github-environment-file "$GITHUB_ENV"
 
       - name: Bootstrap every database identity before migrations
+        if: ${{ !inputs.outbox_only }}
         timeout-minutes: 10
         working-directory: app
         run: mise exec -- pnpm db:bootstrap-runtime-role
 
-      # Every owner migrates its own schema through the same db:migrate chain as a local workspace, before
-      # any upload, so no release ever runs against a schema older than its code. The Commerce portal realm
-      # migrates with the same runtime/admin pair (it runs as ontos_runtime, as in .env.example). Any failed
-      # migration ends the round before anything is uploaded or published.
+      # The stage provider quiescence was proven when stage first cut over (operator receipt, 2026-10-22).
+      - name: Write the initial cutover receipt
+        if: ${{ !inputs.outbox_only }}
+        working-directory: app
+        run: |
+          mkdir -p "$(dirname "$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE")"
+          printf '%s' '{"environment":"stage","inventorySha256":"40ec38189570c5e41abcfb1852b47e9d167902d2490c89a28bac432adbac6ae0","schemaVersion":"2","verifiedAt":"2026-10-22T01:51:15.913Z"}' \
+            >"$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE"
+
+      # Native durable drain and committed sealing precede the complete workspace db:migrate chain.
+      # The runner-local child inherits the stage identities, including the Commerce portal runtime/admin
+      # pair. Failure keeps the native fence and stops the release before any upload or publication.
+      # Exact-published-revision outbox retries cannot seal: they do not publish a replacement composition.
       - name: Migrate every owner schema
+        if: ${{ !inputs.outbox_only }}
         timeout-minutes: 20
         working-directory: app
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
-        run: mise exec -- pnpm db:migrate
+        run: mise exec -- pnpm exec node scripts/stage-demo-migrate.mts
 
       # Refresh exact grants and revocations after every demo owner has migrated. Never run the old shared grant path.
       - name: Bootstrap every database identity after migrations
+        if: ${{ !inputs.outbox_only }}
         timeout-minutes: 10
         working-directory: app
         run: mise exec -- pnpm db:bootstrap-runtime-role
@@ -495,15 +508,6 @@ jobs:
             ${{ runner.temp }}/release-receipts
           if-no-files-found: ignore
           retention-days: 14
-
-      # The stage provider quiescence was proven when stage first cut over (operator receipt, 2026-10-22).
-      - name: Write the initial cutover receipt
-        if: ${{ !inputs.outbox_only }}
-        working-directory: app
-        run: |
-          mkdir -p "$(dirname "$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE")"
-          printf '%s' '{"environment":"stage","inventorySha256":"40ec38189570c5e41abcfb1852b47e9d167902d2490c89a28bac432adbac6ae0","schemaVersion":"2","verifiedAt":"2026-10-22T01:51:15.913Z"}' \
-            >"$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE"
 
       - name: Publish the Application Composition
         if: ${{ !inputs.outbox_only }}
