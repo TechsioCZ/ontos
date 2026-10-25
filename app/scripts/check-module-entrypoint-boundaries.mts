@@ -622,6 +622,55 @@ const VerticalPackageJsonSchema = Schema.Struct({
 });
 const decodeVerticalPackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(VerticalPackageJsonSchema));
 
+const PackageExportTargetSchema = Schema.Union([
+  Schema.String,
+  Schema.Record(Schema.String, Schema.String),
+  Schema.Null,
+]);
+type PackageExportTarget = typeof PackageExportTargetSchema.Type;
+
+const WorkspacePackageJsonSchema = Schema.Struct({
+  exports: Schema.optionalKey(Schema.Record(Schema.String, PackageExportTargetSchema)),
+  name: Schema.optionalKey(Schema.String),
+});
+const decodeWorkspacePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkspacePackageJsonSchema));
+
+interface WorkspacePackageBoundary {
+  readonly kind: 'infrastructure' | 'vertical';
+  readonly publicSubpaths: ReadonlySet<string>;
+}
+
+const hasPublicPackageExportTarget = (target: PackageExportTarget): boolean => {
+  if (target === null) {
+    return false;
+  }
+  return Schema.is(Schema.String)(target)
+    ? target.startsWith('./')
+    : Object.values(target).some((condition) => condition.startsWith('./'));
+};
+
+const readWorkspacePackageBoundaries = (sourceMap: ReadonlyMap<string, string>) =>
+  Effect.gen(function* readWorkspacePackageBoundariesEffect() {
+    const packages = new Map<string, WorkspacePackageBoundary>();
+    for (const [file, source] of sourceMap) {
+      if (!/^(?:packages|verticals)\/[^/]+\/package\.json$/u.test(file)) {
+        continue;
+      }
+      const manifest = yield* decodeWorkspacePackageJson(source);
+      if (manifest.name !== undefined) {
+        packages.set(manifest.name, {
+          kind: file.startsWith('packages/') ? 'infrastructure' : 'vertical',
+          publicSubpaths: new Set(
+            Object.entries(manifest.exports ?? {})
+              .filter(([, target]) => hasPublicPackageExportTarget(target))
+              .map(([subpath]) => subpath),
+          ),
+        });
+      }
+    }
+    return packages;
+  });
+
 const readTopologyOwners = (root: string) =>
   Effect.gen(function* readTopologyOwnersEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -661,6 +710,7 @@ interface BoundaryCheckState {
   readonly businessPermissionEntries: BusinessPermissionInventoryEntry[];
   readonly inventoryEntries: ProtectedEntrypointInventoryEntry[];
   readonly owners: ReadonlyMap<string, string>;
+  readonly packages: ReadonlyMap<string, WorkspacePackageBoundary>;
   readonly routeEntrypoints: RouteEntrypointRecord[];
   readonly sourceMap: ReadonlyMap<string, string>;
 }
@@ -954,6 +1004,29 @@ const validateVerticalApiSource = (state: BoundaryCheckState, file: string, sour
     }
   });
 
+const isPrivateVerticalImport = (
+  state: BoundaryCheckState,
+  path: Path.Path,
+  file: string,
+  specifier: string,
+): boolean => {
+  const importedPackage = /^(?<name>@app\/[^/]+)(?<subpath>\/.+)?$/u.exec(specifier)?.groups;
+  const boundary = importedPackage?.name === undefined ? undefined : state.packages.get(importedPackage.name);
+  if (boundary?.kind === 'infrastructure' && importedPackage?.subpath !== undefined) {
+    return !boundary.publicSubpaths.has(`.${importedPackage.subpath}`);
+  }
+  const privatePath = /(?:verticals\/|@app\/).*\/(?:src|vertical\.registration|workers|search|reports|db)(?:\/|$)/u;
+  if (privatePath.test(specifier)) {
+    return true;
+  }
+  if (!specifier.startsWith('.')) {
+    return false;
+  }
+  const importedFile = path.join(path.dirname(file), specifier).replaceAll('\\', '/');
+  const ownerPath = /^verticals\/[^/]+/u.exec(file)?.[0];
+  return !importedFile.startsWith(`${ownerPath}/`) && privatePath.test(importedFile);
+};
+
 const validateVerticalSource = (
   state: BoundaryCheckState,
   file: string,
@@ -974,8 +1047,9 @@ const validateVerticalSource = (
     );
     yield* validateVerticalApiSource(state, file, source);
     yield* validateGovernedSource(file, source);
+    const path = yield* Path.Path;
     const privateImport = importedModuleSpecifiers.some((specifier) =>
-      /(?:verticals\/|@app\/).*\/(?:src|vertical\.registration|workers|search|reports|db)(?:\/|$)/u.test(specifier),
+      isPrivateVerticalImport(state, path, file, specifier),
     );
     if (privateImport) {
       yield* fail(
@@ -1302,6 +1376,9 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
 const GATEWAY_CONTRACT_SOURCE = 'packages/shared-contracts/src/gateway-context.ts';
 const DOCUMENT_GATEWAY_CONTRACT_SOURCE = 'apps/shell-super-app/shared/document-gateway-api.ts';
 const SHELL_API_CONTRACT_SOURCE = 'apps/shell-super-app/shared/api.ts';
+const GATEWAY_CONTEXT_API_GROUP = 'GatewayContextApiGroup';
+const GATEWAY_CONTEXT_GROUP_ID = 'gatewayContext';
+const SHARED_CONTRACTS_MODULE = '@app/shared-contracts';
 
 type GatewayIssuer = (typeof gatewayContextAuthorizationEntrypoints)[number];
 
@@ -1331,18 +1408,18 @@ const gatewayIssuerBindings = {
     contractFile: GATEWAY_CONTRACT_SOURCE,
     credential: 'api_key',
     endpoint: 'issueApiKeyGatewayContext',
-    group: 'GatewayContextApiGroup',
-    groupId: 'gatewayContext',
-    groupModule: '@app/shared-contracts',
+    group: GATEWAY_CONTEXT_API_GROUP,
+    groupId: GATEWAY_CONTEXT_GROUP_ID,
+    groupModule: SHARED_CONTRACTS_MODULE,
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
   },
   'shell.gateway-context.issue.session': {
     contractFile: GATEWAY_CONTRACT_SOURCE,
     credential: 'session',
     endpoint: 'issueGatewayContext',
-    group: 'GatewayContextApiGroup',
-    groupId: 'gatewayContext',
-    groupModule: '@app/shared-contracts',
+    group: GATEWAY_CONTEXT_API_GROUP,
+    groupId: GATEWAY_CONTEXT_GROUP_ID,
+    groupModule: SHARED_CONTRACTS_MODULE,
     path: shellGatewayContextContract.issueGatewayContextPath,
   },
   'shell.gateway-contexts.issue.session': {
@@ -1354,28 +1431,41 @@ const gatewayIssuerBindings = {
     groupModule: './document-gateway-api.ts',
     path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
   },
+  'shell.gateway-read.issue.api-key': {
+    contractFile: GATEWAY_CONTRACT_SOURCE,
+    credential: 'api_key',
+    endpoint: 'readWithApiKeyGatewayContext',
+    group: GATEWAY_CONTEXT_API_GROUP,
+    groupId: GATEWAY_CONTEXT_GROUP_ID,
+    groupModule: SHARED_CONTRACTS_MODULE,
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
+  },
 } as const satisfies Record<GatewayIssuer['entrypointKey'], GatewayIssuerBinding>;
 
 const gatewayIssuerBinding = (issuer: GatewayIssuer): GatewayIssuerBinding =>
   gatewayIssuerBindings[issuer.entrypointKey];
 
+export const hasExactGatewayIssuerCredentials = (
+  issuers: readonly Pick<GatewayIssuer, 'authorization' | 'entrypointKey'>[],
+): boolean => {
+  const classifiedKeys = new Set<string>(issuers.map(({ entrypointKey }) => entrypointKey));
+  const boundKeys = Object.keys(gatewayIssuerBindings);
+  return (
+    classifiedKeys.size === issuers.length &&
+    classifiedKeys.size === boundKeys.length &&
+    boundKeys.every((key) => classifiedKeys.has(key)) &&
+    issuers.every(
+      (issuer) => issuer.authorization.credential === gatewayIssuerBindings[issuer.entrypointKey].credential,
+    )
+  );
+};
+
 const validateIssuerCredentials = () =>
   Effect.gen(function* validateIssuerCredentialsEffect() {
-    const classifiedKeys = new Set<string>(
-      gatewayContextAuthorizationEntrypoints.map(({ entrypointKey }) => entrypointKey),
-    );
-    const boundKeys = Object.keys(gatewayIssuerBindings);
-    if (
-      classifiedKeys.size !== gatewayContextAuthorizationEntrypoints.length ||
-      classifiedKeys.size !== boundKeys.length ||
-      !boundKeys.every((key) => classifiedKeys.has(key)) ||
-      gatewayContextAuthorizationEntrypoints.some(
-        (issuer) => issuer.authorization.credential !== gatewayIssuerBinding(issuer).credential,
-      )
-    ) {
+    if (!hasExactGatewayIssuerCredentials(gatewayContextAuthorizationEntrypoints)) {
       yield* fail(
         GATEWAY_CONTRACT_SOURCE,
-        'gateway authorization contract must classify exactly the session, API-key, document batch, and document context issuers',
+        'gateway authorization contract must classify exactly the session, API-key, API-key read, document batch, and document context issuers',
       );
     }
   });
@@ -1482,6 +1572,7 @@ const checkModuleEntrypointBoundariesEffect = (root: string) =>
       businessPermissionEntries: [],
       inventoryEntries: [],
       owners,
+      packages: yield* readWorkspacePackageBoundaries(sourceMap),
       routeEntrypoints: [],
       sourceMap,
     };

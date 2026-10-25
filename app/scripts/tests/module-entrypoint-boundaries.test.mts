@@ -7,7 +7,14 @@ import { NodeServices } from '@effect/platform-node';
 import { Cause, ConfigProvider, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect } from '../check-module-entrypoint-boundaries.mts';
+import {
+  gatewayContextAuthorizationEntrypoints,
+  shellGatewayContextContract,
+} from '../../packages/shared-contracts/src/gateway-context.ts';
+import {
+  checkModuleEntrypointBoundaries as checkModuleEntrypointBoundariesEffect,
+  hasExactGatewayIssuerCredentials,
+} from '../check-module-entrypoint-boundaries.mts';
 import {
   hasGeneratedActionRegistrationBinding,
   hasGeneratedActionHttpClientExports,
@@ -108,6 +115,8 @@ const STOCK_LIST_STEM = 'stock-list';
 const GATEWAY_CONTRACT_FILE = 'packages/shared-contracts/src/gateway-context.ts';
 
 const SHELL_API_CONTRACT_FILE = 'apps/shell-super-app/shared/api.ts';
+const SHELL_API_RUNTIME_FILE = 'apps/shell-super-app/api/index.ts';
+const API_KEY_READ_ENTRYPOINT = 'shell.gateway-read.issue.api-key';
 
 const INVENTORY_REPORT_FILE = '.codex/reports/authorization/protected-entrypoints.json';
 
@@ -196,6 +205,10 @@ const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created';
 const PARTY_PACKAGE_NAME = '@app/party-registry';
 
 const INVENTORY_VERTICAL_PATH = 'verticals/inventory-stock';
+const INVENTORY_DEPLOYMENT_ID = 'inventory-stock';
+const SHELL_DEPLOYMENT_ID = 'shell-super-app';
+const SHELL_APPLICATION_PATH = 'apps/shell-super-app';
+const TOPOLOGY_METADATA_FILE = 'topology/reference-topology.json';
 
 const INVENTORY_REGISTRATION_PATH = `${INVENTORY_VERTICAL_PATH}/vertical.registration.ts`;
 
@@ -659,11 +672,11 @@ const makeFixture = Effect.fn(function* mergedScenario1(
   yield* initialize(root);
   yield* write(
     root,
-    'topology/reference-topology.json',
+    TOPOLOGY_METADATA_FILE,
     JSON.stringify({
-      shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
+      shell: { id: SHELL_DEPLOYMENT_ID, path: SHELL_APPLICATION_PATH },
       verticals: [
-        { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
+        { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
         ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
       ],
     }),
@@ -697,14 +710,16 @@ export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
   HttpApiEndpoint.post('documentContext', '/shell/document-context', {}),
 );
 export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(DocumentGatewayApiGroup).add(ShellDocumentContextApiGroup);
-export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context'];`,
+export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context', '/shell-super-app-api/auth/api-key/gateway-read'];`,
   );
   yield* write(root, DOCUMENT_GATEWAY_CONTRACT_FILE, DOCUMENT_GATEWAY_FIXTURE);
   yield* write(
     root,
-    'apps/shell-super-app/api/index.ts',
-    `export const issueGatewayContext = true;
-export const issueApiKeyGatewayContext = true;
+    SHELL_API_RUNTIME_FILE,
+    `export const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) => handlers
+  .handle('issueGatewayContext', () => Effect.succeed({}))
+  .handle('issueApiKeyGatewayContext', () => Effect.succeed({}))
+  .handle('readWithApiKeyGatewayContext', () => Effect.succeed({})));
 export const issueDocumentGatewayContexts = true;
 export const documentContext = true;`,
   );
@@ -728,8 +743,9 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
     GATEWAY_CONTRACT_FILE,
     `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
-  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts', documentContextPath: '/shell-super-app-api/shell/document-context' };`,
+  .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}))
+  .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}));
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts', documentContextPath: '/shell-super-app-api/shell/document-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -2395,6 +2411,94 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
   }),
 );
 
+const CORE_PACKAGE_FILE = 'packages/core-runtime/package.json';
+const PRIVATE_IMPORT_FILE = 'verticals/inventory-stock/src/private-import.ts';
+
+const writeCorePackageFixture = Effect.fn(function* writeCorePackageFixture(root: string) {
+  const manifest = yield* Effect.promise(() =>
+    readFile(new URL(`../../${CORE_PACKAGE_FILE}`, import.meta.url), 'utf-8'),
+  );
+  yield* write(root, CORE_PACKAGE_FILE, manifest);
+});
+
+it.live('accepts declared infrastructure public subpaths, including the Core SQL builder', () =>
+  Effect.gen(function* publicInfrastructureImports() {
+    const root = yield* makeFixture();
+    yield* writeCorePackageFixture(root);
+    yield* write(
+      root,
+      'packages/sql-tools/package.json',
+      JSON.stringify({
+        exports: { './db/public-helper': './src/db/public-helper.ts' },
+        name: '@app/query-helpers',
+      }),
+    );
+    yield* write(
+      root,
+      PRIVATE_IMPORT_FILE,
+      `import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
+import { helper } from '@app/query-helpers/db/public-helper';
+import * as compositionSource from '@app/core-runtime/modules/active-application-composition-source';
+import { local } from '../db/private.ts';`,
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('rejects private vertical imports and undeclared infrastructure subpaths despite public neighbors', () =>
+  Effect.gen(function* privatePackageImports() {
+    const root = yield* makeFixture();
+    yield* writeCorePackageFixture(root);
+    yield* write(
+      root,
+      TOPOLOGY_METADATA_FILE,
+      JSON.stringify({
+        shell: { id: SHELL_DEPLOYMENT_ID, path: SHELL_APPLICATION_PATH },
+        verticals: [
+          { id: INVENTORY_DEPLOYMENT_ID, path: INVENTORY_VERTICAL_PATH },
+          { id: 'billing', path: 'verticals/billing' },
+        ],
+      }),
+    );
+    yield* write(
+      root,
+      'verticals/billing/package.json',
+      JSON.stringify({
+        exports: {
+          './db/private': './shared/private.ts',
+          './src/handlers/private.ts': './shared/private.ts',
+        },
+        name: '@app/billing',
+      }),
+    );
+    yield* assertRejectedSources(
+      root,
+      PRIVATE_IMPORT_FILE,
+      [
+        '@app/billing/src/handlers/private.ts',
+        '@app/billing/db/private',
+        '@app/core-runtime/src/db/client.ts',
+        '@app/core-runtime/db/client',
+        '@app/core-runtime/unexported-helper',
+        '../../billing/src/handlers/private.ts',
+        '../../billing/db/private',
+        '../../../verticals/billing/src/handlers/private.ts',
+        '../../../verticals/billing/db/private',
+      ].map((specifier) => `import value from '${specifier}';`),
+      /cross-vertical private imports.*gateway/u,
+    );
+    for (const exports of [{}, { './db/agent-history-page': null }]) {
+      yield* write(root, CORE_PACKAGE_FILE, JSON.stringify({ exports, name: '@app/core-runtime' }));
+      yield* assertRejectedSources(
+        root,
+        PRIVATE_IMPORT_FILE,
+        ["import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';"],
+        /cross-vertical private imports.*gateway/u,
+      );
+    }
+  }),
+);
+
 const violations = [
   {
     expected: /raw loadRemote.*approved Shell module-entrypoint loader/u,
@@ -3042,6 +3146,107 @@ it.live(
       },
     });
     yield* write(root, contractFile, source);
+  }),
+);
+
+it('requires the exact API-key read issuer classification and credential', () => {
+  const issuers = gatewayContextAuthorizationEntrypoints;
+  expect(hasExactGatewayIssuerCredentials(issuers)).toBe(true);
+  expect(
+    hasExactGatewayIssuerCredentials(issuers.filter(({ entrypointKey }) => entrypointKey !== API_KEY_READ_ENTRYPOINT)),
+  ).toBe(false);
+  expect(
+    hasExactGatewayIssuerCredentials([
+      ...issuers,
+      ...issuers.filter(({ entrypointKey }) => entrypointKey === API_KEY_READ_ENTRYPOINT),
+    ]),
+  ).toBe(false);
+  expect(
+    hasExactGatewayIssuerCredentials(
+      issuers.map((issuer) => ({
+        ...issuer,
+        authorization:
+          issuer.entrypointKey === API_KEY_READ_ENTRYPOINT
+            ? { credential: 'session', kind: 'capability_issuance' }
+            : issuer.authorization,
+      })),
+    ),
+  ).toBe(false);
+});
+
+const API_KEY_READ_ENDPOINT_FIXTURE =
+  "  .add(HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {}))";
+
+for (const [label, before, after] of [
+  ['missing endpoint', API_KEY_READ_ENDPOINT_FIXTURE, ''],
+  ['wrong endpoint', "post('readWithApiKeyGatewayContext'", "post('unrelatedRead'"],
+  [
+    'missing classified path',
+    "'/shell-super-app-api/auth/api-key/gateway-read'",
+    "'/shell-super-app-api/auth/api-key/unclassified-read'",
+  ],
+  ['wrong endpoint path', "'/auth/api-key/gateway-read'", "'/auth/api-key/unclassified-read'"],
+  ['wrong verb', "post('readWithApiKeyGatewayContext'", "get('readWithApiKeyGatewayContext'"],
+  ['wrong group', "make('gatewayContext')", "make('unrelatedReadGroup')"],
+] as const) {
+  it.live(`rejects API-key read issuer binding tampering: ${label}`, () =>
+    Effect.gen(function* apiKeyReadIssuerTampering() {
+      const root = yield* makeFixture();
+      const source = yield* Effect.promise(() => readFile(path.join(root, GATEWAY_CONTRACT_FILE), 'utf-8'));
+      yield* checkModuleEntrypointBoundaries(root);
+      expect(source.replace(before, after)).not.toBe(source);
+      yield* assertRejectedSources(
+        root,
+        GATEWAY_CONTRACT_FILE,
+        [source.replace(before, after)],
+        label === 'wrong group' ? /mounted gateway contract/u : /gateway-read is missing from the mounted/u,
+      );
+    }),
+  );
+}
+
+it.live('classifies the API-key read issuer and requires its Shell group and runtime handler', () =>
+  Effect.gen(function* apiKeyReadIssuerMounted() {
+    const root = yield* makeFixture();
+    yield* checkModuleEntrypointBoundaries(root);
+    const inventory = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8'));
+    const parsed = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Struct({ entries: Schema.Array(Schema.Unknown) })),
+    )(inventory);
+    expect(parsed.entries).toContainEqual({
+      authorization: { credential: 'api_key', kind: 'capability_issuance' },
+      deployment: SHELL_DEPLOYMENT_ID,
+      entrypointKey: API_KEY_READ_ENTRYPOINT,
+      owner: SHELL_DEPLOYMENT_ID,
+      surface: 'capability_issuance',
+    });
+    expect(
+      gatewayContextAuthorizationEntrypoints.find(({ entrypointKey }) => entrypointKey === API_KEY_READ_ENTRYPOINT)
+        ?.path,
+    ).toBe(shellGatewayContextContract.readWithApiKeyGatewayContextPath);
+    const contract = yield* Effect.promise(() => readFile(path.join(root, SHELL_API_CONTRACT_FILE), 'utf-8'));
+    yield* assertRejectedSources(
+      root,
+      SHELL_API_CONTRACT_FILE,
+      [
+        contract.replace('.add(GatewayContextApiGroup)', ''),
+        contract.replace("from '@app/shared-contracts'", "from './unrelated-contract.ts'"),
+      ],
+      /mounted gateway contract/u,
+    );
+    yield* write(root, SHELL_API_CONTRACT_FILE, contract);
+    const runtime = yield* Effect.promise(() => readFile(path.join(root, SHELL_API_RUNTIME_FILE), 'utf-8'));
+    yield* assertRejectedSources(
+      root,
+      SHELL_API_RUNTIME_FILE,
+      [
+        runtime.replace("  .handle('readWithApiKeyGatewayContext', () => Effect.succeed({}))", ''),
+        runtime.replace(".handle('readWithApiKeyGatewayContext'", ".handle('unrelatedRead'"),
+      ],
+      /must be mounted by the Shell API runtime/u,
+    );
+    yield* write(root, SHELL_API_RUNTIME_FILE, runtime);
+    yield* checkModuleEntrypointBoundaries(root);
   }),
 );
 
