@@ -1,6 +1,6 @@
 import { expect, test } from 'effect-rstest';
 
-import { parseVerifiedOAuthQuery } from '../../../api/auth/oauth-server/oauth-flow-live.ts';
+import { parseVerifiedOAuthQuery } from '../../../api/auth/db/oauth-flow-live.ts';
 
 const FULL_QUERY =
   'response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A5000%2Fcallback&scope=openid+ontos&state=s1&resource=http%3A%2F%2Flocalhost%3A3020%2Fmcp&company=71000000-0000-4000-8000-000000000021&agent=a1&exp=1&sig=x';

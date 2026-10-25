@@ -28,7 +28,7 @@ import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/r
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This composition root opens the privileged SELECT-only audit/membership reader; native Actions use the separate runtime-role pool.
 import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
-import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/oauth-server/oauth-flow-live.ts';
+import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { ApiKeyServiceLive } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { IdentityLifecycleLive } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/config.ts';

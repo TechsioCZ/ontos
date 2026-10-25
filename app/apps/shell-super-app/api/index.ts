@@ -148,7 +148,7 @@ import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
-import { OAuthFlowLive } from './auth/oauth-server/oauth-flow-live.ts';
+import { OAuthFlowLive } from './auth/db/oauth-flow-live.ts';
 import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
 import { McpTransportLive } from './mcp/transport.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';

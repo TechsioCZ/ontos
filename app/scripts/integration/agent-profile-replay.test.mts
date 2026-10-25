@@ -26,7 +26,7 @@ import {
   makeActionRuntime,
 } from '../../packages/core-runtime/src/actions/runtime.ts';
 import { ActionAuthorityLive } from '../../packages/core-runtime/src/permissions/action-authority.ts';
-import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/oauth-server/oauth-flow-live.ts';
+import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { makeReadRuntime } from '../../packages/core-runtime/src/reads/runtime.ts';
 import { managedPrincipalsRead } from '../../packages/core-runtime/src/auth/principal-administration-reads.ts';
 import { bindManagedApiKeyAction } from '../../packages/core-runtime/src/modules/actions/bind-managed-api-key.action.ts';
@@ -98,7 +98,6 @@ import {
   AgentProfileSetupError,
   readReviewedAgentProfiles,
   reviewedProfileInputs,
-  REVIEWED_AGENT_PROFILES_SHA256,
   runAgentProfileSetup,
 } from '../demo/agent-profile-setup.mts';
 
@@ -126,14 +125,15 @@ it.live(
       const config = yield* loadSpiceDbConfig();
       expect(config.endpoint).toMatch(/^localhost:\d+$/u);
       const inputFile = yield* Config.String('ONTOS_AGENT_REPLAY_PROOF_INPUT');
-      const document = yield* readReviewedAgentProfiles(inputFile, REVIEWED_AGENT_PROFILES_SHA256);
+      const sourceFingerprint = yield* Config.String('ONTOS_AGENT_REPLAY_PROOF_SHA256');
+      const document = yield* readReviewedAgentProfiles(inputFile, sourceFingerprint);
       const fs = yield* FileSystem.FileSystem;
       const tmp = yield* fs.makeTempDirectoryScoped();
       const corruptFile = `${tmp}/corrupt-input.json`;
       yield* fs.writeFileString(corruptFile, '{}');
-      expect(
-        yield* readReviewedAgentProfiles(corruptFile, REVIEWED_AGENT_PROFILES_SHA256).pipe(Effect.flip),
-      ).toBeInstanceOf(AgentProfileSetupError);
+      expect(yield* readReviewedAgentProfiles(corruptFile, sourceFingerprint).pipe(Effect.flip)).toBeInstanceOf(
+        AgentProfileSetupError,
+      );
       expect(yield* readReviewedAgentProfiles(inputFile, '0'.repeat(64)).pipe(Effect.flip)).toBeInstanceOf(
         AgentProfileSetupError,
       );
@@ -414,18 +414,11 @@ it.live(
             )
             .pipe(Effect.map((rows) => rows.length));
         const before = yield* auditCount();
-        const dryRun = yield* runAgentProfileSetup(
-          operator.principal,
-          inputs,
-          'dry-run',
-          REVIEWED_AGENT_PROFILES_SHA256,
-        );
+        const dryRun = yield* runAgentProfileSetup(operator.principal, inputs, 'dry-run', sourceFingerprint);
         expect(dryRun.applied).toBe(0);
         expect(yield* auditCount()).toBe(before);
         expect(
-          yield* runAgentProfileSetup(operator.principal, inputs, 'verify', REVIEWED_AGENT_PROFILES_SHA256).pipe(
-            Effect.flip,
-          ),
+          yield* runAgentProfileSetup(operator.principal, inputs, 'verify', sourceFingerprint).pipe(Effect.flip),
         ).toBeInstanceOf(AgentProfileSetupError);
         // A bad final row must prevent all earlier Actions, not leave a partially applied batch.
         const last = inputs.at(-1);
@@ -439,18 +432,11 @@ it.live(
         );
         yield* admin.executor.update(principalCompanyMemberships).set({ status: 'disabled' }).where(lastMembership);
         expect(
-          yield* runAgentProfileSetup(operator.principal, inputs, 'apply', REVIEWED_AGENT_PROFILES_SHA256).pipe(
-            Effect.flip,
-          ),
+          yield* runAgentProfileSetup(operator.principal, inputs, 'apply', sourceFingerprint).pipe(Effect.flip),
         ).toBeInstanceOf(AgentProfileSetupError);
         expect(yield* auditCount()).toBe(before);
         yield* admin.executor.update(principalCompanyMemberships).set({ status: 'active' }).where(lastMembership);
-        const applied = yield* runAgentProfileSetup(
-          operator.principal,
-          inputs,
-          'apply',
-          REVIEWED_AGENT_PROFILES_SHA256,
-        );
+        const applied = yield* runAgentProfileSetup(operator.principal, inputs, 'apply', sourceFingerprint);
         expect(applied.applied).toBe(9);
         expect(yield* auditCount()).toBe(before + inputs.length);
         const companyProfiles = yield* Effect.forEach(
@@ -474,12 +460,10 @@ it.live(
             writePolicy: input.writePolicy,
           });
         }
-        expect(
-          (yield* runAgentProfileSetup(operator.principal, inputs, 'verify', REVIEWED_AGENT_PROFILES_SHA256)).verified,
-        ).toBe(true);
-        expect(
-          (yield* runAgentProfileSetup(operator.principal, inputs, 'apply', REVIEWED_AGENT_PROFILES_SHA256)).applied,
-        ).toBe(0);
+        expect((yield* runAgentProfileSetup(operator.principal, inputs, 'verify', sourceFingerprint)).verified).toBe(
+          true,
+        );
+        expect((yield* runAgentProfileSetup(operator.principal, inputs, 'apply', sourceFingerprint)).applied).toBe(0);
         expect(yield* auditCount()).toBe(before + inputs.length);
         // A newer admin edit is not overwritten by replaying the old deterministic source key.
         const [original] = inputs;
@@ -501,9 +485,7 @@ it.live(
           transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
         });
         expect(
-          yield* runAgentProfileSetup(operator.principal, inputs, 'apply', REVIEWED_AGENT_PROFILES_SHA256).pipe(
-            Effect.flip,
-          ),
+          yield* runAgentProfileSetup(operator.principal, inputs, 'apply', sourceFingerprint).pipe(Effect.flip),
         ).toBeInstanceOf(AgentProfileSetupError);
         expect(yield* auditCount()).toBe(before + inputs.length + 1);
         expect(yield* reviewedProfileInputs(document).pipe(Effect.flip)).toBeInstanceOf(AgentProfileSetupError);

@@ -10,8 +10,8 @@ import { ConnectionInvalid, ConnectionUnavailable } from '../../oauth-connection
 import { OAuthFlow } from '../../oauth-connections/oauth-flow.ts';
 import type { OAuthClientInfo, VerifiedOAuthQuery } from '../../oauth-connections/oauth-flow.ts';
 import { AuthConfig } from '../config.ts';
-import { AuthDatabase } from '../db/client.ts';
-import { oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from '../db/schema.ts';
+import { AuthDatabase } from './client.ts';
+import { oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from './schema.ts';
 
 /** Fields of an already signature-checked query; undefined when client_id or redirect_uri is missing. */
 export const parseVerifiedOAuthQuery = (oauthQuery: string): VerifiedOAuthQuery | undefined => {
@@ -58,11 +58,18 @@ export const OAuthFlowLive = Layer.effect(
           .pipe(
             Effect.mapError(unavailable),
             Effect.map(([row]): OAuthClientInfo | undefined =>
-              row === undefined ? undefined : { clientId: row.clientId, logoUri: row.icon, name: row.name ?? row.clientId },
+              row === undefined
+                ? undefined
+                : { clientId: row.clientId, logoUri: row.icon, name: row.name ?? row.clientId },
             ),
           ),
       verifyQuery: (oauthQuery: string) =>
-        Effect.tryPromise({ catch: unavailable, try: () => verifyOAuthQueryParams(oauthQuery, configuration.secret) }).pipe(
+        Effect.tryPromise({
+          catch: unavailable,
+          try: verifyOAuthQueryParams.bind(undefined, oauthQuery, configuration.secret),
+        }).pipe(
+          Effect.timeout('5 seconds'),
+          Effect.catchTag('TimeoutError', (cause) => Effect.fail(unavailable(cause))),
           Effect.flatMap((valid) => {
             const parsed = valid ? parseVerifiedOAuthQuery(oauthQuery) : undefined;
             return parsed === undefined
