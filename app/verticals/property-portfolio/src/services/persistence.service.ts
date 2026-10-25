@@ -58,7 +58,9 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
   command: PropertyCommand,
   context: PropertyTransitionContext,
 ) {
-  const ref = (resourceType: 'property.portfolio.property' | 'property.portfolio.unit' | 'property.portfolio.asset') => ({
+  const ref = (
+    resourceType: 'property.portfolio.property' | 'property.portfolio.unit' | 'property.portfolio.asset',
+  ) => ({
     moduleId: 'property.portfolio' as const,
     resourceId: context.resourceId,
     resourceType,
@@ -151,30 +153,6 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
   );
   const transition = yield* Match.value(command).pipe(
     Match.tags({
-      ChangeAssetLifecycle: (input) =>
-        Effect.succeed({
-          resourceRef: input.assetRef,
-          state: {
-            ...state,
-            assets: state.assets.map((record) =>
-              record.assetRef.resourceId === input.assetRef.resourceId
-                ? { ...record, lifecycleState: input.lifecycleState }
-                : record,
-            ),
-          },
-        }),
-      ChangePropertyLifecycle: (input) =>
-        Effect.succeed({
-          resourceRef: input.propertyRef,
-          state: {
-            ...state,
-            properties: state.properties.map((record) =>
-              record.propertyRef.resourceId === input.propertyRef.resourceId
-                ? { ...record, lifecycleState: input.lifecycleState, updatedAt: context.now }
-                : record,
-            ),
-          },
-        }),
       ArchiveProperty: (input) => {
         const mark = { archivedAt: context.now, archivedBy: context.principalId ?? '', reason: input.reason };
         return Effect.succeed({
@@ -209,38 +187,27 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
             ),
           },
         }),
-      RestoreProperty: (input) => {
-        const mark = state.properties.find(
-          (record) => record.propertyRef.resourceId === input.propertyRef.resourceId,
-        )?.archive;
-        return Effect.succeed({
+      ChangeAssetLifecycle: (input) =>
+        Effect.succeed({
+          resourceRef: input.assetRef,
+          state: {
+            ...state,
+            assets: state.assets.map((record) =>
+              record.assetRef.resourceId === input.assetRef.resourceId
+                ? { ...record, lifecycleState: input.lifecycleState }
+                : record,
+            ),
+          },
+        }),
+      ChangePropertyLifecycle: (input) =>
+        Effect.succeed({
           resourceRef: input.propertyRef,
           state: {
             ...state,
             properties: state.properties.map((record) =>
               record.propertyRef.resourceId === input.propertyRef.resourceId
-                ? { ...withoutArchive(record), updatedAt: context.now }
+                ? { ...record, lifecycleState: input.lifecycleState, updatedAt: context.now }
                 : record,
-            ),
-            // Units archived together with the property come back with it (still retired); separately archived
-            // units stay archived.
-            units: state.units.map((record) =>
-              record.propertyRef.resourceId === input.propertyRef.resourceId &&
-              mark !== undefined &&
-              record.archive?.archivedAt === mark.archivedAt
-                ? withoutArchive(record)
-                : record,
-            ),
-          },
-        });
-      },
-      RestoreUnit: (input) =>
-        Effect.succeed({
-          resourceRef: input.unitRef,
-          state: {
-            ...state,
-            units: state.units.map((record) =>
-              record.unitRef.resourceId === input.unitRef.resourceId ? withoutArchive(record) : record,
             ),
           },
         }),
@@ -315,6 +282,41 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
         };
         return Effect.succeed({ resourceRef: unitRef, state: { ...state, units: [...state.units, unit] } });
       },
+      RestoreProperty: (input) => {
+        const mark = state.properties.find(
+          (record) => record.propertyRef.resourceId === input.propertyRef.resourceId,
+        )?.archive;
+        return Effect.succeed({
+          resourceRef: input.propertyRef,
+          state: {
+            ...state,
+            properties: state.properties.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId
+                ? { ...withoutArchive(record), updatedAt: context.now }
+                : record,
+            ),
+            // Units archived together with the property come back with it (still retired); separately archived
+            // units stay archived.
+            units: state.units.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId &&
+              mark !== undefined &&
+              record.archive?.archivedAt === mark.archivedAt
+                ? withoutArchive(record)
+                : record,
+            ),
+          },
+        });
+      },
+      RestoreUnit: (input) =>
+        Effect.succeed({
+          resourceRef: input.unitRef,
+          state: {
+            ...state,
+            units: state.units.map((record) =>
+              record.unitRef.resourceId === input.unitRef.resourceId ? withoutArchive(record) : record,
+            ),
+          },
+        }),
       UpdateAsset: (input) =>
         Effect.succeed({
           resourceRef: input.assetRef,
@@ -337,10 +339,10 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
                 ? {
                     ...record,
                     address: input.address,
+                    lifecycleState: input.lifecycleState ?? record.lifecycleState,
                     name: input.name,
                     note: input.note,
                     updatedAt: context.now,
-                    lifecycleState: input.lifecycleState ?? record.lifecycleState,
                     ...(input.propertyType === undefined ? {} : { propertyType: input.propertyType }),
                     ...(input.responsiblePerson === undefined ? {} : { responsiblePerson: input.responsiblePerson }),
                   }
