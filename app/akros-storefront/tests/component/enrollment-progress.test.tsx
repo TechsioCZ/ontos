@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EnrollmentProgress } from "@/components/enrollment-progress";
 
@@ -12,10 +12,12 @@ vi.mock("@/components/store-link", () => ({
 const fetchProgress = vi.fn<typeof fetch>();
 beforeEach(() => {
   vi.clearAllMocks();
+  fetchProgress.mockReset();
   vi.stubGlobal("fetch", fetchProgress);
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -40,9 +42,16 @@ it("recovers pending registration after a reload and resumes only on explicit re
 it.each(["FAILED", "TERMINATED", "COMPLETE"])(
   "does not offer to replay a terminal native Attempt (%s)",
   async (state) => {
-    fetchProgress.mockResolvedValue(Response.json({ state }));
+    vi.useFakeTimers();
+    fetchProgress.mockImplementation(async () => Response.json({ state }));
     render(<EnrollmentProgress />);
-    await screen.findByRole("button", { name: "Ověřit stav" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ověřit stav" }).hasAttribute("disabled")).toBe(
+      false,
+    );
+    expect(fetchProgress.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
     expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toContain(
@@ -100,16 +109,26 @@ it.each(["IN_PROGRESS", "VERIFICATION_REQUIRED"])(
   },
 );
 
-it("does not treat COMPLETE after automatic resume as account admission", async () => {
+it("bounds read-only rechecks without treating persistent COMPLETE as admission or replaying resume", async () => {
+  vi.useFakeTimers();
   fetchProgress
+    .mockImplementation(async () => Response.json({ state: "COMPLETE", revision: 12 }))
     .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }))
-    .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }))
     .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }));
   render(<EnrollmentProgress />);
-  await screen.findByRole("button", { name: "Ověřit stav" });
-  expect(fetchProgress).toHaveBeenCalledTimes(3);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(fetchProgress).toHaveBeenCalledTimes(13);
+  expect(fetchProgress.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
   expect(router.replace).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
+  expect(screen.getByRole("status").textContent).toContain("přístup k účtu nyní není povolen");
+  expect(screen.getByRole("button", { name: "Ověřit stav" }).hasAttribute("disabled")).toBe(false);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(fetchProgress).toHaveBeenCalledTimes(13);
 });
 
 it("makes only one automatic resume when an owner still cannot complete", async () => {
@@ -128,6 +147,175 @@ it("does not retry an automatic resume after an outage or ambiguous failure", as
     .mockResolvedValueOnce(Response.json({ message: "Dočasně nedostupné." }, { status: 503 }));
   render(<EnrollmentProgress />);
   expect((await screen.findByRole("alert")).textContent).toContain("Dočasně nedostupné.");
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("waits for actual delayed admission after one resume, without displaying a premature denial", async () => {
+  vi.useFakeTimers();
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS" }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
+  render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(fetchProgress).toHaveBeenCalledTimes(4);
+  expect(router.replace).not.toHaveBeenCalled();
+  expect(screen.getByRole("status").textContent).toContain("Ověřuji přístup");
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith("/muj-ucet");
+  expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual([
+    "GET",
+    "POST",
+    "GET",
+    "GET",
+    "GET",
+  ]);
+});
+
+it("rechecks actual admission when a reload initially reads COMPLETE", async () => {
+  vi.useFakeTimers();
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
+  render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith("/muj-ucet");
+  expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual(["GET", "GET"]);
+});
+
+it.each([
+  "FAILED",
+  "TERMINATED",
+  "RECONCILIATION_REQUIRED",
+  "IN_PROGRESS",
+  "VERIFICATION_REQUIRED",
+])("stops read-only rechecks on %s without automatically mutating it", async (state) => {
+  vi.useFakeTimers();
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state }));
+  render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual(["GET", "GET"]);
+  expect(router.replace).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Ověřit stav" }).hasAttribute("disabled")).toBe(false);
+});
+
+it.each([401, 403, 429, 503])(
+  "stops on an authoritative refusal or error (%s) during rechecks",
+  async (status) => {
+    vi.useFakeTimers();
+    fetchProgress
+      .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+      .mockResolvedValueOnce(Response.json({ message: "Přístup není dostupný." }, { status }));
+    render(<EnrollmentProgress />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchProgress).toHaveBeenCalledTimes(2);
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("Přístup není dostupný.");
+  },
+);
+
+it("uses the same read-only rechecks after an explicit reconciliation resume", async () => {
+  vi.useFakeTimers();
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "RECONCILIATION_REQUIRED" }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE" }))
+    .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
+  render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Obnovit registraci" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith("/muj-ucet");
+  expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual([
+    "GET",
+    "POST",
+    "GET",
+    "GET",
+  ]);
+});
+
+it("cancels the waiting timer on unmount without issuing another read", async () => {
+  vi.useFakeTimers();
+  fetchProgress.mockResolvedValueOnce(Response.json({ state: "COMPLETE" }));
+  const view = render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  const signal = fetchProgress.mock.calls[0]![1]!.signal!;
+  view.unmount();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(signal.aborted).toBe(true);
+  expect(fetchProgress).toHaveBeenCalledOnce();
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("aborts an in-flight recheck and ignores late admission after unmount", async () => {
+  vi.useFakeTimers();
+  let resolveRead!: (response: Response) => void;
+  fetchProgress.mockResolvedValueOnce(Response.json({ state: "COMPLETE" })).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      }),
+  );
+  const view = render(<EnrollmentProgress />);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1_000);
+  });
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  const signal = fetchProgress.mock.calls[1]![1]!.signal!;
+  view.unmount();
+  await act(async () => {
+    resolveRead(Response.json({ state: "ADMITTED" }));
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(signal.aborted).toBe(true);
+  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("does not reread or route after an unmounted automatic resume resolves late", async () => {
+  let resolveResume!: (response: Response) => void;
+  fetchProgress
+    .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS" }))
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResume = resolve;
+        }),
+    );
+  const view = render(<EnrollmentProgress />);
+  await waitFor(() => expect(fetchProgress).toHaveBeenCalledTimes(2));
+  const signal = fetchProgress.mock.calls[1]![1]!.signal!;
+  view.unmount();
+  await act(async () => {
+    resolveResume(Response.json({ state: "COMPLETE" }));
+  });
+  expect(signal.aborted).toBe(true);
   expect(fetchProgress).toHaveBeenCalledTimes(2);
   expect(router.replace).not.toHaveBeenCalled();
 });

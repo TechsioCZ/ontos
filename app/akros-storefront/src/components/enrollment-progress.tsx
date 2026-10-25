@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import StoreLink from "@/components/store-link";
@@ -29,52 +29,98 @@ async function loadProgress(
   return result;
 }
 
+const admissionRechecks = 10;
+const admissionRecheckDelay = 1_000;
+
+function waitForAdmissionRecheck(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, admissionRecheckDelay);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export function EnrollmentProgress() {
   const router = useRouter();
   const [progress, setProgress] = useState<Progress>({});
   const [pending, setPending] = useState(true);
   const [error, setError] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    loadProgress("read", controller.signal)
-      .then(async (initial) => {
-        if (controller.signal.aborted) return;
-        // Login lands here. One explicit, request-owned pass completes a pending registration;
-        // terminal/reconciliation states never replay automatically and there is no polling loop.
-        let result = initial;
-        if (result.state === "IN_PROGRESS" || result.state === "VERIFICATION_REQUIRED") {
-          result = await loadProgress("resume");
-          if (controller.signal.aborted) return;
-          // COMPLETE is owner evidence, not account admission. Recheck the real account before routing.
-          if (result.state === "COMPLETE") result = await loadProgress("read", controller.signal);
-        }
-        if (controller.signal.aborted) return;
-        setProgress(result);
-        setPending(false);
-        if (result.state === "ADMITTED") router.replace("/muj-ucet");
-      })
-      .catch((cause: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
-        setPending(false);
-      });
-    return () => controller.abort();
-  }, [router]);
+  const request = useRef<AbortController | null>(null);
 
-  async function refresh(operation: "read" | "resume" | "restart") {
-    if (pending) return;
+  const checkProgress = useCallback(
+    (operation: "read" | "resume" | "restart", afterLogin = false) => {
+      if (request.current) return;
+      const controller = new AbortController();
+      request.current = controller;
+      const { signal } = controller;
+      return loadProgress(operation, signal)
+        .then(async (initial) => {
+          let result = initial;
+          signal.throwIfAborted();
+          let resumed = false;
+          // Login may resume once. Reconciliation and terminal Attempts never replay automatically.
+          if (
+            afterLogin &&
+            (result.state === "IN_PROGRESS" || result.state === "VERIFICATION_REQUIRED")
+          ) {
+            result = await loadProgress("resume", signal);
+            signal.throwIfAborted();
+            resumed = true;
+          }
+          if ((operation !== "read" || resumed) && result.state === "COMPLETE") {
+            result = await loadProgress("read", signal);
+            signal.throwIfAborted();
+          }
+          setProgress(result);
+          // COMPLETE does not distinguish pending admission from denial. Only bounded real GETs
+          // can establish ADMITTED; an error or any other owner state stops these read-only checks.
+          for (
+            let attempt = 0;
+            result.state === "COMPLETE" && attempt < admissionRechecks;
+            attempt++
+          ) {
+            await waitForAdmissionRecheck(signal);
+            result = await loadProgress("read", signal);
+            signal.throwIfAborted();
+            setProgress(result);
+          }
+          if (result.state === "ADMITTED") router.replace("/muj-ucet");
+        })
+        .catch((cause: unknown) => {
+          if (!signal.aborted) {
+            setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
+          }
+        })
+        .finally(() => {
+          if (request.current === controller) {
+            request.current = null;
+            if (!signal.aborted) setPending(false);
+          }
+        });
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    void checkProgress("read", true);
+    return () => {
+      request.current?.abort();
+      request.current = null;
+    };
+  }, [checkProgress]);
+
+  function refresh(operation: "read" | "resume" | "restart") {
+    if (request.current) return;
     setPending(true);
     setError("");
-    try {
-      let result = await loadProgress(operation);
-      if (operation !== "read" && result.state === "COMPLETE") result = await loadProgress("read");
-      setProgress(result);
-      if (result.state === "ADMITTED") router.replace("/muj-ucet");
-    } catch (cause) {
-      setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
-    } finally {
-      setPending(false);
-    }
+    void checkProgress(operation);
   }
 
   return (
@@ -85,7 +131,9 @@ export function EnrollmentProgress() {
           : progress.state === "TERMINATED"
             ? "Registrace byla ukončena a nelze ji obnovit. Kontaktujte podporu pro nové přijetí účtu; původní zamítnutý krok se neopakuje."
             : progress.state === "COMPLETE"
-              ? "Registrace byla dokončena, ale přístup k účtu nyní není povolen. Obnovení registrace neopravňuje přístup."
+              ? pending
+                ? "Registrace byla dokončena. Ověřuji přístup k účtu."
+                : "Registrace byla dokončena, ale přístup k účtu nyní není povolen. Obnovení registrace neopravňuje přístup."
               : progress.state === "ADMITTED"
                 ? "Účet je připraven."
                 : "Přihlášení samo o sobě nedokončuje registraci. Zde ověříte přijetí účtu a obnovíte rozpracované kroky."}
