@@ -119,6 +119,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     /** Completed when the entrypoint context permission check starts. */
     readonly contextPermissionStarted?: Deferred.Deferred<boolean>;
+    readonly evidenceEvents?: string[];
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -166,6 +167,7 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
+  const scopeParameterRows: unknown[][] = [];
   const transactionSetup = (text: string, values: readonly unknown[]) =>
     Effect.gen(function* transactionSetupQuery() {
       if (text.includes("current_setting('transaction_isolation')")) {
@@ -181,6 +183,7 @@ const makeHarness = Effect.fn(function* makeHarness(
       }
       if (text.includes('set_config')) {
         scopeInstalls += 1;
+        scopeParameterRows.push([values[0], values[1]]);
         options.authorityEvents?.push('scope_installed');
       }
       if (text.includes('transaction_timestamp')) {
@@ -236,6 +239,7 @@ const makeHarness = Effect.fn(function* makeHarness(
         evidenceRows.push(queryHash === undefined ? {} : { queryHash });
         evidenceParameterRows.push([...values]);
         evidence += 1;
+        options.evidenceEvents?.push('evidence_inserted');
       }
       return text.includes('current_setting')
         ? [
@@ -413,10 +417,44 @@ const makeHarness = Effect.fn(function* makeHarness(
       resourcePermissionChecks,
     }),
     runtime,
+    scopeParameterRows: () => scopeParameterRows,
     stages,
     transactionTimestampReads: () => transactionTimestampReadCount,
   };
 });
+
+/** Exact scope bindings and allowed audit payload for the Shell fixtures below. */
+const expectAllowedShellAudit = (
+  harness: Effect.Success<ReturnType<typeof makeHarness>>,
+  expectedScope: OperationalScope = scope,
+  target: 'module' | 'legal_entity' = 'module',
+  scopeInstallCount = 2,
+) => {
+  expect(harness.scopeParameterRows()).toEqual(
+    Array.from({ length: scopeInstallCount }, () => [expectedScope.tenantId, expectedScope.legalEntityId ?? '']),
+  );
+  expect(harness.evidence()).toBe(1);
+  expect(harness.evidenceParameterRows()).toEqual([
+    [
+      expectedScope.tenantId,
+      ...(expectedScope.legalEntityId === undefined ? [] : [expectedScope.legalEntityId]),
+      expectedScope.principalId,
+      expectedScope.authBindingId,
+      expectedScope.authContextRef,
+      expectedScope.authMethod,
+      'allowed',
+      'evidence',
+      'read_allowed',
+      'list',
+      'core.shell',
+      ...(target === 'module' ? ['core.shell'] : []),
+      0,
+      'core.shell.items.v1',
+      'metadata_only',
+    ],
+  ]);
+};
+
 const registration = (items: readonly string[] = []) =>
   defineRead(
     {
@@ -1159,6 +1197,8 @@ it.effect('admits the new active Read revision before scope, service factory, an
     const harness = yield* makeHarness({
       authorityEvents: events,
       compositionAuthority: { phase: 'active', revision, unexpired: true },
+      evidenceEvents: events,
+      sqlEvents: events,
       transactionEvents: events,
     });
     const scopedRegistration = defineRead(
@@ -1185,10 +1225,25 @@ it.effect('admits the new active Read revision before scope, service factory, an
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['current']);
-    expect(events).toEqual(['authority_locked', 'scope_installed', 'factory', 'handler', 'transaction_settled']);
-    // One unlocked admission precheck before authorization, then the locked fence around owner work.
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 2, scopeInstalls: 1 });
-    expect(harness.evidence()).toBe(1);
+    events.push('read_completed');
+    expect(events).toEqual([
+      'BEGIN',
+      'authority_locked',
+      'scope_installed',
+      'factory',
+      'handler',
+      'COMMIT',
+      'transaction_settled',
+      'BEGIN',
+      'scope_installed',
+      'evidence_inserted',
+      'COMMIT',
+      'transaction_settled',
+      'read_completed',
+    ]);
+    // One admission precheck and locked owner fence; the later audit transaction reinstalls the same scope.
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 2, scopeInstalls: 2 });
+    expectAllowedShellAudit(harness);
   }),
 );
 
@@ -1216,7 +1271,13 @@ it.effect('persists no denied evidence for a stale admitted Read', () =>
 
 it.effect('leaves owner-local Reads independent from composition authority queries', () =>
   Effect.gen(function* localReadAuthorityIndependence() {
-    const harness = yield* makeHarness({ compositionAuthority: 'missing' });
+    const events: string[] = [];
+    const harness = yield* makeHarness({
+      authorityEvents: events,
+      compositionAuthority: 'missing',
+      evidenceEvents: events,
+      sqlEvents: events,
+    });
     expect(
       yield* harness.runtime.runRead({
         input: {},
@@ -1225,7 +1286,19 @@ it.effect('leaves owner-local Reads independent from composition authority queri
         transport: { correlationId: scope.correlationId },
       }),
     ).toEqual(['local']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 1 });
+    events.push('read_completed');
+    expect(events).toEqual([
+      'BEGIN',
+      'scope_installed',
+      'COMMIT',
+      'BEGIN',
+      'scope_installed',
+      'evidence_inserted',
+      'COMMIT',
+      'read_completed',
+    ]);
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 2 });
+    expectAllowedShellAudit(harness);
   }),
 );
 
@@ -1306,10 +1379,13 @@ const counterpartyReadRegistration = (legalEntityScope: 'required' | 'optional',
 it.effect('keeps authorization round trips and evidence outside the owner transaction', () =>
   Effect.gen(function* authorizationOutsideTransaction() {
     const events: string[] = [];
+    const resolvedScope = { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000004' };
     const harness = yield* makeHarness({
+      authorityEvents: events,
+      evidenceEvents: events,
       onLegalEntityTarget: () => events.push('spicedb'),
       permissionDecision: 'allowed',
-      resolvedScope: { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000004' },
+      resolvedScope,
       sqlEvents: events,
     });
     yield* harness.runtime.runRead({
@@ -1318,11 +1394,20 @@ it.effect('keeps authorization round trips and evidence outside the owner transa
       registration: counterpartyReadRegistration('required', () => events.push('handler')),
       transport: { correlationId: scope.correlationId },
     });
-    // Every SpiceDB check finishes before the only transaction opens; it commits right after the handler.
-    expect(events).toContain('spicedb');
-    expect(events.lastIndexOf('spicedb')).toBeLessThan(events.indexOf('BEGIN'));
-    expect(events.slice(events.indexOf('BEGIN'))).toEqual(['BEGIN', 'handler', 'COMMIT']);
-    expect(harness.evidence()).toBe(1);
+    // Authorization precedes owner work; the later transaction contains only scoped audit persistence.
+    expect(events).toEqual([
+      'spicedb',
+      'BEGIN',
+      'authority_locked',
+      'scope_installed',
+      'handler',
+      'COMMIT',
+      'BEGIN',
+      'scope_installed',
+      'evidence_inserted',
+      'COMMIT',
+    ]);
+    expectAllowedShellAudit(harness, resolvedScope, 'legal_entity');
   }),
 );
 
@@ -1422,6 +1507,8 @@ it.effect('lets owner prepare, finish, and the owner overlay preparation reach S
     const events: string[] = [];
     const spiceDb = guardedSpiceDb(events);
     const harness = yield* makeHarness({
+      authorityEvents: events,
+      evidenceEvents: events,
       ownerAuthorizationOverlay: {
         prepare: () =>
           spiceDbCheck(spiceDb).pipe(
@@ -1461,11 +1548,17 @@ it.effect('lets owner prepare, finish, and the owner overlay preparation reach S
       'spicedb-rpc',
       'spicedb-rpc',
       'BEGIN',
+      'scope_installed',
       'owner-overlay-check',
       'owner-load',
       'COMMIT',
       'spicedb-rpc',
+      'BEGIN',
+      'scope_installed',
+      'evidence_inserted',
+      'COMMIT',
     ]);
+    expectAllowedShellAudit(harness);
   }),
 );
 
@@ -1595,7 +1688,12 @@ it.effect('gives finish short owner transactions: owner state between remote cal
   Effect.gen(function* finishOwnerTransactions() {
     const events: string[] = [];
     const { readKey } = registration().descriptor;
-    const harness = yield* makeHarness({ permissionDecision: 'allowed', sqlEvents: events });
+    const harness = yield* makeHarness({
+      authorityEvents: events,
+      evidenceEvents: events,
+      permissionDecision: 'allowed',
+      sqlEvents: events,
+    });
     const run = (
       finish: (
         input: Readonly<Record<string, never>>,
@@ -1637,16 +1735,24 @@ it.effect('gives finish short owner transactions: owner state between remote cal
     expect(events).toEqual([
       'fetch:https://owner.example/current',
       'BEGIN',
+      'scope_installed',
       'owner-load',
       'COMMIT',
       'BEGIN',
+      'scope_installed',
       'owner-state:true',
       'COMMIT',
       'fetch:https://owner.example/current',
       'BEGIN',
+      'scope_installed',
       'owner-state-again',
       'COMMIT',
+      'BEGIN',
+      'scope_installed',
+      'evidence_inserted',
+      'COMMIT',
     ]);
+    expectAllowedShellAudit(harness, scope, 'module', 4);
     events.length = 0;
     const fetchInOwnerTransaction = yield* run((_input, context) =>
       context.transaction(() => ownerFetch).pipe(Effect.orDie, Effect.as({ evidence: { resultCount: 0 }, result: [] })),
