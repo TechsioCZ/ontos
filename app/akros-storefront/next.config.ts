@@ -10,6 +10,8 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  // Preserve loopback IP origins so the exact-origin request guard matches the browser.
+  skipProxyUrlNormalize: true,
   // pnpm resolves dependencies through the workspace virtual store above this app.
   outputFileTracingRoot: resolve(process.cwd(), ".."),
   images: {
