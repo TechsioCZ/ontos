@@ -10,13 +10,17 @@ import type { Writer } from 'effect/unstable/socket/Socket';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
+import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../packages/core-runtime/src/actions/principal-context.ts';
 import { AuthenticationNamespaceIdSchema } from '../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import {
   AuthenticationNamespaceRegistry,
   makeAuthenticationNamespaceRegistry,
 } from '../../packages/core-runtime/src/auth/external-identity/verifier.ts';
-import { trustVerifiedGatewayPrincipalContext } from '../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
+import {
+  readVerifiedGatewayScopeAssertion,
+  trustVerifiedGatewayPrincipalContext,
+} from '../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import {
   BEARER_ASSERTION_ROLE_SETTINGS,
@@ -227,7 +231,7 @@ const admissionProbe = function admissionProbe<Value, Failure, Services>(
       (cause) =>
         new AdmissionProbeFailure({
           cause,
-          message: `admission-stage: ${stage}; SQLSTATE: ${Option.getOrUndefined(findPostgresFailure(cause))?.code ?? 'unavailable'}`,
+          message: `admission-stage: ${stage}; SQLSTATE: ${Option.getOrUndefined(findPostgresFailure(cause, ({ code }) => /^[0-9A-Z]{5}$/u.test(code)))?.code ?? 'unavailable'}`,
         }),
     ),
   );
@@ -559,6 +563,30 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
           principal,
         })
         .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+    const principalFor = (binding: (typeof bindings)[number], entityId: string): TrustedPrincipalContext => {
+      const principal: TrustedPrincipalContext = {
+        authBindingId: binding.id,
+        authContextRef: binding.authMethod === 'oauth_connection' ? `oauth-grant:${binding.id}` : `probe-${binding.id}`,
+        authenticationNamespaceId: namespace,
+        authMethod: binding.authMethod,
+        legalEntityId: entityId,
+        principalId: binding.principalId,
+        tenantId,
+      };
+      if (binding.authMethod !== 'oauth_connection') {
+        return principal;
+      }
+      return {
+        ...principal,
+        connection: {
+          clientId: 'scope-admission-client',
+          clientName: 'Scope admission client',
+          grantId: binding.id,
+          modules: [],
+          writePolicy: 'read_only',
+        },
+      };
+    };
     const gatewayPrincipal = Effect.fn('gatewayPrincipal')(function* gatewayPrincipalEffect(
       binding: (typeof bindings)[number],
       entityId: string = legalEntityId,
@@ -567,22 +595,15 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
         principalId: binding.principalId,
         scopeLegalEntityId: entityId,
       });
-      return trustVerifiedGatewayPrincipalContext(
-        {
-          authBindingId: binding.id,
-          authContextRef: `probe-${binding.id}`,
-          authenticationNamespaceId: namespace,
-          authMethod: binding.authMethod,
-          legalEntityId: entityId,
-          principalId: binding.principalId,
-          tenantId,
-        },
-        'a'.repeat(64),
-        { assertion: Redacted.make(assertion), audience: partyAudience },
-      );
+      return trustVerifiedGatewayPrincipalContext(principalFor(binding, entityId), 'a'.repeat(64), {
+        assertion: Redacted.make(assertion),
+        audience: partyAudience,
+      });
     });
     for (const binding of bindings) {
       const principal = yield* gatewayPrincipal(binding);
+      expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
+      expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe(partyAudience);
       const resolved = yield* admissionProbe(`dedicated-${binding.authMethod}`, resolve(principal));
       expect(resolved.principalId).toBe(binding.principalId);
       expect(resolved.authMethod).toBe(binding.authMethod);
@@ -592,19 +613,12 @@ it.live('the dedicated Party identity admits session, OAuth and agent scope with
     const sharedExecutor = yield* makeTestDatabaseFromClient(shared, coreRelations);
     const sharedRepository = makeOperationalScopeRepository({ executor: sharedExecutor });
     for (const binding of bindings) {
-      const principal = trustVerifiedGatewayPrincipalContext(
-        {
-          authBindingId: binding.id,
-          authContextRef: `shared-probe-${binding.id}`,
-          authenticationNamespaceId: namespace,
-          authMethod: binding.authMethod,
-          legalEntityId,
-          principalId: binding.principalId,
-          tenantId,
-        },
-        'a'.repeat(64),
-        { assertion: Redacted.make('verified-non-party-assertion'), audience: 'catalog' },
-      );
+      const principal = trustVerifiedGatewayPrincipalContext(principalFor(binding, legalEntityId), 'a'.repeat(64), {
+        assertion: Redacted.make('verified-non-party-assertion'),
+        audience: 'catalog',
+      });
+      expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
+      expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe('catalog');
       const persisted = yield* admissionProbe(`shared-${binding.authMethod}`, sharedRepository.load(principal));
       expect(persisted.principalTenantId).toBe(tenantId);
       expect(persisted.bindingPrincipalId).toBe(binding.principalId);
