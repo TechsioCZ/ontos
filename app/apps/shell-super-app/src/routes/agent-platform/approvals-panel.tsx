@@ -11,27 +11,44 @@ import type {
   AgentQueueItem,
   AgentQueueRequest,
   AgentPageCursor,
+  AgentDecideRequest,
+  AgentRevertRequest,
+  AgentDecideResponse,
+  AgentQueueResponse,
 } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Effect, Match, Result, Schema } from 'effect';
+import type { HttpClient } from 'effect/unstable/http';
+import type { ComponentProps } from 'react';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
-import { decideAgentItems, formatAgentTime, revertAgentBatch } from './agent-platform-client.ts';
+import {
+  agentMutationIntent,
+  agentMutationUncertain,
+  decideAgentItems,
+  formatAgentTime,
+  revertAgentBatch,
+} from './agent-platform-client.ts';
+import type { AgentMutationIntent } from './agent-platform-client.ts';
 import { agentQueueData } from './platform-page-data.ts';
 import { batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
 
-type Decision = 'approve' | 'reject';
+type Decision = AgentDecideRequest['decision'];
+type ReviewIntent =
+  | { readonly kind: 'decide'; readonly request: AgentMutationIntent<AgentDecideRequest> }
+  | { readonly kind: 'revert'; readonly request: AgentMutationIntent<AgentRevertRequest> };
 
 /** Neutral outline for settled items; the theme's secondary badge is the brand green and reads as success. */
-const itemBadgeVariant = (status: AgentQueueItem['status']) =>
-  status === 'pending'
-    ? 'warning'
-    : status === 'applied'
-      ? 'success'
-      : status === 'failed' || status === 'revert_failed'
-        ? 'danger'
-        : 'outline';
+const itemBadgeVariants = {
+  applied: 'success',
+  failed: 'danger',
+  pending: 'warning',
+  rejected: 'outline',
+  revert_failed: 'danger',
+  reverted: 'outline',
+} satisfies Readonly<Record<AgentQueueItem['status'], ComponentProps<typeof Badge>['variant']>>;
 const queueFailureText = (httpStatus: number): string => {
   if (httpStatus === 401) {
     return 'Přihlaste se prosím znovu.';
@@ -42,14 +59,21 @@ const queueFailureText = (httpStatus: number): string => {
   return 'Seznam návrhů se nepodařilo načíst.';
 };
 
-const commandValue = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
+const commandJson = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+const commandValue = (value: Schema.Json): string =>
+  Schema.is(Schema.String)(value)
+    ? value
+    : Result.match(commandJson(value), {
+        onFailure: () => 'Příkaz nelze zobrazit.',
+        onSuccess: (text) => text,
+      });
 
 /** The exact command an approval runs; open by default when the lines above are only the agent's description. */
 const CommandDetails = ({
   command,
   open,
 }: {
-  readonly command: Readonly<Record<string, unknown>>;
+  readonly command: NonNullable<AgentQueueItem['command']>;
   readonly open: boolean;
 }) => (
   <details className="ai-review-command" open={open}>
@@ -67,77 +91,61 @@ const CommandDetails = ({
   </details>
 );
 
-const ChangeCard = ({
-  item,
-  busy,
-  decide,
-  highlighted,
-}: {
-  readonly highlighted: boolean;
-  readonly item: AgentQueueItem;
-  readonly busy: boolean;
-  readonly decide: (keys: readonly string[], decision: Decision) => void;
-}) => (
-  <article
-    aria-current={highlighted ? 'true' : undefined}
-    tabIndex={highlighted ? -1 : undefined}
-    className="ai-review-change"
-    data-item-key={item.key}
-  >
-    <div className="ai-review-heading">
-      <div>
-        <h3 className="font-semibold text-sm">{item.summary}</h3>
-        {item.targetLabel !== item.summary && <p className="text-fg-secondary text-sm">{item.targetLabel}</p>}
-      </div>
-      <div className="ai-review-actions">
-        <Badge variant={itemBadgeVariant(item.status)}>{agentItemStatusLabel[item.status]}</Badge>
-        <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
-        <span className="text-fg-secondary text-xs">{item.moduleLabel}</span>
-      </div>
-    </div>
-    <p className="ai-review-reason">
-      <span className="font-medium">Důvod návrhu: </span>
-      {item.reason}
-    </p>
-    <div className="ai-review-diff" role="table" aria-label={`Porovnání: ${item.summary}`}>
-      <div className="ai-review-diff-head" role="row">
-        <span role="columnheader">Údaj</span>
-        <span role="columnheader">Před změnou</span>
-        <span role="columnheader">Po schválení</span>
-      </div>
+const ChangeDiff = ({ item }: { readonly item: AgentQueueItem }) => (
+  <table aria-label={`Porovnání: ${item.summary}`} className="ai-review-diff block w-full">
+    <thead className="block">
+      <tr className="ai-review-diff-head">
+        <th className="px-75 py-50 text-left" scope="col">
+          Údaj
+        </th>
+        <th className="px-75 py-50 text-left" scope="col">
+          Před změnou
+        </th>
+        <th className="px-75 py-50 text-left" scope="col">
+          Po schválení
+        </th>
+      </tr>
+    </thead>
+    <tbody className="block">
       {item.diff.map((line) => (
-        <div className="ai-review-diff-row" role="row" key={line.field}>
-          <span className="font-medium" role="cell">
+        <tr className="ai-review-diff-row" key={line.field}>
+          <th className="px-75 py-50 text-left font-medium" scope="row">
             {line.label}
-          </span>
-          <span className="ai-review-before" role="cell">
-            {line.before ?? '—'}
-          </span>
-          <span className="ai-review-after" role="cell">
-            {line.after ?? 'Vymazáno'}
-          </span>
-        </div>
+          </th>
+          <td className="ai-review-before px-75 py-50">{line.before ?? '—'}</td>
+          <td className="ai-review-after px-75 py-50">{line.after ?? 'Vymazáno'}</td>
+        </tr>
       ))}
-    </div>
-    {item.diffSource === 'agent' ? (
+    </tbody>
+  </table>
+);
+
+const ChangeEvidence = ({ item }: { readonly item: AgentQueueItem }) =>
+  Match.value(item.diffSource).pipe(
+    Match.when('agent', () => (
       <StatusText showIcon size="sm" status="warning">
         Tento popis změny napsal agent a platforma ho neumí ověřit. Schválení provede přesně příkaz níže.
       </StatusText>
-    ) : item.diffSource === 'command' ? (
+    )),
+    Match.when('command', () => (
       <p className="text-fg-secondary text-xs">
         Hodnoty „Po schválení“ sestavila platforma z uloženého příkazu. Původní hodnoty tento modul platformě
         neposkytuje.
       </p>
-    ) : (
-      item.diffSource === 'platform' && (
-        <p className="text-fg-secondary text-xs">
-          {item.status === 'pending'
-            ? 'Hodnoty sestavila platforma z příkazu a aktuálního stavu záznamu.'
-            : 'Hodnoty sestavila platforma z provedeného příkazu.'}
-        </p>
-      )
-    )}
-    {item.command !== undefined && <CommandDetails command={item.command} open={item.diffSource === 'agent'} />}
+    )),
+    Match.when('platform', () => (
+      <p className="text-fg-secondary text-xs">
+        {item.status === 'pending'
+          ? 'Hodnoty sestavila platforma z příkazu a aktuálního stavu záznamu.'
+          : 'Hodnoty sestavila platforma z provedeného příkazu.'}
+      </p>
+    )),
+    Match.when(undefined, () => null),
+    Match.exhaustive,
+  );
+
+const ChangeHistory = ({ item }: { readonly item: AgentQueueItem }) => (
+  <>
     {item.failure !== undefined && (
       <p className="text-sm" role="alert">
         Změnu nelze provést: {item.failure}
@@ -156,6 +164,45 @@ const ChangeCard = ({
         {item.status === 'pending' ? 'Po schválení nelze automaticky vrátit' : 'Nelze automaticky vrátit'}
       </Badge>
     )}
+  </>
+);
+
+const ChangeCard = ({
+  busy,
+  decide,
+  highlighted,
+  item,
+}: {
+  readonly busy: boolean;
+  readonly decide: (keys: readonly string[], decision: Decision) => void;
+  readonly highlighted: boolean;
+  readonly item: AgentQueueItem;
+}) => (
+  <article
+    aria-current={highlighted ? 'true' : undefined}
+    className="ai-review-change"
+    data-item-key={item.key}
+    tabIndex={highlighted ? -1 : undefined}
+  >
+    <div className="ai-review-heading">
+      <div>
+        <h3 className="font-semibold text-sm">{item.summary}</h3>
+        {item.targetLabel !== item.summary && <p className="text-fg-secondary text-sm">{item.targetLabel}</p>}
+      </div>
+      <div className="ai-review-actions">
+        <Badge variant={itemBadgeVariants[item.status]}>{agentItemStatusLabel[item.status]}</Badge>
+        <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
+        <span className="text-fg-secondary text-xs">{item.moduleLabel}</span>
+      </div>
+    </div>
+    <p className="ai-review-reason">
+      <span className="font-medium">Důvod návrhu: </span>
+      {item.reason}
+    </p>
+    <ChangeDiff item={item} />
+    <ChangeEvidence item={item} />
+    {item.command !== undefined && <CommandDetails command={item.command} open={item.diffSource === 'agent'} />}
+    <ChangeHistory item={item} />
     {item.status === 'pending' && item.canDecide && (
       <div className="ai-review-actions ai-review-end">
         <Button
@@ -181,38 +228,44 @@ const ChangeCard = ({
   </article>
 );
 
+const BatchStatus = ({ batch }: { readonly batch: AgentQueueBatch }) => {
+  if (batch.revertedAt !== undefined) {
+    return <Badge variant="outline">Dávka vrácena</Badge>;
+  }
+  const pending = batch.items.filter((item) => item.status === 'pending');
+  if (pending.length > 0) {
+    return <Badge variant="warning">{`${pending.length} ke schválení`}</Badge>;
+  }
+  if (batch.items.some((item) => item.status === 'applied')) {
+    return <Badge variant="success">Změny provedeny</Badge>;
+  }
+  return <Badge variant="outline">Vyřízeno</Badge>;
+};
+
 const BatchCard = ({
   batch,
   busy,
   highlighted,
-  targetItemKey,
   onDecide,
   onRevert,
+  targetItemKey,
 }: {
   readonly batch: AgentQueueBatch;
   readonly busy: boolean;
   readonly highlighted: boolean;
-  readonly targetItemKey: string | undefined;
   readonly onDecide: (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => void;
   readonly onRevert: (batch: AgentQueueBatch, note: string) => void;
+  readonly targetItemKey: string | undefined;
 }) => {
   const [note, setNote] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = batch.items.filter((item) => item.status === 'pending');
   const decidable = pending.filter((item) => item.canDecide);
-  const applied = batch.items.filter((item) => item.status === 'applied');
   const trimmedNote = note.trim();
   const decide = (keys: readonly string[], decision: Decision) => onDecide(batch, keys, decision, trimmedNote);
   // Modules with their own AI change engine declare the page that shows these batches too.
   const { modulePage } = batch;
-  const badge =
-    batch.revertedAt !== undefined
-      ? { label: 'Dávka vrácena', variant: 'outline' as const }
-      : pending.length > 0
-        ? { label: `${pending.length} ke schválení`, variant: 'warning' as const }
-        : applied.length > 0
-          ? { label: 'Změny provedeny', variant: 'success' as const }
-          : { label: 'Vyřízeno', variant: 'outline' as const };
+  const revertNote = batch.revertNote === undefined ? '' : ` · ${batch.revertNote}`;
   return (
     <section
       aria-current={highlighted ? 'true' : undefined}
@@ -237,17 +290,17 @@ const BatchCard = ({
               )}
             </div>
           </div>
-          <Badge variant={badge.variant}>{badge.label}</Badge>
+          <BatchStatus batch={batch} />
         </div>
         {decidable.length > 0 && (
           <>
             <FormInput
               id={`note-${batch.key}`}
-              size="sm"
               label="Poznámka k rozhodnutí (nepovinná)"
-              value={note}
               onChange={(event) => setNote(event.target.value)}
               placeholder="Např. ověřeno s obchodníkem"
+              size="sm"
+              value={note}
             />
             <div className="ai-review-actions">
               <Button
@@ -317,13 +370,13 @@ const BatchCard = ({
         )}
         {batch.revertedAt !== undefined && (
           <p className="text-fg-secondary text-xs">
-            {`Vráceno ${formatAgentTime(batch.revertedAt)} · ${batch.revertedByName ?? 'Neznámý uživatel'}${batch.revertNote === undefined ? '' : ` · ${batch.revertNote}`}`}
+            {`Vráceno ${formatAgentTime(batch.revertedAt)} · ${batch.revertedByName ?? 'Neznámý uživatel'}${revertNote}`}
           </p>
         )}
       </header>
       <div className="ai-review-changes">
         {batch.items.map((item) => (
-          <ChangeCard highlighted={item.key === targetItemKey} busy={busy} decide={decide} item={item} key={item.key} />
+          <ChangeCard busy={busy} decide={decide} highlighted={item.key === targetItemKey} item={item} key={item.key} />
         ))}
       </div>
     </section>
@@ -349,15 +402,257 @@ const queueRequest = (
   return request;
 };
 
-export const ApprovalsPanel = () => {
-  const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
-  const targetKey = batchKeyFromSearch(search);
-  const targetItemKey = itemKeyFromSearch(search);
-  const [filter, setFilter] = useState<'all' | 'pending'>(targetKey === undefined ? 'pending' : 'all');
-  const [moduleFilter, setModuleFilter] = useState('');
+interface ReviewFeedback {
+  readonly message: string;
+  readonly uncertain: boolean;
+}
+
+const decisionMessage = (request: AgentDecideRequest, response: AgentDecideResponse): string => {
+  const settled = response.results.every((entry) => entry.outcome === 'applied' || entry.outcome === 'rejected');
+  if (settled) {
+    return request.decision === 'approve'
+      ? 'Rozhodnutí uloženo. Výsledek vidíte u jednotlivých změn.'
+      : 'Návrhy zamítnuty. Data zůstala beze změny.';
+  }
+  const messages = response.results
+    .map((entry) => entry.message)
+    .filter((text): text is string => text !== undefined && text !== '');
+  return `Některé změny se nepodařilo provést: ${messages.join(' ')}`;
+};
+
+const decisionFeedback = (
+  intent: AgentMutationIntent<AgentDecideRequest>,
+): Effect.Effect<ReviewFeedback, never, HttpClient.HttpClient> =>
+  decideAgentItems(intent).pipe(
+    Effect.map((result) => ({
+      message:
+        result.status === 'ok'
+          ? decisionMessage(intent.payload, result.value)
+          : 'Rozhodnutí se nepodařilo uložit. Zkuste to prosím znovu.',
+      uncertain: agentMutationUncertain(result),
+    })),
+  );
+
+const revertFeedback = (
+  intent: AgentMutationIntent<AgentRevertRequest>,
+): Effect.Effect<ReviewFeedback, never, HttpClient.HttpClient> =>
+  revertAgentBatch(intent).pipe(
+    Effect.map((result) => ({
+      message: result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.',
+      uncertain: agentMutationUncertain(result),
+    })),
+  );
+
+/** Own the pending intent independently of queue rows, editable notes, and queue refreshes. */
+const useReviewActions = (refresh: () => void) => {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const [retryIntent, setRetryIntent] = useState<ReviewIntent>();
+  const send = (intent: Effect.Effect<ReviewIntent>) => {
+    if (inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setBusy(true);
+    browserRuntime.runFork(
+      intent.pipe(
+        Effect.tap((request) => Effect.sync(() => setRetryIntent(request))),
+        Effect.flatMap((request) =>
+          request.kind === 'decide' ? decisionFeedback(request.request) : revertFeedback(request.request),
+        ),
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            setMessage(result.message);
+            if (!result.uncertain) {
+              setRetryIntent(undefined);
+              refresh();
+            }
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            inFlight.current = false;
+            setBusy(false);
+          }),
+        ),
+      ),
+    );
+  };
+  const handleDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
+    let payload: AgentDecideRequest = { batchKey: batch.key, decision, itemKeys: [...keys].toSorted() };
+    if (note !== '') {
+      payload = { ...payload, note };
+    }
+    send(
+      agentMutationIntent(retryIntent?.kind === 'decide' ? retryIntent.request : undefined, payload).pipe(
+        Effect.map((request): ReviewIntent => ({ kind: 'decide', request })),
+      ),
+    );
+  };
+  const handleRevert = (batch: AgentQueueBatch, note: string) => {
+    let payload: AgentRevertRequest = { batchKey: batch.key };
+    if (note !== '') {
+      payload = { ...payload, note };
+    }
+    send(
+      agentMutationIntent(retryIntent?.kind === 'revert' ? retryIntent.request : undefined, payload).pipe(
+        Effect.map((request): ReviewIntent => ({ kind: 'revert', request })),
+      ),
+    );
+  };
+  const handleRetry = () => {
+    if (retryIntent !== undefined) {
+      send(Effect.succeed(retryIntent));
+    }
+  };
+  return { busy, handleDecide, handleRetry, handleRevert, message, retryIntent };
+};
+
+type ReviewActions = ReturnType<typeof useReviewActions>;
+
+const ReviewStatus = ({ actions }: { readonly actions: ReviewActions }) => (
+  <>
+    {actions.message !== '' && (
+      <StatusText aria-live="polite" size="sm" status="default">
+        {actions.message}
+      </StatusText>
+    )}
+    {actions.retryIntent !== undefined && (
+      <Button disabled={actions.busy} onClick={actions.handleRetry} size="sm" theme="outlined" variant="secondary">
+        Zopakovat původní požadavek
+      </Button>
+    )}
+  </>
+);
+
+const QueueEmpty = ({ pendingOnly }: { readonly pendingOnly: boolean }) =>
+  pendingOnly ? (
+    <div>
+      <h2 className="font-semibold text-sm">Nic nečeká na schválení</h2>
+      <p className="text-fg-secondary text-sm">Jakmile AI agent pošle návrh změny, objeví se tady.</p>
+    </div>
+  ) : (
+    <p className="text-fg-secondary text-sm">Zatím tu nejsou žádné dávky návrhů.</p>
+  );
+
+const QueueBatches = ({
+  actions,
+  filter,
+  response,
+  targetItemKey,
+  targetKey,
+}: {
+  readonly actions: ReviewActions;
+  readonly filter: 'all' | 'pending';
+  readonly response: AgentQueueResponse;
+  readonly targetItemKey: string | undefined;
+  readonly targetKey: string | undefined;
+}) =>
+  response.batches.length === 0 ? (
+    <QueueEmpty pendingOnly={filter === 'pending'} />
+  ) : (
+    response.batches.map((batch) => (
+      <BatchCard
+        batch={batch}
+        busy={actions.busy}
+        highlighted={batch.key === targetKey}
+        key={batch.key}
+        onDecide={actions.handleDecide}
+        onRevert={actions.handleRevert}
+        targetItemKey={targetItemKey}
+      />
+    ))
+  );
+
+/** Synchronize a review link with the committed DOM, without changing queue filters from an effect. */
+const useReviewTarget = (
+  queue: ReturnType<typeof agentQueueData.snapshot>,
+  targetKey: string | undefined,
+  targetItemKey: string | undefined,
+) => {
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === (targetItemKey ?? targetKey)) {
+      return;
+    }
+    if (!queue.value.batches.some((batch) => batch.key === targetKey)) {
+      return;
+    }
+    const batchElement = document.querySelector<HTMLElement>(`[data-batch-key="${CSS.escape(targetKey)}"]`);
+    const element =
+      targetItemKey === undefined
+        ? batchElement
+        : batchElement?.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(targetItemKey)}"]`);
+    if (element === null || element === undefined) {
+      return;
+    }
+    scrolledTo.current = targetItemKey ?? targetKey;
+    if (targetItemKey !== undefined) {
+      element.focus({ preventScroll: true });
+    }
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [queue, targetKey, targetItemKey]);
+};
+
+const QueueFilters = ({
+  filter,
+  moduleFilter,
+  modules,
+  onFilter,
+  onModuleFilter,
+}: {
+  readonly filter: 'all' | 'pending';
+  readonly moduleFilter: string;
+  readonly modules: NonNullable<AgentQueueResponse['modules']>;
+  readonly onFilter: (filter: 'all' | 'pending') => void;
+  readonly onModuleFilter: (moduleKey: string) => void;
+}) => (
+  <fieldset aria-label="Zobrazení dávek" className="ai-review-actions agent-filters">
+    <Button
+      aria-pressed={filter === 'pending'}
+      onClick={() => onFilter('pending')}
+      size="sm"
+      theme={filter === 'pending' ? 'solid' : 'outlined'}
+      variant={filter === 'pending' ? 'primary' : 'secondary'}
+    >
+      Čeká na schválení
+    </Button>
+    <Button
+      aria-pressed={filter === 'all'}
+      onClick={() => onFilter('all')}
+      size="sm"
+      theme={filter === 'all' ? 'solid' : 'outlined'}
+      variant={filter === 'all' ? 'primary' : 'secondary'}
+    >
+      Všechny dávky
+    </Button>
+    <label>
+      <span>Modul</span>
+      <select onChange={(event) => onModuleFilter(event.target.value)} value={moduleFilter}>
+        <option value="">Všechny moduly</option>
+        {modules.map((module) => (
+          <option key={module.moduleKey} value={module.moduleKey}>
+            {module.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  </fieldset>
+);
+
+const ApprovalsQueue = ({
+  targetItemKey,
+  targetKey,
+}: {
+  readonly targetItemKey: string | undefined;
+  readonly targetKey: string | undefined;
+}) => {
+  const [selectedFilter, setSelectedFilter] = useState<'all' | 'pending'>('pending');
+  const [moduleFilter, setModuleFilter] = useState('');
   const [browse, setBrowse] = useState(false);
+  // A direct review link includes settled batches without resetting React state from an effect.
+  const filter = !browse && targetKey !== undefined ? 'all' : selectedFilter;
   const filterKey = [filter, moduleFilter, browse ? '' : (targetKey ?? '')].join('|');
   const [page, setPage] = useState<{ readonly cursor: AgentPageCursor; readonly filter: string }>();
   const cursor = page?.filter === filterKey ? page.cursor : undefined;
@@ -378,89 +673,21 @@ export const ApprovalsPanel = () => {
     browserRuntime.runFork(agentQueueData.refresh(firstPage));
   };
 
-  /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
-  const scrolledTo = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === (targetItemKey ?? targetKey)) {
-      return;
-    }
-    const index = queue.value.batches.findIndex((batch) => batch.key === targetKey);
-    const target = queue.value.batches[index];
-    if (target === undefined) {
-      return;
-    }
-    if (moduleFilter !== '') {
-      setModuleFilter('');
-      return;
-    }
-    const pendingHere = target.items.some((item) => item.status === 'pending');
-    if (!pendingHere && filter !== 'all') {
-      setFilter('all');
-      return;
-    }
-    const batchElement = document.querySelector<HTMLElement>(`[data-batch-key="${CSS.escape(targetKey)}"]`);
-    const element =
-      targetItemKey === undefined
-        ? batchElement
-        : batchElement?.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(targetItemKey)}"]`);
-    if (element != null && targetItemKey !== undefined) {
-      element.focus({ preventScroll: true });
-    }
-    if (element != null) {
-      scrolledTo.current = targetItemKey ?? targetKey;
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [queue, targetKey, targetItemKey, filter, moduleFilter]);
-
-  const finish = (text: string) => {
-    setMessage(text);
-    setBusy(false);
-    refresh();
-  };
-
-  const onDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
-    setBusy(true);
-    void decideAgentItems({
-      batchKey: batch.key,
-      decision,
-      itemKeys: [...keys],
-      ...(note === '' ? {} : { note }),
-    }).then((result) => {
-      if (result.status !== 'ok') {
-        finish('Rozhodnutí se nepodařilo uložit. Zkuste to prosím znovu.');
-        return;
-      }
-      const settled = result.value.results.every(
-        (entry) => entry.outcome === 'applied' || entry.outcome === 'rejected',
-      );
-      if (settled) {
-        finish(
-          decision === 'approve'
-            ? 'Rozhodnutí uloženo. Výsledek vidíte u jednotlivých změn.'
-            : 'Návrhy zamítnuty. Data zůstala beze změny.',
-        );
-        return;
-      }
-      const messages = result.value.results
-        .map((entry) => entry.message)
-        .filter((text): text is string => text !== undefined && text !== '');
-      finish(`Některé změny se nepodařilo provést: ${messages.join(' ')}`);
-    });
-  };
-
-  const onRevert = (batch: AgentQueueBatch, note: string) => {
-    setBusy(true);
-    void revertAgentBatch({ batchKey: batch.key, ...(note === '' ? {} : { note }) }).then((result) => {
-      finish(result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.');
-    });
-  };
+  const actions = useReviewActions(refresh);
+  useReviewTarget(queue, targetKey, targetItemKey);
 
   if (queue.state === 'pending') {
-    return <ModulePageSkeleton />;
+    return (
+      <>
+        <ReviewStatus actions={actions} />
+        <ModulePageSkeleton />
+      </>
+    );
   }
   if (queue.state === 'failed') {
     return (
       <div className="ai-review">
+        <ReviewStatus actions={actions} />
         <StatusText aria-live="polite" showIcon status="error">
           {queueFailureText(queue.error.httpStatus)}
         </StatusText>
@@ -475,7 +702,6 @@ export const ApprovalsPanel = () => {
 
   const response = queue.value;
   const moduleOptions = response.modules ?? [];
-  const visibleBatches = response.batches;
   const targetBatch = response.batches.find((batch) => batch.key === targetKey);
   const missingTarget =
     targetKey !== undefined &&
@@ -488,7 +714,7 @@ export const ApprovalsPanel = () => {
         <p className="text-fg-secondary text-sm">
           Návrhy změn od AI agentů ze všech modulů. Bez souhlasu člověka se nic nezmění.
         </p>
-        <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+        <Button disabled={actions.busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
           Obnovit seznam
         </Button>
       </div>
@@ -504,78 +730,32 @@ export const ApprovalsPanel = () => {
           {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst. Obnovte prosím stránku za chvíli.`}
         </StatusText>
       )}
-      <div className="ai-review-actions agent-filters" role="group" aria-label="Zobrazení dávek">
-        <Button
-          aria-pressed={filter === 'pending'}
-          onClick={() => {
-            setBrowse(true);
-            setFilter('pending');
-          }}
-          size="sm"
-          theme={filter === 'pending' ? 'solid' : 'outlined'}
-          variant={filter === 'pending' ? 'primary' : 'secondary'}
-        >
-          Čeká na schválení
-        </Button>
-        <Button
-          aria-pressed={filter === 'all'}
-          onClick={() => {
-            setBrowse(true);
-            setFilter('all');
-          }}
-          size="sm"
-          theme={filter === 'all' ? 'solid' : 'outlined'}
-          variant={filter === 'all' ? 'primary' : 'secondary'}
-        >
-          Všechny dávky
-        </Button>
-        <label>
-          <span>Modul</span>
-          <select onChange={(event) => setModuleFilter(event.target.value)} value={moduleFilter}>
-            <option value="">Všechny moduly</option>
-            {moduleOptions.map((module) => (
-              <option key={module.moduleKey} value={module.moduleKey}>
-                {module.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {message !== '' && (
-        <StatusText aria-live="polite" size="sm" status="default">
-          {message}
-        </StatusText>
-      )}
+      <QueueFilters
+        filter={filter}
+        moduleFilter={moduleFilter}
+        modules={moduleOptions}
+        onFilter={(next) => {
+          setBrowse(true);
+          setSelectedFilter(next);
+        }}
+        onModuleFilter={setModuleFilter}
+      />
+      <ReviewStatus actions={actions} />
       {missingTarget && (
         <StatusText aria-live="polite" showIcon size="sm" status="warning">
           Návrh z odkazu tu nevidíte. Možná patří jiné firmě, byl odstraněn, nebo k němu nemáte přístup.
         </StatusText>
       )}
-      {visibleBatches.length === 0 ? (
-        filter === 'pending' ? (
-          <div>
-            <h2 className="font-semibold text-sm">Nic nečeká na schválení</h2>
-            <p className="text-fg-secondary text-sm">Jakmile AI agent pošle návrh změny, objeví se tady.</p>
-          </div>
-        ) : (
-          <p className="text-fg-secondary text-sm">Zatím tu nejsou žádné dávky návrhů.</p>
-        )
-      ) : (
-        visibleBatches.map((batch) => (
-          <BatchCard
-            batch={batch}
-            busy={busy}
-            highlighted={batch.key === targetKey}
-            targetItemKey={targetItemKey}
-            key={batch.key}
-            onDecide={onDecide}
-            onRevert={onRevert}
-          />
-        ))
-      )}
+      <QueueBatches
+        actions={actions}
+        filter={filter}
+        response={response}
+        targetItemKey={targetItemKey}
+        targetKey={targetKey}
+      />
       {response.nextCursor !== undefined && (
         <Button
-          disabled={busy}
+          disabled={actions.busy}
           onClick={() => {
             if (response.nextCursor !== undefined) {
               setPage({ cursor: response.nextCursor, filter: filterKey });
@@ -595,4 +775,9 @@ export const ApprovalsPanel = () => {
       </div>
     </div>
   );
+};
+
+export const ApprovalsPanel = () => {
+  const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  return <ApprovalsQueue targetItemKey={itemKeyFromSearch(search)} targetKey={batchKeyFromSearch(search)} />;
 };

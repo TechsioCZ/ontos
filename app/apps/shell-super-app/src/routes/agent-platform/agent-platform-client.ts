@@ -1,15 +1,19 @@
-// @effect-diagnostics asyncFunction:off globalFetch:off globalDate:off -- Browser fetch transport boundary: the page calls the shell API with the session cookie and formats server timestamps for display. expires: 2027-03-31.
 /**
  * Browser client of the platform approval endpoints (`/shell-super-app-api/agent-platform/*`). The page runs inside
  * the shell origin, so the session cookie authenticates every call; the shell resolves the company and the module
  * permissions of the approving person.
  */
-import { Schema } from 'effect';
+import { DateTime, Effect, Option, Random, Result, Schema } from 'effect';
+import { HttpBody, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import {
+  AgentActivityRequestSchema,
   AgentActivityResponseSchema,
+  AgentDecideRequestSchema,
   AgentDecideResponseSchema,
+  AgentQueueRequestSchema,
   AgentQueueResponseSchema,
+  AgentRevertRequestSchema,
   AgentRevertResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
 import type {
@@ -19,61 +23,103 @@ import type {
   AgentRevertRequest,
 } from '@app/shared-contracts/agent-proposals';
 
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+
 const BASE = '/shell-super-app-api/agent-platform';
 
 export type AgentPlatformResult<A> =
   | { readonly status: 'ok'; readonly value: A }
   | { readonly httpStatus: number; readonly message: string; readonly status: 'failed' };
 
-const fallbackMessage = 'Požadavek se nepodařilo dokončit.';
+export interface AgentMutationIntent<A> {
+  readonly idempotencyKey: string;
+  readonly payload: A;
+}
 
-const failureMessage = (text: string): string => {
-  try {
-    const body: unknown = JSON.parse(text);
-    if (typeof body === 'object' && body !== null && 'detail' in body && typeof body.detail === 'string') {
-      return body.detail;
-    }
-  } catch {
-    // Non-JSON error bodies fall back to the generic Czech message.
+const sameMutation = Schema.toEquivalence(Schema.Union([AgentDecideRequestSchema, AgentRevertRequestSchema]));
+
+/** Keep the exact request, not a payload rebuilt from a potentially refreshed queue. */
+export const agentMutationIntent = Effect.fn('AgentPlatform.mutationIntent')(function* agentMutationIntent<
+  A extends AgentDecideRequest | AgentRevertRequest,
+>(previous: AgentMutationIntent<A> | undefined, payload: A) {
+  if (previous !== undefined && sameMutation(previous.payload, payload)) {
+    return previous;
   }
-  return fallbackMessage;
-};
+  const parts = yield* Effect.forEach([0, 1, 2, 3], () => Random.nextIntBetween(0, 2 ** 32), {
+    concurrency: 1,
+  });
+  return {
+    idempotencyKey: parts.map((part) => part.toString(16).padStart(8, '0')).join(''),
+    payload: structuredClone(payload),
+  } satisfies AgentMutationIntent<A>;
+});
 
-const post = async <A>(
+/** A lost response, in-flight conflict, timeout, rate limit, or server failure does not establish a terminal action. */
+export const agentMutationUncertain = (result: AgentPlatformResult<unknown>): boolean =>
+  result.status === 'failed' && ([0, 408, 409, 425, 429].includes(result.httpStatus) || result.httpStatus >= 500);
+
+const failureBody = Schema.fromJsonString(Schema.Struct({ detail: Schema.String }));
+const failureMessage = (text: string): string =>
+  Result.match(Schema.decodeResult(failureBody)(text), {
+    onFailure: () => 'Požadavek se nepodařilo dokončit.',
+    onSuccess: (body) => body.detail,
+  });
+
+const post = Effect.fn('AgentPlatform.post')(function* post<Request, ResponseBody>(
   path: string,
-  body: unknown,
-  schema: Schema.Codec<A, unknown>,
-): Promise<AgentPlatformResult<A>> => {
-  let response: Response;
-  try {
-    response = await fetch(BASE + path, {
-      body: JSON.stringify(body),
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      method: 'POST',
-    });
-  } catch {
+  body: Request,
+  requestSchema: Schema.Codec<Request>,
+  responseSchema: Schema.Codec<ResponseBody, unknown>,
+  idempotencyKey?: string,
+): Effect.fn.Return<AgentPlatformResult<ResponseBody>, never, HttpClient.HttpClient> {
+  const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(requestSchema))(body).pipe(Effect.result);
+  if (Result.isFailure(encoded)) {
+    return { httpStatus: 400, message: 'Požadavek nemá očekávaný tvar.', status: 'failed' };
+  }
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+  let request = HttpClientRequest.post(BASE + path).pipe(
+    HttpClientRequest.setBody(HttpBody.raw(encoded.success, { contentType: 'application/json' })),
+  );
+  if (idempotencyKey !== undefined) {
+    request = HttpClientRequest.setHeader(request, 'idempotency-key', idempotencyKey);
+  }
+  // The native request scope stays alive until the entire body is consumed. A timeout or caller
+  // interruption closes it and aborts fetch even when the response headers have already arrived.
+  const transport = yield* Effect.gen(function* readResponse() {
+    const response = yield* client.execute(request);
+    const text = yield* response.text;
+    return { response, text };
+  }).pipe(Effect.scoped, Effect.timeout('30 seconds'), Effect.result);
+  if (Result.isFailure(transport)) {
     return { httpStatus: 0, message: 'Server je teď nedostupný.', status: 'failed' };
   }
-  const text = await response.text();
-  if (!response.ok) {
+  const { response, text } = transport.success;
+  if (response.status < 200 || response.status >= 300) {
     return { httpStatus: response.status, message: failureMessage(text), status: 'failed' };
   }
-  try {
-    return { status: 'ok', value: Schema.decodeUnknownSync(schema)(JSON.parse(text)) };
-  } catch {
+  const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(responseSchema))(text).pipe(Effect.result);
+  if (Result.isFailure(decoded)) {
     return { httpStatus: 0, message: 'Odpověď serveru nemá očekávaný tvar.', status: 'failed' };
   }
-};
+  return { status: 'ok', value: decoded.success };
+});
 
-export const loadAgentQueue = (request: AgentQueueRequest) => post('/queue', request, AgentQueueResponseSchema);
+// The existing page-data read boundary accepts Promises; mutations stay in the caller's browser fiber.
+export const loadAgentQueue = (request: AgentQueueRequest) =>
+  browserRuntime.runPromise(post('/queue', request, AgentQueueRequestSchema, AgentQueueResponseSchema));
 
-export const decideAgentItems = (request: AgentDecideRequest) => post('/decide', request, AgentDecideResponseSchema);
+export const decideAgentItems = (intent: AgentMutationIntent<AgentDecideRequest>) =>
+  post('/decide', intent.payload, AgentDecideRequestSchema, AgentDecideResponseSchema, intent.idempotencyKey);
 
-export const revertAgentBatch = (request: AgentRevertRequest) => post('/revert', request, AgentRevertResponseSchema);
+export const revertAgentBatch = (intent: AgentMutationIntent<AgentRevertRequest>) =>
+  post('/revert', intent.payload, AgentRevertRequestSchema, AgentRevertResponseSchema, intent.idempotencyKey);
 
 export const loadAgentActivity = (request: AgentActivityRequest) =>
-  post('/activity', request, AgentActivityResponseSchema);
+  browserRuntime.runPromise(post('/activity', request, AgentActivityRequestSchema, AgentActivityResponseSchema));
 
-export const formatAgentTime = (iso: string) =>
-  new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+const agentTimeFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' });
+export const formatAgentTime = (iso: string): string =>
+  Option.match(DateTime.make(iso), {
+    onNone: () => iso,
+    onSome: (time) => agentTimeFormat.format(DateTime.toEpochMillis(time)),
+  });
