@@ -1,5 +1,7 @@
 import { expect, it } from 'effect-rstest';
 
+import { ACTION_PROVISIONING_INTENTS } from '../../packages/core-runtime/src/authorization/entrypoint-classification.ts';
+
 import {
   makeProtectedEntrypointInventory,
   normalizeBusinessPermissionInventory,
@@ -45,6 +47,42 @@ it('inventory normalization, hashing, and serialization are deterministic', () =
   expect(left.inventoryHash).not.toBe(makeProtectedEntrypointInventory('revision', entries).inventoryHash);
   expect(left.entries.map((entry) => entry.surface)).toEqual(['action', 'route']);
   expect(left.businessPermissions.map(({ key }) => key)).toEqual([pricingReadPermission, pricingRetirePermission]);
+});
+
+it('inventory preserves every native Action provisioning intent through serialization', () => {
+  for (const provisioning of ACTION_PROVISIONING_INTENTS) {
+    const entry = {
+      authorization: { kind: 'action_execution' as const, provisioning },
+      deployment: 'shell-super-app',
+      entrypointKey: 'core.identity.bind-self-api-key',
+      owner: 'core.identity',
+      surface: 'action' as const,
+    };
+    const inventory = makeProtectedEntrypointInventory('revision', [entry]);
+    expect(inventory.entries).toEqual([entry]);
+    expect(serializeProtectedEntrypointInventory(inventory)).toContain(`"provisioning": "${provisioning}"`);
+  }
+});
+
+it('inventory rejects unsupported and malformed Action provisioning values at runtime', () => {
+  for (const provisioning of ['unknown', '', true, null, {}, ['explicit'], undefined]) {
+    const authorization = { kind: 'action_execution' as const, provisioning: 'explicit' as const };
+    Reflect.set(authorization, 'provisioning', provisioning);
+    expect(() => makeProtectedEntrypointInventory('revision', [{ ...entries[1], authorization }])).toThrow(
+      /classification is invalid/u,
+    );
+  }
+});
+
+it('inventory rejects excess data on native self-credential authorization', () => {
+  const authorization = {
+    bypass: true,
+    kind: 'action_execution' as const,
+    provisioning: 'principal_self_credentials' as const,
+  };
+  expect(() => makeProtectedEntrypointInventory('revision', [{ ...entries[1], authorization }])).toThrow(
+    /classification is invalid/u,
+  );
 });
 
 it('business permission inventory rejects duplicate and unsafe permission identities', () => {

@@ -892,6 +892,136 @@ const EngagementInventorySchema = Schema.fromJsonString(
   }),
 );
 
+const ACTION_EXECUTION_KIND_SOURCE = "kind: 'action_execution'";
+const TENANT_MEMBERSHIP_PROVISIONING_SOURCE = "provisioning: 'tenant_membership_default'";
+const CORE_IDENTITY_OWNER = 'core.identity';
+const SELF_CREDENTIAL_ACTION_SLUGS = ['bind-self-api-key', 'set-self-api-key-binding-status'] as const;
+const SELF_CREDENTIAL_PROVISIONING_SOURCE = "provisioning: 'principal_self_credentials'";
+const CORE_IDENTITY_MODULE_SOURCE = "moduleKey: 'core.identity'";
+
+for (const slug of SELF_CREDENTIAL_ACTION_SLUGS) {
+  const file = `packages/core-runtime/src/modules/actions/${slug}.action.ts`;
+  it.live(`accepts and inventories the native self-credential Action ${slug}`, () =>
+    Effect.gen(function* nativeSelfCredentialInventory() {
+      const root = yield* makeFixture();
+      const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+      yield* write(root, file, source);
+      yield* checkModuleEntrypointBoundaries(root);
+      const inventory = Schema.decodeUnknownSync(EngagementInventorySchema)(
+        yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8')),
+      );
+      expect(inventory.entries.filter((entry) => entry.owner === CORE_IDENTITY_OWNER)).toEqual([
+        {
+          authorization: { kind: 'action_execution', provisioning: 'principal_self_credentials' },
+          deployment: SHELL_DEPLOYMENT_ID,
+          entrypointKey: `core.identity.${slug}`,
+          owner: CORE_IDENTITY_OWNER,
+          surface: 'action',
+        },
+      ]);
+    }),
+  );
+
+  it.live(`rejects incorrect native self-credential descriptors and private handler bypasses for ${slug}`, () =>
+    Effect.gen(function* nativeSelfCredentialRejections() {
+      const root = yield* makeFixture();
+      const source = yield* Effect.promise(() => readFile(path.resolve(import.meta.dirname, '../..', file), 'utf-8'));
+      yield* assertRejectedSources(
+        root,
+        file,
+        [
+          source.replace(SELF_CREDENTIAL_PROVISIONING_SOURCE, "provisioning: 'unknown'"),
+          source.replace(SELF_CREDENTIAL_PROVISIONING_SOURCE, `${SELF_CREDENTIAL_PROVISIONING_SOURCE}, bypass: true`),
+          source.replace(SELF_CREDENTIAL_PROVISIONING_SOURCE, `${SELF_CREDENTIAL_PROVISIONING_SOURCE}, ...overrides`),
+          source.replace(ACTION_EXECUTION_KIND_SOURCE, "kind: 'authenticated_principal'"),
+          source.replace('entrypoint: defineSystemModuleEntrypoint(', 'entrypoint: defineTenantModuleEntrypoint('),
+          source.replace("access: 'write'", READ_ACCESS_SOURCE),
+          source.replace("role: 'action'", "role: 'page'"),
+          source.replace(CORE_IDENTITY_MODULE_SOURCE, "moduleKey: 'core.other'"),
+          source.replace(`entrypointKey: 'core.identity.${slug}'`, "entrypointKey: 'core.identity.other'"),
+          source.replace(`// @ontos-action-slug ${slug}`, '// @ontos-action-slug other'),
+          source.replace(`entrypointKey: 'core.identity.${slug}'`, `entrypointKey: 'core.identity.${slug}.forged'`),
+        ],
+        /action_execution authorization|governed action\/write entrypoint|self-credential/u,
+      );
+      yield* assertRejectedSources(
+        root,
+        file,
+        [`${source}\ngetActionHandler(forgedRegistration);`],
+        /private handler accessors.*module-state gate/u,
+      );
+    }),
+  );
+}
+
+it.live('rejects malformed Action authorization objects instead of projecting only recognized strings', () =>
+  Effect.gen(function* malformedActionAuthorization() {
+    const root = yield* makeFixture();
+    const authorization = "kind: 'action_execution', provisioning: 'tenant_membership_default'";
+    const invalid = [
+      ACTION_EXECUTION_KIND_SOURCE,
+      "kind: 'action_execution', provisioning: 'unknown'",
+      "kind: 'action_execution', provisioning: true",
+      "kind: 'action_execution', provisioning: {}",
+      "kind: 'action_execution', provisioning: intent",
+      "kind: 'action_execution', provisioning: 'explicit' || intent",
+      "kind: 'action_execution', provisioning: 'explicit', provisioning: 'tenant_membership_default'",
+      `${authorization}, kind: 'action_execution'`,
+      `${authorization}, extra: 'unsupported'`,
+      `${authorization}, extra: true`,
+      `${authorization}, extra: {}`,
+      `${authorization}, extra`,
+      `${authorization}, ...overrides`,
+      `${authorization}, ['provisioning']: 'unknown'`,
+      `...overrides, ${authorization}`,
+    ];
+    yield* assertRejectedSources(
+      root,
+      ACTION_FILE,
+      invalid.map((properties) => validAction.replace(authorization, properties)),
+      /action_execution authorization/u,
+    );
+    yield* assertRejectedSources(
+      root,
+      ACTION_FILE,
+      [
+        validAction.replace(`authorization: { ${authorization} }`, `nested: { authorization: { ${authorization} } }`),
+        validAction.replace(
+          `authorization: { ${authorization} }`,
+          `authorization: { ${authorization} }, authorization: other`,
+        ),
+        validAction.replace(`authorization: { ${authorization} }`, `authorization: { ${authorization} } || other`),
+        validAction.replace(`authorization: { ${authorization} }`, `authorization: { ${authorization} }.forged`),
+      ],
+      /action_execution authorization/u,
+    );
+    yield* write(
+      root,
+      ACTION_FILE,
+      validAction.replace(TENANT_MEMBERSHIP_PROVISIONING_SOURCE, "provisioning: 'explicit'"),
+    );
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('does not grant native self-credential provisioning to ordinary tenant or Core Actions', () =>
+  Effect.gen(function* reservedSelfCredentialProvisioning() {
+    const root = yield* makeFixture();
+    const source = validAction.replace(TENANT_MEMBERSHIP_PROVISIONING_SOURCE, SELF_CREDENTIAL_PROVISIONING_SOURCE);
+    yield* assertRejectedSources(root, ACTION_FILE, [source], /self-credential/u);
+    yield* write(root, ACTION_FILE, validAction);
+    const coreSource = source
+      .replaceAll('inventory.stock', CORE_IDENTITY_OWNER)
+      .replace('defineTenantModuleEntrypoint', 'defineSystemModuleEntrypoint');
+    yield* assertRejectedSources(
+      root,
+      'packages/core-runtime/src/modules/actions/ordinary.action.ts',
+      [coreSource],
+      /self-credential/u,
+    );
+  }),
+);
+
 it.live(
   'validates all four live shared Action registrations and inventories each concrete identity',
   Effect.fn(function* mergedScenario1() {
@@ -982,8 +1112,8 @@ it.live(
     const mutations = [
       ["'@app/core-runtime'", "'@app/counterfeit-runtime'"],
       ['defineTenantModuleEntrypoint', 'defineSystemModuleEntrypoint'],
-      ["kind: 'action_execution'", PUBLIC_AUTHORIZATION_SOURCE],
-      ["provisioning: 'tenant_membership_default'", "provisioning: 'explicit'"],
+      [ACTION_EXECUTION_KIND_SOURCE, PUBLIC_AUTHORIZATION_SOURCE],
+      [TENANT_MEMBERSHIP_PROVISIONING_SOURCE, "provisioning: 'explicit'"],
       ["access: 'write'", READ_ACCESS_SOURCE],
       ["role: 'action'", "role: 'api'"],
       ["moduleKey: 'party.registry'", "moduleKey: 'other.owner'"],
