@@ -33,6 +33,7 @@ import {
   Config,
   ConfigProvider,
   Console,
+  Context,
   DateTime,
   Effect,
   Exit,
@@ -71,6 +72,7 @@ import {
   demoPermissionRelationships,
   storefrontPrincipal,
 } from './permissions.mts';
+import type { DemoAction, DemoPermissionInstallation } from './permissions.mts';
 
 class DemoPermissionsError extends Schema.TaggedError<DemoPermissionsError>()('DemoPermissionsError', {
   reason: Schema.String,
@@ -253,6 +255,44 @@ const ContextFixtureSchema = Schema.Struct({
   tenant: Schema.Struct({ defaultLocale: Text, displayName: Text, slug: Text, tenantId: TenantIdSchema }),
 });
 
+/** Install through Core first; only a subsequent persisted read is evidence for Action topology. */
+export const bootstrapDemoPermissionContexts = Effect.fn('DemoPermissions.contexts')(
+  function* bootstrapDemoPermissionContexts<E, R, E2, R2>(
+    actions: readonly DemoAction[],
+    publishedModuleKeys: readonly string[],
+    installation: Effect.Effect<Omit<DemoPermissionInstallation, 'publishedModuleKeys'>, E, R>,
+    bootstrap: (context: typeof ContextFixtureSchema.Type) => Effect.Effect<void, E2, R2>,
+  ) {
+    const demoContext = {
+      accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
+        authBindingId,
+        authUserId,
+        displayName,
+        principalId,
+      })),
+      companyMemberships: demoCompanyMemberships,
+      legalEntity: {
+        legalEntityId: demoLegalEntityId,
+        legalName: 'Obchodní firma',
+        registrationCountry: 'CZ',
+        registrationNumber: 'DEMO-SIAMPARK',
+      },
+      modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
+      tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+    };
+    // Core commits identity and insert-only activation before the authorization producer reads installation.
+    yield* bootstrap({ ...demoContext, relationships: [] });
+    const persisted = yield* installation;
+    const relationships = yield* Effect.try({
+      catch: () => fail('Published scoped demo authorization policy is invalid'),
+      try: () => demoPermissionRelationships(actions, { ...persisted, publishedModuleKeys }),
+    });
+    yield* bootstrap({ ...demoContext, modules: [], relationships });
+    yield* bootstrap(yield* verificationContext(actions));
+    return relationships;
+  },
+);
+
 /** Principals, auth bindings and SpiceDB relationships through the core development bootstrap port. */
 const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBootstrapPort(
   root: string,
@@ -264,50 +304,28 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
   const snapshot = yield* source.load;
   const actions = yield* discoverCurrentActions(snapshot);
   const { executor } = yield* AuthDatabase;
-  const moduleStates = yield* executor
-    .select({
-      moduleKey: tenantModuleStates.moduleKey,
-      state: tenantModuleStates.state,
-      tenantId: tenantModuleStates.tenantId,
-    })
-    .from(tenantModuleStates)
-    .where(eq(tenantModuleStates.tenantId, demoTenantId));
-  const companies = yield* executor
-    .select({
-      legalEntityId: legalEntities.legalEntityId,
-      status: legalEntities.status,
-      tenantId: legalEntities.tenantId,
-    })
-    .from(legalEntities)
-    .where(eq(legalEntities.tenantId, demoTenantId));
-  const relationships = yield* Effect.try({
-    catch: () => fail('Published scoped demo authorization policy is invalid'),
-    try: () =>
-      demoPermissionRelationships(actions, {
-        companies,
-        moduleStates,
-        publishedModuleKeys: snapshot.composition.modules.map(({ moduleId }) => moduleId),
-      }),
+  const installation = Effect.gen(function* readPersistedInstallation() {
+    const moduleStates = yield* executor
+      .select({
+        moduleKey: tenantModuleStates.moduleKey,
+        state: tenantModuleStates.state,
+        tenantId: tenantModuleStates.tenantId,
+      })
+      .from(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, demoTenantId));
+    const companies = yield* executor
+      .select({
+        legalEntityId: legalEntities.legalEntityId,
+        status: legalEntities.status,
+        tenantId: legalEntities.tenantId,
+      })
+      .from(legalEntities)
+      .where(eq(legalEntities.tenantId, demoTenantId));
+    return { companies, moduleStates };
   });
-  const demoContext = {
-    accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
-      authBindingId,
-      authUserId,
-      displayName,
-      principalId,
-    })),
-    companyMemberships: demoCompanyMemberships,
-    legalEntity: {
-      legalEntityId: demoLegalEntityId,
-      legalName: 'Obchodní firma',
-      registrationCountry: 'CZ',
-      registrationNumber: 'DEMO-SIAMPARK',
-    },
-    modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
-    relationships,
-    tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
-  };
-  for (const context of [demoContext, yield* verificationContext(actions)]) {
+  const bootstrap = Effect.fn('DemoPermissions.bootstrapContext')(function* bootstrapContext(
+    context: typeof ContextFixtureSchema.Type,
+  ) {
     const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))(context);
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
     const file = path.join(directory, 'context.json');
@@ -327,9 +345,15 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       ),
     );
     if (code !== ChildProcessSpawner.ExitCode(0)) {
-      return yield* fail('Core development bootstrap port failed');
+      yield* fail('Core development bootstrap port failed');
     }
-  }
+  });
+  const relationships = yield* bootstrapDemoPermissionContexts(
+    actions,
+    snapshot.composition.modules.map(({ moduleId }) => moduleId),
+    installation,
+    bootstrap,
+  );
   return yield* Console.log(
     `sales-demo permissions: ${allHumanAccounts.length} accounts + agent-bot + storefront, ${relationships.length} relationships over ${actions.length} Actions`,
   );
@@ -588,7 +612,9 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
     ['ONTOS_LEGAL_ENTITY_ID', demoLegalEntityId],
     ...Option.toArray(revision).map((current) => ['ONTOS_COMPOSITION_REVISION', current] as const),
   ]);
-  if (suppliedKeys !== undefined) return values;
+  if (suppliedKeys !== undefined) {
+    return values;
+  }
   const text = [
     '# Sales demo agent (scripts/demo/reset-permissions.mts). Local secrets; gitignored. Never commit.',
     ...[...values.entries()].map(([key, value]) => `${key}=${value}`),
@@ -632,12 +658,13 @@ const main = (
     yield* runBootstrapPort(root, environment);
     const { shellUrl } = yield* demoAgentConfig;
     yield* ensureDemoCompanies(shellUrl);
-    if (!skipBot) {
-      yield* liftBotKeyRateLimit;
-      const keys = yield* ensureBotKey(root, suppliedKeys);
-      yield* liftBotKeyRateLimit;
-      return keys;
+    if (skipBot) {
+      return yield* Effect.void;
     }
+    yield* liftBotKeyRateLimit;
+    const keys = yield* ensureBotKey(root, suppliedKeys);
+    yield* liftBotKeyRateLimit;
+    return keys;
   });
 
 const environmentLive = ConfigProvider.layer(
@@ -663,14 +690,24 @@ const servicesLive = Layer.mergeAll(
   ),
 );
 
+const DemoPermissionReset = Context.Service<{ readonly keys: Effect.Success<ReturnType<typeof main>> }>(
+  'DemoPermissions/Reset',
+);
+
 /** Canonical accounts/roles and managed keys, with no environment-file IO. Secrets stay with the caller. */
 export const resetDemoPermissions = (
   environment: Readonly<Record<string, string>>,
-  options: { readonly skipKeys?: boolean; readonly existingKeys?: ReadonlyMap<string, string> } = {},
+  options: { readonly existingKeys?: ReadonlyMap<string, string>; readonly skipKeys?: boolean } = {},
 ) =>
-  main(options.skipKeys ?? false, options.existingKeys ?? new Map<string, string>(), environment).pipe(
-    Effect.provide(servicesLive),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+  Layer.build(
+    Layer.effect(
+      DemoPermissionReset,
+      main(options.skipKeys ?? false, options.existingKeys ?? new Map<string, string>(), environment).pipe(
+        Effect.map((keys) => ({ keys })),
+      ),
+    ).pipe(Layer.provide(servicesLive), Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment)))),
+  ).pipe(
+    Effect.map((context) => Context.get(context, DemoPermissionReset).keys),
     Effect.scoped,
   );
 

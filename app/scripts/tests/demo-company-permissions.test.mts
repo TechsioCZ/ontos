@@ -49,7 +49,12 @@ import {
 } from '../demo/permissions.mts';
 import type { DemoAction, DemoPermissionInstallation, DemoRelationship } from '../demo/permissions.mts';
 
-import { demoBootstrapCompanyRows, ensureDemoCompanies } from '../demo/reset-permissions.mts';
+import {
+  bootstrapDemoPermissionContexts,
+  demoBootstrapCompanyRows,
+  ensureDemoCompanies,
+} from '../demo/reset-permissions.mts';
+import { verificationContext } from '../demo/verification-context.mts';
 import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
 import {
   commercePortalExternalIdentityDeployment,
@@ -59,6 +64,8 @@ import {
 
 const operationsModule = 'facility.operations';
 const workforceModule = 'demo.workforce';
+const workforceWriteAll = 'demo.workforce.write_all';
+const rentalActivitiesActionKey = 'crm.activities.apply-command';
 
 const identityModule = 'core.identity';
 const partyModule = 'party.registry';
@@ -71,6 +78,12 @@ const companySuffix = '/demo-companies';
 const shellOrigin = 'http://localhost:3020';
 const privacyModule = 'privacy.core';
 const commerceModule = 'commerce.customer-context';
+const activitiesModule = 'crm.activities';
+const inactiveState = 'inactive';
+const privacySetupActionKeys = [
+  'privacy.core.create-processing-purpose',
+  'privacy.core.create-notice-version',
+] as const;
 const companyRole = (principalId: string, legalEntityId: string) =>
   toScopedRoleObjectId({ legalEntityId, roleKey: demoPrincipalRoleKey(principalId), tenantId: demoTenantId });
 const tenantRole = (principalId: string) =>
@@ -97,8 +110,7 @@ const partyActions = [
   'party.registry.create-party-relationship',
 ].map((key) => actionDescriptor(key, partyModule));
 const privacyActions = [
-  'privacy.core.create-processing-purpose',
-  'privacy.core.create-notice-version',
+  ...privacySetupActionKeys,
   'privacy.core.record-consent-decision',
   'privacy.core.consent-self-service',
   'privacy.core.record-notice-provision',
@@ -169,6 +181,233 @@ const actionScope = (action: DemoAction, legalEntityId: string) =>
   action.legalEntityScope === 'forbidden'
     ? { actionKey: action.actionKey, tenantId: demoTenantId }
     : { actionKey: action.actionKey, legalEntityId, tenantId: demoTenantId };
+
+type BootstrapContext = Parameters<Parameters<typeof bootstrapDemoPermissionContexts>[3]>[0];
+
+// Model only the Core port boundary: committed insert-only module rows and a separate persisted read.
+// This exercises the real producer, not PostgreSQL or the Core subprocess.
+const bootstrapPermissions = (
+  initial: DemoPermissionInstallation,
+  actions: readonly DemoAction[] = descriptors,
+  persistModules = true,
+) =>
+  Effect.gen(function* exercisesBootstrapPhases() {
+    const moduleStates = new Map(initial.moduleStates.map((row) => [`${row.tenantId}/${row.moduleKey}`, row]));
+    const contexts: BootstrapContext[] = [];
+    const reads: DemoPermissionInstallation[] = [];
+    const rows = yield* bootstrapDemoPermissionContexts(
+      actions,
+      initial.publishedModuleKeys,
+      Effect.sync(() => {
+        const persisted = { ...initial, moduleStates: [...moduleStates.values()] };
+        reads.push(persisted);
+        return persisted;
+      }),
+      (context) =>
+        Effect.sync(() => {
+          contexts.push(context);
+          if (!persistModules) {
+            return;
+          }
+          for (const { moduleId } of context.modules) {
+            const key = `${context.tenant.tenantId}/${moduleId}`;
+            if (!moduleStates.has(key)) {
+              moduleStates.set(key, { moduleKey: moduleId, state: 'active', tenantId: context.tenant.tenantId });
+            }
+          }
+        }),
+    );
+    return { contexts, moduleStates: [...moduleStates.values()], reads, rows };
+  });
+
+const privacyTopology = (rows: readonly DemoRelationship[]) => {
+  const actionIds = new Set(
+    installation.companies.flatMap(({ legalEntityId }) =>
+      privacyActions.map((action) => toSpiceDbActionObjectId(actionScope(action, legalEntityId))),
+    ),
+  );
+  return rows.filter((row) => row.resourceType === 'action' && actionIds.has(row.resourceId));
+};
+
+it.effect('installs missing Privacy before deriving its exact scoped Action topology in one producer invocation', () =>
+  Effect.gen(function* verifiesFreshBootstrap() {
+    const initial = {
+      ...installation,
+      moduleStates: installation.moduleStates.filter((row) => row.moduleKey !== privacyModule),
+    };
+    const { contexts, reads, rows } = yield* bootstrapPermissions(initial);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.moduleStates).toContainEqual({
+      moduleKey: privacyModule,
+      state: 'active',
+      tenantId: demoTenantId,
+    });
+    expect(initial.moduleStates.some((row) => row.moduleKey === privacyModule)).toBe(false);
+    expect(contexts).toHaveLength(3);
+    expect(contexts[0]?.relationships).toEqual([]);
+    expect(contexts[0]?.modules.some(({ moduleId }) => moduleId === privacyModule)).toBe(true);
+    expect(contexts[1]?.modules).toEqual([]);
+    expect(contexts[1]?.relationships).toEqual(rows);
+    expect(contexts[2]).toEqual(yield* verificationContext(descriptors));
+    const expected = installation.companies.flatMap(({ legalEntityId }) =>
+      privacyActions.flatMap((action) => {
+        const scope = actionScope(action, legalEntityId);
+        return [
+          {
+            relation: 'company_scope',
+            resourceId: toSpiceDbActionObjectId(scope),
+            resourceType: 'action',
+            subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId),
+            subjectType: 'legal_entity',
+          },
+          {
+            relation: 'grant',
+            resourceId: toSpiceDbActionObjectId(scope),
+            resourceType: 'action',
+            subjectId: toSpiceDbActionGrantObjectId(scope),
+            subjectType: 'action_grant',
+          },
+        ];
+      }),
+    );
+    expect(privacyTopology(rows)).toHaveLength(expected.length);
+    expect(new Set(privacyTopology(rows).map((row) => JSON.stringify(row)))).toEqual(
+      new Set(expected.map((row) => JSON.stringify(row))),
+    );
+    const operatorRole = companyRole(privacyMarketingOperator.principalId, privacyMarketingOperator.legalEntityId);
+    const privacyGrantIds = new Set(
+      privacyActions.map((action) =>
+        toSpiceDbActionGrantObjectId(actionScope(action, privacyMarketingOperator.legalEntityId)),
+      ),
+    );
+    expect(
+      grantsFor(rows, privacyMarketingOperator.principalId)
+        .filter((row) => privacyGrantIds.has(row.resourceId))
+        .map((row) => row.resourceId),
+    ).toEqual(
+      privacySetupActionKeys.map((actionKey) =>
+        toSpiceDbActionGrantObjectId({
+          actionKey,
+          legalEntityId: privacyMarketingOperator.legalEntityId,
+          tenantId: demoTenantId,
+        }),
+      ),
+    );
+    // All named grants are exact: existing operational permissions plus only two Privacy reads, no Privacy write.
+    const operatorPermissions = rows.filter(
+      (row) =>
+        row.subjectId === operatorRole && row.resourceType === 'context_permission' && row.relation === 'role_grantee',
+    );
+    const expectedPermissions = [
+      [merchandiseModule, 'demo.merchandise.read_all'],
+      [merchandiseModule, 'demo.merchandise.write_all'],
+      ['work.tasks', 'work.tasks.read_all'],
+      ['work.tasks', 'work.tasks.write_all'],
+      [workforceModule, 'demo.workforce.read_all'],
+      [workforceModule, workforceWriteAll],
+      ['demo.tagging', 'demo.tagging.read_all'],
+      [privacyModule, 'privacy.processing_catalog.read'],
+      [privacyModule, 'privacy.notice.read'],
+    ] as const;
+    expect(operatorPermissions).toHaveLength(expectedPermissions.length);
+    expect(new Set(operatorPermissions.map((row) => row.resourceId))).toEqual(
+      new Set(
+        expectedPermissions.map(([moduleId, permission]) =>
+          toContextPermissionAccessObjectId(demoTenantId, privacyMarketingOperator.legalEntityId, {
+            moduleId,
+            permission,
+          }),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect('does not reactivate inactive Privacy or install topology without publication or persisted activation', () =>
+  Effect.gen(function* verifiesUnavailablePrivacy() {
+    const inactive = {
+      ...installation,
+      moduleStates: installation.moduleStates.map((row) =>
+        row.moduleKey === privacyModule ? { ...row, state: inactiveState } : row,
+      ),
+    };
+    for (const [initial, persistModules] of [
+      [inactive, true],
+      [{ ...installation, publishedModuleKeys: publishedModuleKeys.filter((key) => key !== privacyModule) }, true],
+      [{ ...installation, moduleStates: [] }, false],
+    ] as const) {
+      const { contexts, reads, rows } = yield* bootstrapPermissions(initial, descriptors, persistModules);
+      expect(privacyTopology(rows)).toEqual([]);
+      expect(rows).toEqual(demoPermissionRelationships(descriptors, reads[0] ?? initial));
+      expect(contexts[2]).toEqual(yield* verificationContext(descriptors));
+    }
+    const { moduleStates } = yield* bootstrapPermissions(inactive);
+    expect(moduleStates.find((row) => row.moduleKey === privacyModule && row.tenantId === demoTenantId)?.state).toBe(
+      inactiveState,
+    );
+  }),
+);
+
+it.effect('conserves unrelated company, role and rental Activities relationships across fresh Privacy activation', () =>
+  Effect.gen(function* verifiesConservedAuthorization() {
+    const activitiesAction = actionDescriptor(rentalActivitiesActionKey, activitiesModule);
+    const actions = [...descriptors, activitiesAction];
+    const initial = {
+      ...installation,
+      moduleStates: [
+        ...installation.moduleStates.filter((row) => row.moduleKey !== privacyModule),
+        { moduleKey: activitiesModule, state: 'active', tenantId: demoTenantId },
+      ],
+      publishedModuleKeys: [...publishedModuleKeys, activitiesModule],
+    };
+    const before = demoPermissionRelationships(actions, initial);
+    const { rows } = yield* bootstrapPermissions(initial, actions);
+    const privacyModules = installation.companies.map(({ legalEntityId }) => ({
+      relation: 'legal_entity',
+      resourceId: toModuleAccessObjectId(demoTenantId, legalEntityId, privacyModule),
+      resourceType: 'module_access',
+      subjectId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId),
+      subjectType: 'legal_entity',
+    }));
+    // Installation may add Privacy module structure as well as Action structure, never role authority.
+    expect(new Set(rows.map((row) => JSON.stringify(row)))).toEqual(
+      new Set([...before, ...privacyTopology(rows), ...privacyModules].map((row) => JSON.stringify(row))),
+    );
+    const activityScope = actionScope(activitiesAction, rentalDemoLegalEntityId);
+    expect(rows).toContainEqual({
+      relation: 'grant',
+      resourceId: toSpiceDbActionObjectId(activityScope),
+      resourceType: 'action',
+      subjectId: toSpiceDbActionGrantObjectId(activityScope),
+      subjectType: 'action_grant',
+    });
+  }),
+);
+
+it.effect('stops before reading installation or writing policy when native identity activation fails', () =>
+  Effect.gen(function* verifiesBootstrapFailure() {
+    let reads = 0;
+    let writes = 0;
+    const activationFailure = new Error('Native activation failed');
+    const failure = yield* Effect.flip(
+      bootstrapDemoPermissionContexts(
+        descriptors,
+        publishedModuleKeys,
+        Effect.sync(() => {
+          reads += 1;
+          return installation;
+        }),
+        () => {
+          writes += 1;
+          return Effect.fail(activationFailure);
+        },
+      ),
+    );
+    expect(failure).toBe(activationFailure);
+    expect(reads).toBe(0);
+    expect(writes).toBe(1);
+  }),
+);
 
 it('retains stable fixture IDs and explicit human affiliations, never deriving membership from service roles', () => {
   expect(demoTenantId).toBe(demoCompanyTenantId);
@@ -287,7 +526,7 @@ it('gives company administrators Workforce writes through their exact admin role
       relation: 'role_grantee',
       resourceId: toContextPermissionAccessObjectId(demoTenantId, legalEntityId, {
         moduleId: workforceModule,
-        permission: 'demo.workforce.write_all',
+        permission: workforceWriteAll,
       }),
       resourceType: 'context_permission',
       subjectId: adminRole,
@@ -317,9 +556,7 @@ it('does not promote rental operators, salespeople or membership-only principals
     salesRep.principalId,
     ...siamparkRentalPersonas.slice(1).map((persona) => persona.principalId),
   ]) {
-    expect(hasPermission(principalId, rentalDemoLegalEntityId, workforceModule, 'demo.workforce.write_all')).toBe(
-      false,
-    );
+    expect(hasPermission(principalId, rentalDemoLegalEntityId, workforceModule, workforceWriteAll)).toBe(false);
     const adminRole = toScopedRoleObjectId({
       legalEntityId: rentalDemoLegalEntityId,
       roleKey: 'admin',
@@ -452,8 +689,7 @@ it('limits the external Siampark role to real operational/assigned-only permissi
 });
 
 it('grants Activities reads, writes and its installed Action only to rental management, not other personas or companies', () => {
-  const activitiesModule = 'crm.activities';
-  const activitiesAction = actionDescriptor('crm.activities.apply-command', activitiesModule);
+  const activitiesAction = actionDescriptor(rentalActivitiesActionKey, activitiesModule);
   const activityInstallation = {
     ...installation,
     moduleStates: [
@@ -654,7 +890,7 @@ it('declares only Privacy setup Actions for the explicit company operator and ne
   const rows = companyPermissionRelationships(privacyActions);
   const operator = privacyMarketingOperator;
   expect(grantsFor(rows, operator.principalId).map((row) => row.resourceId)).toEqual(
-    ['privacy.core.create-processing-purpose', 'privacy.core.create-notice-version'].map((actionKey) =>
+    privacySetupActionKeys.map((actionKey) =>
       toSpiceDbActionGrantObjectId({ actionKey, legalEntityId: operator.legalEntityId, tenantId: demoTenantId }),
     ),
   );
@@ -814,7 +1050,7 @@ it.effect('refuses release bundles without usable owner workload metadata rather
 it.effect('restores only seven reviewed human executors in two separately scoped named add-ons', () =>
   Effect.gen(function* reviewedHumanExecutors() {
     const operational = [
-      actionDescriptor('crm.activities.apply-command', 'crm.activities'),
+      actionDescriptor(rentalActivitiesActionKey, 'crm.activities'),
       actionDescriptor('demo.workforce.apply-command', workforceModule),
       actionDescriptor('demo.merchandise.apply-command', merchandiseModule),
       actionDescriptor('demo.sales-insights.apply-command', 'demo.sales-insights'),
