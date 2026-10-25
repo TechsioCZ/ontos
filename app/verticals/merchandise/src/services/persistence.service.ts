@@ -919,6 +919,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   }
   const number = nextOrderNumberOf(state);
   const order: Order = {
+    ...(value.billingAddress === undefined ? {} : { billingAddress: value.billingAddress }),
     channel: 'STOREFRONT',
     ...(value.customerAccountId === undefined ? {} : { customerAccountId: value.customerAccountId }),
     clientRequestId: value.clientRequestId,

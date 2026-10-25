@@ -32,6 +32,7 @@ const recipient = { firstName: 'Jana', lastName: 'Nováková', phone: '+42077798
 const contact = { email: 'petr@example.invalid', name: 'Petr Novák', phone: '+420777123456' };
 const command = {
   _tag: 'PlaceStorefrontOrder',
+  billingAddress: { city: 'Brno', country: 'CZ', postalCode: '60200', street: 'Fakturační 1' },
   clientRequestId: 'recipient-order-1',
   contact,
   deliveryAddress: { city: 'Praha', country: 'CZ', postalCode: '11000', street: 'Dodací 2' },
@@ -51,21 +52,29 @@ it.effect('preserves a separate recipient through native command decoding, place
     );
     expect(placed.storefrontOrder?.outcome).toBe('PLACED');
     const order = Schema.decodeUnknownSync(Schema.toType(OrderSchema))(placed.state.orders[0]);
-    expect(order).toMatchObject({ contact, deliveryAddress: command.deliveryAddress, deliveryRecipient: recipient });
+    const expected = {
+      billingAddress: command.billingAddress,
+      contact,
+      deliveryAddress: command.deliveryAddress,
+      deliveryRecipient: recipient,
+    };
+    expect(order).toMatchObject(expected);
     const row = orderRowOf({ legalEntityId: 'company-1', tenantId: actor.tenantId }, order);
-    expect(row.document).toMatchObject({ contact, deliveryRecipient: recipient });
-    expect(decodeOrderDocument(row.document)).toMatchObject({ contact, deliveryRecipient: recipient });
+    expect(row.document).toMatchObject(expected);
+    expect(decodeOrderDocument(row.document)).toMatchObject(expected);
 
     const replayed = yield* evolveMerchandiseState(
       placed.state,
       Schema.decodeUnknownSync(MerchandiseCommandSchema)({
         ...command,
+        billingAddress: { ...command.billingAddress, street: 'Changed billing' },
         deliveryRecipient: { ...recipient, firstName: 'Changed' },
       }),
       input,
     );
     expect(replayed.storefrontOrder?.outcome).toBe('REPLAYED');
     expect(replayed.state.orders[0]?.deliveryRecipient).toEqual(recipient);
+    expect(replayed.state.orders[0]?.billingAddress).toEqual(command.billingAddress);
 
     const edited = yield* evolveMerchandiseState(
       placed.state,
@@ -77,8 +86,20 @@ it.effect('preserves a separate recipient through native command decoding, place
       input,
     );
     expect(edited.state.orders[0]?.deliveryRecipient).toEqual(recipient);
+    expect(edited.state.orders[0]?.billingAddress).toEqual(command.billingAddress);
   }),
 );
+
+it('rejects incomplete or malformed billing addresses in the native command contract', () => {
+  for (const invalid of [
+    { ...command.billingAddress, city: '' },
+    { ...command.billingAddress, postalCode: '1' },
+    { ...command.billingAddress, street: '' },
+    { city: 'Brno', postalCode: '60200' },
+  ]) {
+    expect(() => Schema.decodeUnknownSync(MerchandiseCommandSchema)({ ...command, billingAddress: invalid })).toThrow();
+  }
+});
 
 it('rejects incomplete or malformed recipient data in the native command contract', () => {
   for (const invalid of [

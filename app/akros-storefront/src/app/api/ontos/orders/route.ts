@@ -71,6 +71,12 @@ export async function POST(request: Request) {
         email: account.email,
         phone: draft.billing.phone,
       },
+      billingAddress: {
+        city: draft.billing.city,
+        country: draft.billing.country,
+        postalCode: draft.billing.postalCode,
+        street: draft.billing.street,
+      },
       deliveryAddress: {
         city: address.city,
         country: address.country,

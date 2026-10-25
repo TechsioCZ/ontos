@@ -117,6 +117,7 @@ describe("real order boundary", () => {
       expect(vi.mocked(callAction).mock.calls[0][2]).toMatchObject({
         command: {
           contact: { email: account.email, name: "Customer Test", phone: "+420777123456" },
+          billingAddress: { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
           deliveryAddress: differentDeliveryAddress
             ? {
                 city: delivery.city,

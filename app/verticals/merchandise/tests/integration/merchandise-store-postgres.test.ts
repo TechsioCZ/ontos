@@ -220,6 +220,7 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       const orderId = `order-${randomUUID()}`;
       const command = {
         _tag: 'PlaceStorefrontOrder',
+        billingAddress: { city: 'Praha', country: 'CZ', postalCode: '11000', street: 'Fakturační 2' },
         partyId: 'test-customer-party',
         clientRequestId: `client-${randomUUID()}`,
         contact: { email: 'jana@example.cz', name: 'Jana Nováková', phone: '+420777123456' },
@@ -244,11 +245,18 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       expect(placed.clientRequestId).toBe(command.clientRequestId);
       expect(placed.status).toBe('NEW');
       expect(placed.removed).toBe(false);
-      expect(placed.document).toMatchObject({ deliveryRecipient: command.deliveryRecipient });
+      expect(placed.document).toMatchObject({
+        billingAddress: command.billingAddress,
+        deliveryRecipient: command.deliveryRecipient,
+      });
       const stored = decodeOrderDocument(placed.document);
+      expect(stored.billingAddress).toEqual(command.billingAddress);
       expect(stored.deliveryRecipient).toEqual(command.deliveryRecipient);
       expect(stored.contact).toEqual(command.contact);
       const snapshot = yield* readSnapshot(fixture.db, fixture.scope);
+      expect(snapshot?.state.orders.find((order) => order.id === orderId)?.billingAddress).toEqual(
+        command.billingAddress,
+      );
       expect(snapshot?.state.orders.find((order) => order.id === orderId)?.deliveryRecipient).toEqual(
         command.deliveryRecipient,
       );

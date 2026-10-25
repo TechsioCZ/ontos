@@ -213,6 +213,7 @@ export const MerchandiseCommandSchema = Schema.Union([
    * negative ORDER stock movement per line (reference = order number) in the same save; cancelling returns it.
    */
   Schema.TaggedStruct('PlaceStorefrontOrder', {
+    billingAddress: Schema.optionalKey(OrderAddressSchema),
     partyId: Schema.optionalKey(PartyIdSchema),
     customerAccountId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
     clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)),

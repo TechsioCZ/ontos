@@ -376,6 +376,7 @@ export const OrderChannelSchema = Schema.Literals(['STAFF', 'STOREFRONT']);
 export type OrderChannel = typeof OrderChannelSchema.Type;
 
 export const OrderSchema = Schema.Struct({
+  billingAddress: Schema.optionalKey(OrderAddressSchema),
   /** Verified commerce-portal subject, supplied only by the trusted storefront server. */
   customerAccountId: Schema.optionalKey(TextSchema(300)),
   channel: Schema.optionalKey(OrderChannelSchema),
