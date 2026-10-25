@@ -208,22 +208,62 @@ const actionEndpointsOf = (actions: readonly unknown[], moduleId: string, appId:
     })
     .sort((left, right) => left.slug.localeCompare(right.slug));
 
-/** Moves repeated subtrees (>= 300 characters, used at least twice) into shared definitions. */
+/** Visit schema positions only: property maps, schema arrays and literal/annotation data are not schemas. */
+const mapSchemaChildren = (schema: JsonObject, visit: (schema: Json) => Json): JsonObject =>
+  Object.fromEntries(
+    Object.entries(schema).map(([keyword, value]) => {
+      switch (keyword) {
+        case '$defs':
+        case 'definitions':
+        case 'properties':
+        case 'patternProperties':
+        case 'dependentSchemas':
+        case 'dependencies':
+          return [
+            keyword,
+            isJsonObject(value)
+              ? Object.fromEntries(Object.entries(value).map(([name, child]) => [name, visit(child)]))
+              : value,
+          ];
+        case 'allOf':
+        case 'anyOf':
+        case 'oneOf':
+        case 'prefixItems':
+        case 'items':
+          return [keyword, Array.isArray(value) ? value.map(visit) : visit(value)];
+        case 'additionalItems':
+        case 'additionalProperties':
+        case 'unevaluatedItems':
+        case 'unevaluatedProperties':
+        case 'contains':
+        case 'propertyNames':
+        case 'not':
+        case 'if':
+        case 'then':
+        case 'else':
+        case 'contentSchema':
+          return [keyword, visit(value)];
+        default:
+          return [keyword, value];
+      }
+    }),
+  );
+
+/** Moves repeated schemas (>= 300 characters, used at least twice) into shared definitions. */
 const shareRepeatedSubtrees = (
   tools: readonly { readonly schema: JsonObject }[],
   definitions: MutableJsonObject,
 ): JsonObject[] => {
   const counts = new Map<string, number>();
-  const count = (node: Json): void => {
-    if (node !== null && typeof node === 'object') {
+  const count = (node: Json): Json => {
+    if (isJsonObject(node)) {
       const text = JSON.stringify(node);
       if (text.length >= 300) {
         counts.set(text, (counts.get(text) ?? 0) + 1);
       }
-      for (const child of Object.values(node)) {
-        count(child);
-      }
+      mapSchemaChildren(node, count);
     }
+    return node;
   };
   for (const tool of tools) {
     count(tool.schema);
@@ -233,27 +273,28 @@ const shareRepeatedSubtrees = (
   }
   const keys = new Map<string, string>();
   const share = (node: Json, isRoot: boolean): Json => {
-    if (node === null || typeof node !== 'object') {
+    if (!isJsonObject(node)) {
       return node;
     }
     const text = JSON.stringify(node);
     if (!isRoot && text.length >= 300 && (counts.get(text) ?? 0) > 1) {
       let key = keys.get(text);
       if (key === undefined) {
-        key = `S${createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
+        const base = `S${createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
+        key = base;
+        for (let suffix = 2; key in definitions; suffix += 1) {
+          key = `${base}_${suffix}`;
+        }
         keys.set(text, key);
         definitions[key] = share(node, true);
       }
       return { $ref: `#/$defs/${key}` };
     }
-    return Array.isArray(node)
-      ? node.map((child) => share(child, false))
-      : Object.fromEntries(Object.entries(node).map(([name, child]) => [name, share(child, false)]));
+    return mapSchemaChildren(node, (child) => share(child, false));
   };
+  // Snapshot authored definitions before sharing adds generated ones; an authored name can start with S too.
   for (const [name, value] of Object.entries(definitions)) {
-    if (!name.startsWith('S')) {
-      definitions[name] = share(value, true);
-    }
+    definitions[name] = share(value, true);
   }
   return tools.map((tool) => share(tool.schema, true) as JsonObject);
 };
