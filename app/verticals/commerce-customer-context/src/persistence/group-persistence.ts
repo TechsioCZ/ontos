@@ -1,11 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
-import type {
-  OperationalScope,
-  ScopedRoutineDefinition,
-  ScopedRoutineInputValues,
-  ScopedRoutineInvocationError,
-  ScopedRoutineParameter,
-} from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 
 import {
@@ -33,17 +27,6 @@ import type {
 const MODULE_KEY = 'commerce.customer-context';
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Unknown);
 type JsonObject = typeof JsonObjectSchema.Type;
-
-/** Minimum owner-local capability accepted from Core's already-scoped transaction. */
-export interface CustomerGroupScopedRoutineInvoker {
-  readonly invoke: <
-    RowSchema extends Schema.ConstraintDecoder<object>,
-    const Parameters extends readonly ScopedRoutineParameter[],
-  >(
-    routine: ScopedRoutineDefinition<RowSchema, Parameters>,
-    values: ScopedRoutineInputValues<Parameters>,
-  ) => Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError>;
-}
 
 const GroupRowSchema = Schema.Struct({
   actual_revision: Schema.Int,
@@ -520,7 +503,7 @@ const mapUpdateRow = (
 };
 
 export const customerGroupPersistenceForTransaction = (
-  transaction: CustomerGroupScopedRoutineInvoker,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
 ): CustomerGroupPersistence => ({
   archive: (

@@ -10,8 +10,7 @@ import {
   customerGroupPersistenceForTransaction,
   customerGroupRoutineAllowlist,
 } from '../../src/persistence/group-persistence.ts';
-import type { CustomerGroupScopedRoutineInvoker } from '../../src/persistence/group-persistence.ts';
-import type { ScopedRoutineDefinition } from '@app/core-runtime';
+import type { ScopedRoutineDefinition, ScopedRoutineInvoker } from '@app/core-runtime';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -132,7 +131,7 @@ it.effect('forwards exact actor and Action invocation attribution to create', ()
           },
         ]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const outcome = yield* persistence.create({
       actionInvocationId,
@@ -190,7 +189,7 @@ it.effect('maps assignment, removal, and deterministic history documents without
         index += 1;
         return Effect.succeed([row]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const assigned = yield* persistence.assign({
       actionInvocationId,
@@ -256,7 +255,7 @@ it.effect('refuses to treat a cursor-bearing effective membership read as a comp
             outcome: 'PRESENT',
           },
         ]),
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const failure = yield* Effect.flip(
       persistence.effectiveMemberships({
@@ -281,7 +280,7 @@ it.effect('reads counterparty memberships by business code and counterparty id',
           { groups_json: [group], items_json: [{ counterpartyResourceId: 'counterparty-1', membership }] },
         ]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const result = yield* persistence.counterpartyMemberships({
       businessCodes: ['DEALERS'],
@@ -305,7 +304,7 @@ it.effect('fails closed before invocation when command scope disagrees with Core
         invoked = true;
         return Effect.succeed([]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const error = yield* Effect.flip(
       persistence.detail({
@@ -328,7 +327,7 @@ it.effect('rejects forged command actor attribution before routine invocation', 
         invoked = true;
         return Effect.succeed([]);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const error = yield* Effect.flip(
       persistence.create({
@@ -366,7 +365,7 @@ it.effect('sanitizes Core routine failures as the owner persistence error', () =
             routineKey: 'customer-group.read-detail',
           }),
         ),
-    } as CustomerGroupScopedRoutineInvoker;
+    } as ScopedRoutineInvoker;
     const error = yield* Effect.flip(
       customerGroupPersistenceForTransaction(transaction, scope).detail({
         groupRef,

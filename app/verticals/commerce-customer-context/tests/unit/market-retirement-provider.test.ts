@@ -1,4 +1,4 @@
-import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
+import type { OperationalScope, ReadLoadContext, ScopedRoutineInvoker } from '@app/core-runtime';
 import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -33,10 +33,7 @@ import {
   marketRetirementReservationForTransaction,
   marketRetirementRoutineAllowlist,
 } from '../../src/persistence/market-retirement-persistence.ts';
-import type {
-  MarketAffectedUseAssessmentRepository as MarketAffectedUseAssessmentRepositoryContract,
-  MarketRetirementScopedRoutineInvoker,
-} from '../../src/persistence/market-retirement-persistence.ts';
+import type { MarketAffectedUseAssessmentRepository as MarketAffectedUseAssessmentRepositoryContract } from '../../src/persistence/market-retirement-persistence.ts';
 import {
   MarketRetirementAssessmentStaleError,
   MarketRetirementAssessmentUnavailableError,
@@ -181,14 +178,14 @@ const context = (
   services,
 });
 
-const invokerReturning = (...results: readonly object[]): MarketRetirementScopedRoutineInvoker => ({
+const invokerReturning = (...results: readonly object[]): ScopedRoutineInvoker => ({
   invoke: (routine) =>
     Effect.forEach(results, (result) => Schema.decodeUnknownEffect(routine.resultSchema)(result), {
       concurrency: 1,
     }).pipe(Effect.orDie),
 });
 
-const invokerFailing = (failure: ScopedRoutineInvocationError): MarketRetirementScopedRoutineInvoker => ({
+const invokerFailing = (failure: ScopedRoutineInvocationError): ScopedRoutineInvoker => ({
   invoke: () => Effect.fail(failure),
 });
 

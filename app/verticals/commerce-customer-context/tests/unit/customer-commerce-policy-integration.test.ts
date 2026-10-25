@@ -1,4 +1,9 @@
-import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
+import type {
+  ContextAccessService,
+  OperationalScope,
+  ScopedRoutineDefinition,
+  ScopedRoutineInvoker,
+} from '@app/core-runtime';
 import { getVerticalRuntimeEntrypoints, toContextPermissionAccessKey } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Predicate, Result, Schema } from 'effect';
@@ -37,7 +42,6 @@ import { commerceQuantityPolicyCurrentRead } from '../../src/api/commerce-quanti
 import { marketBootstrapPolicyCurrentRead } from '../../src/api/market-bootstrap-policy-current.read.ts';
 import { paymentTermPolicyCurrentRead } from '../../src/api/payment-term-policy-current.read.ts';
 import { purchaseCurrencyPolicyCurrentRead } from '../../src/api/purchase-currency-policy-current.read.ts';
-import type { CustomerCommercePolicyScopedRoutineInvoker } from '../../src/persistence/customer-commerce-policy-persistence.ts';
 import { customerCommercePolicyAdministrationServiceFactory } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import type { CustomerCommercePolicyAdministrationService } from '../../src/services/customer-commerce-policy-administration.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
@@ -208,7 +212,7 @@ interface RoutineCall {
 
 interface StatefulInvoker {
   readonly calls: RoutineCall[];
-  readonly invoker: CustomerCommercePolicyScopedRoutineInvoker;
+  readonly invoker: ScopedRoutineInvoker;
 }
 
 const statefulInvoker = (
@@ -235,10 +239,10 @@ const statefulInvoker = (
       }),
   };
   // SAFETY: the fake implements the repository's sole generic `invoke` test seam and returns routine-schema-shaped rows.
-  return { calls, invoker: fake as CustomerCommercePolicyScopedRoutineInvoker };
+  return { calls, invoker: fake as ScopedRoutineInvoker };
 };
 
-const asServiceTransaction = (invoker: CustomerCommercePolicyScopedRoutineInvoker) =>
+const asServiceTransaction = (invoker: ScopedRoutineInvoker) =>
   // SAFETY: the service uses only the scoped-routine `invoke` seam exposed by its persistence repository.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Scoped transaction behavior beyond `invoke` is unreachable in this owner repository test.
   invoker as Parameters<typeof customerCommercePolicyAdministrationServiceFactory>[0];

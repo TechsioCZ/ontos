@@ -4,8 +4,9 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect } from 'effect';
+import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
 
 import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
 
@@ -281,5 +282,624 @@ it.live('allows private scoped service factories but rejects executor exposure t
       'verticals/stock/src/actions/leaky.action.ts:2',
       'verticals/stock/src/actions/leaky.action.ts:3',
     ]);
+  }),
+);
+
+type SourceFixtures = Record<string, string>;
+
+const ownerInputImports =
+  "import type { OperationalScope, ReadOwnerTransaction, ScopedTransactionExecutor as Executor } from '@app/core-runtime';\n";
+const transitiveDatabaseCapabilityReason = 'transitive global database capability in governed handler requirements';
+
+const scopedOwnerFixtures = (cases: SourceFixtures): SourceFixtures =>
+  Object.fromEntries(
+    Object.entries(cases).flatMap(([name, source]) => [
+      [`verticals/stock/src/services/${name}.ts`, `${ownerInputImports}import { Effect } from 'effect';\n${source}`],
+      [`verticals/stock/src/actions/${name}.action.ts`, `import '../services/${name}.ts';\n`],
+    ]),
+  );
+
+const expectRejectedOwners = (
+  violations: readonly { readonly file: string; readonly line: number; readonly reason: string }[],
+  names: readonly string[],
+): void => {
+  expect(violations).toEqual(
+    EffectArray.sort(
+      names.map((name) => `verticals/stock/src/actions/${name}.action.ts`),
+      Order.String,
+    ).map((file) => ({
+      file,
+      line: 1,
+      reason: transitiveDatabaseCapabilityReason,
+    })),
+  );
+};
+
+const writeInputFixture = (root: string, [relative, source]: readonly [string, string]) =>
+  Effect.gen(function* writeScopedInputFixture() {
+    if (relative.endsWith('.ts')) {
+      expect(parseSync(relative, source, { astType: 'ts' }).errors).toEqual([]);
+    }
+    const file = path.join(root, relative);
+    yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+    yield* Effect.tryPromise(() => writeFile(file, source));
+  });
+
+const checkFixtures = (files: SourceFixtures) =>
+  Effect.gen(function* scopedInputFixtures() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-inputs-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    yield* Effect.forEach(Object.entries(files), (entry) => writeInputFixture(root, entry));
+    return yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+  });
+
+const sqlInputAlias = "export type MerchandiseDb = Pick<Executor, 'delete' | 'insert' | 'select' | 'update'>;\n";
+const sqlBarrelTarget = './barrel.ts';
+const portEffectType = 'Effect.Effect<Port, Unavailable>';
+const useOwnerPort = 'portFor(transaction).pipe(Effect.flatMap(use))';
+const routineInputAlias = `import type { ReadServiceFactory } from '@app/core-runtime';
+type ScopedRoutineInput = Pick<Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0], 'invoke'>;
+`;
+const wrappedSqlInput = `import { Effect } from 'effect';
+${sqlInputAlias}
+const wrapped = Effect.fn('Sql.load')(function* load(db: MerchandiseDb) { return yield* db.select().from(products); });
+export const make = (transaction: Executor, scope: OperationalScope) => ({ load: () => wrapped(transaction) });
+`;
+const pricingReadHelper = `
+${routineInputAlias}
+const routinePort = (transaction: ScopedRoutineInput, scope: OperationalScope) =>
+  ({ loadCurrent: (input) => transaction.invoke(loadCurrentRoutine, { ...input, tenantId: scope.tenantId }) });
+const persistenceForScope: ReadServiceFactory<Port> = (transaction, scope: OperationalScope) =>
+  Effect.succeed(routinePort(transaction, scope));
+export const ownerStatePerRead = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => {
+  const read = <Port, Value, Failure>(
+    portFor: (transaction: Executor) => Effect.Effect<Port, Unavailable>,
+    use: (port: Port) => Effect.Effect<Value, Failure>,
+  ) => ownerTransaction((transaction) => portFor(transaction).pipe(Effect.flatMap(use)));
+  return { loadCurrent: (input) => read(
+    (transaction) => persistenceForScope(transaction, scope),
+    (port) => port.loadCurrent(input),
+  ) };
+};
+`;
+
+it.live('accepts Merchandise SQL inputs and Pricing short-read inputs without tainting governed callers', () =>
+  Effect.gen(function* legitimateScopedInputs() {
+    const violations = yield* checkFixtures({
+      'packages/sql-contract/barrel.ts': "export type { MerchandiseDb as SqlInput } from './input.ts';\n",
+      'packages/sql-contract/input.ts': ownerInputImports + sqlInputAlias,
+      'packages/sql-contract/package.json': JSON.stringify({
+        exports: { './input': { default: sqlBarrelTarget, types: sqlBarrelTarget } },
+        name: '@private/sql-contract',
+      }),
+      'verticals/merchandise/src/actions/replace.action.ts':
+        "import { makePersistence } from '../services/persistence.service.ts';\n",
+      'verticals/merchandise/src/services/imported-input.ts': `
+import type { SqlInput as Db } from '@private/sql-contract/input';
+export const loadRows = (db: Db) => db.select().from(products);
+`,
+      'verticals/merchandise/src/services/merchandise-store.ts': `${ownerInputImports + sqlInputAlias}
+import { Effect } from 'effect';
+export const insertProductRows = (db: MerchandiseDb, rows: readonly ProductRow[]) => db.insert(products).values(rows);
+export const deleteScope = Effect.fn(function* deleteScope(db: MerchandiseDb, scope: StoreScope) {
+  return yield* db.delete(products).where(whereScope(products, scope));
+});
+export const loadProducts = Effect.fn('Merchandise.loadProducts')(function* loadProducts(db: MerchandiseDb, scope: StoreScope) {
+  return yield* db.select().from(products).where(whereScope(products, scope));
+});
+`,
+      'verticals/merchandise/src/services/persistence.service.ts': `${ownerInputImports}
+import { deleteScope, insertProductRows, loadProducts } from './merchandise-store.ts';
+import { loadRows } from './imported-input.ts';
+export const makePersistence = (transaction: Executor, scope: OperationalScope) => {
+  const loadCurrent = () => loadProducts(transaction, scope);
+  return { loadCurrent, loadRows: () => loadRows(transaction), replace: (rows) => {
+    deleteScope(transaction, scope);
+    return insertProductRows(transaction, rows);
+  } };
+};
+export const forwardFactory = (transaction: Executor, scope: OperationalScope) => makePersistence(transaction, scope);
+`,
+      'verticals/pricing/src/integrations/owner-state.ts': ownerInputImports + pricingReadHelper,
+      'verticals/pricing/src/reads/current.read.ts':
+        "import { ownerStatePerRead } from '../integrations/owner-state.ts';\n",
+    });
+    expect(violations).toEqual([]);
+  }),
+);
+
+it.live(
+  'rejects contextual factories, provider aliases, defaults, templates, and class storage that expose executors',
+  () =>
+    Effect.gen(function* boundedEscapeRegressions() {
+      const factoryImport = "import type { ReadServiceFactory } from '@app/core-runtime';\n";
+      const projection = "type Db = Pick<Executor, 'select'>;\n";
+      const negatives = {
+        'class-accessor-storage':
+          'export const leak = (transaction: Executor, scope: OperationalScope) => new class { accessor database = transaction; };',
+        'class-instance-storage':
+          'export const leak = (transaction: Executor, scope: OperationalScope) => new class { database = transaction; };',
+        'class-static-storage':
+          'export const leak = (transaction: Executor, scope: OperationalScope) => class { static database = transaction; };',
+        'contextual-factory-inferred-scope': `${factoryImport}export const leak: ReadServiceFactory<unknown> = (transaction, scope) => Effect.succeed(transaction);`,
+        'contextual-factory-omitted-scope': `${factoryImport}export const leak: ReadServiceFactory<unknown> = (transaction) => Effect.succeed(transaction);`,
+        'contextual-factory-requirements': `${factoryImport}export const leak: ReadServiceFactory<unknown, never> = (transaction) => Effect.succeed(transaction);`,
+        'contextual-factory-unknown-annotation': `${factoryImport}export const leak: ReadServiceFactory<unknown> = (transaction: unknown) => Effect.succeed(transaction);`,
+        'default-box-alias': `${projection}export const leak = (db: Db, box = { db }, alias = box) => alias;`,
+        'default-box-destructuring': `${projection}export const leak = (db: Db, { value } = { value: db }) => value;`,
+        'default-box-return': `${projection}export const leak = (db: Db, box = { db }) => box;`,
+        'default-box-sink': `${projection}export const leak = (db: Db, box = { db }) => capture(box);`,
+        'named-class-expression-scope':
+          'export const Fake = class OperationalScope { make(transaction: Executor, scope: OperationalScope) { return {}; } };',
+        'named-class-expression-scope-closure':
+          'export const Fake = class OperationalScope { make(transaction: Executor, scope: OperationalScope) { return { read: () => transaction.select() }; } };',
+        'provider-alias-chain':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => { const first = ownerTransaction; const run = first; return run(transaction => Effect.succeed(transaction)); };',
+        'provider-alias-return':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => { const run = ownerTransaction; return run(transaction => Effect.succeed(transaction)); };',
+        'provider-alias-shadowed-scope':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => { const run = ownerTransaction; return run(transaction => ({ database: transaction })); };',
+        'provider-aliased-write':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => { const run = ownerTransaction; ownerTransaction = untrusted; return run(transaction => Effect.succeed(transaction)); };',
+        'provider-default-input':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => ownerTransaction((transaction = untrusted) => Effect.succeed(transaction));',
+        'provider-destructured-input':
+          'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => ownerTransaction(({ select }) => Effect.succeed(select));',
+        'tagged-template-alias': `${projection}const capture = (_strings: TemplateStringsArray, value: unknown) => value; export const leak = (db: Db) => { const box = { db }; return capture\`\${box}\`; };`,
+        'tagged-template-raw': `${projection}const capture = (_strings: TemplateStringsArray, value: unknown) => value; export const leak = (db: Db) => capture\`\${db}\`;`,
+      };
+      const violations = yield* checkFixtures(scopedOwnerFixtures(negatives));
+      expectRejectedOwners(violations, Object.keys(negatives));
+    }),
+);
+
+it.live(
+  'preserves scoped domain closures for inferred factories, aliased providers, defaults, templates, and classes',
+  () =>
+    Effect.gen(function* boundedEscapePositiveControls() {
+      const factoryImport = "import type { ReadServiceFactory } from '@app/core-runtime';\n";
+      const positives = {
+        'class-domain-closure':
+          'export const make = (transaction: Executor, scope: OperationalScope) => new class { read = () => transaction.select(); };',
+        'class-static-domain-closure':
+          'export const make = (transaction: Executor, scope: OperationalScope) => class { static read = () => transaction.select(); };',
+        'contextual-factory-inferred-scope': `${factoryImport}export const make: ReadServiceFactory<unknown> = (transaction, scope) => Effect.succeed({ read: () => transaction.select() });`,
+        'contextual-factory-omitted-scope': `${factoryImport}export const make: ReadServiceFactory<unknown> = (transaction) => Effect.succeed({ read: () => transaction.select() });`,
+        'contextual-factory-requirements': `${factoryImport}export const make: ReadServiceFactory<unknown, never> = (transaction) => Effect.succeed({ read: () => transaction.select() });`,
+        'default-domain-closure':
+          'export const make = (transaction: Executor, scope: OperationalScope, box = { read: () => transaction.select() }) => box;',
+        'named-class-expression-scope-is-local':
+          'export const Local = class OperationalScope {}; export const make = (transaction: Executor, scope: OperationalScope) => ({ read: () => transaction.select() });',
+        'provider-alias-domain-closure':
+          'export const make = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => { const first = ownerTransaction; const run = first; return { read: () => run(transaction => transaction.select()) }; };',
+        'tagged-template-domain-closure': `export const make = (transaction: Executor, scope: OperationalScope) => capture\`\${() => transaction.select()}\`;`,
+        'tagged-template-scope-snapshot': `export const make = (transaction: Executor, scope: OperationalScope) => capture\`\${transaction.scope}\`;`,
+      };
+      const violations = yield* checkFixtures(scopedOwnerFixtures(positives));
+      expect(violations).toEqual([]);
+    }),
+);
+
+const canonicalTypeFixtures = {
+  'packages/conflicting-scope/canonical.ts':
+    "export type { NativeScope as Scope } from '../core-runtime/src/private/authority.ts';\n",
+  'packages/conflicting-scope/counterfeit.ts':
+    "export type { NativeScope as Scope } from '../counterfeit/src/index.ts';\n",
+  'packages/conflicting-scope/package.json': JSON.stringify({
+    exports: { default: './counterfeit.ts', types: './canonical.ts' },
+    name: '@private/conflicting-scope',
+  }),
+  'packages/core-runtime/package.json': JSON.stringify({ exports: './src/index.ts', name: '@app/core-runtime' }),
+  'packages/core-runtime/src/index.ts':
+    "export type { NativeExecutor as ScopedTransactionExecutor, NativeScope as OperationalScope } from './private/authority-barrel.ts';\nexport type { ReadOwnerTransaction, ReadServiceFactory } from './private/authority.ts';\nexport { captureUnknown, selectRows } from './private/queries.ts';\n",
+  'packages/core-runtime/src/private/authority-barrel.ts':
+    "export type { NativeExecutor, NativeScope } from './authority.ts';\n",
+  'packages/core-runtime/src/private/authority.ts': `export interface NativeExecutor { readonly select: () => unknown; }
+export interface NativeScope { readonly tenantId: string; }
+export type ReadOwnerTransaction = <Value>(use: (transaction: NativeExecutor) => Value) => Value;
+export type ReadServiceFactory<Services, Requirements = never> = (transaction: NativeExecutor, scope: NativeScope) => Services;
+`,
+  'packages/core-runtime/src/private/queries.ts': `import type { NativeExecutor } from './authority.ts';
+export const selectRows = (db: Pick<NativeExecutor, 'select'>) => db.select();
+export const captureUnknown = (db: unknown) => db;
+`,
+  'packages/counterfeit/src/index.ts':
+    'export interface NativeExecutor { readonly select: () => unknown; }\nexport interface NativeScope { readonly tenantId: string; }\n',
+  'packages/shared-scope/early-barrel.ts': "export type { Scope } from './late-declaration.ts';\n",
+  'packages/shared-scope/late-declaration.ts':
+    "export type { NativeScope as Scope } from '../core-runtime/src/private/authority.ts';\n",
+  'packages/shared-scope/package.json': JSON.stringify({
+    exports: { default: './late-declaration.ts', types: './early-barrel.ts' },
+    name: '@private/shared-scope',
+  }),
+};
+
+const nativeRoutineImport = "import type { ScopedRoutineInvoker as Invoker } from '@app/core-runtime';\n";
+const nativeRoutineDeclaration = `export interface ScopedRoutineInvoker {
+  readonly invoke: <Row, Parameters extends readonly unknown[]>(routine: Routine<Row, Parameters>, values: Parameters) => Effect.Effect<readonly Row[], InvocationError>;
+}
+`;
+const nativeRoutineFixtures = {
+  ...canonicalTypeFixtures,
+  'packages/core-runtime/src/db/routine-barrel.ts':
+    "export type { ScopedRoutineInvoker as NativeInvoker } from './scoped-routine.ts';\n",
+  'packages/core-runtime/src/db/scoped-routine.ts': nativeRoutineDeclaration,
+  'packages/core-runtime/src/index.ts': `${canonicalTypeFixtures['packages/core-runtime/src/index.ts']}
+export type { NativeInvoker as ScopedRoutineInvoker } from './db/routine-barrel.ts';
+export { captureRoutine, invokeRoutine } from './routine-consumers.ts';
+`,
+  'packages/core-runtime/src/routine-consumers.ts': `import type { ScopedRoutineInvoker } from './db/scoped-routine.ts';
+export const captureRoutine = (transaction: ScopedRoutineInvoker) => transaction;
+export const invokeRoutine = (transaction: ScopedRoutineInvoker) => transaction.invoke(routine, []);
+`,
+};
+
+it.live('accepts native Storefront and Commerce routine-only factories without a separate scope parameter', () =>
+  Effect.gen(function* nativeRoutineOwnerFactories() {
+    const violations = yield* checkFixtures({
+      ...nativeRoutineFixtures,
+      'packages/routine-contract/barrel.ts': "export type { RoutineInput } from './input.ts';\n",
+      'packages/routine-contract/input.ts': `${nativeRoutineImport}export type RoutineInput = Invoker;\n`,
+      'packages/routine-contract/package.json': JSON.stringify({
+        exports: { default: './input.ts', types: './barrel.ts' },
+        name: '@private/routine-contract',
+      }),
+      'verticals/commerce-customer-context/src/persistence/current.ts': `${ownerInputImports}
+import type { ScopedRoutineInvoker as NativeInvoker } from '../../../../packages/core-runtime/src/db/scoped-routine.ts';
+import { invoke } from './routine.ts';
+const current = (transaction: NativeInvoker) => ({
+  load: (input) => invoke(transaction, input),
+  refresh: (input) => transaction.invoke(refreshRoutine, [input]),
+  transaction: () => transaction.invoke(auditRoutine, []),
+});
+export const persistenceForScope = (transaction: Executor, scope: OperationalScope) => current(transaction);
+`,
+      'verticals/commerce-customer-context/src/persistence/routine-input.ts':
+        "export type { RoutineInput } from '@private/routine-contract';\n",
+      'verticals/commerce-customer-context/src/persistence/routine.ts': `import { Effect } from 'effect';
+import type { RoutineInput } from './routine-input.ts';
+export const invoke = Effect.fn('Commerce.invoke')(function* invoke(transaction: RoutineInput, input: Input) {
+  return yield* transaction.invoke(routine, [input]);
+});
+`,
+      'verticals/commerce-customer-context/src/reads/current.read.ts':
+        "import { persistenceForScope } from '../persistence/current.ts';\n",
+      'verticals/storefront-registry/src/actions/register.action.ts':
+        "import { persistenceForScope } from '../persistence/administration.ts';\n",
+      'verticals/storefront-registry/src/persistence/administration.ts': `${nativeRoutineImport}
+import { Effect } from 'effect';
+import type { ReadServiceFactory } from '@app/core-runtime';
+import { invokeRoutine } from '@app/core-runtime';
+export const audit = (transaction: Invoker) => ({ load: () => invokeRoutine(transaction) });
+const invoke = <A, I extends object>(transaction: Invoker, routine: Routine, input: I, schema: Decoder<A>) =>
+  transaction.invoke(routine, [input]).pipe(Effect.flatMap(([row]) => decode(schema, row)));
+export const storefrontAdministrationPersistence = (transaction: Invoker) => ({
+  register: (command) => invoke(transaction, registerRoutine, command, RegisterOutcomeSchema),
+  revise: (command) => invoke(transaction, reviseRoutine, command, ReviseOutcomeSchema),
+});
+export const persistenceForScope: ReadServiceFactory<Port> = (transaction) =>
+  Effect.succeed(storefrontAdministrationPersistence(transaction));
+`,
+    });
+    expect(violations).toEqual([]);
+  }),
+);
+
+it.live('keeps native routine inputs raw and rejects widening, lookalikes, shadowing, and alias escapes', () =>
+  Effect.gen(function* nativeRoutineEscapeProof() {
+    const negatives = {
+      'native-array': 'export const leak = (transaction: Invoker) => [transaction];',
+      'native-box': 'export const leak = (transaction: Invoker) => ({ database: transaction });',
+      'native-class-storage': 'export const leak = (transaction: Invoker) => new class { database = transaction; };',
+      'native-core-helper-escape':
+        "import { captureRoutine } from '@app/core-runtime'; export const make = (transaction: Invoker) => captureRoutine(transaction);",
+      'native-core-helper-executor-escape':
+        "import { captureRoutine } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => captureRoutine(transaction);",
+      'native-core-helper-inferred-escape': `import type { ReadServiceFactory } from '@app/core-runtime'; import { captureRoutine } from '@app/core-runtime'; export const make: ReadServiceFactory<unknown> = transaction => captureRoutine(transaction);`,
+      'native-cycle':
+        'const first = (transaction: Invoker) => second(transaction); const second = (transaction: Invoker) => first(transaction); export const make = (transaction: Invoker) => first(transaction);',
+      'native-default-box': 'export const leak = (transaction: Invoker, box = { transaction }) => box;',
+      'native-destructure':
+        'export const leak = (transaction: Invoker) => { const { invoke } = transaction; return invoke; };',
+      'native-effect': 'export const leak = (transaction: Invoker) => Effect.succeed(transaction);',
+      'native-extra-database': 'export const leak = (transaction: Invoker) => transaction.database;',
+      'native-extra-execute': 'export const leak = (transaction: Invoker) => transaction.execute(statement);',
+      'native-extra-select': 'export const leak = (transaction: Invoker) => transaction.select();',
+      'native-full-factory-alias': `import type { ReadServiceFactory } from '@app/core-runtime'; type Full = Parameters<ReadServiceFactory<unknown>>[0]; const consume = (transaction: Full) => transaction.invoke(routine, []); export const make = (transaction: Invoker) => consume(transaction);`,
+      'native-handler-field': 'export interface Services { readonly database: Invoker; }',
+      'native-intersection':
+        'type Full = Invoker & Executor; export const make = (transaction: Full) => transaction.select();',
+      'native-local-box': 'export const make = (transaction: Invoker) => { const box = { transaction }; return {}; };',
+      'native-method-alias':
+        'export const make = (transaction: Invoker) => { const invoke = transaction.invoke; return { load: () => invoke(routine, []) }; };',
+      'native-namespace':
+        "import type * as Core from '@app/core-runtime'; export interface Services { readonly database: Core.ScopedRoutineInvoker; }",
+      'native-outer-storage': 'export const make = (transaction: Invoker) => { escaped = transaction; return {}; };',
+      'native-raw-alias':
+        'export const make = (transaction: Invoker) => { const alias = transaction; return { load: () => alias.invoke(routine, []) }; };',
+      'native-raw-return': 'export const leak = (transaction: Invoker) => transaction;',
+      'native-reassigned':
+        'export const make = (transaction: Invoker) => { transaction = untrusted; return { load: () => transaction.invoke(routine, []) }; };',
+      'native-scope-lookalike': 'export const leak = (transaction: Invoker) => transaction.scope;',
+      'native-shadowed-alias':
+        'const consume = <Invoker>(transaction: Invoker) => transaction; export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);',
+      'native-shadowed-canonical':
+        "import type { ScopedRoutineInvoker } from '@app/core-runtime'; export const make = <ScopedRoutineInvoker>(transaction: ScopedRoutineInvoker) => transaction;",
+      'native-spoofed-import':
+        "import type { ScopedRoutineInvoker as Fake } from 'untrusted'; export const leak = (transaction: Fake) => ({ load: () => transaction.invoke(routine, []) });",
+      'native-spoofed-private':
+        "import type { ScopedRoutineInvoker as Fake } from '@app/counterfeit'; export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction); const consume = (transaction: Fake) => transaction.invoke(routine, []);",
+      'native-structural-lookalike':
+        'interface RoutineInput { readonly invoke: (routine: unknown, values: unknown) => unknown; } const consume = (transaction: RoutineInput) => transaction.invoke(routine, []); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);',
+      'native-tagged-template': `export const make = (transaction: Invoker) => capture\`\${transaction}\`;`,
+      'native-type-import':
+        "export interface Services { readonly database: import('@app/core-runtime').ScopedRoutineInvoker; }",
+      'native-unknown-consumer': 'export const make = (transaction: Invoker) => consume(transaction);',
+      'native-widened-delegation':
+        'const consume = (transaction: Executor, scope: OperationalScope) => transaction.select(); export const make = (transaction: Invoker) => consume(transaction, scope);',
+    };
+    const fixtures = Object.fromEntries(
+      Object.entries(negatives).map(([name, source]) => [name, nativeRoutineImport + source]),
+    );
+    const violations = yield* checkFixtures({ ...nativeRoutineFixtures, ...scopedOwnerFixtures(fixtures) });
+    expectRejectedOwners(violations, Object.keys(negatives));
+  }),
+);
+
+it.live('requires one valid public export of the actual invoke-only native declaration', () =>
+  Effect.gen(function* nativeRoutineExportIdentity() {
+    const consumer = scopedOwnerFixtures({
+      'native-invalid-identity': `${nativeRoutineImport}export const make = (transaction: Invoker) => ({ load: () => transaction.invoke(routine, []) });`,
+    });
+    const indexFile = 'packages/core-runtime/src/index.ts';
+    const routineFile = 'packages/core-runtime/src/db/scoped-routine.ts';
+    const invalidIdentities: readonly SourceFixtures[] = [
+      { [indexFile]: canonicalTypeFixtures[indexFile] },
+      {
+        [indexFile]: `${canonicalTypeFixtures[indexFile]}export type { NativeExecutor as ScopedRoutineInvoker } from './private/authority.ts';`,
+      },
+      {
+        [indexFile]: `${canonicalTypeFixtures[indexFile]}export type { ScopedRoutineInvoker } from '@app/counterfeit';`,
+        'packages/counterfeit/src/index.ts': nativeRoutineDeclaration,
+      },
+      { [routineFile]: nativeRoutineDeclaration.replace('readonly invoke:', 'readonly select:') },
+      { [routineFile]: nativeRoutineDeclaration.replace('\n}', '\n  readonly execute: (sql: string) => unknown;\n}') },
+      {
+        [routineFile]: `${nativeRoutineDeclaration}\nexport interface ScopedRoutineInvoker { readonly select: () => unknown; }`,
+      },
+      {
+        'packages/core-runtime/package.json': JSON.stringify({
+          exports: { default: './src/counterfeit.ts', types: './src/index.ts' },
+          name: '@app/core-runtime',
+        }),
+        'packages/core-runtime/src/counterfeit.ts': nativeRoutineDeclaration,
+      },
+    ];
+    for (const overrides of invalidIdentities) {
+      const violations = yield* checkFixtures({ ...nativeRoutineFixtures, ...overrides, ...consumer });
+      expectRejectedOwners(violations, ['native-invalid-identity']);
+    }
+  }),
+);
+
+it.live(
+  'proves exact canonical private declarations and bounded inline Pick inputs without authorizing lookalikes',
+  () =>
+    Effect.gen(function* canonicalDeclarationAndInlineProjectionProof() {
+      const privateImports =
+        "import type { NativeExecutor as Db, NativeScope as Scope } from '../../../../packages/core-runtime/src/private/authority.ts';\n";
+      const positives = {
+        'canonical-conditional-scope':
+          "import type { Scope } from '@private/shared-scope'; export const make = (transaction: Executor, scope: Scope) => ({ read: () => transaction.select() });",
+        'canonical-private-declarations': `${privateImports}export const consume = (transaction: Db, scope: Scope) => ({ read: () => transaction.select() }); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction, scope);`,
+        'canonical-private-imported-helper':
+          "import { selectRows } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => selectRows(transaction);",
+        'canonical-private-inline-pick': `${privateImports}export const consume = (db: Pick<Db, 'select'>) => db.select(); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);`,
+        'inline-routine-pick': `${routineInputAlias}export const consume = (db: Pick<Parameters<ReadServiceFactory<unknown>>[0], 'invoke'>) => db.invoke(routine, {}); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);`,
+        'inline-sql-pick':
+          "export const consume = (db: Pick<Executor, 'select'>) => db.select(); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);",
+      };
+      expect(yield* checkFixtures({ ...canonicalTypeFixtures, ...scopedOwnerFixtures(positives) })).toEqual([]);
+
+      const negatives = {
+        'conflicting-conditional-scope':
+          "import type { Scope } from '@private/conflicting-scope'; export const make = (transaction: Executor, scope: Scope) => ({ read: () => transaction.select() });",
+        'counterfeit-executor-declaration':
+          "import type { NativeExecutor as Db } from '@app/counterfeit'; const consume = (db: Db) => db.select(); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);",
+        'counterfeit-scope-declaration':
+          "import type { NativeScope as Scope } from '@app/counterfeit'; export const make = (transaction: Executor, scope: Scope) => ({ read: () => transaction.select() });",
+        'full-factory-input': `${routineInputAlias}type FullInput = Parameters<ReadServiceFactory<unknown>>[0]; const consume = (db: FullInput) => db.invoke(routine, {}); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);`,
+        'inline-projection-escape': "export const make = (db: Pick<Executor, 'select'>) => ({ raw: db });",
+        'inline-projection-unsupported-key':
+          "const consume = (db: Pick<Executor, 'scope'>) => db.scope; export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);",
+        'private-canonical-raw-return': `${privateImports}export const make = (transaction: Db, scope: Scope) => transaction;`,
+        'shadowed-inline-pick':
+          "type Pick<T, K> = T; const consume = (db: Pick<Executor, 'select'>) => db.select(); export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);",
+        'unchecked-company-scope':
+          'interface CompanyScope { readonly tenantId: string; } export const make = (transaction: Executor, scope: CompanyScope) => ({ read: () => transaction.select() });',
+        'unproven-core-helper':
+          "import { captureUnknown } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => captureUnknown(transaction);",
+      };
+      const violations = yield* checkFixtures({ ...canonicalTypeFixtures, ...scopedOwnerFixtures(negatives) });
+      expectRejectedOwners(violations, Object.keys(negatives));
+    }),
+);
+
+it.live('rejects ambient aliases, unproven callbacks, global imports, and inferred raw capability escapes', () =>
+  Effect.gen(function* invalidScopedInputs() {
+    const negatives = {
+      'callback-escape-provider-value': pricingReadHelper.replace(
+        useOwnerPort,
+        '{ escaped = transaction; return portFor(transaction); }',
+      ),
+      'callback-expression-shadow': pricingReadHelper
+        .replace(
+          'const read = <Port, Value, Failure>(',
+          'const read = function ownerTransaction<Port, Value, Failure>(',
+        )
+        .replace(') => ownerTransaction((transaction)', ') { return ownerTransaction((transaction)')
+        .replace('Effect.flatMap(use)));', 'Effect.flatMap(use))); };'),
+      'callback-forwarded': pricingReadHelper.replace(useOwnerPort, 'consume(portFor, transaction)'),
+      'callback-layer-requirement': pricingReadHelper.replace(
+        portEffectType,
+        'Layer.Layer<Port, Unavailable, Executor>',
+      ),
+      'callback-no-provider':
+        'export const make = (scope: OperationalScope) => { const read = (portFor: (transaction: Executor) => Effect.Effect<Port>) => arbitrary((transaction) => portFor(transaction)); return read; };\n',
+      'callback-provider-reassigned': pricingReadHelper.replace(
+        '  const read =',
+        '  ownerTransaction = untrusted; const read =',
+      ),
+      'callback-return-raw': pricingReadHelper.replace(portEffectType, 'Executor'),
+      'callback-return-requirement': pricingReadHelper.replace(
+        portEffectType,
+        'Effect.Effect<Port, Unavailable, Executor>',
+      ),
+      'callback-shadowed-provider': pricingReadHelper.replace(
+        '  ) => ownerTransaction((transaction)',
+        '    ownerTransaction: unknown,\n  ) => ownerTransaction((transaction)',
+      ),
+      'callback-shadowed-scope': pricingReadHelper.replace(
+        'const read = <Port, Value, Failure>(',
+        'const read = <Port, Value, Failure>(scope: unknown,',
+      ),
+      'callback-shadowed-transaction': pricingReadHelper.replace(
+        useOwnerPort,
+        '((transaction: unknown) => portFor(transaction))(untrusted)',
+      ),
+      'callback-unused': pricingReadHelper.replace(useOwnerPort, 'Effect.succeed(undefined)'),
+      'callback-wrong-transaction': pricingReadHelper.replace('portFor(transaction).pipe', 'portFor(untrusted).pipe'),
+      'concrete-callback-outer-assignment': pricingReadHelper.replace(
+        '(transaction) => persistenceForScope(transaction, scope)',
+        '(transaction) => { escaped = transaction; return persistenceForScope(transaction, scope); }',
+      ),
+      'concrete-callback-raw-return': pricingReadHelper.replace(
+        '(transaction) => persistenceForScope(transaction, scope)',
+        '(transaction) => transaction',
+      ),
+      'contextual-factory-raw-return': `${routineInputAlias}export const leak: ReadServiceFactory<Port> = (transaction, scope: OperationalScope) => transaction;`,
+      'contextual-factory-unknown-input': pricingReadHelper.replace(
+        'ReadServiceFactory<Port> = (transaction,',
+        'ReadServiceFactory<Port> = (transaction: unknown,',
+      ),
+      'effect-requirement': `${sqlInputAlias}export type Result = Effect.Effect<ResultRow, Failure, MerchandiseDb>;\n`,
+      'executor-closure-raw-return':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => ({ load: () => transaction });\n',
+      'executor-constructor-escape':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => new Box(transaction);',
+      'executor-effect-box':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => Effect.succeed(transaction);',
+      'executor-iterated-escape':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => { for (const db of [transaction]) retain(db); return {}; };',
+      'executor-method-return':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => transaction.select;',
+      'executor-optional-method-escape':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => transaction?.select;',
+      'executor-outer-assignment':
+        'let escaped: unknown; export const leak = (transaction: Executor, scope: OperationalScope) => { escaped = transaction; return {}; };\n',
+      'executor-raw-return': 'export const leak = (transaction: Executor, scope: OperationalScope) => transaction;\n',
+      'executor-reassigned':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => { transaction = untrusted; return { load: () => transaction.select() }; };',
+      'executor-thrown-escape':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => { throw transaction; };',
+      'executor-unknown-sink':
+        'export const leak = (transaction: Executor, scope: OperationalScope) => { retain(transaction); return {}; };',
+      'fake-scope': 'type FakeScope = {}; const factory = (transaction: Executor, scope: FakeScope) => ({});\n',
+      'global-barrel-with-input': `${sqlInputAlias}import { database } from './global-barrel.ts';\nexport const load = (db: MerchandiseDb) => db.select();\n`,
+      'global-import-with-input': `${sqlInputAlias}import { database } from '@app/core-runtime/db/client';\nexport const load = (db: MerchandiseDb) => db.select();\n`,
+      'handler-field': `${sqlInputAlias}export interface Services { readonly database: MerchandiseDb; }\n`,
+      'layer-requirement': `${sqlInputAlias}export type Result = Layer.Layer<Port, Failure, MerchandiseDb>;\n`,
+      'pricing-global': `${pricingReadHelper}import { database } from '@app/core-runtime/db/client';\n`,
+      'projection-boxed-return': `${sqlInputAlias}export const leak = (db: MerchandiseDb) => ({ database: db });\n`,
+      'projection-local-alias': `${sqlInputAlias}export const leak = (db: MerchandiseDb) => { const alias = db; return alias; };\n`,
+      'projection-outer-assignment': `${sqlInputAlias}let escaped: unknown; export const leak = (db: MerchandiseDb) => { escaped = db; return {}; };\n`,
+      'projection-raw-return': `${sqlInputAlias}export const leak = (db: MerchandiseDb) => db;\n`,
+      'provider-inferred-raw-assignment':
+        'let escaped: unknown; export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => ownerTransaction((transaction) => { escaped = transaction; return Effect.void; });',
+      'provider-inferred-raw-effect':
+        'export const leak = (ownerTransaction: ReadOwnerTransaction, scope: OperationalScope) => ownerTransaction((transaction) => Effect.succeed(transaction));',
+      'raw-return-type': `${sqlInputAlias}export const leak = (db: MerchandiseDb): MerchandiseDb => db;\n`,
+      'routine-effect-requirement': `${routineInputAlias}export type Result = Effect.Effect<Row, Error, ScopedRoutineInput>;`,
+      'routine-shadowed-parameters': `type Parameters<T> = [unknown];\n${pricingReadHelper}`,
+      'routine-shadowed-pick': `type Pick<T, K> = T;\n${pricingReadHelper}`,
+      'routine-spoofed-factory': pricingReadHelper.replace(
+        "ReadServiceFactory } from '@app/core-runtime'",
+        "ReadServiceFactory } from 'untrusted-factory'",
+      ),
+      'shadowed-pick': `type Pick<T, K> = T;\n${sqlInputAlias}`,
+      'shadowed-scope-type':
+        'function outer<OperationalScope>() { return (transaction: Executor, scope: OperationalScope) => ({}); }\n',
+      'spoofed-executor': pricingReadHelper
+        .replaceAll('Executor', 'FakeExecutor')
+        .replace(
+          'export const ownerStatePerRead',
+          "import type { ScopedTransactionExecutor as FakeExecutor } from 'untrusted-executor'; export const ownerStatePerRead",
+        ),
+      'unrelated-scope':
+        'const unrelated = (scope: OperationalScope) => scope; const factory = (transaction: Executor) => ({});\n',
+      'unsupported-pick': 'type Keys = keyof Executor; type Db = Pick<Executor, Keys>;\n',
+      'wrapper-extra-argument': wrappedSqlInput.replace(
+        'return yield* db.select().from(products); });',
+        'return yield* db.select().from(products); }, untrusted);',
+      ),
+      'wrapper-mutated-effect': wrappedSqlInput.replace('const wrapped =', 'Effect.fn = untrusted; const wrapped ='),
+      'wrapper-raw-return': wrappedSqlInput.replace('return yield* db.select().from(products);', 'return db;'),
+      'wrapper-shadowed-effect': `${sqlInputAlias}export const make = (transaction: Executor, scope: OperationalScope, Effect: unknown) => {
+        const wrapped = Effect.fn(function* load(db: MerchandiseDb) { return yield* db.select().from(products); });
+        return { load: () => wrapped(transaction) };
+      };`,
+      'wrapper-spoofed-effect': wrappedSqlInput.replace("from 'effect'", "from 'untrusted-effect'"),
+      'wrapper-type-only-effect': wrappedSqlInput.replace('import { Effect }', 'import type { Effect }'),
+    };
+    const files = new Map<string, string>([
+      ['packages/sql-input/barrel.ts', "export * from './input.ts';\n"],
+      ['packages/sql-input/input.ts', `${ownerInputImports}${sqlInputAlias}`],
+      [
+        'packages/sql-input/package.json',
+        JSON.stringify({ exports: { '.': sqlBarrelTarget }, name: '@private/sql-input' }),
+      ],
+      ['verticals/stock/src/services/global-barrel.ts', "export { database } from '@app/core-runtime/db/client';\n"],
+    ]);
+    for (const [name, source] of Object.entries(negatives)) {
+      files.set(`verticals/stock/src/services/${name}.ts`, `${ownerInputImports}${source}`);
+      files.set(`verticals/stock/src/actions/${name}.action.ts`, `import '../services/${name}.ts';\n`);
+    }
+    const importedNegatives = {
+      'imported-effect': 'export type Result = Effect.Effect<Row, Error, Db>;\n',
+      'imported-field': 'export interface Services { readonly db: Db; }\n',
+      'imported-inline': "export type Result = Effect.Effect<Row, Error, import('@private/sql-input').MerchandiseDb>;",
+      'imported-layer': 'export type Result = Layer.Layer<Port, Error, Db>;\n',
+      'imported-namespace':
+        "import type * as Sql from '@private/sql-input'; export type Result = Effect.Effect<Row, Error, Sql.MerchandiseDb>;",
+      'imported-raw-return': 'export const leak = (db: Db) => db;\n',
+    };
+    for (const [name, source] of Object.entries(importedNegatives)) {
+      files.set(
+        `verticals/stock/src/services/${name}.ts`,
+        `import type { MerchandiseDb as Db } from '@private/sql-input';\n${source}`,
+      );
+      files.set(`verticals/stock/src/actions/${name}.action.ts`, `import '../services/${name}.ts';\n`);
+    }
+    files.set(
+      'verticals/stock/src/services/spoofed-provider.ts',
+      `${ownerInputImports.replace(
+        'ReadOwnerTransaction, ',
+        '',
+      )}import type { ReadOwnerTransaction } from 'untrusted-provider';\n${pricingReadHelper}`,
+    );
+    files.set('verticals/stock/src/actions/spoofed-provider.action.ts', "import '../services/spoofed-provider.ts';\n");
+    const violations = yield* checkFixtures(Object.fromEntries(files));
+    expect(violations.map(({ file, line, reason }) => ({ file, line, reason }))).toEqual(
+      EffectArray.sort(
+        [...Object.keys(negatives), ...Object.keys(importedNegatives), 'spoofed-provider'],
+        Order.String,
+      ).map((name) => ({
+        file: `verticals/stock/src/actions/${name}.action.ts`,
+        line: 1,
+        reason: transitiveDatabaseCapabilityReason,
+      })),
+    );
   }),
 );

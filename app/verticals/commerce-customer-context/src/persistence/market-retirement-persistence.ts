@@ -1,9 +1,4 @@
-import type {
-  ScopedRoutineDefinition,
-  ScopedRoutineInputValues,
-  ScopedRoutineInvocationError,
-  ScopedRoutineParameter,
-} from '@app/core-runtime';
+import type { ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { ReadHandlerUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import {
   MarketAffectedUseAssessmentResponseSchema,
@@ -65,16 +60,6 @@ export const marketRetirementRoutineAllowlist = Object.freeze([
   assessMarketRetirementAffectedUseRoutine,
   reserveMarketRetirementRoutine,
 ]);
-
-export interface MarketRetirementScopedRoutineInvoker {
-  readonly invoke: <
-    RowSchema extends Schema.ConstraintDecoder<object>,
-    const Parameters extends readonly ScopedRoutineParameter[],
-  >(
-    routine: ScopedRoutineDefinition<RowSchema, Parameters>,
-    values: ScopedRoutineInputValues<Parameters>,
-  ) => Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError>;
-}
 
 export const MarketRetirementReservationConflictError = Schema.TaggedError<Error>()(
   'MarketRetirementReservationConflict',
@@ -143,7 +128,7 @@ const unavailableAffectedUse = (reason: string, cause?: unknown): ReadHandlerUna
 };
 
 export const marketAffectedUseAssessmentRepositoryForInvoker = (
-  invoker: MarketRetirementScopedRoutineInvoker,
+  invoker: ScopedRoutineInvoker,
 ): MarketAffectedUseAssessmentRepository =>
   MarketAffectedUseAssessmentRepositoryService.of({
     assess: (input) =>
@@ -209,7 +194,7 @@ interface MarketRetirementReservationOperations {
 }
 
 export const marketRetirementReservationForTransaction = (
-  invoker: MarketRetirementScopedRoutineInvoker,
+  invoker: ScopedRoutineInvoker,
 ): MarketRetirementReservationOperations => ({
   execute: (payload, attribution) =>
     Schema.encodeEffect(ReserveMarketRetirementPayloadCodec)(payload).pipe(

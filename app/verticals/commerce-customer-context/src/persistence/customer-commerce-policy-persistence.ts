@@ -3,7 +3,7 @@ import type {
   OperationalScope,
   ScopedRoutineDefinition,
   ScopedRoutineInputValues,
-  ScopedRoutineInvocationError,
+  ScopedRoutineInvoker,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
 import type { OwnerVerifiableSetCompletenessEvidenceEncoded } from '@app/shared-contracts';
@@ -200,16 +200,6 @@ const persistCommerceQuantityRuleAssignmentsRoutine = defineScopedRoutine({
   schema: ROUTINE_SCHEMA,
 });
 
-export interface CustomerCommercePolicyScopedRoutineInvoker {
-  readonly invoke: <
-    RowSchema extends Schema.ConstraintDecoder<object>,
-    const Parameters extends readonly ScopedRoutineParameter[],
-  >(
-    routine: ScopedRoutineDefinition<RowSchema, Parameters>,
-    values: ScopedRoutineInputValues<Parameters>,
-  ) => Effect.Effect<readonly RowSchema['Type'][], ScopedRoutineInvocationError>;
-}
-
 const persistenceUnavailable = (reason: string, cause?: unknown) => {
   const failure = new CustomerCommercePolicyAdministrationRejected({
     code: 'PERSISTENCE_UNAVAILABLE',
@@ -220,7 +210,7 @@ const persistenceUnavailable = (reason: string, cause?: unknown) => {
 };
 
 const invokeJson = <Result, const Parameters extends readonly ScopedRoutineParameter[]>(
-  transaction: CustomerCommercePolicyScopedRoutineInvoker,
+  transaction: ScopedRoutineInvoker,
   routine: ScopedRoutineDefinition<typeof RoutineResultSchema, Parameters>,
   values: ScopedRoutineInputValues<Parameters>,
   resultSchema: Schema.Decoder<Result>,
@@ -345,7 +335,7 @@ export interface CustomerCommercePolicyRepository {
 }
 
 export const customerCommercePolicyRepositoryForScope = (
-  transaction: CustomerCommercePolicyScopedRoutineInvoker,
+  transaction: ScopedRoutineInvoker,
   _scope: OperationalScope,
 ): Effect.Effect<CustomerCommercePolicyRepository> => {
   const persist = (

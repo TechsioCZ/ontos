@@ -2,7 +2,21 @@ import { NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, Console, Effect, Exit, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { ImportDeclaration, ParamPattern, Span, TSTypeAnnotation, TSTypeReference } from 'oxc-parser';
+import type {
+  ArrowFunctionExpression,
+  CallExpression,
+  Expression,
+  Function as FunctionNode,
+  MemberExpression,
+  ParamPattern,
+  Program,
+  Span,
+  TSFunctionType,
+  TSQualifiedName,
+  TSType,
+  TSTypeAliasDeclaration,
+  TSTypeReference,
+} from 'oxc-parser';
 
 export interface DatabaseAccessViolation {
   readonly file: string;
@@ -13,6 +27,7 @@ export interface DatabaseAccessViolation {
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
 const ignoredDirectories = new Set(['dist', 'dist-cloudflare', 'node_modules', 'repos', '.output', '.codex']);
 const coreRuntimeSourcePrefix = 'packages/core-runtime/src/';
+const coreRuntimeSpecifier = '@app/core-runtime';
 
 const collect = (root: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* collectSourceFiles() {
@@ -67,7 +82,6 @@ const isTestSource = (relative: string): boolean =>
 const hiddenCapability =
   /\b(?:CoreDatabase|CoreDatabaseExecutor|CoreTransaction|ActionTransactionExecutor|coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
 const hiddenCoreSchema = /\b(?:coreDatabaseSchema|actionInvocations|CORE_TABLES)\b/u;
-const scopedTransactionExecutor = /\bScopedTransactionExecutor\b/u;
 const isVerticalOwnerSource = (relative: string): boolean => /(?:^|\/)verticals\/[^/]+\/src\//u.test(relative);
 const importsCoreDatabaseSchema = new RegExp(`${importPrefix}['"]@app\\/core-runtime\\/db\\/schema['"]`, 'u');
 const importSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'u');
@@ -240,125 +254,1412 @@ const localSourceResolver = (
   };
 };
 
-const typeReferenceNamed = (annotation: TSTypeAnnotation | null | undefined, name: string): boolean => {
-  const type = annotation?.typeAnnotation;
-  return type?.type === 'TSTypeReference' && type.typeName.type === 'Identifier' && type.typeName.name === name;
-};
+const executorAuthority = Symbol('executor');
+const routineInvokerAuthority = Symbol('native routine invoker');
+const projectionAuthority = Symbol('SQL input projection');
+const unprovenAuthority = Symbol('unproven database capability');
+const isRawAuthority = (authority: symbol | undefined): boolean =>
+  authority === executorAuthority ||
+  authority === routineInvokerAuthority ||
+  authority === projectionAuthority ||
+  authority === unprovenAuthority;
+const scopeAuthority = Symbol('Core scope');
+const ownerTransactionAuthority = Symbol('Core read transaction provider');
+const readFactoryAuthority = Symbol('Core read service factory');
+const coreTypeAuthorities = new Map([
+  ['ScopedTransactionExecutor', executorAuthority],
+  ['ScopedRoutineInvoker', routineInvokerAuthority],
+  ['OperationalScope', scopeAuthority],
+  ['ReadOwnerTransaction', ownerTransactionAuthority],
+  ['ReadServiceFactory', readFactoryAuthority],
+]);
+const sqlProjectionKeys = new Set(['delete', 'insert', 'select', 'update']);
 
-const parameterNamed = (parameter: ParamPattern, name: string, typeName: string): boolean =>
-  parameter.type === 'Identifier' && parameter.name === name && typeReferenceNamed(parameter.typeAnnotation, typeName);
+type OwnerFunction = ArrowFunctionExpression | FunctionNode | TSFunctionType;
+interface LexicalName extends Span {
+  readonly name: string;
+}
+interface LexicalBinding {
+  readonly id: LexicalName;
+  readonly scope: Span;
+}
+interface CapabilitySource {
+  readonly aliases: readonly TSTypeAliasDeclaration[];
+  readonly authorities: Map<LexicalName, symbol>;
+  readonly bindings: readonly LexicalBinding[];
+  readonly calls: readonly CallExpression[];
+  readonly exports: Map<string, symbol>;
+  readonly file: string;
+  readonly functionBindings: Map<LexicalName, OwnerFunction>;
+  readonly functions: readonly OwnerFunction[];
+  readonly functionTypes: Map<OwnerFunction, TSType>;
+  readonly functionWrappers: Map<LexicalName, CallExpression>;
+  readonly program: Program;
+  readonly syntaxError: boolean;
+  readonly valueAliases: ReadonlyMap<LexicalName, LexicalName>;
+  readonly writes: readonly Span[];
+}
 
-const scopedFactoryTransactionSpan = (
-  parameters: readonly ParamPattern[],
-  executorNames: ReadonlySet<string>,
-): Span | undefined => {
-  const hasOperationalScope = parameters.some((parameter) => parameterNamed(parameter, 'scope', 'OperationalScope'));
-  if (!hasOperationalScope) {
-    return undefined;
-  }
-  for (const parameter of parameters) {
-    if (
-      parameter.type === 'Identifier' &&
-      parameter.name === 'transaction' &&
-      parameter.typeAnnotation?.typeAnnotation.type === 'TSTypeReference' &&
-      parameter.typeAnnotation.typeAnnotation.typeName.type === 'Identifier' &&
-      executorNames.has(parameter.typeAnnotation.typeAnnotation.typeName.name)
-    ) {
-      return parameter.typeAnnotation.typeAnnotation;
-    }
-  }
-  return undefined;
-};
+const containsSpan = (outer: Span, inner: Span): boolean => outer.start <= inner.start && inner.end <= outer.end;
 
-const executorImport = (
-  declaration: ImportDeclaration,
-): { readonly localName: string; readonly span: Span; readonly typeOnly: boolean } | undefined => {
-  const specifier = declaration.specifiers.find(
-    (candidate) =>
-      candidate.type === 'ImportSpecifier' &&
-      candidate.imported.type === 'Identifier' &&
-      candidate.imported.name === 'ScopedTransactionExecutor',
-  );
-  if (specifier?.type !== 'ImportSpecifier') {
-    return undefined;
-  }
-  return {
-    localName: specifier.local.name,
-    span: specifier,
-    typeOnly: declaration.importKind === 'type' || specifier.importKind === 'type',
-  };
-};
-
-/**
- * Core passes the scoped executor only to a private owner service factory. The factory may name that
- * input in its `(transaction, scope)` signature, but the executor must never become handler services.
- */
-const scopedTransactionExposureIndexes = (file: string, source: string): readonly number[] => {
-  if (!scopedTransactionExecutor.test(source)) {
-    return [];
-  }
+/** Bindings, rather than spelling, decide which provider, scope, and callback an input belongs to. */
+const capabilitySource = (file: string, source: string): CapabilitySource => {
   const parsed = parseSync(file, source, {
     astType: 'ts',
     lang: file.endsWith('.tsx') ? 'tsx' : 'ts',
     sourceType: 'module',
   });
-  if (parsed.errors.length > 0) {
-    return [...source.matchAll(new RegExp(scopedTransactionExecutor, 'gu'))].map((match) => match.index);
-  }
+  const scopes: Span[] = [parsed.program];
+  const bindings: LexicalBinding[] = [];
+  const functions: OwnerFunction[] = [];
+  const functionBindings = new Map<LexicalName, OwnerFunction>();
+  const functionTypes = new Map<OwnerFunction, TSType>();
+  const functionWrappers = new Map<LexicalName, CallExpression>();
+  const aliases: TSTypeAliasDeclaration[] = [];
+  const calls: CallExpression[] = [];
+  const valueAliases = new Map<LexicalName, LexicalName>();
+  const writes: Span[] = [];
+  const bind = (pattern: ParamPattern, scope = scopes.at(-1) ?? parsed.program): void => {
+    if (pattern.type === 'Identifier') {
+      bindings.push({ id: pattern, scope });
+    } else if (pattern.type === 'AssignmentPattern') {
+      bind(pattern.left, scope);
+    } else if (pattern.type === 'RestElement') {
+      bind(pattern.argument, scope);
+    } else if (pattern.type === 'TSParameterProperty') {
+      bind(pattern.parameter, scope);
+    } else if (pattern.type === 'ArrayPattern') {
+      for (const element of pattern.elements) {
+        if (element !== null) {
+          bind(element, scope);
+        }
+      }
+    } else if (pattern.type === 'ObjectPattern') {
+      for (const property of pattern.properties) {
+        bind(property.type === 'RestElement' ? property.argument : property.value, scope);
+      }
+    }
+  };
+  const enterFunction = (node: OwnerFunction): void => {
+    if (node.type === 'FunctionDeclaration' && node.id !== null) {
+      bind(node.id);
+      functionBindings.set(node.id, node);
+    }
+    scopes.push(node);
+    if (node.type === 'FunctionExpression' && node.id !== null) {
+      bind(node.id);
+      functionBindings.set(node.id, node);
+    }
+    functions.push(node);
+    for (const parameter of node.params) {
+      bind(parameter);
+    }
+  };
+  const leaveScope = (): void => {
+    scopes.pop();
+  };
+  new Visitor({
+    ArrowFunctionExpression: enterFunction,
+    'ArrowFunctionExpression:exit': leaveScope,
+    AssignmentExpression: (node) => {
+      writes.push(node.left);
+    },
+    BlockStatement: (node) => {
+      scopes.push(node);
+    },
+    'BlockStatement:exit': leaveScope,
+    CallExpression: (node) => {
+      calls.push(node);
+    },
+    CatchClause: (node) => {
+      scopes.push(node);
+      if (node.param !== null) {
+        bind(node.param);
+      }
+    },
+    'CatchClause:exit': leaveScope,
+    ClassDeclaration: (node) => {
+      if (node.id !== null) {
+        bind(node.id);
+      }
+      scopes.push(node);
+    },
+    'ClassDeclaration:exit': leaveScope,
+    ClassExpression: (node) => {
+      scopes.push(node);
+      if (node.id !== null) {
+        bind(node.id);
+      }
+    },
+    'ClassExpression:exit': leaveScope,
+    FunctionDeclaration: enterFunction,
+    'FunctionDeclaration:exit': leaveScope,
+    FunctionExpression: enterFunction,
+    'FunctionExpression:exit': leaveScope,
+    ImportDeclaration: (node) => {
+      for (const specifier of node.specifiers) {
+        bind(specifier.local);
+      }
+    },
+    TSFunctionType: enterFunction,
+    'TSFunctionType:exit': leaveScope,
+    TSInterfaceDeclaration: (node) => {
+      bind(node.id);
+      scopes.push(node);
+    },
+    'TSInterfaceDeclaration:exit': leaveScope,
+    TSTypeAliasDeclaration: (node) => {
+      bind(node.id);
+      aliases.push(node);
+      scopes.push(node);
+    },
+    'TSTypeAliasDeclaration:exit': leaveScope,
+    TSTypeParameter: (node) => {
+      bind(node.name);
+    },
+    UpdateExpression: (node) => {
+      writes.push(node.argument);
+    },
+    VariableDeclaration: (node) => {
+      if (node.kind === 'const') {
+        for (const declaration of node.declarations) {
+          if (declaration.id.type === 'Identifier' && declaration.init?.type === 'Identifier') {
+            valueAliases.set(declaration.id, declaration.init);
+          }
+        }
+      }
+    },
+    VariableDeclarator: (node) => {
+      bind(node.id);
+      if (
+        node.id.type === 'Identifier' &&
+        (node.init?.type === 'ArrowFunctionExpression' || node.init?.type === 'FunctionExpression')
+      ) {
+        functionBindings.set(node.id, node.init);
+        if (node.id.typeAnnotation !== null && node.id.typeAnnotation !== undefined) {
+          functionTypes.set(node.init, node.id.typeAnnotation.typeAnnotation);
+        }
+      }
+      if (node.id.type === 'Identifier' && node.init?.type === 'CallExpression') {
+        functionWrappers.set(node.id, node.init);
+      }
+    },
+  }).visit(parsed.program);
+  return {
+    aliases,
+    authorities: new Map(),
+    bindings,
+    calls,
+    exports: new Map(),
+    file,
+    functionBindings,
+    functions,
+    functionTypes,
+    functionWrappers,
+    program: parsed.program,
+    syntaxError: parsed.errors.length > 0,
+    valueAliases,
+    writes,
+  };
+};
 
-  const executorNames = new Set(['ScopedTransactionExecutor']);
-  const invalidImportSpans: Span[] = [];
-  for (const statement of parsed.program.body) {
-    if (statement.type !== 'ImportDeclaration') {
+const bindingAt = (model: CapabilitySource, name: string, position: Span): LexicalName | undefined => {
+  let selected: LexicalBinding | undefined;
+  for (const binding of model.bindings) {
+    if (binding.id.name !== name || !containsSpan(binding.scope, position)) {
       continue;
     }
-    const imported = executorImport(statement);
-    if (imported !== undefined) {
-      executorNames.add(imported.localName);
-      if (!imported.typeOnly) {
-        invalidImportSpans.push(imported.span);
+    if (selected === undefined || containsSpan(selected.scope, binding.scope)) {
+      selected = binding;
+    }
+  }
+  return selected?.id;
+};
+
+const bindingWritten = (model: CapabilitySource, binding: LexicalName): boolean => {
+  let written = false;
+  if (model.writes.length === 0) {
+    return false;
+  }
+  new Visitor({
+    Identifier: (identifier) => {
+      if (
+        identifier.name === binding.name &&
+        bindingAt(model, identifier.name, identifier) === binding &&
+        model.writes.some((write) => containsSpan(write, identifier))
+      ) {
+        written = true;
+      }
+    },
+  }).visit(model.program);
+  return written;
+};
+
+const namedTypeAuthority = (model: CapabilitySource, type: TSType | null | undefined): symbol | undefined => {
+  if (type?.type !== 'TSTypeReference' || type.typeName.type !== 'Identifier' || type.typeArguments !== null) {
+    return undefined;
+  }
+  const binding = bindingAt(model, type.typeName.name, type);
+  return binding === undefined ? undefined : model.authorities.get(binding);
+};
+
+const projectionExecutor = (model: CapabilitySource, type: TSType | null | undefined): TSTypeReference | undefined => {
+  if (
+    type?.type !== 'TSTypeReference' ||
+    type.typeName.type !== 'Identifier' ||
+    type.typeName.name !== 'Pick' ||
+    bindingAt(model, 'Pick', type) !== undefined ||
+    type.typeArguments?.params.length !== 2
+  ) {
+    return undefined;
+  }
+  const [executor, keys] = type.typeArguments.params;
+  if (
+    executor?.type !== 'TSTypeReference' ||
+    namedTypeAuthority(model, executor) !== executorAuthority ||
+    keys === undefined
+  ) {
+    return undefined;
+  }
+  const literals = keys.type === 'TSUnionType' ? keys.types : [keys];
+  return literals.length > 0 &&
+    literals.every(
+      (key) =>
+        key.type === 'TSLiteralType' &&
+        key.literal.type === 'Literal' &&
+        sqlProjectionKeys.has(String(key.literal.value)),
+    )
+    ? executor
+    : undefined;
+};
+
+const unshadowedUtility = (
+  model: CapabilitySource,
+  type: TSType | undefined,
+  name: string,
+): TSTypeReference | undefined =>
+  type?.type === 'TSTypeReference' &&
+  type.typeName.type === 'Identifier' &&
+  type.typeName.name === name &&
+  bindingAt(model, name, type) === undefined
+    ? type
+    : undefined;
+
+const readFactoryType = (model: CapabilitySource, type: TSType | undefined): boolean => {
+  if (
+    type?.type !== 'TSTypeReference' ||
+    type.typeName.type !== 'Identifier' ||
+    type.typeArguments === null ||
+    type.typeArguments.params.length < 1 ||
+    type.typeArguments.params.length > 2
+  ) {
+    return false;
+  }
+  const binding = bindingAt(model, type.typeName.name, type);
+  return binding !== undefined && model.authorities.get(binding) === readFactoryAuthority;
+};
+
+const readFactoryInput = (model: CapabilitySource, type: TSType | undefined): boolean => {
+  const parameters =
+    type?.type === 'TSIndexedAccessType' ? unshadowedUtility(model, type.objectType, 'Parameters') : undefined;
+  if (
+    type?.type !== 'TSIndexedAccessType' ||
+    type.indexType.type !== 'TSLiteralType' ||
+    type.indexType.literal.type !== 'Literal' ||
+    type.indexType.literal.value !== 0 ||
+    parameters?.typeArguments?.params.length !== 1
+  ) {
+    return false;
+  }
+  const [factory] = parameters.typeArguments.params;
+  return readFactoryType(model, factory);
+};
+
+/** Existing generated routine services project only invoke from Core's factory input, not a global executor. */
+const routineInputProjection = (model: CapabilitySource, annotation: TSType | null | undefined): boolean => {
+  const type = unshadowedUtility(model, annotation ?? undefined, 'Pick');
+  if (type?.typeArguments?.params.length !== 2) {
+    return false;
+  }
+  const [input, key] = type.typeArguments.params;
+  return (
+    readFactoryInput(model, input) &&
+    key?.type === 'TSLiteralType' &&
+    key.literal.type === 'Literal' &&
+    key.literal.value === 'invoke'
+  );
+};
+
+const typeAuthority = (model: CapabilitySource, type: TSType | null | undefined): symbol | undefined =>
+  projectionExecutor(model, type) !== undefined || routineInputProjection(model, type)
+    ? projectionAuthority
+    : namedTypeAuthority(model, type);
+
+/** Follow Core's public export to its declaration; private imports gain authority only for that same binding. */
+const canonicalTypeBindings = (
+  models: ReadonlyMap<string, CapabilitySource>,
+  resolveLocalSource: LocalSourceResolver,
+  file: string,
+  name: string,
+  seen: ReadonlySet<string> = new Set(),
+): readonly LexicalName[] => {
+  const model = models.get(file);
+  const key = `${file}:${name}`;
+  if (model === undefined || seen.has(key)) {
+    return [];
+  }
+  const nextSeen = new Set([...seen, key]);
+  const imported = (specifier: string, importedName: string): readonly LexicalName[] =>
+    resolveLocalSource(file, specifier).flatMap((target) =>
+      canonicalTypeBindings(models, resolveLocalSource, target, importedName, nextSeen),
+    );
+  const local = (binding: LexicalName | undefined): readonly LexicalName[] => {
+    if (binding === undefined) {
+      return [];
+    }
+    for (const statement of model.program.body) {
+      if (statement.type === 'ImportDeclaration') {
+        for (const specifier of statement.specifiers) {
+          if (
+            specifier.local === binding &&
+            specifier.type === 'ImportSpecifier' &&
+            specifier.imported.type === 'Identifier'
+          ) {
+            return imported(statement.source.value, specifier.imported.name);
+          }
+        }
+      }
+      const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+      if (
+        (declaration?.type === 'TSTypeAliasDeclaration' || declaration?.type === 'TSInterfaceDeclaration') &&
+        declaration.id === binding
+      ) {
+        return [binding];
+      }
+    }
+    return [];
+  };
+  return model.program.body.flatMap((statement) => {
+    if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
+      return imported(statement.source.value, name);
+    }
+    if (statement.type !== 'ExportNamedDeclaration') {
+      return [];
+    }
+    const { declaration } = statement;
+    if (
+      (declaration?.type === 'TSTypeAliasDeclaration' || declaration?.type === 'TSInterfaceDeclaration') &&
+      declaration.id.name === name
+    ) {
+      return [declaration.id];
+    }
+    return statement.specifiers.flatMap((specifier) => {
+      if (
+        specifier.exported.type !== 'Identifier' ||
+        specifier.exported.name !== name ||
+        specifier.local.type !== 'Identifier'
+      ) {
+        return [];
+      }
+      return statement.source === null
+        ? local(bindingAt(model, specifier.local.name, statement))
+        : imported(statement.source.value, specifier.local.name);
+    });
+  });
+};
+
+/** Validate only the native authority endpoint, never structurally recognize consumer-defined interfaces. */
+const isNativeRoutineDeclaration = (model: CapabilitySource, binding: LexicalName): boolean => {
+  if (!model.file.endsWith(`/${coreRuntimeSourcePrefix}db/scoped-routine.ts`) || model.syntaxError) {
+    return false;
+  }
+  return model.program.body.some((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (
+      declaration?.type !== 'TSInterfaceDeclaration' ||
+      declaration.id !== binding ||
+      declaration.id.name !== 'ScopedRoutineInvoker' ||
+      declaration.typeParameters !== null ||
+      declaration.extends.length !== 0 ||
+      declaration.body.body.length !== 1
+    ) {
+      return false;
+    }
+    const [member] = declaration.body.body;
+    return (
+      member?.type === 'TSPropertySignature' &&
+      member.readonly &&
+      !member.optional &&
+      !member.computed &&
+      member.key.type === 'Identifier' &&
+      member.key.name === 'invoke' &&
+      member.typeAnnotation?.typeAnnotation.type === 'TSFunctionType'
+    );
+  });
+};
+
+/** Reuse the workspace resolver for named imports, renamed re-exports, and barrels; alias-only consumers matter. */
+const capabilitySources = (
+  sources: ReadonlyMap<string, string>,
+  resolveLocalSource: LocalSourceResolver,
+): ReadonlyMap<string, CapabilitySource> => {
+  const models = new Map([...sources].map(([file, source]) => [file, capabilitySource(file, source)]));
+  const [importer] = models.keys();
+  const publicCoreTargets = importer === undefined ? [] : resolveLocalSource(importer, coreRuntimeSpecifier);
+  let nativeRoutineExportProven = false;
+  for (const [name, authority] of coreTypeAuthorities) {
+    const declarationsByTarget = publicCoreTargets.map((target) =>
+      canonicalTypeBindings(models, resolveLocalSource, target, name),
+    );
+    const declarations = new Set(declarationsByTarget.flat());
+    // Missing or conflicting runtime-condition declarations do not prove private authority.
+    if (
+      declarations.size === 1 &&
+      declarationsByTarget.every((bindings) => bindings.length > 0) &&
+      (authority !== routineInvokerAuthority ||
+        [...models.values()].some((model) =>
+          [...declarations].some((declaration) => isNativeRoutineDeclaration(model, declaration)),
+        ))
+    ) {
+      if (authority === routineInvokerAuthority) {
+        nativeRoutineExportProven = true;
+      }
+      for (const model of models.values()) {
+        for (const declaration of declarations) {
+          if (model.bindings.some((binding) => binding.id === declaration)) {
+            model.authorities.set(declaration, authority);
+          }
+        }
       }
     }
   }
+  let changed = true;
+  const publish = <Key,>(map: Map<Key, symbol>, key: Key, authority: symbol | undefined): void => {
+    if (authority === undefined || map.get(key) === authority || map.get(key) === unprovenAuthority) {
+      return;
+    }
+    map.set(key, map.has(key) ? unprovenAuthority : authority);
+    changed = true;
+  };
+  const exportAuthorities = (
+    file: string,
+    model: CapabilitySource,
+    importedAuthority: (specifier: string, name: string) => symbol | undefined,
+  ): void => {
+    for (const statement of model.program.body) {
+      if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
+        for (const target of resolveLocalSource(file, statement.source.value)) {
+          for (const [name, authority] of models.get(target)?.exports ?? []) {
+            publish(model.exports, name, authority);
+          }
+        }
+      }
+      if (statement.type !== 'ExportNamedDeclaration') {
+        continue;
+      }
+      if (
+        statement.declaration?.type === 'TSTypeAliasDeclaration' ||
+        statement.declaration?.type === 'TSInterfaceDeclaration'
+      ) {
+        const alias = statement.declaration;
+        publish(model.exports, alias.id.name, model.authorities.get(alias.id));
+      }
+      for (const specifier of statement.specifiers) {
+        if (specifier.local.type !== 'Identifier' || specifier.exported.type !== 'Identifier') {
+          continue;
+        }
+        const local = bindingAt(model, specifier.local.name, statement);
+        const localAuthority = local === undefined ? undefined : model.authorities.get(local);
+        publish(
+          model.exports,
+          specifier.exported.name,
+          statement.source === null ? localAuthority : importedAuthority(statement.source.value, specifier.local.name),
+        );
+      }
+    }
+  };
+  while (changed) {
+    changed = false;
+    for (const [file, model] of models) {
+      const importedAuthority = (specifier: string, name: string): symbol | undefined => {
+        if (specifier === coreRuntimeSpecifier) {
+          // Native routine inputs need a verified invoke-only endpoint, not just a public type name.
+          return name === 'ScopedRoutineInvoker' && !nativeRoutineExportProven
+            ? unprovenAuthority
+            : coreTypeAuthorities.get(name);
+        }
+        const authorities = resolveLocalSource(file, specifier).map((target) => models.get(target)?.exports.get(name));
+        const [authority] = authorities;
+        if (authorities.some((candidate) => candidate === undefined)) {
+          return undefined;
+        }
+        return authorities.every((candidate) => candidate === authority) ? authority : unprovenAuthority;
+      };
+      for (const statement of model.program.body) {
+        if (statement.type === 'ImportDeclaration') {
+          for (const specifier of statement.specifiers) {
+            if (specifier.type === 'ImportSpecifier' && specifier.imported.type === 'Identifier') {
+              publish(
+                model.authorities,
+                specifier.local,
+                importedAuthority(statement.source.value, specifier.imported.name),
+              );
+            }
+          }
+        }
+      }
+      for (const alias of model.aliases) {
+        if (alias.typeParameters === null) {
+          publish(model.authorities, alias.id, typeAuthority(model, alias.typeAnnotation));
+        }
+      }
+      exportAuthorities(file, model, importedAuthority);
+    }
+  }
+  return models;
+};
 
-  const allowedFactoryParameters: Span[] = [];
-  const allowScopedFactoryParameter = (parameters: readonly ParamPattern[]): void => {
-    const span = scopedFactoryTransactionSpan(parameters, executorNames);
-    if (span !== undefined) {
-      allowedFactoryParameters.push(span);
+const parameterAuthority = (model: CapabilitySource, parameter: ParamPattern): symbol | undefined =>
+  parameter.type === 'Identifier' ? typeAuthority(model, parameter.typeAnnotation?.typeAnnotation) : undefined;
+
+const hasScopedInput = (model: CapabilitySource, node: OwnerFunction, position: Span = node): boolean =>
+  node.params.some(
+    (parameter) =>
+      parameter.type === 'Identifier' &&
+      parameter.name === 'scope' &&
+      parameterAuthority(model, parameter) === scopeAuthority &&
+      bindingAt(model, parameter.name, position) === parameter &&
+      !bindingWritten(model, parameter),
+  );
+
+/** Constant aliases retain the provider's lexical origin, including when an unsafe write invalidates its proof. */
+const providerBindingPath = (
+  model: CapabilitySource,
+  binding: LexicalName | undefined,
+  seen: ReadonlySet<LexicalName> = new Set(),
+): readonly LexicalName[] | undefined => {
+  if (binding === undefined || seen.has(binding)) {
+    return undefined;
+  }
+  if (
+    model.functions.some((fn) =>
+      fn.params.some(
+        (parameter) => parameter === binding && parameterAuthority(model, parameter) === ownerTransactionAuthority,
+      ),
+    )
+  ) {
+    return [binding];
+  }
+  const alias = model.valueAliases.get(binding);
+  const origin =
+    alias === undefined
+      ? undefined
+      : providerBindingPath(model, bindingAt(model, alias.name, alias), new Set([...seen, binding]));
+  return origin === undefined ? undefined : [binding, ...origin];
+};
+
+/** Only the exact callback invocation supplied by the lexically enclosing Core provider proves this input. */
+const readCallbackInput = (model: CapabilitySource, node: OwnerFunction, parameter: ParamPattern): Span | undefined => {
+  if (parameter.type !== 'Identifier' || parameter.typeAnnotation?.typeAnnotation.type !== 'TSFunctionType') {
+    return undefined;
+  }
+  if (bindingWritten(model, parameter)) {
+    return undefined;
+  }
+  const signature = parameter.typeAnnotation.typeAnnotation;
+  const [input] = signature.params;
+  if (
+    signature.params.length !== 1 ||
+    input?.type !== 'Identifier' ||
+    parameterAuthority(model, input) !== executorAuthority
+  ) {
+    return undefined;
+  }
+  const [outer] = EffectArray.sort(
+    model.functions.filter(
+      (candidate) => candidate !== node && containsSpan(candidate, node) && hasScopedInput(model, candidate, node),
+    ),
+    Order.mapInput(Order.Number, (candidate: OwnerFunction) => candidate.end - candidate.start),
+  );
+  if (outer === undefined) {
+    return undefined;
+  }
+  const providers = new Set<Span>(
+    outer.params.filter(
+      (candidate) =>
+        candidate.type === 'Identifier' &&
+        parameterAuthority(model, candidate) === ownerTransactionAuthority &&
+        !bindingWritten(model, candidate),
+    ),
+  );
+  // A callback is private to this helper: every value use must be its direct call under the same provider.
+  const uses: Span[] = [];
+  new Visitor({
+    Identifier: (identifier) => {
+      if (!containsSpan(parameter, identifier) && bindingAt(model, identifier.name, identifier) === parameter) {
+        uses.push(identifier);
+      }
+    },
+  }).visit(model.program);
+  if (uses.length === 0) {
+    return undefined;
+  }
+  for (const use of uses) {
+    const call = model.calls.find((candidate) => candidate.callee === use);
+    if (call?.arguments.length !== 1) {
+      return undefined;
+    }
+    const [transaction] = call.arguments;
+    if (transaction?.type !== 'Identifier') {
+      return undefined;
+    }
+    const providerCall = model.calls.find((candidate) => {
+      if (
+        !containsSpan(node, candidate) ||
+        candidate.callee.type !== 'Identifier' ||
+        candidate.arguments.length !== 1
+      ) {
+        return false;
+      }
+      const path = providerBindingPath(model, bindingAt(model, candidate.callee.name, candidate.callee));
+      if (
+        path === undefined ||
+        path.some((binding) => bindingWritten(model, binding)) ||
+        !providers.has(path.at(-1) ?? parameter)
+      ) {
+        return false;
+      }
+      const [callback] = candidate.arguments;
+      if (callback?.type !== 'ArrowFunctionExpression' && callback?.type !== 'FunctionExpression') {
+        return false;
+      }
+      const [supplied] = callback.params;
+      return (
+        callback.params.length === 1 &&
+        supplied?.type === 'Identifier' &&
+        !bindingWritten(model, supplied) &&
+        callback.body !== null &&
+        containsSpan(callback.body, call) &&
+        bindingAt(model, transaction.name, transaction) === supplied
+      );
+    });
+    if (providerCall === undefined) {
+      return undefined;
+    }
+  }
+  return input.typeAnnotation?.typeAnnotation;
+};
+
+/** A proven callback signature also governs the inferred parameter in each concrete local callback. */
+const collectReadCallbackInputs = (
+  model: CapabilitySource,
+  node: OwnerFunction,
+  parameter: ParamPattern,
+  rawNames: Set<LexicalName>,
+): boolean => {
+  const binding = [...model.functionBindings].find(([, fn]) => fn === node)?.[0];
+  const index = node.params.indexOf(parameter);
+  if (binding === undefined || index === -1 || bindingWritten(model, binding)) {
+    return false;
+  }
+  let proven = true;
+  new Visitor({
+    Identifier: (identifier) => {
+      if (identifier === binding || bindingAt(model, identifier.name, identifier) !== binding) {
+        return;
+      }
+      const call = model.calls.find((candidate) => candidate.callee === identifier);
+      const callback = call?.arguments[index];
+      if (callback?.type !== 'ArrowFunctionExpression' && callback?.type !== 'FunctionExpression') {
+        proven = false;
+        return;
+      }
+      const [input] = callback.params;
+      if (callback.params.length !== 1 || input?.type !== 'Identifier' || bindingWritten(model, input)) {
+        proven = false;
+        return;
+      }
+      rawNames.add(input);
+    },
+  }).visit(model.program);
+  return proven;
+};
+
+const isScopeSnapshot = (expression: MemberExpression): boolean =>
+  !expression.computed && expression.property.type === 'Identifier' && expression.property.name === 'scope';
+
+/** Raw values may not be returned, boxed, rebound, or assigned outside the invocation. Domain closures are not raw values. */
+const rawCapabilityValue = (
+  expression: Expression,
+  rawNames: ReadonlySet<LexicalName>,
+  model: CapabilitySource,
+): boolean => {
+  if (expression.type === 'Identifier') {
+    const binding = bindingAt(model, expression.name, expression);
+    return binding !== undefined && rawNames.has(binding);
+  }
+  if (
+    expression.type === 'ParenthesizedExpression' ||
+    expression.type === 'ChainExpression' ||
+    expression.type === 'TSAsExpression' ||
+    expression.type === 'TSSatisfiesExpression' ||
+    expression.type === 'TSNonNullExpression' ||
+    expression.type === 'TSTypeAssertion'
+  ) {
+    return rawCapabilityValue(expression.expression, rawNames, model);
+  }
+  if (expression.type === 'MemberExpression') {
+    return !isScopeSnapshot(expression) && rawCapabilityValue(expression.object, rawNames, model);
+  }
+  if (expression.type === 'AwaitExpression') {
+    return rawCapabilityValue(expression.argument, rawNames, model);
+  }
+  if (expression.type === 'ObjectExpression') {
+    return expression.properties.some((property) =>
+      property.type === 'SpreadElement'
+        ? rawCapabilityValue(property.argument, rawNames, model)
+        : rawCapabilityValue(property.value, rawNames, model),
+    );
+  }
+  if (expression.type === 'ArrayExpression') {
+    return expression.elements.some(
+      (element) =>
+        element !== null &&
+        rawCapabilityValue(element.type === 'SpreadElement' ? element.argument : element, rawNames, model),
+    );
+  }
+  if (expression.type === 'ConditionalExpression') {
+    return (
+      rawCapabilityValue(expression.consequent, rawNames, model) ||
+      rawCapabilityValue(expression.alternate, rawNames, model)
+    );
+  }
+  if (expression.type === 'LogicalExpression') {
+    return (
+      rawCapabilityValue(expression.left, rawNames, model) || rawCapabilityValue(expression.right, rawNames, model)
+    );
+  }
+  if (expression.type === 'SequenceExpression') {
+    return expression.expressions.some((item) => rawCapabilityValue(item, rawNames, model));
+  }
+  if (expression.type === 'AssignmentExpression') {
+    return rawCapabilityValue(expression.right, rawNames, model);
+  }
+  return false;
+};
+
+const isPrivateInput = (model: CapabilitySource, node: OwnerFunction, parameter: ParamPattern): boolean => {
+  if (parameter.type !== 'Identifier' || bindingWritten(model, parameter)) {
+    return false;
+  }
+  const authority = parameterAuthority(model, parameter);
+  return (
+    (authority === executorAuthority && parameter.name === 'transaction' && hasScopedInput(model, node)) ||
+    ((authority === projectionAuthority || authority === routineInvokerAuthority) && node.type !== 'TSFunctionType') ||
+    (node.params[0] === parameter &&
+      readFactoryType(model, model.functionTypes.get(node)) &&
+      (parameter.typeAnnotation?.typeAnnotation === undefined || authority === executorAuthority))
+  );
+};
+
+interface CapabilityGraph {
+  readonly models: ReadonlyMap<string, CapabilitySource>;
+  readonly resolveLocalSource: LocalSourceResolver;
+}
+
+const collectContextualFactoryInput = (
+  model: CapabilitySource,
+  node: OwnerFunction,
+  rawNames: Set<LexicalName>,
+  invalid: number[],
+): void => {
+  if (node.type === 'TSFunctionType' || !readFactoryType(model, model.functionTypes.get(node))) {
+    return;
+  }
+  const [input] = node.params;
+  if (input?.type === 'Identifier') {
+    // Contextual Core signatures supply the executor even without annotations or a declared scope parameter.
+    rawNames.add(input);
+    if (!isPrivateInput(model, node, input)) {
+      invalid.push(input.start);
+    }
+  } else if (input !== undefined) {
+    invalid.push(input.start);
+  }
+};
+
+const isEffectValueImport = (model: CapabilitySource, binding: LexicalName): boolean =>
+  model.program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.importKind !== 'type' &&
+      statement.source.value === 'effect' &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.importKind !== 'type' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === 'Effect' &&
+          specifier.local === binding,
+      ),
+  );
+
+const wrappedInputFunction = (model: CapabilitySource, binding: LexicalName): OwnerFunction | undefined => {
+  const wrapper = model.functionWrappers.get(binding);
+  if (wrapper?.arguments.length !== 1) {
+    return undefined;
+  }
+  const [fn] = wrapper.arguments;
+  if (fn?.type !== 'FunctionExpression' && fn?.type !== 'ArrowFunctionExpression') {
+    return undefined;
+  }
+  let target = wrapper.callee;
+  if (target.type === 'CallExpression') {
+    const [label] = target.arguments;
+    if (target.arguments.length !== 1 || label?.type !== 'Literal' || !Schema.is(Schema.String)(label.value)) {
+      return undefined;
+    }
+    target = target.callee;
+  }
+  if (
+    target.type !== 'MemberExpression' ||
+    target.computed ||
+    target.property.type !== 'Identifier' ||
+    target.property.name !== 'fn' ||
+    target.object.type !== 'Identifier'
+  ) {
+    return undefined;
+  }
+  const effect = bindingAt(model, target.object.name, target.object);
+  return effect !== undefined && isEffectValueImport(model, effect) && !bindingWritten(model, effect) ? fn : undefined;
+};
+
+/** A routine input has only invoke: no SQL members, local rebinding/boxing, or wider receiving signatures. */
+const routineInputUseIndexes = (
+  model: CapabilitySource,
+  inputs: ReadonlySet<LexicalName>,
+  acceptsInput: (consumer: LexicalName, index: number) => boolean,
+): readonly number[] => {
+  if (inputs.size === 0) {
+    return [];
+  }
+  const allowed = new Set<Span>();
+  for (const call of model.calls) {
+    const { callee } = call;
+    if (
+      callee.type === 'MemberExpression' &&
+      !callee.computed &&
+      callee.property.type === 'Identifier' &&
+      callee.property.name === 'invoke' &&
+      callee.object.type === 'Identifier'
+    ) {
+      allowed.add(callee.object);
+    }
+    const consumer = callee.type === 'Identifier' ? bindingAt(model, callee.name, callee) : undefined;
+    if (consumer !== undefined) {
+      for (const [index, argument] of call.arguments.entries()) {
+        if (
+          argument.type === 'Identifier' &&
+          inputs.has(bindingAt(model, argument.name, argument) ?? argument) &&
+          acceptsInput(consumer, index)
+        ) {
+          allowed.add(argument);
+        }
+      }
+    }
+  }
+  // Property names are not value references, even when their spelling matches a receiving parameter.
+  const propertyName = (node: { readonly computed: boolean; readonly key: Span }): void => {
+    if (!node.computed) {
+      allowed.add(node.key);
     }
   };
   new Visitor({
-    ArrowFunctionExpression: (node) => allowScopedFactoryParameter(node.params),
-    FunctionDeclaration: (node) => allowScopedFactoryParameter(node.params),
-    FunctionExpression: (node) => allowScopedFactoryParameter(node.params),
-    TSFunctionType: (node) => allowScopedFactoryParameter(node.params),
-  }).visit(parsed.program);
-
-  const invalidReferences: number[] = invalidImportSpans.map((span) => span.start);
-  const recordExecutorReference = (reference: TSTypeReference): void => {
-    if (
-      reference.typeName.type === 'Identifier' &&
-      executorNames.has(reference.typeName.name) &&
-      !allowedFactoryParameters.some((span) => span.start <= reference.start && reference.end <= span.end)
-    ) {
-      invalidReferences.push(reference.start);
-    }
-  };
-  new Visitor({ TSTypeReference: recordExecutorReference }).visit(parsed.program);
-  return EffectArray.sort([...new Set(invalidReferences)], Order.Number);
+    AccessorProperty: propertyName,
+    MemberExpression: (node) => {
+      if (!node.computed) {
+        allowed.add(node.property);
+      }
+    },
+    MethodDefinition: propertyName,
+    Property: (node) => {
+      if (!node.shorthand) {
+        propertyName(node);
+      }
+    },
+    PropertyDefinition: propertyName,
+  }).visit(model.program);
+  const invalid: number[] = [];
+  new Visitor({
+    Identifier: (identifier) => {
+      const binding = bindingAt(model, identifier.name, identifier);
+      if (
+        binding !== undefined &&
+        inputs.has(binding) &&
+        !containsSpan(binding, identifier) &&
+        !allowed.has(identifier)
+      ) {
+        invalid.push(identifier.start);
+      }
+    },
+  }).visit(model.program);
+  return invalid;
 };
 
-const containsGlobalDatabaseCapability = (file: string, source: string): boolean =>
-  globalDatabaseImplementationImport.test(source) ||
-  hiddenCapability.test(source) ||
-  scopedTransactionExposureIndexes(file, source).length > 0;
+/** Unknown consumers may retain a raw value. Only explicit, unchanged owner-input signatures qualify. */
+const privateInputProof = (graph: CapabilityGraph) => {
+  const proof = {
+    exported(
+      file: string,
+      name: string,
+      index: number,
+      seen: ReadonlySet<string>,
+      requiredAuthority?: symbol,
+    ): boolean {
+      const key = `${file}:${name}:${index}:${requiredAuthority?.description ?? ''}`;
+      const model = graph.models.get(file);
+      if (seen.has(key) || model === undefined) {
+        return false;
+      }
+      const nextSeen = new Set([...seen, key]);
+      for (const statement of model.program.body) {
+        if (
+          statement.type === 'ExportAllDeclaration' &&
+          statement.exported === null &&
+          proof.imported(model, statement.source.value, name, index, nextSeen, requiredAuthority)
+        ) {
+          return true;
+        }
+        if (statement.type !== 'ExportNamedDeclaration') {
+          continue;
+        }
+        if (statement.declaration !== null) {
+          const binding = bindingAt(model, name, model.program);
+          if (
+            binding !== undefined &&
+            containsSpan(statement.declaration, binding) &&
+            proof.local(model, binding, index, nextSeen, requiredAuthority)
+          ) {
+            return true;
+          }
+        }
+        for (const specifier of statement.specifiers) {
+          if (
+            specifier.exported.type !== 'Identifier' ||
+            specifier.exported.name !== name ||
+            specifier.local.type !== 'Identifier'
+          ) {
+            continue;
+          }
+          if (statement.source !== null) {
+            return proof.imported(
+              model,
+              statement.source.value,
+              specifier.local.name,
+              index,
+              nextSeen,
+              requiredAuthority,
+            );
+          }
+          const binding = bindingAt(model, specifier.local.name, model.program);
+          return binding !== undefined && proof.local(model, binding, index, nextSeen, requiredAuthority);
+        }
+      }
+      return false;
+    },
+
+    imported(
+      model: CapabilitySource,
+      specifier: string,
+      name: string,
+      index: number,
+      seen: ReadonlySet<string>,
+      requiredAuthority?: symbol,
+    ): boolean {
+      const targets = graph.resolveLocalSource(model.file, specifier);
+      return (
+        targets.length > 0 && targets.every((target) => proof.exported(target, name, index, seen, requiredAuthority))
+      );
+    },
+
+    local(
+      model: CapabilitySource,
+      binding: LexicalName,
+      index: number,
+      seen: ReadonlySet<string>,
+      requiredAuthority?: symbol,
+    ): boolean {
+      if (bindingWritten(model, binding)) {
+        return false;
+      }
+      const fn = model.functionBindings.get(binding) ?? wrappedInputFunction(model, binding);
+      const parameter = fn?.params[index];
+      if (fn !== undefined && parameter !== undefined) {
+        if (!isPrivateInput(model, fn, parameter)) {
+          return false;
+        }
+        const authority = parameterAuthority(model, parameter);
+        if (requiredAuthority === undefined && authority !== routineInvokerAuthority) {
+          return true;
+        }
+        const key = `${model.file}:${binding.start}:${index}:${routineInvokerAuthority.description}`;
+        if (parameter.type !== 'Identifier' || authority !== routineInvokerAuthority || seen.has(key)) {
+          return false;
+        }
+        const nextSeen = new Set([...seen, key]);
+        return (
+          routineInputUseIndexes(model, new Set([parameter]), (consumer, inputIndex) =>
+            proof.local(model, consumer, inputIndex, nextSeen, routineInvokerAuthority),
+          ).length === 0
+        );
+      }
+      for (const statement of model.program.body) {
+        if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') {
+          continue;
+        }
+        for (const specifier of statement.specifiers) {
+          if (
+            specifier.local === binding &&
+            specifier.type === 'ImportSpecifier' &&
+            specifier.imported.type === 'Identifier' &&
+            specifier.importKind !== 'type'
+          ) {
+            return proof.imported(
+              model,
+              statement.source.value,
+              specifier.imported.name,
+              index,
+              seen,
+              requiredAuthority,
+            );
+          }
+        }
+      }
+      return false;
+    },
+  };
+  return proof;
+};
+
+const rawEscapeIndexes = (
+  graph: CapabilityGraph,
+  model: CapabilitySource,
+  rawNames: Set<LexicalName>,
+  callbackInputs: ReadonlySet<LexicalName>,
+): readonly number[] => {
+  const invalid: number[] = [];
+  const inputProof = privateInputProof(graph);
+  // Propagate raw local aliases before checking sinks, including uses before their declaration.
+  let changed = true;
+  const aliases = new Visitor({
+    AssignmentPattern: (node) => {
+      if (
+        node.left.type === 'Identifier' &&
+        !rawNames.has(node.left) &&
+        rawCapabilityValue(node.right, rawNames, model)
+      ) {
+        rawNames.add(node.left);
+        changed = true;
+      }
+    },
+    VariableDeclarator: (node) => {
+      if (
+        node.id.type === 'Identifier' &&
+        node.init !== null &&
+        !rawNames.has(node.id) &&
+        rawCapabilityValue(node.init, rawNames, model)
+      ) {
+        rawNames.add(node.id);
+        changed = true;
+      }
+    },
+  });
+  while (changed) {
+    changed = false;
+    aliases.visit(model.program);
+  }
+  new Visitor({
+    AccessorProperty: (node) => {
+      if (node.value !== null && rawCapabilityValue(node.value, rawNames, model)) {
+        invalid.push(node.value.start);
+      }
+    },
+    ArrowFunctionExpression: (node) => {
+      if (node.body.type !== 'BlockStatement' && rawCapabilityValue(node.body, rawNames, model)) {
+        invalid.push(node.body.start);
+      }
+    },
+    AssignmentExpression: (node) => {
+      if (rawCapabilityValue(node.right, rawNames, model)) {
+        invalid.push(node.start);
+      }
+    },
+    AssignmentPattern: (node) => {
+      if (node.left.type !== 'Identifier' && rawCapabilityValue(node.right, rawNames, model)) {
+        invalid.push(node.start);
+      }
+    },
+    CallExpression: (call) => {
+      const binding = call.callee.type === 'Identifier' ? bindingAt(model, call.callee.name, call.callee) : undefined;
+      for (const [index, argument] of call.arguments.entries()) {
+        if (
+          rawCapabilityValue(argument.type === 'SpreadElement' ? argument.argument : argument, rawNames, model) &&
+          (argument.type === 'SpreadElement' ||
+            binding === undefined ||
+            (!(callbackInputs.has(binding) && index === 0) && !inputProof.local(model, binding, index, new Set())))
+        ) {
+          invalid.push(argument.start);
+        }
+      }
+    },
+    ForOfStatement: (node) => {
+      if (rawCapabilityValue(node.right, rawNames, model)) {
+        invalid.push(node.right.start);
+      }
+    },
+    NewExpression: (node) => {
+      for (const argument of node.arguments) {
+        if (rawCapabilityValue(argument.type === 'SpreadElement' ? argument.argument : argument, rawNames, model)) {
+          invalid.push(argument.start);
+        }
+      }
+    },
+    PropertyDefinition: (node) => {
+      if (node.value !== null && rawCapabilityValue(node.value, rawNames, model)) {
+        invalid.push(node.value.start);
+      }
+    },
+    ReturnStatement: (node) => {
+      if (node.argument !== null && rawCapabilityValue(node.argument, rawNames, model)) {
+        invalid.push(node.argument.start);
+      }
+    },
+    TaggedTemplateExpression: (node) => {
+      for (const value of [node.tag, ...node.quasi.expressions]) {
+        if (rawCapabilityValue(value, rawNames, model)) {
+          invalid.push(value.start);
+        }
+      }
+    },
+    ThrowStatement: (node) => {
+      if (rawCapabilityValue(node.argument, rawNames, model)) {
+        invalid.push(node.argument.start);
+      }
+    },
+    VariableDeclarator: (node) => {
+      if (node.id.type !== 'Identifier' && node.init !== null && rawCapabilityValue(node.init, rawNames, model)) {
+        invalid.push(node.start);
+      }
+    },
+    YieldExpression: (node) => {
+      if (node.argument !== null && rawCapabilityValue(node.argument, rawNames, model)) {
+        invalid.push(node.argument.start);
+      }
+    },
+  }).visit(model.program);
+  return invalid;
+};
+
+const providerInputNames = (model: CapabilitySource, invalid: number[]): Set<LexicalName> => {
+  const inputs = new Set<LexicalName>();
+  for (const call of model.calls) {
+    const calleeBinding =
+      call.callee.type === 'Identifier' ? bindingAt(model, call.callee.name, call.callee) : undefined;
+    const path = providerBindingPath(model, calleeBinding);
+    if (path === undefined) {
+      continue;
+    }
+    const [callback] = call.arguments;
+    if (path.some((binding) => bindingWritten(model, binding)) || call.arguments.length !== 1) {
+      invalid.push(call.start);
+    }
+    if (callback?.type === 'ArrowFunctionExpression' || callback?.type === 'FunctionExpression') {
+      const [input] = callback.params;
+      if (input?.type === 'Identifier') {
+        inputs.add(input);
+      } else if (input !== undefined) {
+        invalid.push(input.start);
+      }
+      if (callback.params.length > 1) {
+        invalid.push(callback.start);
+      }
+    } else {
+      // Named callbacks and other invocation shapes need more than the bounded inline-callback proof.
+      invalid.push(call.start);
+    }
+  }
+  return inputs;
+};
+
+const namedExecutorImports = (model: CapabilitySource): ReadonlySet<LexicalName> => {
+  const names = new Set<LexicalName>();
+  for (const statement of model.program.body) {
+    if (statement.type !== 'ImportDeclaration') {
+      continue;
+    }
+    for (const specifier of statement.specifiers) {
+      if (
+        specifier.type === 'ImportSpecifier' &&
+        specifier.imported.type === 'Identifier' &&
+        (specifier.imported.name === 'ScopedTransactionExecutor' || specifier.imported.name === 'ScopedRoutineInvoker')
+      ) {
+        names.add(specifier.local);
+      }
+    }
+  }
+  return names;
+};
+
+const invalidCapabilityImports = (model: CapabilitySource, executorImports: ReadonlySet<LexicalName>): number[] => {
+  const invalid: number[] = [];
+  for (const statement of model.program.body) {
+    if (statement.type !== 'ImportDeclaration' || statement.importKind === 'type') {
+      continue;
+    }
+    for (const specifier of statement.specifiers) {
+      if (
+        (isRawAuthority(model.authorities.get(specifier.local)) || executorImports.has(specifier.local)) &&
+        (specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type')
+      ) {
+        invalid.push(specifier.start);
+      }
+    }
+  }
+  return invalid;
+};
+
+const externalRawType = (
+  graph: CapabilityGraph,
+  model: CapabilitySource,
+  specifier: string,
+  name?: string,
+): boolean => {
+  if (specifier === coreRuntimeSpecifier) {
+    return name === undefined || name === 'ScopedTransactionExecutor' || name === 'ScopedRoutineInvoker';
+  }
+  return graph.resolveLocalSource(model.file, specifier).some((file) => {
+    const exports = graph.models.get(file)?.exports;
+    return name === undefined
+      ? [...(exports?.values() ?? [])].some(isRawAuthority)
+      : isRawAuthority(exports?.get(name));
+  });
+};
+
+const namespaceRawType = (graph: CapabilityGraph, model: CapabilitySource, typeName: TSQualifiedName): boolean => {
+  let root = typeName.left;
+  while (root.type === 'TSQualifiedName') {
+    root = root.left;
+  }
+  if (root.type !== 'Identifier') {
+    return false;
+  }
+  const binding = bindingAt(model, root.name, typeName);
+  return model.program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.specifiers.some(
+        (specifier) => specifier.type === 'ImportNamespaceSpecifier' && specifier.local === binding,
+      ) &&
+      externalRawType(graph, model, statement.source.value, typeName.right.name),
+  );
+};
+
+/** Allow only input annotations/definitions; never blanket-allow an enclosing function or returned Effect/Layer. */
+const scopedTransactionExposureIndexes = (graph: CapabilityGraph, model: CapabilitySource): readonly number[] => {
+  const executorImports = namedExecutorImports(model);
+  const invalid = invalidCapabilityImports(model, executorImports);
+  const allowed = new Set<Span>();
+  const rawNames = providerInputNames(model, invalid);
+  const routineInputs = new Set<LexicalName>();
+  const callbackInputs = new Set<LexicalName>();
+  if (model.syntaxError) {
+    return [model.program.start];
+  }
+  for (const alias of model.aliases) {
+    const executor = alias.typeParameters === null ? projectionExecutor(model, alias.typeAnnotation) : undefined;
+    if (executor !== undefined) {
+      allowed.add(executor);
+    }
+    const authority = typeAuthority(model, alias.typeAnnotation);
+    if (authority === projectionAuthority || (alias.typeParameters === null && authority === routineInvokerAuthority)) {
+      allowed.add(alias.typeAnnotation);
+    }
+  }
+  for (const node of model.functions) {
+    collectContextualFactoryInput(model, node, rawNames, invalid);
+    for (const parameter of node.params) {
+      if (parameter.type === 'Identifier' && isPrivateInput(model, node, parameter)) {
+        if (parameter.typeAnnotation !== null && parameter.typeAnnotation !== undefined) {
+          allowed.add(parameter.typeAnnotation.typeAnnotation);
+        }
+        if (node.type !== 'TSFunctionType') {
+          rawNames.add(parameter);
+          if (parameterAuthority(model, parameter) === routineInvokerAuthority) {
+            routineInputs.add(parameter);
+          }
+        }
+      }
+      const callbackInput = readCallbackInput(model, node, parameter);
+      if (callbackInput !== undefined && parameter.type === 'Identifier') {
+        allowed.add(callbackInput);
+        callbackInputs.add(parameter);
+        if (!collectReadCallbackInputs(model, node, parameter, rawNames)) {
+          invalid.push(callbackInput.start);
+        }
+      }
+    }
+  }
+  new Visitor({
+    ExportAllDeclaration: (node) => {
+      if (node.exported !== null && externalRawType(graph, model, node.source.value)) {
+        invalid.push(node.start);
+      }
+    },
+    TSImportType: (node) => {
+      const name = node.qualifier?.type === 'Identifier' ? node.qualifier.name : undefined;
+      if (externalRawType(graph, model, node.source.value, name)) {
+        invalid.push(node.start);
+      }
+    },
+    TSTypeReference: (reference) => {
+      if (reference.typeName.type !== 'Identifier') {
+        if (reference.typeName.type === 'TSQualifiedName' && namespaceRawType(graph, model, reference.typeName)) {
+          invalid.push(reference.start);
+        }
+        return;
+      }
+      const binding = bindingAt(model, reference.typeName.name, reference);
+      const authority = binding === undefined ? undefined : model.authorities.get(binding);
+      if (
+        (isRawAuthority(authority) ||
+          executorImports.has(binding ?? reference.typeName) ||
+          reference.typeName.name === 'ScopedTransactionExecutor' ||
+          reference.typeName.name === 'ScopedRoutineInvoker') &&
+        ![...allowed].some((annotation) => containsSpan(annotation, reference))
+      ) {
+        invalid.push(reference.start);
+      }
+    },
+  }).visit(model.program);
+  const inputProof = privateInputProof(graph);
+  invalid.push(
+    ...rawEscapeIndexes(graph, model, rawNames, callbackInputs),
+    ...routineInputUseIndexes(model, routineInputs, (consumer, index) =>
+      inputProof.local(model, consumer, index, new Set(), routineInvokerAuthority),
+    ),
+  );
+  return EffectArray.sort([...new Set(invalid)], Order.Number);
+};
+
+const containsGlobalDatabaseCapability = (source: string, exposures: readonly number[]): boolean =>
+  globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source) || exposures.length > 0;
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
   path: Path.Path,
   root: string,
   resolveLocalSource: LocalSourceResolver,
+  exposures: ReadonlyMap<string, readonly number[]>,
 ): ReadonlySet<string> => {
   const importersByDependency = new Map<string, Set<string>>();
   const closure = new Set<string>();
@@ -370,7 +1671,7 @@ const globalDatabaseCapabilityClosure = (
     // owning source line; recursively treating every safe Core type dependency as a
     // database leak makes generated Action and Read registrations impossible.
     if (!relative.startsWith(coreRuntimeSourcePrefix)) {
-      if (containsGlobalDatabaseCapability(file, source)) {
+      if (containsGlobalDatabaseCapability(source, exposures.get(file) ?? [])) {
         closure.add(file);
         pending.push(file);
       }
@@ -433,6 +1734,7 @@ interface SourceCheckContext {
   readonly relative: string;
   readonly resolveLocalSource: LocalSourceResolver;
   readonly root: string;
+  readonly scopedTransactionExposures: readonly number[];
   readonly source: string;
 }
 
@@ -538,7 +1840,7 @@ const recordScopedTransactionExposure = (context: SourceCheckContext): void => {
   if (!context.governedAdapter) {
     return;
   }
-  for (const index of scopedTransactionExposureIndexes(context.file, context.source)) {
+  for (const index of context.scopedTransactionExposures) {
     context.record({
       file: context.relative,
       line: sourceLine(context.source, index),
@@ -602,7 +1904,18 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     const sourceFiles = new Set(files);
     const workspacePackages = yield* collectWorkspacePackages(sourceFiles, root);
     const resolveLocalSource = localSourceResolver(sourceFiles, path, workspacePackages);
-    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(sources, path, root, resolveLocalSource);
+    const models = capabilitySources(sources, resolveLocalSource);
+    const graph: CapabilityGraph = { models, resolveLocalSource };
+    const exposures = new Map(
+      [...models].map(([file, model]) => [file, scopedTransactionExposureIndexes(graph, model)]),
+    );
+    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(
+      sources,
+      path,
+      root,
+      resolveLocalSource,
+      exposures,
+    );
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
       const key = `${violation.file}:${violation.line}:${violation.reason}`;
@@ -623,6 +1936,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         relative,
         resolveLocalSource,
         root,
+        scopedTransactionExposures: exposures.get(file) ?? [],
         source,
       };
       recordProductionTestingImports(context);
