@@ -202,6 +202,9 @@ const commerceVocabulary = /commerce|storefront|better[-_]?auth/iu;
 
 const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node',
+  '@authzed/authzed-node/v1/core',
+  '@authzed/authzed-node/v1/permissions',
+  '@authzed/authzed-node/v1/schema',
   '@effect/platform-node',
   '@effect/sql-pg',
   'drizzle-kit',

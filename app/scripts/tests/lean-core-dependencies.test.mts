@@ -213,7 +213,35 @@ interface HostGraphControl {
   readonly sources?: Readonly<Record<string, string>>;
 }
 
+const authzedPublicMessagesSource = [
+  "export { ObjectReference } from '@authzed/authzed-node/v1/core';",
+  "export { Consistency } from '@authzed/authzed-node/v1/permissions';",
+  "export { ReadSchemaRequest } from '@authzed/authzed-node/v1/schema';",
+].join('\n');
+
 const hostGraphControls: readonly HostGraphControl[] = [
+  {
+    name: 'allows the three explicit Authzed message exports in shared Core source',
+    rejected: false,
+    sources: { 'src/shared.ts': authzedPublicMessagesSource },
+  },
+  {
+    name: 'allows the three explicit Authzed message exports in the Workerd branch',
+    rejected: false,
+    sources: { 'src/transport.worker.ts': authzedPublicMessagesSource },
+  },
+  ...[
+    '@authzed/authzed-node/v1/debug',
+    '@authzed/authzed-node/v1/core/private',
+    '@authzed/authzed-node/dist/src/authzedapi/authzed/api/v1/core.js',
+    '@authzed/authzed-node/package.json',
+    'effect/Effect',
+    'effect/Schema',
+  ].map((specifier) => ({
+    name: `rejects unpinned Core external specifier ${specifier}`,
+    rejected: true,
+    sources: { 'src/shared.ts': `import '${specifier}';` },
+  })),
   { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
   {
     imports: typesFirstHostImports,
