@@ -41,8 +41,8 @@ import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } fro
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, RentTerms } from '../../../../shared/apis/records.ts';
-import { decodeRecordsSearch } from '../../../../shared/apis/records-search.ts';
-import type { RecordsSearch } from '../../../../shared/apis/records-search.ts';
+import { decodeRecordsSearch } from '../../../../shared/domain/records-search.ts';
+import type { RecordsSearch } from '../../../../shared/domain/records-search.ts';
 import {
   ContractCard,
   InvoicesCard,
