@@ -230,7 +230,7 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     const serialized = new TextDecoder().decode(content);
     const contract = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
       onExcessProperty: 'error',
-    })(serialized);
+    })(serialized).pipe(Effect.mapError((cause) => failure(`${contractPath} has an invalid module contract`, cause)));
     if (
       contract.deployment.appId !== expected.deployment.appId ||
       contract.manifest.module.id !== expected.manifest.module.id
