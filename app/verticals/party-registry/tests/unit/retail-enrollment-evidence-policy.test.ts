@@ -1,7 +1,11 @@
 import { DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { RetailEnrollmentEvidenceSchema } from '../../shared/actions/accept-retail-enrollment-evidence.ts';
+import {
+  AcceptRetailEnrollmentEvidencePayloadSchema,
+  AcceptRetailEnrollmentEvidenceResultSchema,
+  RetailEnrollmentEvidenceSchema,
+} from '../../shared/actions/accept-retail-enrollment-evidence.ts';
 import type { PartyCandidate } from '../../shared/domain/identity-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
 import { acceptRetailEnrollmentEvidenceAction } from '../../src/actions/accept-retail-enrollment-evidence.action.ts';
@@ -52,6 +56,33 @@ it('does not relax normal no-identifier creation or claim that identity review h
     kind: 'action_execution',
     provisioning: 'explicit',
   });
+});
+
+it('retains the native scaffold Action contract and original public schemas', () => {
+  const { descriptor } = acceptRetailEnrollmentEvidenceAction;
+  expect(descriptor).toMatchObject({
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'party.registry.retail-enrollment-evidence.access.v1',
+    },
+    actionKey: 'party.registry.accept-retail-enrollment-evidence',
+    auditProfile: 'standard',
+    entrypoint: {
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: 'party.registry.accept-retail-enrollment-evidence',
+      moduleKey: 'party.registry',
+      role: 'action',
+    },
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'party.registry',
+    policies: [],
+    schemaVersion: '1',
+  });
+  expect(descriptor.payloadSchema).toBe(AcceptRetailEnrollmentEvidencePayloadSchema);
+  expect(descriptor.resultSchema).toBe(AcceptRetailEnrollmentEvidenceResultSchema);
+  expect(Object.keys(descriptor.domainEvents)).toEqual(['party.registry.party-created.v1']);
 });
 
 it('rejects another company, tenant, subject, evidence reference, non-person and guest provenance', () => {
