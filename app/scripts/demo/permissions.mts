@@ -342,7 +342,11 @@ export const scopedDemoActionRelationships = (
       subjectType: 'principal',
     },
     ...(action.legalEntityScope === 'forbidden' ? [roleRelationship('tenant', tenantId, 'context_role', roleId)] : []),
-    ...scopedActionRoleBootstrapRelationships({ ...scope, action, roleKey }),
+    ...scopedActionRoleBootstrapRelationships({ ...scope, action, roleKey }).map((relationship) => {
+      const { subjectRelation, ...directSubject } = relationship;
+      // Protobuf uses '' for a direct subject; the fixture port requires an absent optional userset.
+      return subjectRelation === '' ? directSubject : relationship;
+    }),
   ];
 };
 
