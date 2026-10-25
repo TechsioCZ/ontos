@@ -102,6 +102,115 @@ it.live(
     }),
 );
 
+it.live('resolves declared workspace exports without inventing private server dependencies', () =>
+  Effect.gen(function* workspaceExportBoundaries() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-exports-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const sharedApiTarget = './shared/api.ts';
+    const privateTarget = './src/private.ts';
+    const globalDatabaseSource = "import { database } from '@app/core-runtime/db/client';\n";
+    const siblingPrivateSource = "import '../src/private.ts';\n";
+    const privateSource = "import './src/private.ts';\n";
+    const files = {
+      'packages/blocked-root/package.json': JSON.stringify({ exports: null, name: '@app/blocked-root' }),
+      'packages/blocked-root/src/index.ts': globalDatabaseSource,
+      'packages/root-export/api.ts': "import './private.ts';\n",
+      'packages/root-export/package.json': JSON.stringify({
+        exports: { browser: './shared.ts', default: './private.ts', types: './shared.ts' },
+        name: '@app/root-export',
+      }),
+      'packages/root-export/private.ts': globalDatabaseSource,
+      'packages/root-export/shared.ts': 'export interface Contract {}\n',
+      'packages/storage-directory/api/index.ts': siblingPrivateSource,
+      'packages/storage-directory/capability.ts': privateSource,
+      'packages/storage-directory/package.json': JSON.stringify({
+        exports: { './api': privateTarget },
+        name: '@workspace/renamed',
+      }),
+      'packages/storage-directory/src/private.ts': globalDatabaseSource,
+      'packages/string-export/package.json': JSON.stringify({
+        exports: './private.ts',
+        name: '@app/string-export',
+      }),
+      'packages/string-export/private.ts': globalDatabaseSource,
+      'verticals/party-registry/api/index.ts': siblingPrivateSource,
+      'verticals/party-registry/blocked.ts': privateSource,
+      'verticals/party-registry/contracts/blocked.ts': siblingPrivateSource,
+      'verticals/party-registry/missing.ts': privateSource,
+      'verticals/party-registry/package.json': JSON.stringify({
+        exports: {
+          '.': sharedApiTarget,
+          './api': sharedApiTarget,
+          './array': [sharedApiTarget, privateTarget],
+          './blocked': null,
+          './capability': privateTarget,
+          './conditional': {
+            import: { browser: sharedApiTarget, default: privateTarget },
+            types: sharedApiTarget,
+          },
+          './contracts/*': './shared/*.ts',
+          './contracts/blocked': null,
+          './contracts/private-*': './src/*.ts',
+          './missing': './shared/absent.ts',
+          './types': { default: sharedApiTarget, types: privateTarget },
+        },
+        name: '@app/party-registry',
+      }),
+      'verticals/party-registry/shared/api.ts': "export type { Contract } from './contract.ts';\n",
+      'verticals/party-registry/shared/contract.ts': 'export interface Contract { readonly id: string; }\n',
+      'verticals/party-registry/shared/private-secret.ts': 'export const safe = true;\n',
+      'verticals/party-registry/src/private.ts': globalDatabaseSource,
+      'verticals/party-registry/src/secret.ts': "import './private.ts';\n",
+      'verticals/party-registry/undeclared.ts': privateSource,
+      'verticals/stock/src/actions/leaky.action.ts': [
+        "import type { Capability } from '@app/party-registry/capability';",
+        "import type { Capability } from '@app/party-registry/conditional';",
+        "import '@app/party-registry/array';",
+        "import '@app/party-registry/contracts/private-secret';",
+        "import type { Capability } from '@workspace/renamed/api';",
+        "import '@app/root-export';",
+        "import '@app/string-export';",
+        "import '../../../party-registry/src/private.ts';",
+        "import '../services/private-service.ts';",
+        "import '@app/party-registry/types';",
+      ].join('\n'),
+      'verticals/stock/src/actions/safe.action.ts': [
+        "import type { Contract } from '@app/party-registry/api';",
+        "import type { Contract } from '@app/party-registry';",
+        "import type { Contract } from '@app/party-registry/contracts/contract';",
+        "import '@app/party-registry/blocked';",
+        "import '@app/party-registry/undeclared';",
+        "import '@app/party-registry/contracts/blocked';",
+        "import '@app/storage-directory/capability';",
+        "import '@app/root-export/api';",
+        "import '@app/blocked-root';",
+        "import '@app/party-registry/missing';",
+      ].join('\n'),
+      'verticals/stock/src/services/private-service.ts': globalDatabaseSource,
+    } as const;
+    yield* Effect.all(
+      Object.entries(files).map(([relative, source]) =>
+        Effect.gen(function* writeSource() {
+          const file = path.join(root, relative);
+          yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(file, source));
+        }),
+      ),
+    );
+
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file, line, reason }) => ({ file, line, reason }))).toEqual(
+      Array.from({ length: 10 }, (_, index) => ({
+        file: 'verticals/stock/src/actions/leaky.action.ts',
+        line: index + 1,
+        reason: 'transitive global database capability in governed handler requirements',
+      })),
+    );
+  }),
+);
+
 it.live('checks shared transitive import graphs without revisiting every import path', () =>
   Effect.gen(function* sharedTransitiveImportGraph() {
     const root = yield* Effect.acquireRelease(

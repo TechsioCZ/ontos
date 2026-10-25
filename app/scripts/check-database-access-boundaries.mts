@@ -98,39 +98,146 @@ const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] =
   return [unresolved, `${stem}.ts`, `${stem}.mts`];
 };
 
-const resolveLocalSource = (
+type PackageExport = string | null | readonly PackageExport[] | PackageExportMap;
+interface PackageExportMap {
+  readonly [condition: string]: PackageExport;
+}
+
+const PackageExportSchema: Schema.Codec<PackageExport> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.String,
+    Schema.Null,
+    Schema.Array(PackageExportSchema),
+    Schema.Record(Schema.String, PackageExportSchema),
+  ]),
+);
+const isExportMap = Schema.is(Schema.Record(Schema.String, PackageExportSchema));
+const isExportString = Schema.is(Schema.String);
+
+interface WorkspacePackage {
+  readonly publicExports?: PackageExport | undefined;
+  readonly root: string;
+}
+
+const WorkspaceManifest = Schema.fromJsonString(
+  Schema.Struct({ exports: Schema.optionalKey(PackageExportSchema), name: Schema.optionalKey(Schema.String) }),
+);
+
+const collectWorkspacePackages = (sourceFiles: ReadonlySet<string>, root: string) =>
+  Effect.gen(function* collectWorkspacePackageManifests() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const packageRoots = new Set<string>();
+    for (const file of sourceFiles) {
+      const [group, directory] = path.relative(root, file).split(path.sep);
+      if (group !== undefined && directory !== undefined && ['apps', 'packages', 'verticals'].includes(group)) {
+        packageRoots.add(path.join(root, group, directory));
+      }
+    }
+    const entries = yield* Effect.forEach(
+      packageRoots,
+      (packageRoot) =>
+        Effect.gen(function* readWorkspaceManifest() {
+          const manifestPath = path.join(packageRoot, 'package.json');
+          if (!(yield* fileSystem.exists(manifestPath))) {
+            // Small source-only fixtures have no manifest; never apply this guess to a known package.
+            return [`@app/${path.basename(packageRoot)}`, { root: packageRoot }] as const;
+          }
+          const source = yield* fileSystem.readFileString(manifestPath, 'utf-8');
+          const manifest = yield* Schema.decodeUnknownEffect(WorkspaceManifest)(source);
+          return manifest.name === undefined
+            ? undefined
+            : ([manifest.name, { publicExports: manifest.exports, root: packageRoot }] as const);
+        }),
+      { concurrency: 'unbounded' },
+    );
+    return new Map(entries.filter((entry) => entry !== undefined));
+  });
+
+const exportTargetStrings = (value: PackageExport | undefined): readonly string[] => {
+  if (isExportString(value)) {
+    return value.startsWith('./') ? [value] : [];
+  }
+  // No single runtime condition is sufficient: types, browser, import, and default may differ.
+  if (Array.isArray(value)) {
+    return value.flatMap(exportTargetStrings);
+  }
+  return isExportMap(value) ? Object.values(value).flatMap(exportTargetStrings) : [];
+};
+
+const publicExportTargets = (publicExports: PackageExport, subpath: string): readonly string[] => {
+  if (!isExportMap(publicExports) || !Object.keys(publicExports).some((key) => key.startsWith('.'))) {
+    return subpath === '.' ? exportTargetStrings(publicExports) : [];
+  }
+  if (Object.hasOwn(publicExports, subpath)) {
+    return exportTargetStrings(publicExports[subpath]);
+  }
+  // An exact/null entry or a more specific pattern must shadow broader wildcard exports.
+  let bestPattern: string | undefined;
+  let bestPrefixLength = -1;
+  let replacement = '';
+  for (const pattern of Object.keys(publicExports)) {
+    const star = pattern.indexOf('*');
+    if (star === -1) {
+      continue;
+    }
+    const prefix = pattern.slice(0, star);
+    const suffix = pattern.slice(star + 1);
+    if (
+      subpath.length >= prefix.length + suffix.length &&
+      subpath.startsWith(prefix) &&
+      subpath.endsWith(suffix) &&
+      (star > bestPrefixLength || (star === bestPrefixLength && pattern.length > (bestPattern?.length ?? 0)))
+    ) {
+      bestPattern = pattern;
+      bestPrefixLength = star;
+      replacement = subpath.slice(prefix.length, subpath.length - suffix.length);
+    }
+  }
+  return bestPattern === undefined
+    ? []
+    : exportTargetStrings(publicExports[bestPattern]).map((target) => target.replaceAll('*', replacement));
+};
+
+type LocalSourceResolver = (importer: string, specifier: string) => readonly string[];
+
+const localSourceResolver = (
   sourceFiles: ReadonlySet<string>,
   path: Path.Path,
-  root: string,
-  importer: string,
-  specifier: string,
-): string | undefined => {
-  if (specifier.startsWith('.')) {
-    return candidatesFor(path, path.resolve(path.dirname(importer), specifier)).find((candidate) =>
-      sourceFiles.has(candidate),
-    );
-  }
-  const packageGroups = /^@app\/(?<packageName>[^/]+)(?:\/(?<subpath>.+))?$/u.exec(specifier)?.groups;
-  const packageName = packageGroups?.packageName;
-  if (packageName === undefined) {
-    return undefined;
-  }
-  const subpath = packageGroups?.subpath;
-  const candidates = ['apps', 'packages', 'verticals'].flatMap((ownerRoot) => {
-    const packageRoot = path.join(root, ownerRoot, packageName);
-    if (subpath === undefined) {
-      return [
-        path.join(packageRoot, 'src/index.ts'),
-        path.join(packageRoot, 'index.ts'),
-        path.join(packageRoot, 'vertical.registration.ts'),
-      ];
+  workspacePackages: ReadonlyMap<string, WorkspacePackage>,
+): LocalSourceResolver => {
+  const resolveCandidates = (candidates: readonly string[]): readonly string[] => {
+    const source = candidates.find((candidate) => sourceFiles.has(candidate));
+    return source === undefined ? [] : [source];
+  };
+  return (importer, specifier) => {
+    if (specifier.startsWith('.')) {
+      return resolveCandidates(candidatesFor(path, path.resolve(path.dirname(importer), specifier)));
     }
-    return [
-      ...candidatesFor(path, path.join(packageRoot, subpath)),
-      ...candidatesFor(path, path.join(packageRoot, 'src', subpath)),
-    ];
-  });
-  return candidates.find((candidate) => sourceFiles.has(candidate));
+    const groups = /^(?<packageName>@[^/]+\/[^/]+|[^/]+)(?:\/(?<subpath>.+))?$/u.exec(specifier)?.groups;
+    const workspacePackage = groups?.packageName === undefined ? undefined : workspacePackages.get(groups.packageName);
+    if (workspacePackage === undefined) {
+      return [];
+    }
+    const subpath = groups?.subpath;
+    if (workspacePackage.publicExports !== undefined) {
+      return publicExportTargets(workspacePackage.publicExports, subpath === undefined ? '.' : `./${subpath}`).flatMap(
+        (target) => resolveCandidates(candidatesFor(path, path.resolve(workspacePackage.root, target))),
+      );
+    }
+    const candidates =
+      subpath === undefined
+        ? [
+            path.join(workspacePackage.root, 'src/index.ts'),
+            path.join(workspacePackage.root, 'index.ts'),
+            path.join(workspacePackage.root, 'vertical.registration.ts'),
+          ]
+        : [
+            ...candidatesFor(path, path.join(workspacePackage.root, subpath)),
+            ...candidatesFor(path, path.join(workspacePackage.root, 'src', subpath)),
+          ];
+    return resolveCandidates(candidates);
+  };
 };
 
 const typeReferenceNamed = (annotation: TSTypeAnnotation | null | undefined, name: string): boolean => {
@@ -249,9 +356,9 @@ const containsGlobalDatabaseCapability = (file: string, source: string): boolean
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,
-  sourceFiles: ReadonlySet<string>,
   path: Path.Path,
   root: string,
+  resolveLocalSource: LocalSourceResolver,
 ): ReadonlySet<string> => {
   const importersByDependency = new Map<string, Set<string>>();
   const closure = new Set<string>();
@@ -269,9 +376,7 @@ const globalDatabaseCapabilityClosure = (
       }
       for (const match of source.matchAll(importedSpecifier)) {
         const specifier = match.groups?.specifier;
-        const dependency =
-          specifier === undefined ? undefined : resolveLocalSource(sourceFiles, path, root, file, specifier);
-        if (dependency !== undefined) {
+        for (const dependency of specifier === undefined ? [] : resolveLocalSource(file, specifier)) {
           const importers = importersByDependency.get(dependency) ?? new Set<string>();
           importers.add(file);
           importersByDependency.set(dependency, importers);
@@ -326,9 +431,9 @@ interface SourceCheckContext {
   readonly path: Path.Path;
   readonly record: (violation: DatabaseAccessViolation) => void;
   readonly relative: string;
+  readonly resolveLocalSource: LocalSourceResolver;
   readonly root: string;
   readonly source: string;
-  readonly sourceFiles: ReadonlySet<string>;
 }
 
 const sourceLine = (source: string, index: number): number => source.slice(0, index).split('\n').length;
@@ -342,14 +447,16 @@ const recordProductionTestingImports = (context: SourceCheckContext): void => {
     if (specifier === undefined) {
       continue;
     }
-    const dependency = resolveLocalSource(context.sourceFiles, context.path, context.root, context.file, specifier);
-    const dependencyRelative =
-      dependency === undefined
-        ? undefined
-        : context.path.relative(context.root, dependency).split(context.path.sep).join('/');
+    const dependencies = context.resolveLocalSource(context.file, specifier);
     if (
       specifier.startsWith('@app/core-runtime/testing/') ||
-      dependencyRelative?.startsWith('packages/core-runtime/src/testing/') === true
+      dependencies.some((dependency) =>
+        context.path
+          .relative(context.root, dependency)
+          .split(context.path.sep)
+          .join('/')
+          .startsWith('packages/core-runtime/src/testing/'),
+      )
     ) {
       context.record({
         file: context.relative,
@@ -369,8 +476,8 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
     if (specifier === undefined) {
       continue;
     }
-    const dependency = resolveLocalSource(context.sourceFiles, context.path, context.root, context.file, specifier);
-    if (dependency !== undefined && context.globalDatabaseCapabilityFiles.has(dependency)) {
+    const dependencies = context.resolveLocalSource(context.file, specifier);
+    if (dependencies.some((dependency) => context.globalDatabaseCapabilityFiles.has(dependency))) {
       context.record({
         file: context.relative,
         line: sourceLine(context.source, match.index),
@@ -493,7 +600,9 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
     );
     const sources = new Map(sourcePairs);
     const sourceFiles = new Set(files);
-    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(sources, sourceFiles, path, root);
+    const workspacePackages = yield* collectWorkspacePackages(sourceFiles, root);
+    const resolveLocalSource = localSourceResolver(sourceFiles, path, workspacePackages);
+    const globalDatabaseCapabilityFiles = globalDatabaseCapabilityClosure(sources, path, root, resolveLocalSource);
     const recorded = new Set<string>();
     const record = (violation: DatabaseAccessViolation): void => {
       const key = `${violation.file}:${violation.line}:${violation.reason}`;
@@ -512,9 +621,9 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
         path,
         record,
         relative,
+        resolveLocalSource,
         root,
         source,
-        sourceFiles,
       };
       recordProductionTestingImports(context);
       recordTransitiveDatabaseCapabilities(context);
