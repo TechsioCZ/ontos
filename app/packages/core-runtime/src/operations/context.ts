@@ -5,6 +5,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { Context, Effect, Layer, Option } from 'effect';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { recoverSqlTransactionError } from '../actions/repository.ts';
 import {
   AuthBindingIdSchema,
   AuthenticationNamespaceIdSchema,
@@ -16,10 +17,13 @@ import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
   preserveSystemPrincipalContextTrust,
+  readVerifiedGatewayScopeAssertion,
 } from '../auth/system-principal-context-provenance.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { gatewayScopeGrantRoleForAudience } from '../db/database-identities.ts';
 import { auditEvents, legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
-import type { CoreDatabaseExecutor } from '../db/types.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import type { ContextAccessService } from '../permissions/context-access.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
 import type { OperationContextError } from './errors.ts';
@@ -85,17 +89,44 @@ const operationContextUnavailable = (cause?: unknown) => {
   return failure;
 };
 
+/**
+ * Verified gateway lookups run inside an installed scope. Manifest-enrolled audiences use the
+ * database-derived gateway scope; the other owners retain their declared session-setting authority.
+ */
+const selectPersistedScope = <Row, E>(
+  database: { readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'> },
+  principal: TrustedPrincipalContext,
+  select: (executor: Pick<CoreTransaction, 'select'>) => Effect.Effect<readonly Row[], E>,
+) =>
+  Effect.suspend(() =>
+    readVerifiedGatewayScopeAssertion(principal) === undefined
+      ? select(database.executor)
+      : database.executor.transaction((transaction) =>
+          installOperationalScope(
+            transaction,
+            preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' }),
+          ).pipe(Effect.andThen(() => select(transaction))),
+        ),
+  );
+
 export const makeOperationalScopeRepository = (database: {
-  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+  readonly executor: Pick<CoreDatabaseExecutor, 'select' | 'transaction'>;
 }): OperationalScopeRepository => ({
   load: (principal) =>
-    Effect.suspend(() => {
+    selectPersistedScope(database, principal, (executor) => {
       const impersonators = alias(principals, 'impersonators');
       const bindingAudit = alias(auditEvents, 'binding_creation_audit');
-      return database.executor
+      const assertion = readVerifiedGatewayScopeAssertion(principal);
+      const gatewayScoped =
+        assertion !== undefined && Option.isSome(gatewayScopeGrantRoleForAudience(assertion.audience));
+      const query = executor
         .select({
           bindingAuthenticationNamespaceId: principalAuthBindings.authenticationNamespaceId,
-          bindingIssuingLegalEntityId: bindingAudit.legalEntityId,
+          bindingIssuingLegalEntityId: gatewayScoped
+            ? sql<
+                string | null
+              >`trust.auth_binding_issuing_legal_entity(${principal.authBindingId ?? null}::uuid, ${principal.principalId}::uuid)`
+            : bindingAudit.legalEntityId,
           bindingPrincipalId: principalAuthBindings.principalId,
           bindingRevision: principalAuthBindings.bindingRevision,
           bindingRevokedAt: principalAuthBindings.revokedAt,
@@ -133,17 +164,24 @@ export const makeOperationalScopeRepository = (database: {
                 eq(principalAuthBindings.tenantId, principal.tenantId),
                 eq(principalAuthBindings.principalAuthBindingId, principal.authBindingId),
               ),
-        )
-        .leftJoin(
-          bindingAudit,
-          and(
-            eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
-            eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
-            eq(bindingAudit.eventType, 'action.executed'),
-            eq(bindingAudit.outcome, 'succeeded'),
-            sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
-          ),
-        )
+        );
+      // The dedicated request role cannot read binding-creation audit evidence. Its hardened
+      // attestation returns only the issuing company within the sealed tenant and company scope.
+      const attestedQuery = gatewayScoped
+        ? query.$dynamic()
+        : query
+            .$dynamic()
+            .leftJoin(
+              bindingAudit,
+              and(
+                eq(bindingAudit.tenantId, principalAuthBindings.tenantId),
+                eq(bindingAudit.actionInvocationId, principalAuthBindings.createdByInvocationId),
+                eq(bindingAudit.eventType, 'action.executed'),
+                eq(bindingAudit.outcome, 'succeeded'),
+                sql`${bindingAudit.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key'`,
+              ),
+            );
+      return attestedQuery
         .leftJoin(
           legalEntities,
           principal.legalEntityId === undefined
@@ -156,6 +194,7 @@ export const makeOperationalScopeRepository = (database: {
         .where(eq(tenants.tenantId, principal.tenantId))
         .limit(1);
     }).pipe(
+      recoverSqlTransactionError,
       Effect.mapError(operationContextUnavailable),
       Effect.map(
         ([record]) =>
@@ -385,11 +424,16 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
   },
 );
 
-export const makeOperationalScopeResolver = (
+type OperationalScopeResolverConstruction = readonly [
   repository: Pick<OperationalScopeRepository, 'load'>,
   contextAccess: LegalEntityScopeAccess,
   recordInactiveDenial?: (input: ResolveOperationalScopeInput) => Effect.Effect<void>,
+];
+
+export const makeOperationalScopeResolver = (
+  ...construction: OperationalScopeResolverConstruction
 ): OperationalScopeResolverService => {
+  const [repository, contextAccess, recordInactiveDenial] = construction;
   const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
     function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
       const { principal } = input;
@@ -554,32 +598,43 @@ export const makeOperationalScopeResolver = (
 };
 
 const inactiveOperationDenial =
-  (database: { readonly executor: Pick<CoreDatabaseExecutor, 'insert'> }) =>
+  (database: { readonly executor: Pick<CoreDatabaseExecutor, 'transaction'> }) =>
   (input: ResolveOperationalScopeInput): Effect.Effect<void> =>
     database.executor
-      .insert(auditEvents)
-      .values({
-        auditProfile: 'sensitive',
-        authBindingId: input.principal.authBindingId,
-        authMethod: input.principal.authMethod,
-        eventType: 'authn.rejected',
-        evidenceJson: {
-          audience: input.audience ?? null,
-          correlationId: input.correlationId,
-          reason: 'principal_disabled',
-          source: 'operational_scope',
-        },
-        legalEntityId: input.principal.legalEntityId,
-        outcome: 'denied',
-        outcomeCode: 'principal_inactive',
-        outcomeStage: 'authn',
-        principalId: input.principal.principalId,
-        targetModuleKey: 'core.identity',
-        targetResourceId: input.principal.principalId,
-        targetResourceType: 'principal',
-        tenantId: input.principal.tenantId,
-      })
-      .pipe(Effect.ignore);
+      .transaction((transaction) =>
+        installOperationalScope(
+          transaction,
+          preserveSystemPrincipalContextTrust(input.principal, {
+            ...input.principal,
+            correlationId: input.correlationId,
+          }),
+        ).pipe(
+          Effect.andThen(() =>
+            transaction.insert(auditEvents).values({
+              auditProfile: 'sensitive',
+              authBindingId: input.principal.authBindingId,
+              authMethod: input.principal.authMethod,
+              eventType: 'authn.rejected',
+              evidenceJson: {
+                audience: input.audience ?? null,
+                correlationId: input.correlationId,
+                reason: 'principal_disabled',
+                source: 'operational_scope',
+              },
+              legalEntityId: input.principal.legalEntityId,
+              outcome: 'denied',
+              outcomeCode: 'principal_inactive',
+              outcomeStage: 'authn',
+              principalId: input.principal.principalId,
+              targetModuleKey: 'core.identity',
+              targetResourceId: input.principal.principalId,
+              targetResourceType: 'principal',
+              tenantId: input.principal.tenantId,
+            }),
+          ),
+        ),
+      )
+      .pipe(recoverSqlTransactionError, Effect.ignore);
 
 export const OperationalScopeRepositoryLive = Layer.effect(
   OperationalScopeRepositoryContext,

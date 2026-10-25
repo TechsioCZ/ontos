@@ -5,7 +5,7 @@ import {
 } from '@app/core-runtime';
 import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from 'effect-rstest';
-import { Effect, Predicate } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
@@ -32,6 +32,7 @@ import {
   demoPrincipalRoleKey,
   principalRelationships,
   reviewedHumanActionAddonRelationships,
+  ReviewedDemoActionMissing,
   privacyMarketingOperator,
   siamparkRentalPersonas,
   storefrontPrincipal,
@@ -676,49 +677,51 @@ it.effect('refuses release bundles without usable owner workload metadata rather
     expect(noCommerceUnit.reason).toBe('Commerce release secrets require the Commerce and Shell units');
   }),
 );
-it('restores only seven reviewed human executors in two separately scoped named add-ons', () => {
-  const operational = [
-    actionDescriptor('crm.activities.apply-command', 'crm.activities'),
-    actionDescriptor('demo.workforce.apply-command', workforceModule),
-    actionDescriptor('demo.merchandise.apply-command', merchandiseModule),
-    actionDescriptor('demo.sales-insights.apply-command', 'demo.sales-insights'),
-    actionDescriptor('finance.billing.apply-command', billingModule),
-    actionDescriptor('property.portfolio.apply-command', portfolioModule),
-  ];
-  const leasing = actionDescriptor('property.leasing.apply-command', 'property.leasing');
-  const rows = reviewedHumanActionAddonRelationships([...operational, leasing, ...descriptors]);
-  const operationsPerson = siamparkRentalPersonas[1].principalId;
-  expect(new Set(grantsFor(rows, operationsPerson).map((row) => row.resourceId))).toEqual(
-    new Set(operational.map((action) => toSpiceDbActionGrantObjectId(actionScope(action, rentalDemoLegalEntityId)))),
-  );
-  expect(grantsFor(rows, salesRep.principalId).map((row) => row.resourceId)).toEqual([
-    toSpiceDbActionGrantObjectId(actionScope(leasing, demoLegalEntityId)),
-  ]);
-  expect(rows.filter((row) => row.resourceType === 'action_grant' && row.relation === 'role')).toHaveLength(7);
-  expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.resourceId))).toEqual(
-    new Set([
-      toScopedRoleObjectId({
-        legalEntityId: rentalDemoLegalEntityId,
-        roleKey: 'operations-execution',
-        tenantId: demoTenantId,
-      }),
-      toScopedRoleObjectId({
-        legalEntityId: demoLegalEntityId,
-        roleKey: 'rental-sales-execution',
-        tenantId: demoTenantId,
-      }),
-    ]),
-  );
-  expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.subjectId))).toEqual(
-    new Set([operationsPerson, salesRep.principalId]),
-  );
-  expect(rows.some((row) => row.resourceType === 'module_access' || row.resourceType === 'context_permission')).toBe(
-    false,
-  );
-  expect(() => reviewedHumanActionAddonRelationships(operational)).toThrow(
-    'Reviewed Action missing: property.leasing.apply-command',
-  );
-});
+it.effect('restores only seven reviewed human executors in two separately scoped named add-ons', () =>
+  Effect.gen(function* reviewedHumanExecutors() {
+    const operational = [
+      actionDescriptor('crm.activities.apply-command', 'crm.activities'),
+      actionDescriptor('demo.workforce.apply-command', workforceModule),
+      actionDescriptor('demo.merchandise.apply-command', merchandiseModule),
+      actionDescriptor('demo.sales-insights.apply-command', 'demo.sales-insights'),
+      actionDescriptor('finance.billing.apply-command', billingModule),
+      actionDescriptor('property.portfolio.apply-command', portfolioModule),
+    ];
+    const leasing = actionDescriptor('property.leasing.apply-command', 'property.leasing');
+    const rows = yield* reviewedHumanActionAddonRelationships([...operational, leasing, ...descriptors]);
+    const operationsPerson = siamparkRentalPersonas[1].principalId;
+    expect(new Set(grantsFor(rows, operationsPerson).map((row) => row.resourceId))).toEqual(
+      new Set(operational.map((action) => toSpiceDbActionGrantObjectId(actionScope(action, rentalDemoLegalEntityId)))),
+    );
+    expect(grantsFor(rows, salesRep.principalId).map((row) => row.resourceId)).toEqual([
+      toSpiceDbActionGrantObjectId(actionScope(leasing, demoLegalEntityId)),
+    ]);
+    expect(rows.filter((row) => row.resourceType === 'action_grant' && row.relation === 'role')).toHaveLength(7);
+    expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.resourceId))).toEqual(
+      new Set([
+        toScopedRoleObjectId({
+          legalEntityId: rentalDemoLegalEntityId,
+          roleKey: 'operations-execution',
+          tenantId: demoTenantId,
+        }),
+        toScopedRoleObjectId({
+          legalEntityId: demoLegalEntityId,
+          roleKey: 'rental-sales-execution',
+          tenantId: demoTenantId,
+        }),
+      ]),
+    );
+    expect(new Set(rows.filter((row) => row.resourceType === 'scoped_role').map((row) => row.subjectId))).toEqual(
+      new Set([operationsPerson, salesRep.principalId]),
+    );
+    expect(rows.some((row) => row.resourceType === 'module_access' || row.resourceType === 'context_permission')).toBe(
+      false,
+    );
+    const missing = yield* reviewedHumanActionAddonRelationships(operational).pipe(Effect.flip);
+    expect(Schema.is(ReviewedDemoActionMissing)(missing)).toBe(true);
+    expect(missing.message).toBe('Reviewed Action missing: property.leasing.apply-command');
+  }),
+);
 
 it('uses only explicitly linked organizational names for demo logins and preserves unlinked names', () => {
   expect(demoHumanAccounts.map(({ displayName, email }) => [email, displayName])).toEqual([

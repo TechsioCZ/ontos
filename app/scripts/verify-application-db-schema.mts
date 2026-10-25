@@ -2,13 +2,16 @@
 
 import { fileURLToPath } from 'node:url';
 
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Array as EffectArray, Console, Effect, Exit, Option, Order, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Console, Effect, Option, Order, Redacted, Schema } from 'effect';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
 import type { CommercePortalAuthDatabaseConnectionPair } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
+import { assertDatabaseRoleManifestComplete } from './postgres/runtime-role-bootstrap.mts';
 
 const EXPECTED_APPLICATION_SCHEMAS = [
   'assortment',
@@ -19,6 +22,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'commerce_market_catalog',
   'contacts',
   'core',
+  'demo_email',
   'inventory',
   'party',
   'payment_term_catalog',
@@ -40,6 +44,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'demo_sales_insights',
   'storefront_registry',
   'tax',
+  'trust',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_assortment',
@@ -197,43 +202,33 @@ const ownerVerifierPaths = [
   '../verticals/sales-pipeline/scripts/verify-db-schema.mts',
   '../verticals/merchandise/scripts/verify-db-schema.mts',
   '../verticals/sales-insights/scripts/verify-db-schema.mts',
+  '../verticals/facility-operations/scripts/verify-db-schema.mts',
   '../verticals/storefront-registry/scripts/verify-db-schema.mts',
   '../verticals/tax/scripts/verify-db-schema.mts',
 ] as const;
 
 const COMMERCE_PORTAL_AUTH_VERIFIER = '../verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts';
 
-/**
- * The Commerce portal realm is optional, so its owner verifier only runs for a workspace that
- * opted in — the same condition `scripts/run-zerops-migrator.mjs` applies before migrating it.
- * Unlike the verifiers above it reports through its exit code rather than by rejecting, so it is
- * run as its own process and that exit code is what this verification reads.
- */
-const verifyCommercePortalAuthOwnerSchema = Effect.callback<boolean, ApplicationDatabaseVerificationError>((resume) => {
-  const { spawn } = process.getBuiltinModule('node:child_process');
-  const verifier = fileURLToPath(new URL(COMMERCE_PORTAL_AUTH_VERIFIER, import.meta.url));
-  const child = spawn(process.execPath, [verifier], { stdio: 'inherit' });
-  const onError = (cause: Error) => {
-    resume(Effect.fail(verificationFailure(`Owner database verifier ${COMMERCE_PORTAL_AUTH_VERIFIER} failed`, cause)));
-  };
-  const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-    const outcome = signal ?? `code ${String(code)}`;
-    resume(
-      code === 0
-        ? Effect.succeed(true)
-        : Effect.fail(
-            verificationFailure(`Owner database verifier ${COMMERCE_PORTAL_AUTH_VERIFIER} exited with ${outcome}`),
-          ),
+/** Owner CLIs may start asynchronous runtimes and report failure only through their exit code. */
+export const verifyOwnerSchema = Effect.fn('ApplicationDatabase.verifyOwnerSchema')(function* verifyOwnerSchema(
+  ownerVerifierPath: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const code = yield* spawner
+    .exitCode(
+      ChildProcess.make(process.execPath, [fileURLToPath(new URL(ownerVerifierPath, import.meta.url))], {
+        stderr: 'inherit',
+        stdout: 'inherit',
+      }),
+    )
+    .pipe(
+      Effect.mapError((cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause)),
     );
-  };
-
-  child.once('error', onError);
-  child.once('exit', onExit);
-  return Effect.sync(() => {
-    child.off('error', onError);
-    child.off('exit', onExit);
-  });
-}).pipe(Effect.asVoid);
+  if (code !== 0) {
+    return yield* verificationFailure(`Owner database verifier ${ownerVerifierPath} exited with code ${code}`);
+  }
+  return yield* Effect.void;
+});
 
 const main = Effect.gen(function* verifyApplicationDatabase() {
   const configuration = yield* loadDatabaseConnectionPair();
@@ -245,29 +240,26 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
     Effect.mapError((cause) =>
       verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
     ),
-    Effect.flatMap((client) => verifyApplicationCatalog(client, expected)),
+    Effect.flatMap((client) =>
+      Effect.gen(function* verifyCompleteCatalog() {
+        yield* verifyApplicationCatalog(client, expected);
+        yield* assertDatabaseRoleManifestComplete(client).pipe(
+          Effect.mapError((failure) => verificationFailure(failure.reason)),
+        );
+      }),
+    ),
     Effect.scoped,
   );
 
   yield* Console.log('Verified exact application schemas and migration journals');
   for (const ownerVerifierPath of ownerVerifierPaths) {
-    yield* Effect.tryPromise({
-      catch: (cause) => verificationFailure(`Owner database verifier ${ownerVerifierPath} failed`, cause),
-      try: async () => {
-        await import(ownerVerifierPath);
-      },
-    });
+    yield* verifyOwnerSchema(ownerVerifierPath);
   }
   if (Option.isSome(commerceConfiguration)) {
-    yield* verifyCommercePortalAuthOwnerSchema;
+    yield* verifyOwnerSchema(COMMERCE_PORTAL_AUTH_VERIFIER);
   }
-}).pipe(
-  Effect.provide(Reactivity.layer),
-  Effect.tapError((failure) => Console.error(failure.reason)),
-);
+}).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
 
-const exit = await Effect.runPromiseExit(main);
-// Imported owner verifiers report their own failure through `process.exitCode`; never reset it to success.
-if (Exit.isFailure(exit)) {
-  process.exitCode = 1;
+if (import.meta.main) {
+  NodeRuntime.runMain(main.pipe(Effect.provide([Reactivity.layer, NodeServices.layer])));
 }

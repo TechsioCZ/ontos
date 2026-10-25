@@ -165,6 +165,11 @@ export const changeTenantModuleStateAction = defineAction(
     policies: [],
     resultSchema: ChangeTenantModuleStateResultSchema,
     schemaVersion: '1',
+    // Tenant module enable/disable is tenant configuration administration, not a member capability: without
+    // this gate every tenant member holds the membership-default executor grant and could quarantine or
+    // archive a module, or activate one the tenant never enabled. `manage_identity` is a stopgap until a
+    // dedicated `manage_modules` relation exists in the SpiceDB schema.
+    tenantPermission: () => 'manage_identity',
   },
   handleChangeTenantModuleState,
   (transaction) =>

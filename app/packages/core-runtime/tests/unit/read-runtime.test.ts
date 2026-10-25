@@ -241,6 +241,7 @@ const makeHarness = Effect.fn(function* makeHarness(
         ? [
             {
               legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
+              role: 'ontos_runtime',
               tenant_id: scope.tenantId,
             },
           ]
@@ -2899,7 +2900,9 @@ for (const mode of ['local', 'governed'] as const) {
       expect(harness.authorityCounts()).toEqual({
         authorityLocks: mode === 'governed' ? 1 : 0,
         authorityReads: mode === 'governed' ? 2 : 0,
-        scopeInstalls: 1,
+        // Admission precheck plus the locked fence read the authority in governed mode; owner work
+        // and the post-rollback denial evidence each install scope in their own transaction.
+        scopeInstalls: 2,
       });
     }),
   );

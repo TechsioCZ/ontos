@@ -13,6 +13,19 @@ for (const owner of [
   'pricing',
   'privacy',
   'storefront-registry',
+  'property-portfolio',
+  'property-leasing',
+  'legal-agreements',
+  'work-tasks',
+  'workforce',
+  'tagging',
+  'crm',
+  'sales-pipeline',
+  'merchandise',
+  'facility-operations',
+  'sales-insights',
+  'finance-billing',
+  'crm-activities',
 ]) {
   it(`D1 migrates and packages ${owner} before claiming database readiness`, () => {
     const migration = migrator.indexOf(`yield* migrate('verticals/${owner}', 'drizzle.config.ts');`);

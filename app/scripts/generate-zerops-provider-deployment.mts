@@ -3,6 +3,8 @@ import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { parse } from 'yaml';
 
+import { PARTY_REGISTRY_REQUEST_SECRET, zeropsIdentityDatabaseUrl } from './ops/database-identity-secrets.mts';
+
 const begin = '  # <generated-vertical-provider-deployments>';
 const end = '  # </generated-vertical-provider-deployments>';
 const importsBegin = '  # <generated-vertical-provider-imports>';
@@ -68,6 +70,10 @@ const renderProvider = (
       id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined
         ? `\n        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: '${priceGroupCatalogBaseUrl}'`
         : '';
+    const databaseEnvironment =
+      id === 'party-registry'
+        ? `${PARTY_REGISTRY_REQUEST_SECRET.identity.urlKey}: ${zeropsIdentityDatabaseUrl(PARTY_REGISTRY_REQUEST_SECRET, id)}`
+        : `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
     const nodeBin = `$HOME/.local/node-${toolchain.node}/bin`;
     return `  - setup: '${id}'
     build:
@@ -103,7 +109,7 @@ const renderProvider = (
           protocol: tcp
           httpSupport: true
       envVariables:
-        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}
+        ${databaseEnvironment}
         NODE_ENV: production${dependencyEnvironment}
         PORT: '${port}'
         SPICEDB_CA_CERT: \${spicedb_SPICEDB_GRPC_TLS_CERT}

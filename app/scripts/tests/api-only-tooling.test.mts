@@ -19,6 +19,7 @@ import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensio
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
@@ -2492,6 +2493,7 @@ import { runInNewContext } from 'node:vm';
 const environment = {
   ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
   ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+  ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-hyperdrive-id',
   ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
   ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
@@ -2595,10 +2597,14 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
       ({
         ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
       })[name],
-    { publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY' },
+    {
+      hyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
+    },
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),

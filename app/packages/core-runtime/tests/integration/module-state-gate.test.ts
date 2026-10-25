@@ -15,6 +15,7 @@ import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { decideModuleStateAccess, makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
 import { ModuleStateDeniedError } from '../../src/modules/module-state-gate-errors.ts';
@@ -42,7 +43,7 @@ it.live('batches tenant-isolated states once, rejects malformed/unavailable read
     const moduleKey = `gate.integration-${tenantOne}`;
     const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
       `${moduleKey}.${state.replaceAll('_', '-')}`;
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const database = yield* makeCoreDatabase(configuration);
     yield* Effect.addFinalizer(() =>
       Effect.forEach(

@@ -406,6 +406,7 @@ class DataFactoryProof {
             'isMaxLength',
             'isInt',
             'isGreaterThan',
+            'isGreaterThanOrEqualTo',
             'isBetween',
             'isFinite',
             'isTrimmed',

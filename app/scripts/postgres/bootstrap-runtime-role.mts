@@ -1,247 +1,49 @@
 /// <reference types="node" />
 
-import { PgClient } from '@effect/sql-pg';
-import { Effect, Exit, Predicate, Redacted, Schema } from 'effect';
+import { Effect, Exit, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
 
-import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
-import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';
+import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
+import type { DatabaseConfigValue } from '../../packages/core-runtime/src/db/config.ts';
+import { DATABASE_IDENTITIES } from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { RuntimeRoleBootstrapError } from './database-login-roles.mts';
+import { bootstrapFailure, bootstrapRuntimeRoles, connectAdmin } from './runtime-role-bootstrap.mts';
 
-class RuntimeRoleBootstrapError extends Schema.TaggedError<RuntimeRoleBootstrapError>()('RuntimeRoleBootstrapError', {
-  reason: Schema.String,
-}) {}
+const RUNTIME_ROLES = DATABASE_IDENTITIES.map(({ role }) => role);
 
-const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
-const quoteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`;
-const tableExistsQuery = 'select pg_catalog.to_regclass($1) is not null as exists';
-
-const queryFailure = (cause: SqlError): RuntimeRoleBootstrapError =>
-  new RuntimeRoleBootstrapError({
-    reason: `PostgreSQL runtime-role bootstrap query failed: ${cause.message}`,
-  });
-
-const query = <Row extends object>(
-  client: PgClient.PgClient,
-  text: string,
-  values?: readonly string[],
-): Effect.Effect<readonly Row[], RuntimeRoleBootstrapError> =>
-  client.unsafe<Row>(text, values).pipe(Effect.mapError(queryFailure));
-
-const connectAdmin = (connectionString: Redacted.Redacted) =>
-  PgClient.makeClient({ url: connectionString }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new RuntimeRoleBootstrapError({
-          reason: `Unable to connect to the administrative PostgreSQL database: ${cause.message}`,
-        }),
-    ),
-  );
-
-const bootstrapRuntimeRole = (
-  client: PgClient.PgClient,
-  database: string,
-  password: Redacted.Redacted,
-): Effect.Effect<void, RuntimeRoleBootstrapError> =>
-  Effect.gen(function* bootstrapRuntimeRoleEffect() {
-    const exists = yield* query<{ exists: boolean }>(
-      client,
-      'select exists(select 1 from pg_catalog.pg_roles where rolname = $1) as exists',
-      ['ontos_runtime'],
-    );
-    const passwordLiteral = quoteLiteral(Redacted.value(password));
-    yield* query(
-      client,
-      exists[0]?.exists
-        ? `alter role ontos_runtime login password ${passwordLiteral} nosuperuser nocreatedb nocreaterole noinherit nobypassrls`
-        : `create role ontos_runtime login password ${passwordLiteral} nosuperuser nocreatedb nocreaterole noinherit nobypassrls`,
-    );
-    yield* query(client, `grant connect on database ${quoteIdentifier(database)} to ontos_runtime`);
-    yield* Effect.forEach(
-      [
-        'core',
-        'auth',
-        'contacts',
-        'party',
-        'catalog',
-        'inventory',
-        'tax',
-        'privacy',
-        'property_portfolio',
-        'property_leasing',
-        'legal_agreements',
-        'work_tasks',
-        'demo_workforce',
-        'demo_tagging',
-        'demo_crm',
-        'demo_sales_pipeline',
-        'demo_merchandise',
-        'demo_email',
-        'facility_operations',
-        'demo_sales_insights',
-        'finance_billing',
-        'crm_activities',
-      ],
-      (schema) =>
-        Effect.gen(function* grantSchemaPrivilegesEffect() {
-          const schemaExists = yield* query<{ exists: boolean }>(
-            client,
-            'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
-            [schema],
-          );
-          if (schemaExists[0]?.exists) {
-            yield* query(client, `grant usage on schema ${schema} to ontos_runtime`);
-            yield* query(
-              client,
-              `grant select, insert, update, delete on all tables in schema ${schema} to ontos_runtime`,
-            );
-            yield* query(client, `grant usage, select on all sequences in schema ${schema} to ontos_runtime`);
-            yield* query(
-              client,
-              `alter default privileges in schema ${schema} grant select, insert, update, delete on tables to ontos_runtime`,
-            );
-            yield* query(
-              client,
-              `alter default privileges in schema ${schema} grant usage, select on sequences to ontos_runtime`,
-            );
-          }
-        }),
-      { concurrency: 1, discard: true },
-    );
-    // Privacy's immutable ledgers must retain the restrictions installed by their owner migrations.
-    const privacyLedgers = yield* query<{ table_name: string }>(
-      client,
-      `select distinct relation.relname as table_name
-         from pg_catalog.pg_trigger as trigger_record
-         join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
-         join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
-         join pg_catalog.pg_proc as routine on routine.oid = trigger_record.tgfoid
-         join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
-        where namespace.nspname = 'privacy' and routine_namespace.nspname = 'privacy'
-          and routine.proname = 'reject_immutable_ledger_mutation' and not trigger_record.tgisinternal`,
-    );
-    yield* Effect.forEach(
-      privacyLedgers,
-      ({ table_name }) =>
-        query(client, `revoke update, delete on table privacy.${quoteIdentifier(table_name)} from ontos_runtime`),
-      { concurrency: 1, discard: true },
-    );
-    const compositionAuthorityExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [
-      'core.application_composition_authority',
-    ]);
-    if (compositionAuthorityExists[0]?.exists) {
-      yield* query(client, 'revoke all on table core.application_composition_authority from public, ontos_runtime');
-      yield* query(client, 'grant select on table core.application_composition_authority to ontos_runtime');
-    }
-    const durableWorkExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [
-      'core.application_composition_durable_work',
-    ]);
-    if (durableWorkExists[0]?.exists) {
-      yield* query(client, 'revoke all on table core.application_composition_durable_work from public, ontos_runtime');
-      yield* query(client, 'grant select on table core.application_composition_durable_work to ontos_runtime');
-    }
-    const durableWorkRoutineExists = yield* query<{ exists: boolean }>(
-      client,
-      'select pg_catalog.to_regprocedure($1) is not null as exists',
-      ['core.track_application_composition_durable_work(text,text,text,boolean)'],
-    );
-    if (durableWorkRoutineExists[0]?.exists) {
-      yield* query(
-        client,
-        'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
-      );
-    }
-    const pricingSchemaExists = yield* query<{ exists: boolean }>(
-      client,
-      'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
-      ['pricing'],
-    );
-    if (pricingSchemaExists[0]?.exists) {
-      yield* query(client, 'revoke all on schema pricing from public, ontos_runtime');
-      yield* query(client, 'grant usage on schema pricing to ontos_runtime');
-      yield* Effect.forEach(
-        PRICING_RUNTIME_TABLE_GRANTS,
-        ({ privileges, table }) =>
-          Effect.gen(function* grantPricingTablePrivilegesEffect() {
-            const qualifiedTable = `pricing.${quoteIdentifier(table)}`;
-            const tableExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [`pricing.${table}`]);
-            if (tableExists[0]?.exists) {
-              yield* query(client, `revoke all on table ${qualifiedTable} from public, ontos_runtime`);
-              yield* query(client, `grant ${privileges.join(', ')} on table ${qualifiedTable} to ontos_runtime`);
-            }
-          }),
-        { concurrency: 1, discard: true },
-      );
-      yield* Effect.forEach(
-        PRICING_RUNTIME_ROUTINE_SIGNATURES,
-        (signature) =>
-          Effect.gen(function* grantPricingRoutinePrivilegesEffect() {
-            const routineExists = yield* query<{ exists: boolean }>(
-              client,
-              'select pg_catalog.to_regprocedure($1) is not null as exists',
-              [signature],
-            );
-            if (routineExists[0]?.exists) {
-              yield* query(client, `revoke all on function ${signature} from public, ontos_runtime`);
-              yield* query(client, `grant execute on function ${signature} to ontos_runtime`);
-            }
-          }),
-        { concurrency: 1, discard: true },
-      );
-    }
-    const role = yield* query<{ rolbypassrls: boolean; rolsuper: boolean }>(
-      client,
-      'select rolsuper, rolbypassrls from pg_catalog.pg_roles where rolname = $1',
-      ['ontos_runtime'],
-    );
-    const [runtimeRole] = role;
-    if (runtimeRole === undefined || runtimeRole.rolsuper || runtimeRole.rolbypassrls) {
-      yield* new RuntimeRoleBootstrapError({
-        reason: 'Runtime role must be non-superuser and must not bypass RLS',
-      });
-    }
-  }).pipe(
-    client.withTransaction,
-    Effect.mapError((failure) => (Predicate.isTagged(failure, 'SqlError') ? queryFailure(failure) : failure)),
-  );
-
-const main = Effect.gen(function* mainEffect() {
-  const connections = yield* loadDatabaseConnectionPair().pipe(
-    Effect.mapError(
-      (failure) =>
-        new RuntimeRoleBootstrapError({
-          reason: failure.reason,
-        }),
-    ),
-  );
-  const password = yield* Schema.decodeEffect(Schema.URLFromString)(connections.runtime.connectionString).pipe(
+const readRuntimePassword = (
+  identity: DatabaseIdentity,
+  connection: DatabaseConfigValue,
+): Effect.Effect<Redacted.Redacted, RuntimeRoleBootstrapError> =>
+  Schema.decodeEffect(Schema.URLFromString)(connection.connectionString).pipe(
     Effect.flatMap((url) =>
       Effect.try({
         catch: (cause) => cause,
         try: () => url.searchParams.getAll('password').at(-1) ?? decodeURIComponent(url.password),
       }),
     ),
-    Effect.mapError(
-      (cause) =>
-        new RuntimeRoleBootstrapError({
-          reason: `Unable to read the runtime PostgreSQL role credentials: ${String(cause)}`,
-        }),
+    Effect.mapError((cause) =>
+      bootstrapFailure(`Unable to read the ${identity.urlKey} PostgreSQL role credentials: ${String(cause)}`),
+    ),
+    Effect.flatMap((password) =>
+      password.length === 0
+        ? Effect.fail(bootstrapFailure(`${identity.urlKey} must include the ${identity.role} login password`))
+        : Effect.succeed(Redacted.make(password)),
     ),
   );
-  if (connections.runtime.user !== 'ontos_runtime') {
-    yield* new RuntimeRoleBootstrapError({
-      reason: 'DATABASE_URL must use the configured ontos_runtime login',
-    });
+
+const main = Effect.gen(function* mainEffect() {
+  const connections = yield* loadDatabaseIdentityConnections().pipe(
+    Effect.mapError((failure) => bootstrapFailure(failure.reason)),
+  );
+  const passwords = new Map<string, Redacted.Redacted>();
+  for (const identity of DATABASE_IDENTITIES) {
+    passwords.set(identity.role, yield* readRuntimePassword(identity, connections.runtime[identity.id]));
   }
-  const redactedPassword =
-    password === undefined || password.length === 0
-      ? yield* new RuntimeRoleBootstrapError({
-          reason: 'DATABASE_URL must use the configured ontos_runtime login',
-        })
-      : Redacted.make(password);
   const client = yield* connectAdmin(Redacted.make(connections.admin.connectionString));
-  yield* bootstrapRuntimeRole(client, connections.admin.database, redactedPassword);
-  yield* Effect.sync(() => console.log('Verified least-privilege PostgreSQL role ontos_runtime'));
+  yield* bootstrapRuntimeRoles(client, connections.admin.database, passwords);
+  yield* Effect.sync(() => console.log(`Verified least-privilege PostgreSQL roles ${RUNTIME_ROLES.join(', ')}`));
 }).pipe(
   Effect.scoped,
   Effect.provide(Reactivity.layer),

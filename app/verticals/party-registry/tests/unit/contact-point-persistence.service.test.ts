@@ -5,10 +5,7 @@ import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { AresAppliedEvidenceSchema } from '../../shared/domain/ares-application.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';

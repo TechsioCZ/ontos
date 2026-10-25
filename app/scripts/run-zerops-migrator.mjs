@@ -167,6 +167,21 @@ const main = Effect.scoped(
     yield* migrate('verticals/privacy', 'drizzle.config.ts');
     yield* migrate('verticals/storefront-registry', 'drizzle.config.ts');
     yield* migrate('verticals/tax', 'drizzle.config.ts');
+    // <generated-vertical-provider-migrations>
+    yield* migrate('verticals/property-portfolio', 'drizzle.config.ts');
+    yield* migrate('verticals/property-leasing', 'drizzle.config.ts');
+    yield* migrate('verticals/legal-agreements', 'drizzle.config.ts');
+    yield* migrate('verticals/work-tasks', 'drizzle.config.ts');
+    yield* migrate('verticals/workforce', 'drizzle.config.ts');
+    yield* migrate('verticals/tagging', 'drizzle.config.ts');
+    yield* migrate('verticals/crm', 'drizzle.config.ts');
+    yield* migrate('verticals/sales-pipeline', 'drizzle.config.ts');
+    yield* migrate('verticals/merchandise', 'drizzle.config.ts');
+    yield* migrate('verticals/facility-operations', 'drizzle.config.ts');
+    yield* migrate('verticals/sales-insights', 'drizzle.config.ts');
+    yield* migrate('verticals/finance-billing', 'drizzle.config.ts');
+    yield* migrate('verticals/crm-activities', 'drizzle.config.ts');
+    // </generated-vertical-provider-migrations>
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     if (Option.isSome(portalAuthDatabase)) {
       yield* migrate('verticals/commerce-customer-context', 'drizzle.portal-auth.config.ts');

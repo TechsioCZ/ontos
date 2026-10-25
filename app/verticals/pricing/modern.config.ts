@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 /* oxlint-disable sonarjs/no-duplicate-string -- Modern.js BFF routing requires the deployment prefix in multiple generated sections; remove-when: the generated config accepts one shared prefix value. */
 import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
@@ -35,6 +36,7 @@ export default defineConfig(
         bffPrefix: '/pricing-api',
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_PRICING_LOADED_CHUNKS__',
+        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [

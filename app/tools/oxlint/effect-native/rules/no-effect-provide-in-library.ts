@@ -35,7 +35,7 @@
  * - Files matching `rootFiles` (the process/browser composition roots) — audit "Existing patterns to
  *   preserve": the single outer process or framework adapter seam.
  * - The outer process seam itself: a provide that is a *direct argument pipeline* of a module
- *   top-level `Effect.run*` call (e.g. `await Effect.runPromise(Effect.provide(program, RuntimeLive))`
+ *   top-level `Effect.run*` or imported `NodeRuntime.runMain` call (e.g. `await Effect.runPromise(Effect.provide(program, RuntimeLive))`
  *   or `Effect.runFork(program.pipe(Effect.provide(L)))` at the end of a `verify-db-schema.mts`
  *   entrypoint). Only `pipe`/`.pipe` links may sit between the provide and the run call, and the whole
  *   chain must be at the executable edge (including a singly invoked module main or IIFE): callbacks, class bodies or
@@ -96,16 +96,18 @@ interface ResolvedOptions {
 
 /** Locals that can name `Effect.provide*` in this module. */
 interface ProvideBindings {
-  /** `Effect` / `Fx` / `import * as Effect from "effect/Effect"` → the Effect namespace. */
-  readonly namespaces: ReadonlySet<string>;
+  readonly any: boolean;
   /** `import * as EffectNs from "effect"` → `EffectNs.Effect.provide`. */
   readonly barrels: ReadonlySet<string>;
   /** `import { provide as supply } from "effect/Effect"` → local `supply` → member `provide`. */
   readonly directMembers: ReadonlyMap<string, string>;
+  readonly directRuns: ReadonlySet<string>;
+  /** `Effect` / `Fx` / `import * as Effect from "effect/Effect"` → the Effect namespace. */
+  readonly namespaces: ReadonlySet<string>;
+  readonly nodeRuntimeBarrels: ReadonlySet<string>;
+  readonly nodeRuntimeNamespaces: ReadonlySet<string>;
   /** Locals bound to Effect's standalone `pipe` (used to recognise the run seam pipeline). */
   readonly pipes: ReadonlySet<string>;
-  readonly directRuns: ReadonlySet<string>;
-  readonly any: boolean;
 }
 
 function readStringArray(value: unknown, fallback: readonly string[]): readonly string[] {
@@ -127,6 +129,8 @@ function resolveOptions(context: Context): ResolvedOptions {
 }
 
 const RUN_MEMBER = /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u;
+const isNodeRoot = (source: string): boolean => source === '@effect/platform-node';
+const isNodeRuntime = (source: string): boolean => source === '@effect/platform-node/NodeRuntime';
 
 /** Preserve root/submodule filtering and run-before-provide-before-pipe priority. */
 function collectProvideBindings(
@@ -153,13 +157,22 @@ function collectProvideBindings(
   for (const [local, name] of direct) {
     if (name === PIPE_NAMESPACE && !members.has(name)) pipes.add(local);
   }
+  const nodeRuntimeNamespaces = collectRootNamespaces(program, isNodeRuntime, policy);
+  for (const local of collectNamedImports(program, isNodeRoot, new Set(['NodeRuntime']), policy).keys()) {
+    nodeRuntimeNamespaces.add(local);
+  }
+  for (const local of collectNamedImports(program, isNodeRuntime, new Set(['runMain']), policy).keys()) {
+    directRuns.add(local);
+  }
   return {
-    namespaces,
+    any: namespaces.size > 0 || barrels.size > 0 || directMembers.size > 0,
     barrels,
     directMembers,
-    pipes,
     directRuns,
-    any: namespaces.size > 0 || barrels.size > 0 || directMembers.size > 0,
+    namespaces,
+    nodeRuntimeBarrels: collectRootNamespaces(program, isNodeRoot, policy),
+    nodeRuntimeNamespaces,
+    pipes,
   };
 }
 
@@ -248,10 +261,30 @@ function isPipeCall(context: Context, call: ESTree.CallExpression, bindings: Pro
   return resolvesToImport(context, callee);
 }
 
+const isNodeRunReference = (context: Context, callee: ESTree.MemberExpression, bindings: ProvideBindings): boolean => {
+  if (memberName(callee) !== 'runMain') {
+    return false;
+  }
+  const object = unwrap(callee.object);
+  if (object.type === 'Identifier') {
+    return bindings.nodeRuntimeNamespaces.has(object.name) && resolvesToImport(context, object, true);
+  }
+  if (object.type !== 'MemberExpression' || memberName(object) !== 'NodeRuntime') {
+    return false;
+  }
+  const root = unwrap(object.object);
+  return (
+    root.type === 'Identifier' && bindings.nodeRuntimeBarrels.has(root.name) && resolvesToImport(context, root, true)
+  );
+};
+
 function isRunReference(context: Context, node: ESTree.Node, bindings: ProvideBindings): boolean {
   const callee = unwrap(node);
   if (callee.type === 'Identifier') return bindings.directRuns.has(callee.name) && resolvesToImport(context, callee);
   if (callee.type !== 'MemberExpression') return false;
+  if (isNodeRunReference(context, callee, bindings)) {
+    return true;
+  }
   const member = resolveProvideMember(context, callee, bindings);
   return member !== null && /^run(?:Promise|Sync|Fork|Callback)(?:Exit)?$/u.test(member);
 }
@@ -304,7 +337,7 @@ function isEntryFunction(context: Context, fn: ESTree.Node): boolean {
 
 /**
  * True when this reference sits at module top level and is a *direct argument pipeline* of an
- * `Effect.run*` call — the single outer process/framework adapter seam the audit blesses.
+ * `Effect.run*` or imported `NodeRuntime.runMain` call — the single outer process/framework adapter seam.
  *
  * Two independent conditions must hold, and both are needed:
  *  1. Only module evaluation or a singly invoked module main/IIFE may enclose the seam.

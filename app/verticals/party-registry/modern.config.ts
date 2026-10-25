@@ -1,3 +1,4 @@
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,8 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
+import { getOrThrow } from 'effect/Result';
+import { Literals, Struct, decodeUnknownResult, optional } from 'effect/Schema';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
@@ -29,6 +32,11 @@ const resolveDevelopmentModuleContractPath = () =>
 
 const appId = 'party-registry';
 const cloudflareWorkerName = 'app-party-registry';
+const buildEnvironment = getOrThrow(
+  decodeUnknownResult(Struct({ disableTsChecker: optional(Literals(['0', '1'])) }))({
+    disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER'),
+  }),
+);
 const {
   assetPrefix,
   buildCacheDirectory,
@@ -82,6 +90,7 @@ const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfi
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
   ? createCloudflareWorkerConfig(envValue, {
+      hyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY',
     })
   : undefined;
@@ -146,7 +155,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER') === '1',
+        disableTsChecker: buildEnvironment.disableTsChecker === '1',
         distPath: {
           html: './',
           root: buildOutputRoot,

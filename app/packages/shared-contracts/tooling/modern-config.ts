@@ -4,14 +4,24 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
+import {
+  getOrElse as getOptionOrElse,
+  getOrUndefined as getOptionOrUndefined,
+  isNone as isOptionNone,
+  toArray as optionToArray,
+} from 'effect/Option';
+import type { Option } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
+  Array as ArraySchema,
   Boolean as BooleanSchema,
   Literal,
   Literals,
   NumberFromString,
+  OptionFromNullOr,
   OptionFromUndefinedOr,
+  String as StringSchema,
+  Struct,
   Trim,
   check,
   decodeResult,
@@ -20,8 +30,17 @@ import {
   isBetween,
   isInt,
   isMinLength,
+  makeFilter,
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
+
+import type {
+  CloudflareHyperdriveBinding,
+  DatabaseIdentity,
+} from '../../core-runtime/src/db/database-identity-manifest.ts';
+
+/** Each Worker declares exactly the database identities it serves. A non-Worker identity fails the build. */
+type CloudflareHyperdriveBuildBindings = readonly DatabaseIdentity['cloudflareHyperdrive'][];
 
 const nodeBuiltinRequests = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
 
@@ -279,14 +298,47 @@ const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], 
     ),
   );
 
+const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
+  OptionFromNullOr(Struct({ binding: StringSchema, idVariable: StringSchema })),
+).pipe(
+  check(
+    isMinLength(1, { message: 'A Cloudflare Worker build needs at least one Hyperdrive binding' }),
+    makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) =>
+      hyperdrives.some(isOptionNone)
+        ? 'A Cloudflare Worker build names a database identity that has no Worker Hyperdrive binding'
+        : undefined,
+    ),
+    makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) => {
+      const bindings = hyperdrives.flatMap(optionToArray).map(({ binding }) => binding);
+      const duplicate = bindings.find((binding, index) => bindings.indexOf(binding) !== index);
+      return duplicate === undefined ? undefined : `Hyperdrive binding ${duplicate} is declared more than once`;
+    }),
+  ),
+);
+
+const declaredCloudflareHyperdrives = (declared: CloudflareHyperdriveBuildBindings) =>
+  getResultOrThrow(decodeUnknownResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
+
+const cloudflareHyperdriveBindings = (
+  envValue: ModernBuildContext['envValue'],
+  declared: CloudflareHyperdriveBuildBindings,
+) =>
+  declaredCloudflareHyperdrives(declared).map(({ binding, idVariable }) => ({
+    binding,
+    id: requiredCloudflareBuildValue(envValue, idVariable),
+  }));
+
 /**
- * Every OntOS Worker reaches the private data plane through two account objects: PostgreSQL through
- * the `HYPERDRIVE` binding (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
+ * Every OntOS Worker reaches PostgreSQL through its declared database identity Hyperdrive bindings
+ * (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
  * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). It reads the published active
  * Application Composition from the `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through
  * Core's conditional public source module. Their IDs are reviewed build inputs.
  */
-export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['envValue']) => ({
+export const createCloudflareDataPlaneBindings = (
+  envValue: ModernBuildContext['envValue'],
+  hyperdrives: CloudflareHyperdriveBuildBindings,
+) => ({
   vpcServices: [
     {
       binding: 'SPICEDB',
@@ -294,9 +346,7 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
     },
   ],
   wrangler: {
-    hyperdrive: [
-      { binding: 'HYPERDRIVE', id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID') },
-    ],
+    hyperdrive: cloudflareHyperdriveBindings(envValue, hyperdrives),
     kv_namespaces: [
       {
         binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
@@ -306,13 +356,32 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
   },
 });
 
+const CloudflareEmailSenderSchema = Trim.pipe(
+  check(
+    makeFilter(
+      (sender) =>
+        sender.length === 0 ||
+        /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(sender) ||
+        'ULTRAMODERN_EMAIL_SENDER must be a bare email address',
+    ),
+  ),
+);
+
+interface CloudflareEmailBindings {
+  send_email?: { allowed_sender_addresses: string[]; name: string }[];
+}
+
 /** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
-export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envValue']) => {
-  const sender = envValue('ULTRAMODERN_EMAIL_SENDER')?.trim();
-  if (sender === undefined || sender === '') return {};
-  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(sender))
-    throw new Error('ULTRAMODERN_EMAIL_SENDER must be a bare email address');
-  return { send_email: [{ name: 'EMAIL', allowed_sender_addresses: [sender] }] };
+export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envValue']): CloudflareEmailBindings => {
+  const sender = getOptionOrUndefined(
+    getResultOrThrow(
+      decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(envValue('ULTRAMODERN_EMAIL_SENDER')),
+    ),
+  );
+  if (sender === undefined || sender === '') {
+    return {};
+  }
+  return { send_email: [{ allowed_sender_addresses: [sender], name: 'EMAIL' }] };
 };
 
 /**
@@ -370,9 +439,15 @@ const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envV
  */
 export const createCloudflareWorkerConfig = (
   envValue: ModernBuildContext['envValue'],
-  { publicUrlVariable }: { readonly publicUrlVariable: string },
+  {
+    hyperdrives,
+    publicUrlVariable,
+  }: {
+    readonly hyperdrives: CloudflareHyperdriveBuildBindings;
+    readonly publicUrlVariable: string;
+  },
 ) => {
-  const dataPlane = createCloudflareDataPlaneBindings(envValue);
+  const dataPlane = createCloudflareDataPlaneBindings(envValue, hyperdrives);
   // Backend-heavy Workers must not follow a distant caller away from the private data plane.
   // Placement probes a public single-homed endpoint, not a private VPC hostname.
   const placementHost = getOptionOrUndefined(
@@ -405,6 +480,7 @@ const createCloudflareDeployment = (
   worker: {
     /** The unit sends its own transactional mail through the Cloudflare Email Service binding. */
     readonly email: boolean;
+    readonly hyperdrives: CloudflareHyperdriveBuildBindings;
     readonly name: string;
   },
 ) => {
@@ -412,6 +488,7 @@ const createCloudflareDeployment = (
     return {};
   }
   const workerConfig = createCloudflareWorkerConfig(build.envValue, {
+    hyperdrives: worker.hyperdrives,
     publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
   });
   return {
@@ -497,6 +574,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   builderPlugins,
   chunkLoadingGlobal,
   cloudflareEmail = false,
+  cloudflareHyperdrives,
   cloudflareWorkerName,
   moduleUrl,
   plugins,
@@ -510,6 +588,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   builderPlugins?: BuilderPlugin[];
   chunkLoadingGlobal: string;
   cloudflareEmail?: boolean;
+  cloudflareHyperdrives: CloudflareHyperdriveBuildBindings;
   cloudflareWorkerName: string;
   moduleUrl: string;
   plugins: Plugin[];
@@ -539,6 +618,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
     ...createCloudflareDeployment(build, {
       email: cloudflareEmail,
+      hyperdrives: cloudflareHyperdrives,
       name: cloudflareWorkerName,
     }),
     dev: {
@@ -654,6 +734,22 @@ const markWorkerApiSource = (resource: ReplacementResource, sourceDirectory: str
   }
 };
 
+const BROWSER_ONLY_SSR_MODULE = fileURLToPath(new URL('browser-only-ssr-module.mjs', import.meta.url));
+
+/**
+ * Browser-only libraries load from effects that never run during SSR. PDF.js imports its own modules
+ * by computed URL, which a Worker bundle must not contain, so the Worker SSR build gets an empty module.
+ */
+export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
+  NormalModuleReplacementPlugin: new (
+    pattern: RegExp,
+    replace: (resource: ReplacementResource) => void,
+  ) => ReplacementPlugin;
+}) =>
+  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
+    resource.request = BROWSER_ONLY_SSR_MODULE;
+  });
+
 export const createWorkerSsrPlugins = <DefinitionPlugin, ReplacementPlugin>(
   rspack: {
     DefinePlugin: new (definitions: Record<string, string>) => DefinitionPlugin;
@@ -671,22 +767,6 @@ export const createWorkerSsrPlugins = <DefinitionPlugin, ReplacementPlugin>(
   }),
   createBrowserOnlySsrReplacement(rspack),
 ];
-
-const BROWSER_ONLY_SSR_MODULE = fileURLToPath(new URL('browser-only-ssr-module.mjs', import.meta.url));
-
-/**
- * Browser-only libraries load from effects that never run during SSR. PDF.js imports its own modules
- * by computed URL, which a Worker bundle must not contain, so the Worker SSR build gets an empty module.
- */
-export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
-  NormalModuleReplacementPlugin: new (
-    pattern: RegExp,
-    replace: (resource: ReplacementResource) => void,
-  ) => ReplacementPlugin;
-}) =>
-  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
-    resource.request = BROWSER_ONLY_SSR_MODULE;
-  });
 
 const EFFECT_API_DOCS_BROWSER_MODULE = fileURLToPath(new URL('effect-api-docs-browser-module.mjs', import.meta.url));
 const EFFECT_HTTPAPI_DIRECTORY = /[/\\]effect[/\\]dist[/\\]unstable[/\\]httpapi$/u;

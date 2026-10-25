@@ -193,9 +193,9 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
       return Effect.succeedNone;
     }
     const byWorkerKey = new Map(registrations.map((registration) => [registration.descriptor.workerKey, registration]));
-    const systemWorkerKeys = registrations
-      .filter(({ descriptor }) => isCoreSystemOutboxSubscription(descriptor))
-      .map(({ descriptor }) => descriptor.workerKey);
+    const systemWorkerKeys = registrations.flatMap(({ descriptor }) =>
+      isCoreSystemOutboxSubscription(descriptor) ? [descriptor.workerKey] : [],
+    );
     return executor
       .transaction(
         Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
@@ -222,16 +222,27 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
             .where(
               and(
                 inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
+                // A tenant that is no longer active must not have background work claimed at all. This is a
+                // predicate rather than a join on purpose: `.for('update')` below locks every row named in the
+                // FROM list, and `core.tenants` is the per-tenant serialization anchor held FOR UPDATE by every
+                // event-emitting action, so joining it would make claim transactions contend with ordinary
+                // writes. Keeping ineligible deliveries pending means resuming the work resumes with the tenant;
+                // for an archived tenant, which is terminal, they stay pending rather than being retried, and
+                // cancelling them belongs with the archive procedure that changes the status.
+                sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`,
                 or(
                   inArray(outboxDeliveries.workerKey, systemWorkerKeys),
                   exists(
-                    transaction.select({ tenantId: tenantModuleStates.tenantId }).from(tenantModuleStates).where(
-                      and(
-                        eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
-                        eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-                        inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
+                    transaction
+                      .select({ tenantId: tenantModuleStates.tenantId })
+                      .from(tenantModuleStates)
+                      .where(
+                        and(
+                          eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
+                          eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
+                          inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
+                        ),
                       ),
-                    ),
                   ),
                 ),
                 or(

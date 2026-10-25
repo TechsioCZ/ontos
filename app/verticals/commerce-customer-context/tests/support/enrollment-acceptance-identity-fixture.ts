@@ -16,6 +16,7 @@ import {
   TenantIdSchema,
 } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../../../packages/core-runtime/src/auth/external-identity/repository.ts';
+import { readPrincipalBinding } from '../../../../packages/core-runtime/src/auth/external-identity/read.ts';
 import type {
   ChangeExternalIdentityStatusInput,
   ExternalIdentityRepositoryService,
@@ -47,6 +48,7 @@ import {
   OperationalScopeResolverLive,
 } from '../../../../packages/core-runtime/src/operations/context.ts';
 import type { OperationalScopeResolverService } from '../../../../packages/core-runtime/src/operations/context.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { ContextAccess } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { ActionPermission } from '../../../../packages/core-runtime/src/permissions/service.ts';
@@ -137,6 +139,8 @@ export interface EnrollmentAcceptanceIdentityFixture {
   readonly identityServicesLive: Layer.Layer<AuthenticationNamespaceRegistry | ContextAccess>;
   readonly registry: AuthenticationNamespaceRegistryService;
   readonly runtime: (typeof ActionRuntime)['Service'];
+  /** Runtime-role handle that owner repositories run through, as in production. */
+  readonly runtimeDatabase: CoreDatabaseHandle;
   /** The production operational-scope resolver over the real `core` tables. */
   readonly scopeResolver: OperationalScopeResolverService;
   readonly tenantId: string;
@@ -187,8 +191,8 @@ const unsupportedIdentityCall = (operation: string) =>
 
 /**
  * The in-process Core-identity owner effect. The deployed Commerce port speaks HTTP to Shell, and
- * the far side of that transport is this exact Core repository read against
- * `core.principal_auth_bindings`; binding it directly keeps every identity answer a real row.
+ * the far side of that transport is Core's staged binding Read against
+ * `core.principal_auth_bindings`. Namespace checks stay outside the scoped database transaction.
  */
 const identityClientFor = (
   database: CoreDatabaseHandle,
@@ -198,9 +202,26 @@ const identityClientFor = (
   changePrincipalBindingStatus: () => unsupportedIdentityCall('changePrincipalBindingStatus'),
   issueExternalGatewayContext: () => unsupportedIdentityCall('issueExternalGatewayContext'),
   readPrincipalBinding: (payload, options) =>
-    withRepository(database, { ...scope, correlationId: options.requestCorrelation }, (repository) =>
-      repository.read({ ...payload, tenantId: scope.tenantId }),
-    ).pipe(Effect.orDie),
+    runReadOwnerSteps(readPrincipalBinding, payload, {
+      readKey: readPrincipalBinding.descriptor.readKey,
+      scope: {
+        authMethod: 'system',
+        correlationId: options.requestCorrelation,
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      },
+      services: {
+        loadForRead: (lookup) =>
+          withRepository(database, { ...scope, correlationId: options.requestCorrelation }, (repository) =>
+            repository.loadForRead(lookup),
+          ).pipe(Effect.orDie),
+      },
+    }).pipe(
+      Effect.map(({ result }) => result),
+      Effect.provideService(AuthenticationNamespaceRegistry, scope.registry),
+      Effect.provideService(ContextAccess, openContextAccess),
+      Effect.orDie,
+    ),
   reservePrincipalBinding: () => unsupportedIdentityCall('reservePrincipalBinding'),
   resolveExternalSubject: () => unsupportedIdentityCall('resolveExternalSubject'),
 });
@@ -303,6 +324,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       identityServicesLive,
       registry: Context.get(context, AuthenticationNamespaceRegistry),
       runtime: Context.get(context, ActionRuntime),
+      runtimeDatabase,
       scopeResolver: Context.get(context, OperationalScopeResolver),
       tenantId,
     } satisfies EnrollmentAcceptanceIdentityFixture;
@@ -380,13 +402,16 @@ export const reserveBinding = (
   subject: CommercePortalAccountSubject,
   displayName: string,
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `reserve-${subject.providerSubjectId}`), (repository) =>
-    repository.prepare({
-      displayName,
-      invocationId: randomUUID(),
-      subject: coreSubject(subject),
-      tenantId: fixture.tenantId,
-    }),
+  withRepository(
+    fixture.runtimeDatabase,
+    fixtureRepositoryScope(fixture, `reserve-${subject.providerSubjectId}`),
+    (repository) =>
+      repository.prepare({
+        displayName,
+        invocationId: randomUUID(),
+        subject: coreSubject(subject),
+        tenantId: fixture.tenantId,
+      }),
   );
 
 export const activateBinding = (
@@ -394,7 +419,7 @@ export const activateBinding = (
   authBindingId: string,
   expectedRevision: number,
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `activate-${authBindingId}`), (repository) =>
+  withRepository(fixture.runtimeDatabase, fixtureRepositoryScope(fixture, `activate-${authBindingId}`), (repository) =>
     repository.activate({ authBindingId, expectedRevision, invocationId: randomUUID(), tenantId: fixture.tenantId }),
   );
 
@@ -404,7 +429,7 @@ export const changeBindingStatus = (
   expectedRevision: number,
   requestedStatus: ChangeExternalIdentityStatusInput['requestedStatus'],
 ) =>
-  withRepository(fixture.admin, fixtureRepositoryScope(fixture, `status-${authBindingId}`), (repository) =>
+  withRepository(fixture.runtimeDatabase, fixtureRepositoryScope(fixture, `status-${authBindingId}`), (repository) =>
     repository.changeStatus({
       authBindingId,
       expectedRevision,

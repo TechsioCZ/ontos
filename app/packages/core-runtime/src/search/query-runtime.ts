@@ -1,6 +1,8 @@
 import { Context } from 'effect';
 import type { Effect, Schema } from 'effect';
 
+import type { OperationalScope } from '../operations/context.ts';
+
 import type {
   CoreSearchProjectionHit,
   CoreSearchProjectionInvalid,
@@ -10,8 +12,10 @@ import type {
 type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
 
 export interface CoreSearchQueryRuntimeService {
+  /** Runs under the caller's operational scope; the query tenant must match that scope. */
   readonly search: (
     input: UnparsedCoreSearchInput,
+    scope: OperationalScope,
   ) => Effect.Effect<
     readonly CoreSearchProjectionHit[],
     CoreSearchProjectionInvalid | InstanceType<typeof CoreSearchProjectionUnavailable>

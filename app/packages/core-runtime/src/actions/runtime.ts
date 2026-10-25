@@ -5,6 +5,7 @@ import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/S
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  preserveSystemPrincipalContextTrust,
   readVerifiedGatewayCompositionRevision,
 } from '../auth/system-principal-context-provenance.ts';
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
@@ -88,6 +89,7 @@ import {
   ActionHandlerExecutionError,
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
+  createActionInvocationPersistenceErrorWithCause,
   ActionInvocationNotFound,
   ActionInvocationStateError,
   ActionPayloadValidationError,
@@ -115,6 +117,7 @@ import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
 import type {
   ActionInvocationRecord,
+  ActionInvocationScopeExecutor,
   ActionPolicyEvidence,
   ActionRecordedRejection,
   ActionRepositoryService,
@@ -125,6 +128,7 @@ import {
   computeCanonicalValueHash,
   logActionInvocationPersistenceFailureCause,
   logActionTransactionFailureCause,
+  recoverSqlTransactionError,
 } from './repository.ts';
 
 const requireIdempotencyKey = (idempotency: string, transport: ActionTransportMetadata) =>
@@ -206,9 +210,9 @@ export const ACTION_RUNTIME_STAGES = [
   'permission_checked',
   'policy_boundary',
   'invocation_running',
+  'database_scope_installed',
   'composition_authority_locked',
   'invocation_locked',
-  'database_scope_installed',
   'module_state_rechecked',
   'handler_executed',
   'success_evidence_flushed',
@@ -907,6 +911,15 @@ const recordedRejectionFailure = (rejection: Option.Option<ActionRecordedRejecti
       });
 };
 
+const recordedRejectionPersistenceFailure = (cause: unknown) =>
+  createActionInvocationPersistenceErrorWithCause(
+    {
+      code: 'action_invocation_persistence_failed',
+      reason: 'Unable to load the recorded Action rejection',
+    },
+    cause,
+  );
+
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
   requestHash: string,
@@ -1027,6 +1040,26 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
   const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
+  /**
+   * Invocation evidence is recorded only after the invocation's trusted database scope is
+   * installed, so tenant-bound row-level security admits the request role's own tenant alone.
+   */
+  const invocationScopeExecutor = (scope: OperationalScope): ActionInvocationScopeExecutor => ({
+    transaction: (body) =>
+      database.executor.transaction((transaction) =>
+        installScope(transaction, scope).pipe(Effect.andThen(() => body(transaction))),
+      ),
+  });
+  const loadRecordedRejectionInScope = (scope: OperationalScope, invocationId: string) =>
+    invocationScopeExecutor(scope)
+      .transaction((transaction) => repository.loadRecordedRejection(transaction, invocationId))
+      .pipe(
+        recoverSqlTransactionError,
+        Effect.catchTags({
+          OperationContextUnavailable: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
+          SqlError: (failure) => Effect.fail(recordedRejectionPersistenceFailure(failure)),
+        }),
+      );
   const resolveCompositionRevision =
     options.resolveCompositionRevision ??
     (() =>
@@ -1490,6 +1523,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       transport: ActionTransportMetadata,
       actionTarget: Pick<ActionTransportMetadata, 'targetModuleKey' | 'targetResourceId' | 'targetResourceType'>,
       governedTransport: ActionTransportMetadata,
+      scope: OperationalScope,
     ) {
       const normalizedPayload = yield* Effect.try({
         catch: (cause) =>
@@ -1527,7 +1561,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           }),
       });
       const invocation = yield* repository
-        .createOrResolveInvocation(database.executor, {
+        .createOrResolveInvocation(invocationScopeExecutor(scope), {
           actionKey: input.registration.descriptor.actionKey,
           idempotencyKey: transport.idempotencyKey,
           principal,
@@ -1546,7 +1580,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       yield* verifyInvocation(
         invocation,
         requestHash,
-        repository.loadRecordedRejection(database.executor, invocation.actionInvocationId),
+        loadRecordedRejectionInScope(scope, invocation.actionInvocationId),
       );
       return { invocation, requestHash };
     });
@@ -1561,6 +1595,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           transport,
           authorizationContext.actionTarget,
           authorizationContext.governedTransport,
+          scope,
         );
 
         return {
@@ -1614,7 +1649,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const rejectPermission = () =>
       repository
         .rejectPermissionDenied(
-          database.executor,
+          invocationScopeExecutor(scope),
           withOptionalProperty(
             {
               actionInvocationId: invocation.actionInvocationId,
@@ -1672,13 +1707,20 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       hasPreflightPermit: boolean,
     ) {
       const permissionDecision = yield* permission
-        .checkActionPermission({
-          actionKey: input.registration.descriptor.actionKey,
-          correlationId: transport.correlationId,
-          ...(scope.legalEntityId === undefined ? {} : { legalEntityId: scope.legalEntityId }),
-          principalId: principal.principalId,
-          tenantId: scope.tenantId,
-        })
+        .checkActionPermission(
+          withOptionalProperty(
+            {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              principalId: principal.principalId,
+              tenantId: scope.tenantId,
+            },
+            scope.legalEntityId !== undefined,
+            'legalEntityId',
+            scope.legalEntityId,
+            {},
+          ),
+        )
         .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
       const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);
       const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(scope, legalEntityPermission);
@@ -1724,7 +1766,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           schemaVersion: input.registration.descriptor.schemaVersion,
         }),
         payload,
-        principal: Object.freeze({ ...principal }),
+        principal: preserveSystemPrincipalContextTrust(principal, Object.freeze({ ...principal })),
         target: Object.freeze({ ...actionTarget }),
         transport: Object.freeze(
           withOptionalProperty(
@@ -1756,7 +1798,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           const denial = failureReason.error;
           const earlierRejection = yield* repository
             .finalizePolicyDenial(
-              database.executor,
+              invocationScopeExecutor(scope),
               withOptionalProperty(
                 {
                   actionInvocationId: invocation.actionInvocationId,
@@ -1851,6 +1893,8 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ActionCoreError | DomainErrorSchema['Type'],
           HandlerRequirements
         > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
+          const scopedTransaction = yield* installScope(drizzleTransaction, scope);
+          notifyStage('database_scope_installed');
           yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
             Effect.mapError((cause) =>
               createActionTransactionErrorWithCause(
@@ -1880,9 +1924,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             requestHash,
             repository.loadRecordedRejection(drizzleTransaction, lockedInvocation.actionInvocationId),
           );
-
-          const scopedTransaction = yield* installScope(drizzleTransaction, scope);
-          notifyStage('database_scope_installed');
 
           const actionEntrypoint = input.registration.descriptor.entrypoint;
           if (actionEntrypoint.scope === 'tenant') {
@@ -2145,10 +2186,15 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         ),
       ),
     );
-    const invocation = yield* repository.resolveInvocation(database.executor, { ...identity, principal }).pipe(
-      Effect.asSome,
-      Effect.catchTag('ActionInvocationNotFound', () => Effect.succeedNone),
-    );
+    const invocation = yield* repository
+      .resolveInvocation(
+        invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
+        { ...identity, principal },
+      )
+      .pipe(
+        Effect.asSome,
+        Effect.catchTag('ActionInvocationNotFound', () => Effect.succeedNone),
+      );
     if (Option.isNone(invocation)) {
       return { retryCommand: true, state: 'NOT_STARTED' } as const;
     }
@@ -2187,31 +2233,36 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       ),
     );
     const requestedInvocationId = 'invocationId' in identity ? identity.invocationId : undefined;
-    const invocation = yield* repository.resolveInvocation(database.executor, { ...identity, principal }).pipe(
-      Effect.tapError((error) =>
-        Schema.is(ActionInvocationPersistenceError)(error)
-          ? logInvocationPersistenceFailure(
-              error,
-              withOptionalProperty(
-                { principalId: principal.principalId, tenantId: principal.tenantId },
-                requestedInvocationId !== undefined,
-                'invocationId',
-                requestedInvocationId,
-                {},
-              ),
-            )
-          : Effect.void,
-      ),
-      Effect.mapError((error) =>
-        Schema.is(ActionInvocationPersistenceError)(error) && requestedInvocationId !== undefined
-          ? new ActionCommitIndeterminate({
-              code: 'action_commit_indeterminate',
-              invocationId: requestedInvocationId,
-              reason: 'The database cannot confirm the Action commit state yet',
-            })
-          : error,
-      ),
-    );
+    const invocation = yield* repository
+      .resolveInvocation(
+        invocationScopeExecutor(preserveSystemPrincipalContextTrust(principal, { ...principal, correlationId: '' })),
+        { ...identity, principal },
+      )
+      .pipe(
+        Effect.tapError((error) =>
+          Schema.is(ActionInvocationPersistenceError)(error)
+            ? logInvocationPersistenceFailure(
+                error,
+                withOptionalProperty(
+                  { principalId: principal.principalId, tenantId: principal.tenantId },
+                  requestedInvocationId !== undefined,
+                  'invocationId',
+                  requestedInvocationId,
+                  {},
+                ),
+              )
+            : Effect.void,
+        ),
+        Effect.mapError((error) =>
+          Schema.is(ActionInvocationPersistenceError)(error) && requestedInvocationId !== undefined
+            ? new ActionCommitIndeterminate({
+                code: 'action_commit_indeterminate',
+                invocationId: requestedInvocationId,
+                reason: 'The database cannot confirm the Action commit state yet',
+              })
+            : error,
+        ),
+      );
 
     if (invocation.status === 'succeeded') {
       return yield* alreadyCommitted(invocation.actionInvocationId);

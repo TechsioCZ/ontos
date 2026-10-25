@@ -73,8 +73,14 @@ import {
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import {
   makeActionPermissionService,
+  toSpiceDbActionGrantObjectId,
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
@@ -98,6 +104,7 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
 import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
 
@@ -671,7 +678,7 @@ it.live(
               revision: catalog.composition.revision,
             }),
             loadConfig: Effect.succeed(issuerConfiguration),
-          }),
+          }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
         ),
         Effect.map(({ token }) => `Bearer ${token}`),
         Effect.provide(clockLayer),
@@ -729,6 +736,21 @@ it.live(
       resourceId: collidingResourceId,
       resourceType: GENERATED_OWNER.resourceType,
     });
+    const actionIdentity = {
+      actionKey: GENERATED_OWNER.actionKey,
+      legalEntityId: entityA1,
+      tenantId: tenantA,
+    };
+    const roleGrant = { ...actionIdentity, roleKey: 'generated-owner-executor' };
+    const actionRoleId = toScopedRoleObjectId(roleGrant);
+    const actionRelationships = [
+      ...buildActionAuthorizationRelationships([actionIdentity]),
+      ...buildActionAuthorizationRoleGrantRelationships(
+        [roleGrant],
+        [{ legalEntityId: entityA1, moduleKeys: [GENERATED_OWNER.moduleId], tenantId: tenantA }],
+      ),
+      relationship('scoped_role', actionRoleId, 'member', 'principal', principalA),
+    ];
     const touchedObjects: readonly [string, string][] = [
       ['tenant', tenantA],
       ['tenant', tenantB],
@@ -752,7 +774,9 @@ it.live(
       ],
       ['resource', requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource')],
       ['resource', requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource')],
-      ['action', toSpiceDbActionObjectId(GENERATED_OWNER.actionKey)],
+      ['action', toSpiceDbActionObjectId(actionIdentity)],
+      ['action_grant', toSpiceDbActionGrantObjectId(actionIdentity)],
+      ['scoped_role', actionRoleId],
     ];
     yield* Effect.acquireRelease(
       Effect.void,
@@ -897,7 +921,6 @@ it.live(
     );
     const resourceA = requiredValue(toResourceAccessObjectId(tenantA, entityA1, resourceRef), 'Tenant A resource');
     const resourceB = requiredValue(toResourceAccessObjectId(tenantB, entityB1, resourceRef), 'Tenant B resource');
-    const actionId = toSpiceDbActionObjectId(GENERATED_OWNER.actionKey);
     const relationships = [
       relationship('tenant', tenantA, 'member', 'principal', principalA),
       relationship('tenant', tenantB, 'member', 'principal', principalB),
@@ -917,8 +940,7 @@ it.live(
       relationship('resource', resourceA, 'reader', 'principal', principalA),
       relationship('resource', resourceB, 'module', 'module_access', moduleB),
       relationship('resource', resourceB, 'reader', 'principal', principalB),
-      relationship('action', actionId, 'restriction', 'action', actionId),
-      relationship('action', actionId, 'executor', 'principal', principalA),
+      ...actionRelationships,
     ];
     yield* Effect.tryPromise(() =>
       spiceAdmin.promises.writeRelationships(

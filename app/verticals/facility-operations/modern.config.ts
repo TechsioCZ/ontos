@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +41,7 @@ import {
 const localeDigest = createHash('sha256');
 for (const language of ['cs', 'en']) {
   for (const agenda of ['agenda', 'assets', 'documents', 'meters', 'purchasing', 'security']) {
-    localeDigest.update(readFileSync(new URL(`./locales/${language}/agendas/${agenda}.json`, import.meta.url)));
+    localeDigest.update(readFileSync(new URL(`locales/${language}/agendas/${agenda}.json`, import.meta.url)));
   }
 }
 const localeCacheDigest = localeDigest.digest('hex');
@@ -56,6 +57,7 @@ const buildEnvironment = getOrThrow(
   decodeUnknownResult(
     Struct({
       assetPrefix: optional(Trim.check(isNonEmpty())),
+      disableTsChecker: optional(Literals(['0', '1'])),
       failBuild: optional(Literals(['true', 'false'])),
       modernAssetPrefix: optional(Trim.check(isNonEmpty())),
       port: NumberFromString.check(isInt(), isBetween({ maximum: 65_535, minimum: 1 })),
@@ -71,6 +73,7 @@ const buildEnvironment = getOrThrow(
     ),
   )({
     assetPrefix: getBuildConfigEnvironment('ULTRAMODERN_ASSET_PREFIX'),
+    disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER'),
     failBuild: getBuildConfigEnvironment('ZE_FAIL_BUILD'),
     modernAssetPrefix: getBuildConfigEnvironment('MODERN_ASSET_PREFIX'),
     port: getBuildConfigEnvironment('VERTICAL_FACILITY_OPERATIONS_PORT') ?? String(developmentOverlay.ports[appId]),
@@ -149,6 +152,7 @@ if (cloudflareDeployEnabled) {
     worker: {
       // The data plane (Hyperdrive, SpiceDB VPC, composition KV) and cost guards every OntOS Worker carries.
       ...createCloudflareWorkerConfig(getBuildConfigEnvironment, {
+        hyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS',
       }),
       compatibilityDate: '2026-06-02',
@@ -240,7 +244,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER') === '1',
+        disableTsChecker: buildEnvironment.disableTsChecker === '1',
         distPath: {
           html: './',
           root: buildOutputRoot,
@@ -305,7 +309,6 @@ export default defineConfig(
         mainEntryName: 'index',
       },
       tools: {
-        rspack: createCloudflareRspack(cloudflareDeployEnabled, fileURLToPath(new URL('api/', import.meta.url))),
         autoprefixer: {
           overrideBrowserslist: ['defaults'],
         },
@@ -314,6 +317,7 @@ export default defineConfig(
             .uniqueName('verticalFacilityOperations')
             .chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_FACILITY_OPERATIONS_LOADED_CHUNKS__');
         },
+        rspack: createCloudflareRspack(cloudflareDeployEnabled, fileURLToPath(new URL('api/', import.meta.url))),
         tsChecker: {
           typescript: {
             build: false,

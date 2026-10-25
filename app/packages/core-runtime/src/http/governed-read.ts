@@ -1,10 +1,11 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
-import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Schema } from 'effect';
+import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Result, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
+import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
@@ -84,6 +85,8 @@ const governedReadDomainProblemFields = new Set([
   'type',
 ]);
 const domainProblemSchemaAccepts = Schema.is(GovernedReadDomainProblemSchema);
+
+const ReadCorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ReadCorrelationId'));
 const isGovernedReadDomainProblem = (value: unknown): boolean =>
   domainProblemSchemaAccepts(value) && Object.keys(value).every((key) => governedReadDomainProblemFields.has(key));
 
@@ -514,6 +517,12 @@ export function makeGovernedReadHttpHandler<
     const execute = Effect.gen(function* executeGovernedRead() {
       correlationId = request.headers['x-correlation-id'];
       if (correlationId === undefined || correlationId.trim().length === 0) {
+        return yield* Effect.fail(options.problems.invalid());
+      }
+      // The correlation identifier is persisted into read evidence and log annotations, so an unbounded
+      // caller-chosen value must be refused here rather than stored. Branching on the decode result keeps the
+      // schema's diagnostic out of the problem shape without discarding it in an error callback.
+      if (Result.isFailure(Schema.decodeResult(ReadCorrelationIdSchema)(correlationId))) {
         return yield* Effect.fail(options.problems.invalid());
       }
       const principal = yield* options

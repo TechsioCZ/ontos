@@ -13,6 +13,7 @@ import { makeActionRepository } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions } from '../../src/actions/runtime.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import {
   AuthenticationNamespaceIdSchema,
   AuthenticationNamespaceRegistrationSchema,
@@ -169,7 +170,7 @@ const withDatabase = <Value, Error, Requirements>(
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
-      const configuration = yield* loadDatabaseConfig();
+      const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database);
     }),
@@ -780,17 +781,14 @@ const testProgram5 = () =>
         const key = `denial-${stage}`;
         const actionKey = `${actionPrefix}.${stage}`;
         const moduleStateKey = `${actionPrefix}.state.${stage}`;
+        const updates = installedActionRelationships(actionKey).map((item) =>
+          v1.RelationshipUpdate.create({
+            operation: v1.RelationshipUpdate_Operation.TOUCH,
+            relationship: item,
+          }),
+        );
         yield* Effect.promise(() =>
-          adminClient.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: installedActionRelationships(actionKey).map((item) =>
-                v1.RelationshipUpdate.create({
-                  operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: item,
-                }),
-              ),
-            }),
-          ),
+          adminClient.promises.writeRelationships(v1.WriteRelationshipsRequest.create({ updates })),
         );
         const failure = yield* runWithLivePermission(withDenialPersistenceFailure(database, stage), (runtime) =>
           Effect.flip(

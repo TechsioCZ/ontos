@@ -4,13 +4,19 @@ import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess } from 'effect/unstable/process';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
-import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
+import {
+  BEARER_ASSERTION_ROLE_SETTINGS,
+  DATABASE_IDENTITIES,
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import { makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { collectToolingProcess } from '../tests/tooling-process-fixture.mts';
 
@@ -34,7 +40,7 @@ const pricingContext = {
   subjectFingerprint: 'acl-proof-subject',
 };
 
-type Environment = Readonly<{ DATABASE_ADMIN_URL: string; DATABASE_URL: string }>;
+type Environment = Readonly<Record<string, string> & { DATABASE_ADMIN_URL: string; DATABASE_URL: string }>;
 
 const databaseUrl = (connectionString: string, database: string): string => {
   const url = new URL(connectionString);
@@ -174,16 +180,23 @@ const verifyOwner = (owner: (typeof owners)[number], env: Environment) =>
 
 it.live('D1 owner migrations alone grant exact runtime access, and readiness rejects drift', () =>
   Effect.gen(function* migratorRuntimeAccess() {
-    const connections = yield* loadDatabaseConnectionPair();
+    const connections = yield* loadDatabaseIdentityConnections();
     const admin = yield* makeTestPgClient(connections.admin.connectionString);
     // Only this uniquely named test database is created, mutated and removed.
     const database = `ontos_acl_${randomUUID().replaceAll('-', '')}`;
     yield* Effect.acquireRelease(admin.unsafe(`create database "${database}"`), () =>
       admin.unsafe(`drop database "${database}" with (force)`).pipe(Effect.orDie),
     );
-    const env = {
+    // The bootstrap provisions every database identity, so each login targets the throwaway database.
+    const env: Environment = {
+      ...Object.fromEntries(
+        DATABASE_IDENTITIES.map(({ id, urlKey }) => [
+          urlKey,
+          databaseUrl(connections.runtime[id].connectionString, database),
+        ]),
+      ),
       DATABASE_ADMIN_URL: databaseUrl(connections.admin.connectionString, database),
-      DATABASE_URL: databaseUrl(connections.runtime.connectionString, database),
+      DATABASE_URL: databaseUrl(connections.runtime[SHARED_RUNTIME_IDENTITY.id].connectionString, database),
     };
     // The deployment bootstraps the role before owner migrations; its fixed schema list does not
     // cover these owners, so every grant verified below must come from the owner migrations.
@@ -225,5 +238,40 @@ it.live('D1 owner migrations alone grant exact runtime access, and readiness rej
     for (const owner of owners) {
       yield* verifyOwner(owner, env);
     }
+    // A bootstrap re-run discards role settings that drifted outside the manifest.
+    const partyRole = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+    // ALTER ROLE is cluster-wide even on a disposable database. Register restoration before mutation.
+    yield* Effect.acquireRelease(
+      isolatedAdmin.unsafe<{ setting: string }>(
+        `select setting from pg_catalog.pg_db_role_setting as settings
+          join pg_catalog.pg_roles as role on role.oid = settings.setrole
+          cross join lateral unnest(settings.setconfig) as setting
+         where role.rolname = $1 and settings.setdatabase = 0 and setting like 'statement_timeout=%'`,
+        [partyRole],
+      ),
+      (original) => {
+        const setting = original[0]?.setting;
+        const restore =
+          setting === undefined
+            ? `alter role ${partyRole} reset statement_timeout`
+            : `alter role ${partyRole} set statement_timeout = '${setting.slice('statement_timeout='.length).replaceAll("'", "''")}'`;
+        return isolatedAdmin.unsafe(restore).pipe(Effect.orDie);
+      },
+    );
+    yield* isolatedAdmin.unsafe(`alter role ${partyRole} set statement_timeout = '1ms'`);
+    yield* expectScriptSuccess(bootstrapScript, env);
+    const settings = yield* isolatedAdmin.unsafe<{ setting: string }>(
+      `select setting
+         from pg_catalog.pg_db_role_setting as role_setting
+         join pg_catalog.pg_roles as role on role.oid = role_setting.setrole
+        cross join lateral unnest(role_setting.setconfig) as setting
+        where role.rolname = $1
+          and role_setting.setdatabase in (0, (select oid from pg_catalog.pg_database where datname = current_database()))
+        order by setting`,
+      [partyRole],
+    );
+    expect(settings.map(({ setting }) => setting)).toEqual(
+      EffectArray.sort(BEARER_ASSERTION_ROLE_SETTINGS, Order.String),
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

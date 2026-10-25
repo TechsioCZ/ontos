@@ -1,18 +1,8 @@
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { ActionAuthorizationPreflightDatabaseLive, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { TrustedOperationConsentAuthorityFactSchema } from '@app/consent-authority-contracts';
-import type { ConsentSelfServiceRequest } from '@app/consent-authority-contracts';
+import type { ConsentSelfServiceRequest, TrustedOperationConsentAuthorityFact } from '@app/consent-authority-contracts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
-import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../../commerce-customer-context/src/enrollment/orchestration/owner-transaction-runner.ts';
-import {
-  CustomerConsentReceiptSchema,
-  matchesCustomerConsentReceipt,
-} from '../../../commerce-customer-context/api/portal-auth/consent/model.ts';
-import {
-  readCustomerConsentReceipt,
-  recordCustomerConsentReceipt,
-} from '../../../commerce-customer-context/api/portal-auth/consent/receipt-persistence.ts';
 import { consentSelfServiceAction, handleConsentSelfService } from '../../src/actions/consent-self-service.action.ts';
 import {
   CommerceConsentAuthorityLookup,
@@ -21,7 +11,7 @@ import {
 import { ConsentSelfServiceAuthorizationError } from '../../shared/domain/privacy-consent-self-service.ts';
 import { TestClock } from 'effect/testing';
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -52,12 +42,6 @@ const principalId = 'd7000000-0000-4000-8000-000000000003';
 const subjectId = 'd7100000-0000-4000-8000-000000000001';
 
 const pool = makeTestPgClient;
-const receiptAuthorityUnavailable = () =>
-  new ConsentSelfServiceAuthorizationError({
-    code: 'AUTHORITY_UNAVAILABLE',
-    reason: 'Receipt lookup could not complete',
-  });
-
 const trustedScope = (scopedTenantId = tenantId) => ({
   authMethod: 'system' as const,
   correlationId: 'privacy-consent-postgres',
@@ -81,9 +65,6 @@ it.live(
           transaction: Parameters<Parameters<typeof admin.transaction>[0]>[0],
         ) {
           yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
-          yield* transaction.execute(
-            sql`delete from commerce_customer_context.customer_consent_receipts where tenant_id = ${tenantId}::uuid and receipt_id in ('d7800000-0000-4000-8000-000000000001'::uuid, 'd7800000-0000-4000-8000-000000000002'::uuid)`,
-          );
           yield* transaction.delete(consentDecisions).where(eq(consentDecisions.tenantId, tenantId));
           yield* transaction.delete(noticeProvisions).where(eq(noticeProvisions.tenantId, tenantId));
           yield* transaction.delete(noticeVersions).where(eq(noticeVersions.tenantId, tenantId));
@@ -426,26 +407,14 @@ it.live(
     );
     expect(Exit.isFailure(conflictingReplay)).toBe(true);
 
-    // Unlike the repository-only ordering case above, timestamps below are produced by
-    // the server clock, persisted as Commerce receipts, then consumed by the real Action.
-    // Owner HTTP/session admission is represented by the lookup port; neither Action
-    // decision timestamps nor current-consent selection are mocked.
-    const receiptDatabase = yield* makeCoreDatabase(connections.runtime);
-    const receiptRunner = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
-      Layer.provide(ActionAuthorizationPreflightDatabaseLive),
-      Layer.provide(Layer.succeed(CoreDatabase, receiptDatabase)),
-    );
+    // The public authority facts represent retained server acknowledgements. Commerce
+    // proves receipt persistence and replay in its own owner-local integration suite.
+    // This test proves Privacy's real Action and current-consent selection without
+    // importing another owner's implementation or accessing its database.
     yield* Effect.gen(function* retryAcknowledgedReceipt() {
       yield* TestClock.setTime(new Date('2026-10-23T12:00:00.000Z').getTime());
       const scopeRef = 'scope:privacy-db:receipt-retry';
       const scope = { ...evidenceDecision.scope, controllerRef: legalEntityId, scopeRef };
-      const receiptScope = {
-        compositionRevision: 'receipt-retry-proof',
-        legalEntityId,
-        partyId: 'privacy-db-party',
-        requestCorrelation: 'receipt-retry-proof',
-        tenantId,
-      };
       const grantId = 'd7800000-0000-4000-8000-000000000001';
       const withdrawalId = 'd7800000-0000-4000-8000-000000000002';
       const noticeProof = yield* inScope(tenantId, (transaction) =>
@@ -454,25 +423,8 @@ it.live(
           Effect.map(Option.getOrThrow),
         ),
       );
-      const acknowledge = Effect.fn('acknowledgeReceipt')(function* acknowledgeReceipt(
-        requestId: string,
-        kind: 'GRANTED' | 'WITHDRAWN',
-      ) {
-        const receipt = yield* recordCustomerConsentReceipt(
-          receiptScope,
-          yield* Schema.decodeUnknownEffect(CustomerConsentReceiptSchema)({
-            acknowledgedAt: DateTime.formatIso(yield* DateTime.now),
-            decision: kind,
-            noticeVersionId: noticeProof.noticeVersionRef,
-            partyId: receiptScope.partyId,
-            providedLanguage: 'en',
-            providerSubjectId: 'receipt-retry-provider',
-            requestId,
-            scope,
-            sessionRef: 'receipt-retry-session',
-          }),
-        );
-        yield* inScope(
+      const provisionNotice = (requestId: string) =>
+        inScope(
           tenantId,
           Effect.fn('provisionReceiptNotice')(function* provisionReceiptNotice(transaction) {
             const provisions = yield* noticeProvisionRepositoryForScope(transaction, trustedScope());
@@ -482,8 +434,6 @@ it.live(
             });
           }),
         );
-        return receipt;
-      });
       const requestForReceipt = (requestId: string, kind: 'GRANTED' | 'WITHDRAWN'): ConsentSelfServiceRequest => ({
         decision: kind,
         noticeEvidenceRefs: [`commerce-notice:${requestId}`],
@@ -498,47 +448,42 @@ it.live(
         },
         scope,
       });
+      const retainedAuthorityFact = (requestId: string, kind: 'GRANTED' | 'WITHDRAWN', acknowledgedAt: string) =>
+        Schema.decodeUnknownEffect(TrustedOperationConsentAuthorityFactSchema)({
+          actorPrincipalRef: { principalId, tenantId },
+          authorizedScope: scope,
+          decisionReceipt: { acknowledgedAt, decision: kind, requestRef: requestId },
+          evidenceRefs: [requestId, 'receipt-retry-session'],
+          expiresAt: '2099-01-01T00:00:00Z',
+          kind: 'OPERATION_SCOPED',
+          operation: kind === 'WITHDRAWN' ? 'CONSENT_WITHDRAW' : 'CONSENT_WRITE',
+          operationRef: requestId,
+          proofRef: 'receipt-retry-session',
+          scopeRef,
+          status: 'CURRENT',
+          subjectRef: scope.privacySubjectRef,
+          verifiedAt: acknowledgedAt,
+        });
+      const grant = yield* retainedAuthorityFact(grantId, 'GRANTED', '2026-10-23T12:00:00.000Z');
+      const withdrawn = yield* retainedAuthorityFact(withdrawalId, 'WITHDRAWN', '2026-10-23T12:00:01.000Z');
+      yield* provisionNotice(grantId);
+      yield* provisionNotice(withdrawalId);
       let unavailable = true;
       const invoke = Effect.fn('invokeConsentAction')(function* invokeConsentAction(
         request: ConsentSelfServiceRequest,
+        fact: TrustedOperationConsentAuthorityFact,
       ) {
         const execution = yield* preparedCommerceConsentExecution.pipe(
           Effect.provideService(CommerceConsentAuthorityLookup, {
-            resolve: Effect.fn('lookupReceipt')(
-              function* lookupReceipt() {
-                if (unavailable) {
-                  return yield* new ConsentSelfServiceAuthorizationError({
-                    code: 'AUTHORITY_UNAVAILABLE',
-                    reason: 'First call fails before Action execution',
-                  });
-                }
-                const retained = Option.getOrThrow(
-                  yield* readCustomerConsentReceipt(receiptScope, request.path.requestRef),
-                );
-                expect(matchesCustomerConsentReceipt('receipt-retry-session', request, retained)).toBe(true);
-                return yield* Schema.decodeUnknownEffect(TrustedOperationConsentAuthorityFactSchema)({
-                  actorPrincipalRef: { principalId, tenantId },
-                  authorizedScope: retained.scope,
-                  decisionReceipt: {
-                    acknowledgedAt: DateTime.formatIso(retained.acknowledgedAt),
-                    decision: retained.decision,
-                    requestRef: retained.requestId,
-                  },
-                  evidenceRefs: [retained.requestId, retained.sessionRef],
-                  expiresAt: '2099-01-01T00:00:00Z',
-                  kind: 'OPERATION_SCOPED',
-                  operation: request.path.operation,
-                  operationRef: retained.requestId,
-                  proofRef: retained.sessionRef,
-                  scopeRef,
-                  status: 'CURRENT',
-                  subjectRef: scope.privacySubjectRef,
-                  verifiedAt: DateTime.formatIso(yield* DateTime.now),
+            resolve: Effect.fn('lookupReceipt')(function* lookupReceipt() {
+              if (unavailable) {
+                return yield* new ConsentSelfServiceAuthorizationError({
+                  code: 'AUTHORITY_UNAVAILABLE',
+                  reason: 'First call fails before Action execution',
                 });
-              },
-              Effect.provide(receiptRunner),
-              Effect.mapError(receiptAuthorityUnavailable),
-            ),
+              }
+              return fact;
+            }),
             resolveNotice: () =>
               Effect.fail(
                 new ConsentSelfServiceAuthorizationError({
@@ -585,26 +530,22 @@ it.live(
           }),
         );
       });
-      const grant = yield* acknowledge(grantId, 'GRANTED');
-      expect(Exit.isFailure(yield* Effect.exit(invoke(requestForReceipt(grantId, 'GRANTED'))))).toBe(true);
+      expect(Exit.isFailure(yield* Effect.exit(invoke(requestForReceipt(grantId, 'GRANTED'), grant)))).toBe(true);
       expect((yield* read(scopeRef)).outcome).toBe('ABSENT');
       yield* TestClock.adjust('1 second');
       unavailable = false;
-      const withdrawn = yield* acknowledge(withdrawalId, 'WITHDRAWN');
-      yield* invoke(requestForReceipt(withdrawalId, 'WITHDRAWN'));
+      yield* invoke(requestForReceipt(withdrawalId, 'WITHDRAWN'), withdrawn);
       yield* TestClock.adjust('1 second');
-      const replayReceipt = yield* acknowledge(grantId, 'GRANTED');
-      expect(replayReceipt.acknowledgedAt).toEqual(grant.acknowledgedAt);
-      const delayed = yield* invoke(requestForReceipt(grantId, 'GRANTED'));
-      expect(delayed.decision.effectiveAt).toBe(DateTime.formatIso(grant.acknowledgedAt));
+      const delayed = yield* invoke(requestForReceipt(grantId, 'GRANTED'), grant);
+      expect(delayed.decision.effectiveAt).toBe(grant.decisionReceipt.acknowledgedAt);
       expect(delayed.decision.recordedAt).toBe(DateTime.formatIso(yield* DateTime.now));
       const afterRetry = yield* read(scopeRef);
       expect(afterRetry.outcome).toBe('CURRENT');
       if (afterRetry.outcome === 'CURRENT') {
         expect(afterRetry.decision.decision).toBe('WITHDRAWN');
-        expect(afterRetry.decision.effectiveAt).toBe(DateTime.formatIso(withdrawn.acknowledgedAt));
+        expect(afterRetry.decision.effectiveAt).toBe(withdrawn.decisionReceipt.acknowledgedAt);
       }
-    }).pipe(Effect.provide(receiptRunner), Effect.provide(TestClock.layer()));
+    }).pipe(Effect.provide(TestClock.layer()));
 
     const isolated = yield* inScope(otherTenantId, (transaction) =>
       privacyOperationRepositoryForScope(transaction, trustedScope(otherTenantId)).pipe(

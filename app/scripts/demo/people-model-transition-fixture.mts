@@ -32,7 +32,7 @@ export const peopleModelTransitionFixtureRelationships = Effect.fn('PeopleModelT
   return companyMembershipAdmissionRelationships(
     [
       ...demoPermissionRelationships(actions),
-      ...reviewedHumanActionAddonRelationships(actions),
+      ...(yield* reviewedHumanActionAddonRelationships(actions)),
       ...ownTaskRelationships(),
       ...principalRelationships(local.principalId, local.role, actions, local.legalEntityId, local.tenantId),
       ...verification,

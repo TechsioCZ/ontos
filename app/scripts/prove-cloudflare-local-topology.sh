@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the built Shell and every vertical as Workers in workerd, together, against a local
-# PostgreSQL (through each Worker's HYPERDRIVE binding) and SpiceDB (through its SPICEDB binding
+# PostgreSQL (through each Worker's identity Hyperdrive bindings) and SpiceDB (through its SPICEDB binding
 # to the HTTP gateway), then prove the paths the Cloudflare topology depends on:
 #   - repeated database-backed requests (a Worker's Effect runtime never outlives its request);
 #   - Shell authentication, and a Shell read authorized by SpiceDB over HTTP;
@@ -26,6 +26,8 @@ cd "$app_directory"
 
 : "${DATABASE_URL:?DATABASE_URL (the runtime role) is required}"
 : "${DATABASE_ADMIN_URL:?DATABASE_ADMIN_URL (the local fixture administrator) is required}"
+: "${PARTY_REGISTRY_DATABASE_URL:?PARTY_REGISTRY_DATABASE_URL (the Party Registry request role) is required}"
+: "${SHELL_GATEWAY_ISSUER_DATABASE_URL:?SHELL_GATEWAY_ISSUER_DATABASE_URL (the Shell gateway issuer role) is required}"
 : "${SPICEDB_HTTP_PORT:?SPICEDB_HTTP_PORT is required}"
 : "${SPICEDB_PRESHARED_KEY:?SPICEDB_PRESHARED_KEY is required}"
 : "${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}"
@@ -114,7 +116,10 @@ EOF
 export WRANGLER_REGISTRY_PATH="$work/registry"
 cat "$spicedb_certificate" "$owner_certificate" > "$work/trusted-local-certificates.pem"
 export NODE_EXTRA_CA_CERTS="$work/trusted-local-certificates.pem"
+# Each Hyperdrive binding connects as its own database identity, as its config does in the account.
 export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE="$PARTY_REGISTRY_DATABASE_URL"
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE="$SHELL_GATEWAY_ISSUER_DATABASE_URL"
 wrangler="$app_directory/apps/shell-super-app/node_modules/.bin/wrangler"
 ready_logs=()
 

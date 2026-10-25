@@ -2099,11 +2099,20 @@ index 7365f2413cfd07b1f761b391d9ee08792ea1ea53..9bd3a8649903ffb92fb2038a8cde47c0
 -export { MICROVERTICAL_RELEASE_ENVELOPE_KIND, MICROVERTICAL_RELEASE_ENVELOPE_SCHEMA_VERSION, MICROVERTICAL_RELEASE_TARGETS };
 +export { MICROVERTICAL_RELEASE_ENVELOPE_KIND, MICROVERTICAL_RELEASE_ENVELOPE_SCHEMA_VERSION, MICROVERTICAL_RELEASE_TARGETS, SHELL_RELEASE_ENVELOPE_KIND };
 diff --git a/dist/types/config.d.ts b/dist/types/config.d.ts
-index a561977305662b65276aee25b43520142a6ef5f4..c237d04152c68b0b1e7f18ad9543c5c9f834d759 100644
+index a561977305662b65276aee25b43520142a6ef5f4..78f3923c6d4099bb459beba0c9cac36b4e58b417 100644
 --- a/dist/types/config.d.ts
 +++ b/dist/types/config.d.ts
-@@ -243,6 +243,8 @@ export interface CloudflareWorkerDeployConfig {
+@@ -241,8 +241,17 @@
+      * contain server-only implementation code.
+      */
      publicAssetExcludes?: string[];
++    /** Origin-root paths forwarded in-process to BFF routes outside their prefix. */
++    rootRoutes?: {
++      /** Public OAuth discovery routes served with anonymous CORS for GET, HEAD and OPTIONS. */
++      metadata?: Record<string, string>;
++      /** BFF-owned root routes forwarded for any method with their request body. */
++      routes?: Record<string, string>;
++    };
  }
  export interface CloudflareDeployConfig {
 +    /** Release surface owned by this application, independent of federation production. */
@@ -2296,10 +2305,20 @@ index 64c457708a69750a3abe78eb15df82f36168416d..fa479aa9823ecaffee43f93e152ef27d
          });
        }
 diff --git a/src/config.ts b/src/config.ts
-index 760e521387e903fd7b98d726b6097f8f82b9747d..b746b4b32b7dc565bf0f69ed979709e70dbd5e54 100644
+index 760e521387e903fd7b98d726b6097f8f82b9747d..4870d60186ed5374505d09700b0087f057604ef8 100644
 --- a/src/config.ts
 +++ b/src/config.ts
-@@ -265,6 +265,8 @@ export interface CloudflareWorkerDeployConfig {
+@@ -262,9 +262,18 @@
+    * contain server-only implementation code.
+    */
+   publicAssetExcludes?: string[];
++  /** Origin-root paths forwarded in-process to BFF routes outside their prefix. */
++  rootRoutes?: {
++    /** Public OAuth discovery routes served with anonymous CORS for GET, HEAD and OPTIONS. */
++    metadata?: Record<string, string>;
++    /** BFF-owned root routes forwarded for any method with their request body. */
++    routes?: Record<string, string>;
++  };
  }
  
  export interface CloudflareDeployConfig {

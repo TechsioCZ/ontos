@@ -154,14 +154,17 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
     query: () =>
       Effect.gen(function* queryIdentifiers() {
         const search = yield* createCoreSearchQueryRuntime;
-        return yield* search.search({
-          effectiveAt: '2026-09-03T00:00:00.000Z',
-          includeArchived: false,
-          moduleId: 'party.registry',
-          query: identifier.value,
-          resourceType: 'party.registry.party',
-          tenantId,
-        });
+        return yield* search.search(
+          {
+            effectiveAt: '2026-09-03T00:00:00.000Z',
+            includeArchived: false,
+            moduleId: 'party.registry',
+            query: identifier.value,
+            resourceType: 'party.registry.party',
+            tenantId,
+          },
+          { ...principal, correlationId: 'identifier-sync-search' },
+        );
       }).pipe(Effect.provideService(CoreSearchProjectionStore, store)),
     replaceIdentifiers,
     seed: projector.project(baseContext, { partyId: partyRef.resourceId }),

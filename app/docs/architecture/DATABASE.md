@@ -1,13 +1,14 @@
 # Database Architecture
 
-For operation-scope validation, scoped owner services, RLS, runtime/admin roles, and same-tenant constraints, also follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). The current effective-role evidence and trusted-context limitations are recorded in [Database Trust-Boundary Audit](./DATABASE_TRUST_BOUNDARIES.md). Business handlers and BFF adapters never receive or import a database executor; owner repositories are built inside a Core-owned scoped transaction.
+For operation-scope validation, scoped owner services, RLS, runtime/admin roles, and same-tenant constraints, also follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Database identities, grant manifests, the trusted tenant context and their limits are recorded in [Database Trust Boundaries](./DATABASE_TRUST_BOUNDARIES.md). Business handlers and BFF adapters never receive or import a database executor; owner repositories are built inside a Core-owned scoped transaction.
 
 This document defines authoritative database access and schema-ownership rules for the OntOS application. MicroVertical deployment boundaries remain governed by [MicroVertical Architecture](./MICROVERTICALS.md), and state changes remain governed by [Action Execution](./ACTIONS.md).
 
 ## Ownership
 
-- `@app/core-runtime` owns only the PostgreSQL schema named exactly `core`.
-- The `core` migration history contains only Core infrastructure tables.
+- `@app/core-runtime` owns the PostgreSQL schema named exactly `core` and the admin-owned schema `trust`.
+- The `core` migration history contains only Core infrastructure tables and the `trust` objects.
+- Schema `trust` holds the trusted-scope entry point: the gateway grant tables, the sealing key and the `trust.*` routines. Runtime roles get no table privileges there, only EXECUTE on the routines their grant manifest declares.
 - PostgreSQL schema `public` owns no OntOS application tables.
 - Auth and every MicroVertical own separate schemas and migration histories. They are not registered in the Core Drizzle configuration or runtime schema.
 - All migration histories store bookkeeping in the shared PostgreSQL schema `drizzle`, using a distinct journal table per owner. Independent migration histories must never share one journal table because their timestamps would suppress each other's migrations.
@@ -21,7 +22,7 @@ OntOS runs the Drizzle v1 line (`drizzle-orm` and `drizzle-kit` at the same vers
 Owner conventions on v1:
 
 - Declare relations with `defineRelations(<tables>, (r) => ...)`. Core, Auth, and Party construct native executors with `makeWithDefaults({ relations })` from `drizzle-orm/effect-postgres`, supplying `PgClient` and `Reactivity`; their types are `EffectPgDatabase<typeof <owner>Relations>`. The Shell Auth and Commerce portal-auth database services build their Better Auth adapter with `makeEffectDrizzleAuthAdapter` from `@app/better-auth-effect-drizzle/server` over that same native executor, so Better Auth opens no connection of its own. A Better Auth transaction runs inside the executor's transaction. Application Auth queries use the native executor directly. Relational Queries v1 (`relations(...)`, callback `where`) are unavailable.
-- Declare governed tables with `<schema>.table.withRLS(...)` and attach `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`.
+- Declare governed tables with `<schema>.table.withRLS(...)` and attach `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`. Tables read by a `gateway_grant` identity use `gatewayScopedTenantRlsPolicies` or `gatewayScopedTenantLegalEntityRlsPolicies`, which read the `trust.current_*` accessors. Worker reads by a dedicated `session_setting` identity use `sessionScopedTenantReadRlsPolicy` or `sessionScopedTenantLegalEntityReadRlsPolicy`.
 - Use `getColumns` instead of the deprecated `getTableColumns`.
 - After adding a migration or rebasing a branch that adds one, run `pnpm db:check`; it validates each owner's snapshot chain and reports non-commutative migrations across branches.
 
@@ -48,6 +49,8 @@ Drizzle's parameterized `sql` tagged template is allowed only for:
 - migration or bootstrap work; or
 - a documented operation that cannot be represented by a Drizzle query builder.
 
+The `trust.*` routines are the approved narrow privileged path into tenant context. They are SECURITY DEFINER, owned by the migration admin, pinned to `search_path = pg_catalog, pg_temp`, use static SQL only and are not executable by PUBLIC. The Core verifier and `pnpm database-trust:audit` check that hardening.
+
 Every application-level exception needs a nearby explanation and a focused test. Parameters must remain values in the tagged template; never construct SQL by joining or interpolating strings. Raw native Drizzle reads explicitly pass `'objects'` as the second argument to `execute<Row>`: the default raw mode exposes the underlying driver result instead of the object-row array.
 
 Generated migration SQL is an output of the typed schema and is not application query code. Handwritten migration SQL must not replace an expressible typed Drizzle schema definition.
@@ -63,6 +66,8 @@ Missing or malformed configuration is an expected typed Effect error. There is n
 The Core schema inventory is an exact set. Migration generation, application registration, tests, and verification all use `packages/core-runtime/src/db/schema.ts` as their only schema source.
 
 Each owner verifier must reach every owned table through its typed Drizzle reference and exact-match only that owner's schema inventory and migration journal. The root application verifier separately exact-matches the complete set of application schemas and owner-specific Drizzle journals before invoking every owner verifier. PostgreSQL system catalogs and Drizzle's migration bookkeeping remain infrastructure metadata rather than a shared business schema.
+
+The Party pilot enables RLS on seven Core tables: `core.tenants`, `core.action_invocations`, `core.audit_events`, `core.data_access_events`, `core.domain_events`, `core.outbox_messages` and `core.tenant_module_states`. Each has one `USING (true) WITH CHECK (true)` policy for `ontos_runtime`, so the shared runtime behaves as before. `core.search_index_entries` already had RLS; the pilot only changes its policies. Party's own policies bind its rows to the trusted tenant or to module `party.registry`.
 
 ## Canonical, Projected, and Artifact Data
 

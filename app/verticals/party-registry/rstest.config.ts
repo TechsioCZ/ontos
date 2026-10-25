@@ -10,7 +10,10 @@ const swc = {
   jsc: { parser: { disallowAmbiguousJsxLike: false, syntax: 'typescript' } },
 } as const;
 
+const workerCycleIntegrationTest = 'tests/integration/party-identity-runtime.test.ts';
+
 export default defineConfig({
+  pool: { maxWorkers: 1 },
   projects: [
     {
       name: 'component',
@@ -30,6 +33,15 @@ export default defineConfig({
       testEnvironment: 'node',
       setupFiles: ['./tests/integration/application-composition.setup.ts'],
       include: ['tests/integration/**/*.test.ts'],
+      exclude: [workerCycleIntegrationTest],
+      testTimeout: 30_000,
+    },
+    {
+      // A worker cycle can claim every tenant's outbox work, so run it separately.
+      name: 'integration-worker-cycle',
+      testEnvironment: 'node',
+      setupFiles: ['./tests/integration/application-composition.setup.ts'],
+      include: [workerCycleIntegrationTest],
       testTimeout: 30_000,
     },
     {

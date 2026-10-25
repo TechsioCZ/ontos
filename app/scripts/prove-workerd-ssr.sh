@@ -12,7 +12,8 @@ proof_auth_secret="$(node --input-type=module -e 'import { randomBytes } from "n
 
 for output in "$proof_artifact_root"/apps/*/.output "$proof_artifact_root"/verticals/*/.output
 do
-  printf 'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://workerd-proof:workerd-proof@127.0.0.1:5432/workerd-proof\nSPICEDB_ENDPOINT=localhost:8443\nSPICEDB_PRESHARED_KEY=workerd-proof\n' > "$output/.dev.vars"
+  # Each Hyperdrive binding names its own database identity's login; the proof never connects.
+  printf 'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://ontos_runtime:workerd-proof@127.0.0.1:5432/workerd-proof\nCLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE=postgresql://party_registry_runtime:workerd-proof@127.0.0.1:5432/workerd-proof\nCLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE=postgresql://shell_gateway_issuer:workerd-proof@127.0.0.1:5432/workerd-proof\nSPICEDB_ENDPOINT=localhost:8443\nSPICEDB_PRESHARED_KEY=workerd-proof\n' > "$output/.dev.vars"
   if [ "$output" = "$proof_artifact_root/apps/shell-super-app/.output" ]; then
     printf 'BETTER_AUTH_URL=http://localhost:8787\nBETTER_AUTH_SECRET=%s\n' "$proof_auth_secret" >> "$output/.dev.vars"
   fi

@@ -95,8 +95,8 @@ const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(functio
   if (!Number.isSafeInteger(maxDeliveries) || maxDeliveries < 1 || maxDeliveries > 1000) {
     return yield* descriptorFailure('maxDeliveries must be an integer from 1 through 1000');
   }
-  const now = input.now ?? (yield* DateTime.nowAsDate);
-  if (Number.isNaN(now.getTime())) {
+  const clockOverride = input.now;
+  if (clockOverride !== undefined && Option.isNone(DateTime.make(clockOverride))) {
     return yield* descriptorFailure('now must be a valid timestamp');
   }
   const registrations = yield* Effect.try({
@@ -108,9 +108,9 @@ const validateCycleInput = Effect.fn('OutboxRuntime.validateCycleInput')(functio
   });
   return {
     claimOwner: input.claimOwner,
+    clockOverride,
     compositionRevision: input.compositionRevision,
     maxDeliveries,
-    now,
     registrations,
   };
 });
@@ -250,8 +250,9 @@ const initialCycleProgress = (): OutboxCycleProgress => ({
 
 interface OutboxCycleExecution<Registration extends AnyOutboxWorkerRegistration> {
   readonly claimOwner: string;
+  /** Deterministic clock for tests only; production cycles read a fresh clock per delivery. */
+  readonly clockOverride: Date | undefined;
   readonly compositionRevision: string;
-  readonly now: Date;
   readonly registrations: readonly Registration[];
   readonly registrationsByKey: ReadonlyMap<string, Registration>;
 }
@@ -297,8 +298,12 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     execution: OutboxCycleExecution<Registration>,
     state: OutboxCycleProgress,
   ) {
+    // Read the claim clock per delivery. Reusing one cycle-start timestamp wrote leases that had already
+    // expired by the time the claim reached the handler, so a second runtime could reclaim and execute the
+    // same delivery concurrently.
+    const deliveryNow = execution.clockOverride ?? (yield* DateTime.nowAsDate);
     const claimOption = yield* repository
-      .claimNext(execution.registrations, execution.claimOwner, execution.now, execution.compositionRevision)
+      .claimNext(execution.registrations, execution.claimOwner, deliveryNow, execution.compositionRevision)
       .pipe(Effect.tapError(() => logUnexpectedPersistence()));
     if (Option.isNone(claimOption)) {
       return { ...state, stopped: true };
@@ -322,7 +327,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       return yield* failOutboxDelivery(
         repository,
         claim,
-        execution.now,
+        execution.clockOverride ?? (yield* DateTime.nowAsDate),
         claimedState,
         decodeError.reason,
         'payload_decode_failure',
@@ -365,14 +370,16 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       return yield* failOutboxDelivery(
         repository,
         claim,
-        execution.now,
+        // Settlement reads the clock again: reusing the claim timestamp recorded a zero handler duration and
+        // placed the retry's availableAt in the past, which skipped the backoff.
+        execution.clockOverride ?? (yield* DateTime.nowAsDate),
         claimedState,
         executionError.reason,
         'handler_failure',
       );
     }
 
-    yield* repository.complete(claim, execution.now).pipe(
+    yield* repository.complete(claim, execution.clockOverride ?? (yield* DateTime.nowAsDate)).pipe(
       Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );
@@ -397,8 +404,8 @@ const runCycleWithRepository = Effect.fn('makeOutboxRuntime.runCycle')(function*
   );
   const execution: OutboxCycleExecution<Registration> = {
     claimOwner: validated.claimOwner,
+    clockOverride: validated.clockOverride,
     compositionRevision: validated.compositionRevision,
-    now: validated.now,
     registrations: validated.registrations,
     registrationsByKey,
   };

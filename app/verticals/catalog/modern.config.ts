@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +83,7 @@ const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfi
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
   ? createCloudflareWorkerConfig(envValue, {
+      hyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_CATALOG',
     })
   : undefined;

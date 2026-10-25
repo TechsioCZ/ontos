@@ -1,13 +1,15 @@
 /// <reference types="node" />
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
+import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { FinanceStateSchema } from '../shared/apis/records.ts';
-import { financeRelations, financeStates } from '../src/database/schema.ts';
+import { financeDocumentContents, financeRelations, financeStates } from '../src/database/schema.ts';
 
 const OWNER_SCHEMA = 'finance_billing';
 const DEMO_TENANT = '70000000-0000-4000-8000-000000000020';
@@ -15,7 +17,7 @@ const DEMO_LEGAL_ENTITY = '71000000-0000-4000-8000-000000000020';
 const OTHER_TENANT = '70000000-0000-4000-8000-000000000021';
 const OTHER_LEGAL_ENTITY = '71000000-0000-4000-8000-000000000021';
 const ColumnNameSchema = Schema.String.pipe(Schema.brand('PostgreSQLColumnName'));
-const CatalogSchema = Schema.Struct({
+export const CatalogSchema = Schema.Struct({
   checks: Schema.Array(Schema.String),
   forceRls: Schema.Boolean,
   owner: Schema.String,
@@ -43,30 +45,34 @@ class FinanceDatabaseVerificationError extends Schema.TaggedError<FinanceDatabas
   { reason: Schema.String },
 ) {}
 const failure = (reason: string) => new FinanceDatabaseVerificationError({ reason });
-const verifyTables = Effect.fn('Finance.verifyTableCatalog')(function* verifyTableCatalog(
+const hasRuntimeGrants = (table: typeof CatalogSchema.Type, adminOwner: string) =>
+  table.owner === adminOwner &&
+  table.runtimeSelect &&
+  table.runtimeInsert &&
+  table.runtimeDelete &&
+  table.runtimeUpdate === (table.tableName !== 'gateway_assertion_redemptions');
+const hasScopedRls = (table: typeof CatalogSchema.Type) =>
+  table.rowSecurity && table.forceRls && table.policies.join(',') === 'a,d,r,w';
+export const verifyTables = Effect.fn('Finance.verifyTableCatalog')(function* verifyTableCatalog(
   tables: readonly (typeof CatalogSchema.Type)[],
   adminOwner: string,
 ) {
-  const [stateTable, redemptionTable] = tables;
+  const [documentTable, stateTable, redemptionTable] = tables;
   if (
-    tables.length !== 2 ||
+    tables.length !== 3 ||
+    documentTable?.tableName !== 'finance_document_contents' ||
     stateTable?.tableName !== 'finance_states' ||
     redemptionTable?.tableName !== 'gateway_assertion_redemptions' ||
-    tables.some(
-      (table) =>
-        table.owner !== adminOwner ||
-        !table.runtimeSelect ||
-        !table.runtimeInsert ||
-        !table.runtimeUpdate ||
-        !table.runtimeDelete,
-    )
+    tables.some((table) => !hasRuntimeGrants(table, adminOwner))
   ) {
-    return yield* failure('Finance owner tables, ownership or runtime CRUD grants do not match');
+    return yield* failure(
+      'Finance owner tables, ownership, state CRUD or immutable replay receipt grants do not match',
+    );
   }
   if (
-    !stateTable.rowSecurity ||
-    !stateTable.forceRls ||
-    stateTable.policies.join(',') !== 'a,d,r,w' ||
+    !hasScopedRls(documentTable) ||
+    documentTable.primaryKey.join(',') !== 'tenant_id,legal_entity_id,document_id' ||
+    !hasScopedRls(stateTable) ||
     stateTable.primaryKey.join(',') !== 'tenant_id,legal_entity_id' ||
     !stateTable.checks.some((check) => check.includes('revision >= 0')) ||
     !stateTable.checks.some((check) => check.includes('jsonb_typeof(state)')) ||
@@ -78,6 +84,45 @@ const verifyTables = Effect.fn('Finance.verifyTableCatalog')(function* verifyTab
   }
   return yield* Effect.void;
 });
+interface SnapshotRow {
+  readonly revision: number;
+  readonly state: unknown;
+}
+// Readiness checks every present aggregate; --require-seed also requires the demo row.
+export const verifySnapshot = Effect.fn('Finance.verifySnapshot')(function* verifySnapshot(
+  rows: readonly SnapshotRow[],
+  requireSeed: boolean,
+) {
+  const snapshot = yield* Schema.decodeUnknownEffect(
+    Schema.Array(
+      Schema.Struct({
+        revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        state: FinanceStateSchema,
+      }),
+    ),
+  )(rows);
+  if (snapshot.length > 1 || (requireSeed && snapshot.length !== 1)) {
+    return yield* failure('Finance exact scope must contain at most one aggregate; --require-seed requires one');
+  }
+  for (const { state } of snapshot) {
+    const references = [
+      ...state.invoices.flatMap((invoice) => [
+        invoice.ref,
+        invoice.counterpartyRef,
+        invoice.propertyRef,
+        invoice.unitRef,
+        invoice.contractRef,
+        invoice.occupancyRef,
+        invoice.taskRef,
+      ]),
+      ...state.financialPlanEntries.flatMap((entry) => [entry.ref, entry.propertyRef]),
+    ];
+    if (references.some((ref) => ref !== undefined && ref.tenantId !== DEMO_TENANT)) {
+      return yield* failure('Finance persisted state contains a reference outside its tenant scope');
+    }
+  }
+  return yield* Effect.void;
+});
 const runtimePgLive = PgClient.layerFrom(
   Effect.gen(function* runtimeConnection() {
     const pair = yield* loadDatabaseConnectionPair();
@@ -85,13 +130,14 @@ const runtimePgLive = PgClient.layerFrom(
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
-const main = Effect.gen(function* verifyFinanceDatabase() {
-  const connections = yield* loadDatabaseConnectionPair();
-  const client = yield* PgClient.PgClient;
-  const db = yield* makeWithDefaults({ relations: financeRelations });
-  // PostgreSQL catalogs have no owner Drizzle table. These queries only inspect
-  // the actual deployment schema, migration journal, constraints and grants.
-  const rawTables = yield* client.unsafe<typeof CatalogSchema.Encoded>(`
+const main = (requireSeed: boolean) =>
+  Effect.gen(function* verifyFinanceDatabase() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const client = yield* PgClient.PgClient;
+    const db = yield* makeWithDefaults({ relations: financeRelations });
+    // PostgreSQL catalogs have no owner Drizzle table. These queries only inspect
+    // the actual deployment schema, migration journal, constraints and grants.
+    const rawTables = yield* client.unsafe<typeof CatalogSchema.Encoded>(`
     select c.relname as "tableName", pg_get_userbyid(c.relowner) as owner,
       c.relrowsecurity as "rowSecurity", c.relforcerowsecurity as "forceRls",
       array(select p.polcmd::text from pg_catalog.pg_policy p where p.polrelid=c.oid order by p.polcmd) as policies,
@@ -108,9 +154,9 @@ const main = Effect.gen(function* verifyFinanceDatabase() {
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
     where n.nspname='finance_billing' and c.relkind='r' order by c.relname
   `);
-  const tables = yield* Schema.decodeEffect(Schema.Array(CatalogSchema))(rawTables);
-  yield* verifyTables(tables, connections.admin.user);
-  const rawInfrastructure = yield* client.unsafe<typeof InfrastructureSchema.Encoded>(`
+    const tables = yield* Schema.decodeEffect(Schema.Array(CatalogSchema))(rawTables);
+    yield* verifyTables(tables, connections.admin.user);
+    const rawInfrastructure = yield* client.unsafe<typeof InfrastructureSchema.Encoded>(`
     select current_user as "runtimeRole", r.rolsuper as "runtimeSuper", r.rolbypassrls as "runtimeBypass",
       has_schema_privilege(current_user,'finance_billing','USAGE') as "runtimeUsage",
       has_schema_privilege(current_user,'finance_billing','CREATE') as "runtimeCreate",
@@ -124,85 +170,100 @@ const main = Effect.gen(function* verifyFinanceDatabase() {
         where n.nspname='finance_billing' and k.contype='f' and target_n.nspname<>'finance_billing') as "externalForeignKeys"
     from pg_catalog.pg_roles r where r.rolname=current_user
   `);
-  const [infrastructure] = yield* Schema.decodeEffect(Schema.Array(InfrastructureSchema))(rawInfrastructure);
-  if (
-    infrastructure === undefined ||
-    infrastructure.runtimeRole !== connections.runtime.user ||
-    infrastructure.runtimeSuper ||
-    infrastructure.runtimeBypass ||
-    infrastructure.runtimeCreate ||
-    !infrastructure.runtimeUsage ||
-    !infrastructure.migrationJournal ||
-    !infrastructure.expiryIndex ||
-    infrastructure.externalForeignKeys !== 0
-  ) {
-    return yield* failure('Finance runtime role, owner schema privileges or migration catalog do not match');
-  }
-  const unscoped = yield* db.select().from(financeStates).limit(1);
-  if (unscoped.length !== 0) {
-    return yield* failure('Unscoped runtime read bypassed Finance RLS');
-  }
-  const readDemoWithScope = Effect.fn('Finance.verifyScopedRead')(function* readDemoWithScope(
-    tenantId: string,
-    legalEntityId: string,
-  ) {
-    return yield* client.withTransaction(
-      Effect.gen(function* readInTransaction() {
-        // Only transaction-local context changes; no business rows or privileges are mutated.
-        yield* client`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`;
-        return yield* db
-          .select()
-          .from(financeStates)
-          .where(and(eq(financeStates.tenantId, DEMO_TENANT), eq(financeStates.legalEntityId, DEMO_LEGAL_ENTITY)))
-          .limit(2);
-      }),
+    const [infrastructure] = yield* Schema.decodeEffect(Schema.Array(InfrastructureSchema))(rawInfrastructure);
+    if (
+      infrastructure === undefined ||
+      infrastructure.runtimeRole !== connections.runtime.user ||
+      infrastructure.runtimeSuper ||
+      infrastructure.runtimeBypass ||
+      infrastructure.runtimeCreate ||
+      !infrastructure.runtimeUsage ||
+      !infrastructure.migrationJournal ||
+      !infrastructure.expiryIndex ||
+      infrastructure.externalForeignKeys !== 0
+    ) {
+      return yield* failure('Finance runtime role, owner schema privileges or migration catalog do not match');
+    }
+    const unscoped = yield* db.select().from(financeStates).limit(1);
+    const unscopedDocuments = yield* db
+      .select({ documentId: financeDocumentContents.documentId })
+      .from(financeDocumentContents)
+      .limit(1);
+    if (unscoped.length !== 0 || unscopedDocuments.length !== 0) {
+      return yield* failure('Unscoped runtime read bypassed Finance RLS');
+    }
+    const readDemoWithScope = Effect.fn('Finance.verifyScopedRead')(function* readDemoWithScope(
+      tenantId: string,
+      legalEntityId: string,
+    ) {
+      return yield* client.withTransaction(
+        Effect.gen(function* readInTransaction() {
+          // Only transaction-local context changes; no business rows or privileges are mutated.
+          yield* client`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`;
+          return yield* db
+            .select()
+            .from(financeStates)
+            .where(and(eq(financeStates.tenantId, DEMO_TENANT), eq(financeStates.legalEntityId, DEMO_LEGAL_ENTITY)))
+            .limit(2);
+        }),
+      );
+    });
+    const readDemoDocumentsWithScope = (tenantId: string, legalEntityId: string) =>
+      client.withTransaction(
+        Effect.gen(function* readDocumentsInTransaction() {
+          yield* client`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`;
+          return yield* db
+            .select({ documentId: financeDocumentContents.documentId })
+            .from(financeDocumentContents)
+            .where(
+              and(
+                eq(financeDocumentContents.tenantId, DEMO_TENANT),
+                eq(financeDocumentContents.legalEntityId, DEMO_LEGAL_ENTITY),
+              ),
+            )
+            .limit(1);
+        }),
+      );
+    for (const [tenantId, legalEntityId] of [
+      ['', DEMO_LEGAL_ENTITY],
+      [OTHER_TENANT, DEMO_LEGAL_ENTITY],
+      [DEMO_TENANT, OTHER_LEGAL_ENTITY],
+      [DEMO_TENANT, ''],
+    ] as const) {
+      const denied = yield* readDemoWithScope(tenantId, legalEntityId);
+      const deniedDocuments = yield* readDemoDocumentsWithScope(tenantId, legalEntityId);
+      if (denied.length !== 0 || deniedDocuments.length !== 0) {
+        return yield* failure('Wrong tenant, wrong legal entity or missing legal entity exposed the Finance demo row');
+      }
+    }
+    yield* verifySnapshot(yield* readDemoWithScope(DEMO_TENANT, DEMO_LEGAL_ENTITY), requireSeed);
+    return yield* Console.log(
+      `${OWNER_SCHEMA} database verification passed (catalog, grants, RLS, scope isolation, existing state; ${requireSeed ? 'seed required' : 'migration readiness'})`,
     );
   });
-  for (const [tenantId, legalEntityId] of [
-    [OTHER_TENANT, DEMO_LEGAL_ENTITY],
-    [DEMO_TENANT, OTHER_LEGAL_ENTITY],
-    [DEMO_TENANT, ''],
-  ] as const) {
-    const denied = yield* readDemoWithScope(tenantId, legalEntityId);
-    if (denied.length !== 0) {
-      return yield* failure('Wrong tenant, wrong legal entity or missing legal entity exposed the Finance demo row');
-    }
-  }
-  const [baseline] = yield* readDemoWithScope(DEMO_TENANT, DEMO_LEGAL_ENTITY);
-  if (baseline === undefined || baseline.revision < 0) {
-    return yield* failure('Finance demo seed is absent in its correct tenant and legal entity scope');
-  }
-  const state = yield* Schema.decodeEffect(FinanceStateSchema)(baseline.state);
-  const references = [
-    ...state.invoices.flatMap((invoice) => [
-      invoice.ref,
-      invoice.counterpartyRef,
-      invoice.propertyRef,
-      invoice.unitRef,
-      invoice.contractRef,
-      invoice.occupancyRef,
-      invoice.taskRef,
-    ]),
-    ...state.financialPlanEntries.flatMap((entry) => [entry.ref, entry.propertyRef]),
-  ];
-  if (references.some((ref) => ref !== undefined && ref.tenantId !== DEMO_TENANT)) {
-    return yield* failure('Finance persisted state contains a reference outside its tenant scope');
-  }
-  return yield* Console.log(
-    `${OWNER_SCHEMA} database verification passed (catalog, grants, RLS, scope isolation, seed)`,
-  );
-});
-const mainLive = Layer.effectDiscard(main).pipe(Layer.provide(runtimePgLive));
-const result = await Effect.runPromiseExit(
-  Effect.scoped(Layer.build(mainLive)).pipe(
-    Effect.tapCause((cause) =>
-      Console.error(
-        'Finance database verification failed',
-        cause.reasons.map((reason) => reason._tag),
+const cli = Command.make(
+  'verify-db-schema',
+  {
+    requireSeed: Flag.Boolean('require-seed').pipe(Flag.withDefault(false)),
+  },
+  ({ requireSeed }) => main(requireSeed),
+);
+const mainLive = Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
+  Layer.provide(runtimePgLive),
+  Layer.provide(NodeServices.layer),
+);
+if (import.meta.main) {
+  const result = await Effect.runPromiseExit(
+    Effect.scoped(Layer.build(mainLive)).pipe(
+      Effect.tapCause((cause) =>
+        Console.error(
+          'Finance database verification failed',
+          cause.reasons.map((reason) => reason._tag),
+        ),
       ),
     ),
-  ),
-);
-if (Exit.isFailure(result)) {
-  process.exitCode = 1;
+  );
+  if (Exit.isFailure(result)) {
+    process.exitCode = 1;
+  }
 }

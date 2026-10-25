@@ -62,6 +62,8 @@ services:
     type: nodejs@24
   - hostname: privacyworker
     type: nodejs@24
+  - hostname: financebillingworker
+    type: nodejs@24
   - hostname: coresystemworker
     type: nodejs@24
   # Stage-only services carry hard autoscaling ceilings, so a runaway container cannot grow the bill.

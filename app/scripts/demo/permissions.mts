@@ -17,7 +17,7 @@ import {
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import {
   akrosDemoLegalEntityId,
@@ -1010,41 +1010,59 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
 };
 
 /** Reviewed live-only restoration: exact executors, no module or context-permission union. */
-export const reviewedHumanActionAddonRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
-  const operationsKeys = [
-    'crm.activities.apply-command',
-    'demo.workforce.apply-command',
-    'demo.merchandise.apply-command',
-    'demo.sales-insights.apply-command',
-    'finance.billing.apply-command',
-    'property.portfolio.apply-command',
-  ];
-  const selected = (keys: readonly string[]) =>
-    keys.map((key) => {
-      const action = actions.find((candidate) => candidate.actionKey === key);
-      if (action === undefined) {
-        throw new Error(`Reviewed Action missing: ${key}`);
-      }
-      return action;
-    });
-  return [
-    ...selected(operationsKeys).flatMap((action) =>
-      scopedDemoActionRelationships(
-        siamparkRentalPersonas[1].principalId,
-        action,
-        rentalDemoLegalEntityId,
-        demoTenantId,
-        'operations-execution',
+const ReviewedActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
+
+export class ReviewedDemoActionMissing extends Schema.TaggedError<ReviewedDemoActionMissing>()(
+  'ReviewedDemoActionMissing',
+  { actionKey: ReviewedActionKeySchema, message: Schema.String },
+) {}
+
+export const reviewedHumanActionAddonRelationships = Effect.fn('DemoPermissions.reviewedHumanActionAddons')(
+  function* reviewedHumanActionAddons(actions: readonly DemoAction[]) {
+    const operationsKeys = [
+      'crm.activities.apply-command',
+      'demo.workforce.apply-command',
+      'demo.merchandise.apply-command',
+      'demo.sales-insights.apply-command',
+      'finance.billing.apply-command',
+      'property.portfolio.apply-command',
+    ];
+    const selected = (keys: readonly string[]) =>
+      Effect.forEach(
+        keys,
+        (key) => {
+          const action = actions.find((candidate) => candidate.actionKey === key);
+          if (action === undefined) {
+            return Effect.fail(
+              new ReviewedDemoActionMissing({
+                actionKey: ReviewedActionKeySchema.make(key),
+                message: `Reviewed Action missing: ${key}`,
+              }),
+            );
+          }
+          return Effect.succeed(action);
+        },
+        { concurrency: 1 },
+      );
+    return [
+      ...(yield* selected(operationsKeys)).flatMap((action) =>
+        scopedDemoActionRelationships(
+          siamparkRentalPersonas[1].principalId,
+          action,
+          rentalDemoLegalEntityId,
+          demoTenantId,
+          'operations-execution',
+        ),
       ),
-    ),
-    ...selected(['property.leasing.apply-command']).flatMap((action) =>
-      scopedDemoActionRelationships(
-        demoHumanAccounts[1].principalId,
-        action,
-        demoLegalEntityId,
-        demoTenantId,
-        'rental-sales-execution',
+      ...(yield* selected(['property.leasing.apply-command'])).flatMap((action) =>
+        scopedDemoActionRelationships(
+          demoHumanAccounts[1].principalId,
+          action,
+          demoLegalEntityId,
+          demoTenantId,
+          'rental-sales-execution',
+        ),
       ),
-    ),
-  ];
-};
+    ];
+  },
+);

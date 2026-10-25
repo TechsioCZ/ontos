@@ -15,7 +15,9 @@ const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName,
-  kind: Schema.Literals(['service', 'integration', 'system']),
+  // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
+  // a persisted kind is never evidence of Core attestation.
+  kind: Schema.Literals(['service', 'integration']),
 });
 export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayloadSchema>;
 const CreateNonHumanPrincipalResultSchema = Schema.Struct({

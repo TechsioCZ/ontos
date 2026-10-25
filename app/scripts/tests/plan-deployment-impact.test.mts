@@ -571,6 +571,9 @@ for (const changedPath of [
   'scripts/run-zerops-migrator.mjs',
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
+  'scripts/postgres/runtime-role-bootstrap.mts',
+  'scripts/postgres/database-login-roles.mts',
+  'scripts/postgres/database-role-manifest.mts',
 ]) {
   it.live(`includes the migrator for root migration contract ${changedPath}`, () =>
     Effect.gen(function* testEffect14() {
@@ -584,6 +587,38 @@ for (const changedPath of [
         }),
       );
     }),
+  );
+}
+
+for (const changedPath of [
+  'packages/core-runtime/src/db/database-identities.ts',
+  'packages/core-runtime/src/db/database-identity-manifest.ts',
+]) {
+  it.live(`deploys the migrator before consumers of the database identity contract ${changedPath}`, () =>
+    withFixture((root) =>
+      Effect.gen(function* plansIdentityContractChange() {
+        const plan = yield* planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+        expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'contacts', SHELL_ID]);
+      }),
+    ),
+  );
+}
+
+for (const changedPath of [
+  'verticals/party-registry/src/db/database-grants.ts',
+  'verticals/party-registry/scripts/database-role-contract.mts',
+  'verticals/party-registry/drizzle-contacts/20261024090301_contacts-gateway-scope-rls/migration.sql',
+  'verticals/party-registry/drizzle.contacts.config.ts',
+]) {
+  it.live(`deploys the migrator before Party for the database boundary contract ${changedPath}`, () =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* plansPartyDatabaseBoundaryChange() {
+          const plan = yield* planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'party-registry']);
+        }),
+      { verticalId: 'party-registry' },
+    ),
   );
 }
 

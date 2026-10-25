@@ -1,12 +1,20 @@
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
+import { PgClient } from '@effect/sql-pg';
 import { getTableName, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import type { CatalogEntry } from '../src/db/catalog.ts';
 import { compareApplicationCatalog } from '../src/db/catalog.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
-import { DatabaseConfigLive } from '../src/db/config.ts';
+import { DatabaseConfigLive, loadDatabaseConnectionPair } from '../src/db/config.ts';
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+  TRUST_ROUTINES,
+} from '../src/db/database-identities.ts';
 import {
   CORE_SCHEMA_NAME,
   actionInvocations,
@@ -49,6 +57,216 @@ const RuntimeRoleRowSchema = Schema.Struct({
   rolsuper: Schema.Boolean,
 });
 type RuntimeRoleRow = typeof RuntimeRoleRowSchema.Type;
+
+const SHARED_ROLE = SHARED_RUNTIME_IDENTITY.role;
+const REQUEST_ROLE = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+const WORKER_ROLE = PARTY_REGISTRY_WORKER_IDENTITY.role;
+const COMPOSITION_AUTHORITY_ROLES = [SHARED_ROLE, REQUEST_ROLE, WORKER_ROLE];
+
+interface ExpectedPolicy {
+  readonly command: 'ALL' | 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
+  readonly name: string;
+  readonly roles: readonly string[];
+  readonly trustedLegalEntity?: true;
+  /** The policy must read the trusted tenant through trust.current_tenant_id(). */
+  readonly trustedTenant?: true;
+}
+
+const sharedRuntimeAll = (table: string): ExpectedPolicy => ({
+  command: 'ALL',
+  name: `core_${table}_shared_runtime_all`,
+  roles: [SHARED_ROLE],
+});
+
+const SEARCH_POLICY_COMMANDS = { delete: 'DELETE', insert: 'INSERT', select: 'SELECT', update: 'UPDATE' } as const;
+
+const sharedSearchPolicies = (
+  table: string,
+  operations: readonly ('select' | 'insert' | 'update' | 'delete')[],
+): readonly ExpectedPolicy[] =>
+  operations.map((operation) => ({
+    command: SEARCH_POLICY_COMMANDS[operation],
+    name: `core_${table}_tenant_${operation}`,
+    roles: [SHARED_ROLE],
+  }));
+
+const workerSearchPolicies = (table: string): readonly ExpectedPolicy[] => [
+  { command: 'SELECT', name: `core_${table}_party_registry_worker_select`, roles: [WORKER_ROLE] },
+  { command: 'INSERT', name: `core_${table}_party_registry_worker_insert`, roles: [WORKER_ROLE] },
+  { command: 'UPDATE', name: `core_${table}_party_registry_worker_update`, roles: [WORKER_ROLE] },
+];
+
+/** Tables whose RLS is enabled but not forced so the admin-owned migrations keep owner access. */
+const DEDICATED_IDENTITY_RLS_TABLES = [
+  'tenants',
+  'tenant_module_states',
+  'legal_entities',
+  'principals',
+  'principal_auth_bindings',
+  'action_invocations',
+  'audit_events',
+  'data_access_events',
+  'domain_events',
+  'outbox_messages',
+] as const;
+
+/** Exact policy sets per Core table that the dedicated database identities depend on. */
+const EXPECTED_CORE_POLICIES: ReadonlyMap<string, readonly ExpectedPolicy[]> = new Map(
+  Object.entries({
+    action_invocations: [
+      sharedRuntimeAll('action_invocations'),
+      {
+        command: 'SELECT',
+        name: 'core_action_invocations_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      {
+        command: 'INSERT',
+        name: 'core_action_invocations_party_registry_request_insert',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      {
+        command: 'UPDATE',
+        name: 'core_action_invocations_party_registry_request_update',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      { command: 'SELECT', name: 'core_action_invocations_party_registry_worker_select', roles: [WORKER_ROLE] },
+    ],
+    audit_events: [
+      sharedRuntimeAll('audit_events'),
+      {
+        command: 'SELECT',
+        name: 'core_audit_events_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      {
+        command: 'INSERT',
+        name: 'core_audit_events_party_registry_request_insert',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+    ],
+    data_access_events: [
+      sharedRuntimeAll('data_access_events'),
+      {
+        command: 'INSERT',
+        name: 'core_data_access_events_party_registry_request_insert',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+    ],
+    domain_events: [
+      sharedRuntimeAll('domain_events'),
+      {
+        command: 'INSERT',
+        name: 'core_domain_events_party_registry_request_insert',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      { command: 'SELECT', name: 'core_domain_events_party_registry_worker_select', roles: [WORKER_ROLE] },
+      { command: 'UPDATE', name: 'core_domain_events_party_registry_worker_lock', roles: [WORKER_ROLE] },
+    ],
+    legal_entities: [
+      sharedRuntimeAll('legal_entities'),
+      {
+        command: 'SELECT',
+        name: 'core_legal_entities_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedTenant: true,
+      },
+      { command: 'SELECT', name: 'core_legal_entities_party_registry_worker_select', roles: [WORKER_ROLE] },
+    ],
+    outbox_messages: [
+      sharedRuntimeAll('outbox_messages'),
+      {
+        command: 'INSERT',
+        name: 'core_outbox_messages_party_registry_request_insert',
+        roles: [REQUEST_ROLE],
+        trustedTenant: true,
+      },
+      { command: 'SELECT', name: 'core_outbox_messages_party_registry_worker_select', roles: [WORKER_ROLE] },
+      { command: 'UPDATE', name: 'core_outbox_messages_party_registry_worker_update', roles: [WORKER_ROLE] },
+    ],
+    principal_auth_bindings: [
+      sharedRuntimeAll('principal_auth_bindings'),
+      {
+        command: 'SELECT',
+        name: 'core_principal_auth_bindings_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedTenant: true,
+      },
+    ],
+    principals: [
+      sharedRuntimeAll('principals'),
+      {
+        command: 'SELECT',
+        name: 'core_principals_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedTenant: true,
+      },
+    ],
+    search_index_entries: [
+      ...sharedSearchPolicies('search_index_entries', ['select', 'insert', 'update', 'delete']),
+      {
+        command: 'SELECT',
+        name: 'core_search_index_entries_party_registry_request_select',
+        roles: [REQUEST_ROLE],
+        trustedLegalEntity: true,
+        trustedTenant: true,
+      },
+      ...workerSearchPolicies('search_index_entries'),
+    ],
+    search_projection_generations: [
+      ...sharedSearchPolicies('search_projection_generations', ['select', 'insert', 'update']),
+      ...workerSearchPolicies('search_projection_generations'),
+    ],
+    search_projection_rebuilds: [
+      ...sharedSearchPolicies('search_projection_rebuilds', ['select', 'insert', 'update']),
+      ...workerSearchPolicies('search_projection_rebuilds'),
+    ],
+    tenant_module_states: [
+      sharedRuntimeAll('tenant_module_states'),
+      {
+        command: 'SELECT',
+        name: 'core_tenant_module_states_party_registry_select',
+        roles: [REQUEST_ROLE, WORKER_ROLE],
+      },
+      { command: 'UPDATE', name: 'core_tenant_module_states_party_registry_worker_lock', roles: [WORKER_ROLE] },
+    ],
+    tenants: [
+      sharedRuntimeAll('tenants'),
+      { command: 'SELECT', name: 'core_tenants_party_registry_select', roles: [REQUEST_ROLE, WORKER_ROLE] },
+      {
+        command: 'UPDATE',
+        name: 'core_tenants_party_registry_request_lock',
+        roles: [REQUEST_ROLE],
+        trustedTenant: true,
+      },
+      { command: 'UPDATE', name: 'core_tenants_party_registry_worker_lock', roles: [WORKER_ROLE] },
+    ],
+  } satisfies Record<string, readonly ExpectedPolicy[]>),
+);
+
+const policyIdentity = ({
+  command,
+  name,
+  roles,
+}: {
+  readonly command: string;
+  readonly name: string;
+  readonly roles: readonly string[];
+}): string => `${name}:${command}:${roles.toSorted().join('+')}`;
 
 const isUnsafeRuntimeRole = (role: RuntimeRoleRow | undefined): boolean =>
   role === undefined || role.rolsuper || role.rolbypassrls;
@@ -97,11 +315,7 @@ const verifyRuntimeRole = Effect.gen(function* verifyRuntimeRoleEffect() {
 
 const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect() {
   const database = yield* CoreDatabase;
-  for (const [tableName, operations] of [
-    ['search_index_entries', ['delete', 'insert', 'select', 'update']],
-    ['search_projection_generations', ['insert', 'select', 'update']],
-    ['search_projection_rebuilds', ['insert', 'select', 'update']],
-  ] as const) {
+  for (const tableName of ['search_index_entries', 'search_projection_generations', 'search_projection_rebuilds']) {
     const searchIsolation = yield* database.executor
       .execute<{
         policy_names: string[];
@@ -133,7 +347,7 @@ const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect()
         ),
       );
     const [searchIsolationRow] = searchIsolation;
-    const expectedSearchPolicies = operations.map((operation) => `core_${tableName}_tenant_${operation}`);
+    const expectedSearchPolicies = (EXPECTED_CORE_POLICIES.get(tableName) ?? []).map(({ name }) => name).toSorted();
     if (
       searchIsolationRow === undefined ||
       !searchIsolationRow.relrowsecurity ||
@@ -151,6 +365,7 @@ const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect()
 
 const verifyApplicationCompositionAuthority = (
   table: typeof applicationCompositionAuthority | typeof applicationCompositionDurableWork,
+  expectedRoles: readonly string[],
 ) =>
   Effect.gen(function* verifyApplicationCompositionAuthorityEffect() {
     const database = yield* CoreDatabase;
@@ -180,7 +395,10 @@ const verifyApplicationCompositionAuthority = (
             where policy.policyname = ${`core_${getTableName(table)}_select`}
               and policy.cmd = 'SELECT'
               and policy.permissive = 'PERMISSIVE'
-              and policy.roles = array['ontos_runtime']::name[]
+              and array(select role_name::text from unnest(policy.roles) as role_name order by 1) = array[${sql.join(
+                expectedRoles.toSorted().map((role) => sql`${role}`),
+                sql`, `,
+              )}]::text[]
               and policy.qual = 'true'
               and policy.with_check is null
           )::integer as select_policy_count
@@ -261,6 +479,208 @@ const verifyDurableWorkRoutine = Effect.gen(function* verifyDurableWorkRoutineEf
   }
   return yield* Effect.void;
 });
+
+const hasEntityOrGlobalPredicate = (expression: string | null): boolean =>
+  expression === null ||
+  (expression.includes('trust.current_legal_entity_id()') &&
+    (expression.match(/IS NULL/gu)?.length ?? 0) >= 2 &&
+    (expression.match(/ OR /gu)?.length ?? 0) >= 2);
+
+const verifyDedicatedIdentityPolicies = Effect.gen(function* verifyDedicatedIdentityPoliciesEffect() {
+  const database = yield* CoreDatabase;
+  const relations = yield* database.executor
+    .execute<{ relforcerowsecurity: boolean; relname: string; relrowsecurity: boolean }>(
+      sql`
+        select relation.relname, relation.relrowsecurity, relation.relforcerowsecurity
+        from pg_catalog.pg_class as relation
+        inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+        where namespace.nspname = ${CORE_SCHEMA_NAME}
+          and relation.relname in (${sql.join(
+            DEDICATED_IDENTITY_RLS_TABLES.map((table) => sql`${table}`),
+            sql`, `,
+          )})
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () => new DatabaseVerificationError({ reason: 'Unable to verify Core dedicated-identity row security' }),
+      ),
+    );
+  const unprotected = DEDICATED_IDENTITY_RLS_TABLES.filter((table) => {
+    const relation = relations.find(({ relname }) => relname === table);
+    return relation === undefined || !relation.relrowsecurity || relation.relforcerowsecurity;
+  });
+  if (unprotected.length > 0) {
+    return yield* new DatabaseVerificationError({
+      reason: `Core tables must enable, and not force, row security: ${unprotected.join(', ')}`,
+    });
+  }
+  const tables = [...EXPECTED_CORE_POLICIES.keys()];
+  const policies = yield* database.executor
+    .execute<{
+      cmd: string;
+      policyname: string;
+      qual: string | null;
+      roles: string[];
+      tablename: string;
+      with_check: string | null;
+    }>(
+      sql`
+        select policy.tablename::text as tablename, policy.policyname::text as policyname, policy.cmd,
+          array(select role_name::text from unnest(policy.roles) as role_name order by 1) as roles,
+          policy.qual, policy.with_check
+        from pg_catalog.pg_policies as policy
+        where policy.schemaname = ${CORE_SCHEMA_NAME}
+          and policy.tablename in (${sql.join(
+            tables.map((table) => sql`${table}`),
+            sql`, `,
+          )})
+      `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () => new DatabaseVerificationError({ reason: 'Unable to verify Core dedicated-identity policies' }),
+      ),
+    );
+  for (const table of tables) {
+    const expected = (EXPECTED_CORE_POLICIES.get(table) ?? []).map(policyIdentity).toSorted();
+    const actual = policies
+      .filter(({ tablename }) => tablename === table)
+      .map(({ cmd, policyname, roles }) => policyIdentity({ command: cmd, name: policyname, roles }))
+      .toSorted();
+    if (actual.length !== expected.length || actual.some((policy, index) => policy !== expected[index])) {
+      return yield* new DatabaseVerificationError({
+        reason: `Core ${table} policies must be exactly [${expected.join(', ')}], found [${actual.join(', ')}]`,
+      });
+    }
+  }
+  const expectedPolicies = [...EXPECTED_CORE_POLICIES.values()].flat();
+  for (const policy of policies) {
+    const expected = expectedPolicies.find(({ name }) => name === policy.policyname);
+    const predicate = `${policy.qual ?? ''} ${policy.with_check ?? ''}`;
+    if (expected?.trustedLegalEntity === true && ![policy.qual, policy.with_check].every(hasEntityOrGlobalPredicate)) {
+      return yield* new DatabaseVerificationError({
+        reason: `Core policy ${policy.policyname} must allow global rows and tenant-wide scope while checking sealed legal entity`,
+      });
+    }
+    if (
+      policy.roles.includes(REQUEST_ROLE) &&
+      (predicate.includes('current_setting') ||
+        (expected?.trustedTenant === true && !predicate.includes('trust.current_tenant_id()')))
+    ) {
+      return yield* new DatabaseVerificationError({
+        reason: `Core policy ${policy.policyname} must read tenant scope only through trust.current_tenant_id()`,
+      });
+    }
+  }
+  return yield* Effect.void;
+});
+
+const TRUST_TABLE_NAMES = ['scope_sealing_keys', 'gateway_audience_roles', 'gateway_scope_grants'] as const;
+const TRUST_ROUTINE_SEARCH_PATH = 'search_path=pg_catalog, pg_temp';
+
+const trustCatalogFailure = (reason: string): DatabaseVerificationError => new DatabaseVerificationError({ reason });
+
+const verifyTrustAudience = (client: PgClient.PgClient) =>
+  Effect.gen(function* verifyTrustAudienceEffect() {
+    const audiences = yield* client
+      .unsafe<{ audience: string; role_name: string }>(
+        'select audience, role_name::text from trust.gateway_audience_roles order by audience',
+      )
+      .pipe(Effect.mapError(() => trustCatalogFailure('Unable to verify trust gateway audiences')));
+    if (
+      audiences.length !== 1 ||
+      audiences[0]?.audience !== 'party-registry' ||
+      audiences[0]?.role_name !== REQUEST_ROLE
+    ) {
+      return yield* trustCatalogFailure(
+        'trust.gateway_audience_roles must contain exactly party-registry -> party_registry_runtime',
+      );
+    }
+    return yield* Effect.void;
+  });
+
+/**
+ * Verifies the trust schema as the migration administrator: only that session can see the sealing-key
+ * count, and the routines must be owned by it.
+ */
+const verifyTrustCatalog = Effect.gen(function* verifyTrustCatalogEffect() {
+  const connections = yield* loadDatabaseConnectionPair().pipe(
+    Effect.mapError((failure) => trustCatalogFailure(failure.reason)),
+  );
+  const client = yield* PgClient.makeClient({ url: Redacted.make(connections.admin.connectionString) }).pipe(
+    Effect.mapError((cause) =>
+      trustCatalogFailure(`Unable to connect as the PostgreSQL administrator: ${cause.message}`),
+    ),
+  );
+  const query = <Row extends object>(text: string, values?: readonly string[]) =>
+    client
+      .unsafe<Row>(text, values)
+      .pipe(Effect.mapError((cause) => trustCatalogFailure(`Unable to verify the trust catalog: ${cause.message}`)));
+  const [schema] = yield* query<{ present: boolean }>(
+    "select exists(select 1 from pg_catalog.pg_namespace where nspname = 'trust') as present",
+  );
+  if (schema?.present !== true) {
+    return yield* trustCatalogFailure('PostgreSQL schema trust is missing');
+  }
+  for (const table of TRUST_TABLE_NAMES) {
+    const [relation] = yield* query<{ foreign_grantees: number; present: boolean }>(
+      `select pg_catalog.to_regclass($1) is not null as present,
+         (select count(*)::int from pg_catalog.pg_class as relation
+            cross join lateral pg_catalog.aclexplode(relation.relacl) as acl
+           where relation.oid = pg_catalog.to_regclass($1) and acl.grantee <> relation.relowner) as foreign_grantees`,
+      [`trust.${table}`],
+    );
+    if (relation?.present !== true || relation.foreign_grantees !== 0) {
+      return yield* trustCatalogFailure(`trust.${table} must exist and grant nothing beyond its owner`);
+    }
+  }
+  for (const routine of TRUST_ROUTINES) {
+    const [row] = yield* query<{
+      config: string[] | null;
+      executors: string[];
+      owned_by_admin: boolean;
+      public_execute: boolean;
+      security_definer: boolean;
+    }>(
+      `select routine.prosecdef as security_definer, routine.proconfig as config,
+         routine.proowner = (select oid from pg_catalog.pg_roles where rolname = session_user) as owned_by_admin,
+         exists (select 1 from pg_catalog.aclexplode(coalesce(routine.proacl, pg_catalog.acldefault('f', routine.proowner))) as acl
+           where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') as public_execute,
+         array(select grantee.rolname::text
+                 from pg_catalog.aclexplode(routine.proacl) as acl
+                 join pg_catalog.pg_roles as grantee on grantee.oid = acl.grantee
+                where acl.privilege_type = 'EXECUTE' and acl.grantee <> routine.proowner
+                order by 1) as executors
+        from pg_catalog.pg_proc as routine
+       where routine.oid = pg_catalog.to_regprocedure($1)`,
+      [routine.signature],
+    );
+    const expectedExecutors = routine.executableBy.toSorted();
+    if (
+      row === undefined ||
+      row.security_definer !== routine.securityDefiner ||
+      row.config?.length !== 1 ||
+      row.config[0] !== TRUST_ROUTINE_SEARCH_PATH ||
+      !row.owned_by_admin ||
+      row.public_execute ||
+      row.executors.length !== expectedExecutors.length ||
+      row.executors.some((executor, index) => executor !== expectedExecutors[index])
+    ) {
+      return yield* trustCatalogFailure(
+        `${routine.signature} must exist, be admin-owned, ${routine.securityDefiner ? '' : 'not '}be SECURITY DEFINER, pin ${TRUST_ROUTINE_SEARCH_PATH} and be executable only by [${expectedExecutors.join(', ')}]`,
+      );
+    }
+  }
+  yield* verifyTrustAudience(client);
+  const [keys] = yield* query<{ key_count: number }>('select count(*)::int as key_count from trust.scope_sealing_keys');
+  if (keys?.key_count !== 1) {
+    return yield* trustCatalogFailure('trust.scope_sealing_keys must hold exactly one sealing key');
+  }
+  return yield* Effect.void;
+}).pipe(Effect.scoped);
 
 const verifyCatalog = Effect.gen(function* verifyCatalogEffect() {
   const database = yield* CoreDatabase;
@@ -624,10 +1044,12 @@ const verifyAuthBindingIndexes = Effect.gen(function* verifyAuthBindingIndexesEf
 const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   const database = yield* CoreDatabase;
   yield* verifyRuntimeRole;
-  yield* verifyApplicationCompositionAuthority(applicationCompositionAuthority);
-  yield* verifyApplicationCompositionAuthority(applicationCompositionDurableWork);
+  yield* verifyApplicationCompositionAuthority(applicationCompositionAuthority, COMPOSITION_AUTHORITY_ROLES);
+  yield* verifyApplicationCompositionAuthority(applicationCompositionDurableWork, [SHARED_ROLE]);
   yield* verifyDurableWorkRoutine;
   yield* verifySearchIsolation;
+  yield* verifyDedicatedIdentityPolicies;
+  yield* verifyTrustCatalog;
   yield* verifyCoreConstraints;
   yield* verifyAuthBindingColumns;
   yield* verifyAuthBindingIndexes;
@@ -668,6 +1090,8 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
 });
 
 const DatabaseRuntimeLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
-const result = await Effect.runPromise(Effect.provide(verifyDatabase, DatabaseRuntimeLive));
+const result = await Effect.runPromise(
+  verifyDatabase.pipe(Effect.provide(Layer.merge(Reactivity.layer, DatabaseRuntimeLive))),
+);
 
 console.log(`Verified ${result.tableCount} typed tables in PostgreSQL schema ${CORE_SCHEMA_NAME}`);

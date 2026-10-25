@@ -1262,6 +1262,9 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
     node: Extract<Node, { type: 'FunctionDeclaration' | 'FunctionExpression' | 'ArrowFunctionExpression' }>,
   ) => {
     if (node.start <= offset && offset < node.end) {
+      if (node.type === 'FunctionExpression' && node.id !== null) {
+        blockBinding(node.id);
+      }
       for (const parameter of node.params) {
         if (parameter.type === 'AssignmentPattern' && parameter.left.type === 'Identifier') {
           variables.set(parameter.left.name, parameter);
@@ -1491,6 +1494,34 @@ const nativeSubprocessEvidence = (
       }
     },
   }).visit(facts.program);
+  const identityInScope = (
+    raw: Node | undefined,
+    variables: ReadonlyMap<string, Node>,
+    seen = new Set<string>(),
+  ): string | undefined => {
+    if (
+      raw?.type === 'YieldExpression' &&
+      raw.delegate &&
+      identityInScope(raw.argument ?? undefined, variables, seen) === 'effect:Path.Path'
+    ) {
+      return 'effect:Path.service';
+    }
+    if (raw?.type === 'Identifier') {
+      if (mutable.has(raw.name) || seen.has(raw.name)) {
+        return undefined;
+      }
+      seen.add(raw.name);
+      return variables.has(raw.name)
+        ? identityInScope(variables.get(raw.name), variables, seen)
+        : (imports.get(raw.name) ?? (raw.name === 'process' || raw.name === 'URL' ? `global:${raw.name}` : undefined));
+    }
+    if (raw?.type !== 'MemberExpression' || (raw.computed && raw.property.type !== 'Literal')) {
+      return undefined;
+    }
+    const host = identityInScope(raw.object, variables, seen);
+    const member = propertyName(raw.property);
+    return host === undefined || member === undefined ? undefined : `${host}.${member}`;
+  };
   const parameters = new Map<Node, { index: number; name: string; owner: Node }>();
   const loops: {
     readonly binding: Extract<Node, { type: 'Identifier' }>;
@@ -1498,10 +1529,39 @@ const nativeSubprocessEvidence = (
     readonly iterable: Node;
   }[] = [];
   const functions = new Map<string, Extract<Node, { type: 'ArrowFunctionExpression' }>>();
+  const parameterOwners = new Map<
+    string,
+    {
+      implementation: Extract<Node, { type: 'ArrowFunctionExpression' | 'FunctionExpression' }>;
+      owner: Node;
+    }
+  >();
   new Visitor({
     VariableDeclarator: (node) => {
-      if (node.id.type === 'Identifier' && node.init?.type === 'ArrowFunctionExpression') {
+      if (node.id.type !== 'Identifier') {
+        return;
+      }
+      if (node.init?.type === 'ArrowFunctionExpression') {
         functions.set(node.id.name, node.init);
+        parameterOwners.set(node.id.name, { implementation: node.init, owner: node.init });
+        return;
+      }
+      const initializer = node.init;
+      if (initializer?.type !== 'CallExpression' || initializer.callee.type !== 'CallExpression') {
+        return;
+      }
+      const factory = initializer.callee;
+      const [implementation] = initializer.arguments;
+      if (
+        identityInScope(factory.callee, scopedVariables(facts, node.start)) === 'effect:Effect.fn' &&
+        factory.arguments.length === 1 &&
+        staticString(factory.arguments[0], new Map()) !== undefined &&
+        initializer.arguments.length === 1 &&
+        implementation?.type === 'FunctionExpression' &&
+        implementation.generator &&
+        !implementation.async
+      ) {
+        parameterOwners.set(node.id.name, { implementation, owner: initializer });
       }
     },
     ForOfStatement: (node) => {
@@ -1514,11 +1574,11 @@ const nativeSubprocessEvidence = (
       }
     },
   }).visit(facts.program);
-  for (const [name, owner] of functions) {
-    if (owner.type !== 'ArrowFunctionExpression' || mutable.has(name)) {
+  for (const [name, { implementation, owner }] of parameterOwners) {
+    if (mutable.has(name)) {
       continue;
     }
-    for (const [index, parameter] of owner.params.entries()) {
+    for (const [index, parameter] of implementation.params.entries()) {
       if (parameter.type === 'AssignmentPattern' || parameter.type === 'Identifier') {
         parameters.set(parameter, { index, name, owner });
       }
@@ -1646,37 +1706,29 @@ const nativeSubprocessEvidence = (
     if (!possibleFactory(call.callee)) {
       return;
     }
+    for (const [name, { implementation, owner }] of parameterOwners) {
+      if (
+        implementation.type === 'FunctionExpression' &&
+        implementation.start <= call.start &&
+        call.end <= implementation.end &&
+        (mutable.has(name) ||
+          !calls.some(
+            (invocation) =>
+              invocation.callee.type === 'Identifier' &&
+              invocation.callee.name === name &&
+              scopedVariables(facts, invocation.start).get(name) === owner,
+          ))
+      ) {
+        return;
+      }
+    }
     const variables = scopedVariables(facts, call.start);
     const immutableValue = (raw: Node | undefined): Node | undefined => {
       const candidates = values(raw, variables);
       return candidates.length === 1 ? candidates[0] : undefined;
     };
     const literalStrings = (raw: Node | undefined): string[] => strings(raw, variables);
-    const identity = (raw: Node | undefined, seen = new Set<string>()): string | undefined => {
-      if (
-        raw?.type === 'YieldExpression' &&
-        raw.delegate &&
-        identity(raw.argument ?? undefined, seen) === 'effect:Path.Path'
-      ) {
-        return 'effect:Path.service';
-      }
-      if (raw?.type === 'Identifier') {
-        if (mutable.has(raw.name) || seen.has(raw.name)) {
-          return undefined;
-        }
-        seen.add(raw.name);
-        return variables.has(raw.name)
-          ? identity(variables.get(raw.name), seen)
-          : (imports.get(raw.name) ??
-              (raw.name === 'process' || raw.name === 'URL' ? `global:${raw.name}` : undefined));
-      }
-      if (raw?.type !== 'MemberExpression' || (raw.computed && raw.property.type !== 'Literal')) {
-        return undefined;
-      }
-      const host = identity(raw.object, seen);
-      const member = propertyName(raw.property);
-      return host === undefined || member === undefined ? undefined : `${host}.${member}`;
-    };
+    const identity = (raw: Node | undefined): string | undefined => identityInScope(raw, variables);
     const factory = identity(call.callee);
     if (
       !['child_process:spawn', 'child_process:*.spawn', 'effect/unstable/process:ChildProcess.make'].includes(
@@ -1716,16 +1768,29 @@ const nativeSubprocessEvidence = (
           }
           return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
         }
-        if (value.type === 'CallExpression' && identity(value.callee) === 'effect:Path.service.fromFileUrl') {
+        if (
+          value.type === 'CallExpression' &&
+          ['effect:Path.service.fromFileUrl', 'url:fileURLToPath', 'url:*.fileURLToPath'].includes(
+            identity(value.callee) ?? '',
+          )
+        ) {
           const [url] = value.arguments;
           if (
+            value.arguments.length !== 1 ||
             url?.type !== 'NewExpression' ||
+            url.arguments.length !== 2 ||
             identity(url.callee) !== 'global:URL' ||
             !importedUrlBase(url.arguments[1])
           ) {
             return [];
           }
-          return literalStrings(url.arguments[0]).map((target) => path.resolve(path.dirname(sourceFile), target));
+          return literalStrings(url.arguments[0])
+            .filter(
+              (target) =>
+                identity(value.callee) === 'effect:Path.service.fromFileUrl' ||
+                (/^\.\.?\//u.test(target) && !/[%?#\\:\s]/u.test(target)),
+            )
+            .map((target) => path.resolve(path.dirname(sourceFile), target));
         }
         if (
           value.type !== 'CallExpression' ||
