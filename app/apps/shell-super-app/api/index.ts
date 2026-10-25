@@ -226,6 +226,7 @@ import {
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
+import { logRequestServicesFailure } from './request-service-diagnostics.ts';
 import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
 import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
@@ -3259,6 +3260,7 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provideMerge(ActionAuthorityLive),
     Layer.provideMerge(Reactivity.layer),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.tapCause(logRequestServicesFailure),
     Layer.orDie,
   );
 
