@@ -4,6 +4,7 @@
  * plan and any follow-up (e.g. a comment naming the proposing agent). Legacy module engines decide and revert through
  * their own AiDecideChanges/AiRevertBatch.
  */
+import type { AgentProposalCommandResult } from '@app/core-runtime';
 import type {
   AgentDecideRequest,
   AgentDecideResponse,
@@ -18,7 +19,7 @@ import {
   resolveAgentRevertPlan,
   withAgentCreatedId,
 } from '@app/shared-contracts/agent-revert';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import { approverCheck, parseCoreKey, revertResultMessage } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
@@ -28,30 +29,44 @@ import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { loadComposedModules } from './composed-modules.ts';
 import { applyModuleCommand, readModuleRecords } from './module-call.ts';
+import type { ModuleCommandOutcome } from './module-call.ts';
 import { reviewedItem, reviewInModule } from './module-review.ts';
 import type { ModuleReview } from './module-review.ts';
 import {
+  AgentStoreUnavailable,
   batchHasApprovalInProgress,
   claimBatchRevert,
   claimForApproval,
   closePendingInBatch,
-  isBatchReverted,
   loadBatchProposals,
+  loadProposalBatch,
   markApplied,
-  markFailed,
   markRejected,
   markRevertFailed,
   markReverted,
-  releaseApprovalClaim,
+  requireCurrentProposalClaim,
 } from './proposal-store.ts';
 
 type DecideResult = AgentDecideResponse['results'][number];
+/** No module recovery producer supplies an exact original invocation result yet. Even a later refusal cannot
+ * disprove an earlier delivery's commit. Keep the reservation on every unsuccessful/unknown delivery; in
+ * particular AlreadyCommitted is not a result and a timeout is not a business failure or release authority.
+ */
+export const requireModuleCommandResult = (outcome: ModuleCommandOutcome) =>
+  outcome.ok
+    ? Effect.succeed(outcome.body)
+    : Effect.fail(
+        new AgentStoreUnavailable({
+          cause: { code: outcome.code, message: outcome.message, status: outcome.status },
+        }),
+      );
 
 const result = (itemKey: string, outcome: DecideResult['outcome'], message?: string): DecideResult =>
   message === undefined ? { itemKey, outcome } : { itemKey, message, outcome };
 
 const BATCH_NOT_FOUND = 'Dávka návrhů nebyla nalezena.';
 const ALREADY_DECIDED = 'Změnu už vyřídil někdo jiný nebo se právě schvaluje. Obnovte seznam.';
+const ITEM_NOT_IN_BATCH = 'Změna do této dávky nepatří.';
 const BATCH_REVERTED = 'Dávka už byla vrácena, změnu nelze schválit.';
 const NOT_READABLE = 'Záznam se teď nepodařilo načíst.';
 const notAllowed = (moduleLabel: string) => `Změny v modulu ${moduleLabel} nemůžete schválit ani zamítnout.`;
@@ -60,7 +75,7 @@ const audiencesOf = (row: AgentProposalRow) =>
   row.referenceAudiences.length === 0 ? {} : { referenceAudiences: row.referenceAudiences };
 
 interface RowReview {
-  readonly item: AgentReviewItem | undefined;
+  readonly item: AgentReviewItem | null;
   readonly review: ModuleReview;
 }
 
@@ -71,21 +86,23 @@ const reviewRow = Effect.fn('AgentPlatform.reviewRow')(function* reviewRow(
   stage: 'proposed' | 'undo',
 ) {
   const module = (yield* loadComposedModules).byAppId(row.appId);
+  const subject = { actionSlug: row.actionSlug, command: row.command, key: row.proposalId, stage };
   const review: ModuleReview =
     module === undefined
       ? { state: 'none' }
-      : yield* reviewInModule(principal, module, [
-          {
-            actionSlug: row.actionSlug,
-            command: row.command,
-            key: row.proposalId,
-            stage,
-            ...(stage === 'proposed'
-              ? { proposal: { agentLabel: row.agentLabel, proposalId: row.proposalId, summary: row.summary } }
-              : {}),
-          },
-        ]);
-  return { item: reviewedItem(review, row.proposalId), review } satisfies RowReview;
+      : yield* reviewInModule(
+          principal,
+          module,
+          stage === 'proposed'
+            ? [
+                {
+                  ...subject,
+                  proposal: { agentLabel: row.agentLabel, proposalId: row.proposalId, summary: row.summary },
+                },
+              ]
+            : [subject],
+        );
+  return { item: reviewedItem(review, row.proposalId) ?? null, review } satisfies RowReview;
 });
 
 /** Whether this person can carry out the stored command (approval runs as them), with the module's review. */
@@ -94,8 +111,8 @@ const checkApprover = Effect.fn('AgentPlatform.checkApprover')(function* checkAp
   row: AgentProposalRow,
 ) {
   const reviewed = yield* reviewRow(principal, row, 'proposed');
-  const moduleBody = reviewed.item === undefined ? yield* readModuleRecords(principal, row.appId) : undefined;
-  return { check: approverCheck(reviewed.review, reviewed.item, moduleBody), reviewed };
+  const moduleBody = reviewed.item === null ? yield* readModuleRecords(principal, row.appId) : undefined;
+  return { check: approverCheck(reviewed.review, reviewed.item ?? undefined, moduleBody), reviewed };
 });
 
 /** The undo plan of an approval: the module's (from the live record), or why there is none. */
@@ -109,23 +126,33 @@ const revertPlanOf = ({ item, review }: RowReview): AgentRevertPlan =>
 const runFollowUp = Effect.fn('AgentPlatform.runFollowUp')(function* runFollowUp(
   caller: AgentPlatformCaller,
   row: AgentProposalRow,
-  item: AgentReviewItem | undefined,
-  applyResult: unknown,
+  item: AgentReviewItem | null,
+  applyResult: Schema.Json,
 ) {
   const followUp = item?.followUp;
   if (followUp === undefined) {
     return;
   }
   const commands = withAgentCreatedId(followUp.commands, followUp.createdIdPath, applyResult);
-  for (const [index, command] of (commands ?? []).entries()) {
-    yield* applyModuleCommand(caller.principal, row.appId, command, {
-      idempotencyKey: `agent-proposal-${row.proposalId}-follow-up-${index}`,
-      referenceAudiences: [...new Set([...row.referenceAudiences, ...followUp.referenceAudiences])],
-    }).pipe(Effect.ignore);
-  }
+  yield* Effect.forEach(
+    commands ?? [],
+    (command, index) =>
+      applyModuleCommand(caller.principal, row.appId, command, {
+        idempotencyKey: `agent-proposal-${row.proposalId}-follow-up-${index}`,
+        referenceAudiences: [...new Set([...row.referenceAudiences, ...followUp.referenceAudiences])],
+      }).pipe(Effect.ignore),
+    { concurrency: 1, discard: true },
+  );
 });
 
-type RowRevert = 'changed' | 'failed' | 'reverted' | 'unavailable';
+/** A native command's commit marker alone is not proof that this row changed. */
+const requireAffected = (command: AgentProposalCommandResult, proposalId: string) =>
+  command.affectedProposalIds.includes(proposalId)
+    ? Effect.void
+    : Effect.fail(new AgentStoreUnavailable({ cause: 'The native proposal transition did not affect its target' }));
+
+const RowRevertSchema = Schema.Literals(['changed', 'failed', 'reverted', 'unavailable']);
+type RowRevert = typeof RowRevertSchema.Type;
 
 /** Undoes one applied proposal as the person, unless someone changed the record after the approval. */
 const revertRow = Effect.fn('AgentPlatform.revertRow')(function* revertRow(
@@ -133,31 +160,48 @@ const revertRow = Effect.fn('AgentPlatform.revertRow')(function* revertRow(
   row: AgentProposalRow,
   plan: AgentProposalRow['revert'],
   current: RowReview,
+  reservationId: string,
 ) {
   if (plan === null || plan.kind === 'none') {
     return 'unavailable' satisfies RowRevert;
   }
   if (current.review.state !== 'none') {
-    if (current.item === undefined || !current.item.visible) {
-      yield* markRevertFailed(row.proposalId, { failure: NOT_READABLE });
+    if (current.item === null || !current.item.visible) {
+      yield* requireAffected(
+        yield* markRevertFailed(caller.principal, {
+          batchId: row.batchId,
+          failure: NOT_READABLE,
+          proposalId: row.proposalId,
+          reservationId,
+        }),
+        row.proposalId,
+      );
       return 'failed' satisfies RowRevert;
     }
     if (current.item.stillInPlace === false) {
       return 'changed' satisfies RowRevert;
     }
   }
-  for (const [index, command] of plan.commands.entries()) {
-    const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
-      actionSlug: row.actionSlug,
-      idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
-      ...audiencesOf(row),
-    });
-    if (!outcome.ok) {
-      yield* markRevertFailed(row.proposalId, { failure: outcome.message });
-      return 'failed' satisfies RowRevert;
-    }
-  }
-  yield* markReverted(row.proposalId, { by: caller.principal.principalId });
+  yield* Effect.forEach(
+    plan.commands,
+    Effect.fn('AgentPlatform.revertCommand')(function* revertCommand(command, index) {
+      const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
+        actionSlug: row.actionSlug,
+        idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
+        ...audiencesOf(row),
+      });
+      yield* requireModuleCommandResult(outcome);
+    }),
+    { concurrency: 1, discard: true },
+  );
+  yield* requireAffected(
+    yield* markReverted(caller.principal, {
+      batchId: row.batchId,
+      proposalId: row.proposalId,
+      reservationId,
+    }),
+    row.proposalId,
+  );
   return 'reverted' satisfies RowRevert;
 });
 
@@ -167,36 +211,63 @@ const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* appro
   reviewed: RowReview,
 ) {
   const itemKey = `core:${row.proposalId}`;
-  const by = caller.principal.principalId;
   // One atomic claim: a concurrent reject, approval or „Vrátit vše“ cannot also act on this proposal.
-  if (!(yield* claimForApproval(row.proposalId, by))) {
+  const claim = yield* claimForApproval(caller.principal, { batchId: row.batchId, proposalId: row.proposalId });
+  if (!claim.affectedProposalIds.includes(row.proposalId)) {
     return result(itemKey, 'skipped', ALREADY_DECIDED);
   }
+  const { reservationId } = claim;
+  if (reservationId === undefined) {
+    return yield* new AgentStoreUnavailable({ cause: 'The native approval claim returned no reservation' });
+  }
+  yield* requireCurrentProposalClaim(caller.principal, claim, 'claim-approval');
   const plan = revertPlanOf(reviewed);
   const outcome = yield* applyModuleCommand(caller.principal, row.appId, row.command, {
     actionSlug: row.actionSlug,
     idempotencyKey: `agent-proposal-${row.proposalId}`,
     ...audiencesOf(row),
   });
-  if (outcome.ok) {
-    const revert = resolveAgentRevertPlan(plan, outcome.body);
-    yield* markApplied(row.proposalId, { applyResult: outcome.body, by, diff: reviewed.item?.diff, revert });
-    yield* runFollowUp(caller, row, reviewed.item, outcome.body);
-    if (yield* isBatchReverted(row.batchId)) {
-      // „Vrátit vše“ ran while this change was being applied: undo it right away so the batch stays reverted.
-      yield* revertRow(caller, row, revert, yield* reviewRow(caller.principal, row, 'undo'));
-      return result(itemKey, 'skipped', 'Dávka byla mezitím vrácena, změna byla hned vrácena také.');
+  const applyResult = yield* requireModuleCommandResult(outcome);
+  const revert = resolveAgentRevertPlan(plan, applyResult);
+  const applied = {
+    applyResult,
+    batchId: row.batchId,
+    proposalId: row.proposalId,
+    reservationId,
+    revert,
+  };
+  yield* requireAffected(
+    yield* markApplied(
+      caller.principal,
+      reviewed.item?.diff === undefined ? applied : { ...applied, diff: reviewed.item.diff },
+    ),
+    row.proposalId,
+  );
+  yield* runFollowUp(caller, row, reviewed.item, applyResult);
+  // A revert can acquire the batch after mark-applied commits. Only a CURRENT caller-owned batch
+  // reservation authorizes compensation; a different person's reservation must never be borrowed.
+  const batch = yield* loadProposalBatch(caller.principal, row.batchId);
+  if (batch.batchReverted) {
+    const currentRow = batch.proposals.find((candidate) => candidate.proposalId === row.proposalId);
+    if (currentRow?.status === 'reverted') {
+      return result(itemKey, 'skipped', BATCH_REVERTED);
     }
-    return result(itemKey, 'applied');
+    const reservation = batch.reservations?.find(
+      (candidate) => candidate.operation === 'claim-batch-revert' && candidate.proposalIds.includes(row.proposalId),
+    );
+    if (currentRow === undefined || reservation === undefined) {
+      return yield* new AgentStoreUnavailable({
+        cause: 'Concurrent compensation remains with the native batch reservation owner',
+      });
+    }
+    const current = yield* reviewRow(caller.principal, currentRow, 'undo');
+    const compensated = yield* revertRow(caller, currentRow, currentRow.revert, current, reservation.reservationId);
+    if (compensated !== 'reverted') {
+      return yield* new AgentStoreUnavailable({ cause: 'Concurrent compensation has not completed' });
+    }
+    return result(itemKey, 'skipped', BATCH_REVERTED);
   }
-  if (outcome.status === 403 || outcome.status === 404) {
-    // The module refused this person or does not show them the record: the proposal stays pending for someone with
-    // the right permission instead of being used up.
-    yield* releaseApprovalClaim(row.proposalId, by);
-    return result(itemKey, 'forbidden', outcome.message);
-  }
-  yield* markFailed(row.proposalId, { by, failure: outcome.message });
-  return result(itemKey, 'failed', outcome.message);
+  return result(itemKey, 'applied');
 });
 
 const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
@@ -204,40 +275,42 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
   batchId: string,
   request: AgentDecideRequest,
 ) {
-  const { legalEntityId, principalId, tenantId } = caller.principal;
-  const rows = yield* loadBatchProposals(tenantId, legalEntityId, batchId);
+  // Complete-batch authorization and private visibility must succeed before the first claim or mutation.
+  // A forbidden sibling denies the entire request; do not translate it into per-item forbidden counts.
+  const rows = yield* loadBatchProposals(caller.principal, batchId);
   if (rows.length === 0) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
-  const modules = yield* callerModuleAccess(caller);
   const results = yield* Effect.forEach(
     request.itemKeys,
-    (itemKey) =>
-      Effect.gen(function* decideOne() {
-        const proposalId = parseCoreKey(itemKey);
-        const row = rows.find((candidate) => candidate.proposalId === proposalId);
-        if (row === undefined) {
-          return result(itemKey, 'skipped', 'Změna do této dávky nepatří.');
-        }
-        if (row.status !== 'pending') {
-          return result(itemKey, 'skipped', 'Změna už byla vyřízena.');
-        }
-        if (!modules.write.has(row.moduleKey)) {
-          return result(itemKey, 'forbidden', notAllowed((yield* loadComposedModules).labelOf(row.moduleKey)));
-        }
-        const { check, reviewed } = yield* checkApprover(caller.principal, row);
-        if (!check.ok) {
-          return result(itemKey, 'forbidden', check.hidden ? 'Změna do této dávky nepatří.' : check.reason);
-        }
-        if (request.decision === 'reject') {
-          const rejected = yield* markRejected(row.proposalId, { by: principalId, note: request.note ?? null });
-          return rejected ? result(itemKey, 'rejected') : result(itemKey, 'skipped', ALREADY_DECIDED);
-        }
-        if (row.batchRevertedAt !== null) {
-          return result(itemKey, 'skipped', BATCH_REVERTED);
-        }
-        return yield* approveCoreRow(caller, row, reviewed);
-      }),
+    Effect.fn('AgentPlatform.decideOne')(function* decideOne(itemKey) {
+      const proposalId = parseCoreKey(itemKey);
+      const row = rows.find((candidate) => candidate.proposalId === proposalId);
+      if (row === undefined) {
+        return result(itemKey, 'skipped', ITEM_NOT_IN_BATCH);
+      }
+      if (row.status !== 'pending') {
+        return result(itemKey, 'skipped', 'Změna už byla vyřízena.');
+      }
+      const { check, reviewed } = yield* checkApprover(caller.principal, row);
+      if (!check.ok) {
+        return result(itemKey, 'forbidden', check.hidden ? ITEM_NOT_IN_BATCH : check.reason);
+      }
+      if (request.decision === 'reject') {
+        const target = { batchId, proposalId: row.proposalId };
+        const rejected = yield* markRejected(
+          caller.principal,
+          request.note === undefined ? target : { ...target, note: request.note },
+        );
+        return rejected.affectedProposalIds.includes(row.proposalId)
+          ? result(itemKey, 'rejected')
+          : result(itemKey, 'skipped', ALREADY_DECIDED);
+      }
+      if (row.batchRevertedAt !== null) {
+        return result(itemKey, 'skipped', BATCH_REVERTED);
+      }
+      return yield* approveCoreRow(caller, row, reviewed);
+    }),
     { concurrency: 1 },
   );
   return { results } satisfies AgentDecideResponse;
@@ -271,13 +344,13 @@ const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function*
     } satisfies AgentDecideResponse;
   }
   const outcome = yield* decideLegacy(caller.principal, module.appId, changeIds, request.decision, request.note);
+  const decisionResult = (itemKey: string) =>
+    outcome.ok
+      ? result(itemKey, request.decision === 'approve' ? 'applied' : 'rejected')
+      : result(itemKey, outcome.status === 403 ? 'forbidden' : 'failed', outcome.message);
   return {
     results: request.itemKeys.map((itemKey) =>
-      changeIdOf(itemKey) === undefined
-        ? result(itemKey, 'skipped', 'Změna do této dávky nepatří.')
-        : outcome.ok
-          ? result(itemKey, request.decision === 'approve' ? 'applied' : 'rejected')
-          : result(itemKey, outcome.status === 403 ? 'forbidden' : 'failed', outcome.message),
+      changeIdOf(itemKey) === undefined ? result(itemKey, 'skipped', ITEM_NOT_IN_BATCH) : decisionResult(itemKey),
     ),
   } satisfies AgentDecideResponse;
 });
@@ -303,47 +376,59 @@ const revertCoreBatch = Effect.fn('AgentPlatform.revertCoreBatch')(function* rev
   batchId: string,
   request: AgentRevertRequest,
 ) {
-  const { legalEntityId, principalId, tenantId } = caller.principal;
-  const rows = yield* loadBatchProposals(tenantId, legalEntityId, batchId);
+  // Complete-batch authorization and private visibility must succeed before the first claim or mutation.
+  // A forbidden sibling denies the entire request; do not translate it into per-item forbidden counts.
+  const rows = yield* loadBatchProposals(caller.principal, batchId);
   if (rows.length === 0) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
-  if (rows.some((row) => row.batchRevertedAt !== null)) {
-    return { message: 'Dávka už byla vrácena.', outcome: 'failed' } satisfies AgentRevertResponse;
-  }
-  const modules = yield* callerModuleAccess(caller);
-  const applied = rows
-    .filter((row) => row.status === 'applied')
-    .toSorted((left, right) => right.position - left.position);
-  if (applied.some((row) => !modules.write.has(row.moduleKey))) {
-    return yield* new AgentPlatformForbidden({
-      reason: 'Dávku může vrátit jen člověk s oprávněním k zápisu ve všech jejích modulech.',
-    });
-  }
-  if (applied.length === 0) {
+  // A batch marker is not completion: the same persisted ingress may still need to finish its reservation.
+  if (
+    !rows.some((row) => row.batchRevertedAt !== null) &&
+    !rows.some((row) => row.status === 'applied' || row.status === 'revert_failed')
+  ) {
     return revertResultMessage({ changed: 0, failed: 0, reverted: 0, unavailable: 0 });
   }
-  if (yield* batchHasApprovalInProgress(batchId)) {
+  if (yield* batchHasApprovalInProgress(caller.principal, batchId)) {
     return {
       message: 'Některá změna z dávky se právě schvaluje. Zkuste to prosím za chvíli znovu.',
       outcome: 'failed',
     } satisfies AgentRevertResponse;
   }
-  if (!(yield* claimBatchRevert(batchId, { by: principalId, note: request.note ?? null }))) {
+  const claim = yield* claimBatchRevert(
+    caller.principal,
+    request.note === undefined ? { batchId } : { batchId, note: request.note },
+  );
+  if (claim.affectedProposalIds.length === 0) {
     return { message: 'Dávka už byla vrácena.', outcome: 'failed' } satisfies AgentRevertResponse;
   }
-  // The batch is closed: proposals nobody decided yet will not run any more.
-  yield* closePendingInBatch(batchId, { by: principalId, note: 'Dávka byla vrácena, návrh se už neprovede.' });
-  const counts = { changed: 0, failed: 0, reverted: 0, unavailable: 0 };
-  for (const row of applied) {
-    // Checked per change, right before undoing it: an earlier undo in this batch may have restored the record.
-    const current =
-      row.revert?.kind === 'commands'
-        ? yield* reviewRow(caller.principal, row, 'undo')
-        : { item: undefined, review: { state: 'none' } as const };
-    const outcome = yield* revertRow(caller, row, row.revert, current);
-    counts[outcome] += 1;
+  const { reservationId } = claim;
+  if (reservationId === undefined) {
+    return yield* new AgentStoreUnavailable({ cause: 'The native batch revert claim returned no reservation' });
   }
+  const batch = yield* requireCurrentProposalClaim(caller.principal, claim, 'claim-batch-revert');
+  const applied = batch.proposals
+    .filter((row) => row.status === 'applied' || row.status === 'revert_failed')
+    .toSorted((left, right) => right.position - left.position);
+  // The batch is closed: proposals nobody decided yet will not run any more. Cleanup errors remain errors.
+  yield* closePendingInBatch(caller.principal, {
+    batchId,
+    note: 'Dávka byla vrácena, návrh se už neprovede.',
+    reservationId,
+  });
+  const counts = yield* Effect.reduce(
+    applied,
+    () => ({ changed: 0, failed: 0, reverted: 0, unavailable: 0 }),
+    Effect.fn('AgentPlatform.revertBatchItem')(function* revertBatchItem(previous, row) {
+      // Checked immediately before undo: an earlier undo may have restored this record.
+      const current: RowReview =
+        row.revert?.kind === 'commands'
+          ? yield* reviewRow(caller.principal, row, 'undo')
+          : { item: null, review: { state: 'none' } };
+      const outcome = yield* revertRow(caller, row, row.revert, current, reservationId);
+      return { ...previous, [outcome]: previous[outcome] + 1 };
+    }),
+  );
   return revertResultMessage(counts);
 });
 
