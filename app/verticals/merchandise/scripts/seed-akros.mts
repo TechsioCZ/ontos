@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Command, Flag } from 'effect/unstable/cli';
-import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { MerchandiseStateSchema } from '../shared/apis/records.ts';
@@ -75,6 +75,15 @@ const writeState = Effect.fn('Merchandise.writeAkrosState')(function* writeAkros
   );
 });
 
+/** Merge the native company seed without reading or writing dotenv; existing orders and catalog edits stay intact. */
+export const seedAkros = (environment: Readonly<Record<string, string>>) =>
+  Layer.build(
+    Layer.effectDiscard(writeState(false, false, false)).pipe(
+      Layer.provide(AdminDatabaseLive),
+      Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+    ),
+  ).pipe(Effect.scoped, Effect.asVoid);
+
 const command = Command.make(
   'merchandise-seed-akros',
   {
@@ -115,4 +124,6 @@ const program = Effect.gen(function* seedProgram() {
   ).pipe(Effect.scoped);
 });
 
-NodeRuntime.runMain(program.pipe(Effect.provide(NodeServices.layer)));
+if (import.meta.main) {
+  NodeRuntime.runMain(program.pipe(Effect.provide(NodeServices.layer)));
+}
