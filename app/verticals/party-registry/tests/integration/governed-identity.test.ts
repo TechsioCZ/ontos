@@ -142,7 +142,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+              legalEntityManagerRelations: ['counterparty_manager'],
               tenantManagerRelations: [
                 'party_identity_manager',
                 'party_identity_reader',
@@ -163,7 +163,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
               databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-              legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+              legalEntityManagerRelations: ['counterparty_manager'],
               tenantManagerRelations: [
                 'party_identity_manager',
                 'party_identity_reader',
