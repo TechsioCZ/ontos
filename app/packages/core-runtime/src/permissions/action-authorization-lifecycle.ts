@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Redacted } from 'effect';
 
 import { CoreDatabase } from '../db/client.ts';
@@ -17,6 +17,8 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 import { coreActionCatalog } from '../modules/actions/catalog.ts';
+import { readLatestAgentOperatorCommand } from '../modules/actions/agent-operator-command.ts';
+import type { AgentOperatorCommand } from '../modules/actions/agent-operator-command.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
 import { readCurrentAuditedAgentProfile, reconcileCurrentAgentProfiles } from './agent-profile-lifecycle.ts';
@@ -25,6 +27,10 @@ import { SpiceDbConfig } from './config.ts';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { ScopedRoleMembershipLifecycle } from './scoped-role-membership-lifecycle.ts';
 import type { ScopedRoleIdentity } from './scoped-role.ts';
+import { fullyConsistent } from './client.ts';
+import { toLegalEntityAccessObjectId } from './context-access.ts';
+import { operatorChanges } from './principal-operators.ts';
+import type { SpiceDbRpc } from './spicedb-rpc.ts';
 
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
 
@@ -169,7 +175,7 @@ const readCurrentCompanyMembershipUpdates = Effect.fn(
               tenantId,
             });
       const profile =
-        principal.kind === 'agent'
+        principal.kind === 'agent' && principal.status !== 'archived'
           ? yield* readCurrentAuditedAgentProfile(transaction, tenantId, company.legalEntityId, principalId)
           : null;
       return {
@@ -188,6 +194,161 @@ const readCurrentCompanyMembershipUpdates = Effect.fn(
     membershipUpdates: membershipUpdates.flatMap(({ updates }) => updates),
   };
 });
+
+interface CurrentAgentOperatorState {
+  readonly activeHumanIds: readonly string[];
+  readonly command: AgentOperatorCommand | null;
+  readonly companyActive: boolean;
+}
+
+/** No-command agents retain their pre-native operators; archive cleanup is unconditional. */
+export const deriveCurrentAgentOperatorSet = (
+  input: CurrentAgentOperatorState & {
+    readonly companyMemberIds: readonly string[];
+    readonly status: string;
+    readonly tenantActive: boolean;
+  },
+): readonly string[] | null => {
+  if (input.status === 'archived') {
+    return [];
+  }
+  if (input.command === null) {
+    return null;
+  }
+  const members = new Set(input.companyMemberIds);
+  if (
+    !input.tenantActive ||
+    input.status !== 'active' ||
+    !input.companyActive ||
+    !members.has(input.command.agentPrincipalId)
+  ) {
+    return [];
+  }
+  const activeHumans = new Set(input.activeHumanIds);
+  return input.command.desiredOperatorPrincipalIds.filter((id) => activeHumans.has(id) && members.has(id));
+};
+
+const readCurrentAgentOperatorState = Effect.fn('ActionAuthorizationLifecycle.readCurrentAgentOperators')(
+  function* readCurrentAgentOperators(
+    transaction: CoreTransaction,
+    tenantId: string,
+    principalId: string,
+    status: string,
+  ) {
+    // Archive cleanup must not depend on old evidence remaining decodable.
+    const command =
+      status === 'archived' ? null : yield* readLatestAgentOperatorCommand(transaction, tenantId, principalId);
+    if (command === null) {
+      return { activeHumanIds: [], command, companyActive: false } satisfies CurrentAgentOperatorState;
+    }
+    const [company] = yield* transaction
+      .select({ status: legalEntities.status })
+      .from(legalEntities)
+      .where(and(eq(legalEntities.tenantId, tenantId), eq(legalEntities.legalEntityId, command.legalEntityId)));
+    const humans =
+      command.desiredOperatorPrincipalIds.length === 0
+        ? []
+        : yield* transaction
+            .select({ principalId: principals.principalId })
+            .from(principals)
+            .where(
+              and(
+                eq(principals.tenantId, tenantId),
+                eq(principals.kind, 'human'),
+                eq(principals.status, 'active'),
+                inArray(principals.principalId, [...command.desiredOperatorPrincipalIds]),
+              ),
+            );
+    return {
+      activeHumanIds: humans.map(({ principalId: id }) => id),
+      command,
+      companyActive: company?.status === 'active',
+    } satisfies CurrentAgentOperatorState;
+  },
+);
+
+const exactPrincipalSubjects = (responses: readonly v1.ReadRelationshipsResponse[]) =>
+  Effect.forEach(
+    responses,
+    ({ relationship }) => {
+      if (
+        relationship?.subject?.object?.objectType !== 'principal' ||
+        relationship.subject.optionalRelation !== '' ||
+        relationship.optionalCaveat !== undefined ||
+        relationship.optionalExpiresAt !== undefined
+      ) {
+        return Effect.fail(failed());
+      }
+      return Effect.succeed(relationship.subject.object.objectId);
+    },
+    { concurrency: 1 },
+  );
+
+/** Runs only after SQL ends, under the EXISTING per-principal session lock. */
+const reconcileCurrentAgentOperators = Effect.fn('ActionAuthorizationLifecycle.reconcileCurrentAgentOperators')(
+  function* reconcileCurrentAgentOperators(
+    rpc: SpiceDbRpc,
+    input: CurrentAgentOperatorState & {
+      readonly principalId: string;
+      readonly status: string;
+      readonly tenantActive: boolean;
+      readonly tenantId: string;
+    },
+  ) {
+    if (input.status !== 'archived' && input.command === null) {
+      return;
+    }
+    const companyMemberIds =
+      input.command === null
+        ? []
+        : yield* rpc
+            .readRelationships(
+              v1.ReadRelationshipsRequest.create({
+                consistency: fullyConsistent,
+                relationshipFilter: {
+                  optionalRelation: 'member',
+                  optionalResourceId: toLegalEntityAccessObjectId(input.tenantId, input.command.legalEntityId) ?? '',
+                  optionalSubjectFilter: { subjectType: 'principal' },
+                  resourceType: 'legal_entity',
+                },
+              }),
+            )
+            .pipe(Effect.flatMap(exactPrincipalSubjects));
+    const desired = deriveCurrentAgentOperatorSet({ ...input, companyMemberIds });
+    if (desired === null) {
+      return;
+    }
+    const current = yield* rpc
+      .readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency: fullyConsistent,
+          relationshipFilter: {
+            optionalRelation: 'operator',
+            optionalResourceId: input.principalId,
+            resourceType: 'principal',
+          },
+        }),
+      )
+      .pipe(Effect.flatMap(exactPrincipalSubjects));
+    const changes = operatorChanges(current, desired);
+    const update = (id: string, operation: v1.RelationshipUpdate_Operation) =>
+      v1.RelationshipUpdate.create({
+        operation,
+        relationship: {
+          relation: 'operator',
+          resource: { objectId: input.principalId, objectType: 'principal' },
+          subject: { object: { objectId: id, objectType: 'principal' } },
+        },
+      });
+    const updates = [
+      ...changes.add.map((id) => update(id, v1.RelationshipUpdate_Operation.TOUCH)),
+      ...changes.remove.map((id) => update(id, v1.RelationshipUpdate_Operation.DELETE)),
+    ];
+    if (updates.length > 0) {
+      yield* rpc.writeRelationships(v1.WriteRelationshipsRequest.create({ updates }));
+    }
+  },
+);
 
 export class ActionAuthorizationLifecycle extends Context.Service<
   ActionAuthorizationLifecycle,
@@ -259,7 +420,11 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                         .from(tenantModuleStates)
                         .where(and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.state, 'active')))
                     : [];
-                return { ...principal, ...membership, installedModules };
+                const operators =
+                  principal.kind === 'agent'
+                    ? yield* readCurrentAgentOperatorState(transaction, tenantId, principalId, principal.status)
+                    : null;
+                return { ...principal, ...membership, installedModules, operators };
               }),
             );
             // The SQL fence ended. An old delivery always applies the current row, never old event authority.
@@ -298,6 +463,15 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                 }),
               )
               .pipe(Effect.asVoid);
+            if (current.operators !== null) {
+              yield* reconcileCurrentAgentOperators(client, {
+                ...current.operators,
+                principalId,
+                status: current.status,
+                tenantActive: current.tenantStatus === 'active',
+                tenantId,
+              });
+            }
             return yield* roleLifecycle.reconcilePrincipal(tenantId, principalId, compositionRevision);
           }),
         ).pipe(Effect.mapError(failed));

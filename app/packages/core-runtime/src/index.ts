@@ -967,12 +967,37 @@ export {
 export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from './install/agent-entity-grants.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { replaceAgentOperatorsAction } from './modules/actions/replace-agent-operators.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
 export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setScopedRoleMembershipAction } from './modules/actions/set-scoped-role-membership.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
+
+export {
+  AgentProfileProjectionSchema,
+  DEFAULT_AGENT_PROFILE,
+  foldAgentProfiles,
+} from './auth/agent-profile-projection.ts';
+export type { AgentProfile, AgentProfileAuditRow } from './auth/agent-profile-projection.ts';
+export { AgentProfilesInputSchema, AgentProfilesResultSchema, agentProfilesRead } from './auth/agent-profiles-read.ts';
+export {
+  AgentOperatorCommandSchema,
+  CompanyAgentDirectoryInputSchema,
+  CompanyAgentDirectoryResultSchema,
+  companyAgentDirectoryRead,
+} from './auth/company-agent-directory-read.ts';
+export {
+  ReplaceAgentOperatorsAuditEvidenceSchema,
+  ReplaceAgentOperatorsPayloadSchema,
+  ReplaceAgentOperatorsResultSchema,
+} from './modules/actions/agent-operator-command.ts';
+export type {
+  AgentOperatorCommand,
+  ReplaceAgentOperatorsPayload,
+  ReplaceAgentOperatorsResult,
+} from './modules/actions/agent-operator-command.ts';
 
 export { defineOutboxWorker, extractOutboxWorkerSubscriptions } from './outbox/definition.ts';
 export type {

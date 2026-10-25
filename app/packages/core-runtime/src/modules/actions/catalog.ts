@@ -13,6 +13,7 @@ import { createNonHumanPrincipalAction } from './create-non-human-principal.acti
 import { invitePersonAction } from './invite-person.action.ts';
 import { manageDemoAccountAction } from './manage-demo-account.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
+import { replaceAgentOperatorsAction } from './replace-agent-operators.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
 import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
@@ -37,6 +38,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   invitePersonAction.descriptor,
   manageDemoAccountAction.descriptor,
   recordSupportImpersonationAction.descriptor,
+  replaceAgentOperatorsAction.descriptor,
   reservePrincipalBindingAction.descriptor,
   setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
