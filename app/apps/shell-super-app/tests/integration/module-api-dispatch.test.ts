@@ -14,8 +14,52 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
+import { relayModuleResponse } from '../../src/module-api/response-relay.ts';
 import { admitModuleApiRequest, MODULE_API_REVISION_HEADER } from '../../src/module-api/admission.ts';
 import { makeCompositionSnapshot, sealComposition } from '../fixtures/application-composition.ts';
+
+const realmCookies = ['example-portal.session_token', '__Secure-example-portal.session_token'];
+const scopedCookie = 'example-portal.session_token=signed%2Bvalue; Path=/; HttpOnly; SameSite=Lax';
+
+it('preserves separate reviewed realm cookies and their exact provider attributes', () => {
+  const secureCookie =
+    '__Secure-example-portal.session_token=signed%2Fvalue; Path=/; HttpOnly; SameSite=Strict; Secure';
+  const expiredCookie =
+    'example-portal.session_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  for (const cookies of [[scopedCookie, secureCookie], [expiredCookie]]) {
+    const headers: [string, string][] = cookies.map((cookie) => ['set-cookie', cookie]);
+    headers.push(['set-cookie', 'better-auth.session_token=staff; Path=/; HttpOnly; SameSite=Lax']);
+    const relayed = relayModuleResponse(new Response('payload', { headers }), 'https://shell.example', realmCookies);
+    expect(relayed.headers.getSetCookie()).toEqual(cookies);
+    expect(relayed.headers.get('cache-control')).toBe('no-store');
+  }
+});
+
+it.each([
+  'example-portal.session_data=cache; Path=/; HttpOnly; SameSite=Lax',
+  'another-portal.session_token=foreign; Path=/; HttpOnly; SameSite=Lax',
+  `${scopedCookie}; Domain=shell.example`,
+  `${scopedCookie}; Domain=`,
+  `${scopedCookie}; dOmAiN = shell.example`,
+  `${scopedCookie}; Path = /other`,
+  `${scopedCookie}; SameSite = None`,
+  scopedCookie.replace('Path=/', 'Path=/api/portal-auth'),
+  scopedCookie.replace('; HttpOnly', ''),
+  scopedCookie.replace('SameSite=Lax', 'SameSite=None'),
+  scopedCookie.replace('; SameSite=Lax', ''),
+  `${scopedCookie}; Path=/other`,
+  `${scopedCookie}; SameSite=None`,
+  scopedCookie.replace('HttpOnly', 'HttpOnly=false'),
+  `__Secure-${scopedCookie}`,
+])('drops undeclared or unsafe realm response cookies: %s', (cookie) => {
+  const response = new Response('payload', { headers: { 'set-cookie': cookie } });
+  expect(relayModuleResponse(response, 'https://shell.example', realmCookies).headers.getSetCookie()).toEqual([]);
+});
+
+it('does not infer cookie permission from a realm-looking name without admission', () => {
+  const response = new Response('payload', { headers: { 'set-cookie': scopedCookie } });
+  expect(relayModuleResponse(response, 'https://shell.example').headers.getSetCookie()).toEqual([]);
+});
 
 const appId = 'party-registry';
 const buildMarker = '0123456789abcdef';
@@ -292,6 +336,14 @@ it.effect('forwards only exact reviewed realm cookies to the declaring owner, ro
     expect(accepted.forwardedRequest.headers.get('cookie')).toBe(
       'example-portal.session_token=signed%2Bvalue; __Secure-example-portal.session_token=secure%2Fvalue',
     );
+    const providerCookie = 'example-portal.session_token=signed%2Bvalue; Path=/; HttpOnly; SameSite=Lax';
+    const relayFor = (target: typeof accepted) =>
+      relayModuleResponse(
+        new Response('session', { headers: { 'set-cookie': providerCookie } }),
+        'https://shell.example',
+        target.responseCookieNames,
+      );
+    expect(relayFor(accepted).headers.getSetCookie()).toEqual([providerCookie]);
     for (const [path, method] of [
       ['/api/customer-account', 'POST'],
       ['/api/customer-account/extra', 'GET'],
@@ -300,6 +352,7 @@ it.effect('forwards only exact reviewed realm cookies to the declaring owner, ro
     ] as const) {
       const denied = yield* admitModuleApiRequest(admittedRequest(path, method), snapshot.composition);
       expect(denied.forwardedRequest.headers.get('cookie')).toBeNull();
+      expect(relayFor(denied).headers.getSetCookie()).toEqual([]);
     }
     const otherOwnerRequest = new Request(
       requestFor(
@@ -312,12 +365,14 @@ it.effect('forwards only exact reviewed realm cookies to the declaring owner, ro
     );
     const isolated = yield* admitModuleApiRequest(otherOwnerRequest, snapshot.composition);
     expect(isolated.forwardedRequest.headers.get('cookie')).toBeNull();
+    expect(relayFor(isolated).headers.getSetCookie()).toEqual([]);
     const noDeclaration = yield* makeCompositionSnapshot([contract]);
     const undeclaredRequest = new Request(requestFor(noDeclaration.composition.revision), {
       headers: { cookie: cookies, [MODULE_API_REVISION_HEADER]: noDeclaration.composition.revision },
     });
     const absent = yield* admitModuleApiRequest(undeclaredRequest, noDeclaration.composition);
     expect(absent.forwardedRequest.headers.get('cookie')).toBeNull();
+    expect(relayFor(absent).headers.getSetCookie()).toEqual([]);
     const duplicate = new Request(admittedRequest('/api/customer-account'), {
       headers: {
         cookie: 'example-portal.session_token=first; example-portal.session_token=second',

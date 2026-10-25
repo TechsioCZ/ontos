@@ -19,6 +19,14 @@ const expectedCookies = [false, true].flatMap((useSecureCookies) => {
   return [cookies.sessionToken.name, cookies.dontRememberToken.name];
 });
 
+it.effect('declares the provider-issued cookies for the exact email sign-in route', () =>
+  Effect.sync(() => {
+    expect(cookiesFor('POST', '/api/portal-auth/sign-in/email')).toStrictEqual(expectedCookies);
+    expect(cookiesFor('GET', '/api/portal-auth/sign-in/email')).toStrictEqual([]);
+    expect(cookiesFor('POST', '/api/portal-auth/sign-in/email/extra')).toStrictEqual([]);
+  }),
+);
+
 it.effect.each([
   currentEnrollment.readCurrentEnrollment,
   currentEnrollment.resumeCurrentEnrollment,

@@ -346,6 +346,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         }),
         realmPrefix: COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix,
         routes: [
+          { method: 'POST', path: '/api/portal-auth/sign-in/email' },
           { method: 'GET', path: '/api/portal-auth/get-session' },
           { method: 'GET', path: '/api/portal-auth/enrollment/current' },
           { method: 'POST', path: '/api/portal-auth/enrollment/current/resume' },

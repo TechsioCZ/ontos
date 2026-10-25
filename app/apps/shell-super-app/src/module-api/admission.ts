@@ -55,7 +55,7 @@ const moduleApiCookies = Effect.fn('ModuleApi.cookies')(function* moduleApiCooki
   if (new Set(selectedCookies.map((part) => part.slice(0, part.indexOf('=')))).size !== selectedCookies.length) {
     return yield* new ModuleApiDispatchError({ reason: 'Module credential cookie is ambiguous', status: 400 });
   }
-  return selectedCookies.join('; ');
+  return { cookieHeader: selectedCookies.join('; '), responseCookieNames: [...allowedCookies] };
 });
 
 /** Resolve only the reviewed native BFF convention under an admitted release, never an input URL. */
@@ -111,7 +111,11 @@ export const admitModuleApiRequest = Effect.fn('ModuleApi.admitRequest')(functio
   if (connectionHeaders.some((token) => !connectionToken.test(token) || governedHeaders.has(token))) {
     return yield* new ModuleApiDispatchError({ reason: 'Module API Connection header is invalid', status: 400 });
   }
-  const cookieHeader = yield* moduleApiCookies(request, module.contractDocument, ownerPath.slice(ownerPrefix.length));
+  const { cookieHeader, responseCookieNames } = yield* moduleApiCookies(
+    request,
+    module.contractDocument,
+    ownerPath.slice(ownerPrefix.length),
+  );
   const forwardedRequest = new Request(forwardedUrl, request);
   for (const name of ['cookie', 'host', ...hopByHopHeaders, ...connectionHeaders]) {
     forwardedRequest.headers.delete(name);
@@ -119,5 +123,5 @@ export const admitModuleApiRequest = Effect.fn('ModuleApi.admitRequest')(functio
   if (cookieHeader.length > 0) {
     forwardedRequest.headers.set('cookie', cookieHeader);
   }
-  return { forwardedRequest, forwardedUrl, module };
+  return { forwardedRequest, forwardedUrl, module, responseCookieNames };
 });
