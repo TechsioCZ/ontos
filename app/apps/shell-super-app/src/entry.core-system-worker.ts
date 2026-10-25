@@ -1,4 +1,5 @@
-import { defineDatabaseIdentityEnrollment, makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
+import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ActionAuthorizationLifecycleLive,
