@@ -81,7 +81,10 @@
           "email": "E-mail",
           "fullName": "Jméno a příjmení",
           "phone": "Telefon",
-          "role": "Role",
+          "principal": "Přihlašovací účet",
+          "principalHelp": "Nejprve pozvěte člověka ve správě lidí. Zaměstnání ani pracovní role nepřidělují oprávnění; pro přiřazení úkolů aktivujte členství a přidělte přístup k Úkolům.",
+          "managePeople": "Pozvat člověka a spravovat členství a oprávnění",
+          "role": "Pracovní role",
           "save": "Uložit změny",
           "saving": "Ukládám…"
         },
@@ -107,6 +110,7 @@
           "load": "Data se nepodařilo načíst.",
           "loadDescription": "Zkontrolujte připojení a zkuste to znovu.",
           "phone": "Zadejte telefon se 6 až 15 číslicemi, např. +420 777 123 456.",
+          "principal": "Vyberte přihlašovací účet zaměstnance.",
           "retry": "Zkusit znovu",
           "save": "Zaměstnance se nepodařilo uložit. Zkuste to znovu."
         },

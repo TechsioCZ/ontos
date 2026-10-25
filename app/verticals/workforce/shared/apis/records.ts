@@ -80,6 +80,7 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
   aiActivity: Schema.optionalKey(Schema.Array(AiActivityEntrySchema)),
+  availablePrincipals: Schema.Array(Schema.Struct({ displayName: Schema.String, principalRef: PrincipalRefSchema })),
   canWrite: Schema.Boolean,
   indicators: Schema.Struct({
     active: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

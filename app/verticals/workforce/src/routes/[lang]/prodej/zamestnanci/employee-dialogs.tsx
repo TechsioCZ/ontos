@@ -9,7 +9,7 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect } from 'effect';
 import { useState } from 'react';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { Employee, EmployeeId, EmployeeRole } from '../../../../../shared/apis/records.ts';
+import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   bulkCommand,
@@ -32,6 +32,7 @@ const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
 
 const key = 'workforce.pages.employees';
 const employeeFormId = 'employee-form';
+const selectPlaceholder = 'workforce.selectPlaceholder';
 
 /** Fields a saved command shows on the rows of `ids` before the list reread settles. */
 export interface ShownEdit {
@@ -86,15 +87,17 @@ const closeWhenDismissed =
  * the draft has unsaved edits.
  */
 export const EmployeeFormDialog = ({
+  availablePrincipals,
   commit,
   employee,
   onClose,
 }: {
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
   readonly commit: CommitCommand;
   readonly employee: Employee | null;
   readonly onClose: () => void;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const [draft, setDraft] = useState<EmployeeDraft>(() =>
     employee === null ? emptyDraft : draftFromEmployee(employee),
   );
@@ -114,6 +117,11 @@ export const EmployeeFormDialog = ({
     ? { helpText: t(`${key}.errors.emailTaken`), validateStatus: 'error' as const }
     : fieldStatus('email');
   const roleItems = roleItemsOf(t);
+  const principalOptions =
+    employee?.principalRef !== undefined &&
+    !availablePrincipals.some(({ principalRef }) => principalRef.principalId === employee.principalRef?.principalId)
+      ? [...availablePrincipals, { displayName: employee.fullName, principalRef: employee.principalRef }]
+      : availablePrincipals;
 
   /** A dirty draft asks before Escape, the close button or Zrušit drop the typed edits. */
   const dirty = !sameDraft(draft, employee === null ? emptyDraft : draftFromEmployee(employee));
@@ -131,7 +139,7 @@ export const EmployeeFormDialog = ({
       return;
     }
     setSubmitted(true);
-    if (errors.length > 0) {
+    if (errors.length > 0 || (employee === null && draft.principalRef === undefined)) {
       return;
     }
     // Nothing changed on an existing Employee: there is nothing to save, so the panel just closes.
@@ -144,7 +152,7 @@ export const EmployeeFormDialog = ({
     const build =
       employee === null
         ? newEmployeeId.pipe(Effect.map((id) => createCommand(id, draft)))
-        : Effect.succeed(updateCommand(employee.id, draft));
+        : Effect.succeed(updateCommand(employee, draft));
     const shown = employee === null ? undefined : { ids: [employee.id], patch: listedFieldsOf(draft) };
     void browserRuntime.runPromise(
       commit(build, `${key}.toast.saved`, shown).pipe(
@@ -212,6 +220,37 @@ export const EmployeeFormDialog = ({
               {serverError}
             </StatusText>
           )}
+          <SelectTemplate
+            disabled={busy}
+            items={principalOptions.map(({ displayName, principalRef }) => ({
+              displayValue: displayName,
+              label: displayName,
+              value: principalRef.principalId,
+            }))}
+            label={t(`${key}.form.principal`)}
+            labelProps={selectLabelProps}
+            name="principalId"
+            onValueChange={({ value }) => {
+              const person = availablePrincipals.find(({ principalRef }) => principalRef.principalId === value[0]);
+              if (person !== undefined) {
+                set({
+                  fullName: draft.fullName.trim() === '' ? person.displayName : draft.fullName,
+                  principalRef: person.principalRef,
+                });
+              }
+            }}
+            placeholder={t(selectPlaceholder)}
+            value={draft.principalRef === undefined ? [] : [draft.principalRef.principalId]}
+          />
+          {submitted && employee === null && draft.principalRef === undefined && (
+            <StatusText role="alert" status="error">
+              {t(`${key}.errors.principal`)}
+            </StatusText>
+          )}
+          <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
+          <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
+            {t(`${key}.form.managePeople`)}
+          </a>
           <FormInput
             autoComplete="off"
             id="employee-full-name"
@@ -257,7 +296,7 @@ export const EmployeeFormDialog = ({
                 set({ role: next });
               }
             }}
-            placeholder={t('workforce.selectPlaceholder')}
+            placeholder={t(selectPlaceholder)}
             value={[draft.role]}
           />
           <FormInput
@@ -473,7 +512,7 @@ export const BulkRoleDialog = ({
               setRole(next);
             }
           }}
-          placeholder={t('workforce.selectPlaceholder')}
+          placeholder={t(selectPlaceholder)}
           value={[role]}
         />
       </div>

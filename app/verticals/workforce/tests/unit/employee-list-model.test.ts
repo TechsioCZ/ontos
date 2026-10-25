@@ -1,14 +1,16 @@
-import { DateTime, Schema } from 'effect';
+import { DateTime, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { EmployeeIdSchema } from '../../shared/resources/employee.ts';
 import { EmployeePhoneInputSchema } from '../../shared/apis/records.ts';
 import type { Employee } from '../../shared/apis/records.ts';
 import {
+  createCommand,
   draftFromEmployee,
   errorFieldKey,
   filterEmployees,
   noFilters,
   sameDraft,
+  updateCommand,
 } from '../../src/routes/[lang]/prodej/zamestnanci/employee-model.ts';
 
 const now = DateTime.makeUnsafe('2026-10-13T09:00:00Z');
@@ -49,6 +51,47 @@ it('recognises an unchanged draft so saving it closes the panel instead of writi
   expect(sameDraft(draft, { ...draft })).toBe(true);
   expect(sameDraft(draft, { ...draft, role: 'SALES_HEAD' })).toBe(false);
   expect(sameDraft(draft, { ...draft, phone: '+420 777 123 456' })).toBe(false);
+});
+
+it('carries the selected login principal into the employee command without granting rights', () => {
+  const principalRef = {
+    principalId: '4c589117-5ecf-4b8a-a1ce-171093e26614',
+    tenantId: '6bce2eda-3c92-4010-9900-046ca4deed76',
+  };
+  const draft = { ...draftFromEmployee(jana), principalRef };
+  const command = createCommand(jana.id, draft);
+  expect(Predicate.isTagged('CreateEmployee')(command)).toBe(true);
+  expect(Struct.omit(command, ['_tag'])).toEqual({
+    active: jana.active,
+    department: jana.department,
+    email: jana.email,
+    fullName: jana.fullName,
+    id: jana.id,
+    principalRef,
+    role: jana.role,
+  });
+  expect(sameDraft(draftFromEmployee(jana), draft)).toBe(false);
+  expect(draftFromEmployee({ ...jana, principalRef }).principalRef).toEqual(principalRef);
+});
+
+it('only revalidates a linked principal when the employee form changes the account', () => {
+  const principalRef = {
+    principalId: '4c589117-5ecf-4b8a-a1ce-171093e26614',
+    tenantId: '6bce2eda-3c92-4010-9900-046ca4deed76',
+  };
+  const linked = { ...jana, principalRef };
+  const draft = { ...draftFromEmployee(linked), department: 'Support' };
+  const unchangedAccount = updateCommand(linked, draft);
+  expect(Predicate.isTagged('UpdateEmployee')(unchangedAccount)).toBe(true);
+  if (Predicate.isTagged('UpdateEmployee')(unchangedAccount)) {
+    expect(unchangedAccount.patch.principalRef).toBeUndefined();
+    expect(unchangedAccount.patch.department).toBe('Support');
+  }
+  const relinked = updateCommand(jana, draft);
+  expect(Predicate.isTagged('UpdateEmployee')(relinked)).toBe(true);
+  if (Predicate.isTagged('UpdateEmployee')(relinked)) {
+    expect(relinked.patch.principalRef).toEqual(principalRef);
+  }
 });
 
 it('accepts a phone of six to fifteen digits and rejects longer numbers', () => {

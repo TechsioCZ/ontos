@@ -81,7 +81,10 @@
           "email": "E-mail",
           "fullName": "Full name",
           "phone": "Phone",
-          "role": "Role",
+          "principal": "Login account",
+          "principalHelp": "Invite the person in People first. Employment and job roles grant no permissions; activate company membership and grant Tasks access before assigning tasks.",
+          "managePeople": "Invite a person and manage membership and permissions",
+          "role": "Job role",
           "save": "Save changes",
           "saving": "Saving…"
         },
@@ -107,6 +110,7 @@
           "load": "Data could not be loaded.",
           "loadDescription": "Check your connection and try again.",
           "phone": "Enter a phone number with 6 to 15 digits, e.g. +420 777 123 456.",
+          "principal": "Select the employee's login account.",
           "retry": "Try again",
           "save": "The employee could not be saved. Try again."
         },

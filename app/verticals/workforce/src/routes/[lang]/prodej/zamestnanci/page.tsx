@@ -713,7 +713,14 @@ const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: strin
         <PermissionsCard />
       </div>
 
-      {form !== null && <EmployeeFormDialog commit={commit} employee={form.employee} onClose={() => setForm(null)} />}
+      {form !== null && (
+        <EmployeeFormDialog
+          availablePrincipals={data?.availablePrincipals ?? []}
+          commit={commit}
+          employee={form.employee}
+          onClose={() => setForm(null)}
+        />
+      )}
       <BulkTagDialog
         kind="employee"
         onDone={() => {

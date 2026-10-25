@@ -6,6 +6,7 @@ import {
   principalEligibilityForTransaction,
 } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { loadAssignablePrincipalDirectory } from '@app/core-runtime/auth/assignable-principals';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Match, Predicate, Schema, Struct } from 'effect';
 
@@ -300,6 +301,7 @@ const departmentCounts = (employees: readonly Employee[]) => {
 /** What the owner transaction read for a records request: the stored row (still encoded) and the AI feed. */
 export interface LoadedRecords {
   readonly aiActivity: RecordsResponse['aiActivity'];
+  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
   readonly row: { readonly revision: number; readonly state: unknown } | undefined;
 }
 
@@ -334,10 +336,12 @@ export const finishWorkforceRecords = Effect.fn('Workforce.finishRecords')(funct
       (request.active === undefined || employee.active === request.active),
   );
   const activity = loaded.aiActivity === undefined ? {} : { aiActivity: loaded.aiActivity };
+  const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.workforce');
   return {
     ...activity,
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.workforce'),
+    availablePrincipals: canWrite ? loaded.availablePrincipals : [],
+    canWrite,
     indicators: {
       active: items.filter((employee) => employee.active).length,
       byDepartment: departmentCounts(items),
@@ -524,7 +528,20 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       }));
     });
     /** The records read's whole transaction step: the raw state row and the AI feed; decoding runs after commit. */
-    const loadRecords = Effect.fn('Workforce.loadRecords')(function* loadRecords(request: RecordsRequest) {
+    const loadRecords = Effect.fn('Workforce.loadRecords')(function* loadRecords(
+      request: RecordsRequest,
+      includePrincipals: boolean,
+    ) {
+      const directory = includePrincipals
+        ? yield* loadAssignablePrincipalDirectory(transaction, scope).pipe(Effect.mapError(referenceUnavailable))
+        : undefined;
+      // Employment may link an invited person, but never grants company or module access.
+      const availablePrincipals = (directory?.members ?? []).flatMap((member) =>
+        member.principalStatus === 'active' &&
+        (member.membershipStatus === 'active' || member.membershipStatus === 'invited')
+          ? [{ displayName: member.displayName, principalRef: member.principalRef }]
+          : [],
+      );
       const [row] = yield* transaction
         .select({ revision: workforceStates.revision, state: workforceStates.state })
         .from(workforceStates)
@@ -533,10 +550,8 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         .pipe(Effect.mapError(unavailable));
       // The activity feed is best-effort: an unreadable audit table never breaks the employee list.
       const activity =
-        request.includeAiActivity === true
-          ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.void))
-          : undefined;
-      return { aiActivity: activity ?? undefined, row } satisfies LoadedRecords;
+        request.includeAiActivity === true ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.void)) : undefined;
+      return { aiActivity: activity ?? undefined, availablePrincipals, row } satisfies LoadedRecords;
     });
     return { apply, loadRecords };
   },

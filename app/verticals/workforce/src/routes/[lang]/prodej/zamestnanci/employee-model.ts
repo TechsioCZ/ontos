@@ -1,5 +1,5 @@
 import { matchesSearch } from '@app/admin-ui';
-import { Effect, Option, Random, Schema } from 'effect';
+import { Effect, Option, Random, Schema, Struct } from 'effect';
 import {
   EmployeeDepartmentSchema,
   EmployeeEmailSchema,
@@ -58,6 +58,7 @@ export interface EmployeeDraft {
   readonly email: string;
   readonly fullName: string;
   readonly phone: string;
+  readonly principalRef?: NonNullable<Employee['principalRef']>;
   readonly role: EmployeeRole;
 }
 
@@ -76,6 +77,7 @@ export const draftFromEmployee = (employee: Employee): EmployeeDraft => ({
   email: employee.email,
   fullName: employee.fullName,
   phone: employee.phone ?? '',
+  ...Struct.pick(employee, ['principalRef']),
   role: employee.role,
 });
 
@@ -86,16 +88,19 @@ export const sameDraft = (left: EmployeeDraft, right: EmployeeDraft): boolean =>
   left.email === right.email &&
   left.fullName === right.fullName &&
   left.phone === right.phone &&
+  left.principalRef?.principalId === right.principalRef?.principalId &&
+  left.principalRef?.tenantId === right.principalRef?.tenantId &&
   left.role === right.role;
 
 /** The fields the list shows, trimmed as the server stores them. The page applies them to the rows before the reread. */
 export const listedFieldsOf = (
   draft: EmployeeDraft,
-): Pick<Employee, 'active' | 'department' | 'email' | 'fullName' | 'role'> => ({
+): Pick<Employee, 'active' | 'department' | 'email' | 'fullName' | 'principalRef' | 'role'> => ({
   active: draft.active,
   department: draft.department.trim(),
   email: draft.email.trim(),
   fullName: draft.fullName.trim(),
+  ...Struct.pick(draft, ['principalRef']),
   role: draft.role,
 });
 
@@ -138,6 +143,7 @@ const employeeFields = (draft: EmployeeDraft) => {
     department: draft.department.trim(),
     email: draft.email.trim(),
     fullName: draft.fullName.trim(),
+    ...Struct.pick(draft, ['principalRef']),
     role: draft.role,
   };
   const phone = draft.phone.trim();
@@ -150,11 +156,18 @@ export const createCommand = (id: EmployeeId, draft: EmployeeDraft): WorkforceCo
   ...employeeFields(draft),
 });
 
-export const updateCommand = (id: EmployeeId, draft: EmployeeDraft): WorkforceCommand => ({
-  _tag: 'UpdateEmployee',
-  id,
-  patch: employeeFields(draft),
-});
+export const updateCommand = (employee: Employee, draft: EmployeeDraft): WorkforceCommand => {
+  const { principalRef, ...fields } = employeeFields(draft);
+  const relink =
+    principalRef !== undefined &&
+    (principalRef.principalId !== employee.principalRef?.principalId ||
+      principalRef.tenantId !== employee.principalRef?.tenantId);
+  return {
+    _tag: 'UpdateEmployee',
+    id: employee.id,
+    patch: relink ? { ...fields, principalRef } : fields,
+  };
+};
 
 export const bulkCommand = (
   ids: readonly EmployeeId[],
