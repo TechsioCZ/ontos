@@ -1,0 +1,78 @@
+diff --git a/dist/cjs/compilers/rslib.js b/dist/cjs/compilers/rslib.js
+--- a/dist/cjs/compilers/rslib.js
++++ b/dist/cjs/compilers/rslib.js
+@@ -118,8 +118,8 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, assets
+         if (fromApp.startsWith('..') || external_path_default().isAbsolute(fromApp) || resolved.includes(`${external_path_default().sep}node_modules${external_path_default().sep}`)) {
+             const aliased = matchAlias(alias, request);
+-            if (!aliased) return request;
+-            for (const target of aliased.targets.filter(isBareSpecifier)){
++            if (!aliased && isBareSpecifier(request)) return request;
++            for (const target of aliased?.targets.filter(isBareSpecifier) ?? []){
+                 const specifier = `${target}${aliased.rest}`;
+                 if (await resolve(context, specifier).catch(()=>'') === resolved) return specifier;
+             }
+             const outputDir = external_path_default().join(distDir, external_path_default().relative(appDirectory, external_path_default().dirname(contextInfo.issuer)));
+diff --git a/dist/esm/compilers/rslib.mjs b/dist/esm/compilers/rslib.mjs
+--- a/dist/esm/compilers/rslib.mjs
++++ b/dist/esm/compilers/rslib.mjs
+@@ -76,8 +76,8 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, assets
+         if (fromApp.startsWith('..') || path.isAbsolute(fromApp) || resolved.includes(`${path.sep}node_modules${path.sep}`)) {
+             const aliased = matchAlias(alias, request);
+-            if (!aliased) return request;
+-            for (const target of aliased.targets.filter(isBareSpecifier)){
++            if (!aliased && isBareSpecifier(request)) return request;
++            for (const target of aliased?.targets.filter(isBareSpecifier) ?? []){
+                 const specifier = `${target}${aliased.rest}`;
+                 if (await resolve(context, specifier).catch(()=>'') === resolved) return specifier;
+             }
+             const outputDir = path.join(distDir, path.relative(appDirectory, path.dirname(contextInfo.issuer)));
+diff --git a/dist/esm-node/compilers/rslib.mjs b/dist/esm-node/compilers/rslib.mjs
+--- a/dist/esm-node/compilers/rslib.mjs
++++ b/dist/esm-node/compilers/rslib.mjs
+@@ -77,8 +77,8 @@ const importEmittedFile = ({ appDirectory, distDir, alias, sources, reached, assets
+         if (fromApp.startsWith('..') || path.isAbsolute(fromApp) || resolved.includes(`${path.sep}node_modules${path.sep}`)) {
+             const aliased = matchAlias(alias, request);
+-            if (!aliased) return request;
+-            for (const target of aliased.targets.filter(isBareSpecifier)){
++            if (!aliased && isBareSpecifier(request)) return request;
++            for (const target of aliased?.targets.filter(isBareSpecifier) ?? []){
+                 const specifier = `${target}${aliased.rest}`;
+                 if (await resolve(context, specifier).catch(()=>'') === resolved) return specifier;
+             }
+             const outputDir = path.join(distDir, path.relative(appDirectory, path.dirname(contextInfo.issuer)));
+diff --git a/dist/cjs/compilers/tsgo.js b/dist/cjs/compilers/tsgo.js
+--- a/dist/cjs/compilers/tsgo.js
++++ b/dist/cjs/compilers/tsgo.js
+@@ -70,7 +70,7 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs, tsgo
+     delete options.tsBuildInfoFile;
+     config.files = filterSourceFiles(tsconfigDir, sourceDirs, config.files, excludeFiles);
+     delete config.include;
+-    delete config.references;
++    // Preserve references so application projects resolve through their checked declarations.
+     if (void 0 !== options.baseUrl) {
+         const baseUrl = external_path_default().resolve(tsconfigDir, options.baseUrl);
+         if (options.paths) options.paths = Object.fromEntries(Object.entries(options.paths).map(([key, targets])=>[
+diff --git a/dist/esm/compilers/tsgo.mjs b/dist/esm/compilers/tsgo.mjs
+--- a/dist/esm/compilers/tsgo.mjs
++++ b/dist/esm/compilers/tsgo.mjs
+@@ -25,7 +25,7 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs, tsgo
+     delete options.tsBuildInfoFile;
+     config.files = filterSourceFiles(tsconfigDir, sourceDirs, config.files, excludeFiles);
+     delete config.include;
+-    delete config.references;
++    // Preserve references so application projects resolve through their checked declarations.
+     if (void 0 !== options.baseUrl) {
+         const baseUrl = path.resolve(tsconfigDir, options.baseUrl);
+         if (options.paths) options.paths = Object.fromEntries(Object.entries(options.paths).map(([key, targets])=>[
+diff --git a/dist/esm-node/compilers/tsgo.mjs b/dist/esm-node/compilers/tsgo.mjs
+--- a/dist/esm-node/compilers/tsgo.mjs
++++ b/dist/esm-node/compilers/tsgo.mjs
+@@ -30,7 +30,7 @@ const createResolvedTsgoConfig = async (appDirectory, tsconfigPath, sourceDirs, tsgo
+     delete options.tsBuildInfoFile;
+     config.files = filterSourceFiles(tsconfigDir, sourceDirs, config.files, excludeFiles);
+     delete config.include;
+-    delete config.references;
++    // Preserve references so application projects resolve through their checked declarations.
+     if (void 0 !== options.baseUrl) {
+         const baseUrl = path.resolve(tsconfigDir, options.baseUrl);
+         if (options.paths) options.paths = Object.fromEntries(Object.entries(options.paths).map(([key, targets])=>[

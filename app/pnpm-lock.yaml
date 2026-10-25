@@ -238,6 +238,7 @@ patchedDependencies:
   '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28': a24d2cd516ebfce14856460194abe7c0e6731c278f72ce9a5d78f2bdf22ad9b8
   '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28': 032c0e5bea700ff3e5d1d246ddc76b4535526183442f095e0fa102c6bf29913c
   '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': 5fcd3789e8a8a0ce91af838b83dcd94f5bf039302d17032ba43cfd2ca0660e9b
+  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28': 9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337
   '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': 94e26a23e23ef4136167d558e7e9bb2c24631cb20d9e287c1e486d30420c4eec
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
   '@techsio/ui-kit@0.57.0': 69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36
@@ -16046,7 +16047,7 @@ snapshots:
       '@modern-js/server': '@bleedingdev/modern-js-server@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/types': '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@rsbuild/core': 2.2.9(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)
@@ -16102,7 +16103,7 @@ snapshots:
       '@modern-js/server': '@bleedingdev/modern-js-server@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/types': '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@rsbuild/core': 2.2.9(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)
@@ -16158,7 +16159,7 @@ snapshots:
       '@modern-js/server': '@bleedingdev/modern-js-server@3.9.0-ultramodern.28(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@modern-js/server-runtime-extensions': '@bleedingdev/modern-js-server-runtime-extensions@3.9.0-ultramodern.28(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(zod@4.6.5)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
       '@modern-js/types': '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@rsbuild/core': 2.2.9(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)
@@ -16645,7 +16646,7 @@ snapshots:
       '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@swc/core': 1.16.2(@swc/helpers@0.5.23)
       qs: 6.16.0
@@ -16668,7 +16669,7 @@ snapshots:
       '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@swc/core': 1.16.2(@swc/helpers@0.5.23)
       qs: 6.16.0
@@ -16691,7 +16692,7 @@ snapshots:
       '@modern-js/bff-core': '@bleedingdev/modern-js-bff-core@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(zod@4.6.5)'
       '@modern-js/create-request': '@bleedingdev/modern-js-create-request@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@swc/core': 1.16.2(@swc/helpers@0.5.23)
       qs: 6.16.0
@@ -17034,7 +17035,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)':
+  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)':
     dependencies:
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@rslib/core': 1.0.2(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(typescript@7.0.2)
@@ -17049,7 +17050,7 @@ snapshots:
       - react-dom
       - typescript
 
-  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)':
+  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)':
     dependencies:
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@rslib/core': 1.0.2(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(typescript@7.0.2)
@@ -17068,7 +17069,7 @@ snapshots:
     dependencies:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@bleedingdev/mf-runtime-tools@2.9.2)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@7.0.2)'
       '@modern-js/types': '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
       '@swc/helpers': 0.5.23
@@ -17092,7 +17093,7 @@ snapshots:
     dependencies:
       '@modern-js/runtime-utils': '@bleedingdev/modern-js-runtime-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@modern-js/server-core': '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
-      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
+      '@modern-js/server-utils': '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28(patch_hash=9fc59bf9c8d208f2da1586616aeeae7541e10ac39c04fcd2d759480df2fb0337)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.3.0))(react@19.3.0)(typescript@7.0.2)'
       '@modern-js/types': '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
       '@modern-js/utils': '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28(react-dom@19.2.8(react@19.3.0))(react@19.3.0)'
       '@swc/helpers': 0.5.23
