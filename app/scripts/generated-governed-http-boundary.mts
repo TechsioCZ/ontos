@@ -366,21 +366,6 @@ const callbackReturnedExpression = (handlerSource: string): string | undefined =
   return (statementEnd === -1 ? returned : returned.slice(0, statementEnd)).trim();
 };
 
-const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
-  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
-    return false;
-  }
-  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
-  if (resolved === undefined) {
-    return false;
-  }
-  if (isEffectFnCallback(resolved)) {
-    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
-  }
-  const expression = callbackReturnedExpression(resolved);
-  return /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(maskNonCode(expression ?? '', true));
-};
-
 interface GeneratedSlotRange {
   readonly bodyEnd: number;
   readonly bodyStart: number;
@@ -585,6 +570,24 @@ const hasExactValueImport = (
     (allowAdditionalImports || imports.length === 1) &&
     importedValues.filter((candidate) => candidate === value).length === 1 &&
     !matches(code, new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(importedBinding)}\\b`, 'u'))
+  );
+};
+
+const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
+  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
+    return false;
+  }
+  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
+  if (resolved === undefined) {
+    return false;
+  }
+  if (isEffectFnCallback(resolved)) {
+    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
+  }
+  const expression = maskNonCode(callbackReturnedExpression(resolved) ?? '', true).trim();
+  return (
+    (expression === 'Effect.succeedNone' && hasExactValueImport(ownerSource, 'Effect', 'effect')) ||
+    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression)
   );
 };
 
@@ -1850,10 +1853,10 @@ const hasReadCallbacks = (
     pipeline?.trimStart().startsWith('{') === true &&
     (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
     optionalSteps.every(
-      (callback) =>
-        isExecutableCallback(callback, source) ||
-        isOwnerLocalImportedCallback(callback) ||
-        isOwnerLocalImportedFactoryResult(callback),
+      (step) =>
+        isExecutableCallback(step, source) ||
+        isOwnerLocalImportedCallback(step) ||
+        isOwnerLocalImportedFactoryResult(step),
     ) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);

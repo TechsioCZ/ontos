@@ -68,7 +68,7 @@ export const retailOrderHistoryDetailRead = defineRead(
       }).pipe(Effect.mapError(mapHistoryError));
       return { evidence: { resultCount: 1 }, result };
     }),
-    load: (): Effect.Effect<Option.Option<PreloadedCounterpartyAssociation>> => Effect.succeed(Option.none()),
+    load: (): Effect.Effect<Option.Option<PreloadedCounterpartyAssociation>> => Effect.succeedNone,
   },
   loadCustomerHistoryReadServices,
   (input, scope) => retailHistoryTarget({ profileRef: input.profileRef, refs: [input.orderRef] }, scope),
