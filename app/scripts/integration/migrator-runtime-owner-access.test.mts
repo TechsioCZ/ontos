@@ -199,7 +199,9 @@ it.live('D1 owner migrations alone grant exact runtime access, and readiness rej
         }),
       ),
       DATABASE_ADMIN_URL: databaseUrl(connections.admin.connectionString, database),
+      DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
       DATABASE_URL: databaseUrl(sharedConnection.connectionString, database),
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
     };
     // The deployment bootstraps the role before owner migrations; its fixed schema list does not
     // cover these owners, so every grant verified below must come from the owner migrations.

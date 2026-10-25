@@ -135,7 +135,7 @@ step containers "${COMPOSE[@]}" up -d --wait
 
 # 3. Schema, base context, Siampark baseline, authorization. SpiceDB is in-memory: grants are re-written
 #    on every run (demo:reset writes the Siampark account grants).
-step db-migrate pnpm_ db:migrate
+DATABASE_LOGIN_ROLE_POLICY=initialize-local step db-migrate pnpm_ db:migrate
 step local-initialize pnpm_ local:initialize
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset

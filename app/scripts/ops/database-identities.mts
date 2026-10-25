@@ -75,7 +75,7 @@ export const DatabaseLoginRolesLive = Layer.succeed(
               }),
           ),
         );
-        yield* ensureDatabaseLoginRole(client, { database, password, role }).pipe(
+        yield* ensureDatabaseLoginRole(client, { credentials: { kind: 'password', password }, database, role }).pipe(
           Effect.mapError(
             // The cause is dropped: a driver error may echo the statement that carries the password.
             () => new StageOperationError({ message: `the login role ${role} could not be ensured` }),

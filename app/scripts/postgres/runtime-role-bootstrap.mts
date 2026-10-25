@@ -2,8 +2,10 @@
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 import { PgClient } from '@effect/sql-pg';
-import { Array as EffectArray, Effect, Order, Predicate } from 'effect';
-import type { Redacted } from 'effect';
+import { Array as EffectArray, Effect, Order, Predicate, Redacted, Schema } from 'effect';
+import type { Reactivity } from 'effect/unstable/reactivity';
+
+import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 
 import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import type {
@@ -18,6 +20,7 @@ import {
   quoteIdentifier,
   runtimeRoleQueryFailure,
 } from './database-login-roles.mts';
+import type { DatabaseLoginCredentials } from './database-login-roles.mts';
 import { DATABASE_ROLE_GRANT_MANIFEST, TRUST_ROUTINES } from './database-role-manifest.mts';
 import type { DatabaseRoleGrantManifestEntry } from './database-role-manifest.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';
@@ -168,23 +171,18 @@ export const bootstrapFailure = (reason: string): RuntimeRoleBootstrapError =>
 
 export const connectAdmin = (connectionString: Redacted.Redacted) =>
   PgClient.makeClient({ url: connectionString }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new RuntimeRoleBootstrapError({
-          reason: `Unable to connect to the administrative PostgreSQL database: ${cause.message}`,
-        }),
-    ),
+    Effect.mapError(() => bootstrapFailure('Unable to connect to the administrative PostgreSQL database')),
   );
 
 const resetLoginRole = (
   client: PgClient.PgClient,
   database: string,
   entry: DatabaseRoleGrantManifestEntry,
-  password: Redacted.Redacted,
+  credentials: DatabaseLoginCredentials,
 ): Effect.Effect<void, RuntimeRoleBootstrapError> =>
   Effect.gen(function* resetLoginRoleEffect() {
     const { role } = entry.identity;
-    yield* ensureDatabaseLoginRole(client, { database, password, role });
+    yield* ensureDatabaseLoginRole(client, { credentials, database, role });
     const memberships = yield* query<{ granted_role: string; grantor: string; member: string }>(
       client,
       `select granted.rolname as granted_role, member_role.rolname as member, grantor.rolname as grantor
@@ -875,19 +873,65 @@ export const revokePublicStatementStatistics = (
     { concurrency: 1, discard: true },
   );
 
-export const bootstrapRuntimeRoles = (
+export const RuntimeRoleBootstrapModeSchema = Schema.Literals(['reconcile', 'initialize-local']);
+export type RuntimeRoleBootstrapMode = typeof RuntimeRoleBootstrapModeSchema.Type;
+
+/** Check the complete manifest, not just whichever credentials the caller supplied. No writes or transaction here. */
+const preflightProtectedLogins = (client: PgClient.PgClient, connections: DatabaseIdentityConnections) =>
+  Effect.gen(function* preflightProtectedLoginsEffect() {
+    for (const { identity } of explicitEntries) {
+      if (
+        !(yield* exists(
+          client,
+          'select exists(select 1 from pg_catalog.pg_roles where rolname = $1) as exists',
+          identity.role,
+        ))
+      ) {
+        return yield* bootstrapFailure(`Protected PostgreSQL role ${identity.role} is missing`);
+      }
+    }
+    for (const { identity } of explicitEntries) {
+      const connection = connections.runtime[identity.id];
+      if (connection === undefined) {
+        return yield* bootstrapFailure(`The protected ${identity.urlKey} connection is unavailable`);
+      }
+      yield* Effect.gen(function* authenticateProtectedLogin() {
+        const login = yield* PgClient.makeClient({
+          connectTimeout: '10 seconds',
+          url: Redacted.make(connection.connectionString),
+        });
+        const [session] = yield* login.unsafe<{ database: string; role: string }>(
+          'select current_database() as database, session_user as role',
+        );
+        if (session?.database !== connections.admin.database || session.role !== identity.role) {
+          return yield* bootstrapFailure('Unexpected PostgreSQL login identity or database');
+        }
+        return yield* Effect.void;
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError(() =>
+          bootstrapFailure(
+            `Unable to authenticate the protected ${identity.urlKey} connection to its intended database`,
+          ),
+        ),
+      );
+    }
+    return yield* Effect.void;
+  });
+
+const applyRuntimeRoleBootstrap = (
   client: PgClient.PgClient,
   database: string,
-  passwords: ReadonlyMap<string, Redacted.Redacted>,
+  credentials: ReadonlyMap<string, DatabaseLoginCredentials>,
 ): Effect.Effect<void, RuntimeRoleBootstrapError> =>
-  Effect.gen(function* bootstrapRuntimeRolesEffect() {
+  Effect.gen(function* applyRuntimeRoleBootstrapEffect() {
     yield* Effect.forEach(
       DATABASE_ROLE_GRANT_MANIFEST,
       (entry) => {
-        const password = passwords.get(entry.identity.role);
-        return password === undefined
-          ? Effect.fail(bootstrapFailure(`Missing the ${entry.identity.urlKey} password for ${entry.identity.role}`))
-          : resetLoginRole(client, database, entry, password);
+        const login = credentials.get(entry.identity.role);
+        return login === undefined
+          ? Effect.fail(bootstrapFailure(`Missing the ${entry.identity.urlKey} credential policy`))
+          : resetLoginRole(client, database, entry, login);
       },
       { concurrency: 1, discard: true },
     );
@@ -915,7 +959,35 @@ export const bootstrapRuntimeRoles = (
     });
   }).pipe(
     client.withTransaction,
-    Effect.mapError((failure) =>
-      Predicate.isTagged(failure, 'SqlError') ? runtimeRoleQueryFailure(failure) : failure,
-    ),
+    Effect.mapError((failure) => (Predicate.isTagged(failure, 'SqlError') ? runtimeRoleQueryFailure() : failure)),
   );
+
+export const bootstrapRuntimeRoles = (
+  client: PgClient.PgClient,
+  connections: DatabaseIdentityConnections,
+  passwords: ReadonlyMap<string, Redacted.Redacted>,
+  mode: RuntimeRoleBootstrapMode,
+): Effect.Effect<void, RuntimeRoleBootstrapError, Reactivity.Reactivity> =>
+  Effect.gen(function* bootstrapRuntimeRolesEffect() {
+    if (mode === 'initialize-local') {
+      if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(connections.admin.host)) {
+        return yield* bootstrapFailure('PostgreSQL role initialization requires a local database');
+      }
+    } else {
+      yield* preflightProtectedLogins(client, connections);
+    }
+    const credentials = new Map<string, DatabaseLoginCredentials>();
+    for (const entry of DATABASE_ROLE_GRANT_MANIFEST) {
+      if (mode === 'reconcile' && entry.kind === 'explicit') {
+        credentials.set(entry.identity.role, { kind: 'existing' });
+      } else {
+        const password = passwords.get(entry.identity.role);
+        if (password === undefined) {
+          return yield* bootstrapFailure(`Missing the ${entry.identity.urlKey} password for ${entry.identity.role}`);
+        }
+        credentials.set(entry.identity.role, { kind: 'password', password });
+      }
+    }
+    yield* applyRuntimeRoleBootstrap(client, connections.admin.database, credentials);
+    return yield* Effect.void;
+  });

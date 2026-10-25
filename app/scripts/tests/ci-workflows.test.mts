@@ -53,6 +53,9 @@ it('holds one stage lock across dedicated identity bootstrap, every demo migrati
   const { jobs } = demoDeployment();
   const { release } = jobs;
   expect(release?.concurrency?.group).toBe(EDGE_PUBLICATION_LOCK);
+  // Job-wide policy also covers both bootstraps nested inside db:migrate.
+  expect(release?.env?.DATABASE_LOGIN_ROLE_POLICY).toBe('reconcile');
+  expect(release?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
   expect(jobs['outbox-host']).toBeUndefined();
   const steps = release?.steps ?? [];
   const ordered = [
