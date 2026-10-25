@@ -1,5 +1,11 @@
 import { Effect, Schema } from 'effect';
 
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
+import type { DatabaseIdentity } from '../../packages/core-runtime/src/db/database-identities.ts';
 import { StageOperationError } from './stage-operation-error.mts';
 import { decodeInput, readAppText } from './stage-operations.mts';
 
@@ -29,16 +35,28 @@ export const PlacementSchema = Schema.fromJsonString(
 export const PLACEMENT_PATH = ['topology', 'cloudflare-placement.json'] as const;
 export const PLACEMENT_LABEL = 'topology/cloudflare-placement.json';
 
-export const HYPERDRIVE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
+/**
+ * The build variable of an identity's Worker Hyperdrive config. Only Worker-served identities have one;
+ * the cut-over tests pin each derived name, so an identity without a binding fails there, not at deploy.
+ */
+const workerHyperdriveIdVariable = (identity: DatabaseIdentity): string =>
+  identity.cloudflareHyperdrive?.idVariable ?? '';
+
+export const HYPERDRIVE_ID_VARIABLE = workerHyperdriveIdVariable(SHARED_RUNTIME_IDENTITY);
+export const PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE = workerHyperdriveIdVariable(PARTY_REGISTRY_REQUEST_IDENTITY);
+export const GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE = workerHyperdriveIdVariable(SHELL_GATEWAY_ISSUER_IDENTITY);
 export const SPICEDB_VPC_SERVICE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
 export const MF_DEV_ORIGIN_VARIABLE = 'ULTRAMODERN_MF_DEV_ORIGIN';
 export const COMPOSITION_KV_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID';
 // Every placed Worker bakes the Shell origin into its API CORS allowlist and binds the private data
-// plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service, and the
-// active Application Composition through the composition KV namespace.
+// plane: PostgreSQL through its identity's Hyperdrive config, SpiceDB through its Workers VPC service,
+// and the active Application Composition through the composition KV namespace. The placement is one
+// build environment for every Worker, so it needs each identity's Hyperdrive ID.
 const SHARED_BUILD_VARIABLES = [
   MF_DEV_ORIGIN_VARIABLE,
   HYPERDRIVE_ID_VARIABLE,
+  PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
+  GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
   SPICEDB_VPC_SERVICE_ID_VARIABLE,
   COMPOSITION_KV_ID_VARIABLE,
 ] as const;

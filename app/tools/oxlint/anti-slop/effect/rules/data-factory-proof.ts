@@ -283,6 +283,7 @@ class DataFactoryProof {
             'isMaxLength',
             'isInt',
             'isGreaterThan',
+            'isGreaterThanOrEqualTo',
             'isBetween',
             'isFinite',
             'isTrimmed',
@@ -677,6 +678,7 @@ class DataFactoryProof {
 
   property(input: Value, name: string, model: Model): Value {
     const value = this.normalizeNative(input);
+    if (value.kind === 'record' && value.native === 'set' && name === 'has') return native('set:has');
     if (value.kind === 'record') return value.fields?.get(name) ?? value.element ?? BAD;
     if (value.kind === 'data' && value.native === 'regexp') return native(`regexp:${name}`);
     if (value.kind === 'schema') {
@@ -746,7 +748,7 @@ class DataFactoryProof {
       !env.has('Set')
     ) {
       const args = node.arguments.map((part: Node) => this.expression(part, model, env));
-      return args.every(isData) ? record(new Map([['size', DATA]])) : BAD;
+      return args.every(isData) ? { ...record(new Map([['size', DATA]])), native: 'set' } : BAD;
     }
     if (node.type === 'ConditionalExpression') {
       const test = this.expression(node.test, model, env);
@@ -776,6 +778,19 @@ class DataFactoryProof {
       return isData(this.expression(node.argument, model, env)) ? DATA : BAD;
     if (node.type !== 'CallExpression') return BAD;
     const callee = this.expression(node.callee, model, env);
+    if (callee.kind === 'native' && callee.native === 'effect:Schema.TemplateLiteral') {
+      // Inspect each segment before array merging erases the distinction between literals and
+      // schemas. Opaque schemas and executable segments cannot establish a closed string codec.
+      const parts = node.arguments.length === 1 ? unwrap(node.arguments[0]) : undefined;
+      if (parts?.type !== 'ArrayExpression') return BAD;
+      return parts.elements.every((part: Node | null) => {
+        if (part === null) return false;
+        const value = this.expression(part, model, env);
+        return value.kind === 'data' || (value.kind === 'schema' && isClosedData(value.payload ?? BAD));
+      })
+        ? schema(DATA)
+        : BAD;
+    }
     const args = node.arguments.map((argument: Node) => this.expression(argument, model, env));
     if (callee.kind === 'bad' || args.some((argument: Value) => argument.kind === 'bad')) return BAD;
     const result = callee.kind === 'native' ? this.nativeCall(callee, args) : this.invoke(callee, args);
@@ -785,6 +800,7 @@ class DataFactoryProof {
 
   nativeCall(callee: Value, args: readonly Value[]): Value {
     const name = callee.native ?? '';
+    if (name === 'set:has' && args.length === 1 && args.every(isClosedData)) return DATA;
     if (name === 'regexp:test' && args.every(isData)) return DATA;
     if (name === 'regexp:exec' && args.every(isData))
       return record(new Map([['groups', { kind: 'record', fields: new Map(), element: DATA }]]));
@@ -812,6 +828,13 @@ class DataFactoryProof {
     if (name.startsWith('data:')) {
       const operation = name.slice(5);
       const owner = callee.payload ?? BAD;
+      if (
+        operation === 'replace' &&
+        owner.kind === 'data' &&
+        args.length === 2 &&
+        args.every((value) => value.kind === 'data')
+      )
+        return DATA;
       if (operation === 'split' && owner.kind === 'data' && args.every(isData)) return array(DATA);
       if (operation === 'slice' && isData(owner) && args.every(isData)) return owner;
       if (operation === 'flatMap' && owner.kind === 'array' && args.length === 1) {
@@ -902,6 +925,13 @@ class DataFactoryProof {
       }
       return schema(record(fields));
     }
+    if (
+      operation === 'Record' &&
+      args.length === 2 &&
+      args.every((value) => value.kind === 'schema' && isClosedData(value.payload ?? BAD))
+    )
+      // Dynamic keys need no field projection when both codecs prove the entire payload closed.
+      return schema(DATA);
     if (operation === 'Array' && args.length === 1 && args[0]?.kind === 'schema')
       return schema(array(args[0].payload ?? BAD));
     if (operation === 'Union' && args.length === 1 && args[0]?.kind === 'array') {
@@ -925,9 +955,18 @@ class DataFactoryProof {
         },
       };
     if (
-      ['brand', 'isPattern', 'isMinLength', 'isMaxLength', 'isInt', 'isBetween', 'isFinite', 'isTrimmed', 'isUUID'].includes(
-        operation,
-      ) &&
+      [
+        'brand',
+        'isPattern',
+        'isMinLength',
+        'isMaxLength',
+        'isInt',
+        'isGreaterThanOrEqualTo',
+        'isBetween',
+        'isFinite',
+        'isTrimmed',
+        'isUUID',
+      ].includes(operation) &&
       args.every(isData)
     )
       return { kind: 'transform', apply: (values) => (values[0]?.kind === 'schema' ? values[0] : BAD) };
@@ -949,7 +988,7 @@ class DataFactoryProof {
     if (value.kind !== 'native') return value;
     const name = value.native ?? '';
     if (name === 'effect:Schema.Unknown') return schema(BAD);
-    if (/^effect:Schema\.(String|NonEmptyString|Number|Finite|Boolean|BigInt|Undefined|Null|Never)$/u.test(name))
+    if (/^effect:Schema\.(String|NonEmptyString|Number|Finite|Int|Json|Boolean|BigInt|Undefined|Null|Never)$/u.test(name))
       return schema(DATA);
     if (name === 'effect:Order.String' || name === 'effect:Order.Number')
       return { kind: 'function', apply: (args) => (args.every(isData) ? DATA : BAD) };

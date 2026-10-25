@@ -7,6 +7,14 @@ import { makePartySearchProjectionGateway } from '../../src/search/parties.provi
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
+const scope = {
+  authMethod: 'system',
+  authContextRef: 'job:party-search:run:adapter-test',
+  correlationId: 'party-search-adapter-test',
+  legalEntityId,
+  principalId: '30000000-0000-4000-8000-000000000003',
+  tenantId,
+} as const;
 const partyRef = (resourceId: string) => ({
   moduleId: 'party.registry',
   resourceId,
@@ -62,18 +70,22 @@ it.effect('Party adapter queries only the Core-owned Party projection and maps a
   Effect.gen(function* partyAdapterQuery() {
     const calls: unknown[] = [];
     const core: CoreSearchQueryRuntimeService = {
-      search: (input) => {
+      search: (input, searchScope) => {
         calls.push(input);
+        expect(searchScope).toBe(scope);
         return Effect.succeed([partyAliasHit]);
       },
     };
 
     const gateway = makePartySearchProjectionGateway(core);
-    const hits = yield* gateway.searchParties({
-      includeArchived: true,
-      query: 'ACME',
-      tenantId,
-    });
+    const hits = yield* gateway.searchParties(
+      {
+        includeArchived: true,
+        query: 'ACME',
+        tenantId,
+      },
+      scope,
+    );
 
     expect(calls).toEqual([
       {
@@ -99,21 +111,25 @@ it.effect('Counterparty adapter uses trusted Legal Entity, effective time, role 
   Effect.gen(function* counterpartyAdapterQuery() {
     const calls: unknown[] = [];
     const core: CoreSearchQueryRuntimeService = {
-      search: (input) => {
+      search: (input, searchScope) => {
         calls.push(input);
+        expect(searchScope).toBe(scope);
         return Effect.succeed([counterpartyHit]);
       },
     };
     const effectiveAt = '2026-09-03T12:00:00.000Z';
 
-    const hits = yield* makePartySearchProjectionGateway(core).searchCounterparties({
-      effectiveAt,
-      includeArchived: false,
-      legalEntityId,
-      query: 'ACME',
-      role: 'CUSTOMER',
-      tenantId,
-    });
+    const hits = yield* makePartySearchProjectionGateway(core).searchCounterparties(
+      {
+        effectiveAt,
+        includeArchived: false,
+        legalEntityId,
+        query: 'ACME',
+        role: 'CUSTOMER',
+        tenantId,
+      },
+      scope,
+    );
 
     expect(calls).toEqual([
       {
@@ -154,11 +170,14 @@ it.effect('Party adapter fails closed when a generic projection returns the wron
     };
 
     const failure = yield* Effect.exit(
-      makePartySearchProjectionGateway(core).searchParties({
-        includeArchived: false,
-        query: 'Wrong',
-        tenantId,
-      }),
+      makePartySearchProjectionGateway(core).searchParties(
+        {
+          includeArchived: false,
+          query: 'Wrong',
+          tenantId,
+        },
+        scope,
+      ),
     );
     expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
   }),

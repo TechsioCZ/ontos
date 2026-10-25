@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { GatewayScopeGrantRegistrar } from '@app/core-runtime';
 import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 
 import {
@@ -23,6 +24,7 @@ import {
   Option,
   PlatformError,
   Predicate,
+  Redacted,
   Ref,
   Schema,
   Semaphore,
@@ -34,6 +36,14 @@ import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog
 import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type { GatewayIssuerConfigError, GatewayIssuerConfigValue } from './gateway-issuer-config.ts';
+
+const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
 // An issued assertion is handed out again until this many seconds before it expires, so a reused
@@ -49,7 +59,7 @@ const gatewayIssuerErrorFields = {
   code: Schema.Literals(['gateway_audience_invalid', 'gateway_issuer_unavailable', 'gateway_revision_unsupported']),
   failureCause: Schema.optionalKey(GatewayIssuerFailureCauseSchema),
   reason: Schema.String,
-  stage: Schema.Literals(['audience', 'clock', 'configuration', 'principal', 'signing']),
+  stage: Schema.Literals(['audience', 'clock', 'configuration', 'principal', 'scope_grant', 'signing']),
 };
 const GatewayIssuerErrorSchema = Schema.TaggedStruct('GatewayIssuerError', gatewayIssuerErrorFields);
 const GatewayIssuerErrorConstructor = Schema.TaggedError<Schema.Schema.Type<typeof GatewayIssuerErrorSchema>>()(
@@ -141,7 +151,7 @@ export class GatewayIssuer extends Context.Service<GatewayIssuer, GatewayIssuerS
 ) {}
 
 const unavailable = (
-  stage: 'audience' | 'clock' | 'configuration' | 'principal' | 'signing',
+  stage: 'audience' | 'clock' | 'configuration' | 'principal' | 'scope_grant' | 'signing',
   failureCause?: GatewayIssuerFailureCause,
 ) =>
   new GatewayIssuerErrorConstructor(
@@ -201,6 +211,7 @@ export const ShellCryptoLive = Layer.succeed(Crypto.Crypto, gatewayCrypto);
 const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssuerService(
   options: GatewayIssuerLayerOptions,
 ) {
+  const scopeGrantRegistrar = yield* GatewayScopeGrantRegistrar;
   const configurationCache = yield* Cache.makeWith(
     (_key: 'configuration') =>
       options.loadConfig.pipe(Effect.mapError((failureCause) => unavailable('configuration', failureCause))),
@@ -321,6 +332,27 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
       (failureCause) => unavailable('signing', failureCause),
       () => unavailable('signing', 'Assertion signing timed out'),
     );
+    // Every audience goes through the registrar; it registers only audiences enrolled for gateway scope grants.
+    // A failed registration fails issuance, so no unregistered assertion leaves the issuer.
+    yield* scopeGrantRegistrar
+      .register(
+        withOptionalProperty(
+          {
+            assertion: Redacted.make(token),
+            audience: input.audience,
+          },
+          principal.legalEntityId !== undefined,
+          'legalEntityId',
+          principal.legalEntityId,
+          {
+            expiresAtEpochSeconds: expiresAt,
+            jti,
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          },
+        ),
+      )
+      .pipe(Effect.mapError((failureCause) => unavailable('scope_grant', failureCause)));
 
     const response: GatewayContextResponse = {
       apiBaseUrl:

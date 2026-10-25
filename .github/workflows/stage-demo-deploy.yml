@@ -19,7 +19,7 @@ on:
         type: boolean
         default: false
       outbox_only:
-        description: Only push the outbox worker host at this revision and verify (after a failed outbox push).
+        description: Retry the outbox host only when this exact revision is already the successful stage-edge release.
         type: boolean
         default: false
 
@@ -214,6 +214,10 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/database-identity-environment.test.mts
+          scripts/tests/cloudflare-data-plane-bindings.test.mts
+          scripts/tests/generate-zerops-provider-deployment.test.mts
+          scripts/tests/outbox-worker-delivery.test.mts
           scripts/tests/reconcile-stage-service-grants.test.mts
           scripts/tests/verification-context.test.mts
           scripts/tests/mcp-proof-transport.test.mts
@@ -254,15 +258,21 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Uploads, publication, ingress and the storefront deploy hold the stage lock shared with the
+  # Identity bootstrap, migrations, edge publication, outbox and storefront deployment hold one lock shared with the
   # composition refresh. The job records the stage-edge deployment, so the refresh re-publishes this revision.
   release:
     name: Deploy, publish and activate stage
     needs: [plan, build, build-storefront, release-script-tests]
-    if: github.event_name == 'push' || inputs.deploy
+    if: >-
+      always() && !cancelled() &&
+      ((needs.plan.result == 'success' && needs.build.result == 'success' && needs.build-storefront.result == 'success' && needs.release-script-tests.result == 'success' && (github.event_name == 'push' || inputs.deploy)) ||
+       (github.event_name == 'workflow_dispatch' && inputs.outbox_only))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: stage-edge
+    permissions:
+      contents: read
+      deployments: read
     concurrency:
       group: zerops-stage
       cancel-in-progress: false
@@ -274,6 +284,7 @@ jobs:
       DEPLOY_TARGET: cloudflare
       OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
       ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: topology/initial-composition-execution.stage.json
       UNITS_JSON: ${{ needs.plan.outputs.units }}
@@ -293,16 +304,33 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Require the exact published revision for an outbox-only retry
+        if: inputs.outbox_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published=""
+          while IFS=$'\t' read -r id sha; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=1" --jq '.[0].state // ""')"
+            if [[ "$state" == success ]]; then published="$sha"; break; fi
+          done < <(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=stage-edge&per_page=100" --jq '.[] | [.id, .sha] | @tsv')
+          if [[ -z "$published" || "$published" != "$GITHUB_SHA" ]]; then
+            echo "::error title=Revision mismatch::outbox-only retries require this exact revision to be the published stage-edge release; run a full hardened release instead" >&2
+            exit 1
+          fi
+
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
       - name: Download every unit's build output
+        if: ${{ !inputs.outbox_only }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: edge-unit-*
           path: ${{ runner.temp }}/edge-units
 
       - name: Unpack the build outputs
+        if: ${{ !inputs.outbox_only }}
         working-directory: app
         run: |
           while IFS=$'\t' read -r id package; do
@@ -312,6 +340,7 @@ jobs:
           done < <(jq -r '.[] | [.id, .package] | @tsv' <<<"$UNITS_JSON")
 
       - name: Require a clean checkout before the uploads
+        if: ${{ !inputs.outbox_only }}
         run: |
           dirty="$(git status --porcelain=v1 --untracked-files=all)"
           if [[ -n "$dirty" ]]; then
@@ -331,6 +360,19 @@ jobs:
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
+      # Read-only: reuse existing sensitive migrator secrets. A missing dedicated secret stops the release.
+      - name: Load the dedicated database identity credentials
+        timeout-minutes: 5
+        working-directory: app
+        run: >-
+          mise exec -- pnpm exec node scripts/ops/database-identities.mts
+          --github-environment-file "$GITHUB_ENV"
+
+      - name: Bootstrap every database identity before migrations
+        timeout-minutes: 10
+        working-directory: app
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       # Every owner migrates its own schema through the same db:migrate chain as a local workspace, before
       # any upload, so no release ever runs against a schema older than its code. The Commerce portal realm
       # migrates with the same runtime/admin pair (it runs as ontos_runtime, as in .env.example). Any failed
@@ -342,6 +384,12 @@ jobs:
           COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: mise exec -- pnpm db:migrate
+
+      # Refresh exact grants and revocations after every demo owner has migrated. Never run the old shared grant path.
+      - name: Bootstrap every database identity after migrations
+        timeout-minutes: 10
+        working-directory: app
+        run: mise exec -- pnpm db:bootstrap-runtime-role
 
       # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation.
       - name: Reconcile storefront, Commerce and Privacy service grants
@@ -367,6 +415,7 @@ jobs:
       # Deploys only upload immutable release Workers; nothing serves them until publication. Each upload
       # locks only its own release identity, so eight run side by side (Cloudflare API rate limits).
       - name: Upload every immutable release Worker
+        if: ${{ !inputs.outbox_only }}
         working-directory: app
         env:
           ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
@@ -400,7 +449,7 @@ jobs:
             | xargs -P "$UPLOAD_PARALLELISM" -L 1 bash -c 'upload "$0" "$1"'
 
       - name: Upload the per-unit upload logs
-        if: always()
+        if: always() && !inputs.outbox_only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upload-logs
@@ -409,12 +458,13 @@ jobs:
           retention-days: 14
 
       - name: Summarize the upload phases
-        if: always()
+        if: always() && !inputs.outbox_only
         run: |
           grep -h ' phase \|receipt written' "$RUNNER_TEMP"/upload-logs/*.log | sed -E 's/^.*(release [^ ]+ (phase|receipt))/\1/' | sort || true
           grep -h 'release CLI exit' "$RUNNER_TEMP"/upload-logs/*.log | sort | uniq -c || true
 
       - name: Assemble the composition candidate
+        if: ${{ !inputs.outbox_only }}
         working-directory: app
         run: |
           receipts=()
@@ -428,7 +478,7 @@ jobs:
             --candidate-file "$CANDIDATE_FILE"
 
       - name: Archive the candidate and receipts
-        if: always()
+        if: always() && !inputs.outbox_only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: stage-demo-release
@@ -440,6 +490,7 @@ jobs:
 
       # The stage provider quiescence was proven when stage first cut over (operator receipt, 2026-10-22).
       - name: Write the initial cutover receipt
+        if: ${{ !inputs.outbox_only }}
         working-directory: app
         run: |
           mkdir -p "$(dirname "$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE")"
@@ -447,6 +498,7 @@ jobs:
             >"$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE"
 
       - name: Publish the Application Composition
+        if: ${{ !inputs.outbox_only }}
         timeout-minutes: 20
         working-directory: app
         env:
@@ -455,6 +507,7 @@ jobs:
         run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$CANDIDATE_FILE"
 
       - name: Activate the Shell ingress
+        if: ${{ !inputs.outbox_only }}
         timeout-minutes: 20
         working-directory: app
         env:
@@ -466,98 +519,7 @@ jobs:
             --app-directory apps/shell-super-app \
             --receipt-file "$RECEIPTS/shell-super-app.json"
 
-      - name: Clear the runner-owned Zerops VPN
-        if: always() && steps.composition-vpn.outputs.state-directory != ''
-        uses: ./.github/actions/zerops-vpn
-        with:
-          operation: clear
-          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
-          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
-
-      - name: Download the storefront build output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: akros-storefront
-          path: ${{ runner.temp }}/storefront
-
-      - name: Deploy the AKROS storefront
-        timeout-minutes: 15
-        working-directory: app/akros-storefront
-        env:
-          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
-          ONTOS_SHELL_WORKER_NAME: app-shell-super-app
-          STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
-          STOREFRONT_IMAGE_HOSTS: ''
-        run: |
-          tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
-          mise exec -- pnpm run cloudflare:deploy
-
-      # One short check, no load: the stage Workers CPU budget is capped.
-      - name: Smoke the Shell login and OAuth metadata
-        run: |
-          check() {
-            local url="$1" status
-            for _ in 1 2 3 4 5; do
-              status="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}s' --max-time 30 "$url" || true)"
-              echo "$url -> $status"
-              [[ "$status" == 200\ * ]] && return 0
-              sleep 10
-            done
-            echo "::error title=Smoke failed::$url did not answer 200" >&2
-            return 1
-          }
-          check "$STAGE_SHELL_URL/cs/login"
-          check "$STAGE_SHELL_URL/.well-known/oauth-authorization-server"
-
-  # The outbox worker host admits only the composition built from its exact commit (the build marker
-  # carries the source revision), so it is always built from the published commit: this run's commit after
-  # a release, or the last successful stage-edge deployment for an outbox-only dispatch.
-  outbox-host:
-    name: Push the outbox worker host
-    needs: [release]
-    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.outbox_only))
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    environment:
-      name: stage-edge
-      deployment: false
-    permissions:
-      contents: read
-      deployments: read
-    steps:
-      - name: Resolve the published commit
-        id: published
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASED: ${{ needs.release.result == 'success' }}
-        run: |
-          if [[ "$RELEASED" == true ]]; then
-            echo "sha=$GITHUB_SHA" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          while IFS=$'\t' read -r id sha; do
-            state="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=1" --jq '.[0].state // ""')"
-            if [[ "$state" == success ]]; then
-              echo "Active stage-edge deployment: $sha"
-              echo "sha=$sha" >>"$GITHUB_OUTPUT"
-              exit 0
-            fi
-          done < <(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=stage-edge&per_page=20" --jq '.[] | [.id, .sha] | @tsv')
-          echo "::error title=No published commit::no successful stage-edge deployment found" >&2
-          exit 1
-
-      - name: Checkout the published commit
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ steps.published.outputs.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
+      # The host is built from this same checkout and source SHA, before the single stage lock is released.
       - name: Install Zerops CLI
         run: |
           npm install --global @zerops/zcli@1.1.0
@@ -604,11 +566,59 @@ jobs:
           fi
           tail -15 "$RUNNER_TEMP/outbox-new.log"
 
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+      - name: Download the storefront build output
+        if: ${{ !inputs.outbox_only }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: akros-storefront
+          path: ${{ runner.temp }}/storefront
+
+      - name: Deploy the AKROS storefront
+        if: ${{ !inputs.outbox_only }}
+        timeout-minutes: 15
+        working-directory: app/akros-storefront
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_SHELL_WORKER_NAME: app-shell-super-app
+          STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
+          STOREFRONT_IMAGE_HOSTS: ''
+        run: |
+          tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
+          mise exec -- pnpm run cloudflare:deploy
+
+      # One short check, no load: the stage Workers CPU budget is capped.
+      - name: Smoke the Shell login and OAuth metadata
+        if: ${{ !inputs.outbox_only }}
+        run: |
+          check() {
+            local url="$1" status
+            for _ in 1 2 3 4 5; do
+              status="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}s' --max-time 30 "$url" || true)"
+              echo "$url -> $status"
+              [[ "$status" == 200\ * ]] && return 0
+              sleep 10
+            done
+            echo "::error title=Smoke failed::$url did not answer 200" >&2
+            return 1
+          }
+          check "$STAGE_SHELL_URL/cs/login"
+          check "$STAGE_SHELL_URL/.well-known/oauth-authorization-server"
+
   # One verification pass after every deploy, no load (the stage Workers CPU budget is capped).
   verify:
     name: Verify stage once
-    needs: [release, outbox-host]
-    if: always() && needs.outbox-host.result == 'success'
+    needs: [release]
+    if: always() && needs.release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

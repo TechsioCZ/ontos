@@ -98,6 +98,10 @@ export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), 
   Schema.brand('TimelineEntryId'),
 );
 
+// Tenant request bodies cannot create Core-attested `system` principals.
+// Demo agents have their own creation lifecycle and remain visible in managed-key reads.
+const nonHumanPrincipalKind = Schema.Literals(['service', 'integration']);
+
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
@@ -116,7 +120,9 @@ export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boo
 
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  kind: Schema.Literals(['service', 'integration', 'system']),
+  // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
+  // a persisted kind is never evidence of Core attestation.
+  kind: nonHumanPrincipalKind,
 });
 const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
 const identityReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -165,15 +171,15 @@ export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
     ...apiKeyStatusFields,
     newStatus: MutableApiKeyBindingStatusSchema,
     principalId: PrincipalIdSchema,
-    scope: ManagedApiKeyScopeSchema,
     reason: Schema.optionalKey(identityReason),
+    scope: ManagedApiKeyScopeSchema,
   }),
   Schema.Struct({
     ...apiKeyStatusFields,
     newStatus: Schema.Literal('revoked'),
     principalId: PrincipalIdSchema,
-    scope: ManagedApiKeyScopeSchema,
     reason: identityReason,
+    scope: ManagedApiKeyScopeSchema,
   }),
 ]);
 export const RotateApiKeyPayloadSchema = Schema.Struct({
@@ -754,7 +760,7 @@ const identityErrors = [
 const AgentApiKeyHeadersSchema = Schema.Struct({
   'x-api-key': Schema.optionalKey(Schema.String),
 });
-export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
+export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: LegalEntityIdSchema });
 
 /**
  * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified

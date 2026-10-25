@@ -251,8 +251,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let serviceResolutionCount = 0;
   let rollbackCount = 0;
   let commitCount = 0;
-  let currentInvocation: ActionInvocationRecord = {
+  let currentInvocation: ActionInvocationRecord & { readonly actionKey: string } = {
     actionInvocationId: invocationId,
+    actionKey: createPriceGroupAction.descriptor.actionKey,
     completedAt: null,
     requestHash: '',
     status: 'received',
@@ -262,7 +263,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     createOrResolveInvocation: (_executor, input) => {
       createInvocationCount += 1;
       if (currentInvocation.requestHash.length === 0) {
-        currentInvocation = { ...currentInvocation, requestHash: input.requestHash };
+        currentInvocation = { ...currentInvocation, actionKey: input.actionKey, requestHash: input.requestHash };
       }
       return Effect.succeed(currentInvocation);
     },
@@ -344,7 +345,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         );
       }
       if (sql.includes('current_setting')) {
-        return Effect.succeed([{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }]);
+        return Effect.succeed([
+          { legal_entity_id: installedLegalEntityId, role: 'ontos_runtime', tenant_id: installedTenantId },
+        ]);
       }
       if (sql.includes('transaction_timestamp')) {
         return Effect.succeed([{ operation_at: new Date('2026-11-30T00:00:00.000Z') }]);

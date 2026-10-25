@@ -1,16 +1,21 @@
-import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
+import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
+import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
-  makeTestPgClient,
   makeTestDatabaseFromClient,
   privacyMeasureDeferredCases,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { counterparties, parties, partyRelations, privacyMeasureExecutions } from '../../src/db/schema.ts';
 import { privacyMeasureExecutionService } from '../../src/services/privacy-measure-execution.service.ts';
-import { hasPostgreSqlCode } from '../support/database-boundary.ts';
+import {
+  establishPartyGatewayScope,
+  hasPostgreSqlCode,
+  openPartyBoundaryClients,
+  registerPartyGatewayScope,
+} from '../support/database-boundary.ts';
 
 const tenantId = 'e1000000-0000-4000-8000-000000000001';
 const legalEntityId = 'e2000000-0000-4000-8000-000000000002';
@@ -44,11 +49,11 @@ const handoff: PrivacyMeasureHandoff = {
 it.live('records unsupported Party measures without changing canonical lifecycle state', () =>
   Effect.scoped(
     Effect.gen(function* partyPrivacyMeasurePostgresAcceptance() {
-      const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* makeTestPgClient(connections.admin.connectionString);
-      const runtimePool = yield* makeTestPgClient(connections.runtime.connectionString);
-      const admin = yield* makeTestDatabaseFromClient(adminPool, partyRelations);
-      const runtime = yield* makeTestDatabaseFromClient(runtimePool, partyRelations);
+      const clients = yield* openPartyBoundaryClients();
+      const admin = yield* makeTestDatabaseFromClient(clients.admin, partyRelations);
+      const runtime = yield* makeTestDatabaseFromClient(clients.runtime, partyRelations);
+      const gatewayScope = yield* registerPartyGatewayScope(clients, { legalEntityId, tenantId });
+      yield* addTestGatewayScopeGrantCleanup(clients.admin, [tenantId]);
       const scope = {
         authMethod: 'system' as const,
         correlationId: 'party-owner-postgres',
@@ -68,10 +73,7 @@ it.live('records unsupported Party measures without changing canonical lifecycle
       const execute = (actionInvocationId: string, input = handoff) =>
         runtime.transaction((transaction) =>
           Effect.gen(function* executeInScope() {
-            yield* transaction.execute(
-              sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
-              'objects',
-            );
+            yield* establishPartyGatewayScope(transaction, gatewayScope);
             const service = yield* privacyMeasureExecutionService(transaction, scope);
             return yield* service.execute(input, actionInvocationId);
           }),
@@ -174,5 +176,5 @@ it.live('records unsupported Party measures without changing canonical lifecycle
       );
       expect(hasPostgreSqlCode('55000')(immutableFailure)).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provide(NodeCrypto.layer)),
 );

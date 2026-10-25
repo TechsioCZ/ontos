@@ -11,7 +11,7 @@ import {
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Predicate, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -57,6 +57,7 @@ import {
   SupportImpersonationStoreService,
 } from '../../api/auth/impersonation-service.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../api/auth/service.ts';
+import { scopeGrantRegistrarLayer } from '../support/gateway-issuer-layer.ts';
 
 const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   const cookies = new Map<string, string>();
@@ -131,21 +132,7 @@ it.live.each([
       legalEntities: () => Effect.succeed([]),
       modules: () => Effect.succeed([]),
       resources: () => Effect.succeed([]),
-      tenants: ({
-        permission,
-        tenantIds,
-      }: {
-        readonly permission:
-          | 'access'
-          | 'impersonate'
-          | 'manage_identity'
-          | 'manage_party_identity'
-          | 'manage_party_relationships'
-          | 'merge_party_identity'
-          | 'read_party_identity'
-          | 'review_party_identity';
-        readonly tenantIds: readonly string[];
-      }) =>
+      tenants: ({ permission, tenantIds }: Parameters<(typeof ContextAccess)['Service']['tenants']>[0]) =>
         Effect.succeed(
           tenantIds.map((key) => ({
             decision:
@@ -398,7 +385,7 @@ it.live.each([
               x: privateJwk.x ?? '',
             },
           }),
-        }),
+        }).pipe(Layer.provide(scopeGrantRegistrarLayer())),
       ),
     );
     const verifiedAssertion = yield* Effect.tryPromise(() =>

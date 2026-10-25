@@ -22,6 +22,87 @@ const readWorkflow = (name: string) =>
     parse(readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8')),
   );
 
+const DemoDeploymentSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      concurrency: Schema.optionalKey(Schema.Struct({ group: Schema.String })),
+      env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+      steps: Schema.Array(
+        Schema.Struct({
+          if: Schema.optionalKey(Schema.String),
+          name: Schema.String,
+          run: Schema.optionalKey(Schema.String),
+        }),
+      ),
+    }),
+  ),
+});
+
+const LOAD_IDENTITIES = 'Load the dedicated database identity credentials';
+const BOOTSTRAP_BEFORE = 'Bootstrap every database identity before migrations';
+const BOOTSTRAP_AFTER = 'Bootstrap every database identity after migrations';
+const EDGE_PUBLICATION_LOCK = 'zerops-stage';
+
+const demoDeployment = () =>
+  Schema.decodeUnknownSync(DemoDeploymentSchema)(
+    parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
+  );
+
+it('holds one stage lock across dedicated identity bootstrap, every demo migration, edge publication and outbox push', () => {
+  const { jobs } = demoDeployment();
+  const { release } = jobs;
+  expect(release?.concurrency?.group).toBe(EDGE_PUBLICATION_LOCK);
+  expect(jobs['outbox-host']).toBeUndefined();
+  const steps = release?.steps ?? [];
+  const ordered = [
+    LOAD_IDENTITIES,
+    BOOTSTRAP_BEFORE,
+    'Migrate every owner schema',
+    BOOTSTRAP_AFTER,
+    'Upload every immutable release Worker',
+    'Publish the Application Composition',
+    'Activate the Shell ingress',
+    'Push the outbox worker host',
+    'Clear the runner-owned Zerops VPN',
+  ];
+  const positions = ordered.map((name) => steps.findIndex((step) => step.name === name));
+  expect(positions.every((position) => position >= 0)).toBe(true);
+  expect(positions).toEqual(EffectArray.sort(positions, Order.Number));
+  for (const name of [BOOTSTRAP_BEFORE, BOOTSTRAP_AFTER]) {
+    expect(steps.find((step) => step.name === name)?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
+  }
+});
+
+it('loads dedicated credentials from existing sensitive stage secrets, never from shared fallback or build jobs', () => {
+  const { jobs } = demoDeployment();
+  const { release } = jobs;
+  const load = release?.steps.find(({ name }) => name === LOAD_IDENTITIES);
+  expect(load?.run).toContain('scripts/ops/database-identities.mts');
+  expect(load?.run).toContain('--github-environment-file "$GITHUB_ENV"');
+  expect(load?.run).not.toContain('database-identities --');
+  for (const job of ['build', 'build-storefront']) {
+    expect(jobs[job]?.env?.DATABASE_URL).toBeUndefined();
+    expect(jobs[job]?.env?.ZEROPS_TOKEN).toBeUndefined();
+  }
+});
+
+it('retries outbox only at the exact published hardened revision instead of checking out an older deployment', () => {
+  const { release } = demoDeployment().jobs;
+  const check = release?.steps.find(
+    ({ name }) => name === 'Require the exact published revision for an outbox-only retry',
+  );
+  expect(check?.if).toBe('inputs.outbox_only');
+  expect(check?.run).toContain('"$published" != "$GITHUB_SHA"');
+  expect(check?.run).toContain('run a full hardened release instead');
+  expect(release?.steps.filter(({ name }) => name.startsWith('Checkout'))).toHaveLength(1);
+  const checkout = release?.steps.findIndex(({ name }) => name === 'Checkout') ?? -1;
+  const publish = release?.steps.findIndex(({ name }) => name === 'Publish the Application Composition') ?? -1;
+  const outbox = release?.steps.findIndex(({ name }) => name === 'Push the outbox worker host') ?? -1;
+  expect(publish).toBeGreaterThan(checkout);
+  expect(outbox).toBeGreaterThan(publish);
+});
+
 /** The GitHub environment that holds the Cloudflare account token. */
 const EDGE_ENVIRONMENT = 'stage-edge';
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
@@ -130,7 +211,6 @@ const EDGE_PLAN_JOB = 'edge-plan';
 const EDGE_BUILD_JOB = 'edge-build';
 const EDGE_RELEASE_JOB = 'deploy-cloudflare';
 const EDGE_PUBLISH_JOB = 'publish-edge-composition';
-const EDGE_PUBLICATION_LOCK = 'zerops-stage';
 const EDGE_UNITS_OUTPUT = expression('needs.edge-plan.outputs.cloudflare');
 
 interface PlacementBuildInputs {

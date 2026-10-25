@@ -283,41 +283,74 @@ jobs:
 
       # Share one install across independent checks and retain a log for each check.
       # Keep the memory-heavy API analyzer and Commerce build outside this group.
-      - parallel:
-          - name: Validate the root lefthook config
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            run: app/node_modules/.bin/lefthook validate
+      - name: Start the independent static contract checks
+        id: static-contract-checks
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: |
+          mkdir "$RUNNER_TEMP/static-contracts"
+          nohup bash -eo pipefail >"$RUNNER_TEMP/static-contracts/runner.log" 2>&1 <<'CHECKS' &
+          directory="$RUNNER_TEMP/static-contracts"
+          result=1
+          trap 'printf "%s\n" "$result" > "$directory/status"' EXIT
+          names=(
+            'Validate the root lefthook config'
+            'Skills'
+            'Lean Core Dependencies'
+            'Workspace Contract'
+            'Module Contract Generation'
+            'Action Unit Tests'
+          )
+          commands=(
+            'cd .. && app/node_modules/.bin/lefthook validate'
+            'mise exec -- pnpm skills:check'
+            'mise exec -- pnpm lean-core:check'
+            'mise exec -- pnpm contract:check'
+            'mise exec -- pnpm check:module-contracts'
+            'mise exec -- pnpm action:test:unit'
+          )
+          pids=()
+          for index in "${!commands[@]}"; do
+            bash -eo pipefail -c "${commands[$index]}" >"$directory/$index.log" 2>&1 &
+            pids+=("$!")
+          done
+          failed=0
+          for index in "${!pids[@]}"; do
+            if wait "${pids[$index]}"; then
+              status=0
+            else
+              status=$?
+              failed=1
+            fi
+            echo "::group::${names[$index]}"
+            cat "$directory/$index.log"
+            echo '::endgroup::'
+            if [[ "$status" != 0 ]]; then
+              echo "::error title=Static contract check failed::${names[$index]} exited $status."
+            fi
+          done
+          result="$failed"
+          CHECKS
 
-          - name: Skills
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm skills:check
+      - name: Database Access Boundaries
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: mise exec -- pnpm database-access:check
 
-          - name: Database Access Boundaries
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm database-access:check
-
-          - name: Lean Core Dependencies
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm lean-core:check
-
-          - name: Workspace Contract
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm contract:check
-
-          - name: Module Contract Generation
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm check:module-contracts
-
-          - name: Action Unit Tests
-            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-            working-directory: app
-            run: mise exec -- pnpm action:test:unit
-
+      - name: Wait for every independent static contract check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          STATIC_CHECKS_OUTCOME: ${{ steps.static-contract-checks.outcome }}
+        run: |
+          if [[ "$STATIC_CHECKS_OUTCOME" != success ]]; then
+            echo '::error::The independent static contract checks could not start.'
+            exit 1
+          fi
+          until [[ -f "$RUNNER_TEMP/static-contracts/status" ]]; do
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/static-contracts/runner.log"
+          [[ "$(cat "$RUNNER_TEMP/static-contracts/status")" == 0 ]]
 
       # Module contract generation creates and deletes bundles inside verticals.
       # Wait for it before the i18n scanner walks those source directories.
@@ -477,13 +510,16 @@ jobs:
       # background while the services start and the migrations run; the browser tests wait for it below.
       - name: Install Chromium and its runtime dependencies
         id: chromium-install
-        background: true
         if: matrix.suite == 'browser'
         timeout-minutes: 10
         working-directory: app
         env:
           CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
+          nohup bash -eo pipefail >"$RUNNER_TEMP/chromium-install.log" 2>&1 <<'CHROMIUM' &
+          result=1
+          trap 'printf "%s\n" "$result" > "$RUNNER_TEMP/chromium-install.status"' EXIT
+          if timeout --kill-after=30s 10m bash -eo pipefail <<'INSTALL'; then
           if [ -d ~/.cache/playwright-apt-debs ]; then
             sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
           fi
@@ -493,6 +529,12 @@ jobs:
             set -- install --with-deps chromium
           fi
           mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
+          INSTALL
+            result=0
+          else
+            result=$?
+          fi
+          CHROMIUM
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -567,7 +609,27 @@ jobs:
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
-        wait: chromium-install
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        env:
+          CHROMIUM_INSTALL_OUTCOME: ${{ steps.chromium-install.outcome }}
+        run: |
+          if [[ "$CHROMIUM_INSTALL_OUTCOME" == skipped ]]; then
+            exit 0
+          fi
+          if [[ "$CHROMIUM_INSTALL_OUTCOME" != success ]]; then
+            echo '::error::The Chromium install could not start.'
+            exit 1
+          fi
+          until [[ -f "$RUNNER_TEMP/chromium-install.status" ]]; do
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/chromium-install.log"
+          status="$(cat "$RUNNER_TEMP/chromium-install.status")"
+          if [[ "$status" != 0 ]]; then
+            echo "::error::The Chromium install exited $status."
+            exit 1
+          fi
 
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'
@@ -620,10 +682,26 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
         include:
-          - { shard: 1, proof: none, units: verticals/catalog verticals/tax }
-          - { shard: 2, proof: none, units: verticals/commerce-customer-context verticals/storefront-registry }
-          - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
-          - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory verticals/availability }
+          - {
+              shard: 1,
+              proof: none,
+              units: verticals/catalog verticals/tax verticals/property-portfolio verticals/property-leasing verticals/legal-agreements verticals/work-tasks,
+            }
+          - {
+              shard: 2,
+              proof: none,
+              units: verticals/commerce-customer-context verticals/storefront-registry verticals/workforce verticals/tagging verticals/crm verticals/sales-pipeline,
+            }
+          - {
+              shard: 3,
+              proof: none,
+              units: verticals/assortment apps/shell-super-app verticals/merchandise verticals/facility-operations verticals/sales-insights,
+            }
+          - {
+              shard: 4,
+              proof: none,
+              units: verticals/party-registry verticals/inventory verticals/availability verticals/finance-billing verticals/crm-activities,
+            }
           - {
               shard: 5,
               proof: node,
@@ -739,25 +817,39 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5]
         include:
-          - { shard: 1, proof: topology, units: verticals/assortment verticals/pricing }
+          - {
+              shard: 1,
+              proof: topology,
+              units: verticals/assortment verticals/pricing verticals/property-portfolio verticals/property-leasing verticals/legal-agreements,
+            }
           - {
               shard: 2,
               proof: none,
-              units: verticals/party-registry verticals/price-group-catalog verticals/availability,
+              units: verticals/party-registry verticals/price-group-catalog verticals/availability verticals/work-tasks verticals/workforce verticals/tagging,
             }
-          - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
-          - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app verticals/tax }
+          - {
+              shard: 3,
+              proof: outputs,
+              units: verticals/catalog verticals/storefront-registry verticals/crm verticals/sales-pipeline verticals/merchandise,
+            }
+          - {
+              shard: 4,
+              proof: none,
+              units: verticals/commerce-customer-context apps/shell-super-app verticals/tax verticals/facility-operations verticals/sales-insights verticals/finance-billing,
+            }
           - {
               shard: 5,
               proof: none,
-              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy,
+              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog verticals/privacy verticals/crm-activities,
             }
     env:
-      # Placeholder data-plane IDs: locally a Worker's HYPERDRIVE binding connects to the proof's
+      # Placeholder data-plane IDs: locally a Worker's Hyperdrive bindings connect to the proof's
       # PostgreSQL, its SPICEDB binding is served by a local gateway Worker and its composition KV
       # binding is a local namespace.
       ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+      ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: '00000000000000000000000000000000'
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+      ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: '00000000000000000000000000000000'
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
     steps:
       - name: Harden Runner
@@ -785,15 +877,28 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_CRM: https://crm.invalid
+          ULTRAMODERN_PUBLIC_URL_CRM_ACTIVITIES: https://crm-activities.invalid
+          ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS: https://facility-operations.invalid
+          ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING: https://finance-billing.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
+          ULTRAMODERN_PUBLIC_URL_LEGAL_AGREEMENTS: https://legal-agreements.invalid
+          ULTRAMODERN_PUBLIC_URL_MERCHANDISE: https://merchandise.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
+          ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
+          ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
+          ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
+          ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE: https://sales-pipeline.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_TAGGING: https://tagging.invalid
           ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
+          ULTRAMODERN_PUBLIC_URL_WORK_TASKS: https://work-tasks.invalid
+          ULTRAMODERN_PUBLIC_URL_WORKFORCE: https://workforce.invalid
         run: |
           read -ra units <<<"$SHARD_UNITS"
           filters=()
@@ -910,15 +1015,28 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_CRM: https://crm.invalid
+          ULTRAMODERN_PUBLIC_URL_CRM_ACTIVITIES: https://crm-activities.invalid
+          ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS: https://facility-operations.invalid
+          ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING: https://finance-billing.invalid
           ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
+          ULTRAMODERN_PUBLIC_URL_LEGAL_AGREEMENTS: https://legal-agreements.invalid
+          ULTRAMODERN_PUBLIC_URL_MERCHANDISE: https://merchandise.invalid
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_PRIVACY: https://privacy.invalid
+          ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING: https://property-leasing.invalid
+          ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO: https://property-portfolio.invalid
+          ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS: https://sales-insights.invalid
+          ULTRAMODERN_PUBLIC_URL_SALES_PIPELINE: https://sales-pipeline.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_TAGGING: https://tagging.invalid
           ULTRAMODERN_PUBLIC_URL_TAX: https://tax.invalid
+          ULTRAMODERN_PUBLIC_URL_WORK_TASKS: https://work-tasks.invalid
+          ULTRAMODERN_PUBLIC_URL_WORKFORCE: https://workforce.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json

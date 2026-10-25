@@ -1,10 +1,14 @@
 /// <reference types="node" />
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import { NodeRuntime } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
+import { and, eq } from 'drizzle-orm';
+import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Console, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { WorkforceStateSchema } from '../shared/apis/records.ts';
+import { workforceRelations, workforceStates } from '../src/database/schema.ts';
 
 class OwnerVerificationError extends Schema.TaggedError<OwnerVerificationError>()('OwnerVerificationError', {
   reason: Schema.String,
@@ -26,7 +30,6 @@ const CatalogSchema = Schema.Struct({
   runtime_usage: Schema.Boolean,
   unique_redemption: Schema.Boolean,
 });
-const CountSchema = Schema.Array(Schema.Struct({ count: Schema.Int }));
 const SnapshotSchema = Schema.Array(
   Schema.Struct({ revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)), state: WorkforceStateSchema }),
 );
@@ -37,7 +40,7 @@ const stateMatchesDemoScope = (state: typeof WorkforceStateSchema.Type) =>
   state.employees.every(
     (employee) => employee.principalRef === undefined || employee.principalRef.tenantId === demoTenant,
   );
-const catalogMatches = (row: typeof CatalogSchema.Type) =>
+export const catalogMatches = (row: typeof CatalogSchema.Type) =>
   row.enabled &&
   row.forced &&
   row.policies === 4 &&
@@ -53,12 +56,38 @@ const catalogMatches = (row: typeof CatalogSchema.Type) =>
   !row.runtime_bypass &&
   !row.runtime_super &&
   row.unique_redemption;
-const verification = Effect.scoped(
-  Effect.gen(function* verifyOwnerDatabase() {
+type SnapshotRow = Pick<typeof workforceStates.$inferSelect, 'revision' | 'state'>;
+// Migration readiness allows no aggregate; seeded acceptance explicitly requires one.
+export const verifySnapshot = Effect.fn('verifySnapshot')(function* verifySnapshot(
+  rows: readonly SnapshotRow[],
+  requireSeed: boolean,
+) {
+  const snapshot = yield* Schema.decodeUnknownEffect(SnapshotSchema)(rows);
+  if (
+    snapshot.length > 1 ||
+    (requireSeed && snapshot.length !== 1) ||
+    snapshot.some((row) => !stateMatchesDemoScope(row.state))
+  ) {
+    return yield* new OwnerVerificationError({
+      reason: 'Exact scope must contain at most one valid aggregate; --require-seed requires one',
+    });
+  }
+  return yield* Effect.void;
+});
+const runtimePgLive = PgClient.layerFrom(
+  Effect.gen(function* runtimeConnection() {
     const pair = yield* loadDatabaseConnectionPair();
-    const client = yield* PgClient.makeClient({ url: Redacted.make(pair.runtime.connectionString) });
-    const catalog = yield* client
-      .unsafe(`select
+    return yield* PgClient.makeClient({ url: Redacted.make(pair.runtime.connectionString) });
+  }),
+).pipe(Layer.provide(Reactivity.layer));
+const verification = (requireSeed: boolean) =>
+  Effect.scoped(
+    Effect.gen(function* verifyOwnerDatabase() {
+      const client = yield* PgClient.PgClient;
+      const db = yield* makeWithDefaults({ relations: workforceRelations });
+      // System catalogs have no owner-local Drizzle table; business reads below use typed references.
+      const catalog = yield* client
+        .unsafe(`select
     c.relrowsecurity as enabled, c.relforcerowsecurity as forced,
     (select count(*)::int from pg_catalog.pg_policy where polrelid=c.oid) as policies,
     exists(select 1 from pg_catalog.pg_constraint where conrelid=c.oid and contype='p' and pg_get_constraintdef(oid) like '%tenant_id, legal_entity_id%') as primary_key,
@@ -75,87 +104,88 @@ const verification = Effect.scoped(
     exists(select 1 from pg_catalog.pg_constraint where conrelid='demo_workforce.gateway_assertion_redemptions'::regclass and contype='p' and pg_get_constraintdef(oid) like '%issuer, audience, jti%') as unique_redemption
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
     where n.nspname='demo_workforce' and c.relname='workforce_states'`)
-      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(CatalogSchema))));
-    if (catalog.length !== 1 || catalog[0] === undefined || !catalogMatches(catalog[0])) {
-      return yield* new OwnerVerificationError({
-        reason: 'RLS, runtime grants or concurrency infrastructure is incomplete',
-      });
-    }
-    const countVisible = (tenantId: string, legalEntityId: string) =>
-      client.withTransaction(
-        Effect.gen(function* countScopedVisibility() {
-          yield* client`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`;
-          const rows =
-            yield* client`select count(*)::int as count from demo_workforce.workforce_states where tenant_id=${demoTenant}::uuid and legal_entity_id=${demoCompany}::uuid`.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(CountSchema)),
-            );
-          return rows[0]?.count;
+        .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(CatalogSchema))));
+      if (catalog.length !== 1 || catalog[0] === undefined || !catalogMatches(catalog[0])) {
+        return yield* new OwnerVerificationError({
+          reason:
+            catalog[0] !== undefined && !catalog[0].forced
+              ? 'Owner state table is missing FORCE ROW LEVEL SECURITY'
+              : 'RLS, runtime grants or concurrency infrastructure is incomplete',
+        });
+      }
+      const countVisible = (tenantId: string, legalEntityId: string) =>
+        client.withTransaction(
+          Effect.gen(function* countScopedVisibility() {
+            yield* client`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`;
+            const rows = yield* db
+              .select({ tenantId: workforceStates.tenantId })
+              .from(workforceStates)
+              .where(and(eq(workforceStates.tenantId, demoTenant), eq(workforceStates.legalEntityId, demoCompany)))
+              .limit(1);
+            return rows.length;
+          }),
+        );
+      const unscoped = yield* db.select().from(workforceStates).limit(1);
+      if (unscoped.length !== 0) {
+        return yield* new OwnerVerificationError({ reason: 'Unscoped runtime read exposed owner state' });
+      }
+      const denied = yield* Effect.all(
+        [
+          countVisible('', demoCompany),
+          countVisible(demoTenant, ''),
+          countVisible('70000000-0000-4000-8000-000000000021', demoCompany),
+          countVisible(demoTenant, '71000000-0000-4000-8000-000000000021'),
+        ],
+        { concurrency: 1 },
+      );
+      if (denied.some((count) => count !== 0)) {
+        return yield* new OwnerVerificationError({ reason: 'Missing or foreign scope exposed the fixed demo state' });
+      }
+      const snapshot = yield* client.withTransaction(
+        Effect.gen(function* readScopedSnapshot() {
+          yield* client`select set_config('ontos.tenant_id', ${demoTenant}, true), set_config('ontos.legal_entity_id', ${demoCompany}, true)`;
+          return yield* db
+            .select({ revision: workforceStates.revision, state: workforceStates.state })
+            .from(workforceStates);
         }),
       );
-    const unscoped = yield* client
-      .unsafe('select count(*)::int as count from demo_workforce.workforce_states')
-      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(CountSchema)));
-    if (unscoped[0]?.count !== 0) {
-      return yield* new OwnerVerificationError({ reason: 'Unscoped runtime read exposed owner state' });
-    }
-    const denied = yield* Effect.all(
-      [
-        countVisible('', demoCompany),
-        countVisible(demoTenant, ''),
-        countVisible('70000000-0000-4000-8000-000000000021', demoCompany),
-        countVisible(demoTenant, '71000000-0000-4000-8000-000000000021'),
-      ],
-      { concurrency: 1 },
-    );
-    if (denied.some((count) => count !== 0)) {
-      return yield* new OwnerVerificationError({ reason: 'Missing or foreign scope exposed the fixed demo state' });
-    }
-    const snapshot = yield* client.withTransaction(
-      Effect.gen(function* readScopedSnapshot() {
-        yield* client`select set_config('ontos.tenant_id', ${demoTenant}, true), set_config('ontos.legal_entity_id', ${demoCompany}, true)`;
-        return yield* client
-          .unsafe('select revision,state from demo_workforce.workforce_states')
-          .pipe(
-            Effect.flatMap((rows) =>
-              Schema.decodeUnknownEffect(SnapshotSchema)(rows).pipe(
-                Effect.mapError((cause) =>
-                  Object.defineProperty(
-                    new OwnerVerificationError({ reason: `Exact-scope aggregate validation failed: ${cause.message}` }),
-                    'cause',
-                    { enumerable: false, value: cause },
-                  ),
-                ),
-              ),
-            ),
-          );
-      }),
-    );
-    if (snapshot.length !== 1 || snapshot[0] === undefined || !stateMatchesDemoScope(snapshot[0].state)) {
-      return yield* new OwnerVerificationError({ reason: 'Exact demo scope must expose one valid seeded aggregate' });
-    }
-    return yield* Effect.void;
-  }),
-);
-const reportTypedFailure = (failure: Effect.Error<typeof verification>) =>
+      yield* verifySnapshot(snapshot, requireSeed);
+      return yield* Effect.void;
+    }),
+  );
+const reportTypedFailure = (failure: Effect.Error<ReturnType<typeof verification>>) =>
   Console.error(
     Match.value(failure).pipe(
       Match.tag('OwnerVerificationError', ({ reason }) => reason),
       Match.orElse(() => 'Owner catalog or fixture decoding failed; details withheld'),
     ),
   );
-const main = verification.pipe(
-  Effect.tapError(reportTypedFailure),
-  Effect.tapCause((cause) =>
-    Console.error('workforce database verification failed; details withheld', {
-      defects: Cause.hasDies(cause),
-      typedFailures: Cause.hasFails(cause),
-    }),
-  ),
-  Effect.tap(() =>
-    Console.log(
-      'workforce database verification passed: catalog, nonce PK, runtime grants, exact demo visibility and four denied scopes',
+const main = (requireSeed: boolean) =>
+  verification(requireSeed).pipe(
+    Effect.tapError(reportTypedFailure),
+    Effect.tapCause((cause) =>
+      Console.error('workforce database verification failed; details withheld', {
+        defects: Cause.hasDies(cause),
+        typedFailures: Cause.hasFails(cause),
+      }),
     ),
-  ),
+    Effect.tap(() =>
+      Console.log(
+        `workforce database verification passed: catalog, nonce PK, runtime grants, existing scoped state and four denied scopes (${requireSeed ? 'seed required' : 'migration readiness'})`,
+      ),
+    ),
+  );
+const cli = Command.make(
+  'verify-db-schema',
+  {
+    requireSeed: Flag.Boolean('require-seed').pipe(Flag.withDefault(false)),
+  },
+  ({ requireSeed }) => main(requireSeed),
 );
-const mainLive = Layer.effectDiscard(main).pipe(Layer.provide(Reactivity.layer));
-NodeRuntime.runMain(Effect.scoped(Layer.build(mainLive)), { disableErrorReporting: true });
+const mainLive = Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
+  Layer.provide(runtimePgLive),
+  Layer.provide(NodeServices.layer),
+);
+if (import.meta.main) {
+  NodeRuntime.runMain(Effect.scoped(Layer.build(mainLive)), { disableErrorReporting: true });
+}

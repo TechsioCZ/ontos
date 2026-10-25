@@ -6,6 +6,7 @@ import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import { FileSystem, Effect } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
+import { PARTY_REGISTRY_WORKER_PARTY_TABLES } from '../../src/db/database-grants.ts';
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   PARTY_SCHEMA_NAME,
@@ -176,13 +177,22 @@ it('gives every tenant-owned record a tenant-qualified identity and forced-RLS p
       config.columns.some((column) => column.name === 'tenant_id' && column.notNull),
       `${config.name} needs a required tenant_id`,
     ).toBeTruthy();
+    const requestPolicies = config.policies.filter((policy) => policy.to === 'party_registry_runtime');
+    const workerPolicies = config.policies.filter((policy) => policy.to === 'party_registry_worker');
     expect(
-      config.policies.map((policy) => policy.for),
+      requestPolicies.map((policy) => policy.for),
       `${config.name} needs complete CRUD policies`,
     ).toEqual(['select', 'insert', 'update', 'delete']);
-    for (const policy of config.policies) {
-      expect(policy.to).toBe('ontos_runtime');
+    expect(requestPolicies.length + workerPolicies.length, `${config.name} has a policy for another role`).toBe(
+      config.policies.length,
+    );
+    for (const policy of workerPolicies) {
+      expect(policy.for).toBe('select');
+      expect(policy.name).toMatch(/_worker_select$/u);
     }
+    expect(workerPolicies.length > 0, `${config.name} worker read policy`).toBe(
+      PARTY_REGISTRY_WORKER_PARTY_TABLES.some((workerTable) => workerTable === `party.${config.name}`),
+    );
     const tenantIdentity = [...config.uniqueConstraints, ...config.indexes].find((candidate) => {
       const columns = 'columns' in candidate ? candidate.columns : (candidate.config.columns ?? []);
       return columns.some((column) => 'name' in column && column.name === 'tenant_id');
@@ -628,7 +638,7 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
     Effect.gen(function* testScenario() {
       const bootstrap = yield* FileSystem.FileSystem.use((fs) =>
         fs.readFileString(
-          fileURLToPath(new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url)),
+          fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
         ),
       );
       const verifier = yield* FileSystem.FileSystem.use((fs) =>
@@ -636,10 +646,37 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      // The platform schemas lead the grant list; the demo branch appends its vertical schemas after them.
-      expect(bootstrap).toMatch(
-        /\[\s*'core',\s*'auth',\s*'contacts',\s*'party',\s*'catalog',\s*'inventory',\s*'tax',\s*'privacy',/u,
-      );
+      // The legacy shared role keeps blanket access to the platform schemas, and the demo branch
+      // appends its vertical schemas after them; contacts and party move to dedicated identities.
+      const sharedRuntimeSchemas = /const SHARED_RUNTIME_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(bootstrap)?.groups?.[
+        'schemas'
+      ];
+      expect(sharedRuntimeSchemas).toBeDefined();
+      for (const schema of [
+        'core',
+        'auth',
+        'catalog',
+        'inventory',
+        'tax',
+        'privacy',
+        'property_portfolio',
+        'property_leasing',
+        'legal_agreements',
+        'work_tasks',
+        'demo_workforce',
+        'demo_tagging',
+        'demo_crm',
+        'demo_sales_pipeline',
+        'demo_merchandise',
+        'demo_email',
+        'facility_operations',
+        'demo_sales_insights',
+        'finance_billing',
+        'crm_activities',
+      ]) {
+        expect(sharedRuntimeSchemas).toContain(`'${schema}'`);
+      }
+      expect(bootstrap).toMatch(/revoke all on all tables in schema/u);
       // Every platform schema stays verified; the demo branch adds its vertical schemas to the same list.
       const verifiedSchemas = /const EXPECTED_APPLICATION_SCHEMAS = \[(?<schemas>[^\]]*)\]/u.exec(verifier)?.groups?.[
         'schemas'
@@ -661,6 +698,7 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
         'privacy',
         'storefront_registry',
         'tax',
+        'trust',
       ]) {
         expect(verifiedSchemas).toContain(`'${schema}'`);
       }
@@ -676,4 +714,34 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
       expect(verifier).toMatch(/verticals\/price-group-catalog\/scripts\/verify-db-schema\.mts/u);
     }),
   );
+});
+
+it('narrows every Counterparty projection policy to the sealed entity without excluding tenant-wide grants', () => {
+  for (const table of [counterparties, counterpartyRolePeriods, counterpartyAdminReadModels]) {
+    for (const policy of configOf(table).policies.filter((candidate) => candidate.to === 'party_registry_runtime')) {
+      for (const expression of [policy.using, policy.withCheck]) {
+        if (expression === undefined) {
+          continue;
+        }
+        const predicate = dialect.sqlToQuery(expression).sql;
+        expect(predicate).toContain('trust.current_tenant_id()');
+        expect(predicate).toContain('(select trust.current_legal_entity_id()) is null or');
+        expect(predicate).toContain('"legal_entity_id" is null or');
+        expect(predicate).toContain('"legal_entity_id" = (select trust.current_legal_entity_id())');
+      }
+    }
+  }
+  for (const policy of configOf(counterpartyRoleAdminReadModels).policies) {
+    for (const expression of [policy.using, policy.withCheck]) {
+      if (expression === undefined) {
+        continue;
+      }
+      const predicate = dialect.sqlToQuery(expression).sql;
+      expect(predicate).toContain('exists (select 1 from party.counterparty_admin_read_models as parent');
+      expect(predicate).toContain('parent.tenant_id = "party"."counterparty_role_admin_read_models"."tenant_id"');
+      expect(predicate).toContain(
+        'parent.counterparty_id = "party"."counterparty_role_admin_read_models"."counterparty_id"',
+      );
+    }
+  }
 });

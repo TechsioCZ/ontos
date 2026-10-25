@@ -873,6 +873,38 @@ const kvAnswer = (account: FakeState, method: string, url: URL, path: string, bo
   return envelope(names.map((name) => ({ name })));
 };
 
+/** Hyperdrive list/create and in-place updates; an unknown ID must not become a new config. */
+const hyperdriveAnswer = (
+  account: FakeState,
+  method: string,
+  url: URL,
+  path: string,
+  body: Option.Option<Json>,
+): Response => {
+  if (path === '/hyperdrive/configs') {
+    if (method === 'POST') {
+      const created = {
+        ...decodeBody(HyperdriveBodySchema, body),
+        id: `hyperdrive-${String(account.hyperdrives.length + 1)}`,
+      };
+      account.hyperdrives.push(created);
+      return envelope(created);
+    }
+    return firstPage(url, account.hyperdrives);
+  }
+  const hyperdriveId = /^\/hyperdrive\/configs\/(?<id>[^/]+)$/u.exec(path)?.groups?.id;
+  if (method !== 'PUT' || hyperdriveId === undefined) {
+    return noRoute();
+  }
+  const index = account.hyperdrives.findIndex(({ id }) => id === hyperdriveId);
+  if (index === -1) {
+    return noRoute();
+  }
+  const updated = { ...decodeBody(HyperdriveBodySchema, body), id: hyperdriveId };
+  account.hyperdrives[index] = updated;
+  return envelope(updated);
+};
+
 export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloudflareAccount => {
   const account: FakeState = {
     accessApps: [...(initial.accessApps ?? [])],
@@ -919,13 +951,8 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
       }
       return firstPage(url, account.vpcServices);
     }
-    if (path === '/hyperdrive/configs') {
-      if (method === 'POST') {
-        const created = { ...decodeBody(HyperdriveBodySchema, body), id: 'hyperdrive-1' };
-        account.hyperdrives.push(created);
-        return envelope(created);
-      }
-      return firstPage(url, account.hyperdrives);
+    if (path.startsWith('/hyperdrive/configs')) {
+      return hyperdriveAnswer(account, method, url, path, body);
     }
     if (path.startsWith('/storage/kv/namespaces')) {
       return kvAnswer(account, method, url, path, body);

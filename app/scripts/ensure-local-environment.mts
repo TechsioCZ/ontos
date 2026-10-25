@@ -2,7 +2,11 @@
 import { Cause, Config, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from 'effect';
 
 import { APP_ENV_PATH } from '../packages/core-runtime/src/environment/workspace-environment.ts';
-import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
+import {
+  localDatabaseIdentityValues,
+  localPublicClientValues,
+  localSpiceDbValues,
+} from './local-environment-values.mts';
 import { LocalSpicedbTlsLive, ensureLocalSpicedbTls } from './local-spicedb-tls.mts';
 
 const ShellIdSchema = Schema.String.pipe(Schema.brand('ShellId'));
@@ -79,6 +83,8 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   });
   const remaining = new Map(
     Object.entries({
+      // Only missing identity URLs are returned, so the replacement below never rewrites one.
+      ...(yield* localDatabaseIdentityValues(lines)),
       ...localPublicClientValues(lines, publicClientTopology),
       ...localSpiceDbValues(
         lines,

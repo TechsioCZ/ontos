@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { defineConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
@@ -36,6 +37,7 @@ export default defineConfig(
         bffPrefix,
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_ASSORTMENT_LOADED_CHUNKS__',
+        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [

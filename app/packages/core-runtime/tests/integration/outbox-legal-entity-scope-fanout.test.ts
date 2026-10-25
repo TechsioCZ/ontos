@@ -3,6 +3,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { Effect, Predicate, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { applicationCompositionAuthority, coreRelations, legalEntities, tenants } from '../../src/db/schema.ts';
 import type { CoreTransaction } from '../../src/db/types.ts';
 import { lockApplicationCompositionPublication } from '../../src/modules/application-composition-authority.ts';
@@ -62,7 +63,7 @@ const context = attestOutboxWorkerHandlerContext({
 
 it.live('runs owner callbacks once inside every current legal-entity scope of the exact Tenant', () =>
   Effect.gen(function* legalEntityFanoutIntegration() {
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const database = yield* makeCoreDatabase(configuration);
     const connections = yield* loadDatabaseConnectionPair();
     const admin = yield* makeTestPgClient(connections.admin.connectionString);

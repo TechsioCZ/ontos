@@ -1,4 +1,4 @@
-import { databaseRuntime } from '@app/core-runtime';
+import { SHARED_RUNTIME_IDENTITY, databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthConfig } from './config-service.ts';
@@ -332,7 +332,7 @@ const portalAuthEnvironment: Effect.Effect<ConfigProvider.ConfigProvider> = Effe
       return environment;
     }
     const runtime = yield* databaseRuntime
-      .runtimeDatabaseProvider(ConfigProvider.fromUnknown({}))
+      .runtimeDatabaseProvider(ConfigProvider.fromUnknown({}), SHARED_RUNTIME_IDENTITY)
       .pipe(Effect.orElseSucceed(() => ConfigProvider.fromUnknown({})));
     return Option.match(yield* namedValue(runtime, 'DATABASE_URL'), {
       onNone: () => environment,

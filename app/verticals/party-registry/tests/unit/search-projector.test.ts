@@ -21,6 +21,14 @@ import type { PartySearchSourceSnapshot } from '../../src/services/party-search-
 import { partySearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const searchScope = {
+  authMethod: 'system',
+  authContextRef: 'job:party-search:run:projector-test',
+  correlationId: 'party-search-projector-test',
+  principalId: '30000000-0000-4000-8000-000000000003',
+  tenantId,
+} as const;
+const counterpartySearchScope = { ...searchScope, legalEntityId: '20000000-0000-4000-8000-000000000002' } as const;
 const partyRef = {
   moduleId: 'party.registry' as const,
   resourceId: 'party-1',
@@ -106,14 +114,17 @@ it.effect('post-commit projection makes only active permission-safe identity evi
       ),
     )(documents);
     const query = (value: string) =>
-      search.search({
-        effectiveAt: '2026-09-03T00:00:00.000Z',
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: value,
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
+      search.search(
+        {
+          effectiveAt: '2026-09-03T00:00:00.000Z',
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: value,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope,
+      );
     const publicHits = yield* query('public@example.test');
     const identifierHits = yield* query('12345678');
     expect(publicHits.length).toBe(1);
@@ -168,13 +179,16 @@ it.effect('aliases collapse to canonical identity and only alias-only evidence l
       ),
     )(documents);
     const query = (value: string) =>
-      search.search({
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: value,
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
+      search.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: value,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope,
+      );
     const alias = yield* query('Old Company');
     expect(alias.length).toBe(1);
     expect(alias[0]?.ref).toEqual(partyRef);
@@ -202,13 +216,16 @@ it.effect(
           partyId: partyRef.resourceId,
         });
       const query = (includeArchived = false) =>
-        search.search({
-          includeArchived,
-          moduleId: 'party.registry',
-          query: 'ACME',
-          resourceType: 'party.registry.party',
-          tenantId,
-        });
+        search.search(
+          {
+            includeArchived,
+            moduleId: 'party.registry',
+            query: 'ACME',
+            resourceType: 'party.registry.party',
+            tenantId,
+          },
+          searchScope,
+        );
       yield* deliver();
       yield* deliver();
       const replayHits = yield* query();
@@ -281,14 +298,17 @@ it.effect('future-ended contact disappears at its period boundary without anothe
       ),
     )(documents);
     const query = (effectiveAt: string) =>
-      search.search({
-        effectiveAt,
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: 'timed@example.test',
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
+      search.search(
+        {
+          effectiveAt,
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'timed@example.test',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope,
+      );
     const currentHits = yield* query('2026-09-03T00:00:00.000Z');
     expect(currentHits.length).toBe(1);
     expect(yield* query('2026-09-04T00:00:00.000Z')).toEqual([]);
@@ -360,7 +380,7 @@ it.effect('Counterparty identity survives aliases, current-role expiry and canon
       role: 'CUSTOMER' as const,
       tenantId,
     };
-    const hits = yield* gateway.searchCounterparties(input);
+    const hits = yield* gateway.searchCounterparties(input, counterpartySearchScope);
     expect(hits.length).toBe(2);
     expect(hits.map((hit) => hit.counterpartyRef.resourceId)).toEqual(['cp-1', 'cp-2']);
     const normalized = normalizeCounterpartySearchHits(input, hits);
@@ -374,10 +394,13 @@ it.effect('Counterparty identity survives aliases, current-role expiry and canon
     expect(normalizedItems[0]?.collision?.kind).toBe('CANONICAL_PARTY_COUNTERPARTY_COLLISION');
     expect(normalizedItems[0]?.party.matchedViaAlias).toBe(true);
     expect(
-      yield* gateway.searchCounterparties({
-        ...input,
-        effectiveAt: '2026-10-01T00:00:00.000Z',
-      }),
+      yield* gateway.searchCounterparties(
+        {
+          ...input,
+          effectiveAt: '2026-10-01T00:00:00.000Z',
+        },
+        counterpartySearchScope,
+      ),
     ).toEqual([]);
   }),
 );
@@ -413,13 +436,16 @@ it.effect('shared public contact returns multiple Parties without uniqueness or 
         context,
       ),
     )(documents);
-    const hits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'public@example.test',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const hits = yield* search.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'public@example.test',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope,
+    );
     expect(hits.map((hit) => hit.ref.resourceId)).toEqual(['party-1', 'party-2']);
   }),
 );
@@ -454,13 +480,16 @@ it.effect('rebuild reconciles omitted documents and preserves tombstones against
       partyId: 'party-1',
     });
     expect(
-      yield* search.search({
-        includeArchived: true,
-        moduleId: 'party.registry',
-        query: 'ACME',
-        resourceType: 'party.registry.party',
-        tenantId,
-      }),
+      yield* search.search(
+        {
+          includeArchived: true,
+          moduleId: 'party.registry',
+          query: 'ACME',
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope,
+      ),
     ).toEqual([]);
   }),
 );
@@ -493,13 +522,16 @@ it.effect('source failure is sanitized and leaves previously searchable state in
         partyId: 'party-1',
       }),
     );
-    const priorHits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'ACME',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const priorHits = yield* search.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'ACME',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope,
+    );
     expect(Predicate.isTagged(failure, 'Failure')).toBeTruthy();
     expect(priorHits.length).toBe(1);
   }),
@@ -582,13 +614,16 @@ it.effect('projection generation is independent of an out-of-order business even
         partyId: 'party-1',
       },
     );
-    const hits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'ACME',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const hits = yield* search.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'ACME',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope,
+    );
     expect(hits.length).toBe(1);
   }),
 );
@@ -634,13 +669,16 @@ it.effect('correction and identifier/contact changes replace obsolete evidence i
       partyId: 'party-1',
     });
     const query = (value: string) =>
-      search.search({
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query: value,
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
+      search.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: value,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        searchScope,
+      );
     expect(yield* query('ACME')).toEqual([]);
     expect(yield* query('12345678')).toEqual([]);
     expect(yield* query('public@example.test')).toEqual([]);
@@ -671,13 +709,16 @@ it.effect('a complete empty rebuild also rejects delayed evidence for a never-be
     yield* projector.project(context, {
       partyId: 'party-1',
     });
-    const hits = yield* search.search({
-      includeArchived: true,
-      moduleId: 'party.registry',
-      query: 'ACME',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const hits = yield* search.search(
+      {
+        includeArchived: true,
+        moduleId: 'party.registry',
+        query: 'ACME',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      searchScope,
+    );
     expect(hits).toEqual([]);
   }),
 );

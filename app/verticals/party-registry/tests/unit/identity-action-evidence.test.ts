@@ -4,11 +4,8 @@ import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
-import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { trustResolvedSystemPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import type { ActionEvidenceSnapshot } from '../../../../packages/core-runtime/src/actions/events.ts';
 import { PartySchema, makePartyRef } from '../../shared/domain/identity-contracts.ts';
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';

@@ -1198,7 +1198,7 @@ it('registers the exact owner schema, journal, verifier, and runtime grants', ()
     'utf-8',
   );
   const runtimeBootstrap = readFileSync(
-    fileURLToPath(new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url)),
+    fileURLToPath(new URL('../../../../scripts/postgres/runtime-role-bootstrap.mts', import.meta.url)),
     'utf-8',
   );
   expect(rootVerifier).toMatch(/'inventory'/u);

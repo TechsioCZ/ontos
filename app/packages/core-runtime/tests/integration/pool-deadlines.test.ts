@@ -8,6 +8,7 @@ import { Reactivity } from 'effect/unstable/reactivity';
 
 import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
 
 class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()(
@@ -49,7 +50,7 @@ const silentTransport = () =>
 
 it.live('applies PostgreSQL connect and statement deadlines', () =>
   Effect.gen(function* poolDeadlines1() {
-    const databaseConfiguration = yield* loadDatabaseConfig();
+    const databaseConfiguration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const clientConfiguration = yield* configureDatabasePool(Redacted.make(databaseConfiguration.connectionString), {
       connectTimeoutMillis: 200,
       statement_timeout: 120,

@@ -45,7 +45,9 @@
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
-    "./workspace-environment": "./src/environment/workspace-environment.ts"
+    "./workspace-environment": "./src/environment/workspace-environment.ts",
+    "./testing/gateway-scope-grant": "./src/testing/gateway-scope-grant.ts",
+    "./testing/owner-evidence": "./src/testing/owner-evidence.ts"
   },
   "imports": {
     "#database-runtime": {

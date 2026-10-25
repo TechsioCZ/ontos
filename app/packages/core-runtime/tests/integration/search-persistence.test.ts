@@ -1,14 +1,23 @@
 import { randomUUID } from 'node:crypto';
 
+import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { loadDatabaseIdentityConnections } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
+import type { OperationalScope } from '../../src/operations/context.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { CoreSearchProjectionStore, createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
-import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import {
+  addTestGatewayScopeGrantCleanup,
+  registerTestGatewayScopeGrant,
+} from '../../src/testing/gateway-scope-grant.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient, testDatabaseClients } from '../support/database.ts';
 import { installSearchTestAuthority } from '../support/search-authority.ts';
 
 const queryEffect = <Row extends object>(
@@ -17,13 +26,53 @@ const queryEffect = <Row extends object>(
   parameters: readonly unknown[] = [],
 ) => client.unsafe<Row>(statement, parameters);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const compositionRevision = 'a'.repeat(64);
+
+/** A Party request scope backed by a grant that a Shell issuer login registered for this tenant. */
+const partyRequestScope = Effect.fn('SearchPersistenceTest.partyRequestScope')(function* partyRequestScopeEffect(
+  issuer: PgClient.PgClient,
+  principalId: string,
+  tenantId: string,
+  legalEntityId?: string,
+) {
+  const legalEntity = legalEntityId === undefined ? {} : { legalEntityId };
+  const grant = yield* registerTestGatewayScopeGrant(issuer, {
+    audience: 'party-registry',
+    principalId,
+    tenantId,
+    ...legalEntity,
+  });
+  const context = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)({
+    authBindingId: '40000000-0000-4000-8000-000000000009',
+    authContextRef: 'better-auth-session:core-search-persistence',
+    authMethod: 'session',
+    principalId,
+    tenantId,
+    ...legalEntity,
+  });
+  // Provenance is attached to the exact scope object, so the gateway marking comes last.
+  const scope: OperationalScope = trustVerifiedGatewayPrincipalContext(
+    { ...context, correlationId: 'core-search-persistence' },
+    compositionRevision,
+    { assertion: grant.assertion, audience: 'party-registry' },
+  );
+  return scope;
+});
 
 it.live('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', () =>
   Effect.gen(function* searchPersistenceIntegration() {
     const { admin, runtime } = yield* testDatabaseClients;
+    // Party rows are hidden from the shared runtime: the Party worker writes them and the Party
+    // request role reads them only under a registered gateway grant.
+    const identities = yield* loadDatabaseIdentityConnections();
+    const worker = yield* makeTestPgClient(identities.runtime.party_registry_worker.connectionString);
+    const partyRequest = yield* makeTestPgClient(identities.runtime.party_registry_request.connectionString);
+    const issuer = yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString);
     yield* installSearchTestAuthority();
     const tenantId = randomUUID();
     const otherTenantId = randomUUID();
+    const principalId = randomUUID();
+    yield* addTestGatewayScopeGrantCleanup(admin, [tenantId, otherTenantId]);
     const context = attestOutboxWorkerHandlerContext({
       attemptNumber: 1,
       claimId: 'claim-1',
@@ -52,9 +101,14 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       tenantId,
     };
     const store = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+      executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
     });
-    const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    const queryStore = makePostgresCoreSearchProjectionStore({
+      executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
+    });
+    const search = yield* createCoreSearchQueryRuntime.pipe(
+      Effect.provideService(CoreSearchProjectionStore, queryStore),
+    );
     const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
       aliases: [
         {
@@ -109,6 +163,7 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       yield* queryEffect(admin, `delete from core.search_index_entries where tenant_id = $1`, [tenantId]);
       yield* queryEffect(admin, `delete from core.search_projection_rebuilds where tenant_id = $1`, [tenantId]);
       yield* queryEffect(admin, `delete from core.legal_entities where tenant_id = $1`, [tenantId]);
+      yield* queryEffect(admin, `delete from core.principals where tenant_id = $1`, [tenantId]);
       yield* queryEffect(admin, `delete from core.tenants where tenant_id in ($1, $2)`, [tenantId, otherTenantId]);
     }).pipe(Effect.orDie);
 
@@ -122,6 +177,11 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       admin,
       `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Search LE', 'CZ', $1::uuid::text, 'active'), ($3::uuid, $2, 'Other LE', 'CZ', $3::uuid::text, 'active')`,
       [legalEntityId, tenantId, otherLegalEntityId],
+    );
+    yield* queryEffect(
+      admin,
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'human', 'Search principal', 'active')`,
+      [principalId, tenantId],
     );
 
     yield* store.replace(
@@ -166,24 +226,31 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       context,
     );
 
-    const partyHits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'private@example.test',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
+    const scope = yield* partyRequestScope(issuer, principalId, tenantId);
+    const partyHits = yield* search.search(
+      {
+        includeArchived: false,
+        moduleId: 'party.registry',
+        query: 'private@example.test',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      scope,
+    );
     expect(partyHits.map(({ title }) => title)).toEqual(['Acme current']);
     expect(yield* encodeJson(partyHits)).not.toMatch(/private@example\.test/u);
     const evidenceSearch = (query: string, effectiveAt = '2026-02-01T00:00:00Z') =>
-      search.search({
-        effectiveAt,
-        includeArchived: false,
-        moduleId: 'party.registry',
-        query,
-        resourceType: 'party.registry.party',
-        tenantId,
-      });
+      search.search(
+        {
+          effectiveAt,
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        scope,
+      );
     const aliasHits = yield* evidenceSearch('former');
     expect(aliasHits.length).toBe(1);
     expect(aliasHits[0]?.matchedRef).toEqual(aliasRef);
@@ -215,19 +282,27 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
     yield* store.replace(emptyRebuild, context);
     // A fresh service instance must observe the durable floor, not process-local state.
     const restarted = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
+      executor: yield* makeTestDatabaseFromClient(worker, coreRelations),
     });
     const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
-      Effect.provideService(CoreSearchProjectionStore, restarted),
+      Effect.provideService(
+        CoreSearchProjectionStore,
+        makePostgresCoreSearchProjectionStore({
+          executor: yield* makeTestDatabaseFromClient(partyRequest, coreRelations),
+        }),
+      ),
     );
     const floorSearch = () =>
-      restartedSearch.search({
-        includeArchived: false,
-        moduleId: floorRef.moduleId,
-        query: 'unseen',
-        resourceType: floorRef.resourceType,
-        tenantId,
-      });
+      restartedSearch.search(
+        {
+          includeArchived: false,
+          moduleId: floorRef.moduleId,
+          query: 'unseen',
+          resourceType: floorRef.resourceType,
+          tenantId,
+        },
+        scope,
+      );
     yield* restarted.apply({ document: staleDocument, kind: 'upsert' }, context);
     yield* restarted.replace(
       {
@@ -257,23 +332,52 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       [tenantId],
     );
     expect(rebuildRows.length).toBe(0);
-    const counterpartyHits = yield* search.search({
-      includeArchived: false,
-      moduleId: 'party.registry',
-      query: 'acme',
-      resourceType: 'party.registry.counterparty',
-      selectedLegalEntityId: legalEntityId,
-      tenantId,
-    });
+    const counterpartySearch = (selectedLegalEntityId: string, searchScope: OperationalScope) =>
+      search.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'acme',
+          resourceType: 'party.registry.counterparty',
+          selectedLegalEntityId,
+          tenantId,
+        },
+        searchScope,
+      );
+    const legalEntityScope = yield* partyRequestScope(issuer, principalId, tenantId, legalEntityId);
+    const counterpartyHits = yield* counterpartySearch(legalEntityId, legalEntityScope);
     expect(counterpartyHits.map(({ ref }) => ref.resourceId)).toEqual([counterpartyId]);
-    expect(
-      yield* search.search({
+    // Tenant-wide grants may narrow to either entity. Entity grants cannot widen to another.
+    expect((yield* counterpartySearch(legalEntityId, scope)).map(({ ref }) => ref.resourceId)).toEqual([
+      counterpartyId,
+    ]);
+    expect((yield* counterpartySearch(otherLegalEntityId, scope)).map(({ ref }) => ref.resourceId)).toEqual([
+      otherCounterpartyId,
+    ]);
+    const failure = yield* Effect.flip(counterpartySearch(otherLegalEntityId, legalEntityScope));
+    expect(Predicate.isTagged(failure, 'CoreSearchProjectionUnavailable')).toBe(true);
+    const selectedScopePartyHits = yield* search.search(
+      {
         includeArchived: false,
         moduleId: 'party.registry',
-        query: 'acme',
-        resourceType: 'party.registry.counterparty',
+        query: 'private@example.test',
+        resourceType: 'party.registry.party',
         tenantId,
-      }),
+      },
+      legalEntityScope,
+    );
+    expect(selectedScopePartyHits).toEqual(partyHits);
+    expect(
+      yield* search.search(
+        {
+          includeArchived: false,
+          moduleId: 'party.registry',
+          query: 'acme',
+          resourceType: 'party.registry.counterparty',
+          tenantId,
+        },
+        scope,
+      ),
     ).toEqual([]);
 
     const runtimeRows = yield* queryEffect(
@@ -291,5 +395,5 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       [tenantId, removedPartyId],
     );
     expect(stored).toEqual([{ deleted: true, projection_version: '2' }]);
-  }),
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

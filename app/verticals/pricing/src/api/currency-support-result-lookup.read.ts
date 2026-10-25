@@ -27,7 +27,7 @@ const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
 
 const currencySupportResultLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'authenticated_principal' },
+  authorization: { kind: 'context_permission', permission: 'pricing.currency_support.read' },
   entrypointKey: 'commerce.pricing.api.currency-support-result-lookup',
   moduleKey: MODULE_KEY,
   role: 'api',

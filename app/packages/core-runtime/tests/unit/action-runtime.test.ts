@@ -1,6 +1,6 @@
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
 import {
   defineAction,
   defineActionAssortmentPermissions,
@@ -148,7 +148,7 @@ interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly compositionAuthority?: TestCompositionAuthority | 'missing';
   readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
-  readonly createRecord?: ActionInvocationRecord;
+  readonly createRecord?: ActionInvocationRecord & { readonly actionKey?: string };
   readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
   readonly legalEntityPermissionDecision?: PermissionDecision;
@@ -201,14 +201,16 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let compositionAuthorityLockCount = 0;
   let compositionAuthorityLockHeld = false;
   const transactionSteps: string[] = [];
-  const invocation =
-    options.createRecord ??
-    ({
-      actionInvocationId: 'invocation-1',
-      completedAt: null,
-      requestHash: '',
-      status: 'received',
-    } satisfies ActionInvocationRecord);
+  const invocation: ActionInvocationRecord & { readonly actionKey: string } =
+    options.createRecord === undefined
+      ? {
+          actionInvocationId: 'invocation-1',
+          actionKey: 'shell.counter.write',
+          completedAt: null,
+          requestHash: '',
+          status: 'received',
+        }
+      : { actionKey: 'shell.counter.write', ...options.createRecord };
   let currentInvocation = invocation;
   let preparedHash = '';
 
@@ -294,7 +296,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
           }),
         );
       }
-      return Effect.succeed({ ...currentInvocation, actionKey: 'shell.counter.write' });
+      return Effect.succeed(currentInvocation);
     },
     transitionInvocationToRunning: () => {
       transitionCount += 1;
@@ -404,6 +406,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [
         {
           legal_entity_id: installedLegalEntityId,
+          role: 'ontos_runtime',
           tenant_id: installedTenantId,
         },
       ];
@@ -4122,7 +4125,7 @@ it.effect(
     expect(Schema.is(ActionPermissionDenied)(retry)).toBe(true);
     expect(harness.permissionChecks).toHaveLength(1);
     expect(harness.rejections).toHaveLength(1);
-    expect(harness.counts().transactionCount).toBe(0);
+    expect(harness.counts().transactionCount).toBe(1);
   }),
 );
 
@@ -4188,6 +4191,62 @@ it.effect(
     );
 
     expect(Schema.is(ActionPermissionDenied)(error)).toBe(true);
+  }),
+);
+
+for (const phase of ['BEGIN', 'COMMIT'] as const) {
+  it.effect(`maps ${phase} failure while loading a recorded rejection to invocation persistence unavailability`, () =>
+    Effect.gen(function* recordedRejectionSettlementFailure() {
+      const harness = yield* makeHarness({
+        createRecord: {
+          actionInvocationId: 'rejected-settlement-failure',
+          completedAt: completionTime(),
+          requestHash: '',
+          status: 'rejected',
+        },
+        transactionMode: phase === 'BEGIN' ? 'definite-failure' : 'commit-definite',
+      });
+      const error = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport(),
+        }),
+      );
+      expect(Schema.is(ActionInvocationPersistenceError)(error)).toBe(true);
+      if (Schema.is(ActionInvocationPersistenceError)(error)) {
+        const cause = getActionInvocationPersistenceFailureCause(error);
+        expect(cause?.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))).toBe(true);
+      }
+    }),
+  );
+}
+
+it.effect('preserves unrelated defects while loading a recorded rejection', () =>
+  Effect.gen(function* recordedRejectionUnexpectedDefect() {
+    const defect = new Error('unexpected rejection lookup settlement');
+    const harness = yield* makeHarness({
+      commit: Effect.die(defect),
+      createRecord: {
+        actionInvocationId: 'rejected-unexpected-defect',
+        completedAt: completionTime(),
+        requestHash: '',
+        status: 'rejected',
+      },
+    });
+    const exit = yield* Effect.exit(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport(),
+      }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(true);
+    }
   }),
 );
 
@@ -4277,13 +4336,19 @@ it('the Core database service identity remains server-only', () => {
 });
 
 for (const scenario of [
-  { completed: false, retryCommand: true, state: 'RETRYABLE', status: 'received' },
-  { completed: false, retryCommand: false, state: 'RUNNING', status: 'running' },
-  { completed: false, retryCommand: false, state: 'RUNNING', status: 'indeterminate' },
-  { completed: true, retryCommand: false, state: 'COMMITTED', status: 'succeeded' },
-  { completed: true, retryCommand: false, state: 'REJECTED', status: 'rejected' },
-  { completed: true, retryCommand: false, state: 'REJECTED', status: 'failed' },
-  { completed: true, retryCommand: false, state: 'REJECTED', status: 'received' },
+  { actionKey: 'shell.counter.write', completed: false, retryCommand: true, state: 'RETRYABLE', status: 'received' },
+  { actionKey: 'shell.counter.write', completed: false, retryCommand: false, state: 'RUNNING', status: 'running' },
+  {
+    actionKey: 'shell.counter.write',
+    completed: false,
+    retryCommand: false,
+    state: 'RUNNING',
+    status: 'indeterminate',
+  },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'COMMITTED', status: 'succeeded' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'rejected' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'failed' },
+  { actionKey: 'shell.counter.write', completed: true, retryCommand: false, state: 'REJECTED', status: 'received' },
 ] as const) {
   it.effect(
     `projects native execution ${scenario.status}/${String(scenario.completed)} as ${scenario.state} without executing`,
@@ -4293,6 +4358,7 @@ for (const scenario of [
         const h = yield* makeHarness({
           createRecord: {
             actionInvocationId: invocationId,
+            actionKey: scenario.actionKey,
             completedAt: scenario.completed ? completionTime() : null,
             requestHash: 'original',
             status: scenario.status,
@@ -4300,7 +4366,7 @@ for (const scenario of [
         });
         const executionState = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
         const expected =
-          scenario.state === 'COMMITTED' ? { actionKey: 'shell.counter.write', ...executionState } : executionState;
+          scenario.state === 'COMMITTED' ? { actionKey: scenario.actionKey, ...executionState } : executionState;
         expect(Schema.is(ActionExecutionResolutionSchema)(expected)).toBe(true);
         if (scenario.state === 'COMMITTED') {
           expect(Schema.is(ActionExecutionResolutionSchema)(executionState)).toBe(false);

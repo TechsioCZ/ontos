@@ -12,6 +12,7 @@ import {
   setApiKeyBindingStatus,
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
@@ -22,7 +23,7 @@ it.live('persists managed key lifecycle without credential material and enforces
   Effect.gen(function* principalManagement1() {
     const tenantId = randomUUID();
     const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const database = yield* makeTestDatabaseFromClient(
       yield* makeTestPgClient(configuration.connectionString),
       coreRelations,

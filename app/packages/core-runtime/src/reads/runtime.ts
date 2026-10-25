@@ -2,6 +2,7 @@ import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { transportIdentifier } from '../actions/string-schemas.ts';
 import { computeCanonicalValueHash } from '../actions/repository.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -11,6 +12,7 @@ import {
 import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/oauth-connection-scope.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { installOperationalScope, installOperationalScopeAt } from '../db/scoped-transaction.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
   lockApplicationCompositionAuthority,
@@ -79,7 +81,7 @@ import {
   ReadPolicyEvaluationError,
   ReadResultValidationError,
 } from './errors.ts';
-import { persistReadEvidence } from './repository.ts';
+import { persistReadEvidence, persistScopedReadEvidence } from './repository.ts';
 import type { PersistReadEvidenceInput } from './repository.ts';
 import { observeReadPhase } from './diagnostics.ts';
 import type { ReadPhase, ReadTiming } from './diagnostics.ts';
@@ -98,13 +100,15 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const CorrelationIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadCorrelationId'));
+// Bounded here as well as at the HTTP adapters: Shell routes call ReadRuntime directly with the raw
+// request header, so the transport schema is the only layer every caller passes through.
+const CorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ReadCorrelationId'));
 const TargetModuleKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetModuleKey'));
 const TargetResourceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetResourceId'));
 const TargetResourceTypeSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
   Schema.brand('ReadTargetResourceType'),
 );
-const TraceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTraceId'));
+const TraceIdSchema = transportIdentifier.pipe(Schema.brand('ReadTraceId'));
 
 const ReadTransportSchema = Schema.Struct({
   correlationId: CorrelationIdSchema,
@@ -1332,17 +1336,21 @@ const readRuntimeFromDependencies = <
         );
 
     const admittedTransaction = <Value, Failure, Environment>(
-      body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
+      body: (
+        transaction: CoreTransaction,
+        scoped: ScopedTransactionExecutor,
+      ) => Effect.Effect<Value, Failure, Environment>,
     ) =>
       readTransaction(
         Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
+          const scoped = yield* installOperationalScope(transaction, scope);
           if (compositionRevision !== undefined) {
             yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
               Effect.mapError(compositionNoLongerAdmits),
               observe('read-authority'),
             );
           }
-          return yield* body(transaction);
+          return yield* body(transaction, scoped);
         }),
       );
 
@@ -1573,8 +1581,7 @@ const readRuntimeFromDependencies = <
       sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
     );
     /** A short admitted, scoped, guarded owner transaction for `finish` (owner-state reads between remote calls). */
-    const ownerTransaction: ReadOwnerTransaction = (use) =>
-      admittedTransaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(use)));
+    const ownerTransaction: ReadOwnerTransaction = (use) => admittedTransaction((_transaction, scoped) => use(scoped));
     const ownerContext = Object.freeze({
       compositionRevision,
       readKey: input.registration.descriptor.readKey,
@@ -1679,7 +1686,7 @@ const readRuntimeFromDependencies = <
               targetResourceId: ownerResource.resourceId,
               targetResourceType: ownerResource.resourceType,
             };
-      yield* persistReadEvidence(
+      yield* persistScopedReadEvidence(
         database.executor,
         withOptionalProperty(
           withOptionalProperty(
@@ -1728,7 +1735,7 @@ const readRuntimeFromDependencies = <
     }
     // A late definite denial (owner-local state or a forbidden result resource) is recorded after rollback.
     const evidenceExit = yield* Effect.exit(
-      persistReadEvidence(
+      persistScopedReadEvidence(
         database.executor,
         evidenceFor(scope, permissionTargetMetadata, {
           outcome: 'denied',

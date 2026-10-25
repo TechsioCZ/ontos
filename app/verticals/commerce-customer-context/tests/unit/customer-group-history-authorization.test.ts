@@ -43,6 +43,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
         {
           legal_entity_id: values[1],
           operation_at: new Date('2026-09-21T10:00:00.000Z'),
+          role: 'ontos_runtime',
           tenant_id: values[0],
         },
       ]);
@@ -55,6 +56,7 @@ const makeHarness = Effect.fn(function* makeCustomerGroupHistoryAuthorizationHar
       return Effect.succeed([
         {
           legal_entity_id: legalEntityId,
+          role: 'ontos_runtime',
           tenant_id: tenantId,
         },
       ]);

@@ -350,6 +350,96 @@ it('proves native array predicates in DTO codecs without admitting executable ca
   }, testsDirectory);
 });
 
+it('proves native Set membership in DTO codecs and rejects executable lookalikes', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const codec = [
+      'const codec = Schema.String.check(Schema.makeFilter((value) => reserved.has(value) ? "reserved" : undefined));',
+      'const decode = Schema.decodeUnknownSync(codec);',
+      'export const makeData = (value: string) => ({ value: decode(value) });',
+    ].join('\n');
+    writeFileSync(factory, `${schemaImport}\nconst reserved = new Set(["staff", "shell"]);\n${codec}`);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const declaration of [
+      'const reserved = { has: (value: string) => { fetch(value); return false; } };',
+      'const Set = class { constructor(values: readonly string[]) { fetch(values[0]); } has() { return false; } }; const reserved = new Set(["staff"]);',
+      'const reserved = new Set([() => fetch("service")]);',
+      'const reserved = new Set([fetch("service")]);',
+      'const reserved = new Set(["staff"]); reserved.add("shell");',
+    ]) {
+      writeFileSync(factory, `${schemaImport}\n${declaration}\n${codec}`);
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(false);
+    }
+    writeFileSync(
+      factory,
+      `${schemaImport}\nconst reserved = new Set(["staff"]);\n${codec.replace('reserved.has(value)', 'reserved.has(fetch(value))')}`,
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(false);
+  }, testsDirectory);
+});
+
+it('proves native string replacement in DTO codecs and rejects executable alternatives', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const codec = [
+      'const codec = Schema.String.check(Schema.makeFilter((value) => value.replace(/^__(?:Secure|Host)-/u, "").startsWith("staff.") ? "reserved" : undefined));',
+      'const decode = Schema.decodeUnknownSync(codec);',
+      'export const makeData = (value: string) => ({ value: decode(value) });',
+    ].join('\n');
+    writeFileSync(factory, `${schemaImport}\n${codec}`);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makeData')).toBe(true);
+    for (const expression of [
+      'value.replace(/^__/u, () => fetch(value))',
+      'value.replace(/^__/u, fetch(value))',
+      'value.replace({ [Symbol.replace]: () => fetch(value) }, "")',
+      '({ replace: () => fetch(value) }).replace()',
+    ]) {
+      writeFileSync(
+        factory,
+        `${schemaImport}\n${codec.replace('value.replace(/^__(?:Secure|Host)-/u, "")', expression)}`,
+      );
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), expression).toBe(false);
+    }
+  }, testsDirectory);
+});
+
+it('proves closed record and template schemas and rejects opaque or executable payloads', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(consumer, dataFactoryConsumer);
+    const declaration = (codec: string, input = '{}'): string =>
+      `${schemaImport}\nconst decode = Schema.decodeUnknownSync(${codec}); export const makeData = () => ({ value: decode(${input}) });`;
+    for (const [codec, input] of [
+      ['Schema.Record(Schema.String, Schema.String)', '{ label: "data" }'],
+      ['Schema.Record(Schema.String, Schema.Json)', '{ nested: { values: [1, "data", null] } }'],
+      ['Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))', '0'],
+      ['Schema.TemplateLiteral(["icon-[", Schema.String, "]"])', '"icon-[home]"'],
+    ] as const) {
+      writeFileSync(factory, declaration(codec, input));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), codec).toBe(true);
+    }
+    for (const codec of [
+      'Schema.Record(Schema.String, Schema.Unknown)',
+      'Schema.Record(Schema.Unknown, Schema.String)',
+      'Schema.Record(Schema.String, Schema.String.check(Schema.makeFilter((value) => { fetch(value); return undefined; })))',
+      'Schema.Record(Schema.String, Schema.String, { transform: () => fetch("service") })',
+      'Schema.Int.check(Schema.isGreaterThanOrEqualTo(fetch("service")))',
+      'Schema.TemplateLiteral(["icon-[", Schema.Unknown, "]"])',
+      'Schema.TemplateLiteral(["icon-[", () => fetch("service"), "]"])',
+      'Schema.TemplateLiteral(["icon-[", fetch("service"), "]"])',
+      'Schema.TemplateLiteral(["icon-[", Schema.String.check(Schema.makeFilter((value) => { fetch(value); return undefined; })), "]"])',
+    ]) {
+      writeFileSync(factory, declaration(codec));
+      expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), codec).toBe(false);
+    }
+  }, testsDirectory);
+});
+
 it('proves native UUID and URL codecs with closed array bindings and rejects executable alternatives', () => {
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);

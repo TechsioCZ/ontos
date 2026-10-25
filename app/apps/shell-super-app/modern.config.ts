@@ -1,3 +1,7 @@
+import {
+  SHARED_RUNTIME_IDENTITY,
+  SHELL_GATEWAY_ISSUER_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +92,7 @@ const cloudflareDeployEnabled = resolveDeployTarget().target === 'cloudflare';
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
   ? createCloudflareWorkerConfig(envValue, {
+      hyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive, SHELL_GATEWAY_ISSUER_IDENTITY.cloudflareHyperdrive],
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
     })
   : undefined;
@@ -189,8 +194,8 @@ export default defineConfig(
         releaseEnvelopeRole: 'shell',
         worker: {
           ...cloudflareWorkerConfig,
-          wrangler: { ...cloudflareWorkerConfig?.wrangler, ...createCloudflareEmailBindings(envValue) },
           compatibilityDate: '2026-06-02',
+          name: cloudflareWorkerName,
           // server/modern.server.ts is Node middleware; the Worker serves its root routes through the BFF hooks.
           publicAssetExcludes: ['server'],
           // Root OAuth discovery and the MCP endpoint live outside the BFF prefix; the Worker serves them in-process.
@@ -198,9 +203,9 @@ export default defineConfig(
             metadata: Object.fromEntries(OAUTH_METADATA_ROUTES),
             routes: Object.fromEntries(ROOT_ROUTES),
           },
-          name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
           ssr: true,
+          wrangler: { ...cloudflareWorkerConfig?.wrangler, ...createCloudflareEmailBindings(envValue) },
         },
       } satisfies NonNullable<UltramodernAppUserConfig['deploy']>,
       {

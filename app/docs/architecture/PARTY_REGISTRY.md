@@ -507,6 +507,37 @@ Required implementation sequence:
 
 Do not build repository-only backfill, dual-write, compatibility aliases, or long-lived migration mapping. Create a migration only when a verified live External Business System or dataset exists.
 
+## Database identities
+
+Party Registry is the pilot for dedicated database identities. It never connects as the shared `ontos_runtime`, which has no privilege on `party` or `contacts`. The full design, threat model and costs are in [Database trust boundaries](./DATABASE_TRUST_BOUNDARIES.md).
+
+| Identity                 | PostgreSQL role          | URL key                                                                   | Scope authority                                   |
+| ------------------------ | ------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------- |
+| `party_registry_request` | `party_registry_runtime` | `PARTY_REGISTRY_DATABASE_URL`; Worker binding `PARTY_REGISTRY_HYPERDRIVE` | `gateway_grant`, audience `party-registry`        |
+| `party_registry_worker`  | `party_registry_worker`  | `PARTY_REGISTRY_WORKER_DATABASE_URL`; no Worker binding                   | `session_setting`, excluded from the trusted path |
+
+- The BFF opens every scoped transaction with `trust.establish_gateway_scope(assertion)`. The tenant and legal entity come from the grant Shell registered for that assertion, never from a client-set setting. Party RLS policies read them through `trust.current_tenant_id()` and `trust.current_legal_entity_id()`.
+- The Outbox worker entry reads the six projection-source tables through its own `<prefix>_worker_select` policies. Its Core privileges for claiming are lock-only: it may `SELECT ... FOR UPDATE` `core.domain_events`, `core.tenant_module_states` and `core.tenants`, but any real `UPDATE` fails because those policies are `WITH CHECK (false)`.
+
+The process owner declares the Core subset it uses in `src/db/database-grants.ts`: `PARTY_REGISTRY_REQUEST_DATABASE_GRANTS` and `PARTY_REGISTRY_WORKER_DATABASE_GRANTS`. Every entry names the statement that needs it, and Core owners review changes to it. `scripts/postgres/database-role-manifest.mts` composes it into `DATABASE_ROLE_GRANT_MANIFEST`, which the bootstrap grants exactly, the Party verifiers compare with the catalog, and `pnpm database-trust:audit` checks.
+
+Core evidence is bound to the trusted tenant and module. Rows carrying a legal entity must also match the selected seal, unless the seal is tenant-wide; NULL-legal-entity rows remain tenant-global:
+
+- `core.action_invocations` rows must have an `action_key` starting with `party.registry.`. Every new Party Action key must keep that prefix, or its invocation insert fails RLS.
+- `core.audit_events` rows must belong to a `party.registry.` invocation.
+- `core.data_access_events` rows must have `serving_module_key = 'party.registry'`.
+- `core.domain_events` and `core.outbox_messages` rows must name the trusted tenant and `producer_module_key = 'party.registry'`; domain events also apply the entity-or-global rule. `core.search_index_entries` reads require the same tenant/entity rule and `source_module_key = 'party.registry'`.
+
+Counterparty base rows and both admin projections obey that same selected-entity boundary for all
+CRUD operations. The role admin projection has no duplicated legal-entity column: it must reference
+a visible tenant-qualified counterparty admin projection. Tenant-wide administration requires a grant
+sealed without a legal entity; the administrative purpose of a projection does not widen an L1 seal.
+
+Party Search deliberately queries only tenant-global documents (`legal_entity_id IS NULL`), even when
+the caller has selected a legal entity. Core preserves and installs that caller's unchanged scope.
+Counterparty Search may select any entity under a tenant-wide grant, or only the matching entity
+under a selected grant. A conflicting explicit selection fails before candidate access.
+
 ## Required focused validation
 
 The initial implementation is not complete until these behaviors pass:

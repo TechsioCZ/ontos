@@ -1,4 +1,5 @@
 import { defineRelations, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import {
   bigint,
   boolean,
@@ -16,8 +17,15 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { Schema } from 'effect';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import type { CompanyAffiliation, CompanyMembershipStatus } from '../permissions/company-membership.ts';
+
+import {
+  PARTY_REGISTRY_REQUEST_IDENTITY,
+  PARTY_REGISTRY_WORKER_IDENTITY,
+  SHARED_RUNTIME_IDENTITY,
+} from './database-identity-manifest.ts';
 
 export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
 
@@ -95,6 +103,42 @@ const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultN
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
 
+const CANONICAL_MODULE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
+
+const CorePolicyDefinitionInvariantError = Schema.TaggedError<Error>()('CorePolicyDefinitionInvariantError', {
+  message: Schema.String,
+});
+
+/** Renders a module key (or its action-key prefix) as a SQL literal only after proving it is canonical. */
+const moduleKeyPolicyLiteral = (moduleKey: string | null, suffix: '' | '.'): SQL => {
+  if (moduleKey === null || !CANONICAL_MODULE_KEY_PATTERN.test(moduleKey)) {
+    throw new CorePolicyDefinitionInvariantError({ message: 'Core policy module key is not canonical' });
+  }
+  return sql.raw(`'${moduleKey}${suffix}'`);
+};
+
+const SHARED_RUNTIME_ROLE = SHARED_RUNTIME_IDENTITY.role;
+const PARTY_REGISTRY_REQUEST_ROLE = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+const PARTY_REGISTRY_WORKER_ROLE = PARTY_REGISTRY_WORKER_IDENTITY.role;
+const PARTY_REGISTRY_ROLES = [PARTY_REGISTRY_REQUEST_ROLE, PARTY_REGISTRY_WORKER_ROLE];
+const PARTY_REGISTRY_MODULE_KEY = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '');
+const PARTY_REGISTRY_ACTION_KEY_PREFIX = moduleKeyPolicyLiteral(PARTY_REGISTRY_REQUEST_IDENTITY.ownerModuleKey, '.');
+const TRUSTED_TENANT_ID = sql`(select trust.current_tenant_id())`;
+const SESSION_TENANT_ID = sql`nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
+
+/** A sealed legal entity narrows non-global rows; an unselected scope is tenant-wide. */
+const trustedTenantLegalEntityPredicate = (tenantColumn: AnyPgColumn, legalEntityColumn: AnyPgColumn) =>
+  sql`${tenantColumn} = ${TRUSTED_TENANT_ID} and ((select trust.current_legal_entity_id()) is null or ${legalEntityColumn} is null or ${legalEntityColumn} = (select trust.current_legal_entity_id()))`;
+
+/** The shared runtime keeps its pre-pilot unrestricted access once RLS guards a Core table. */
+const sharedRuntimeAllPolicy = (tableName: string) =>
+  pgPolicy(`core_${tableName}_shared_runtime_all`, {
+    for: 'all',
+    to: SHARED_RUNTIME_ROLE,
+    using: sql`true`,
+    withCheck: sql`true`,
+  });
+
 /** Publication is admin-owned; application runtimes can only observe the complete approved authority. */
 export const applicationCompositionAuthority = enableCoreGovernedRls(
   coreSchema.table(
@@ -121,7 +165,7 @@ export const applicationCompositionAuthority = enableCoreGovernedRls(
       ),
       pgPolicy('core_application_composition_authority_select', {
         for: 'select',
-        to: 'ontos_runtime',
+        to: [SHARED_RUNTIME_ROLE, ...PARTY_REGISTRY_ROLES],
         using: sql`true`,
       }),
     ],
@@ -158,21 +202,37 @@ export const applicationCompositionDurableWork = enableCoreGovernedRls(
   ),
 );
 
-export const tenants = coreSchema.table(
-  'tenants',
-  {
-    tenantId: uuid('tenant_id').defaultRandom().primaryKey(),
-    slug: text('slug').notNull(),
-    name: text('name').notNull(),
-    status: text('status').notNull(),
-    defaultLocale: text('default_locale').notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [
-    uniqueIndex('core_tenants_slug_uk').on(table.slug),
-    check('core_tenants_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
-  ],
+export const tenants = enableCoreGovernedRls(
+  coreSchema.table(
+    'tenants',
+    {
+      tenantId: uuid('tenant_id').defaultRandom().primaryKey(),
+      slug: text('slug').notNull(),
+      name: text('name').notNull(),
+      status: text('status').notNull(),
+      defaultLocale: text('default_locale').notNull(),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      uniqueIndex('core_tenants_slug_uk').on(table.slug),
+      check('core_tenants_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
+      sharedRuntimeAllPolicy('tenants'),
+      pgPolicy('core_tenants_party_registry_select', { for: 'select', to: PARTY_REGISTRY_ROLES, using: sql`true` }),
+      pgPolicy('core_tenants_party_registry_request_lock', {
+        for: 'update',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
+        withCheck: sql`false`,
+      }),
+      pgPolicy('core_tenants_party_registry_worker_lock', {
+        for: 'update',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+        withCheck: sql`false`,
+      }),
+    ],
+  ),
 );
 
 const tenantId = () =>
@@ -180,110 +240,139 @@ const tenantId = () =>
     .notNull()
     .references(() => tenants.tenantId, { onDelete: 'restrict' });
 
-export const legalEntities = coreSchema.table(
-  'legal_entities',
-  {
-    legalEntityId: uuid('legal_entity_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalName: text('legal_name').notNull(),
-    registrationCountry: text('registration_country').notNull(),
-    registrationNumber: text('registration_number').notNull(),
-    vatId: text('vat_id'),
-    status: text('status').notNull(),
-    /** What the company does, in one or two sentences, shown on Home; tenant data the company provides. */
-    welcome: text('welcome'),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [
-    uniqueIndex('core_legal_entities_tenant_id_uk').on(table.tenantId, table.legalEntityId),
-    uniqueIndex('core_legal_entities_registration_uk').on(
-      table.tenantId,
-      table.registrationCountry,
-      table.registrationNumber,
-    ),
-    index('core_legal_entities_tenant_idx').on(table.tenantId),
-    check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
-    check('core_legal_entities_welcome_ck', sql`length(${table.welcome}) between 1 and 400`),
-  ],
+export const legalEntities = enableCoreGovernedRls(
+  coreSchema.table(
+    'legal_entities',
+    {
+      legalEntityId: uuid('legal_entity_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalName: text('legal_name').notNull(),
+      registrationCountry: text('registration_country').notNull(),
+      registrationNumber: text('registration_number').notNull(),
+      vatId: text('vat_id'),
+      status: text('status').notNull(),
+      /** Tenant-provided company introduction displayed by the demo. */
+      welcome: text('welcome'),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      uniqueIndex('core_legal_entities_tenant_id_uk').on(table.tenantId, table.legalEntityId),
+      uniqueIndex('core_legal_entities_registration_uk').on(
+        table.tenantId,
+        table.registrationCountry,
+        table.registrationNumber,
+      ),
+      index('core_legal_entities_tenant_idx').on(table.tenantId),
+      check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
+      check('core_legal_entities_welcome_ck', sql`length(${table.welcome}) between 1 and 400`),
+      sharedRuntimeAllPolicy('legal_entities'),
+      pgPolicy('core_legal_entities_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
+      }),
+      pgPolicy('core_legal_entities_party_registry_worker_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+      }),
+    ],
+  ),
 );
 
-export const principals = coreSchema.table(
-  'principals',
-  {
-    principalId: uuid('principal_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    kind: text('kind').$type<PrincipalKind>().notNull(),
-    displayName: text('display_name').notNull(),
-    status: text('status').$type<PrincipalStatus>().notNull(),
-    createdAt: createdAt(),
-    disabledAt: timestamp('disabled_at', { withTimezone: true }),
-  },
-  (table) => [
-    uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
-    index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
-    check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
-    check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
-  ],
+export const principals = enableCoreGovernedRls(
+  coreSchema.table(
+    'principals',
+    {
+      principalId: uuid('principal_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      kind: text('kind').$type<PrincipalKind>().notNull(),
+      displayName: text('display_name').notNull(),
+      status: text('status').$type<PrincipalStatus>().notNull(),
+      createdAt: createdAt(),
+      disabledAt: timestamp('disabled_at', { withTimezone: true }),
+    },
+    (table) => [
+      uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
+      index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
+      check('core_principals_kind_ck', sql`${table.kind} in ('human', 'service', 'integration', 'agent', 'system')`),
+      check('core_principals_status_ck', sql`${table.status} in ('active', 'disabled', 'archived')`),
+      sharedRuntimeAllPolicy('principals'),
+      pgPolicy('core_principals_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
+      }),
+    ],
+  ),
 );
 
 const principalId = (columnName = 'principal_id') => uuid(columnName).notNull();
 
 const optionalPrincipalId = (columnName = 'principal_id') => uuid(columnName);
 
-export const principalAuthBindings = coreSchema.table(
-  'principal_auth_bindings',
-  {
-    principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    principalId: principalId(),
-    authenticationNamespaceId: text('authentication_namespace_id').notNull(),
-    provider: text('provider').notNull(),
-    subjectType: text('subject_type').$type<BindingSubjectType>().notNull(),
-    providerSubjectId: text('provider_subject_id').notNull(),
-    status: text('status').$type<BindingStatus>().notNull(),
-    bindingRevision: integer('binding_revision').default(1).notNull(),
-    // Nullable for legacy/bootstrap rows whose original writer was not an
-    // Action invocation. Governed writes set this to their trusted invocation.
-    createdByInvocationId: uuid('created_by_invocation_id'),
-    // Nullable for legacy/bootstrap rows. Governed transitions set the stable
-    // transition reference and same-state no-ops leave it unchanged.
-    lastTransitionRef: uuid('last_transition_ref'),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-    revokedAt: timestamp('revoked_at', { withTimezone: true }),
-  },
-  (table) => [
-    uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
-    uniqueIndex('core_auth_bindings_namespace_subject_uk').on(
-      table.tenantId,
-      table.authenticationNamespaceId,
-      table.subjectType,
-      table.providerSubjectId,
-    ),
-    uniqueIndex('core_auth_bindings_api_key_subject_global_uk')
-      .on(table.provider, table.subjectType, table.providerSubjectId)
-      .where(sql`${table.subjectType} = 'api_key'`),
-    index('core_auth_bindings_principal_idx').on(table.principalId),
-    foreignKey({
-      columns: [table.tenantId, table.principalId],
-      foreignColumns: [principals.tenantId, principals.principalId],
-      name: 'core_auth_bindings_tenant_principal_fk',
-    }).onDelete('restrict'),
-    check('core_auth_bindings_provider_ck', sql`length(${table.provider}) between 1 and 500`),
-    check(
-      'core_auth_bindings_namespace_ck',
-      sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
-    ),
-    check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key', 'oauth_grant')`),
-    check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
-    check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
-    check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
-    check(
-      'core_auth_bindings_lifecycle_ck',
-      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
-    ),
-  ],
+export const principalAuthBindings = enableCoreGovernedRls(
+  coreSchema.table(
+    'principal_auth_bindings',
+    {
+      principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      principalId: principalId(),
+      authenticationNamespaceId: text('authentication_namespace_id').notNull(),
+      provider: text('provider').notNull(),
+      subjectType: text('subject_type').$type<BindingSubjectType>().notNull(),
+      providerSubjectId: text('provider_subject_id').notNull(),
+      status: text('status').$type<BindingStatus>().notNull(),
+      bindingRevision: integer('binding_revision').default(1).notNull(),
+      // Nullable for legacy/bootstrap rows whose original writer was not an
+      // Action invocation. Governed writes set this to their trusted invocation.
+      createdByInvocationId: uuid('created_by_invocation_id'),
+      // Nullable for legacy/bootstrap rows. Governed transitions set the stable
+      // transition reference and same-state no-ops leave it unchanged.
+      lastTransitionRef: uuid('last_transition_ref'),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+      revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    },
+    (table) => [
+      uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
+      uniqueIndex('core_auth_bindings_namespace_subject_uk').on(
+        table.tenantId,
+        table.authenticationNamespaceId,
+        table.subjectType,
+        table.providerSubjectId,
+      ),
+      uniqueIndex('core_auth_bindings_api_key_subject_global_uk')
+        .on(table.provider, table.subjectType, table.providerSubjectId)
+        .where(sql`${table.subjectType} = 'api_key'`),
+      index('core_auth_bindings_principal_idx').on(table.principalId),
+      foreignKey({
+        columns: [table.tenantId, table.principalId],
+        foreignColumns: [principals.tenantId, principals.principalId],
+        name: 'core_auth_bindings_tenant_principal_fk',
+      }).onDelete('restrict'),
+      check('core_auth_bindings_provider_ck', sql`length(${table.provider}) between 1 and 500`),
+      check(
+        'core_auth_bindings_namespace_ck',
+        sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
+      ),
+      check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key', 'oauth_grant')`),
+      check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
+      check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
+      check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
+      check(
+        'core_auth_bindings_lifecycle_ck',
+        sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('pending', 'active', 'disabled') and ${table.revokedAt} is null)`,
+      ),
+      sharedRuntimeAllPolicy('principal_auth_bindings'),
+      pgPolicy('core_principal_auth_bindings_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${table.tenantId} = ${TRUSTED_TENANT_ID}`,
+      }),
+    ],
+  ),
 );
 
 /** Core-owned directory membership. Departures retain identity and company history; rows are never deleted. */
@@ -354,7 +443,11 @@ export const personInvitations = coreSchema.table.withRLS(
       foreignKey({
         name: 'core_person_invitations_membership_fk',
         columns: [table.tenantId, table.legalEntityId, table.principalId],
-        foreignColumns: [principalCompanyMemberships.tenantId, principalCompanyMemberships.legalEntityId, principalCompanyMemberships.principalId],
+        foreignColumns: [
+          principalCompanyMemberships.tenantId,
+          principalCompanyMemberships.legalEntityId,
+          principalCompanyMemberships.principalId,
+        ],
       }).onDelete('restrict'),
       uniqueIndex('core_person_invitations_verification_uk').on(table.verificationId),
       uniqueIndex('core_person_invitations_principal_uk').on(table.tenantId, table.principalId),
@@ -377,24 +470,38 @@ const authContextRefColumns = () => ({
   impersonatedByPrincipalId: optionalPrincipalId('impersonated_by_principal_id'),
 });
 
-export const tenantModuleStates = coreSchema.table(
-  'tenant_module_states',
-  {
-    tenantModuleStateId: uuid('tenant_module_state_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    moduleKey: text('module_key').notNull(),
-    state: text('state').notNull(),
-    lastChangeId: uuid('last_change_id'),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [
-    uniqueIndex('core_module_states_tenant_module_uk').on(table.tenantId, table.moduleKey),
-    check(
-      'core_module_states_state_ck',
-      sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
-    ),
-  ],
+export const tenantModuleStates = enableCoreGovernedRls(
+  coreSchema.table(
+    'tenant_module_states',
+    {
+      tenantModuleStateId: uuid('tenant_module_state_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      moduleKey: text('module_key').notNull(),
+      state: text('state').notNull(),
+      lastChangeId: uuid('last_change_id'),
+      createdAt: createdAt(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      uniqueIndex('core_module_states_tenant_module_uk').on(table.tenantId, table.moduleKey),
+      check(
+        'core_module_states_state_ck',
+        sql`${table.state} in ('inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived')`,
+      ),
+      sharedRuntimeAllPolicy('tenant_module_states'),
+      pgPolicy('core_tenant_module_states_party_registry_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_ROLES,
+        using: sql`true`,
+      }),
+      pgPolicy('core_tenant_module_states_party_registry_worker_lock', {
+        for: 'update',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+        withCheck: sql`false`,
+      }),
+    ],
+  ),
 );
 
 const authContextForeignKeys = (
@@ -423,55 +530,79 @@ const authContextForeignKeys = (
   }).onDelete('restrict'),
 ];
 
-export const actionInvocations = coreSchema.table(
-  'action_invocations',
-  {
-    actionInvocationId: uuid('action_invocation_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: legalEntityId(),
-    principalId: optionalPrincipalId(),
-    ...authContextRefColumns(),
-    authMethod: text('auth_method').$type<ActionAuthMethod>(),
-    anonymousSessionRef: text('anonymous_session_ref'),
-    traceId: text('trace_id'),
-    correlationId: text('correlation_id'),
-    actionKey: text('action_key').notNull(),
-    idempotencyKey: text('idempotency_key'),
-    targetModuleKey: text('target_module_key'),
-    targetResourceType: text('target_resource_type'),
-    targetResourceId: text('target_resource_id'),
-    status: text('status').$type<ActionInvocationStatus>().notNull(),
-    requestHash: text('request_hash').notNull(),
-    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
-    completedAt: timestamp('completed_at', { withTimezone: true }),
-  },
-  (table) => [
-    uniqueIndex('core_action_invocations_tenant_id_uk').on(table.tenantId, table.actionInvocationId),
-    uniqueIndex('core_action_invocations_idempotency_uk')
-      .on(table.tenantId, table.actionKey, table.principalId, table.idempotencyKey)
-      .where(sql`${table.idempotencyKey} is not null`),
-    index('core_action_invocations_tenant_started_idx').on(table.tenantId, table.startedAt),
-    index('core_action_invocations_target_idx').on(
-      table.tenantId,
-      table.targetModuleKey,
-      table.targetResourceType,
-      table.targetResourceId,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId],
-      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      name: 'core_action_invocations_tenant_legal_entity_fk',
-    }).onDelete('restrict'),
-    ...authContextForeignKeys('core_action_invocations', table),
-    check(
-      'core_action_invocations_auth_method_ck',
-      sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation', 'oauth_connection')`,
-    ),
-    check(
-      'core_action_invocations_status_ck',
-      sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
-    ),
-  ],
+export const actionInvocations = enableCoreGovernedRls(
+  coreSchema.table(
+    'action_invocations',
+    {
+      actionInvocationId: uuid('action_invocation_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: legalEntityId(),
+      principalId: optionalPrincipalId(),
+      ...authContextRefColumns(),
+      authMethod: text('auth_method').$type<ActionAuthMethod>(),
+      anonymousSessionRef: text('anonymous_session_ref'),
+      traceId: text('trace_id'),
+      correlationId: text('correlation_id'),
+      actionKey: text('action_key').notNull(),
+      idempotencyKey: text('idempotency_key'),
+      targetModuleKey: text('target_module_key'),
+      targetResourceType: text('target_resource_type'),
+      targetResourceId: text('target_resource_id'),
+      status: text('status').$type<ActionInvocationStatus>().notNull(),
+      requestHash: text('request_hash').notNull(),
+      startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+      completedAt: timestamp('completed_at', { withTimezone: true }),
+    },
+    (table) => [
+      uniqueIndex('core_action_invocations_tenant_id_uk').on(table.tenantId, table.actionInvocationId),
+      uniqueIndex('core_action_invocations_idempotency_uk')
+        .on(table.tenantId, table.actionKey, table.principalId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} is not null`),
+      index('core_action_invocations_tenant_started_idx').on(table.tenantId, table.startedAt),
+      index('core_action_invocations_target_idx').on(
+        table.tenantId,
+        table.targetModuleKey,
+        table.targetResourceType,
+        table.targetResourceId,
+      ),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_action_invocations_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+      ...authContextForeignKeys('core_action_invocations', table),
+      check(
+        'core_action_invocations_auth_method_ck',
+        sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation', 'oauth_connection')`,
+      ),
+      check(
+        'core_action_invocations_status_ck',
+        sql`${table.status} in ('received', 'rejected', 'running', 'succeeded', 'failed', 'indeterminate', 'replayed')`,
+      ),
+      sharedRuntimeAllPolicy('action_invocations'),
+      pgPolicy('core_action_invocations_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+      }),
+      pgPolicy('core_action_invocations_party_registry_request_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+      }),
+      pgPolicy('core_action_invocations_party_registry_request_update', {
+        for: 'update',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and starts_with(${table.actionKey}, ${PARTY_REGISTRY_ACTION_KEY_PREFIX})`,
+      }),
+      pgPolicy('core_action_invocations_party_registry_worker_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+      }),
+    ],
+  ),
 );
 
 const actionInvocationId = () => uuid('action_invocation_id');
@@ -510,190 +641,249 @@ export const tenantModuleStateChanges = coreSchema.table(
   ],
 );
 
-export const auditEvents = coreSchema.table(
-  'audit_events',
-  {
-    auditEventId: uuid('audit_event_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: legalEntityId(),
-    actionInvocationId: actionInvocationId(),
-    principalId: optionalPrincipalId(),
-    ...authContextRefColumns(),
-    authMethod: text('auth_method').notNull(),
-    eventType: text('event_type').notNull(),
-    outcome: text('outcome').notNull(),
-    outcomeStage: text('outcome_stage').notNull(),
-    outcomeCode: text('outcome_code').notNull(),
-    auditProfile: text('audit_profile').notNull(),
-    targetModuleKey: text('target_module_key'),
-    targetResourceType: text('target_resource_type'),
-    targetResourceId: text('target_resource_id'),
-    evidenceJson: jsonb('evidence_json')
-      .notNull()
-      .default(sql`'{}'::jsonb`),
-    occurredAt: occurredAt(),
-  },
-  (table) => [
-    uniqueIndex('core_audit_events_tenant_id_uk').on(table.tenantId, table.auditEventId),
-    index('core_audit_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
-    index('core_audit_events_action_idx').on(table.actionInvocationId),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId],
-      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      name: 'core_audit_events_tenant_legal_entity_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
-      name: 'core_audit_events_tenant_invocation_fk',
-    }).onDelete('restrict'),
-    ...authContextForeignKeys('core_audit_events', table),
-    check('core_audit_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`),
-    check(
-      'core_audit_events_stage_ck',
-      sql`${table.outcomeStage} in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')`,
-    ),
-    check('core_audit_events_profile_ck', sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`),
-  ],
+export const auditEvents = enableCoreGovernedRls(
+  coreSchema.table(
+    'audit_events',
+    {
+      auditEventId: uuid('audit_event_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: legalEntityId(),
+      actionInvocationId: actionInvocationId(),
+      principalId: optionalPrincipalId(),
+      ...authContextRefColumns(),
+      authMethod: text('auth_method').notNull(),
+      eventType: text('event_type').notNull(),
+      outcome: text('outcome').notNull(),
+      outcomeStage: text('outcome_stage').notNull(),
+      outcomeCode: text('outcome_code').notNull(),
+      auditProfile: text('audit_profile').notNull(),
+      targetModuleKey: text('target_module_key'),
+      targetResourceType: text('target_resource_type'),
+      targetResourceId: text('target_resource_id'),
+      evidenceJson: jsonb('evidence_json')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      occurredAt: occurredAt(),
+    },
+    (table) => [
+      uniqueIndex('core_audit_events_tenant_id_uk').on(table.tenantId, table.auditEventId),
+      index('core_audit_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
+      index('core_audit_events_action_idx').on(table.actionInvocationId),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_audit_events_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [table.tenantId, table.actionInvocationId],
+        foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+        name: 'core_audit_events_tenant_invocation_fk',
+      }).onDelete('restrict'),
+      ...authContextForeignKeys('core_audit_events', table),
+      check('core_audit_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`),
+      check(
+        'core_audit_events_stage_ck',
+        sql`${table.outcomeStage} in ('system', 'authn', 'authz', 'policy', 'validation', 'execution')`,
+      ),
+      check('core_audit_events_profile_ck', sql`${table.auditProfile} in ('standard', 'sensitive', 'minimal')`),
+      sharedRuntimeAllPolicy('audit_events'),
+      pgPolicy('core_audit_events_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
+      }),
+      pgPolicy('core_audit_events_party_registry_request_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and exists (select 1 from core.action_invocations as i where i.action_invocation_id = ${table.actionInvocationId} and starts_with(i.action_key, ${PARTY_REGISTRY_ACTION_KEY_PREFIX}))`,
+      }),
+    ],
+  ),
 );
 
 const auditEventId = () => uuid('audit_event_id');
 
-export const dataAccessEvents = coreSchema.table(
-  'data_access_events',
-  {
-    dataAccessEventId: uuid('data_access_event_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: legalEntityId(),
-    actionInvocationId: actionInvocationId(),
-    principalId: principalId(),
-    ...authContextRefColumns(),
-    authMethod: text('auth_method').notNull(),
-    outcome: text('outcome').notNull(),
-    outcomeStage: text('outcome_stage').notNull(),
-    outcomeCode: text('outcome_code').notNull(),
-    accessKind: text('access_kind').notNull(),
-    servingModuleKey: text('serving_module_key').notNull(),
-    targetModuleKey: text('target_module_key'),
-    targetResourceType: text('target_resource_type'),
-    targetResourceId: text('target_resource_id'),
-    queryHash: text('query_hash'),
-    resultCount: integer('result_count').notNull(),
-    resultFingerprintSchema: text('result_fingerprint_schema'),
-    resultFingerprintHash: text('result_fingerprint_hash'),
-    evidencePolicyKey: text('evidence_policy_key').notNull(),
-    evidenceCaptureMode: text('evidence_capture_mode').notNull(),
-    evidencePayloadJson: jsonb('evidence_payload_json'),
-    redactionProfile: text('redaction_profile'),
-    occurredAt: occurredAt(),
-  },
-  (table) => [
-    uniqueIndex('core_data_access_events_tenant_id_uk').on(table.tenantId, table.dataAccessEventId),
-    index('core_data_access_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId],
-      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      name: 'core_data_access_events_tenant_legal_entity_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
-      name: 'core_data_access_events_tenant_invocation_fk',
-    }).onDelete('restrict'),
-    ...authContextForeignKeys('core_data_access_events', table),
-    check('core_data_access_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'failed')`),
-    check(
-      'core_data_access_events_stage_ck',
-      sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`,
-    ),
-    check(
-      'core_data_access_events_access_kind_ck',
-      sql`${table.accessKind} in ('read', 'list', 'search', 'export', 'download')`,
-    ),
-    check(
-      'core_data_access_events_capture_mode_ck',
-      sql`${table.evidenceCaptureMode} in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')`,
-    ),
-    check(
-      'core_data_access_events_redaction_ck',
-      sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`,
-    ),
-  ],
+export const dataAccessEvents = enableCoreGovernedRls(
+  coreSchema.table(
+    'data_access_events',
+    {
+      dataAccessEventId: uuid('data_access_event_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: legalEntityId(),
+      actionInvocationId: actionInvocationId(),
+      principalId: principalId(),
+      ...authContextRefColumns(),
+      authMethod: text('auth_method').notNull(),
+      outcome: text('outcome').notNull(),
+      outcomeStage: text('outcome_stage').notNull(),
+      outcomeCode: text('outcome_code').notNull(),
+      accessKind: text('access_kind').notNull(),
+      servingModuleKey: text('serving_module_key').notNull(),
+      targetModuleKey: text('target_module_key'),
+      targetResourceType: text('target_resource_type'),
+      targetResourceId: text('target_resource_id'),
+      queryHash: text('query_hash'),
+      resultCount: integer('result_count').notNull(),
+      resultFingerprintSchema: text('result_fingerprint_schema'),
+      resultFingerprintHash: text('result_fingerprint_hash'),
+      evidencePolicyKey: text('evidence_policy_key').notNull(),
+      evidenceCaptureMode: text('evidence_capture_mode').notNull(),
+      evidencePayloadJson: jsonb('evidence_payload_json'),
+      redactionProfile: text('redaction_profile'),
+      occurredAt: occurredAt(),
+    },
+    (table) => [
+      uniqueIndex('core_data_access_events_tenant_id_uk').on(table.tenantId, table.dataAccessEventId),
+      index('core_data_access_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_data_access_events_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [table.tenantId, table.actionInvocationId],
+        foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+        name: 'core_data_access_events_tenant_invocation_fk',
+      }).onDelete('restrict'),
+      ...authContextForeignKeys('core_data_access_events', table),
+      check('core_data_access_events_outcome_ck', sql`${table.outcome} in ('allowed', 'denied', 'failed')`),
+      check(
+        'core_data_access_events_stage_ck',
+        sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`,
+      ),
+      check(
+        'core_data_access_events_access_kind_ck',
+        sql`${table.accessKind} in ('read', 'list', 'search', 'export', 'download')`,
+      ),
+      check(
+        'core_data_access_events_capture_mode_ck',
+        sql`${table.evidenceCaptureMode} in ('metadata_only', 'hash_only', 'redacted_payload', 'stored_artifact')`,
+      ),
+      check(
+        'core_data_access_events_redaction_ck',
+        sql`(${table.evidenceCaptureMode} = 'redacted_payload' and ${table.redactionProfile} is not null and ${table.evidencePayloadJson} is not null) or (${table.evidenceCaptureMode} <> 'redacted_payload' and ${table.redactionProfile} is null)`,
+      ),
+      sharedRuntimeAllPolicy('data_access_events'),
+      pgPolicy('core_data_access_events_party_registry_request_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.servingModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+      }),
+    ],
+  ),
 );
 
 const dataAccessEventId = () => uuid('data_access_event_id');
 
-export const domainEvents = coreSchema.table(
-  'domain_events',
-  {
-    domainEventId: uuid('domain_event_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    legalEntityId: legalEntityId(),
-    actionInvocationId: actionInvocationId(),
-    producerModuleKey: text('producer_module_key').notNull(),
-    eventType: text('event_type').notNull(),
-    subjectModuleKey: text('subject_module_key').notNull(),
-    subjectResourceType: text('subject_resource_type').notNull(),
-    subjectResourceId: text('subject_resource_id').notNull(),
-    payloadJson: jsonb('payload_json')
-      .notNull()
-      .default(sql`'{}'::jsonb`),
-    // PostgreSQL owns sequence allocation. A global sequence is monotonic for
-    // every tenant stream, permits gaps, and is safe across concurrent
-    // transactions without application-side max + 1 allocation.
-    tenantSequenceNo: bigint('tenant_sequence_no', { mode: 'bigint' })
-      .default(sql`nextval('core.domain_event_tenant_sequence_no_seq'::regclass)`)
-      .notNull(),
-    occurredAt: occurredAt(),
-  },
-  (table) => [
-    uniqueIndex('core_domain_events_tenant_id_uk').on(table.tenantId, table.domainEventId),
-    uniqueIndex('core_domain_events_tenant_sequence_uk').on(table.tenantId, table.tenantSequenceNo),
-    index('core_domain_events_subject_idx').on(
-      table.tenantId,
-      table.subjectModuleKey,
-      table.subjectResourceType,
-      table.subjectResourceId,
-    ),
-    foreignKey({
-      columns: [table.tenantId, table.legalEntityId],
-      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
-      name: 'core_domain_events_tenant_legal_entity_fk',
-    }).onDelete('restrict'),
-    foreignKey({
-      columns: [table.tenantId, table.actionInvocationId],
-      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
-      name: 'core_domain_events_tenant_invocation_fk',
-    }).onDelete('restrict'),
-  ],
+export const domainEvents = enableCoreGovernedRls(
+  coreSchema.table(
+    'domain_events',
+    {
+      domainEventId: uuid('domain_event_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      legalEntityId: legalEntityId(),
+      actionInvocationId: actionInvocationId(),
+      producerModuleKey: text('producer_module_key').notNull(),
+      eventType: text('event_type').notNull(),
+      subjectModuleKey: text('subject_module_key').notNull(),
+      subjectResourceType: text('subject_resource_type').notNull(),
+      subjectResourceId: text('subject_resource_id').notNull(),
+      payloadJson: jsonb('payload_json')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      // PostgreSQL owns sequence allocation. A global sequence is monotonic for
+      // every tenant stream, permits gaps, and is safe across concurrent
+      // transactions without application-side max + 1 allocation.
+      tenantSequenceNo: bigint('tenant_sequence_no', { mode: 'bigint' })
+        .default(sql`nextval('core.domain_event_tenant_sequence_no_seq'::regclass)`)
+        .notNull(),
+      occurredAt: occurredAt(),
+    },
+    (table) => [
+      uniqueIndex('core_domain_events_tenant_id_uk').on(table.tenantId, table.domainEventId),
+      uniqueIndex('core_domain_events_tenant_sequence_uk').on(table.tenantId, table.tenantSequenceNo),
+      index('core_domain_events_subject_idx').on(
+        table.tenantId,
+        table.subjectModuleKey,
+        table.subjectResourceType,
+        table.subjectResourceId,
+      ),
+      foreignKey({
+        columns: [table.tenantId, table.legalEntityId],
+        foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+        name: 'core_domain_events_tenant_legal_entity_fk',
+      }).onDelete('restrict'),
+      foreignKey({
+        columns: [table.tenantId, table.actionInvocationId],
+        foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+        name: 'core_domain_events_tenant_invocation_fk',
+      }).onDelete('restrict'),
+      sharedRuntimeAllPolicy('domain_events'),
+      pgPolicy('core_domain_events_party_registry_request_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        withCheck: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+      }),
+      pgPolicy('core_domain_events_party_registry_worker_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+      }),
+      pgPolicy('core_domain_events_party_registry_worker_lock', {
+        for: 'update',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+        withCheck: sql`false`,
+      }),
+    ],
+  ),
 );
 
 const domainEventId = () => uuid('domain_event_id');
 
-export const outboxMessages = coreSchema.table(
-  'outbox_messages',
-  {
-    outboxMessageId: uuid('outbox_message_id').defaultRandom().primaryKey(),
-    tenantId: tenantId(),
-    domainEventId: domainEventId().notNull(),
-    producerModuleKey: text('producer_module_key').notNull(),
-    topic: text('topic').notNull(),
-    payloadJson: jsonb('payload_json')
-      .notNull()
-      .default(sql`'{}'::jsonb`),
-    matchedAt: timestamp('matched_at', { withTimezone: true }),
-    createdAt: createdAt(),
-  },
-  (table) => [
-    index('core_outbox_messages_unmatched_idx')
-      .on(table.createdAt)
-      .where(sql`${table.matchedAt} is null`),
-    foreignKey({
-      columns: [table.tenantId, table.domainEventId],
-      foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],
-      name: 'core_outbox_messages_tenant_domain_event_fk',
-    }).onDelete('restrict'),
-  ],
+export const outboxMessages = enableCoreGovernedRls(
+  coreSchema.table(
+    'outbox_messages',
+    {
+      outboxMessageId: uuid('outbox_message_id').defaultRandom().primaryKey(),
+      tenantId: tenantId(),
+      domainEventId: domainEventId().notNull(),
+      producerModuleKey: text('producer_module_key').notNull(),
+      topic: text('topic').notNull(),
+      payloadJson: jsonb('payload_json')
+        .notNull()
+        .default(sql`'{}'::jsonb`),
+      matchedAt: timestamp('matched_at', { withTimezone: true }),
+      createdAt: createdAt(),
+    },
+    (table) => [
+      index('core_outbox_messages_unmatched_idx')
+        .on(table.createdAt)
+        .where(sql`${table.matchedAt} is null`),
+      foreignKey({
+        columns: [table.tenantId, table.domainEventId],
+        foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],
+        name: 'core_outbox_messages_tenant_domain_event_fk',
+      }).onDelete('restrict'),
+      sharedRuntimeAllPolicy('outbox_messages'),
+      pgPolicy('core_outbox_messages_party_registry_request_insert', {
+        for: 'insert',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        withCheck: sql`${table.tenantId} = ${TRUSTED_TENANT_ID} and ${table.producerModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+      }),
+      pgPolicy('core_outbox_messages_party_registry_worker_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+      }),
+      pgPolicy('core_outbox_messages_party_registry_worker_update', {
+        for: 'update',
+        to: PARTY_REGISTRY_WORKER_ROLE,
+        using: sql`true`,
+        withCheck: sql`true`,
+      }),
+    ],
+  ),
 );
 
 export const outboxDeliveries = coreSchema.table(
@@ -940,6 +1130,32 @@ export const evidenceReferences = coreSchema.table(
   ],
 );
 
+/** The Party Registry worker maintains only Party Registry projections under its session tenant setting. */
+const partyRegistryWorkerSearchPolicies = (
+  prefix: string,
+  table: { readonly sourceModuleKey: AnyPgColumn; readonly tenantId: AnyPgColumn },
+) => {
+  const predicate = sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`;
+  return [
+    pgPolicy(`${prefix}_party_registry_worker_select`, {
+      for: 'select',
+      to: PARTY_REGISTRY_WORKER_ROLE,
+      using: predicate,
+    }),
+    pgPolicy(`${prefix}_party_registry_worker_insert`, {
+      for: 'insert',
+      to: PARTY_REGISTRY_WORKER_ROLE,
+      withCheck: predicate,
+    }),
+    pgPolicy(`${prefix}_party_registry_worker_update`, {
+      for: 'update',
+      to: PARTY_REGISTRY_WORKER_ROLE,
+      using: predicate,
+      withCheck: predicate,
+    }),
+  ];
+};
+
 export const searchIndexEntries = enableCoreGovernedRls(
   coreSchema.table(
     'search_index_entries',
@@ -989,24 +1205,30 @@ export const searchIndexEntries = enableCoreGovernedRls(
       pgPolicy('core_search_index_entries_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_index_entries_tenant_insert', {
         for: 'insert',
         to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_index_entries_tenant_update', {
         for: 'update',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_index_entries_tenant_delete', {
         for: 'delete',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
+      pgPolicy('core_search_index_entries_party_registry_request_select', {
+        for: 'select',
+        to: PARTY_REGISTRY_REQUEST_ROLE,
+        using: sql`${trustedTenantLegalEntityPredicate(table.tenantId, table.legalEntityId)} and ${table.sourceModuleKey} = ${PARTY_REGISTRY_MODULE_KEY}`,
+      }),
+      ...partyRegistryWorkerSearchPolicies('core_search_index_entries', table),
     ],
   ),
 );
@@ -1031,19 +1253,20 @@ export const searchProjectionGenerations = enableCoreGovernedRls(
       pgPolicy('core_search_projection_generations_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_projection_generations_tenant_insert', {
         for: 'insert',
         to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_projection_generations_tenant_update', {
         for: 'update',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
+      ...partyRegistryWorkerSearchPolicies('core_search_projection_generations', table),
     ],
   ),
 );
@@ -1070,19 +1293,20 @@ export const searchProjectionRebuilds = enableCoreGovernedRls(
       pgPolicy('core_search_projection_rebuilds_tenant_select', {
         for: 'select',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_projection_rebuilds_tenant_insert', {
         for: 'insert',
         to: 'ontos_runtime',
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
       pgPolicy('core_search_projection_rebuilds_tenant_update', {
         for: 'update',
         to: 'ontos_runtime',
-        using: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
-        withCheck: sql`${table.tenantId} = nullif(current_setting('ontos.tenant_id', true), '')::uuid`,
+        using: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
+        withCheck: sql`${table.tenantId} = ${SESSION_TENANT_ID} and ${table.sourceModuleKey} <> ${PARTY_REGISTRY_MODULE_KEY}`,
       }),
+      ...partyRegistryWorkerSearchPolicies('core_search_projection_rebuilds', table),
     ],
   ),
 );
@@ -1123,7 +1347,7 @@ export const agentProposals = coreSchema.table(
     appId: text('app_id').notNull(),
     moduleKey: text('module_key').notNull(),
     actionSlug: text('action_slug').notNull().default('apply-command'),
-    commandJson: jsonb('command_json').$type<Readonly<Record<string, unknown>>>().notNull(),
+    commandJson: jsonb('command_json').$type<Readonly<Record<string, Schema.Json>>>().notNull(),
     referenceAudiencesJson: jsonb('reference_audiences_json')
       .$type<readonly string[]>()
       .notNull()

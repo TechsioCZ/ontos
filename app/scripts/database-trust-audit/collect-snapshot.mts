@@ -1,13 +1,9 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
+import type { SqlError } from 'effect/unstable/sql/SqlError';
 
-import {
-  assertDatabaseSessionIdentities,
-  assertSameDatabaseTarget,
-  DatabaseSessionIdentityError,
-  DatabaseTargetMismatchError,
-} from './report.mts';
-import type { DatabaseTargetIdentity, DatabaseTrustBoundarySnapshot } from './report.mts';
+import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
+import type { DatabaseTrustBoundarySnapshot, GlobalTrustSnapshot } from './report.mts';
 
 interface RoleRow {
   readonly bypass_rls: boolean;
@@ -74,6 +70,7 @@ interface RoutinePrivilegeRow {
   readonly routine: string;
   readonly schema: string;
   readonly security_definer: boolean;
+  readonly signature: string;
 }
 
 interface TablePrivilegeRow {
@@ -95,10 +92,55 @@ interface TablePrivilegeRow {
   readonly security_invoker: boolean;
   readonly select: boolean;
   readonly table: string;
+  readonly table_delete: boolean;
+  readonly table_insert: boolean;
+  readonly table_select: boolean;
+  readonly table_update: boolean;
   readonly trigger: boolean;
   readonly truncate: boolean;
   readonly updatable: boolean;
   readonly update: boolean;
+}
+
+interface ColumnPrivilegeRow {
+  readonly column: string;
+  readonly privilege: string;
+  readonly schema: string;
+  readonly table: string;
+}
+
+interface PolicyRow {
+  readonly command: 'all' | 'delete' | 'insert' | 'select' | 'update';
+  readonly policy: string;
+  readonly reads_session_setting: boolean;
+  readonly reads_trusted_scope: boolean;
+  readonly schema: string;
+  readonly table: string;
+}
+
+interface RoleSettingRow {
+  readonly scope: 'all_databases' | 'current_database';
+  readonly setting: string;
+}
+
+interface TrustRoutineRow {
+  readonly config: string[];
+  readonly grantees: string[];
+  readonly owner: string;
+  readonly public_execute: boolean;
+  readonly security_definer: boolean;
+  readonly signature: string;
+}
+
+interface TrustTableGranteeRow {
+  readonly grantee: string;
+  readonly privilege: string;
+  readonly table: string;
+}
+
+interface IdentityMembershipRow {
+  readonly member: string;
+  readonly role: string;
 }
 
 interface ParameterPrivilegeRow {
@@ -150,6 +192,7 @@ class DatabaseTrustBoundarySnapshotError extends Schema.TaggedError<DatabaseTrus
       'database_session_identity_unavailable',
       'database_target_identity_unavailable',
       'runtime_role_absent',
+      'trusted_scope_probe_failed',
     ]),
     reason: Schema.String,
   },
@@ -158,9 +201,6 @@ class DatabaseTrustBoundarySnapshotError extends Schema.TaggedError<DatabaseTrus
     return this.reason;
   }
 }
-
-type DatabaseSessionIdentityFailure = InstanceType<typeof DatabaseSessionIdentityError>;
-type DatabaseTargetMismatchFailure = InstanceType<typeof DatabaseTargetMismatchError>;
 
 const query = <Row extends object>(
   client: PgClient.PgClient,
@@ -179,104 +219,217 @@ const query = <Row extends object>(
 
 export const hasTrustedContextValue = (value: string | null): boolean => value !== null && value.length > 0;
 
+const TENANT_SETTING = 'ontos.tenant_id';
+const LEGAL_ENTITY_SETTING = 'ontos.legal_entity_id';
+const SCOPE_SETTING = 'ontos_trust.scope';
+const SET_LOCAL_CONFIG = 'select set_config($1, $2, true)';
+const TRUSTED_SCOPE_PROBE_FAILED = 'trusted_scope_probe_failed';
+
+type ProbedSetting = typeof LEGAL_ENTITY_SETTING | typeof SCOPE_SETTING | typeof TENANT_SETTING;
+
+const TENANT_PROBE_VALUE = '00000000-0000-4000-8000-000000000001';
+const LEGAL_ENTITY_PROBE_VALUE = '00000000-0000-4000-8000-000000000002';
+const SCOPE_PROBE_VALUE = `v2|0|0|probe|${TENANT_PROBE_VALUE}|-|${'0'.repeat(64)}`;
+const INSUFFICIENT_PRIVILEGE = '42501';
+
+/** Runs `body` in one transaction on a single-connection `makeClient` client and ends it with `end`, or ROLLBACK on failure. */
+const inTransaction = <Value, Failure>(
+  client: PgClient.PgClient,
+  end: 'commit' | 'rollback',
+  body: Effect.Effect<Value, Failure>,
+): Effect.Effect<Value, DatabaseTrustBoundarySnapshotError | Failure> =>
+  Effect.gen(function* runProbeTransaction() {
+    yield* query(client, 'begin');
+    const exit = yield* Effect.exit(body);
+    yield* query(client, end === 'commit' && Exit.isSuccess(exit) ? 'commit' : 'rollback');
+    return yield* Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause);
+  });
+
+const readSetting = (
+  client: PgClient.PgClient,
+  setting: ProbedSetting,
+): Effect.Effect<Option.Option<string>, DatabaseTrustBoundarySnapshotError> =>
+  query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]).pipe(
+    Effect.map(([row]) => Option.fromNullishOr(row?.value)),
+  );
+
+const isRetained = (value: Option.Option<string>): boolean => hasTrustedContextValue(Option.getOrNull(value));
+
 const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   client: PgClient.PgClient,
-  setting: 'ontos.legal_entity_id' | 'ontos.tenant_id',
+  setting: ProbedSetting,
   value: string,
 ) {
-  yield* query(client, 'begin');
-  const settable = yield* Effect.gen(function* probeTrustedContextSetting() {
-    yield* query(client, 'select set_config($1, $2, true)', [setting, value]);
-    const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
-    const [currentRow] = current;
-    return currentRow?.value === value;
-  }).pipe(Effect.catch(() => Effect.succeed(false)));
-  yield* query(client, 'rollback');
-  const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
-  const [afterRow] = after;
+  const settable = yield* inTransaction(
+    client,
+    'rollback',
+    query(client, SET_LOCAL_CONFIG, [setting, value]).pipe(
+      Effect.andThen(readSetting(client, setting)),
+      Effect.map(Option.contains(value)),
+      Effect.orElseSucceed(() => false),
+    ),
+  );
+  const after = yield* readSetting(client, setting);
   return {
-    retainedAfterRollback: hasTrustedContextValue(afterRow?.value ?? null),
+    retainedAfterRollback: isRetained(after),
     settable,
   };
 });
 
-export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSnapshotEffect(
+/** `SET LOCAL` reaches the same placeholder settings as `set_config`, so it is probed separately. */
+const probeSetLocalEffect = (client: PgClient.PgClient): Effect.Effect<boolean, DatabaseTrustBoundarySnapshotError> =>
+  inTransaction(
+    client,
+    'rollback',
+    query(client, `set local ontos.tenant_id = '${TENANT_PROBE_VALUE}'`).pipe(
+      Effect.andThen(readSetting(client, TENANT_SETTING)),
+      Effect.map(Option.contains(TENANT_PROBE_VALUE)),
+      Effect.orElseSucceed(() => false),
+    ),
+  );
+
+/** Commits a transaction that only sets a transaction-local value, then checks whether the value is still visible. */
+const probeRetainedAfterCommitEffect = Effect.fn('probeRetainedAfterCommit')(function* probeRetainedAfterCommit(
+  client: PgClient.PgClient,
+  setting: ProbedSetting,
+  value: string,
+) {
+  yield* inTransaction(client, 'commit', query(client, SET_LOCAL_CONFIG, [setting, value]).pipe(Effect.ignore));
+  return isRetained(yield* readSetting(client, setting));
+});
+
+interface AccessorRow {
+  readonly tenant_id: string | null;
+}
+
+const isAccessorRejection = (failure: SqlError): boolean =>
+  Option.isSome(findPostgresFailure(failure, ({ code }) => code === INSUFFICIENT_PRIVILEGE));
+
+/**
+ * Calls `trust.current_tenant_id()` in the open transaction. SQLSTATE 42501 is the accessor's rejection
+ * and counts as not accepted; any other failure makes the evidence unusable.
+ */
+const accessorAcceptsEffect = (client: PgClient.PgClient): Effect.Effect<boolean, DatabaseTrustBoundarySnapshotError> =>
+  client.unsafe<AccessorRow>('select trust.current_tenant_id()::text as tenant_id').pipe(
+    Effect.map(([row]) => row?.tenant_id !== null && row?.tenant_id !== undefined),
+    Effect.catchIf(isAccessorRejection, () => Effect.succeed(false)),
+    Effect.mapError(
+      () =>
+        new DatabaseTrustBoundarySnapshotError({
+          code: TRUSTED_SCOPE_PROBE_FAILED,
+          reason: 'trusted scope accessor probe failed',
+        }),
+    ),
+  );
+
+interface SealContextRow {
+  readonly deadline: string;
+  readonly session_role: string;
+  readonly xid: string;
+}
+
+/** Sets a well-formed seal for the current transaction with an all-zero MAC and asks the accessor to accept it. */
+const probeForgedSealEffect = (client: PgClient.PgClient): Effect.Effect<boolean, DatabaseTrustBoundarySnapshotError> =>
+  inTransaction(
+    client,
+    'rollback',
+    Effect.gen(function* forgeSeal() {
+      const [context] = yield* query<SealContextRow>(
+        client,
+        `select
+           pg_current_xact_id()::text as xid,
+           session_user::text as session_role,
+           ((extract(epoch from clock_timestamp()) + 60) * 1000000)::bigint::text as deadline`,
+      );
+      if (context === undefined) {
+        return yield* new DatabaseTrustBoundarySnapshotError({
+          code: TRUSTED_SCOPE_PROBE_FAILED,
+          reason: 'trusted scope probe context is unavailable',
+        });
+      }
+      const seal = ['v2', context.xid, context.deadline, context.session_role, TENANT_PROBE_VALUE, '-', '0'.repeat(64)];
+      yield* query(client, SET_LOCAL_CONFIG, [SCOPE_SETTING, seal.join('|')]);
+      return yield* accessorAcceptsEffect(client);
+    }),
+  );
+
+/** Sets only the legacy session setting and asks the accessor whether it returns a tenant from it. */
+const probeSessionSettingAcceptedEffect = (
+  client: PgClient.PgClient,
+): Effect.Effect<boolean, DatabaseTrustBoundarySnapshotError> =>
+  inTransaction(
+    client,
+    'rollback',
+    query(client, SET_LOCAL_CONFIG, [TENANT_SETTING, TENANT_PROBE_VALUE]).pipe(
+      Effect.andThen(accessorAcceptsEffect(client)),
+    ),
+  );
+
+interface ExecutableRow {
+  readonly executable: boolean;
+}
+
+const probeTrustedScopeEffect = Effect.fn('probeTrustedScope')(function* probeTrustedScope(
   admin: PgClient.PgClient,
   runtime: PgClient.PgClient,
-  endpoints: {
-    readonly admin: Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'>;
-    readonly runtime: Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'>;
-  },
-): Effect.fn.Return<
-  DatabaseTrustBoundarySnapshot,
-  DatabaseSessionIdentityFailure | DatabaseTargetMismatchFailure | DatabaseTrustBoundarySnapshotError
-> {
-  const targetQuery = `select
-    current_user::text as current_role,
-    current_database() as database,
-    session_user::text as session_role,
-    inet_server_addr()::text as server_address,
-    inet_server_port() as server_port`;
-  const [administrativeTarget, runtimeTarget] = yield* Effect.all(
-    [query<DatabaseTargetRow>(admin, targetQuery), query<DatabaseTargetRow>(runtime, targetQuery)],
-    { concurrency: 'unbounded' },
+  runtimeRole: string,
+) {
+  const [row] = yield* query<ExecutableRow>(
+    admin,
+    `select coalesce(
+       has_schema_privilege($1, to_regnamespace('trust')::oid, 'USAGE')
+       and has_function_privilege($1, to_regprocedure('trust.current_tenant_id()')::oid, 'EXECUTE'),
+       false
+     ) as executable`,
+    [runtimeRole],
   );
-  const [administrativeTargetRow] = administrativeTarget;
-  const [runtimeTargetRow] = runtimeTarget;
-  if (administrativeTargetRow === undefined || runtimeTargetRow === undefined) {
+  const executable = row !== undefined && row.executable;
+  if (!executable) {
+    return { executable, forgedSealAccepted: false, sessionSettingAccepted: false };
+  }
+  const forgedSealAccepted = yield* probeForgedSealEffect(runtime);
+  const sessionSettingAccepted = yield* probeSessionSettingAcceptedEffect(runtime);
+  return { executable, forgedSealAccepted, sessionSettingAccepted };
+});
+
+const targetQuery = `select
+  current_user::text as current_role,
+  current_database() as database,
+  session_user::text as session_role,
+  inet_server_addr()::text as server_address,
+  inet_server_port() as server_port`;
+
+/** Reads which role, server and database one audit connection actually reached. */
+export const readDatabaseTarget = Effect.fn('readDatabaseTarget')(function* readDatabaseTargetEffect(
+  client: PgClient.PgClient,
+) {
+  const [row] = yield* query<DatabaseTargetRow>(client, targetQuery);
+  if (row === undefined) {
     return yield* new DatabaseTrustBoundarySnapshotError({
       code: 'database_target_identity_unavailable',
       reason: 'database target identity is unavailable',
     });
   }
-  const administrativeEndpoint = endpoints.admin;
-  const runtimeEndpoint = endpoints.runtime;
-  yield* Effect.try({
-    catch: (cause) =>
-      Schema.is(DatabaseTargetMismatchError)(cause)
-        ? cause
-        : new DatabaseTrustBoundarySnapshotError({
-            code: 'database_target_identity_unavailable',
-            reason: 'database target identity is unavailable',
-          }),
-    try: () =>
-      assertSameDatabaseTarget(
-        {
-          ...administrativeEndpoint,
-          database: administrativeTargetRow.database,
-          serverAddress: administrativeTargetRow.server_address,
-          serverPort: administrativeTargetRow.server_port,
-        },
-        {
-          ...runtimeEndpoint,
-          database: runtimeTargetRow.database,
-          serverAddress: runtimeTargetRow.server_address,
-          serverPort: runtimeTargetRow.server_port,
-        },
-      ),
-  });
-  yield* Effect.try({
-    catch: (cause) =>
-      Schema.is(DatabaseSessionIdentityError)(cause)
-        ? cause
-        : new DatabaseTrustBoundarySnapshotError({
-            code: 'database_session_identity_unavailable',
-            reason: 'database session identity is unavailable',
-          }),
-    try: () =>
-      assertDatabaseSessionIdentities(
-        {
-          currentRole: administrativeTargetRow.current_role,
-          sessionRole: administrativeTargetRow.session_role,
-        },
-        {
-          currentRole: runtimeTargetRow.current_role,
-          sessionRole: runtimeTargetRow.session_role,
-        },
-      ),
-  });
-  const administrativeRole = administrativeTargetRow.session_role;
-  const runtimeRole = runtimeTargetRow.session_role;
+  return {
+    currentRole: row.current_role,
+    database: row.database,
+    serverAddress: row.server_address,
+    serverPort: row.server_port,
+    sessionRole: row.session_role,
+  };
+});
+
+/**
+ * Collects one runtime identity's effective privileges from the admin connection and probes trusted
+ * context through the identity's own single-connection client. The caller has already verified that both
+ * connections reach the same database as their expected roles.
+ */
+export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSnapshotEffect(
+  admin: PgClient.PgClient,
+  runtime: PgClient.PgClient,
+  roles: { readonly administrativeRole: string; readonly runtimeRole: string },
+): Effect.fn.Return<DatabaseTrustBoundarySnapshot, DatabaseTrustBoundarySnapshotError> {
+  const { administrativeRole, runtimeRole } = roles;
 
   const role = yield* query<RoleRow>(
     admin,
@@ -506,6 +659,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        end as kind,
        owner.rolname as owner,
        routine.prosecdef as security_definer,
+       format('%I.%I(%s)', namespace.nspname, routine.proname, oidvectortypes(routine.proargtypes)) as signature,
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and has_function_privilege($1, routine.oid, 'EXECUTE')
@@ -671,7 +825,23 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and has_table_privilege($1, relation.oid, 'MAINTAIN')
-       ) as maintain
+       ) as maintain,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'SELECT')
+       ) as table_select,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'INSERT')
+       ) as table_insert,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'UPDATE')
+       ) as table_update,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'DELETE')
+       ) as table_delete
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
@@ -738,6 +908,92 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      where relation.relkind = 'S' and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames],
+  );
+  const columnPrivileges = yield* query<ColumnPrivilegeRow>(
+    admin,
+    `select distinct
+       namespace.nspname as schema,
+       relation.relname as table,
+       attribute.attname as column,
+       lower(acl.privilege_type) as privilege
+     from pg_catalog.pg_attribute as attribute
+     join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+     cross join lateral pg_catalog.aclexplode(attribute.attacl) as acl
+     where attribute.attnum > 0
+       and not attribute.attisdropped
+       and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+       and namespace.nspname = any($2::text[])
+       and has_schema_privilege($1, namespace.oid, 'USAGE')
+       and (
+         acl.grantee = 0
+         or acl.grantee in (
+           select candidate.oid
+           from pg_catalog.pg_roles as candidate
+           where pg_has_role($1, candidate.oid, 'USAGE')
+         )
+       )
+     order by 1, 2, 3, 4`,
+    [runtimeRole, schemaNames],
+  );
+  const policies = yield* query<PolicyRow>(
+    admin,
+    `select
+       namespace.nspname as schema,
+       relation.relname as table,
+       policy.polname as policy,
+       case policy.polcmd
+         when '*' then 'all'
+         when 'r' then 'select'
+         when 'a' then 'insert'
+         when 'w' then 'update'
+         when 'd' then 'delete'
+       end as command,
+       (
+         coalesce(pg_catalog.pg_get_expr(policy.polqual, policy.polrelid), '') ~ $3
+         or coalesce(pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid), '') ~ $3
+       ) as reads_session_setting,
+       (
+         coalesce(pg_catalog.pg_get_expr(policy.polqual, policy.polrelid), '') ~ $4
+         or coalesce(pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid), '') ~ $4
+       ) as reads_trusted_scope
+     from pg_catalog.pg_policy as policy
+     join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
+     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+     where namespace.nspname = any($2::text[])
+       and has_schema_privilege($1, namespace.oid, 'USAGE')
+       and (
+         has_table_privilege($1, relation.oid, 'SELECT,INSERT,UPDATE,DELETE')
+         or has_any_column_privilege($1, relation.oid, 'SELECT,INSERT,UPDATE')
+       )
+       and exists (
+         select 1
+         from unnest(policy.polroles) as policy_role(role_oid)
+         where policy_role.role_oid = 0
+            or policy_role.role_oid in (
+              select candidate.oid
+              from pg_catalog.pg_roles as candidate
+              where pg_has_role($1, candidate.oid, 'USAGE')
+            )
+       )
+     order by 1, 2, 3`,
+    [runtimeRole, schemaNames, String.raw`current_setting\('ontos\.`, String.raw`trust\.current_`],
+  );
+  const roleSettings = yield* query<RoleSettingRow>(
+    admin,
+    `select
+       case when setting.setdatabase = 0 then 'all_databases' else 'current_database' end as scope,
+       configured.setting
+     from pg_catalog.pg_db_role_setting as setting
+     join pg_catalog.pg_roles as candidate on candidate.oid = setting.setrole
+     cross join lateral unnest(setting.setconfig) as configured(setting)
+     where candidate.rolname = $1
+       and setting.setdatabase in (
+         0,
+         (select database.oid from pg_catalog.pg_database as database where database.datname = current_database())
+       )
+     order by 1, 2`,
+    [runtimeRole],
   );
   const parameterPrivileges = yield* query<ParameterPrivilegeRow>(
     admin,
@@ -1068,15 +1324,21 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        grantable`,
     [runtimeRole, schemaNames, administrativeRole],
   );
-  const tenant = yield* probeSettingEffect(runtime, 'ontos.tenant_id', '00000000-0000-4000-8000-000000000001');
-  const legalEntity = yield* probeSettingEffect(
+  const tenant = yield* probeSettingEffect(runtime, TENANT_SETTING, TENANT_PROBE_VALUE);
+  const legalEntity = yield* probeSettingEffect(runtime, LEGAL_ENTITY_SETTING, LEGAL_ENTITY_PROBE_VALUE);
+  const scope = yield* probeSettingEffect(runtime, SCOPE_SETTING, SCOPE_PROBE_VALUE);
+  const tenantSetLocalSettable = yield* probeSetLocalEffect(runtime);
+  const sessionSettingRetainedAfterCommit = yield* probeRetainedAfterCommitEffect(
     runtime,
-    'ontos.legal_entity_id',
-    '00000000-0000-4000-8000-000000000002',
+    TENANT_SETTING,
+    TENANT_PROBE_VALUE,
   );
+  const scopeRetainedAfterCommit = yield* probeRetainedAfterCommitEffect(runtime, SCOPE_SETTING, SCOPE_PROBE_VALUE);
+  const trustedScope = yield* probeTrustedScopeEffect(admin, runtime, runtimeRole);
 
   return {
     administrativeRole,
+    columnPrivileges,
     database: databaseRow.database,
     databasePrivileges: {
       connect: databaseRow.connect,
@@ -1123,6 +1385,14 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       parameter: privilege.parameter,
       set: privilege.set,
     })),
+    policies: policies.map((policy) => ({
+      command: policy.command,
+      policy: policy.policy,
+      readsSessionSetting: policy.reads_session_setting,
+      readsTrustedScope: policy.reads_trusted_scope,
+      schema: policy.schema,
+      table: policy.table,
+    })),
     role: {
       bypassRls: roleRow.bypass_rls,
       canCreateDatabases: roleRow.can_create_databases,
@@ -1133,6 +1403,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       replication: roleRow.replication,
       superuser: roleRow.superuser,
     },
+    roleSettings,
     routines: routines.map((routine) => ({
       executable: routine.executable,
       identityArguments: routine.identity_arguments,
@@ -1141,6 +1412,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       routine: routine.routine,
       schema: routine.schema,
       securityDefiner: routine.security_definer,
+      signature: routine.signature,
     })),
     runtimeRole,
     schemas,
@@ -1178,15 +1450,110 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       schema: table.schema,
       securityInvoker: table.security_invoker,
       table: table.table,
+      tableGrants: {
+        delete: table.table_delete,
+        insert: table.table_insert,
+        select: table.table_select,
+        update: table.table_update,
+      },
       updatable: table.updatable,
     })),
     trustedContext: {
       legalEntitySettingRetainedAfterRollback: legalEntity.retainedAfterRollback,
       legalEntitySettingSettable: legalEntity.settable,
+      scopeRetainedAfterCommit,
+      scopeRetainedAfterRollback: scope.retainedAfterRollback,
+      sessionSettingRetainedAfterCommit,
+      tenantSetLocalSettable,
       tenantSettingRetainedAfterRollback: tenant.retainedAfterRollback,
       tenantSettingSettable: tenant.settable,
       transactionLocal: true,
+      trustedScope,
     },
     types,
+  };
+});
+
+/**
+ * Collects the trust-schema evidence shared by every identity: each `trust.*` routine's hardening,
+ * every non-owner grantee on a trust table, and memberships between checked-in identity roles.
+ */
+export const collectGlobalSnapshot = Effect.fn('collectGlobalSnapshot')(function* collectGlobalSnapshotEffect(
+  admin: PgClient.PgClient,
+  identityRoles: readonly string[],
+): Effect.fn.Return<GlobalTrustSnapshot, DatabaseTrustBoundarySnapshotError> {
+  const trustRoutines = yield* query<TrustRoutineRow>(
+    admin,
+    `select
+       format('%I.%I(%s)', namespace.nspname, routine.proname, oidvectortypes(routine.proargtypes)) as signature,
+       routine.prosecdef as security_definer,
+       coalesce(routine.proconfig, '{}'::text[]) as config,
+       owner.rolname as owner,
+       has_function_privilege('public', routine.oid, 'EXECUTE') as public_execute,
+       coalesce(
+         array(
+           select distinct grantee.rolname::text
+           from pg_catalog.aclexplode(routine.proacl) as acl
+           join pg_catalog.pg_roles as grantee on grantee.oid = acl.grantee
+           where acl.privilege_type = 'EXECUTE'
+             and acl.grantee <> 0
+             and acl.grantee <> routine.proowner
+           order by 1
+         ),
+         '{}'::text[]
+       ) as grantees
+     from pg_catalog.pg_proc as routine
+     join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+     join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
+     where namespace.nspname = 'trust'
+     order by 1`,
+  );
+  const trustTableGrantees = yield* query<TrustTableGranteeRow>(
+    admin,
+    `with trust_acl as (
+       select relation.oid, relation.relname, relation.relowner, acl.grantee, acl.privilege_type
+       from pg_catalog.pg_class as relation
+       join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+       cross join lateral pg_catalog.aclexplode(relation.relacl) as acl
+       where namespace.nspname = 'trust' and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+       union all
+       select relation.oid, relation.relname, relation.relowner, acl.grantee, acl.privilege_type
+       from pg_catalog.pg_attribute as attribute
+       join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+       join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+       cross join lateral pg_catalog.aclexplode(attribute.attacl) as acl
+       where namespace.nspname = 'trust' and attribute.attnum > 0 and not attribute.attisdropped
+     )
+     select distinct
+       'trust.' || quote_ident(trust_acl.relname) as table,
+       case when trust_acl.grantee = 0 then 'PUBLIC' else grantee.rolname::text end as grantee,
+       lower(trust_acl.privilege_type) as privilege
+     from trust_acl
+     left join pg_catalog.pg_roles as grantee on grantee.oid = trust_acl.grantee
+     where trust_acl.grantee <> trust_acl.relowner
+     order by 1, 2, 3`,
+  );
+  const identityMemberships = yield* query<IdentityMembershipRow>(
+    admin,
+    `select distinct member_role.rolname::text as member, granted_role.rolname::text as role
+     from pg_catalog.pg_auth_members as membership
+     join pg_catalog.pg_roles as member_role on member_role.oid = membership.member
+     join pg_catalog.pg_roles as granted_role on granted_role.oid = membership.roleid
+     where member_role.rolname = any($1::text[])
+       and granted_role.rolname = any($1::text[])
+     order by 1, 2`,
+    [identityRoles],
+  );
+  return {
+    identityMemberships,
+    trustRoutines: trustRoutines.map((routine) => ({
+      config: routine.config,
+      grantees: routine.grantees,
+      owner: routine.owner,
+      publicExecute: routine.public_execute,
+      securityDefiner: routine.security_definer,
+      signature: routine.signature,
+    })),
+    trustTableGrantees,
   };
 });

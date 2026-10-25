@@ -1,5 +1,6 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { DatabaseConfigLive } from '@app/core-runtime';
+import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
@@ -74,9 +75,11 @@ const readShellOrigin = () => {
 };
 const shellOrigin = readShellOrigin();
 
+const partyRegistryDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY);
+
 const gatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
   Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(partyRegistryDatabaseConfigLive),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
@@ -84,11 +87,15 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
 
-const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
-const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
-  Layer.provide(DatabaseConfigLive),
+const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
 );
-const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
+const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
+  Layer.provide(partyRegistryDatabaseConfigLive),
+);
+const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
+);
 
 type PartyRegistryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,

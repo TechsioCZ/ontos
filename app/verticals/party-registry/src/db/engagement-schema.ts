@@ -1,4 +1,4 @@
-import { tenantRlsPolicies } from '@app/core-runtime';
+import { gatewayScopedTenantRlsPolicies, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import { check, index, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
@@ -45,7 +45,11 @@ export const organizationEngagementProfiles = contactsSchema.table.withRLS(
       'contacts_organization_engagement_profiles_counterparty_resource_id_ck',
       sql`${table.counterpartyResourceId} = btrim(${table.counterpartyResourceId}) and length(${table.counterpartyResourceId}) > 0`,
     ),
-    ...tenantRlsPolicies('contacts_organization_engagement_profiles_tenant', table.tenantId),
+    ...gatewayScopedTenantRlsPolicies(
+      'contacts_organization_engagement_profiles_tenant',
+      table.tenantId,
+      PARTY_REGISTRY_REQUEST_IDENTITY.role,
+    ),
   ],
 );
 
@@ -81,7 +85,11 @@ export const personEngagementProfiles = contactsSchema.table.withRLS(
       'contacts_person_engagement_profiles_counterparty_resource_id_ck',
       sql`${table.counterpartyResourceId} = btrim(${table.counterpartyResourceId}) and length(${table.counterpartyResourceId}) > 0`,
     ),
-    ...tenantRlsPolicies('contacts_person_engagement_profiles_tenant', table.tenantId),
+    ...gatewayScopedTenantRlsPolicies(
+      'contacts_person_engagement_profiles_tenant',
+      table.tenantId,
+      PARTY_REGISTRY_REQUEST_IDENTITY.role,
+    ),
   ],
 );
 

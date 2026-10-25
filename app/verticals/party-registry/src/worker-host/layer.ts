@@ -4,6 +4,7 @@ import {
   CoreSearchIngestionLive,
   CoreSearchProjectionStoreLive,
   CoreSearchWorkerSnapshotLive,
+  PARTY_REGISTRY_WORKER_IDENTITY,
 } from '@app/core-runtime';
 import type {
   CoreSearchIngestion,
@@ -12,7 +13,7 @@ import type {
   CoreSearchWorkerSnapshot,
   OutboxRuntime,
 } from '@app/core-runtime';
-import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
+import { makeDatabaseConfigLive, OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
 
 import { PartySearchIngestionRegistryLive } from './search-ingestion-registrations.ts';
@@ -25,9 +26,10 @@ import { PrivacyMeasureOwnerGatewayLive } from '../workers/privacy-measure-owner
 
 export {
   CorePersistenceLive as outboxWorkerCorePersistenceLive,
-  DatabaseConfigLive as outboxWorkerDatabaseConfigLive,
   OutboxRepositoryLive as outboxWorkerRepositoryLive,
 } from '@app/core-runtime/outbox/worker';
+
+export const outboxWorkerDatabaseConfigLive = makeDatabaseConfigLive(PARTY_REGISTRY_WORKER_IDENTITY);
 
 const outboxWorkerInfrastructureLayer: Layer.Layer<
   OutboxRuntime,

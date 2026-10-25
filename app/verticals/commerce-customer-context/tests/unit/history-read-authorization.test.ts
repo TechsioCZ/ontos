@@ -292,12 +292,15 @@ it.effect('executes exact business and Resource gates before resolving unavailab
             {
               legal_entity_id: values[1],
               operation_at: new Date('2026-09-21T10:00:00.000Z'),
+              role: 'ontos_runtime',
               tenant_id: values[0],
             },
           ]);
         }
         return Effect.succeed(
-          text.includes('current_setting') ? [{ legal_entity_id: scope.legalEntityId, tenant_id: tenantId }] : [],
+          text.includes('current_setting')
+            ? [{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]
+            : [],
         );
       }),
     };

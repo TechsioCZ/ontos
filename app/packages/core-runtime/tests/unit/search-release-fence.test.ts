@@ -64,7 +64,7 @@ it.effect('native projection writes retain the worker release fence through each
         return Effect.succeed([{ phase: 'active', revision: activeRevision, subscriptionsJson: [], unexpired: true }]);
       }
       if (statement.includes('as tenant_id') && statement.includes('as legal_entity_id')) {
-        return Effect.succeed([{ legal_entity_id: '', tenant_id: tenantId }]);
+        return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       return Effect.succeed([]);
     });
@@ -122,7 +122,7 @@ it.effect('the native generation CAS rereads owner data after a competing genera
         return Effect.succeed([{ phase: 'draining', revision, subscriptionsJson: [], unexpired: true }]);
       }
       if (statement.includes('as tenant_id') && statement.includes('as legal_entity_id')) {
-        return Effect.succeed([{ legal_entity_id: '', tenant_id: tenantId }]);
+        return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       if (statement.includes('max(') && statement.includes('"domain_events"')) {
         return Effect.succeed([{ version: '2' }]);
@@ -163,7 +163,7 @@ it.effect('a coherent read remains read-only and its generation cannot commit af
         return Effect.succeed([{ phase: 'active', revision: activeRevision, subscriptionsJson: [], unexpired: true }]);
       }
       if (statement.includes('as tenant_id') && statement.includes('as legal_entity_id')) {
-        return Effect.succeed([{ legal_entity_id: '', tenant_id: tenantId }]);
+        return Effect.succeed([{ legal_entity_id: '', role: 'ontos_runtime', tenant_id: tenantId }]);
       }
       if (statement.includes('max(') && statement.includes('"domain_events"')) {
         return Effect.succeed([{ version: '2' }]);

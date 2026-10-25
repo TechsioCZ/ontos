@@ -1,10 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';

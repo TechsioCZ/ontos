@@ -14,5 +14,16 @@
         ]
       }
     ]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/native-run-main-disabled.mts"],
+      "rules": {
+        "effect-native/no-effect-provide-in-library": [
+          "error",
+          { "includeTests": true, "rootFiles": [], "allowOuterRunSeam": false }
+        ]
+      }
+    }
+  ]
 }

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { COMMERCE_CUSTOMER_CONTEXT_API_PREFIX } from './shared/deployment-paths.ts';
 import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
@@ -38,6 +39,7 @@ export default defineConfig(
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_COMMERCE_CUSTOMER_CONTEXT_LOADED_CHUNKS__',
         // Portal verification, recovery and step-up mail.
         cloudflareEmail: true,
+        cloudflareHyperdrives: [SHARED_RUNTIME_IDENTITY.cloudflareHyperdrive],
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [

@@ -292,7 +292,7 @@ const principalManagementPersistenceFromTransaction = (
 
 export interface CreateNonHumanPrincipalInput {
   readonly displayName: string;
-  readonly kind: Extract<PrincipalKind, 'integration' | 'service' | 'system'>;
+  readonly kind: Extract<PrincipalKind, 'integration' | 'service'>;
   readonly tenantId: string;
 }
 

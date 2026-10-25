@@ -59,7 +59,7 @@ it('keeps publication authority singleton state admin-owned with one read-only r
   const [policy] = config.policies;
   expect(policy?.name).toBe('core_application_composition_authority_select');
   expect(policy?.for).toBe('select');
-  expect(policy?.to).toBe('ontos_runtime');
+  expect(policy?.to).toEqual(['ontos_runtime', 'party_registry_runtime', 'party_registry_worker']);
   expect(policy?.withCheck).toBeUndefined();
   for (const name of [
     'authority_key',

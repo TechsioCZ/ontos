@@ -27,6 +27,7 @@ import type {
 import type { ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
 import { coreRelations } from '../db/schema.ts';
 import { makeModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
@@ -40,6 +41,21 @@ import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+const gatewayAssertionValuesSchema = Schema.Tuple([Schema.String]);
+/** The principal claim Shell registers as the gateway scope grant for an issued assertion. */
+const gatewayAssertionClaimsSchema = Schema.Struct({
+  principal: Schema.Struct({
+    legalEntityId: Schema.optional(Schema.String.pipe(Schema.brand('LegalEntityId'))),
+    tenantId: Schema.String.pipe(Schema.brand('TenantId')),
+  }),
+});
+const decodeGatewayAssertionClaims = Schema.decodeUnknownEffect(
+  Schema.StringFromBase64Url.pipe(Schema.decodeTo(Schema.fromJsonString(gatewayAssertionClaimsSchema))),
+);
+const ESTABLISH_GATEWAY_SCOPE_SQL =
+  "select established_tenant_id::text as tenant_id, coalesce(established_legal_entity_id::text, '') as legal_entity_id from trust.establish_gateway_scope($1)";
+const READ_GATEWAY_SCOPE_SQL =
+  "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id";
 const idempotencyScopeSchema = Schema.Tuple([Schema.String, Schema.String, Schema.String, Schema.String]);
 const encodeIdempotencyScope = Schema.encodeEffect(Schema.fromJsonString(idempotencyScopeSchema));
 const testCommitAcknowledgementSqlState = ['0', '8007'].join('');
@@ -57,6 +73,8 @@ interface ActionTestServiceBindingPayload {
 
 interface ActionTestConnectionScope {
   legalEntityId: string;
+  /** The connected role: the shared runtime until a gateway scope is established. */
+  role: string;
   tenantId: string;
 }
 
@@ -285,13 +303,25 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       }
     } else if (sql === 'rollback') {
       pendingCommit = [];
+    } else if (sql === ESTABLISH_GATEWAY_SCOPE_SQL) {
+      // Models the grant Shell registered for this assertion: the database derives the scope
+      // from the redeemed assertion's principal claim, never from the request.
+      const [assertion] = yield* Schema.decodeUnknownEffect(gatewayAssertionValuesSchema)(values);
+      const { principal } = yield* decodeGatewayAssertionClaims(assertion.split('.')[1] ?? '');
+      scope.tenantId = principal.tenantId;
+      scope.legalEntityId = principal.legalEntityId ?? '';
+      scope.role = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+      return {
+        rows: [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }],
+      };
     } else if (sql.includes('set_config')) {
       [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(values);
-    } else if (sql.includes('current_setting')) {
+    } else if (sql.includes('current_setting') || sql === READ_GATEWAY_SCOPE_SQL) {
       return {
         rows: [
           {
             legal_entity_id: scope.legalEntityId,
+            role: scope.role,
             tenant_id: scope.tenantId,
           },
         ],
@@ -315,6 +345,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       yield* Effect.addFinalizer(() => Deferred.succeed(released, null));
       const scope: ActionTestConnectionScope = {
         legalEntityId: '',
+        role: SHARED_RUNTIME_IDENTITY.role,
         tenantId: '',
       };
       pendingCommit = [];

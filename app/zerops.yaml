@@ -42,6 +42,19 @@ zerops:
         - 'app/verticals/privacy'
         - 'app/verticals/storefront-registry'
         - 'app/verticals/tax'
+        - 'app/verticals/property-portfolio'
+        - 'app/verticals/property-leasing'
+        - 'app/verticals/legal-agreements'
+        - 'app/verticals/work-tasks'
+        - 'app/verticals/workforce'
+        - 'app/verticals/tagging'
+        - 'app/verticals/crm'
+        - 'app/verticals/sales-pipeline'
+        - 'app/verticals/merchandise'
+        - 'app/verticals/facility-operations'
+        - 'app/verticals/sales-insights'
+        - 'app/verticals/finance-billing'
+        - 'app/verticals/crm-activities'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -61,6 +74,9 @@ zerops:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         MIGRATOR_PORT: '8080'
         NODE_ENV: production
+        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
         # The migrator bootstraps the same datastore identity that the SpiceDB service consumes.
@@ -185,7 +201,7 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
-        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:${migrator_PARTY_REGISTRY_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         PORT: '4102'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1465,6 +1481,7 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
+        SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PORT: '3020'
         SHELL_SUPER_APP_PORT: '3020'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
@@ -1510,7 +1527,7 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
-        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
         PORT: '4102'
         OUTBOX_WORKER_HEALTH_PORT: '4102'
@@ -1838,6 +1855,7 @@ zerops:
         NODE_ENV: production
         ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         OUTBOX_WORKER_HEALTH_PORT: '4100'
+        PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PORT: '4100'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'

@@ -59,7 +59,6 @@ it('binds generated PostgreSQL credentials into every database-using service', (
 
   for (const setup of [
     'migrator',
-    'party-registry',
     commerceCustomerContextSetup,
     'payment-term-catalog',
     priceGroupCatalogSetup,
@@ -177,9 +176,11 @@ it('starts a dedicated Price Group worker that drains durable pending projection
 
 it('runs every owner worker in one Outbox Worker host service beside the dedicated workers', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const host = serviceBlock(zeropsYaml, 'outbox-worker-host');
+  const host = serviceBlock(zeropsYaml, OUTBOX_WORKER_HOST.id);
 
-  expect(host).toContain(`zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker`);
+  expect(host).toContain(
+    `zerops:materialize --app '${OUTBOX_WORKER_HOST.id}' --package 'app' --package-dir '.' --worker`,
+  );
   expect(host).toContain(`- 'app/.zerops/runtime/outbox-worker-host'`);
   expect(host).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4100'`);
   expect(host).toContain(runtimeDatabaseUrl);
@@ -240,7 +241,7 @@ it('ships every package the migrator runs drizzle-kit in', () => {
 
 // Zerops caps hostnames at 25 characters, so stage runs this worker under an abbreviated name.
 // Units that serve no public route: the migrator, the Outbox Worker host and the Cloudflare Tunnel connector.
-const PRIVATE_SETUPS = new Set(['cloudflared', 'migrator', 'outbox-worker-host']);
+const PRIVATE_SETUPS = new Set(['cloudflared', 'migrator', OUTBOX_WORKER_HOST.id]);
 const INFRASTRUCTURE_HOSTNAMES = new Set(['db18', 'spicedb']);
 
 const hostnameOf = (setup: string) =>
@@ -358,3 +359,48 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
   }),
 );
+
+it('keeps the full demo inventory and binds Party requests and workers to their separate migrator secrets', () => {
+  const source = readFileSync(zeropsYamlPath, 'utf-8');
+  const party = serviceBlock(source, 'party-registry');
+  expect(party).toContain(
+    `PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:\${migrator_PARTY_REGISTRY_DB_PASSWORD}@`,
+  );
+  expect(party).not.toContain('        DATABASE_URL:');
+  const worker = serviceBlock(source, 'party-registry-worker');
+  expect(worker).toContain(
+    `PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:\${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@`,
+  );
+  expect(worker).not.toContain('        DATABASE_URL:');
+  expect(worker).not.toContain('        PARTY_REGISTRY_DATABASE_URL:');
+  expect(serviceBlock(source, OUTBOX_WORKER_HOST.id)).toContain(
+    'PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:',
+  );
+  expect(serviceBlock(source, OUTBOX_WORKER_HOST.id)).toContain(runtimeDatabaseUrl);
+  const core = serviceBlock(source, 'core-system-worker');
+  expect(core).toContain(runtimeDatabaseUrl);
+  expect(core).not.toContain('PARTY_REGISTRY_WORKER_DATABASE_URL:');
+  expect(serviceBlock(source, 'shellsuperapp')).toContain(
+    `SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:\${migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD}@`,
+  );
+  const migrator = serviceBlock(source, 'migrator');
+  for (const key of [
+    'PARTY_REGISTRY_DB_PASSWORD',
+    'PARTY_REGISTRY_WORKER_DB_PASSWORD',
+    'SHELL_GATEWAY_ISSUER_DB_PASSWORD',
+  ]) {
+    expect(migrator).toContain(`\${${key}}`);
+    expect(migrator).not.toContain(`\${migrator_${key}}`);
+  }
+  const topology = Schema.decodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        verticals: Schema.Array(Schema.Struct({ id: Schema.String })),
+      }),
+    ),
+  )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
+  expect(topology.verticals).toHaveLength(26);
+  for (const { id } of topology.verticals) {
+    expect(source).toContain(`  - setup: '${id}'\n`);
+  }
+});

@@ -185,3 +185,32 @@ it.effect('pins the build toolchain from .mise.toml and packageManager and ships
     ).toBe('package.json#packageManager must pin pnpm@<major>.<minor>.<patch>');
   }),
 );
+
+const databaseUrls = (section: string) => section.match(/^ {8}[A-Z_]*DATABASE_URL: .*$/gmu) ?? [];
+
+it.effect(
+  'binds Party Registry only to its dedicated request identity while other providers keep the shared role',
+  () =>
+    Effect.gen(function* dedicatedProviderIdentity() {
+      const party = {
+        id: 'party-registry',
+        moduleFederation: { manifestUrl: 'http://localhost:4102/mf-manifest.json' },
+        package: '@app/party-registry',
+        path: 'verticals/party-registry',
+      };
+      const generated = yield* generateZeropsProviderDeployment(
+        "zerops:\n  - setup: 'party-registry'\n\n  - setup: 'shellsuperapp'\n",
+        { verticals: [party, ledger] },
+        toolchain,
+      );
+      const sections = generated.split(/(?=^ {2}- setup: )/mu);
+      const partySection = sections.find((section) => section.startsWith("  - setup: 'party-registry'")) ?? '';
+      const sharedSection = sections.find((section) => section.startsWith("  - setup: 'ledger'")) ?? '';
+      expect(databaseUrls(partySection)).toEqual([
+        `        PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:\${migrator_PARTY_REGISTRY_DB_PASSWORD}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`,
+      ]);
+      expect(databaseUrls(sharedSection)).toEqual([
+        `        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`,
+      ]);
+    }),
+);

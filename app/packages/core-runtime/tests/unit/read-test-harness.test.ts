@@ -117,10 +117,16 @@ it.effect('runs the original factory and handler with installed scope and commit
     expect(harness.snapshot().ownerQueries[0]?.sql).toContain('transaction_timestamp()');
     expect(harness.snapshot().evidenceWrites).toBe(1);
     expect(harness.snapshot().stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
-    // Allowed evidence follows the committed owner transaction, so no connection idles in it meanwhile.
+    // Allowed evidence runs in its own scoped transaction after the owner transaction commits, so no
+    // connection idles while the evidence transaction is opened.
     const { statements } = harness.snapshot();
-    expect(statements.at(-1)).toContain('data_access_events');
-    expect(statements.at(-2)).toBe('COMMIT');
+    const ownerCommitIndex = statements.indexOf('COMMIT');
+    const evidenceIndex = statements.findIndex((statement) => statement.includes('data_access_events'));
+    expect(ownerCommitIndex).toBeGreaterThan(-1);
+    expect(evidenceIndex).toBeGreaterThan(ownerCommitIndex);
+    expect(statements.slice(ownerCommitIndex + 1, evidenceIndex)).toContain('BEGIN');
+    expect(statements.at(-2)).toContain('data_access_events');
+    expect(statements.at(-1)).toBe('COMMIT');
   }),
 );
 

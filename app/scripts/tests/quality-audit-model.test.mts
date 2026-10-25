@@ -1461,6 +1461,105 @@ it.live(
 
 layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
   testing.effect(
+    'named Effect generator subprocess helpers require finite calls and native file URL conversion',
+    Effect.fn(function* namedGeneratorSubprocessConsumers() {
+      const effectImportSource = "import { Effect } from 'effect';";
+      const fileUrlImportSource = "import { fileURLToPath } from 'node:url';";
+      const awaitedVerifierCall = 'yield* verify(ownerPath)';
+      const inertOwnerPath = 'void ownerPath';
+      const ownerUrlExpression = 'new URL(file,';
+      const mainDeclaration = 'const main =';
+      const awaitedChildProcess = '  yield* ChildProcess.make';
+      const verifierGeneratorDeclaration = 'function* verify';
+      const root = yield* fixture();
+      const consumer = 'scripts/verify.mts';
+      const target = 'scripts/owner.mts';
+      const unused = 'scripts/unused.mts';
+      write(root, target, unusedNeighborSource);
+      write(root, unused, unusedNeighborSource);
+      const config = {
+        workspaces: { '.': { entry: [consumer], node: false, project: [operatorScriptPattern] } },
+      };
+      const consumerPath = path.join(root, auditConsumersFile);
+      const source = [
+        effectImportSource,
+        "import { ChildProcess } from 'effect/unstable/process';",
+        fileUrlImportSource,
+        "const ownerPaths = ['./owner.mts'] as const;",
+        "const unusedPaths = ['./unused.mts'] as const;",
+        "export const verify = Effect.fn('verify')(function* verify(file: string) {",
+        '  yield* ChildProcess.make(process.execPath, [fileURLToPath(new URL(file, import.meta.url))]);',
+        '});',
+        'const main = Effect.gen(function* main() {',
+        '  for (const ownerPath of ownerPaths) yield* verify(ownerPath);',
+        '});',
+      ].join('\n');
+      for (const valid of [
+        source,
+        source.replaceAll('fileURLToPath', 'toPath').replace('{ toPath }', '{ fileURLToPath as toPath }'),
+        source
+          .replace(fileUrlImportSource, "import * as urls from 'node:url';")
+          .replace('fileURLToPath(new URL', 'urls.fileURLToPath(new URL'),
+        source.replace(awaitedVerifierCall, "yield* verify('./owner.mts')"),
+        source.replace(ownerUrlExpression, "new URL('./owner.mts',"),
+      ]) {
+        write(root, consumer, valid);
+        const model = yield* buildKnipModel(root, config, consumerPath);
+        expect(
+          model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason)).map((fact) => fact.target),
+          valid,
+        ).toEqual([target]);
+      }
+      const invalid = [
+        source.replace(awaitedVerifierCall, inertOwnerPath),
+        source.replace(awaitedVerifierCall, inertOwnerPath).replace(ownerUrlExpression, "new URL('./owner.mts',"),
+        source
+          .replace(awaitedVerifierCall, inertOwnerPath)
+          .replace(awaitedChildProcess, "  yield* verify('./owner.mts'); yield* ChildProcess.make"),
+        source.replace(awaitedVerifierCall, 'yield* verify(unknownPath)'),
+        source.replace('of ownerPaths', 'of unknownPaths'),
+        source.replace('const ownerPaths', 'let ownerPaths'),
+        source.replace(mainDeclaration, 'ownerPaths.pop(); const main ='),
+        source.replace(mainDeclaration, 'verify = replacement; const main ='),
+        source.replace(mainDeclaration, 'verify.custom = replacement; const main ='),
+        source.replace(mainDeclaration, 'Effect.fn = replacement; const main ='),
+        source.replace(awaitedVerifierCall, '{ const verify = replacement; yield* verify(ownerPath); }'),
+        source.replace(awaitedChildProcess, "  file = './unused.mts'; yield* ChildProcess.make"),
+        source.replace(effectImportSource, "import { Effect } from './counterfeit.mts';"),
+        source.replace(effectImportSource, 'const Effect = replacement;'),
+        source.replace("Effect.fn('verify')", "unknownFactory('verify')"),
+        source.replace("Effect.fn('verify')", 'Effect.fn(unknownLabel)'),
+        source
+          .replace(verifierGeneratorDeclaration, 'function verify')
+          .replace(awaitedChildProcess, '  ChildProcess.make'),
+        source.replace('process.execPath', "'/usr/bin/printf'"),
+        source.replace(fileUrlImportSource, "import { fileURLToPath } from './counterfeit.mts';"),
+        source.replace(awaitedChildProcess, '  const fileURLToPath = replacement; yield* ChildProcess.make'),
+        source.replace(awaitedChildProcess, '  const URL = replacement; yield* ChildProcess.make'),
+        source.replace(verifierGeneratorDeclaration, 'function* URL'),
+        source.replace(verifierGeneratorDeclaration, 'function* fileURLToPath'),
+        source.replace(mainDeclaration, 'fileURLToPath.custom = replacement; const main ='),
+        source.replace('new URL(file, import.meta.url)', 'new URL(file, unknownBase)'),
+        source.replace('new URL(file, import.meta.url)', 'new URL(file, import.meta.url, unknownOption)'),
+        source.replace(
+          'fileURLToPath(new URL(file, import.meta.url))',
+          'fileURLToPath(new URL(file, import.meta.url), unknownOptions)',
+        ),
+        source.replace('./owner.mts', './owner.mts?ignored'),
+        source.replace('./owner.mts', './owner%2emts'),
+      ];
+      for (const rejected of invalid) {
+        write(root, consumer, rejected);
+        const model = yield* buildKnipModel(root, config, consumerPath);
+        expect(
+          model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason)),
+          rejected,
+        ).toEqual([]);
+      }
+    }),
+  );
+
+  testing.effect(
     'actual owner reset tables and verifier loops require the native consumer; inert neighboring lists remain unused',
     Effect.fn(function* dynamicOwnerTables() {
       const root = yield* fixture();
@@ -1477,13 +1576,19 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
         'apps/shell-super-app/scripts/reset-demo-accounts.mts',
         'packages/core-runtime/scripts/bootstrap-development-context.mts',
         'verticals/party-registry/scripts/reset-siampark-demo.mts',
-        ...['legal-agreements', 'finance-billing', 'property-leasing', 'property-portfolio', 'crm-activities', 'work-tasks'].map(
-          (owner) => `verticals/${owner}/scripts/reset-demo.mts`,
-        ),
+        ...[
+          'legal-agreements',
+          'finance-billing',
+          'property-leasing',
+          'property-portfolio',
+          'crm-activities',
+          'work-tasks',
+        ].map((owner) => `verticals/${owner}/scripts/reset-demo.mts`),
       ];
       const checked = ['legal-agreements', 'property-leasing'].map(
         (owner) => `verticals/${owner}/scripts/verify-db-schema.mts`,
       );
+      checked.push('verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts');
       for (const file of [...valid, ...checked]) {
         write(
           root,
@@ -1515,7 +1620,10 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       expect(ports.some((fact) => fact.target === dead)).toBe(false);
       for (const target of checked) {
         expect(
-          model.evidence.some((fact) => fact.target === target && fact.reason.startsWith('Immutable for-of')),
+          model.evidence.some(
+            (fact) =>
+              fact.source === verifier && fact.target === target && fact.reason.startsWith(nativeSubprocessReason),
+          ),
         ).toBe(true);
       }
       const run = yield* runPinnedKnip(root, consumerPath, model);
@@ -1546,7 +1654,14 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       );
       const invalid = yield* buildKnipModel(root, config, consumerPath);
       expect(invalid.evidence.some((fact) => fact.reason.startsWith('Literal owner port'))).toBe(false);
-      expect(invalid.evidence.some((fact) => fact.reason.startsWith('Immutable for-of'))).toBe(false);
+      for (const target of checked.filter((file) => !file.endsWith('verify-portal-auth-db-schema.mts'))) {
+        expect(
+          invalid.evidence.some(
+            (fact) =>
+              fact.source === verifier && fact.target === target && fact.reason.startsWith(nativeSubprocessReason),
+          ),
+        ).toBe(false);
+      }
     }),
   );
 

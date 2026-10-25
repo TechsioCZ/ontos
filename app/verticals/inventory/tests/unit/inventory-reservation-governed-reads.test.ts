@@ -308,6 +308,9 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
     const database = {
       executor: yield* makeTestDatabase((statement) => {
         statements.push(statement);
+        if (statement.includes('current_setting')) {
+          return Effect.succeed([{ legal_entity_id: scope.legalEntityId, role: 'ontos_runtime', tenant_id: tenantId }]);
+        }
         return Effect.succeed([]);
       }),
     };
@@ -354,11 +357,12 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
     // The only database work is Core's denial evidence, in its own transaction; no Inventory table is touched.
-    expect(statements.map((statement) => statement.split(' (', 1)[0])).toEqual([
-      'BEGIN',
-      'insert into "core"."data_access_events"',
-      'COMMIT',
-    ]);
+    expect(statements).toHaveLength(5);
+    expect(statements[0]).toBe('BEGIN');
+    expect(statements[1]).toContain("set_config('ontos.tenant_id'");
+    expect(statements[2]).toContain('current_user::text as role');
+    expect(statements[3]).toMatch(/^insert into "core"\."data_access_events"/u);
+    expect(statements[4]).toBe('COMMIT');
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

@@ -3,10 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
-import {
-  PrincipalIdSchema,
-  TenantIdSchema,
-} from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
+import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { UpdatePartyOfficialIdentifierResultSchema } from '../../shared/actions/update-party-official-identifier.ts';
 import type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 import { OfficialIdentifierClaimConflict } from '../../shared/domain/identifier-contracts.ts';

@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { makeLegalEntityContext } from '../../src/auth/legal-entity-context.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { legalEntities, tenants } from '../../src/db/schema.ts';
 
 const tenantOne = '11000000-0000-4000-8000-000000000001';
@@ -16,7 +17,7 @@ const foreign = '21000000-0000-4000-8000-000000000004';
 
 it.live('lists and validates only active legal entities inside the exact tenant', () =>
   Effect.gen(function* legalEntityContextIntegration() {
-    const configuration = yield* loadDatabaseConfig();
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const { executor: database } = yield* makeCoreDatabase(configuration);
     const context = makeLegalEntityContext({ executor: database });
     const cleanup = Effect.gen(function* cleanLegalEntityContextFixtures() {

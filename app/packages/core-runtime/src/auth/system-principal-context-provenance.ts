@@ -1,6 +1,11 @@
-import { Data, Effect, Predicate, Schema } from 'effect';
+import { Data, Effect, Schema } from 'effect';
+import type { Redacted } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
+import {
+  readPrincipalContextProvenanceSeal,
+  sealPrincipalContextProvenance,
+} from './principal-context-provenance-seal.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
 const SystemPrincipalContextSchema = Schema.Struct({
@@ -13,7 +18,25 @@ const CompositionRevisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]
 const systemProvenance = Object.freeze({ kind: 'system' });
 const supportRecoveryProvenance = Object.freeze({ kind: 'support_recovery' });
 const redeemedGatewayProvenance = Object.freeze({ kind: 'redeemed_gateway' });
-const provenanceAccessProperty = '__ontosCorePrincipalContextProvenanceAccess';
+
+/**
+ * The redeemed gateway assertion a trusted database scope can be established from. It lives only in
+ * the module-private provenance store, so it is never a property of, or serialized with, the context.
+ */
+export interface GatewayScopeAssertion {
+  readonly assertion: Redacted.Redacted;
+  readonly audience: string;
+}
+
+interface RedeemedGatewayProvenance {
+  readonly compositionRevision: string;
+  readonly scopeAssertion?: GatewayScopeAssertion;
+}
+
+const GatewayScopeAssertionSchema = Schema.Struct({
+  assertion: Schema.Redacted(Schema.String),
+  audience: Schema.String.check(Schema.isMinLength(1)),
+});
 
 const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()('PrincipalContextProvenanceInvariant', {
   reason: Schema.String,
@@ -27,78 +50,44 @@ type PrincipalContextProvenanceToken =
   | typeof supportRecoveryProvenance
   | typeof systemProvenance
   | typeof redeemedGatewayProvenance;
-type PrincipalContextProvenanceAccess = (
-  candidate: TrustedPrincipalContext,
-  token: PrincipalContextProvenanceToken,
-) => boolean | object | string;
 
-const PrincipalContextProvenanceAccessSchema = Schema.declare<PrincipalContextProvenanceAccess>(
-  (value): value is PrincipalContextProvenanceAccess => Predicate.isFunction(value),
-);
-const PrincipalContextProvenanceCarrierSchema = Schema.Struct({
-  [provenanceAccessProperty]: Schema.optionalKey(PrincipalContextProvenanceAccessSchema),
-});
+export interface PrincipalContextProvenance {
+  readonly actionRegistration?: object;
+  readonly redeemedGateway?: RedeemedGatewayProvenance;
+  readonly token: PrincipalContextProvenanceToken;
+}
 
-const attachPrincipalContextProvenance = <
-  Context extends TrustedPrincipalContext,
-  Registration extends object = object,
->(
+const attachPrincipalContextProvenance = <Context extends TrustedPrincipalContext>(
   context: Context,
-  provenance: PrincipalContextProvenanceToken,
-  actionRegistration?: Registration,
-  compositionRevision?: string,
+  provenance: PrincipalContextProvenance,
 ): Context => {
   const carrier = { ...context };
-  const accessProvenance: PrincipalContextProvenanceAccess = (candidate, token) => {
-    if (candidate !== carrier || token !== provenance) {
-      return false;
-    }
-    if (provenance === supportRecoveryProvenance) {
-      return actionRegistration ?? false;
-    }
-    return provenance === redeemedGatewayProvenance ? (compositionRevision ?? false) : true;
-  };
-  Object.defineProperty(carrier, provenanceAccessProperty, {
-    value: accessProvenance,
-  });
+  sealPrincipalContextProvenance(carrier, provenance);
   return Object.isFrozen(context) ? Object.freeze(carrier) : carrier;
 };
 
-const hasSystemProvenance = <Context>(context: Context): boolean => {
-  if (
-    !Schema.is(TrustedPrincipalContextSchema)(context) ||
-    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
-  ) {
-    return false;
+const readPrincipalContextProvenance = <Context>(
+  context: Context,
+  token: PrincipalContextProvenanceToken,
+): PrincipalContextProvenance | undefined => {
+  if (!Schema.is(TrustedPrincipalContextSchema)(context)) {
+    return undefined;
   }
-  const accessProvenance = context[provenanceAccessProperty];
-  return accessProvenance?.(context, systemProvenance) === true;
+  const provenance = readPrincipalContextProvenanceSeal(context);
+  return provenance?.token === token ? provenance : undefined;
 };
 
-const readSupportRecoveryAction = <Context>(context: Context): object | null => {
-  if (
-    !Schema.is(TrustedPrincipalContextSchema)(context) ||
-    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
-  ) {
-    return null;
-  }
-  const accessProvenance = context[provenanceAccessProperty];
-  if (accessProvenance === undefined) {
-    return null;
-  }
-  const registration = accessProvenance(context, supportRecoveryProvenance);
-  return Predicate.isObjectKeyword(registration) && registration !== null ? registration : null;
-};
+const hasSystemProvenance = <Context>(context: Context): boolean =>
+  readPrincipalContextProvenance(context, systemProvenance) !== undefined;
 
-const hasRedeemedGatewayProvenance = <Context>(context: Context): boolean => {
-  if (
-    !Schema.is(TrustedPrincipalContextSchema)(context) ||
-    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
-  ) {
-    return false;
-  }
-  return Schema.is(CompositionRevisionSchema)(context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance));
-};
+const readSupportRecoveryAction = <Context>(context: Context): object | null =>
+  readPrincipalContextProvenance(context, supportRecoveryProvenance)?.actionRegistration ?? null;
+
+const readRedeemedGatewayProvenance = <Context>(context: Context): RedeemedGatewayProvenance | undefined =>
+  readPrincipalContextProvenance(context, redeemedGatewayProvenance)?.redeemedGateway;
+
+const hasRedeemedGatewayProvenance = <Context>(context: Context): boolean =>
+  readRedeemedGatewayProvenance(context) !== undefined;
 
 const failProvenanceInvariant = (reason: string): never => {
   throw new PrincipalContextProvenanceInvariant({ reason });
@@ -110,36 +99,47 @@ export const trustResolvedSystemPrincipalContext = <Context extends TrustedPrinc
   if (!Schema.is(SystemPrincipalContextSchema)(context)) {
     return failProvenanceInvariant('Only resolved system contexts can carry system provenance');
   }
-  return attachPrincipalContextProvenance(context, systemProvenance);
+  return attachPrincipalContextProvenance(context, { token: systemProvenance });
 };
 
 export const isTrustedSystemPrincipalContext = <Context>(context: Context): boolean =>
   hasSystemProvenance(context) && Schema.is(SystemPrincipalContextSchema)(context);
 
-/** Marks a context only after an audience-bound gateway assertion has been verified and redeemed. */
+/**
+ * Marks a context only after an audience-bound gateway assertion has been verified and redeemed. The
+ * optional scope assertion is the redeemed token a trusted database scope is established from.
+ */
 export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrincipalContext>(
   context: Context,
   compositionRevision: string,
+  scopeAssertion?: GatewayScopeAssertion,
 ): Context => {
   if (!Schema.is(CompositionRevisionSchema)(compositionRevision)) {
     return failProvenanceInvariant('Verified gateway provenance requires its signed composition revision');
   }
+  if (scopeAssertion !== undefined && !Schema.is(GatewayScopeAssertionSchema)(scopeAssertion)) {
+    return failProvenanceInvariant('A gateway scope assertion requires its audience and redacted assertion');
+  }
+  const redeemedGateway: RedeemedGatewayProvenance = Object.freeze(
+    scopeAssertion === undefined
+      ? { compositionRevision }
+      : {
+          compositionRevision,
+          scopeAssertion: Object.freeze({ assertion: scopeAssertion.assertion, audience: scopeAssertion.audience }),
+        },
+  );
   return Object.freeze(
-    attachPrincipalContextProvenance(context, redeemedGatewayProvenance, undefined, compositionRevision),
+    attachPrincipalContextProvenance(context, { redeemedGateway, token: redeemedGatewayProvenance }),
   );
 };
 
 /** Returns only the revision carried by this exact verified and redeemed context. */
-export const readVerifiedGatewayCompositionRevision = <Context>(context: Context): string | undefined => {
-  if (
-    !Schema.is(TrustedPrincipalContextSchema)(context) ||
-    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
-  ) {
-    return undefined;
-  }
-  const revision = context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance);
-  return Schema.is(CompositionRevisionSchema)(revision) ? revision : undefined;
-};
+export const readVerifiedGatewayCompositionRevision = <Context>(context: Context): string | undefined =>
+  readRedeemedGatewayProvenance(context)?.compositionRevision;
+
+/** Returns the redeemed gateway assertion carried by this exact verified context, if any. */
+export const readVerifiedGatewayScopeAssertion = <Context>(context: Context): GatewayScopeAssertion | undefined =>
+  readRedeemedGatewayProvenance(context)?.scopeAssertion;
 
 export const isVerifiedGatewayPrincipalContext = <Context>(context: Context): boolean =>
   hasRedeemedGatewayProvenance(context);
@@ -154,7 +154,7 @@ export const trustSupportRecoveryPrincipalContext = <
   if (!Schema.is(SessionPrincipalContextSchema)(context)) {
     return failProvenanceInvariant('Only resolved session contexts can carry support recovery provenance');
   }
-  return attachPrincipalContextProvenance(context, supportRecoveryProvenance, actionRegistration);
+  return attachPrincipalContextProvenance(context, { actionRegistration, token: supportRecoveryProvenance });
 };
 
 export const isTrustedSupportRecoveryPrincipalContext = <Context, Registration extends object = object>(
@@ -176,9 +176,13 @@ export const preserveSystemPrincipalContextTrust = <Source, Context extends Trus
   if (isTrustedSystemPrincipalContext(source)) {
     return trustResolvedSystemPrincipalContext(context);
   }
-  const gatewayCompositionRevision = readVerifiedGatewayCompositionRevision(source);
-  if (gatewayCompositionRevision !== undefined) {
-    return trustVerifiedGatewayPrincipalContext(context, gatewayCompositionRevision);
+  const redeemedGateway = readRedeemedGatewayProvenance(source);
+  if (redeemedGateway !== undefined) {
+    return trustVerifiedGatewayPrincipalContext(
+      context,
+      redeemedGateway.compositionRevision,
+      redeemedGateway.scopeAssertion,
+    );
   }
   const recoveryActionRegistration = readSupportRecoveryAction(source);
   if (recoveryActionRegistration !== null) {
