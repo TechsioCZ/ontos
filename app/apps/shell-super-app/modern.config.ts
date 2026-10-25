@@ -1,7 +1,7 @@
 import {
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
-} from '../../packages/core-runtime/src/db/database-identity-manifest.ts';
+} from '../../packages/core-runtime/src/db/database-identity-data.ts';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
