@@ -9,6 +9,9 @@ import { CartNotifications } from "@/features/cart/cart-notifications";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import type { CartItemSnapshot } from "@/features/cart/cart-state";
 
+const isHTMLElement = (value: unknown): value is HTMLElement =>
+  value !== null && value !== undefined && HTMLElement.prototype.isPrototypeOf(value);
+
 const item: CartItemSnapshot = {
   productId: "rod",
   variantId: "rod-a2",
@@ -70,7 +73,7 @@ describe("cart action notifications", () => {
     await user.click(add);
     expect(await screen.findByText("Přidáno do košíku")).not.toBeNull();
     const notification = screen.getByText("Přidáno do košíku").closest('[role="status"]');
-    if (!(notification instanceof HTMLElement)) throw new Error("Missing notification");
+    if (!isHTMLElement(notification)) throw new Error("Missing notification");
     expect(within(notification).getByText(/0,5 m/)).not.toBeNull();
     expect(within(notification).getByText(/Tyč 6 mm \/ A2/)).not.toBeNull();
     expect(

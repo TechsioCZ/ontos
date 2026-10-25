@@ -5,6 +5,9 @@ import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 
+const isDOMException = (value: unknown): value is DOMException =>
+  value !== null && value !== undefined && DOMException.prototype.isPrototypeOf(value);
+
 interface ProductDetailActionsProps {
   productId: string;
   productName: string;
@@ -44,7 +47,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
       try {
         await navigator.share(shareData);
       } catch (error) {
-        if (!(error instanceof DOMException) || error.name !== "AbortError") throw error;
+        if (!isDOMException(error) || error.name !== "AbortError") throw error;
       }
       return;
     }

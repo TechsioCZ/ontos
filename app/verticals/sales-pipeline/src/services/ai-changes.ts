@@ -1,11 +1,7 @@
 // AI level C for opportunities (specs AGENT.md §3): the agent proposes, a person approves in /prodej/schvalovani-ai,
 // and an applied batch can be reverted at once. The module-neutral engine lives in @app/shared-contracts/ai-approvals;
 // this file plugs the sales-pipeline state and reducer into it.
-import {
-  decideAiChanges,
-  proposeAiChanges,
-  revertAiBatch,
-} from '@app/shared-contracts/ai-approvals';
+import { decideAiChanges, proposeAiChanges, revertAiBatch } from '@app/shared-contracts/ai-approvals';
 import type {
   AiApprovalAdapter,
   AiContext,
@@ -15,22 +11,30 @@ import type {
   AiRisk,
   AiSlice,
 } from '@app/shared-contracts/ai-approvals';
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { SalesPipelineAiOperation, SalesPipelineCommand } from '../../shared/actions/apply-command.ts';
 import type { SalesPipelineState } from '../../shared/apis/records.ts';
 import { OpportunitySchema, opportunityAmountMinor } from '../../shared/model/opportunity.ts';
 import type { Opportunity, OpportunityLine, OpportunityStage } from '../../shared/model/opportunity.ts';
 
-type AiCommand = Extract<SalesPipelineCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
+type AiCommand = Extract<
+  SalesPipelineCommand,
+  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
+>;
 
 export const isSalesPipelineAiCommand = (command: SalesPipelineCommand): command is AiCommand =>
-  command._tag === 'AiProposeChanges' || command._tag === 'AiDecideChanges' || command._tag === 'AiRevertBatch';
+  Predicate.isTagged(command, 'AiProposeChanges') ||
+  Predicate.isTagged(command, 'AiDecideChanges') ||
+  Predicate.isTagged(command, 'AiRevertBatch');
 
 type Evolve = (
   state: SalesPipelineState,
   command: SalesPipelineCommand,
   input: { readonly invocationId: string; readonly now: DateTime.Utc },
-) => Effect.Effect<{ readonly affected: readonly Opportunity[]; readonly state: SalesPipelineState }, { readonly reason: string }>;
+) => Effect.Effect<
+  { readonly affected: readonly Opportunity[]; readonly state: SalesPipelineState },
+  { readonly reason: string }
+>;
 
 export const stageLabel: Readonly<Record<OpportunityStage, string>> = {
   LEAD: 'Nová',
@@ -50,8 +54,7 @@ const czechReason = (reason: string): string =>
     'The requested Opportunity transition is not allowed': 'Tento přechod mezi fázemi není povolen.',
   })[reason] ?? reason;
 
-const czk = (minor: number) =>
-  `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 2 }).format(minor / 100)} Kč`;
+const czk = (minor: number) => `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 2 }).format(minor / 100)} Kč`;
 
 const linesText = (lines: readonly OpportunityLine[]) =>
   lines.length === 0
@@ -92,8 +95,14 @@ const describe = (state: SalesPipelineState, operation: SalesPipelineAiOperation
   return Match.value(operation).pipe(
     Match.tagsExhaustive({
       AssignOpportunity: (value): AiDescribed => ({
-        diff: line('ownerEmployeeId', existing(value.id)?.ownerEmployeeId, Option.getOrUndefined(value.ownerEmployeeId)),
-        summary: Option.isNone(value.ownerEmployeeId) ? 'Odebrání obchodníka z příležitosti' : 'Předání příležitosti obchodníkovi',
+        diff: line(
+          'ownerEmployeeId',
+          existing(value.id)?.ownerEmployeeId,
+          Option.getOrUndefined(value.ownerEmployeeId),
+        ),
+        summary: Option.isNone(value.ownerEmployeeId)
+          ? 'Odebrání obchodníka z příležitosti'
+          : 'Předání příležitosti obchodníkovi',
         target: target(value.id),
       }),
       ChangeOpportunityStage: (value): AiDescribed => {
@@ -147,7 +156,11 @@ const describe = (state: SalesPipelineState, operation: SalesPipelineAiOperation
                     current === undefined ? undefined : czk(current.amountMinor),
                     czk(opportunityAmountMinor(patch.lines)),
                   ),
-                  ...line('lines', current === undefined ? undefined : linesText(current.lines), linesText(patch.lines)),
+                  ...line(
+                    'lines',
+                    current === undefined ? undefined : linesText(current.lines),
+                    linesText(patch.lines),
+                  ),
                 ]),
             ...(patch.note === undefined ? [] : line('note', current?.note, patch.note)),
           ],
@@ -163,7 +176,8 @@ const risk = (operation: SalesPipelineAiOperation): AiRisk =>
   Match.value(operation).pipe(
     Match.tagsExhaustive({
       AssignOpportunity: (): AiRisk => 'medium',
-      ChangeOpportunityStage: (value): AiRisk => (value.toStage === 'WON' || value.toStage === 'LOST' ? 'high' : 'medium'),
+      ChangeOpportunityStage: (value): AiRisk =>
+        value.toStage === 'WON' || value.toStage === 'LOST' ? 'high' : 'medium',
       CreateOpportunity: (): AiRisk => 'medium',
       UpdateOpportunity: (value): AiRisk =>
         value.patch.lines !== undefined || value.patch.partyId !== undefined ? 'high' : 'low',
@@ -173,8 +187,11 @@ const risk = (operation: SalesPipelineAiOperation): AiRisk =>
 const encodeOpportunity = Schema.encodeSync(OpportunitySchema);
 const decodeOpportunity = Schema.decodeUnknownSync(OpportunitySchema);
 
-const adapterFor = (evolve: Evolve, now: DateTime.Utc): AiApprovalAdapter<SalesPipelineState, SalesPipelineAiOperation> => ({
-  creates: (operation) => operation._tag === 'CreateOpportunity',
+const adapterFor = (
+  evolve: Evolve,
+  now: DateTime.Utc,
+): AiApprovalAdapter<SalesPipelineState, SalesPipelineAiOperation> => ({
+  creates: (operation) => Predicate.isTagged(operation, 'CreateOpportunity'),
   describe,
   encode: (_kind, entity) => encodeOpportunity(entity as Opportunity),
   entities: (state) => state.opportunities,
@@ -235,7 +252,12 @@ export const applySalesPipelineAiCommand = (
   return Match.value(command).pipe(
     Match.tagsExhaustive({
       AiDecideChanges: (value) =>
-        decideAiChanges(adapter, state, { changeIds: value.changeIds, decision: value.decision, note: value.note }, aiContext),
+        decideAiChanges(
+          adapter,
+          state,
+          { changeIds: value.changeIds, decision: value.decision, note: value.note },
+          aiContext,
+        ),
       AiProposeChanges: (value) =>
         proposeAiChanges(
           adapter,

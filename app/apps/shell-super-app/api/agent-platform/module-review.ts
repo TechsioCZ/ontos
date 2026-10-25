@@ -6,12 +6,8 @@
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 import { AgentReviewResponseSchema } from '@app/shared-contracts/agent-review';
-import type {
-  AgentReviewItem,
-  AgentReviewItemRequest,
-  AgentReviewStage,
-} from '@app/shared-contracts/agent-review';
-import { Effect, Schema } from 'effect';
+import type { AgentReviewItem, AgentReviewItemRequest, AgentReviewStage } from '@app/shared-contracts/agent-review';
+import { Effect, Option, Result, Schema } from 'effect';
 
 import type { McpModule } from '../mcp/catalog.ts';
 import { callModuleAs } from './module-call.ts';
@@ -71,11 +67,11 @@ export const reviewInModule = Effect.fn('AgentPlatform.reviewInModule')(function
         ...(proposal === undefined ? {} : { proposal }),
       })),
     }).pipe(Effect.result);
-    if (response._tag === 'Failure' || response.success.status !== 200) {
+    if (Result.isFailure(response) || response.success.status !== 200) {
       return unavailable;
     }
     const decoded = decodeResponse(response.success.body);
-    if (decoded._tag === 'None') {
+    if (Option.isNone(decoded)) {
       return unavailable;
     }
     seesAllRecords &&= decoded.value.seesAllRecords;

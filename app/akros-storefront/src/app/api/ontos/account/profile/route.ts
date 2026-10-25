@@ -17,7 +17,7 @@ export async function GET(request: Request) {
       { headers: noStore },
     );
   } catch (error) {
-    if (error instanceof OntosError && error.status === 401) {
+    if (OntosError.is(error) && error.status === 401) {
       return anonymous();
     }
     return problem(error, "Údaje účtu se nepodařilo načíst z OntOS. Zkuste to prosím později.");
@@ -39,10 +39,10 @@ export async function POST(request: Request) {
     const profile = await saveCustomerProfile(origin, request.headers.get("cookie"), input);
     return Response.json({ outcome: "PROFILE_SAVED", profile }, { headers: noStore });
   } catch (error) {
-    if (error instanceof OntosError && error.status === 401) {
+    if (OntosError.is(error) && error.status === 401) {
       return anonymous();
     }
-    if (error instanceof OntosError && [400, 403, 409, 422].includes(error.status)) {
+    if (OntosError.is(error) && [400, 403, 409, 422].includes(error.status)) {
       const message =
         error.status === 409
           ? "Údaje mezitím někdo změnil. Obnovte stránku a zkuste to znovu."

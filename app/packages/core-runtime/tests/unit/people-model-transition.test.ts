@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -376,14 +376,16 @@ it.effect(
       const original = input();
       const native = nativeClient(original);
       const result = yield* Effect.result(applyPeopleModelTransitionGraph(native.client, original, 'b'.repeat(64)));
-      expect(result._tag).toBe('Failure');
+      expect(Result.isFailure(result)).toBe(true);
       expect(native.calls).toEqual([]);
       const failed = nativeClient(original, true);
       expect(
-        (yield* Effect.result(
-          applyPeopleModelTransitionGraph(failed.client, original, planPeopleModelTransition(original).fingerprint),
-        ))._tag,
-      ).toBe('Failure');
+        Result.isFailure(
+          yield* Effect.result(
+            applyPeopleModelTransitionGraph(failed.client, original, planPeopleModelTransition(original).fingerprint),
+          ),
+        ),
+      ).toBe(true);
       expect(failed.state.has(key(agentPolicy))).toBe(false);
       expect(failed.state.has(key(retail))).toBe(true);
     }),

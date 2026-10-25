@@ -4,6 +4,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 export function VerificationResendForm() {
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -29,7 +32,7 @@ export function VerificationResendForm() {
         throw new Error("Odeslání ověřovacího e-mailu nebylo potvrzeno.");
       setSent(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Ověřovací e-mail je dočasně nedostupný.");
+      setError(isError(cause) ? cause.message : "Ověřovací e-mail je dočasně nedostupný.");
     } finally {
       setPending(false);
     }

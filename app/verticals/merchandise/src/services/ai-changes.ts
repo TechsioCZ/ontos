@@ -15,7 +15,7 @@ import type {
   AiSlice,
 } from '@app/shared-contracts/ai-approvals';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
-import { DateTime, Effect, Exit, Match, Schema } from 'effect';
+import { DateTime, Effect, Exit, Match, Predicate, Schema } from 'effect';
 import type { MerchandiseAiOperation, MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { OrderSchema, StockMovementIdSchema, StockMovementSchema } from '../../shared/domain/merchandise-model.ts';
@@ -30,10 +30,15 @@ import {
 } from './persistence.service.ts';
 import { stockOnHandOf, variantStockOf } from './stock-levels.ts';
 
-type AiCommand = Extract<MerchandiseCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
+type AiCommand = Extract<
+  MerchandiseCommand,
+  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
+>;
 
 export const isMerchandiseAiCommand = (command: MerchandiseCommand): command is AiCommand =>
-  command._tag === 'AiProposeChanges' || command._tag === 'AiDecideChanges' || command._tag === 'AiRevertBatch';
+  Predicate.isTagged(command, 'AiProposeChanges') ||
+  Predicate.isTagged(command, 'AiDecideChanges') ||
+  Predicate.isTagged(command, 'AiRevertBatch');
 
 const czk = (minor: number) =>
   `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
@@ -54,7 +59,9 @@ const czechReason = (reason: string): string =>
       : reason);
 
 const orderLabel = (order: Order | undefined) =>
-  order === undefined ? 'Neznámá objednávka' : `Objednávka ${order.number}${order.contact === undefined ? '' : ` · ${order.contact.name}`}`;
+  order === undefined
+    ? 'Neznámá objednávka'
+    : `Objednávka ${order.number}${order.contact === undefined ? '' : ` · ${order.contact.name}`}`;
 
 const diffLine = (field: string, label: string, before: string, after: string): readonly AiDiffLine[] =>
   before === after ? [] : [{ after, before, field, label }];
@@ -65,7 +72,12 @@ const orderDiff = (before: Order, after: Order): readonly AiDiffLine[] => [
   ...diffLine('lines', 'Položky', describeLines(before), describeLines(after)),
   ...diffLine('total', 'Celkem s DPH', czk(before.totalMinor), czk(after.totalMinor)),
   ...diffLine('shipping', 'Doprava', describeShipping(before.shipping), describeShipping(after.shipping)),
-  ...diffLine('deliveryAddress', 'Doručovací adresa', describeAddress(before.deliveryAddress), describeAddress(after.deliveryAddress)),
+  ...diffLine(
+    'deliveryAddress',
+    'Doručovací adresa',
+    describeAddress(before.deliveryAddress),
+    describeAddress(after.deliveryAddress),
+  ),
   ...diffLine('contact', 'Kontakt', describeContact(before.contact), describeContact(after.contact)),
   ...diffLine('note', 'Poznámka', before.note ?? 'bez poznámky', after.note ?? 'bez poznámky'),
 ];
@@ -87,7 +99,12 @@ const adapterFor = (
     );
   const describe = (state: MerchandiseState, operation: MerchandiseAiOperation): AiDescribed => {
     const before = state.orders.find((order) => order.id === operation.id);
-    const summary = operation._tag === 'ChangeOrderStatus' ? 'Změna stavu objednávky' : 'Úprava objednávky';
+    const summary = Match.value(operation).pipe(
+      Match.tagsExhaustive({
+        ChangeOrderStatus: () => 'Změna stavu objednávky',
+        EditOrder: () => 'Úprava objednávky',
+      }),
+    );
     const target = { id: operation.id, kind: 'order', label: orderLabel(before) };
     const outcome = Effect.runSyncExit(run(state, operation, 'ai-describe'));
     const after = Exit.isSuccess(outcome)
@@ -165,13 +182,12 @@ const adapterFor = (
       }),
     run,
     risk: (operation): AiRisk =>
-      operation._tag === 'ChangeOrderStatus'
-        ? operation.status === 'CANCELLED'
-          ? 'high'
-          : 'medium'
-        : operation.lines !== undefined || operation.shipping !== undefined
-          ? 'high'
-          : 'low',
+      Match.value(operation).pipe(
+        Match.tagsExhaustive({
+          ChangeOrderStatus: (value) => (value.status === 'CANCELLED' ? 'high' : 'medium'),
+          EditOrder: (value) => (value.lines !== undefined || value.shipping !== undefined ? 'high' : 'low'),
+        }),
+      ),
     setSlice: (state, slice) => ({ ...state, aiChanges: slice as MerchandiseState['aiChanges'] & object }),
   };
 };
@@ -191,7 +207,12 @@ export const applyMerchandiseAiCommand = (
   return Match.value(command).pipe(
     Match.tagsExhaustive({
       AiDecideChanges: (value) =>
-        decideAiChanges(adapter, state, { changeIds: value.changeIds, decision: value.decision, note: value.note }, aiContext),
+        decideAiChanges(
+          adapter,
+          state,
+          { changeIds: value.changeIds, decision: value.decision, note: value.note },
+          aiContext,
+        ),
       AiProposeChanges: (value) =>
         proposeAiChanges(
           adapter,

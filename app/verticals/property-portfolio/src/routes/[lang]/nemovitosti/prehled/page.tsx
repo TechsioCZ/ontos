@@ -7,7 +7,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Effect, Random } from 'effect';
+import { Effect, Match, Random } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
@@ -122,16 +122,23 @@ export const projectOverviewAgenda = (records: AgendaSources) => {
 };
 
 /** Each source fails independently: no financial permissions must not erase the property portfolio. */
-const governedSource = <A, E>(read: Effect.Effect<A, E>): Effect.Effect<Source<A>> =>
+type OverviewReadFailure = Effect.Error<
+  ReturnType<
+    | typeof executeAgreements
+    | typeof executeFinance
+    | typeof executeOccupancy
+    | typeof executeProperty
+    | typeof executeWork
+  >
+>;
+const governedSource = <A,>(read: Effect.Effect<A, OverviewReadFailure>): Effect.Effect<Source<A>> =>
   read.pipe(
     Effect.match({
-      onFailure: (error) =>
-        ({
-          status:
-            typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Forbidden')
-              ? 'forbidden'
-              : 'unavailable',
-        }) as Source<A>,
+      onFailure: (error): Source<A> =>
+        Match.value(error).pipe(
+          Match.tag('RecordsForbiddenProblem', 'GatewayForbiddenProblem', (): Source<A> => ({ status: 'forbidden' })),
+          Match.orElse((): Source<A> => ({ status: 'unavailable' })),
+        ),
       onSuccess: (data): Source<A> => ({ data, status: 'ready' }),
     }),
   );

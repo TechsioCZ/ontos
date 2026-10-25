@@ -59,7 +59,7 @@ export async function POST(request: Request) {
       } catch (error) {
         // Only a definite optimistic-lock refusal is retried. Never repeat a command with an unknown outcome.
         if (
-          error instanceof OntosError &&
+          OntosError.is(error) &&
           error.status === 409 &&
           error.code === "work_revision_conflict" &&
           attempt < 2
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     }
     throw new Error("Inquiry owner is busy");
   } catch (error) {
-    if (error instanceof OntosError && error.status === 403) {
+    if (OntosError.is(error) && error.status === 403) {
       console.error("[AKROS] Inquiry owner authorization denied");
       return Response.json(
         {

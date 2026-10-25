@@ -8,6 +8,7 @@ import type { AgentDiffValueOptions } from '@app/shared-contracts/agent-diff';
 import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
 import type { AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
+import { Match, Predicate } from 'effect';
 import {
   AGENT_REVERT_MISSING_BEFORE,
   agentRestoredPatch,
@@ -46,43 +47,48 @@ const CATALOG_COMMANDS: ReadonlySet<string> = new Set([
   'UpdateProduct',
 ]);
 
-/** Commands that change one existing product, read live for `before`, the undo plan and the in-place check. */
-const TARGETED: ReadonlySet<string> = new Set(['ChangePrice', 'UpdateProduct']);
-const REVERTIBLE: ReadonlySet<string> = new Set(['ChangePrice', 'UpdateProduct', 'CreateProduct']);
+const isRevertible = (command: AgentCommand): boolean =>
+  Predicate.isTagged(command, 'ChangePrice') ||
+  Predicate.isTagged(command, 'UpdateProduct') ||
+  Predicate.isTagged(command, 'CreateProduct');
 
 /** Id of the product the command changes when it is one that is read live, undefined otherwise. */
 export const targetProductId = (command: AgentCommand): string | undefined => {
   const id = command['id'];
-  return TARGETED.has(String(command['_tag'])) && typeof id === 'string' ? id : undefined;
+  return Match.value(String(command['_tag'])).pipe(
+    Match.whenOr('ChangePrice', 'UpdateProduct', () => (typeof id === 'string' ? id : undefined)),
+    Match.orElse(() => undefined),
+  );
 };
 
-export const productDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
-  switch (command['_tag']) {
-    case 'ChangePrice': {
+export const productDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined =>
+  Match.value(command).pipe(
+    Match.when({ _tag: 'ChangePrice' }, () => {
       const { variantId } = command;
       const money = { moneyFields: new Set(['priceMinor']) };
       if (typeof variantId === 'string') {
         const variant = agentEntryWithId(before?.['variants'], variantId);
-        return [agentDiffLine('priceMinor', 'Cena varianty bez DPH', variant?.['priceMinor'], command['priceMinor'], money)];
+        return [
+          agentDiffLine('priceMinor', 'Cena varianty bez DPH', variant?.['priceMinor'], command['priceMinor'], money),
+        ];
       }
       return [agentDiffLine('priceMinor', 'Cena bez DPH', before?.['currentPriceMinor'], command['priceMinor'], money)];
-    }
-    case 'UpdateProduct': {
+    }),
+    Match.when({ _tag: 'UpdateProduct' }, () => {
       const { patch } = command;
-      return isRecord(patch) ? agentFieldLines(patch, PRODUCT_LABELS, before, new Set(), moneyOptions(patch)) : undefined;
-    }
-    case 'CreateProduct': {
-      return agentFieldLines(command, PRODUCT_LABELS, undefined, new Set(['id']), moneyOptions(command));
-    }
-    default: {
-      return undefined;
-    }
-  }
-};
+      return isRecord(patch)
+        ? agentFieldLines(patch, PRODUCT_LABELS, before, new Set(), moneyOptions(patch))
+        : undefined;
+    }),
+    Match.when({ _tag: 'CreateProduct' }, () =>
+      agentFieldLines(command, PRODUCT_LABELS, undefined, new Set(['id']), moneyOptions(command)),
+    ),
+    Match.orElse(() => undefined),
+  );
 
-export const productRevert = (command: AgentCommand, before: Rec | undefined): AgentRevertPlan => {
-  switch (command['_tag']) {
-    case 'ChangePrice': {
+export const productRevert = (command: AgentCommand, before: Rec | undefined): AgentRevertPlan =>
+  Match.value(command).pipe(
+    Match.when({ _tag: 'ChangePrice' }, () => {
       if (before === undefined) return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       const id = command['id'];
       const { variantId } = command;
@@ -96,29 +102,26 @@ export const productRevert = (command: AgentCommand, before: Rec | undefined): A
       return typeof price === 'number'
         ? agentRevertCommands([{ _tag: 'ChangePrice', id, priceMinor: price }])
         : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
-    }
-    case 'UpdateProduct': {
+    }),
+    Match.when({ _tag: 'UpdateProduct' }, () => {
       const restored = agentRestoredPatch(command['patch'], before);
       return restored === undefined
         ? agentRevertNone(AGENT_REVERT_MISSING_BEFORE)
         : agentRevertCommands([{ _tag: 'UpdateProduct', id: command['id'], patch: restored }]);
-    }
-    case 'CreateProduct': {
-      return agentRevertCommands(
+    }),
+    Match.when({ _tag: 'CreateProduct' }, () =>
+      agentRevertCommands(
         [{ _tag: 'UpdateProduct', id: AGENT_CREATED_ID_PLACEHOLDER, patch: { active: false } }],
         'entityIds.0',
-      );
-    }
-    default: {
-      return agentRevertNone();
-    }
-  }
-};
+      ),
+    ),
+    Match.orElse(() => agentRevertNone()),
+  );
 
 /** Does the product still hold what the approved command set? Undefined when there is nothing to compare. */
-export const productStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined => {
-  switch (command['_tag']) {
-    case 'ChangePrice': {
+export const productStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined =>
+  Match.value(command).pipe(
+    Match.when({ _tag: 'ChangePrice' }, () => {
       if (current === undefined) return false;
       const { variantId } = command;
       if (typeof variantId === 'string') {
@@ -126,15 +129,10 @@ export const productStillInPlace = (command: AgentCommand, current: Rec | undefi
         return variant !== undefined && variant['priceMinor'] === command['priceMinor'];
       }
       return current['currentPriceMinor'] === command['priceMinor'];
-    }
-    case 'UpdateProduct': {
-      return current !== undefined && agentRecordHolds(command['patch'], current);
-    }
-    default: {
-      return undefined;
-    }
-  }
-};
+    }),
+    Match.when({ _tag: 'UpdateProduct' }, () => current !== undefined && agentRecordHolds(command['patch'], current)),
+    Match.orElse(() => undefined),
+  );
 
 /** What the person's records read says they may change. */
 export interface MerchandiseRights {
@@ -190,7 +188,6 @@ export const reviewProductProposal = ({ product, request, rights }: ProductRevie
   const missing = targeted && rights !== undefined && product === undefined;
   const lines = productDiff(command, product);
   const blockedReason = blockedReasonOf(command, rights);
-  const tag = command['_tag'];
   const name = product?.['name'] ?? product?.['title'];
   return {
     key,
@@ -198,7 +195,7 @@ export const reviewProductProposal = ({ product, request, rights }: ProductRevie
     visible: !missing,
     ...(blockedReason === undefined ? {} : { blockedReason }),
     ...(lines === undefined ? {} : { diff: lines }),
-    ...(typeof tag === 'string' && REVERTIBLE.has(tag) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
+    ...(isRevertible(command) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
     ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
   };
 };

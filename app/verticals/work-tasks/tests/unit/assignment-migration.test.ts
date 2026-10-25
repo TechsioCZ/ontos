@@ -2,6 +2,7 @@ import { Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { WorkStateSchema } from '../../shared/apis/records.ts';
 import {
+  AssignmentMigrationScopeMismatch,
   EmployeeAssignmentMigrationInputSchema,
   migrateEmployeeAssignments as migrate,
 } from '../../src/services/migrate-employee-assignments.ts';
@@ -129,10 +130,11 @@ it('rejects cross-tenant reviewed login links rather than manufacturing a local 
     new Map([['employee', { ...human, tenantId: agent.principalId }]]),
     tenantId,
   );
-  expect(result).toMatchObject({
-    _tag: 'Failure',
-    failure: { _tag: 'AssignmentMigrationScopeMismatch', reason: expect.stringContaining('exact tenant') },
-  });
+  expect(Result.isFailure(result)).toBe(true);
+  if (Result.isFailure(result)) {
+    expect(Schema.is(AssignmentMigrationScopeMismatch)(result.failure)).toBe(true);
+    expect(result.failure.reason).toContain('exact tenant');
+  }
 });
 
 it('legacy employee assignment overrides seeded management ownership, or clears it when unlinked', () => {

@@ -3,6 +3,7 @@
  * changes, the undo plan, whether the change is still in place and whether the person may write. Pronájmy has no
  * before -> after lines of its own. Pure; the read handler supplies the lease read as the person.
  */
+import { Function as EffectFunction, Match } from 'effect';
 import { agentRecordHolds } from '@app/shared-contracts/agent-diff';
 import type { AgentCommand, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
@@ -15,29 +16,26 @@ const isRecord = (value: unknown): value is Rec => typeof value === 'object' && 
 
 export const RENT_STATE_UNAVAILABLE = 'Změnu stavu nájmu nelze automaticky vrátit.';
 
-/** Commands that change one existing lease, read live for the undo plan and the in-place check. */
-const TARGETED: ReadonlySet<string> = new Set(['SetRentTerms', 'UpdateDraft']);
-const REVERTIBLE: ReadonlySet<string> = new Set(['SetRentTerms', 'UpdateDraft', 'CreateDraft']);
-const STATE_CHANGES: ReadonlySet<string> = new Set(['Confirm', 'Activate', 'Complete', 'Cancel']);
-
 /** Resource id of the lease the command changes when it is one that is read live, undefined otherwise. */
-export const targetOccupancyId = (command: AgentCommand): string | undefined => {
-  const ref = command['occupancyRef'];
-  return TARGETED.has(String(command['_tag'])) && isRecord(ref) && typeof ref['resourceId'] === 'string'
-    ? ref['resourceId']
-    : undefined;
-};
+export const targetOccupancyId = (command: AgentCommand): string | undefined =>
+  Match.value(String(command['_tag'])).pipe(
+    Match.whenOr('SetRentTerms', 'UpdateDraft', () => {
+      const ref = command['occupancyRef'];
+      return isRecord(ref) && typeof ref['resourceId'] === 'string' ? ref['resourceId'] : undefined;
+    }),
+    Match.orElse(EffectFunction.constUndefined),
+  );
 
 export const occupancyRevert = (command: AgentCommand, before: Rec | undefined, tenantId: string): AgentRevertPlan => {
   const occupancyRef = command['occupancyRef'];
-  switch (command['_tag']) {
-    case 'SetRentTerms': {
+  return Match.value(command).pipe(
+    Match.when({ _tag: 'SetRentTerms' }, () => {
       const rentTerms = before?.['rentTerms'];
       return isRecord(rentTerms)
         ? agentRevertCommands([{ _tag: 'SetRentTerms', occupancyRef, rentTerms }])
         : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
-    }
-    case 'UpdateDraft': {
+    }),
+    Match.when({ _tag: 'UpdateDraft' }, () => {
       if (before === undefined || typeof before['startDate'] !== 'string') {
         return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       }
@@ -51,9 +49,9 @@ export const occupancyRevert = (command: AgentCommand, before: Rec | undefined, 
           ...(isRecord(rentTerms) ? { rentTerms } : {}),
         },
       ]);
-    }
-    case 'CreateDraft': {
-      return agentRevertCommands(
+    }),
+    Match.when({ _tag: 'CreateDraft' }, () =>
+      agentRevertCommands(
         [
           {
             _tag: 'Cancel',
@@ -66,41 +64,33 @@ export const occupancyRevert = (command: AgentCommand, before: Rec | undefined, 
           },
         ],
         'resourceRef.resourceId',
-      );
-    }
-    case 'Confirm':
-    case 'Activate':
-    case 'Complete':
-    case 'Cancel': {
-      return agentRevertNone(RENT_STATE_UNAVAILABLE);
-    }
-    default: {
-      return agentRevertNone();
-    }
-  }
+      ),
+    ),
+    Match.whenOr({ _tag: 'Confirm' }, { _tag: 'Activate' }, { _tag: 'Complete' }, { _tag: 'Cancel' }, () =>
+      agentRevertNone(RENT_STATE_UNAVAILABLE),
+    ),
+    Match.orElse(() => agentRevertNone()),
+  );
 };
 
 /** Why „Vrátit vše“ will not undo the command once approved; undefined when Pronájmy declares an undo for it. */
-export const revertUnavailableReasonOf = (command: AgentCommand): string | undefined => {
-  const tag = String(command['_tag']);
-  if (REVERTIBLE.has(tag)) return undefined;
-  return STATE_CHANGES.has(tag) ? RENT_STATE_UNAVAILABLE : AGENT_REVERT_UNAVAILABLE;
-};
+export const revertUnavailableReasonOf = (command: AgentCommand): string | undefined =>
+  Match.value(String(command['_tag'])).pipe(
+    Match.whenOr('SetRentTerms', 'UpdateDraft', 'CreateDraft', EffectFunction.constUndefined),
+    Match.whenOr('Confirm', 'Activate', 'Complete', 'Cancel', () => RENT_STATE_UNAVAILABLE),
+    Match.orElse(() => AGENT_REVERT_UNAVAILABLE),
+  );
 
 /** Does the lease still hold what the approved command set? Undefined when there is nothing to compare. */
-export const occupancyStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined => {
-  switch (command['_tag']) {
-    case 'SetRentTerms': {
-      return current !== undefined && agentRecordHolds(command['rentTerms'], current['rentTerms']);
-    }
-    case 'UpdateDraft': {
-      return current !== undefined && current['startDate'] === command['startDate'];
-    }
-    default: {
-      return undefined;
-    }
-  }
-};
+export const occupancyStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined =>
+  Match.value(command).pipe(
+    Match.when(
+      { _tag: 'SetRentTerms' },
+      () => current !== undefined && agentRecordHolds(command['rentTerms'], current['rentTerms']),
+    ),
+    Match.when({ _tag: 'UpdateDraft' }, () => current !== undefined && current['startDate'] === command['startDate']),
+    Match.orElse(EffectFunction.constUndefined),
+  );
 
 /**
  * What the person reading may know about one proposal. `read` is undefined when their lease read failed;
@@ -113,7 +103,12 @@ export interface OccupancyReviewInput {
   readonly tenantId: string;
 }
 
-export const reviewOccupancyProposal = ({ occupancy, read, request, tenantId }: OccupancyReviewInput): AgentReviewItem => {
+export const reviewOccupancyProposal = ({
+  occupancy,
+  read,
+  request,
+  tenantId,
+}: OccupancyReviewInput): AgentReviewItem => {
   const { command, key, stage } = request;
   const targeted = targetOccupancyId(command) !== undefined;
   if (stage === 'history') {

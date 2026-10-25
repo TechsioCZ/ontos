@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-import { DateTime } from 'effect';
+import { DateTime, Match } from 'effect';
 import type {
   AgendaRecipientInput,
   AkrosOrderInput,
@@ -172,17 +172,19 @@ export const planAgendaEmails = (
   });
 };
 
-export const deliveryOutcomeOf = (error: { readonly _tag: string }): DeliveryOutcome => {
-  switch (error._tag) {
-    case 'EmailDeliveryUnavailable':
-      return { errorTag: error._tag, status: 'RETRY' };
-    case 'EmailDeliveryRejected':
-    case 'EmailDeliveryInvalidMessage':
-      return { errorTag: error._tag, status: 'FAILED' };
-    default:
-      return { errorTag: error._tag, status: 'UNKNOWN' };
-  }
-};
+export const deliveryOutcomeOf = (error: { readonly _tag: string }): DeliveryOutcome =>
+  Match.value(error).pipe(
+    Match.when({ _tag: 'EmailDeliveryUnavailable' }, (failure): DeliveryOutcome => ({
+      errorTag: failure._tag,
+      status: 'RETRY',
+    })),
+    Match.whenOr(
+      { _tag: 'EmailDeliveryRejected' },
+      { _tag: 'EmailDeliveryInvalidMessage' },
+      (failure): DeliveryOutcome => ({ errorTag: failure._tag, status: 'FAILED' }),
+    ),
+    Match.orElse((failure): DeliveryOutcome => ({ errorTag: failure._tag, status: 'UNKNOWN' })),
+  );
 
 /** One staff notification from committed inquiry task state. Ledger guarantees never-twice submission. */
 export const planStorefrontInquiryEmail = (

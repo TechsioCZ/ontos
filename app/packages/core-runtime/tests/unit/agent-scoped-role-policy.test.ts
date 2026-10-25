@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { agentGrantRelationships } from '../../src/install/agent-entity-grants.ts';
@@ -134,7 +134,7 @@ it.effect('preflights the exact replacement without writes and the writer rechec
     expect(state.writes).toHaveLength(0);
     expect(state.values().map(identity).toSorted()).toEqual(previous.map(identity).toSorted());
     state.control.failRead = true;
-    expect((yield* Effect.result(replaceAgentScopedRolePolicy(state.rpc, input)))._tag).toBe('Failure');
+    expect(Result.isFailure(yield* Effect.result(replaceAgentScopedRolePolicy(state.rpc, input)))).toBe(true);
     expect(state.writes).toHaveLength(0);
   }),
 );
@@ -486,13 +486,13 @@ it.effect('refuses conditional or incomplete native template policy instead of w
           ? Effect.succeed([v1.ReadRelationshipsResponse.create()])
           : malformed.rpc.readRelationships(request),
     };
-    expect((yield* Effect.result(readScopedRoleTemplatePolicy(rpc, scope.principalId)))._tag).toBe('Failure');
+    expect(Result.isFailure(yield* Effect.result(readScopedRoleTemplatePolicy(rpc, scope.principalId)))).toBe(true);
     const conditional = graph([
       v1.Relationship.create({ ...membership, optionalCaveat: { caveatName: 'not-unconditional' } }),
     ]);
-    expect((yield* Effect.result(readScopedRoleTemplatePolicy(conditional.rpc, scope.principalId)))._tag).toBe(
-      'Failure',
-    );
+    expect(
+      Result.isFailure(yield* Effect.result(readScopedRoleTemplatePolicy(conditional.rpc, scope.principalId))),
+    ).toBe(true);
     expect(malformed.writes).toHaveLength(0);
     expect(conditional.writes).toHaveLength(0);
     return yield* Effect.void;

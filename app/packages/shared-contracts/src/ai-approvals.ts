@@ -10,7 +10,7 @@
 //            entities since; pending proposals of the batch are rejected. History stays (nothing is deleted).
 //
 // Snapshots are stored ENCODED (wire JSON) so they compare equal after a database round trip.
-import { Effect, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 
 const ShortText = Schema.String.check(Schema.isMaxLength(300));
 const LongText = Schema.String.check(Schema.isMaxLength(4000));
@@ -403,7 +403,7 @@ export const proposeAiChanges = <State, Operation extends { readonly _tag: strin
       const dryRun = yield* adapter
         .run(state, entry.operation, subInvocation(context, `c${index}`))
         .pipe(Effect.result);
-      if (dryRun._tag === 'Failure') {
+      if (Result.isFailure(dryRun)) {
         return yield* Effect.fail(
           invalid(`Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${dryRun.failure}`),
         );
@@ -528,7 +528,7 @@ export const decideAiChanges = <State, Operation extends { readonly _tag: string
       const applied = yield* adapter
         .run(working, change.operation, subInvocation(context, `a${index}`))
         .pipe(Effect.result);
-      if (applied._tag === 'Failure') {
+      if (Result.isFailure(applied)) {
         working = adapter.setSlice(working, {
           ...slice,
           changes: replaceChange(slice.changes, { ...decided, failure: applied.failure, status: 'failed' }),
@@ -618,7 +618,7 @@ export const revertAiBatch = <State, Operation extends { readonly _tag: string }
         const restored = yield* adapter
           .restore(working, snapshot, { ...context, suffix: `r${index}-${position}` }, note)
           .pipe(Effect.result);
-        if (restored._tag === 'Failure') {
+        if (Result.isFailure(restored)) {
           return yield* Effect.fail(conflict(`${change.summary} (${change.target.label}): ${restored.failure}`));
         }
         working = restored.success;

@@ -1,4 +1,5 @@
 import type { AgentActivityEntry, AgentCommand } from '@app/shared-contracts/agent-proposals';
+import { Predicate } from 'effect';
 
 import type { McpModule } from '../mcp/catalog.ts';
 
@@ -20,7 +21,7 @@ export const commandRecordReference = (
   command: AgentCommand,
 ): RecordReference | undefined => {
   for (const link of links) {
-    const target = link.commands.find(({ tag }) => tag === command['_tag']);
+    const target = link.commands.find(({ tag }) => Predicate.isTagged(command, tag));
     const resourceId = target === undefined ? undefined : fieldAt(command, target.idField);
     if (typeof resourceId === 'string' && resourceId !== '') return { resourceId, resourceType: link.resourceType };
   }

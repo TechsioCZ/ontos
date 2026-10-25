@@ -4,7 +4,7 @@
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/unstable/http';
-import { Option, Redacted, Schema } from 'effect';
+import { Match, Option, Redacted, Schema } from 'effect';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
 import { makePartyIntake } from '../src/services/party-intake.ts';
@@ -49,8 +49,13 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   // CRM.md §3: after the command COMMITTED, clients it made active get their Party Registry identity through the
   // governed intake principal (outside this command's transaction). A failure leaves the client unlinked for the
   // správce's "Propojit s Party Registry"; the committed command itself stays successful.
-  const command = decoded.command;
-  if (identityCommands.has(command._tag) && !(command._tag === 'CreateClient' && command.partyRef !== undefined)) {
+  const intakeEntityIds = Match.value(decoded.command).pipe(
+    Match.tag('CreateClient', ({ partyRef }) => (partyRef === undefined ? Option.some([]) : Option.none())),
+    Match.tag('AiDecideChanges', () => Option.some([])),
+    Match.tag('SyncClientParties', 'RestoreClient', () => Option.some(result.entityIds)),
+    Match.orElse(() => Option.none()),
+  );
+  if (Option.isSome(intakeEntityIds)) {
     const legalEntityId = legalEntityOfAssertion(request.headers['authorization']);
     const compositionRevision = request.headers['x-ontos-composition-revision'];
     if (legalEntityId !== undefined && compositionRevision !== undefined) {
@@ -59,7 +64,7 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
         correlationId: correlationId ?? `crm-intake-${result.revision}`,
         legalEntityId,
       })
-        .reconcile(command._tag === 'SyncClientParties' || command._tag === 'RestoreClient' ? result.entityIds : [])
+        .reconcile(intakeEntityIds.value)
         .pipe(
           Effect.uninterruptible,
           Effect.tapError((error) => Effect.logWarning('CRM Party Registry intake failed', error)),
@@ -69,14 +74,6 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   }
   return result;
 });
-
-/** Commands after which a client may be active without a Party Registry identity. */
-const identityCommands: ReadonlySet<string> = new Set([
-  'AiDecideChanges',
-  'CreateClient',
-  'RestoreClient',
-  'SyncClientParties',
-]);
 
 const AssertionClaimsSchema = Schema.fromJsonString(
   Schema.Struct({ principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String) }) }),

@@ -10,7 +10,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { DataTableRowAction } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useReducer, useState } from 'react';
 import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
@@ -386,7 +386,7 @@ const RecordsPageContent = ({
               Match.orElse(() => t(`${K}.errors.generic`)),
             );
             setDialogError(message);
-            if (command._tag === 'ArchiveOpportunity') {
+            if (Predicate.isTagged(command, 'ArchiveOpportunity')) {
               toaster.create({ title: message, type: 'error' });
             }
             reload();

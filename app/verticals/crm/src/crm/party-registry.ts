@@ -4,7 +4,7 @@
 // is made by a správce / vedoucí on the client card.
 import { createCustomer, listCustomers } from '@app/party-registry/api/client';
 import type { CustomerListItem } from '@app/party-registry/api/client';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import type { Client, PartyLinkInput } from '../../shared/domain/clients.ts';
 
 export type RegistryFailure = 'ambiguous' | 'forbidden' | 'unavailable';
@@ -17,7 +17,7 @@ const statusOf = (error: unknown): number | undefined => {
 };
 
 const failureOf = (error: unknown): RegistryFailure => {
-  if (typeof error === 'object' && error !== null && '_tag' in error && error._tag === 'CustomerCreateAmbiguous') {
+  if (Predicate.isTagged(error, 'CustomerCreateAmbiguous')) {
     return 'ambiguous';
   }
   const status = statusOf(error);

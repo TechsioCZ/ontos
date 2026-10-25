@@ -1,4 +1,5 @@
 // Explicit operational meter boundary. Full meter aggregates remain restricted.
+import { Match } from 'effect';
 import type { MetersCommand } from '../commands/meters.ts';
 import type { MetersState } from './meters.ts';
 
@@ -20,9 +21,10 @@ export const meterAccess = (grants: MeterGrants) => ({
 export const canApplyMeterCommand = (grants: MeterGrants, command: MetersCommand): boolean =>
   grants.writeAll ||
   (grants.writeOperational &&
-    command._tag === 'MeterReadingRecord' &&
-    command.costMinor === undefined &&
-    command.photo === undefined);
+    Match.value(command).pipe(
+      Match.tag('MeterReadingRecord', (reading) => reading.costMinor === undefined && reading.photo === undefined),
+      Match.orElse(() => false),
+    ));
 
 /** Allowlist, not a cost-only denylist: contracts, attachments and internal free text stay on the server. */
 export const operationalMetersState = (state: MetersState): MetersState => ({

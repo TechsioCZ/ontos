@@ -1,7 +1,12 @@
 // @effect-diagnostics *:off
 import { describe, expect, it } from '@rstest/core';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 import { makeCloudflareEmailDelivery } from '../../src/cloudflare.ts';
+import {
+  EmailDeliveryAcceptanceIndeterminate,
+  EmailDeliveryInvalidMessage,
+  EmailDeliveryUnavailable,
+} from '../../src/server.ts';
 import type { CloudflareEmailBinding } from '../../src/cloudflare.ts';
 import { submitEmail } from '../../src/dispatcher/dispatch.ts';
 import type { PlannedEmail } from '../../src/dispatcher/contract.ts';
@@ -60,22 +65,20 @@ it('does not claim success or retry when the binding throws', async () => {
     from,
   );
   const error = await Effect.runPromise(Effect.flip(service.send(message)));
-  expect(error._tag).toBe('EmailDeliveryAcceptanceIndeterminate');
+  expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
   expect(JSON.stringify(error)).not.toContain('private provider diagnostics');
   expect(calls).toBe(1);
 });
 
 it('treats a malformed receipt as ambiguous, never as acceptance', async () => {
   const service = makeCloudflareEmailDelivery({ send: async () => ({ messageId: '' }) }, from);
-  expect((await Effect.runPromise(Effect.flip(service.send(message))))._tag).toBe(
-    'EmailDeliveryAcceptanceIndeterminate',
-  );
+  const error = await Effect.runPromise(Effect.flip(service.send(message)));
+  expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
 });
 
 it('fails before submission for a missing binding or header injection', async () => {
-  expect((await Effect.runPromise(Effect.flip(makeCloudflareEmailDelivery(undefined, from).send(message))))._tag).toBe(
-    'EmailDeliveryUnavailable',
-  );
+  const unavailable = await Effect.runPromise(Effect.flip(makeCloudflareEmailDelivery(undefined, from).send(message)));
+  expect(Schema.is(EmailDeliveryUnavailable)(unavailable)).toBe(true);
   let calls = 0;
   const service = makeCloudflareEmailDelivery(
     {
@@ -87,7 +90,7 @@ it('fails before submission for a missing binding or header injection', async ()
     from,
   );
   const invalid = await Effect.runPromise(Effect.flip(service.send({ ...message, subject: 'bad\r\nSubject' })));
-  expect(invalid._tag).toBe('EmailDeliveryInvalidMessage');
+  expect(Schema.is(EmailDeliveryInvalidMessage)(invalid)).toBe(true);
   expect(calls).toBe(0);
 });
 

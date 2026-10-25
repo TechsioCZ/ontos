@@ -67,7 +67,7 @@ const documentOf = (schema: Schema.Top, label: string): SchemaDocument => {
     return { definitions: { ...(document.definitions as JsonObject) }, schema: root };
   } catch (error) {
     return fail(
-      `${label}: the JSON Schema cannot be derived (${error instanceof Error ? error.message : String(error)})`,
+      `${label}: the JSON Schema cannot be derived (${Predicate.isError(error) ? error.message : String(error)})`,
     );
   }
 };

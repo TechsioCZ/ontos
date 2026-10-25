@@ -2,6 +2,7 @@ import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Predicate } from 'effect';
 import { useState } from 'react';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -68,7 +69,7 @@ const ChangeCard = ({
         <span role="columnheader">Před změnou</span>
         <span role="columnheader">Po schválení</span>
       </div>
-      {(change.operation._tag === 'CreateClient'
+      {(Predicate.isTagged(change.operation, 'CreateClient')
         ? [
             ...change.diff.filter((line) => line.field !== 'contacts' && !line.field.startsWith('contacts.')),
             ...newClientContactsDiff(change.operation.contacts),

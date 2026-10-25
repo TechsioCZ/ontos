@@ -2,7 +2,7 @@
 // ACL-projected aggregate; one governed apply-command Action changes it. Pages never filter for security.
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
-import { Effect, Random } from 'effect';
+import { Effect, Predicate, Random } from 'effect';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import { partyLinksOf } from '../../shared/commands/index.ts';
@@ -24,10 +24,9 @@ const randomToken = Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, 
 const correlation = (purpose: string) => randomToken.pipe(Effect.map((token) => `crm:${purpose}:${token}`));
 
 const isForbidden = (error: unknown) =>
-  typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Forbidden');
+  Predicate.isTagged(error, 'RecordsForbiddenProblem') || Predicate.isTagged(error, 'GatewayForbiddenProblem');
 
-const isConflict = (error: unknown) =>
-  typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Conflict');
+const isConflict = (error: unknown) => Predicate.isTagged(error, 'ApplyCommandActionConflictProblem');
 
 export const loadCrmRecords = (clientId?: string) =>
   correlation('records').pipe(

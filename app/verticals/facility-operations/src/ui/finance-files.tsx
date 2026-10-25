@@ -7,7 +7,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 import { useEffect, useState } from 'react';
 import { readFinance } from '../api/finance-reads.ts';
 import type { FinanceFileView, FinanceInvoiceView } from '../api/finance-reads.ts';
@@ -23,10 +23,17 @@ export type FinanceFilesState =
   | { readonly status: 'loading' | 'forbidden' | 'unavailable' }
   | { readonly status: 'ready'; readonly rows: readonly FinanceFileRow[] };
 
-const failureStatus = (error: unknown): 'forbidden' | 'unavailable' => {
-  const tag = typeof error === 'object' && error !== null && '_tag' in error ? String(error._tag) : '';
-  return /Forbidden|Authentication/u.test(tag) ? 'forbidden' : 'unavailable';
-};
+const failureStatus = (error: unknown): 'forbidden' | 'unavailable' =>
+  Match.value(error).pipe(
+    Match.whenOr(
+      { _tag: 'RecordsForbiddenProblem' },
+      { _tag: 'RecordsAuthenticationProblem' },
+      { _tag: 'GatewayForbiddenProblem' },
+      { _tag: 'GatewayAuthenticationRequiredProblem' },
+      (): 'forbidden' => 'forbidden',
+    ),
+    Match.orElse((): 'unavailable' => 'unavailable'),
+  );
 
 /** Finance files of the current company, newest first, each with the invoice it belongs to. */
 export const useFinanceFiles = (): FinanceFilesState => {
@@ -69,7 +76,13 @@ export const financeInvoiceLabel = (invoice: FinanceInvoiceView | undefined) =>
 
 /** Search text of one row (file name, invoice number, counterparty, uploader). */
 export const financeFileText = (row: FinanceFileRow) =>
-  [row.file.fileName, row.invoice?.number, row.invoice?.documentNumber, row.invoice?.counterpartyName, row.file.actorLabel]
+  [
+    row.file.fileName,
+    row.invoice?.number,
+    row.invoice?.documentNumber,
+    row.invoice?.counterpartyName,
+    row.file.actorLabel,
+  ]
     .filter((part) => part !== undefined)
     .join(' ');
 
@@ -128,21 +141,14 @@ export const FinanceFilesList = ({
   readonly language: string;
   readonly rows: readonly FinanceFileRow[];
 }) => (
-  <ul
-    className={`flex flex-col ${dividedListClassName}`}
-    data-testid="finance-files"
-  >
+  <ul className={`flex flex-col ${dividedListClassName}`} data-testid="finance-files">
     {rows.map(({ file, invoice }) => (
       <li className="flex flex-wrap items-center gap-150 px-150 py-100" key={file.id}>
         <FileTypeIcon mime={file.mimeType} name={file.fileName} />
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-medium text-sm">{file.fileName}</span>
           <span className="text-fg-secondary text-xs">
-            {[
-              formatBytes(file.sizeBytes),
-              file.actorLabel ?? 'Finance',
-              formatDateTime(file.uploadedAt),
-            ].join(' · ')}
+            {[formatBytes(file.sizeBytes), file.actorLabel ?? 'Finance', formatDateTime(file.uploadedAt)].join(' · ')}
           </span>
         </div>
         <span className="flex min-w-0 flex-col text-right">
@@ -193,7 +199,9 @@ export const PartyFinanceFiles = ({
     <section className="flex flex-col gap-100" data-testid="party-finance-files">
       <span className="font-semibold text-fg-secondary text-xs uppercase">Soubory faktur (Finance)</span>
       {rows.length === 0 ? (
-        <p className="text-fg-secondary text-sm">K fakturám této protistrany zatím nejsou ve Financích nahrané soubory.</p>
+        <p className="text-fg-secondary text-sm">
+          K fakturám této protistrany zatím nejsou ve Financích nahrané soubory.
+        </p>
       ) : (
         <FinanceFilesList language={language} rows={rows} />
       )}

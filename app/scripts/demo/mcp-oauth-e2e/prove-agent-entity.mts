@@ -4,6 +4,7 @@
 // Run via app/scripts/demo/prove-agent-entity.mts. Never writes the coordination board.
 import { isDeepStrictEqual } from 'node:util';
 import { decodeJwt } from 'jose';
+import { Predicate } from 'effect';
 import type { Client } from '@modelcontextprotocol/client';
 import { E2E, CIMD_CLIENT_ID, GRANT_CLAIM, sleep } from './env.mts';
 import { Recorder } from './report.mts';
@@ -77,7 +78,7 @@ function isString(value: unknown): value is string {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return Predicate.isError(error) ? error.message : String(error);
 }
 
 function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {

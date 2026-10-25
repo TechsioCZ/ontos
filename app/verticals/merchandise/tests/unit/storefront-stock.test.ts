@@ -2,7 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
 
@@ -202,7 +202,7 @@ it.effect('archives only inactive unpublished products and retains the ledger an
       { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Úklid DEMO katalogu' },
       'archive',
     ).pipe(Effect.flip);
-    expect(refused._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(refused)).toBe(true);
     const hidden = yield* run(
       state,
       { _tag: 'UpdateProduct', id: 'product-1', patch: { active: false, published: false } },
@@ -264,7 +264,7 @@ it.effect('a different customer cannot replay another account submission', () =>
       { ...order(100, 'account-replay'), customerAccountId: 'other-customer' },
       'other-order',
     ).pipe(Effect.flip);
-    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(rejected)).toBe(true);
   }),
 );
 it.effect('a real customer order cannot be deleted by demo cleanup', () =>
@@ -275,7 +275,7 @@ it.effect('a real customer order cannot be deleted by demo cleanup', () =>
       { _tag: 'RemoveDemoOrder', id: placed.storefrontOrder!.orderId!, reason: 'Not a demo record' },
       'cleanup',
     ).pipe(Effect.flip);
-    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(rejected)).toBe(true);
   }),
 );
 it.effect('dry-run validates actual cart without fake contact or address and saves nothing', () =>
@@ -286,7 +286,7 @@ it.effect('dry-run validates actual cart without fake contact or address and sav
     expect(result.storefrontOrder?.outcome).toBe('VALID');
     expect(result.state).toBe(state);
     const rejected = yield* run(state, cartRequest, 'invalid-order').pipe(Effect.flip);
-    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(rejected)).toBe(true);
   }),
 );
 

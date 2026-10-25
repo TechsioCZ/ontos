@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import type { AgentQueueBatch, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
-import { Effect } from 'effect';
+import { Effect, Result } from 'effect';
 
 import { applyModuleCommand, callModuleAs, recordsReadOf } from './module-call.ts';
 import { normalizeLegacySlice, sliceFromRecords } from './legacy-normalize.ts';
@@ -38,7 +38,7 @@ const readLegacyOnce = (
       ),
       Effect.result,
     );
-    if (result._tag === 'Failure') {
+    if (Result.isFailure(result)) {
       return result.failure.stage === 'assertion' ? ABSENT : UNAVAILABLE;
     }
     const response = result.success;

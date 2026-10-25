@@ -1,6 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import {
   AKROS_LEGAL_ENTITY_ID,
   ESHOP_LEGAL_ENTITY_ID,
@@ -122,7 +122,7 @@ it.effect('never removes non-DEMO or staff orders', () =>
         id: state.orders[0]!.id,
         reason: 'Úklid prezentace',
       }).pipe(Effect.flip);
-      expect(failure._tag).toBe('MerchandiseLifecycleConflict');
+      expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
     }
   }),
 );

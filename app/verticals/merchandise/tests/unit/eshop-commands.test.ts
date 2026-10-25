@@ -1,6 +1,10 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
+import {
+  MerchandiseCommandSchema,
+  MerchandiseLifecycleConflict,
+  MerchandisePermissionDenied,
+} from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
@@ -243,7 +247,7 @@ it.effect('the storefront API key may only place guest orders in the e-shop comp
     const eshop = '71000000-0000-4000-8000-000000000023';
     yield* assertStorefrontScope('api_key', eshop, 'PlaceStorefrontOrder');
     const denied = yield* Effect.flip(assertStorefrontScope('api_key', eshop, 'CreateProduct'));
-    expect(denied._tag).toBe('MerchandisePermissionDenied');
+    expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
     yield* assertStorefrontScope('session', eshop, 'EditOrder');
   }),
 );

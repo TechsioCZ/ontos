@@ -129,10 +129,10 @@ describe('Occupancy state transitions', () => {
       yield* rejected(
         transitionOccupancy(completed.snapshot, { _tag: 'SetRentTerms', occupancyRef, rentTerms }, scope, validators),
       );
-      expect(Schema.decodeExit(OccupancySchema)({ ...draft, rentTerms: { ...rentTerms, paymentDay: 0 } })._tag).toBe(
-        'Failure',
-      );
-      expect(Schema.decodeExit(OccupancySchema)(draft)._tag).toBe('Success');
+      expect(
+        Exit.isFailure(Schema.decodeExit(OccupancySchema)({ ...draft, rentTerms: { ...rentTerms, paymentDay: 0 } })),
+      ).toBe(true);
+      expect(Exit.isSuccess(Schema.decodeExit(OccupancySchema)(draft))).toBe(true);
     }),
   );
   it.effect('edits only a draft period and preserves its customer, unit and lifecycle anchors', () =>
@@ -445,13 +445,15 @@ it.effect('stores complete tenant case metadata with actor and history across la
     expect(reloaded.tenantDossiers?.[0]?.history.every((entry) => entry.authorPrincipalId === actor.principalId)).toBe(
       true,
     );
-    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: null })._tag).toBe(
-      'Success',
+    expect(
+      Exit.isSuccess(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: null })),
+    ).toBe(true);
+    expect(Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, deadline: '2026-02-31' }))).toBe(
+      true,
     );
-    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, deadline: '2026-02-31' })._tag).toBe('Failure');
-    expect(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: -1 })._tag).toBe(
-      'Failure',
-    );
+    expect(
+      Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: -1 })),
+    ).toBe(true);
   }),
 );
 

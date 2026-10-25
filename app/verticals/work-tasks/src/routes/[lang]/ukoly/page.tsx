@@ -101,16 +101,25 @@ type CommandOutcome =
     }
   | { readonly message: string; readonly ok: false };
 
+type PageReadFailure = Effect.Error<
+  ReturnType<typeof executeRecords> | ReturnType<typeof listCustomers> | ReturnType<typeof listOpportunities>
+>;
+const isForbiddenReadFailure = (error: PageReadFailure): boolean =>
+  Match.value(error).pipe(
+    Match.tag('CustomerListForbiddenProblem', 'GatewayForbiddenProblem', 'RecordsForbiddenProblem', () => true),
+    Match.orElse(() => false),
+  );
+
 /**
  * A read that fails while the gateway is busy (several lists load at once on the first visit) is tried twice more
  * before the page reports it. A forbidden answer is final.
  */
-const retryTransient = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+const retryTransient = <A, E extends PageReadFailure, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.retry({
       schedule: Schedule.spaced('800 millis'),
       times: 2,
-      while: (error: E) => !error._tag.includes('Forbidden'),
+      while: (error: E) => !isForbiddenReadFailure(error),
     }),
   );
 
@@ -184,13 +193,8 @@ const opportunityDirectory = definePageData({
 });
 
 /** A denied directory is not a task failure, so it is not reported as unavailable. */
-const forbiddenLookupTags: ReadonlySet<string> = new Set([
-  'CustomerListForbiddenProblem',
-  'GatewayForbiddenProblem',
-  'RecordsForbiddenProblem',
-]);
-const lookupFailed = <E extends { readonly _tag: string }>(snapshot: PageDataSnapshot<unknown, E>) =>
-  snapshot.state === 'failed' && !forbiddenLookupTags.has(snapshot.error._tag);
+const lookupFailed = <E extends PageReadFailure>(snapshot: PageDataSnapshot<unknown, E>) =>
+  snapshot.state === 'failed' && !isForbiddenReadFailure(snapshot.error);
 
 const preloadDirectories = (legalEntityId: string, access: LookupAccess | undefined) =>
   Effect.all(
@@ -359,7 +363,7 @@ const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, { readonly _tag
   if (snapshot.state === 'pending' || snapshot.refreshing) {
     return 'loading';
   }
-  return snapshot.error._tag === 'RecordsForbiddenProblem' ? 'forbidden' : 'error';
+  return Predicate.isTagged('RecordsForbiddenProblem')(snapshot.error) ? 'forbidden' : 'error';
 };
 
 const useTasksPage = (

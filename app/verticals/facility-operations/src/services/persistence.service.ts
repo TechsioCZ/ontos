@@ -3,7 +3,7 @@
 import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
 
 import {
   FacilityOperationsPermissionDenied,
@@ -17,11 +17,7 @@ import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '.
 import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { OverviewRequest, OverviewResponse } from '../../shared/apis/overview.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
-import {
-  PERSONAL_AGENDA_COMMANDS,
-  agendaStateForAssignee,
-  agendaStateForPrincipal,
-} from '../../shared/domain/agenda.ts';
+import { agendaStateForAssignee, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
 import type { MetersState } from '../../shared/domain/meters.ts';
@@ -181,7 +177,10 @@ const visibleAgendas = Effect.fn('FacilityOperations.visibleAgendas')(function* 
   const assignedOnly = isAssignedOnly(granted);
   const actorRef = { principalId: scope.principalId, tenantId: scope.tenantId } as RecordsResponse['actorPrincipalRef'];
   let ownEventIds: ReadonlySet<string> | undefined;
-  const envelopes = new Map<AgendaId, Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }>();
+  const envelopes = new Map<
+    AgendaId,
+    Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }
+  >();
   for (const entry of recordsAccessList(granted)) {
     if (!entry.canRead || !requested.includes(entry.agenda)) {
       continue;
@@ -490,7 +489,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       resourceId: string,
       baseUpdatedAt?: string,
     ) {
-      if (command._tag === 'FileUpload') {
+      if (Predicate.isTagged(command, 'FileUpload')) {
         return yield* uploadFile(command, resourceId);
       }
       const definition = agendaOfCommand(command);
@@ -498,19 +497,25 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
         return yield* opsConflict(`No agenda handles command ${command._tag}`);
       }
       const granted = yield* grants();
-      const meterCommand =
-        command._tag === 'MeterCreate' ||
-        command._tag === 'MeterUpdate' ||
-        command._tag === 'MeterReadingRecord' ||
-        command._tag === 'MeterReadingVoid';
       const agendaCommand = definition.id === 'agenda';
-      const mayApply = meterCommand
-        ? canApplyMeterCommand(granted, command)
-        : agendaCommand && PERSONAL_AGENDA_COMMANDS.has(command._tag)
-          ? canReadAgenda(granted, definition.sensitivity)
-          : agendaCommand
-            ? canWriteAgendaEvents(granted)
-            : canWriteAgenda(granted, definition.sensitivity);
+      const mayApply = Match.value(command).pipe(
+        Match.tag('MeterCreate', 'MeterUpdate', 'MeterReadingRecord', 'MeterReadingVoid', (meterCommand) =>
+          canApplyMeterCommand(granted, meterCommand),
+        ),
+        Match.tag(
+          'AgendaExportRecord',
+          'AgendaNotificationsMarkAllRead',
+          'AgendaNotificationsMarkRead',
+          'AgendaPreferencesSet',
+          () =>
+            agendaCommand
+              ? canReadAgenda(granted, definition.sensitivity)
+              : canWriteAgenda(granted, definition.sensitivity),
+        ),
+        Match.orElse(() =>
+          agendaCommand ? canWriteAgendaEvents(granted) : canWriteAgenda(granted, definition.sensitivity),
+        ),
+      );
       if (!mayApply) {
         return yield* permissionDenied(`Changes in agenda ${definition.id} require write permission`);
       }

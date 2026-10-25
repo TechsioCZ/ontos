@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
 import { AKROS_LEGAL_ENTITY_ID, assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
@@ -99,7 +99,7 @@ it.effect('AKROS API keys may only place storefront orders', () =>
     yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
     for (const tag of ['ChangePrice', 'UpdateProduct', 'CreateOrder', 'ChangeOrderStatus']) {
       const denied = yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
-      expect(denied._tag).toBe('MerchandisePermissionDenied');
+      expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
     }
   }),
 );

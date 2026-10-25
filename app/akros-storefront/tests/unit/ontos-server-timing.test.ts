@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { withShellTimings } from "@/ontos/server-timing";
 
 const request = new Request("https://storefront.test/");
+const isRequest = (input: RequestInfo | URL): input is Request =>
+  Request.prototype.isPrototypeOf(input);
 
 describe("storefront Shell Server-Timing forwarding", () => {
   it("forwards all fixed numeric owner phases alongside gateway phases", async () => {
@@ -245,9 +247,7 @@ describe("storefront Shell Server-Timing forwarding", () => {
           fetch: async (input: RequestInfo | URL) =>
             new Response(null, {
               headers: {
-                "server-timing": String(input instanceof Request ? input.url : input).endsWith(
-                  "large",
-                )
+                "server-timing": String(isRequest(input) ? input.url : input).endsWith("large")
                   ? `read-owner;dur=1, ${"private".repeat(1200)}`
                   : "read-encode;dur=2",
               },
@@ -274,7 +274,7 @@ describe("storefront Shell Server-Timing forwarding", () => {
               headers: {
                 "server-timing": Array(40)
                   .fill(
-                    String(input instanceof Request ? input.url : input).endsWith("first")
+                    String(isRequest(input) ? input.url : input).endsWith("first")
                       ? "read-owner;dur=1"
                       : "read-encode;dur=2",
                   )
@@ -347,7 +347,7 @@ describe("storefront Shell Server-Timing forwarding", () => {
         fetch: async (input: RequestInfo | URL) =>
           new Response(null, {
             headers: {
-              "server-timing": `key-verify;dur=${String(input instanceof Request ? input.url : input).endsWith("first") ? 11 : 22}`,
+              "server-timing": `key-verify;dur=${String(isRequest(input) ? input.url : input).endsWith("first") ? 11 : 22}`,
             },
           }),
       },

@@ -24,7 +24,7 @@ import type {
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
-import { Effect, Redacted } from 'effect';
+import { Effect, Match, Predicate, Redacted } from 'effect';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
@@ -62,34 +62,37 @@ const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
 
 const fromDemoAccountError = (
   error: DemoAccountConflict | DemoAccountForbidden | DemoAccountInvalid | DemoAccountUnavailable,
-) => {
-  switch (error._tag) {
-    case 'DemoAccountForbidden':
-      return new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy. Pokus je zapsaný v auditu.' });
-    case 'DemoAccountInvalid':
-      return new ConnectionsInvalid({ reason: 'Tuto změnu agenta nelze provést.' });
-    case 'DemoAccountConflict':
-      return new ConnectionsGone({ reason: 'Agent se mezitím změnil. Obnovte seznam.' });
-    default:
-      return new ConnectionsUnavailable({ cause: error.cause });
-  }
-};
+) =>
+  Match.value(error).pipe(
+    Match.tag(
+      'DemoAccountForbidden',
+      () => new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy. Pokus je zapsaný v auditu.' }),
+    ),
+    Match.tag('DemoAccountInvalid', () => new ConnectionsInvalid({ reason: 'Tuto změnu agenta nelze provést.' })),
+    Match.tag('DemoAccountConflict', () => new ConnectionsGone({ reason: 'Agent se mezitím změnil. Obnovte seznam.' })),
+    Match.tag('DemoAccountUnavailable', (failure) => new ConnectionsUnavailable({ cause: failure.cause })),
+    Match.exhaustive,
+  );
 
-const fromActionError = (error: { readonly _tag: string }) => {
-  switch (error._tag) {
-    case 'IdentityLifecycleConflictError':
-    case 'ActionRequestHashConflict':
-      return new ConnectionsGone({ reason: 'Agent se mezitím změnil. Obnovte seznam a zkuste to znovu.' });
-    case 'IdentityTargetInvalidError':
-    case 'ActionPayloadValidationError':
-      return new ConnectionsInvalid({ reason: 'Tuto změnu agenta nelze provést.' });
-    case 'ActionPermissionDenied':
-    case 'ActionPolicyDenied':
-      return new ConnectionsForbidden({ reason: 'K této změně nemáte oprávnění. Pokus je zapsaný v auditu.' });
-    default:
-      return new ConnectionsUnavailable({ cause: error });
-  }
-};
+const fromActionError = (error: { readonly _tag: string }) =>
+  Match.value(error).pipe(
+    Match.tag(
+      'IdentityLifecycleConflictError',
+      'ActionRequestHashConflict',
+      () => new ConnectionsGone({ reason: 'Agent se mezitím změnil. Obnovte seznam a zkuste to znovu.' }),
+    ),
+    Match.tag(
+      'IdentityTargetInvalidError',
+      'ActionPayloadValidationError',
+      () => new ConnectionsInvalid({ reason: 'Tuto změnu agenta nelze provést.' }),
+    ),
+    Match.tag(
+      'ActionPermissionDenied',
+      'ActionPolicyDenied',
+      () => new ConnectionsForbidden({ reason: 'K této změně nemáte oprávnění. Pokus je zapsaný v auditu.' }),
+    ),
+    Match.orElse((failure) => new ConnectionsUnavailable({ cause: failure })),
+  );
 
 const cleanDescription = (value: string | null) => {
   const trimmed = value?.trim() ?? '';
@@ -140,7 +143,7 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
     const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
     const { members } = yield* requireAdministrator(caller, grants).pipe(
       Effect.mapError((error) =>
-        error._tag === 'DemoAccountForbidden'
+        Predicate.isTagged(error, 'DemoAccountForbidden')
           ? new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy.' })
           : fromDemoAccountError(error),
       ),
@@ -452,7 +455,7 @@ export const manageAgentEntity = <R>(
     const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
     yield* requireAdministrator(caller, grants).pipe(
       Effect.tapError((error) =>
-        error._tag === 'DemoAccountForbidden'
+        Predicate.isTagged(error, 'DemoAccountForbidden')
           ? auditForbiddenAttempt(
               caller,
               `${request.operation}-agent`,

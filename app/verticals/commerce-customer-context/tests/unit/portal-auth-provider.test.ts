@@ -2,7 +2,7 @@ import { APIError } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -1242,15 +1242,17 @@ it.effect('enrollment binding proof authorizes reserve/activate without a sessio
       reference.replace(/\}$/u, ',"unexpected":true}'),
     ]) {
       expect(
-        (yield* Effect.exit(
-          runVerification(
-            { ...request, authenticationOperation: 'reserve', sessionRef: forged },
-            noSession,
-            allowingCaller,
-            proof,
+        Exit.isFailure(
+          yield* Effect.exit(
+            runVerification(
+              { ...request, authenticationOperation: 'reserve', sessionRef: forged },
+              noSession,
+              allowingCaller,
+              proof,
+            ),
           ),
-        ))._tag,
-      ).toBe('Failure');
+        ),
+      ).toBe(true);
     }
   }),
 );

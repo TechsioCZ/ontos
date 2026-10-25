@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import {
   PrivacyNoticeAuthorityFactSchema,
@@ -130,7 +130,7 @@ describe('Commerce consent authority preparation', () => {
       const args = { credentialRef: 'session:one', now: DateTime.formatIso(now), request };
       expect(yield* execution.authority.ports.verifyOperationCredential(args)).toEqual(fact(now));
       expect(reads).toBe(1);
-      expect((yield* Effect.exit(execution.authority.ports.verifyOperationCredential(args)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(execution.authority.ports.verifyOperationCredential(args)))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
   it.effect('never shares prepared evidence between concurrent native invocations', () =>
@@ -141,24 +141,28 @@ describe('Commerce consent authority preparation', () => {
       const second = yield* prepareExecution(lookup);
       yield* first.preflight.prepare(input);
       expect(
-        (yield* Effect.exit(
-          second.authority.ports.verifyOperationCredential({
-            credentialRef: 'session:one',
-            now: DateTime.formatIso(now),
-            request,
-          }),
-        ))._tag,
-      ).toBe('Failure');
+        Exit.isFailure(
+          yield* Effect.exit(
+            second.authority.ports.verifyOperationCredential({
+              credentialRef: 'session:one',
+              now: DateTime.formatIso(now),
+              request,
+            }),
+          ),
+        ),
+      ).toBe(true);
       first.clear();
       expect(
-        (yield* Effect.exit(
-          first.authority.ports.verifyOperationCredential({
-            credentialRef: 'session:one',
-            now: DateTime.formatIso(now),
-            request,
-          }),
-        ))._tag,
-      ).toBe('Failure');
+        Exit.isFailure(
+          yield* Effect.exit(
+            first.authority.ports.verifyOperationCredential({
+              credentialRef: 'session:one',
+              now: DateTime.formatIso(now),
+              request,
+            }),
+          ),
+        ),
+      ).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
   it.effect('rejects changed operation, decision, notice and scope rather than reusing a proof', () =>
@@ -175,14 +179,16 @@ describe('Commerce consent authority preparation', () => {
         });
         yield* execution.preflight.prepare(input);
         expect(
-          (yield* Effect.exit(
-            execution.authority.ports.verifyOperationCredential({
-              credentialRef: 'session:one',
-              now: DateTime.formatIso(now),
-              request: changed,
-            }),
-          ))._tag,
-        ).toBe('Failure');
+          Exit.isFailure(
+            yield* Effect.exit(
+              execution.authority.ports.verifyOperationCredential({
+                credentialRef: 'session:one',
+                now: DateTime.formatIso(now),
+                request: changed,
+              }),
+            ),
+          ),
+        ).toBe(true);
       }
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
@@ -259,7 +265,7 @@ describe('Commerce consent authority preparation', () => {
         yield* execution.preflight.prepare({ ...input, actionKey: 'privacy.core.create-privacy-subject' }),
       ).toEqual({ outcome: 'not_applicable' });
       expect(reads).toBe(0);
-      expect((yield* Effect.exit(execution.preflight.prepare(input)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(execution.preflight.prepare(input)))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });
@@ -339,8 +345,8 @@ describe('Commerce notice authority preparation', () => {
       expect(reads).toBe(1);
       expect(yield* execution.noticeAuthority.resolve(noticeRequest, noticeContext)).toEqual(noticeFact);
       expect(reads).toBe(1);
-      expect((yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe(
-        'Failure',
+      expect(Exit.isFailure(yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))).toBe(
+        true,
       );
     }).pipe(Effect.scoped),
   );
@@ -354,18 +360,22 @@ describe('Commerce notice authority preparation', () => {
       ]) {
         const execution = yield* prepareExecution(noticeLookup);
         yield* execution.preflight.prepare(noticeInput);
-        expect((yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, context)))._tag).toBe('Failure');
-        expect((yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe(
-          'Failure',
+        expect(Exit.isFailure(yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, context)))).toBe(
+          true,
         );
+        expect(
+          Exit.isFailure(yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext))),
+        ).toBe(true);
       }
       const execution = yield* prepareExecution(noticeLookup);
       yield* execution.preflight.prepare(noticeInput);
       expect(
-        (yield* Effect.exit(
-          execution.noticeAuthority.resolve({ ...noticeRequest, noticeVersionRef: 'notice:other' }, noticeContext),
-        ))._tag,
-      ).toBe('Failure');
+        Exit.isFailure(
+          yield* Effect.exit(
+            execution.noticeAuthority.resolve({ ...noticeRequest, noticeVersionRef: 'notice:other' }, noticeContext),
+          ),
+        ),
+      ).toBe(true);
     }).pipe(Effect.scoped),
   );
   it.effect('rejects mismatched receipt claims and inconsistent native scopes before preparing evidence', () =>
@@ -375,8 +385,8 @@ describe('Commerce notice authority preparation', () => {
         resolveNotice: () => Effect.succeed({ ...noticeFact, claimRef: 'receipt:other' }),
       });
       expect(yield* execution.preflight.prepare(noticeInput)).toEqual({ outcome: 'denied' });
-      expect((yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe(
-        'Failure',
+      expect(Exit.isFailure(yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))).toBe(
+        true,
       );
       expect(
         yield* execution.preflight.prepare({ ...noticeInput, scope: { ...input.scope, tenantId: legalEntityId } }),
@@ -392,11 +402,15 @@ describe('Commerce notice authority preparation', () => {
           return execution;
         }),
       );
-      expect((yield* Effect.exit(first.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(first.noticeAuthority.resolve(noticeRequest, noticeContext)))).toBe(
+        true,
+      );
       const second = yield* prepareExecution(noticeLookup);
       const third = yield* prepareExecution(noticeLookup);
       yield* second.preflight.prepare(noticeInput);
-      expect((yield* Effect.exit(third.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe('Failure');
+      expect(Exit.isFailure(yield* Effect.exit(third.noticeAuthority.resolve(noticeRequest, noticeContext)))).toBe(
+        true,
+      );
       expect(yield* second.noticeAuthority.resolve(noticeRequest, noticeContext)).toEqual(noticeFact);
     }).pipe(Effect.scoped),
   );
@@ -412,9 +426,9 @@ describe('Commerce notice authority preparation', () => {
       });
       yield* execution.preflight.prepare(noticeInput);
       available = false;
-      expect((yield* Effect.exit(execution.preflight.prepare(noticeInput)))._tag).toBe('Failure');
-      expect((yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe(
-        'Failure',
+      expect(Exit.isFailure(yield* Effect.exit(execution.preflight.prepare(noticeInput)))).toBe(true);
+      expect(Exit.isFailure(yield* Effect.exit(execution.noticeAuthority.resolve(noticeRequest, noticeContext)))).toBe(
+        true,
       );
     }).pipe(Effect.scoped),
   );
@@ -426,24 +440,26 @@ describe('Prepared Commerce evidence lifecycle', () => {
       for (const ending of [Effect.fail('stopped-before-commit'), Effect.interrupt]) {
         const captured = yield* Ref.make(Option.none<PreparedCommerceConsentExecution>());
         expect(
-          (yield* Effect.exit(
-            Effect.scoped(
-              Effect.gen(function* interruptedNoticeScope() {
-                const execution = yield* prepareExecution(noticeLookup);
-                yield* execution.preflight.prepare(noticeInput);
-                yield* Ref.set(captured, Option.some(execution));
-                return yield* ending;
-              }),
+          Exit.isFailure(
+            yield* Effect.exit(
+              Effect.scoped(
+                Effect.gen(function* interruptedNoticeScope() {
+                  const execution = yield* prepareExecution(noticeLookup);
+                  yield* execution.preflight.prepare(noticeInput);
+                  yield* Ref.set(captured, Option.some(execution));
+                  return yield* ending;
+                }),
+              ),
             ),
-          ))._tag,
-        ).toBe('Failure');
+          ),
+        ).toBe(true);
         const execution = yield* Ref.get(captured);
         if (Option.isNone(execution)) {
           return yield* Effect.fail('Evidence preparation did not run');
         }
-        expect((yield* Effect.exit(execution.value.noticeAuthority.resolve(noticeRequest, noticeContext)))._tag).toBe(
-          'Failure',
-        );
+        expect(
+          Exit.isFailure(yield* Effect.exit(execution.value.noticeAuthority.resolve(noticeRequest, noticeContext))),
+        ).toBe(true);
       }
       return yield* Effect.void;
     }),

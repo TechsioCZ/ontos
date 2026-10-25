@@ -15,6 +15,7 @@ import {
   agentRevertCommands,
   agentRevertNone,
 } from '@app/shared-contracts/agent-revert';
+import { Predicate } from 'effect';
 
 type Rec = Readonly<Record<string, unknown>>;
 
@@ -87,18 +88,21 @@ const VALUE_OPTIONS = {
 
 export const clientDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
   const { patch } = command;
-  return command['_tag'] === 'UpdateClient' && isRecord(patch)
+  return Predicate.isTagged(command, 'UpdateClient') && isRecord(patch)
     ? agentFieldLines(patch, CLIENT_LABELS, before, new Set(), VALUE_OPTIONS)
     : undefined;
 };
 
 /** An edited client gets its previous values back (only when every changed field had a value before). */
 export const clientRevert = (command: AgentCommand, before: Rec | undefined): AgentRevertPlan => {
-  if (command['_tag'] !== 'UpdateClient') return agentRevertNone();
-  const restored = agentRestoredPatch(command['patch'], before);
+  const { id, patch } = command;
+  if (!Predicate.isTagged(command, 'UpdateClient')) {
+    return agentRevertNone();
+  }
+  const restored = agentRestoredPatch(patch, before);
   return restored === undefined
     ? agentRevertNone(AGENT_REVERT_MISSING_BEFORE)
-    : agentRevertCommands([{ _tag: 'UpdateClient', id: command['id'], patch: restored }]);
+    : agentRevertCommands([{ _tag: 'UpdateClient', id, patch: restored }]);
 };
 
 /** Why the reader cannot carry out the command, undefined when they can. */
@@ -109,7 +113,7 @@ export const clientBlockedReason = (
 ): string | undefined => {
   const owns =
     client !== undefined && viewer.salespersonId !== undefined && client['ownerSalespersonId'] === viewer.salespersonId;
-  if (command['_tag'] === 'AssignClient' && !viewer.assign) {
+  if (Predicate.isTagged(command, 'AssignClient') && !viewer.assign) {
     return 'Přidělit klienta jinému obchodníkovi může jen správce nebo vedoucí.';
   }
   const mayWrite =
@@ -135,10 +139,10 @@ export const reviewCrmProposal = (
     return { key, visible, ...(lines === undefined ? {} : { diff: lines }) };
   }
   if (stage === 'undo') {
-    const inPlace =
-      command['_tag'] === 'UpdateClient'
-        ? client !== undefined && agentRecordHolds(command['patch'], client)
-        : undefined;
+    const { patch } = command;
+    const inPlace = Predicate.isTagged(command, 'UpdateClient')
+      ? client !== undefined && agentRecordHolds(patch, client)
+      : undefined;
     return { key, visible, ...(inPlace === undefined ? {} : { stillInPlace: inPlace }) };
   }
   const lines = clientDiff(command, client);
@@ -150,7 +154,7 @@ export const reviewCrmProposal = (
     visible,
     ...(blocked === undefined ? {} : { blockedReason: blocked }),
     ...(lines === undefined ? {} : { diff: lines }),
-    ...(command['_tag'] === 'UpdateClient' ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
+    ...(Predicate.isTagged(command, 'UpdateClient') ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
     ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
   };
 };

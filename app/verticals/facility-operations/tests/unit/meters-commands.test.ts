@@ -1,7 +1,15 @@
 import { DateTime, Effect, Schema } from 'effect';
+import { FacilityOperationsLifecycleConflict } from '../../shared/errors/facility-operations-lifecycle-conflict.ts';
+import { FacilityOperationsNotFound } from '../../shared/errors/facility-operations-not-found.ts';
 import { expect, it } from 'effect-rstest';
 import { evolveMeters, MetersCommandSchema } from '../../shared/commands/meters.ts';
-import { MetersStateSchema, monthlySeries, readingProblem, readingRows, recentAnomalyRow } from '../../shared/domain/meters.ts';
+import {
+  MetersStateSchema,
+  monthlySeries,
+  readingProblem,
+  readingRows,
+  recentAnomalyRow,
+} from '../../shared/domain/meters.ts';
 import type { MetersState } from '../../shared/domain/meters.ts';
 import { seedMetersState } from '../../scripts/seed/meters.mts';
 
@@ -50,20 +58,20 @@ it.effect('refuses lower values, duplicate dates and future dates; out-of-order 
     const first = yield* read(created.state, '2026-09-01', 1200, 'r1');
     const second = yield* read(first.state, '2026-10-01', 1250, 'r2');
     const lower = yield* Effect.flip(read(second.state, '2026-10-10', 1240, 'r3'));
-    expect(lower._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(lower)).toBe(true);
     const duplicate = yield* Effect.flip(read(second.state, '2026-10-01', 1260, 'r3'));
-    expect(duplicate._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(duplicate)).toBe(true);
     const future = yield* Effect.flip(read(second.state, '2026-10-21', 1300, 'r3'));
-    expect(future._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(future)).toBe(true);
     const tooHigh = yield* Effect.flip(read(second.state, '2026-09-15', 1251, 'r3'));
-    expect(tooHigh._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(tooHigh)).toBe(true);
     const between = yield* read(second.state, '2026-09-15', 1220, 'r3');
     const rows = readingRows(between.state.meters[0] ?? { readings: [] });
     expect(rows.map((row) => row.consumption)).toEqual([undefined, 20, 30]);
     const missing = yield* Effect.flip(
       apply(second.state, { _tag: 'MeterReadingRecord', date: '2026-10-02', meterId: 'nope', value: 1 }, 'r9'),
     );
-    expect(missing._tag).toBe('FacilityOperationsNotFound');
+    expect(Schema.is(FacilityOperationsNotFound)(missing)).toBe(true);
   }),
 );
 
@@ -85,16 +93,23 @@ it.effect('a voided reading stays in history but is skipped by calculations', ()
     const created = yield* withMeter();
     const a = yield* read(created.state, '2026-09-01', 1200, 'r1');
     const typo = yield* read(a.state, '2026-09-15', 2100, 'r2');
-    const voided = yield* apply(typo.state, { _tag: 'MeterReadingVoid', meterId, readingId: 'r2', reason: 'Překlep' }, 'v1');
+    const voided = yield* apply(
+      typo.state,
+      { _tag: 'MeterReadingVoid', meterId, readingId: 'r2', reason: 'Překlep' },
+      'v1',
+    );
     const meter = voided.state.meters[0];
     expect(meter?.readings?.length).toBe(2);
     expect(meter?.readings?.[1]?.voided?.reason).toBe('Překlep');
     const after = yield* read(voided.state, '2026-10-01', 1250, 'r3');
-    expect(readingRows(after.state.meters[0] ?? { readings: [] }).map((row) => row.consumption)).toEqual([undefined, 50]);
+    expect(readingRows(after.state.meters[0] ?? { readings: [] }).map((row) => row.consumption)).toEqual([
+      undefined,
+      50,
+    ]);
     const again = yield* Effect.flip(
       apply(after.state, { _tag: 'MeterReadingVoid', meterId, readingId: 'r2', reason: 'znovu' }, 'v2'),
     );
-    expect(again._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(again)).toBe(true);
   }),
 );
 
@@ -116,9 +131,13 @@ it.effect('a unit change of the meter stops the difference (same meter and unit 
       { _tag: 'MeterUpdate', meterId, medium: 'ELECTRICITY', serialNumber: 'EL-1', status: 'RETIRED', unit: 'MWh' },
       'u2',
     );
-    expect(readingProblem(retired.state.meters[0] ?? { readings: [], unit: 'MWh' }, { date: '2026-10-02', value: 2 }, '2026-10-20')).toBe(
-      'retired',
-    );
+    expect(
+      readingProblem(
+        retired.state.meters[0] ?? { readings: [], unit: 'MWh' },
+        { date: '2026-10-02', value: 2 },
+        '2026-10-20',
+      ),
+    ).toBe('retired');
   }),
 );
 
@@ -128,16 +147,19 @@ it.effect('rejects a duplicate serial number', () =>
     const duplicate = yield* Effect.flip(
       apply(created.state, { _tag: 'MeterCreate', medium: 'WATER', serialNumber: 'el-1', unit: 'm³' }, 'm2'),
     );
-    expect(duplicate._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(duplicate)).toBe(true);
   }),
 );
 
 it.effect('the seed decodes, covers every Siampark unit and stages the demo cases', () =>
   Effect.gen(function* () {
     const state = yield* Schema.decodeUnknownEffect(MetersStateSchema)(seedMetersState());
-    const unitIds = new Set(state.meters.flatMap((meter) => (meter.location?.kind === 'unit' ? [meter.location.id] : [])));
+    const unitIds = new Set(
+      state.meters.flatMap((meter) => (meter.location?.kind === 'unit' ? [meter.location.id] : [])),
+    );
     expect(unitIds.size).toBe(8);
-    const bySerial = (serial: string) => state.meters.find((meter) => meter.serialNumber === serial) ?? { readings: [] };
+    const bySerial = (serial: string) =>
+      state.meters.find((meter) => meter.serialNumber === serial) ?? { readings: [] };
     expect(readingRows(bySerial('VO-PK-A202')).some((row) => row.anomaly)).toBe(true);
     expect(readingRows(bySerial('EL-RV-R101')).some((row) => row.anomaly)).toBe(true);
     expect(readingRows(bySerial('EL-RV-S01-CH')).map((row) => row.status)).toEqual(['first']);

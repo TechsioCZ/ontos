@@ -8,6 +8,9 @@ import { readAccount } from "@/ontos/account";
 import { readCustomerOrders } from "@/ontos/customer-orders";
 import { readCheckoutOptions } from "@/ontos/checkout-options";
 
+const isOntosError = (value: unknown): value is OntosError =>
+  value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
+
 export async function GET(request: Request) {
   try {
     const account = await readAccount(new URL(request.url).origin, request.headers.get("cookie"));
@@ -129,7 +132,7 @@ export async function POST(request: Request) {
           throw new Error("Uložení objednávky nebylo potvrzeno.");
         return Response.json(order, { headers: { "cache-control": "no-store" } });
       } catch (e) {
-        if (e instanceof OntosError && [409, 502, 503].includes(e.status) && attempt < 2) {
+        if (isOntosError(e) && [409, 502, 503].includes(e.status) && attempt < 2) {
           await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
           continue;
         }

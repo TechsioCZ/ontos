@@ -3,6 +3,7 @@
 // Run via app/scripts/demo/prove-mcp-oauth.mts. Never writes the coordination board.
 import { isDeepStrictEqual } from 'node:util';
 import { decodeJwt } from 'jose';
+import { Predicate } from 'effect';
 import type { Client } from '@modelcontextprotocol/client';
 import {
   E2E,
@@ -80,7 +81,7 @@ function isString(value: unknown): value is string {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return Predicate.isError(error) ? error.message : String(error);
 }
 
 function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {

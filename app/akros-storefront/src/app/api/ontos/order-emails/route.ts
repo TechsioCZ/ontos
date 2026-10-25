@@ -2,6 +2,9 @@ import "server-only";
 import { getConfig } from "@/ontos/config";
 import { shellFetch } from "@/ontos/shell-fetch";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 const events = ["ORDER_CREATED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
 const statuses = ["SENDING", "SENT", "RETRY", "FAILED", "UNKNOWN", "SKIPPED"];
 type Receipt = { event: string; eventLabel: string | null; status: string; sentAt: string | null };
@@ -49,7 +52,7 @@ export async function GET(request: Request) {
       : [];
     return Response.json({ deliveries }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    console.error("[AKROS] order e-mail status", error instanceof Error ? error.message : "failed");
+    console.error("[AKROS] order e-mail status", isError(error) ? error.message : "failed");
     return Response.json({ message: "Stav e-mailů se nepodařilo ověřit." }, { status: 503 });
   }
 }

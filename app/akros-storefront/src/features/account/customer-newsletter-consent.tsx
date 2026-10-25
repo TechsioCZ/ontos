@@ -6,6 +6,9 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { isCustomerNewsletterConsent } from "@/ontos/consent-model";
 import type { CustomerNewsletterConsent } from "@/ontos/consent-model";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 /** Only an actual owner projection reveals the control; unavailable authorization never becomes a default choice. */
 export function CustomerNewsletterConsentForm() {
   const [consent, setConsent] = useState<CustomerNewsletterConsent | null>(null);
@@ -28,7 +31,7 @@ export function CustomerNewsletterConsentForm() {
       .catch((cause) => {
         if (signal?.aborted) return;
         setConsent(null);
-        setError(cause instanceof Error ? cause.message : "Souhlas je dočasně nedostupný.");
+        setError(isError(cause) ? cause.message : "Souhlas je dočasně nedostupný.");
       })
       .finally(() => {
         if (!signal?.aborted) setPending(false);
@@ -74,7 +77,7 @@ export function CustomerNewsletterConsentForm() {
       setSaved(true);
     } catch (cause) {
       setConsent(null);
-      setError(cause instanceof Error ? cause.message : "Změnu souhlasu nelze potvrdit.");
+      setError(isError(cause) ? cause.message : "Změnu souhlasu nelze potvrdit.");
     } finally {
       setPending(false);
     }

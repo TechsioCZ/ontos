@@ -2224,35 +2224,33 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
 );
 
 // Platform approval layer for AI agents (lane approvals-platform). Agents use their API key; people their session.
-const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) => {
-  switch (error._tag) {
-    case 'AgentPlatformForbidden': {
-      return failIdentityProblem(
+const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) =>
+  Match.value(error).pipe(
+    Match.tag('AgentPlatformForbidden', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellTargetForbiddenProblem',
-          error.reason,
+          failure.reason,
           403,
           'Module target forbidden',
           'https://ontos.dev/problems/module-target-forbidden',
         ),
-      );
-    }
-    case 'AgentPlatformInvalid': {
-      return failIdentityProblem(
+      ),
+    ),
+    Match.tag('AgentPlatformInvalid', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellPolicyUnprocessableProblem',
-          error.reason,
+          failure.reason,
           422,
           'Policy violation',
           'https://ontos.dev/problems/policy-violation',
         ),
-      );
-    }
-    default: {
-      return failIdentityProblem(shellCapabilityUnavailableProblem());
-    }
-  }
-};
+      ),
+    ),
+    Match.tag('AgentStoreUnavailable', () => failIdentityProblem(shellCapabilityUnavailableProblem())),
+    Match.exhaustive,
+  );
 
 const agentPlatformSessionCaller = Effect.fn('shell.agentPlatform.sessionCaller')(function* agentPlatformSessionCaller(
   request: RequestWithHeaders,
@@ -2405,60 +2403,60 @@ const causeChain = (cause: unknown): string[] => {
 };
 
 // "Připojené aplikace" management (lane mcp-connections-ui): session callers; grants via connection-grants services.
-const connectionsAdminFailure = (error: ConnectionsAdminError) => {
-  switch (error._tag) {
-    case 'ConnectionsForbidden': {
-      return failIdentityProblem(
+const connectionsAdminFailure = (error: ConnectionsAdminError) =>
+  Match.value(error).pipe(
+    Match.tag('ConnectionsForbidden', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellTargetForbiddenProblem',
-          error.reason,
+          failure.reason,
           403,
           'Module target forbidden',
           'https://ontos.dev/problems/module-target-forbidden',
         ),
-      );
-    }
-    case 'ConnectionsInvalid': {
-      return failIdentityProblem(
+      ),
+    ),
+    Match.tag('ConnectionsInvalid', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellPolicyUnprocessableProblem',
-          error.reason,
+          failure.reason,
           422,
           'Policy violation',
           'https://ontos.dev/problems/policy-violation',
         ),
-      );
-    }
-    case 'ConnectionsGone': {
-      return failIdentityProblem(
+      ),
+    ),
+    Match.tag('ConnectionsGone', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellPolicyConflictProblem',
-          error.reason,
+          failure.reason,
           409,
           'Policy conflict',
           'https://ontos.dev/problems/policy-conflict',
         ),
-      );
-    }
-    case 'ConnectionsNotFound': {
-      return failIdentityProblem(
+      ),
+    ),
+    Match.tag('ConnectionsNotFound', (failure) =>
+      failIdentityProblem(
         problemDetails(
           'ShellTargetNotFoundProblem',
-          error.reason,
+          failure.reason,
           404,
           'Target not found',
           'https://ontos.dev/problems/target-not-found',
         ),
-      );
-    }
-    default: {
+      ),
+    ),
+    Match.tag('ConnectionsUnavailable', (failure) =>
       // Unavailability is retryable for the caller, but the operator needs the underlying cause.
-      return Effect.logWarning('Connections administration unavailable', causeChain(error.cause)).pipe(
+      Effect.logWarning('Connections administration unavailable', causeChain(failure.cause)).pipe(
         Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
-      );
-    }
-  }
-};
+      ),
+    ),
+    Match.exhaustive,
+  );
 
 const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* connectionsCaller(
   request: RequestWithHeaders,

@@ -62,7 +62,7 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
       Effect.logError('MCP authentication defect', defect).pipe(Effect.as({ _tag: 'unavailable' as const })),
     ),
   );
-  if (outcome._tag !== 'ok') {
+  if (!Predicate.isTagged(outcome, 'ok')) {
     return { kind: outcome._tag } satisfies McpAuthentication;
   }
   const { catalog, live } = outcome;
@@ -82,9 +82,9 @@ const authenticate = Effect.fn('Mcp.authenticateRequest')(function* authenticate
         Effect.provideContext(services),
       ),
     listProposals: listOwnAgentBatches(caller).pipe(
-        Effect.mapError(() => new ModuleUnavailable({ message: QUEUE_UNAVAILABLE })),
-        Effect.provideContext(services),
-      ),
+      Effect.mapError(() => new ModuleUnavailable({ message: QUEUE_UNAVAILABLE })),
+      Effect.provideContext(services),
+    ),
     submitProposals: (request) =>
       submitAgentProposals(caller, request).pipe(
         Effect.mapError((error) =>

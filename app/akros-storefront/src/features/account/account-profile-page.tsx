@@ -11,6 +11,9 @@ import type { CustomerAccount } from "@/ontos/account";
 import { isCustomerProfile } from "@/ontos/profile-model";
 import type { CustomerProfile } from "@/ontos/profile-model";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 /** Login identity is read-only; editable contact data is owned by Party Registry through Commerce. */
 export function AccountProfilePage({
   account,
@@ -58,7 +61,7 @@ export function AccountProfilePage({
       setValues(result.profile);
       setSaved(true);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Uložení údajů se nepodařilo.");
+      setError(isError(error) ? error.message : "Uložení údajů se nepodařilo.");
     } finally {
       setPending(null);
       // A refused multi-command save can have completed some native commands; show the owner's real state.
@@ -83,7 +86,7 @@ export function AccountProfilePage({
       router.replace("/prihlaseni");
       router.refresh();
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Odhlášení se nepodařilo.");
+      setError(isError(error) ? error.message : "Odhlášení se nepodařilo.");
     } finally {
       setPending(null);
     }

@@ -13,6 +13,8 @@ import { MiniCart } from "@/features/cart/mini-cart";
 import { cs } from "@/i18n/cs";
 import { useCatalog } from "@/ontos/catalog-provider";
 
+const isElement = (value: EventTarget): value is Element => Element.prototype.isPrototypeOf(value);
+
 const utilityLinks = [
   { href: "/", label: cs.header.home },
   { href: "/obchodni-podminky", label: cs.header.terms },
@@ -86,8 +88,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
               <Drawer.Body
                 data-akros-mobile-menu-body=""
                 onClick={(event) => {
-                  if (event.target instanceof Element && event.target.closest("a[href]"))
-                    setOpen(false);
+                  if (isElement(event.target) && event.target.closest("a[href]")) setOpen(false);
                 }}
               >
                 <section>

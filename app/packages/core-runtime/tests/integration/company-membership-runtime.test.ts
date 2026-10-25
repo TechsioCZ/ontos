@@ -1033,17 +1033,17 @@ it.live(
       yield* Effect.forEach(
         invalid,
         Effect.fn('BootstrapMembershipProof.rejectInvalid')(function* rejectInvalid(selection) {
-          expect((yield* Effect.result(install([selection])))._tag).toBe('Failure');
+          expect(Result.isFailure(yield* Effect.result(install([selection])))).toBe(true);
           expect(yield* rows()).toEqual(original);
         }),
         { concurrency: 1, discard: true },
       );
-      expect((yield* Effect.result(install([...selected, ...selected])))._tag).toBe('Failure');
+      expect(Result.isFailure(yield* Effect.result(install([...selected, ...selected])))).toBe(true);
       const partial = yield* decode([
         { affiliation: 'external', legalEntityId, principalId: unselected },
         { affiliation: null, legalEntityId, principalId: service },
       ]);
-      expect((yield* Effect.result(install(partial)))._tag).toBe('Failure');
+      expect(Result.isFailure(yield* Effect.result(install(partial)))).toBe(true);
       expect(yield* rows()).toEqual(original);
       yield* Effect.forEach(
         ['invited', 'disabled', 'departed'] as const,
@@ -1058,7 +1058,7 @@ it.live(
               ),
             );
           const before = yield* rows();
-          expect((yield* Effect.result(install(selected)))._tag).toBe('Failure');
+          expect(Result.isFailure(yield* Effect.result(install(selected)))).toBe(true);
           expect(yield* rows()).toEqual(before);
         }),
         { concurrency: 1, discard: true },

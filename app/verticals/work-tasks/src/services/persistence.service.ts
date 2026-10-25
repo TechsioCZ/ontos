@@ -276,7 +276,7 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
             reason: 'Task does not exist in the authorized scope',
           });
         }
-        if (value._tag === 'SetTaskArchived') {
+        if (Predicate.isTagged('SetTaskArchived')(value)) {
           // Only a closed task leaves the lists: open work must stay visible to whoever is responsible for it.
           if (taskStatusGroup(existing.state) !== 'DONE') {
             return yield* new WorkLifecycleConflict({
@@ -941,7 +941,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
         }
         const now = yield* DateTime.now;
-        if (command._tag === 'AddTaskComment') {
+        if (Predicate.isTagged('AddTaskComment')(command)) {
           const task = snapshot.state.tasks.find((item) => item.ref.resourceId === command.taskRef.resourceId);
           if (task === undefined || command.taskRef.tenantId !== scope.tenantId) {
             return yield* new WorkNotFound({
@@ -986,8 +986,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           });
         }
         const projects = snapshot.state.projects ?? [];
-        const existing = command._tag === 'UpdateProject' ? projects.find((item) => item.id === command.id) : undefined;
-        if (command._tag === 'UpdateProject' && existing === undefined) {
+        const existing = Predicate.isTagged('UpdateProject')(command)
+          ? projects.find((item) => item.id === command.id)
+          : undefined;
+        if (Predicate.isTagged('UpdateProject')(command) && existing === undefined) {
           return yield* new WorkNotFound({
             code: 'work_not_found',
             reason: 'Project does not exist in the authorized company',
@@ -1069,12 +1071,13 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           reason: workChangedReason,
         });
       }
-      const selectedProjectId =
-        command._tag === 'CreateTask'
-          ? command.projectId
-          : command._tag === 'UpdateTask'
-            ? Option.getOrUndefined(command.projectId ?? Option.none())
-            : undefined;
+      const selectedProjectId = Match.value(command).pipe(
+        Match.tag('CreateTask', ({ projectId }) => Option.fromUndefinedOr(projectId)),
+        Match.tag('UpdateTask', ({ projectId }) => projectId ?? Option.none()),
+        Match.tag('AssignTask', 'ChangeTaskState', 'SetTaskArchived', () => Option.none()),
+        Match.exhaustive,
+        Option.getOrUndefined,
+      );
       if (
         selectedProjectId !== undefined &&
         !(snapshot.state.projects ?? []).some((project) => project.id === selectedProjectId)
@@ -1088,7 +1091,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (owner !== undefined) {
         yield* resolveAssignee(owner);
       }
-      if ((command._tag === 'CreateTask' || command._tag === 'UpdateTask') && (command.contextRefs?.length ?? 0) > 0) {
+      if (
+        (Predicate.isTagged('CreateTask')(command) || Predicate.isTagged('UpdateTask')(command)) &&
+        (command.contextRefs?.length ?? 0) > 0
+      ) {
         yield* verifier.verify(command.contextRefs ?? [], scope);
       }
       const now = yield* DateTime.now;

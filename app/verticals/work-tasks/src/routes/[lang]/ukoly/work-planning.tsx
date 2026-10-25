@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import { useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
@@ -95,7 +95,7 @@ const ProjectEditor = ({
       ...(project === undefined ? {} : { id: project.id }),
     });
     if (
-      command._tag === 'None' ||
+      Option.isNone(command) ||
       draft.plannedStart > draft.plannedEnd ||
       draft.milestones.some(
         (milestone) => milestone.dueDate < draft.plannedStart || milestone.dueDate > draft.plannedEnd,

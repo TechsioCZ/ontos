@@ -3,7 +3,7 @@ import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Effect, DateTime, Match, Schema } from 'effect';
+import { Effect, DateTime, Match, Predicate, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -1172,7 +1172,7 @@ export const isOrderScopedEdit = (
   command: MerchandiseCommand,
 ): command is Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }> & {
   readonly expectedUpdatedAt: DateTime.Utc;
-} => command._tag === 'EditOrder' && command.expectedUpdatedAt !== undefined;
+} => Predicate.isTagged(command, 'EditOrder') && command.expectedUpdatedAt !== undefined;
 
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
@@ -1342,7 +1342,12 @@ type AiOperation = Extract<MerchandiseCommand, { readonly _tag: 'ChangeOrderStat
 const operationNeeds = (operations: readonly AiOperation[]) => ({
   orderIds: operations.map((operation) => operation.id),
   productIds: operations.flatMap((operation) =>
-    operation._tag === 'EditOrder' ? (operation.lines ?? []).map((line) => line.productId) : [],
+    Match.value(operation).pipe(
+      Match.tagsExhaustive({
+        ChangeOrderStatus: () => [],
+        EditOrder: (value) => (value.lines ?? []).map((line) => line.productId),
+      }),
+    ),
   ),
 });
 
@@ -1356,10 +1361,11 @@ const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChan
       AiRevertBatch: (value) => changes.filter((change) => change.batchId === value.batchId),
     }),
   );
-  const operations: AiOperation[] =
-    command._tag === 'AiProposeChanges'
-      ? command.changes.map((change) => change.operation)
-      : chosen.map((change) => change.operation);
+  const operations: AiOperation[] = Match.value(command).pipe(
+    Match.tag('AiProposeChanges', (value) => value.changes.map((change) => change.operation)),
+    Match.tag('AiDecideChanges', 'AiRevertBatch', () => chosen.map((change) => change.operation)),
+    Match.exhaustive,
+  );
   const snapshotProducts = chosen.flatMap((change) =>
     [...(change.snapshots ?? []), ...(change.proposedSnapshots ?? [])].flatMap((snapshot) => {
       const value = (snapshot.after ?? snapshot.before) as { readonly productId?: unknown } | undefined;
@@ -1597,12 +1603,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       // An order edit carrying the order's own updatedAt conflicts only when that order changed.
       if (
         !isOrderScopedEdit(command) &&
-        command._tag !== 'PlaceStorefrontOrder' &&
+        !Predicate.isTagged(command, 'PlaceStorefrontOrder') &&
         head.revision !== expectedRevision
       ) {
         return yield* revisionConflict();
       }
-      if (command._tag === 'ResetDemoData') {
+      if (Predicate.isTagged(command, 'ResetDemoData')) {
         // Scoped by tenant + legal entity: no other company's rows are read or written.
         const revision = yield* resetToAkrosBaseline(transaction, store).pipe(Effect.mapError(unavailable));
         return { entityIds: [], revision };
@@ -1636,7 +1642,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       expectedRevision: number,
       resourceId: string,
     ) {
-      const proposing = command._tag === 'AiProposeChanges';
+      const proposing = Predicate.isTagged(command, 'AiProposeChanges');
       if (!(yield* contextGrant(proposing ? 'read_all' : 'write_all'))) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',

@@ -1,7 +1,7 @@
 import { AiSnapshotSchema } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
+import { SalesPipelineCommandSchema, SalesPipelinePermissionDenied } from '../../shared/actions/apply-command.ts';
 import type { SalesPipelineCommand } from '../../shared/actions/apply-command.ts';
 import { SalesPipelineStateSchema } from '../../shared/apis/records.ts';
 import type { SalesPipelineState } from '../../shared/apis/records.ts';
@@ -202,7 +202,7 @@ it.effect('API keys may propose but never decide or revert', () =>
     yield* assertCommandAllowed('non_human', 'AiProposeChanges');
     for (const tag of ['AiDecideChanges', 'AiRevertBatch']) {
       const denied = yield* assertCommandAllowed('non_human', tag).pipe(Effect.flip);
-      expect(denied._tag).toBe('SalesPipelinePermissionDenied');
+      expect(Schema.is(SalesPipelinePermissionDenied)(denied)).toBe(true);
       yield* assertCommandAllowed('human', tag);
     }
   }),

@@ -1,6 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
@@ -11,9 +11,15 @@ import { evolveMerchandiseState } from '../../src/services/persistence.service.t
 import { stockOnHandOf } from '../../src/services/stock-levels.ts';
 
 const agent = { principalId: '20000000-0000-4000-8000-0000000000c1', tenantId: '20000000-0000-4000-8000-000000000001' };
-const approver = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
+const approver = {
+  principalId: '20000000-0000-4000-8000-000000000002',
+  tenantId: '20000000-0000-4000-8000-000000000001',
+};
 const now = DateTime.makeUnsafe('2026-10-21T08:00:00Z');
-type AiCommand = Extract<MerchandiseCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
+type AiCommand = Extract<
+  MerchandiseCommand,
+  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
+>;
 const decode = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const roundTrip = (state: MerchandiseState) =>
   Schema.decodeUnknownSync(MerchandiseStateSchema)(
@@ -47,7 +53,11 @@ const seeded = Effect.gen(function* seed() {
     },
     'product-1',
   );
-  const received = yield* run(product, { _tag: 'RecordStockMovement', delta: 10, productId: 'product-1', reason: 'RECEIPT' }, 'receipt-1');
+  const received = yield* run(
+    product,
+    { _tag: 'RecordStockMovement', delta: 10, productId: 'product-1', reason: 'RECEIPT' },
+    'receipt-1',
+  );
   return yield* run(
     received,
     { _tag: 'CreateOrder', id: 'order-1', lines: [{ productId: 'product-1', quantity: 3 }], partyId: 'party-1' },
@@ -63,7 +73,12 @@ it.effect('an approved order cancellation returns stock; Vrátit vše restores t
       start,
       {
         _tag: 'AiProposeChanges',
-        changes: [{ operation: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CANCELLED' }, reason: 'Zákazník objednávku zrušil e-mailem.' }],
+        changes: [
+          {
+            operation: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CANCELLED' },
+            reason: 'Zákazník objednávku zrušil e-mailem.',
+          },
+        ],
         instruction: 'Stornuj objednávku zákazníka.',
         runId: 'run-1',
       },
@@ -105,7 +120,9 @@ it.effect('an approved note edit is reverted; a change made by a person since bl
       start,
       {
         _tag: 'AiProposeChanges',
-        changes: [{ operation: { _tag: 'EditOrder', id: 'order-1', note: 'Doručit po 14:00' }, reason: 'Zákazník volal.' }],
+        changes: [
+          { operation: { _tag: 'EditOrder', id: 'order-1', note: 'Doručit po 14:00' }, reason: 'Zákazník volal.' },
+        ],
         instruction: 'Doplň poznámku k objednávce.',
       },
       '80000000-0000-4000-8000-000000000011',
@@ -138,7 +155,7 @@ it.effect('API keys may propose but never decide or revert', () =>
     yield* assertCommandAllowed('non_human', 'AiProposeChanges');
     for (const tag of ['AiDecideChanges', 'AiRevertBatch']) {
       const denied = yield* assertCommandAllowed('non_human', tag).pipe(Effect.flip);
-      expect(denied._tag).toBe('MerchandisePermissionDenied');
+      expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
     }
   }),
 );

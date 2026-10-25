@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Predicate, Schema } from 'effect';
 import { PropertyRefSchema } from '../resources/property.ts';
 import { UnitRefSchema } from '../resources/unit.ts';
 import { AssetRefSchema } from '../resources/asset.ts';
@@ -76,10 +76,12 @@ type StaffOnlyPropertyCommand = Extract<
   PropertyCommand,
   { readonly _tag: 'ArchiveProperty' | 'ArchiveUnit' | 'RestoreProperty' | 'RestoreUnit' }
 >;
-const staffOnlyTags: ReadonlySet<string> = new Set(['ArchiveProperty', 'RestoreProperty', 'ArchiveUnit', 'RestoreUnit']);
 /** Archive commands change what every register shows, so only interactive staff sessions may run them. */
 export const isStaffOnlyPropertyCommand = (command: PropertyCommand): command is StaffOnlyPropertyCommand =>
-  staffOnlyTags.has(command._tag);
+  Predicate.isTagged(command, 'ArchiveProperty') ||
+  Predicate.isTagged(command, 'RestoreProperty') ||
+  Predicate.isTagged(command, 'ArchiveUnit') ||
+  Predicate.isTagged(command, 'RestoreUnit');
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: PropertyCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

@@ -7,6 +7,8 @@ import type {
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
 
+import { Predicate } from 'effect';
+
 import { parseLegacyKey } from '../../shared/proposal-key.ts';
 
 import type { McpModule } from '../mcp/catalog.ts';
@@ -88,7 +90,7 @@ const diffOfChange = (change: Rec): AgentDiffLine[] => {
   const diff = diffLinesOf(change['diff']);
   const operation = change['operation'];
   const contacts = isRecord(operation) ? operation['contacts'] : undefined;
-  if (!isRecord(operation) || operation['_tag'] !== 'CreateClient' || !Array.isArray(contacts)) return diff;
+  if (!isRecord(operation) || !Predicate.isTagged(operation, 'CreateClient') || !Array.isArray(contacts)) return diff;
   if (diff.some((line) => line.field.startsWith('contacts.'))) return diff;
   return [
     ...diff.filter((line) => line.field !== 'contacts'),

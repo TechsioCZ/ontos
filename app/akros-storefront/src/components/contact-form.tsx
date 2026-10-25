@@ -6,6 +6,9 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
 import type { InquiryKind } from "@/ontos/inquiry-model";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 export function ContactForm({
   compact = false,
   kind = "CONTACT",
@@ -70,9 +73,7 @@ export function ContactForm({
       setTaskId(body.taskId);
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : "Spojení se nezdařilo. Údaje zachovejte a zkuste znovu.",
+        isError(cause) ? cause.message : "Spojení se nezdařilo. Údaje zachovejte a zkuste znovu.",
       );
     } finally {
       setPending(false);

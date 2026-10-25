@@ -1,4 +1,6 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
+import { FacilityOperationsLifecycleConflict } from '../../shared/errors/facility-operations-lifecycle-conflict.ts';
+import { FacilityOperationsNotFound } from '../../shared/errors/facility-operations-not-found.ts';
 import { expect, it } from 'effect-rstest';
 import { DocumentsCommandSchema, evolveDocuments } from '../../shared/commands/documents.ts';
 import type { OpsCommandInput } from '../../shared/domain/common.ts';
@@ -81,7 +83,7 @@ it.effect('DocumentVersionAdd refuses the same stored file twice', () =>
     );
     const decoded = yield* decodeCommand({ _tag: 'DocumentVersionAdd', documentId: 'doc-1', file: pdf('file-1') });
     const error = yield* Effect.flip(evolveDocuments(created, decoded, input('cmd-2')));
-    expect(error._tag).toBe('FacilityOperationsLifecycleConflict');
+    expect(Schema.is(FacilityOperationsLifecycleConflict)(error)).toBe(true);
   }),
 );
 
@@ -94,7 +96,7 @@ it.effect('an amendment must point to an existing contract document', () =>
       title: 'Dodatek č. 1',
     });
     const error = yield* Effect.flip(evolveDocuments(yield* empty, decoded, input('doc-2')));
-    expect(error._tag).toBe('FacilityOperationsNotFound');
+    expect(Schema.is(FacilityOperationsNotFound)(error)).toBe(true);
     const contract = yield* step(
       yield* empty,
       { _tag: 'DocumentCreate', category: 'contract', title: 'Nájemní smlouva' },
@@ -130,9 +132,11 @@ it.effect('a manual signature needs an uploaded version and activates a draft co
       signedOn: '2025-10-15',
       version: 1,
     });
-    expect((yield* Effect.flip(evolveDocuments(created, missing, input('cmd-1'))))._tag).toBe(
-      'FacilityOperationsLifecycleConflict',
-    );
+    expect(
+      Schema.is(FacilityOperationsLifecycleConflict)(
+        yield* Effect.flip(evolveDocuments(created, missing, input('cmd-1'))),
+      ),
+    ).toBe(true);
     const withScan = yield* step(
       created,
       { _tag: 'DocumentVersionAdd', documentId: 'doc-1', file: pdf('scan') },
@@ -140,7 +144,13 @@ it.effect('a manual signature needs an uploaded version and activates a draft co
     );
     const signed = yield* step(
       withScan,
-      { _tag: 'DocumentSignatureRecord', documentId: 'doc-1', signedBy: 'Petra Malá', signedOn: '2025-10-15', version: 1 },
+      {
+        _tag: 'DocumentSignatureRecord',
+        documentId: 'doc-1',
+        signedBy: 'Petra Malá',
+        signedOn: '2025-10-15',
+        version: 1,
+      },
       input('cmd-3'),
     );
     expect(signed.documents[0]?.signature?.signedBy).toBe('Petra Malá');
@@ -158,10 +168,16 @@ it.effect('comments keep author, edit history and withdrawal; only the author ma
     );
     expect(posted.comments?.[0]?.createdBy.principalId).toBe(operations.principalId);
 
-    const foreignEdit = yield* decodeCommand({ _tag: 'DocumentCommentEdit', body: 'Jiný text', commentId: 'comment-1' });
-    expect((yield* Effect.flip(evolveDocuments(posted, foreignEdit, input('cmd-x', management))))._tag).toBe(
-      'FacilityOperationsLifecycleConflict',
-    );
+    const foreignEdit = yield* decodeCommand({
+      _tag: 'DocumentCommentEdit',
+      body: 'Jiný text',
+      commentId: 'comment-1',
+    });
+    expect(
+      Schema.is(FacilityOperationsLifecycleConflict)(
+        yield* Effect.flip(evolveDocuments(posted, foreignEdit, input('cmd-x', management))),
+      ),
+    ).toBe(true);
 
     const edited = yield* step(
       posted,
@@ -179,9 +195,11 @@ it.effect('comments keep author, edit history and withdrawal; only the author ma
     );
     expect(retracted.comments?.[0]?.retractedAt).toBeDefined();
     const again = yield* decodeCommand({ _tag: 'DocumentCommentEdit', body: 'Znovu', commentId: 'comment-1' });
-    expect((yield* Effect.flip(evolveDocuments(retracted, again, input('cmd-4', operations))))._tag).toBe(
-      'FacilityOperationsLifecycleConflict',
-    );
+    expect(
+      Schema.is(FacilityOperationsLifecycleConflict)(
+        yield* Effect.flip(evolveDocuments(retracted, again, input('cmd-4', operations))),
+      ),
+    ).toBe(true);
   }),
 );
 
@@ -190,7 +208,7 @@ it.effect('blank comments are refused by the command schema', () =>
     const result = yield* Effect.result(
       decodeCommand({ _tag: 'DocumentCommentPost', body: '   ', subject: { id: 'x', kind: 'task', label: 'Úkol' } }),
     );
-    expect(result._tag).toBe('Failure');
+    expect(Result.isFailure(result)).toBe(true);
   }),
 );
 
@@ -215,7 +233,9 @@ it.effect('S12-01: a contract ending in 5 days is in the upcoming deadlines; ter
     expect(cleaning?.days).toBe(5);
     expect(upcoming[0]?.document.id).toBe('seed-doc-uklid');
     const terminated = state.documents.map((document) =>
-      document.contract === undefined ? document : { ...document, contract: { ...document.contract, status: 'terminated' as const } },
+      document.contract === undefined
+        ? document
+        : { ...document, contract: { ...document.contract, status: 'terminated' as const } },
     );
     expect(upcomingDeadlines(terminated, '2026-10-20')).toEqual([]);
     expect(daysUntil('2026-10-19', '2026-10-20')).toBe(-1);

@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import StoreLink from "@/components/store-link";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 type Progress = { state?: string; message?: string };
 const terminal = (state?: string) =>
   state === "FAILED" || state === "TERMINATED" || state === "COMPLETE";
@@ -52,7 +55,7 @@ export function EnrollmentProgress() {
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : "Stav registrace je nedostupný.");
+        setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
         setPending(false);
       });
     return () => controller.abort();
@@ -68,7 +71,7 @@ export function EnrollmentProgress() {
       setProgress(result);
       if (result.state === "ADMITTED") router.replace("/muj-ucet");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Stav registrace je nedostupný.");
+      setError(isError(cause) ? cause.message : "Stav registrace je nedostupný.");
     } finally {
       setPending(false);
     }

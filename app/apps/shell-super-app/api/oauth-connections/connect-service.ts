@@ -96,7 +96,7 @@ const ModulesJson = Schema.fromJsonString(ConnectionModulesRequestSchema);
 const modulesJson = (modules: ConnectionModulesRequest): string => Schema.encodeSync(ModulesJson)(modules);
 
 const toUnavailable = (cause: unknown): ConnectionUnavailable =>
-  cause instanceof ConnectionUnavailable ? cause : new ConnectionUnavailable({ cause });
+  Schema.is(Schema.instanceOf(ConnectionUnavailable))(cause) ? cause : new ConnectionUnavailable({ cause });
 
 const companiesOfAgent = (agentPrincipalId: string) =>
   Effect.scoped(Effect.flatMap(openDemoAccountGrants, (grants) => grants.companiesOf(agentPrincipalId))).pipe(

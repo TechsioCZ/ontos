@@ -8,6 +8,7 @@ import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-c
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
 import type { AgentFollowUp, AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
 import { AGENT_REVERT_MISSING_BEFORE, agentRevertCommands, agentRevertNone } from '@app/shared-contracts/agent-revert';
+import { Match, Option, Predicate } from 'effect';
 
 type Rec = Readonly<Record<string, unknown>>;
 
@@ -56,38 +57,51 @@ const TASK_LABELS: Readonly<Record<string, string>> = {
 const TASK_SKIP: ReadonlySet<string> = new Set(['taskRef']);
 
 /** Commands that change one existing task, read live for `before`, the undo plan and the in-place check. */
-const TARGETED: ReadonlySet<string> = new Set(['UpdateTask', 'ChangeTaskState', 'AssignTask']);
-const REVERTIBLE: ReadonlySet<string> = new Set(['CreateTask', 'UpdateTask', 'ChangeTaskState', 'AssignTask']);
+const targetsExistingTask = (command: AgentCommand): boolean =>
+  Match.value(String(command['_tag'])).pipe(
+    Match.whenOr('UpdateTask', 'ChangeTaskState', 'AssignTask', () => true),
+    Match.orElse(() => false),
+  );
+const isRevertibleTaskCommand = (command: AgentCommand): boolean =>
+  Match.value(command).pipe(
+    Match.whenOr(
+      { _tag: 'CreateTask' },
+      { _tag: 'UpdateTask' },
+      { _tag: 'ChangeTaskState' },
+      { _tag: 'AssignTask' },
+      () => true,
+    ),
+    Match.orElse(() => false),
+  );
 
 /** Resource id of the task the command changes when it is one that is read live, undefined otherwise. */
 export const targetTaskId = (command: AgentCommand): string | undefined => {
   const ref = command['taskRef'];
-  return TARGETED.has(String(command['_tag'])) && isRecord(ref) && typeof ref['resourceId'] === 'string'
+  return targetsExistingTask(command) && isRecord(ref) && typeof ref['resourceId'] === 'string'
     ? ref['resourceId']
     : undefined;
 };
 
-export const taskDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
-  switch (command['_tag']) {
-    case 'CreateTask': {
-      return agentFieldLines(command, TASK_LABELS, undefined, TASK_SKIP, VALUE_OPTIONS);
-    }
-    case 'UpdateTask':
-    case 'ChangeTaskState':
-    case 'AssignTask':
-    case 'SetTaskArchived': {
-      return agentFieldLines(command, TASK_LABELS, before, TASK_SKIP, VALUE_OPTIONS);
-    }
-    default: {
-      return undefined;
-    }
-  }
-};
+export const taskDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined =>
+  Match.value(command).pipe(
+    Match.when({ _tag: 'CreateTask' }, () =>
+      agentFieldLines(command, TASK_LABELS, undefined, TASK_SKIP, VALUE_OPTIONS),
+    ),
+    Match.whenOr(
+      { _tag: 'UpdateTask' },
+      { _tag: 'ChangeTaskState' },
+      { _tag: 'AssignTask' },
+      { _tag: 'SetTaskArchived' },
+      () => agentFieldLines(command, TASK_LABELS, before, TASK_SKIP, VALUE_OPTIONS),
+    ),
+    Match.option,
+    Option.getOrUndefined,
+  );
 
 export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenantId: string): AgentRevertPlan => {
   const { taskRef } = command;
-  switch (command['_tag']) {
-    case 'CreateTask': {
+  return Match.value(command).pipe(
+    Match.when({ _tag: 'CreateTask' }, () => {
       const createdRef = taskRefOfCreated(tenantId);
       return agentRevertCommands(
         [
@@ -96,8 +110,8 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
         ],
         'task.ref.resourceId',
       );
-    }
-    case 'UpdateTask': {
+    }),
+    Match.when({ _tag: 'UpdateTask' }, () => {
       if (before === undefined) {
         return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       }
@@ -116,30 +130,28 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
         }
       }
       return agentRevertCommands([{ _tag: 'UpdateTask', taskRef, ...fields }]);
-    }
-    case 'ChangeTaskState': {
+    }),
+    Match.when({ _tag: 'ChangeTaskState' }, () => {
       const from = command['state'];
       const to = before?.['state'];
       const allowed = typeof from === 'string' ? (TASK_STATE_TRANSITIONS[from] ?? []) : [];
       return typeof to === 'string' && allowed.includes(to)
         ? agentRevertCommands([{ _tag: 'ChangeTaskState', state: to, taskRef }])
         : agentRevertNone(TASK_STATE_UNAVAILABLE);
-    }
-    case 'AssignTask': {
+    }),
+    Match.when({ _tag: 'AssignTask' }, () => {
       const owner = before?.['ownerPrincipalRef'];
       return isRecord(owner)
         ? agentRevertCommands([{ _tag: 'AssignTask', ownerPrincipalRef: owner, taskRef }])
         : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
-    }
-    default: {
-      return agentRevertNone();
-    }
-  }
+    }),
+    Match.orElse(() => agentRevertNone()),
+  );
 };
 
 /** Does the task still hold what the approved command set (only the fields the command set are compared)? */
 export const taskStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined => {
-  if (!TARGETED.has(String(command['_tag']))) {
+  if (!targetsExistingTask(command)) {
     return undefined;
   }
   if (current === undefined) {
@@ -158,7 +170,7 @@ export const provenanceComment = (
   proposal: NonNullable<AgentReviewItemRequest['proposal']>,
   tenantId: string,
 ): AgentFollowUp | undefined => {
-  const created = command['_tag'] === 'CreateTask';
+  const created = Predicate.isTagged('CreateTask')(command);
   const taskRef = created ? taskRefOfCreated(tenantId) : command['taskRef'];
   if (!isRecord(taskRef)) {
     return undefined;
@@ -210,7 +222,6 @@ export const reviewTaskProposal = ({
   }
   const missing = targeted && taskRead && task === undefined;
   const lines = taskDiff(command, task);
-  const tag = command['_tag'];
   const name = task?.['title'];
   const followUp = proposal === undefined ? undefined : provenanceComment(command, proposal, tenantId);
   return {
@@ -220,7 +231,7 @@ export const reviewTaskProposal = ({
     ...(canWrite === false ? { blockedReason: 'V tomto modulu nemáte oprávnění k zápisu.' } : {}),
     ...(lines === undefined ? {} : { diff: lines }),
     ...(followUp === undefined ? {} : { followUp }),
-    ...(typeof tag === 'string' && REVERTIBLE.has(tag) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
+    ...(isRevertibleTaskCommand(command) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
     ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
   };
 };

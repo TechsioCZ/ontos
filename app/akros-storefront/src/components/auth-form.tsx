@@ -8,6 +8,9 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { VerificationResendForm } from "@/components/verification-resend-form";
 import type { AccountSubmissionResponse } from "@/ontos/account";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 async function submitAccount(
   form: HTMLFormElement,
   operation: "login" | "register",
@@ -53,7 +56,7 @@ export function LoginForm() {
       router.push("/dokonceni-registrace");
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Přihlášení se nepodařilo.");
+      setError(isError(cause) ? cause.message : "Přihlášení se nepodařilo.");
     } finally {
       setPending(false);
     }
@@ -117,7 +120,7 @@ export function RegistrationForm() {
       form.reset();
       setSubmitted(true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Registrace se nepodařila.");
+      setError(isError(cause) ? cause.message : "Registrace se nepodařila.");
     } finally {
       setPending(false);
     }

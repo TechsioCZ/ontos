@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { FinanceReferenceUnavailable } from '../../shared/actions/errors/finance-reference-unavailable.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import { withoutExportFiles } from '../../src/api/records.read.ts';
@@ -105,7 +106,7 @@ describe('S08 export issuer identity', () => {
           { invoice: () => Effect.void },
         ),
       );
-      expect(failure._tag).toBe('FinanceReferenceUnavailable');
+      expect(Schema.is(FinanceReferenceUnavailable)(failure)).toBe(true);
       expect('reason' in failure ? failure.reason : undefined).toBe('export_references_unavailable');
     }),
   );

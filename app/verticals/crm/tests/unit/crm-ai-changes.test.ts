@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@rstest/core';
-import { Effect, Exit, Schema } from 'effect';
+import { Effect, Exit, Predicate, Schema } from 'effect';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
@@ -235,8 +235,15 @@ describe('AI level C governed pending batches', () => {
         { name: 'Eva Lipová', email: 'eva@lipa.demo', phone: '+420 777 123 456', role: 'Provozní', primary: true },
       ],
     }).state.aiChanges?.changes[0];
-    if (pending?.operation._tag !== 'CreateClient') throw new Error('Missing creation proposal');
-    const legacy = { ...pending, diff: [{ field: 'contacts', label: 'Kontaktní osoby', after: 'Eva Lipová' }] };
+    const operation = pending?.operation;
+    if (pending === undefined || !Predicate.isTagged(operation, 'CreateClient')) {
+      throw new Error('Missing creation proposal');
+    }
+    const legacy = {
+      ...pending,
+      operation,
+      diff: [{ field: 'contacts', label: 'Kontaktní osoby', after: 'Eva Lipová' }],
+    };
     expect(newClientContactsDiff(legacy.operation.contacts).map((entry) => entry.after)).toEqual([
       'Eva Lipová',
       'eva@lipa.demo',

@@ -36,7 +36,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Crypto, DateTime, Effect, Option, PlatformError } from 'effect';
+import { Crypto, DateTime, Effect, Match, Option, PlatformError, Predicate } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
@@ -387,7 +387,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   );
   /** S10-01: names the confirmed stay or lease that blocks the second confirmation of the same unit. */
   const collisionFor = (command: OccupancyCommand) => {
-    if (snapshot === undefined || (command._tag !== 'Confirm' && command._tag !== 'Activate')) return undefined;
+    if (snapshot === undefined || (!Predicate.isTagged(command, 'Confirm') && !Predicate.isTagged(command, 'Activate')))
+      return undefined;
     const record = snapshot.occupancies.find(
       (item) => item.occupancyRef.resourceId === command.occupancyRef.resourceId,
     );
@@ -415,9 +416,11 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
         other.endDate === null ? 'bez konce' : formatDate(other.endDate)
       } již ${other.state === 'ACTIVE' ? 'obsazena' : 'potvrzeně rezervována'} (${
         other.kind === 'LONG_TERM_LEASE' ? 'nájem' : 'pobyt'
-      }${party === undefined ? '' : ` – ${party}`}). ${
-        command._tag === 'Confirm' ? 'Potvrzení' : 'Zahájení'
-      } bylo odmítnuto, tento záznam zůstává ve stavu ${t(`property-leasing.demo.stateLabels.${record.state}`)}.`,
+      }${party === undefined ? '' : ` – ${party}`}). ${Match.value(command).pipe(
+        Match.tag('Confirm', () => 'Potvrzení'),
+        Match.tag('Activate', () => 'Zahájení'),
+        Match.exhaustive,
+      )} bylo odmítnuto, tento záznam zůstává ve stavu ${t(`property-leasing.demo.stateLabels.${record.state}`)}.`,
     };
   };
   const runCommand = (command: OccupancyCommand) => {
@@ -533,7 +536,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setCreateError(
               status === 403
                 ? 'Pro zakládání protistran nemáte oprávnění.'
-                : failure._tag === 'CustomerCreateAmbiguous'
+                : Predicate.isTagged(failure, 'CustomerCreateAmbiguous')
                   ? 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.'
                   : 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.',
             );

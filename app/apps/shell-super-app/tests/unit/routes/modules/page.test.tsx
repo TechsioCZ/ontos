@@ -1,6 +1,6 @@
 import { getDocumentCompositionRevision } from '@app/shared-contracts';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
@@ -558,7 +558,7 @@ it.live('a prepared page renders its content in the first commit, without any pl
       '/en/contacts',
       '5 seconds',
     );
-    expect(prepared._tag).toBe('Some');
+    expect(Option.isSome(prepared)).toBe(true);
     expect(preloadPage).toHaveBeenCalledWith(expectedPageProps(resolvedModel));
     useLoaderDataMock.mockReturnValue(resolvedModel);
 

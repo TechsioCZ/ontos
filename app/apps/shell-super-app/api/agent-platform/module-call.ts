@@ -5,7 +5,7 @@ import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
-import { Data, Effect, Schema } from 'effect';
+import { Data, Effect, Result, Schema } from 'effect';
 
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
@@ -53,7 +53,7 @@ export const readModuleRecords = (principal: TrustedPrincipalContext, appId: str
     Effect.flatMap((read) => callModuleAs(principal, appId, read.path, read.query)),
     Effect.result,
     Effect.map((result): unknown =>
-      result._tag === 'Success' && result.success.status === 200 ? result.success.body : undefined,
+      Result.isSuccess(result) && result.success.status === 200 ? result.success.body : undefined,
     ),
   );
 

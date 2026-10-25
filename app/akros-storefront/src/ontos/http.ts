@@ -1,7 +1,14 @@
 import "server-only";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 /** A request the BFF refuses on its own (not an OntOS outage): sent back with its own status. */
 export class RequestError extends Error {
+  static is(value: unknown): value is RequestError {
+    return value !== null && value !== undefined && RequestError.prototype.isPrototypeOf(value);
+  }
+
   constructor(
     readonly status: 400 | 403 | 404 | 413 | 415,
     message: string,
@@ -34,11 +41,11 @@ export const outageMessage = {
   search: "Vyhledávání v OntOS je teď nedostupné. Zkuste to prosím za chvíli.",
 } as const;
 export function problem(error: unknown, message: string = outageMessage.cart) {
-  if (error instanceof RequestError)
+  if (RequestError.is(error))
     return Response.json(
       { message: error.message },
       { status: error.status, headers: { "cache-control": "no-store" } },
     );
-  console.error("[AKROS]", error instanceof Error ? error.message : "Request failed");
+  console.error("[AKROS]", isError(error) ? error.message : "Request failed");
   return Response.json({ message }, { status: 503, headers: { "cache-control": "no-store" } });
 }

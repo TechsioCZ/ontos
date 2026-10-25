@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/unstable/http';
 
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
@@ -40,77 +40,79 @@ const searchFromRequest = (request: Request): typeof SearchRouteSearch.Type => {
 
 export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
   const query = (searchFromRequest(request).q ?? '').trim();
-  return browserRuntime.runPromise(
-    loadHomePageModel(request).pipe(
-      Effect.timeout('30 seconds'),
-      Effect.flatMap((shell) => {
-        if (shell.state !== 'authenticated') {
-          return Effect.succeed<SearchPageModel>({
-            query,
-            shell,
-            state: shell.state === 'anonymous' ? 'selection_required' : shell.state,
-          });
-        }
-        if (shell.contextState !== 'authenticated' || shell.compositionRevision === undefined) {
-          return Effect.succeed<SearchPageModel>({
-            query,
-            shell,
-            state: 'selection_required',
-          });
-        }
-        const { compositionRevision } = shell;
-        if (query.length === 0) {
-          return Effect.succeed<SearchPageModel>({
-            query,
-            response: { partial: false, results: [] },
-            shell,
-            state: 'ready',
-          });
-        }
-        return shellAuthenticationClientOptionsFromRequest(request).pipe(
-          Effect.flatMap((options) => searchResources({ compositionRevision, query }, options)),
-          Effect.map((response): SearchPageModel => ({
-            query,
-            response,
-            shell,
-            state: 'ready',
-          })),
-          Effect.matchEffect({
-            onFailure: (error) =>
-              Effect.succeed<SearchPageModel>({
-                query,
-                // The search read itself saying "sign in again" means the session died meanwhile.
-                shell: error._tag === 'ShellAuthenticationRequiredProblem' ? sessionEndedModel : shell,
-                state: Match.value(error).pipe(
-                  Match.tag('ShellReloadRequiredProblem', () => 'reload_required' as const),
-                  Match.tag(
-                    'ShellAuthenticationRequiredProblem',
-                    'ShellSelectionRequiredProblem',
-                    () => 'selection_required' as const,
+  return browserRuntime
+    .runPromise(
+      loadHomePageModel(request).pipe(
+        Effect.timeout('30 seconds'),
+        Effect.flatMap((shell) => {
+          if (shell.state !== 'authenticated') {
+            return Effect.succeed<SearchPageModel>({
+              query,
+              shell,
+              state: shell.state === 'anonymous' ? 'selection_required' : shell.state,
+            });
+          }
+          if (shell.contextState !== 'authenticated' || shell.compositionRevision === undefined) {
+            return Effect.succeed<SearchPageModel>({
+              query,
+              shell,
+              state: 'selection_required',
+            });
+          }
+          const { compositionRevision } = shell;
+          if (query.length === 0) {
+            return Effect.succeed<SearchPageModel>({
+              query,
+              response: { partial: false, results: [] },
+              shell,
+              state: 'ready',
+            });
+          }
+          return shellAuthenticationClientOptionsFromRequest(request).pipe(
+            Effect.flatMap((options) => searchResources({ compositionRevision, query }, options)),
+            Effect.map((response): SearchPageModel => ({
+              query,
+              response,
+              shell,
+              state: 'ready',
+            })),
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Effect.succeed<SearchPageModel>({
+                  query,
+                  // The search read itself saying "sign in again" means the session died meanwhile.
+                  shell: Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ? sessionEndedModel : shell,
+                  state: Match.value(error).pipe(
+                    Match.tag('ShellReloadRequiredProblem', () => 'reload_required' as const),
+                    Match.tag(
+                      'ShellAuthenticationRequiredProblem',
+                      'ShellSelectionRequiredProblem',
+                      () => 'selection_required' as const,
+                    ),
+                    Match.tag(
+                      'ConfigError',
+                      'HttpClientError',
+                      'SchemaError',
+                      'ShellCapabilityUnavailableProblem',
+                      'ShellInternalProblem',
+                      'ShellInvalidRequestProblem',
+                      'ShellPolicyConflictProblem',
+                      'ShellPolicyUnprocessableProblem',
+                      'ShellPreconditionRequiredProblem',
+                      'ShellRateLimitedProblem',
+                      'ShellTargetForbiddenProblem',
+                      'ShellTargetNotFoundProblem',
+                      () => 'unavailable' as const,
+                    ),
+                    Match.exhaustive,
                   ),
-                  Match.tag(
-                    'ConfigError',
-                    'HttpClientError',
-                    'SchemaError',
-                    'ShellCapabilityUnavailableProblem',
-                    'ShellInternalProblem',
-                    'ShellInvalidRequestProblem',
-                    'ShellPolicyConflictProblem',
-                    'ShellPolicyUnprocessableProblem',
-                    'ShellPreconditionRequiredProblem',
-                    'ShellRateLimitedProblem',
-                    'ShellTargetForbiddenProblem',
-                    'ShellTargetNotFoundProblem',
-                    () => 'unavailable' as const,
-                  ),
-                  Match.exhaustive,
-                ),
-              }),
-            onSuccess: Effect.succeed,
-          }),
-        );
-      }),
-    ),
-    { signal: request.signal },
-  ).then((model) => requireSignedIn(request, model));
+                }),
+              onSuccess: Effect.succeed,
+            }),
+          );
+        }),
+      ),
+      { signal: request.signal },
+    )
+    .then((model) => requireSignedIn(request, model));
 };

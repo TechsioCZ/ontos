@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Effect, Predicate, Redacted, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
@@ -317,7 +317,7 @@ it.effect('invalid Party phones fail before any Attempt or provider dispatch can
         ),
         Effect.result,
       );
-      expect(result._tag).toBe('Failure');
+      expect(Result.isFailure(result)).toBe(true);
       expect(attempts).toBe(0);
       expect(providers).toBe(0);
     }

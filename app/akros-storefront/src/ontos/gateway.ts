@@ -17,6 +17,10 @@ const GATEWAY_READ_PATH = "/shell-super-app-api/auth/api-key/gateway-read";
 const GATEWAY_CONTEXT_HEADER = "x-ontos-gateway-context";
 
 export class OntosError extends Error {
+  static is(value: unknown): value is OntosError {
+    return value !== null && value !== undefined && OntosError.prototype.isPrototypeOf(value);
+  }
+
   readonly status: number;
   readonly code: string | undefined;
   readonly detail: string | undefined;
@@ -268,13 +272,13 @@ export const readRecords = async (
           ? await post(context, path, query)
           : await parseResponse(firstResponse, path);
       } catch (error) {
-        if (error instanceof OntosError && [400, 401, 403, 409].includes(error.status))
+        if (OntosError.is(error) && [400, 401, 403, 409].includes(error.status))
           forgetContext(vertical, context);
         throw error;
       }
     } catch (error) {
       const retryable =
-        error instanceof OntosError &&
+        OntosError.is(error) &&
         (error.status === 503 ||
           error.status === 409 ||
           error.status === 400 ||
@@ -326,7 +330,7 @@ export const callAction = async (
       "idempotency-key": idempotencyKey,
     });
   } catch (error) {
-    if (error instanceof OntosError && [400, 401, 403, 409].includes(error.status))
+    if (OntosError.is(error) && [400, 401, 403, 409].includes(error.status))
       forgetContext(vertical, context);
     throw error;
   }

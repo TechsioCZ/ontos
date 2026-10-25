@@ -32,6 +32,9 @@ import {
   cartCollectionStorageKey,
 } from "@/features/cart/cart-collection";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 const storageKey = "akros-demo-cart-v3";
 
 interface CartContextValue {
@@ -316,7 +319,7 @@ export function CartProvider({
         return true;
       } catch (error) {
         setPurchaseError(
-          error instanceof Error && error.name !== "TypeError"
+          isError(error) && error.name !== "TypeError"
             ? error.message
             : "Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.",
         );

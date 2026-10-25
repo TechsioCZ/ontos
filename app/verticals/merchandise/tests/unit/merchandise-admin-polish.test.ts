@@ -1,4 +1,4 @@
-import { DateTime, Schema } from 'effect';
+import { DateTime, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { staffCommandAllowed, AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
@@ -75,5 +75,5 @@ it('scopes an order edit to its order only when the editor names the order versi
   const unscoped = Schema.decodeUnknownSync(MerchandiseCommandSchema)({ _tag: 'EditOrder', id, note: 'Doplněno' });
   expect(isOrderScopedEdit(scoped)).toBe(true);
   expect(isOrderScopedEdit(unscoped)).toBe(false);
-  expect(scoped._tag === 'EditOrder' && DateTime.isDateTime(scoped.expectedUpdatedAt)).toBe(true);
+  expect(Predicate.isTagged(scoped, 'EditOrder') && DateTime.isDateTime(scoped.expectedUpdatedAt)).toBe(true);
 });

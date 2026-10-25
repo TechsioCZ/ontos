@@ -17,6 +17,11 @@ import { cs } from "@/i18n/cs";
 import { describeOfferPrice } from "@/lib/format";
 import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+const isInput = (value: EventTarget): value is HTMLInputElement =>
+  HTMLInputElement.prototype.isPrototypeOf(value);
+
 type SuggestionData =
   | { kind: "category"; trail: string }
   | {
@@ -90,7 +95,7 @@ export function HeaderSearch() {
             total: 0,
             categories: [],
             error:
-              error instanceof Error && error.name !== "TypeError" && error.message
+              isError(error) && error.name !== "TypeError" && error.message
                 ? error.message
                 : "Vyhledávání v OntOS je teď nedostupné.",
           });
@@ -157,7 +162,7 @@ export function HeaderSearch() {
   const handleKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (
       event.key === "Enter" &&
-      event.target instanceof HTMLInputElement &&
+      isInput(event.target) &&
       !event.nativeEvent.isComposing &&
       !event.target.getAttribute("aria-activedescendant")
     ) {

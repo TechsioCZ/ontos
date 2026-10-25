@@ -109,7 +109,7 @@ export const revokedStatusFor = (reason: ConnectionRevokeReason): 'revoked' | 's
   reason === 'superseded' ? 'superseded' : 'revoked';
 
 const toUnavailable = (cause: unknown): ConnectionUnavailable =>
-  cause instanceof ConnectionUnavailable ? cause : new ConnectionUnavailable({ cause });
+  Schema.is(Schema.instanceOf(ConnectionUnavailable))(cause) ? cause : new ConnectionUnavailable({ cause });
 
 const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(value));
 

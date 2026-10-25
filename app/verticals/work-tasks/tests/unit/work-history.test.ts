@@ -1,6 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SingleWorkCommandSchema } from '../../shared/actions/apply-command.ts';
+import { SingleWorkCommandSchema, WorkLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import { WorkStateSchema } from '../../shared/apis/records.ts';
 import { evolveWorkState } from '../../src/services/persistence.service.ts';
 import { withHistory } from '../../src/services/work-history.ts';
@@ -58,7 +58,7 @@ it.effect('every governed change records who, when and each field before → aft
       yield* command({ _tag: 'SetTaskArchived', archived: true, taskRef }),
       { now: later, resourceId: 'task-1', tenantId },
     ).pipe(Effect.flip);
-    expect(refused._tag).toBe('WorkLifecycleConflict');
+    expect(Schema.is(WorkLifecycleConflict)(refused)).toBe(true);
     const cancel = yield* evolveWorkState(
       afterUpdate,
       yield* command({ _tag: 'ChangeTaskState', state: 'CANCELLED', taskRef }),

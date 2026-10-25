@@ -1,5 +1,6 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { CatalogCategorySchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
 import {
@@ -109,7 +110,7 @@ it.effect('assignCategory moves the product to an existing category', () =>
 it.effect('assignCategory fails with a lifecycle conflict for an unknown category', () =>
   Effect.gen(function* () {
     const error = yield* Effect.flip(assignCategory(p1, 'missing', categories));
-    expect(error._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(error)).toBe(true);
   }),
 );
 
@@ -146,6 +147,6 @@ it.effect('updateCategoryCommand fails with not found for an unknown category', 
     const error = yield* Effect.flip(
       updateCategoryCommand(state, { _tag: 'UpdateCategory', id: 'missing', patch: { name: 'X' } }, input),
     );
-    expect(error._tag).toBe('MerchandiseNotFound');
+    expect(Schema.is(MerchandiseNotFound)(error)).toBe(true);
   }),
 );

@@ -7,7 +7,7 @@ import { executeRecords as executeAgreements } from '@app/legal-agreements/clien
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeProperty } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
-import { Effect, Schedule } from 'effect';
+import { Effect, Match, Schedule } from 'effect';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
@@ -27,9 +27,17 @@ export interface SourceState<Data> {
 }
 
 /** Gateway / assertion hiccups (e.g. while the composition is republished) are retried before reporting „forbidden“. */
-const transientOverviewFailure = (error: { readonly _tag: string }) =>
-  /^(OverviewAuthentication|GatewayAuthenticationRequired|GatewayReloadRequired|GatewayUnavailable|OverviewUnavailable)/u.test(
-    error._tag,
+const transientOverviewFailure = (error: Effect.Error<ReturnType<typeof executeOverview>>) =>
+  Match.value(error).pipe(
+    Match.tag(
+      'OverviewAuthenticationProblem',
+      'GatewayAuthenticationRequiredProblem',
+      'GatewayReloadRequiredProblem',
+      'GatewayUnavailableProblem',
+      'OverviewUnavailableProblem',
+      () => true,
+    ),
+    Match.orElse(() => false),
   );
 
 /** The governed read of each source; `ops(true)` also loads the search rows of the provoz records (first search on Přehled). */
@@ -71,12 +79,31 @@ export interface RentalOverviewSources {
 }
 
 export type SourceKey = keyof RentalOverviewSources;
-export const sourceKeys: readonly SourceKey[] = ['property', 'occupancy', 'agreements', 'work', 'finance', 'ops', 'parties'];
+export const sourceKeys: readonly SourceKey[] = [
+  'property',
+  'occupancy',
+  'agreements',
+  'work',
+  'finance',
+  'ops',
+  'parties',
+];
 
-const failureStatus = (error: unknown): SourceStatus => {
-  const tag = typeof error === 'object' && error !== null && '_tag' in error ? String(error._tag) : '';
-  return /Forbidden|Authentication|Unauthorized/u.test(tag) ? 'forbidden' : 'unavailable';
-};
+const failureStatus = (error: unknown): SourceStatus =>
+  Match.value(error).pipe(
+    Match.whenOr(
+      { _tag: 'RecordsForbiddenProblem' },
+      { _tag: 'RecordsAuthenticationProblem' },
+      { _tag: 'OverviewForbiddenProblem' },
+      { _tag: 'OverviewAuthenticationProblem' },
+      { _tag: 'CustomerListForbiddenProblem' },
+      { _tag: 'CustomerListAuthenticationProblem' },
+      { _tag: 'GatewayForbiddenProblem' },
+      { _tag: 'GatewayAuthenticationRequiredProblem' },
+      (): SourceStatus => 'forbidden',
+    ),
+    Match.orElse((): SourceStatus => 'unavailable'),
+  );
 
 interface Loaded<A> {
   readonly data: A;
@@ -115,7 +142,15 @@ const opsStore = definePageData({
   load: (search: boolean) => timed(loaders.ops(search)),
   runtime: browserRuntime,
 });
-const wholeKeys = ['agreements', 'finance', 'occupancy', 'parties', 'property', 'sales', 'work'] as const satisfies readonly (keyof typeof sourceStores)[];
+const wholeKeys = [
+  'agreements',
+  'finance',
+  'occupancy',
+  'parties',
+  'property',
+  'sales',
+  'work',
+] as const satisfies readonly (keyof typeof sourceStores)[];
 const SOURCE_CONCURRENCY = 8;
 
 /** `preloadPage` of Přehled and Moje agenda: all eight sources (the provoz source without search rows). */
@@ -224,4 +259,5 @@ export const nameLookup = (sources: RentalOverviewSources): ReadonlyMap<string, 
 };
 
 /** `true` once no source is still loading. */
-export const allSettled = (sources: RentalOverviewSources) => sourceKeys.every((key) => sources[key].status !== 'loading');
+export const allSettled = (sources: RentalOverviewSources) =>
+  sourceKeys.every((key) => sources[key].status !== 'loading');

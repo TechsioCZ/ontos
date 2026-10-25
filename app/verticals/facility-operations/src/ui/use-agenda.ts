@@ -60,8 +60,16 @@ const commandReason = (error: CommandFailure): FailureReason =>
 
 /** Gateway / assertion hiccups (e.g. while the composition is republished) are retried before reporting „forbidden“. */
 const transientAuthFailure = (error: RecordsFailure) =>
-  /^(RecordsAuthentication|GatewayAuthenticationRequired|GatewayReloadRequired|GatewayUnavailable|RecordsUnavailable)/u.test(
-    error._tag,
+  Match.value(error).pipe(
+    Match.tag(
+      'RecordsAuthenticationProblem',
+      'GatewayAuthenticationRequiredProblem',
+      'GatewayReloadRequiredProblem',
+      'GatewayUnavailableProblem',
+      'RecordsUnavailableProblem',
+      () => true,
+    ),
+    Match.orElse(() => false),
   );
 
 /** The governed records read as an Effect (transient gateway failures are retried twice); failures stay typed. */
@@ -86,7 +94,9 @@ const recordsRead = (request: {
 /** Runs the governed records read (transient gateway failures are retried twice). */
 export const loadRecords = (
   request: { readonly agendas?: readonly AgendaId[]; readonly fileId?: string; readonly historyFor?: string } = {},
-): Promise<{ readonly ok: true; readonly data: RecordsResponse } | { readonly ok: false; readonly reason: FailureReason }> =>
+): Promise<
+  { readonly ok: true; readonly data: RecordsResponse } | { readonly ok: false; readonly reason: FailureReason }
+> =>
   browserRuntime.runPromise(
     recordsRead(request).pipe(
       Effect.match({
@@ -138,7 +148,9 @@ export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 /** Uploads a browser File (≤ 5 MB). On success returns the snapshot to store in a documents command. */
 export const uploadFile = async (
   file: File,
-): Promise<{ readonly ok: true; readonly file: StoredFileRef } | { readonly ok: false; readonly reason: FailureReason }> => {
+): Promise<
+  { readonly ok: true; readonly file: StoredFileRef } | { readonly ok: false; readonly reason: FailureReason }
+> => {
   if (file.size > MAX_UPLOAD_BYTES) {
     return { ok: false, reason: 'invalid' };
   }
@@ -155,7 +167,9 @@ export const uploadFile = async (
   if (!outcome.ok) {
     return outcome;
   }
-  return outcome.result.file === undefined ? { ok: false, reason: 'unavailable' } : { ok: true, file: outcome.result.file };
+  return outcome.result.file === undefined
+    ? { ok: false, reason: 'unavailable' }
+    : { ok: true, file: outcome.result.file };
 };
 
 /** Fetches a stored file through the governed read and saves it in the browser. */

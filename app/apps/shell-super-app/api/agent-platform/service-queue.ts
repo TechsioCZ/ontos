@@ -15,7 +15,7 @@ import type {
   AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
-import { Effect } from 'effect';
+import { Effect, Match, Predicate } from 'effect';
 
 import { loadAgentProfiles } from '../auth/agent-store.ts';
 import { demoAccountCapability } from '../auth/demo-accounts.ts';
@@ -166,13 +166,15 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
     const actionSlug = proposal.actionSlug ?? 'apply-command';
-    const tag = proposal.command['_tag'];
     // apply-command needs a command `_tag`; a named Action (party-registry, commerce) takes its payload without one.
     const allowedCommand =
       ACTION_SLUG.test(actionSlug) &&
       (actionSlug === 'apply-command'
-        ? typeof tag === 'string' && tag !== '' && !HUMAN_ONLY_COMMANDS.has(tag)
-        : tag === undefined);
+        ? Match.value(proposal.command['_tag']).pipe(
+            Match.when(Match.nonEmptyString, (value) => !HUMAN_ONLY_COMMANDS.has(value)),
+            Match.orElse(() => false),
+          )
+        : Predicate.isUndefined(proposal.command['_tag']));
     if (!allowedCommand) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }

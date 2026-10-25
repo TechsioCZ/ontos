@@ -238,7 +238,7 @@ it.effect('installs exactly the file-selected role members without assigning a p
           scopedRoles: [{ legalEntityId: 'foreign-company', roleKey: 'writer', tenantId: context.tenantId }],
         }),
       );
-      expect(rejected._tag).toBe('Failure');
+      expect(Result.isFailure(rejected)).toBe(true);
     }
   }),
 );

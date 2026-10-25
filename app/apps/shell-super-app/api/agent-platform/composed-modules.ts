@@ -3,7 +3,7 @@
  * whether they keep their own AI change engine, and how their command revision is read. Everything comes from the
  * modules' own MCP contributions; the platform names no module.
  */
-import { Effect } from 'effect';
+import { Effect, Match } from 'effect';
 
 import { mcpModulesOf } from '../mcp/catalog.ts';
 import type { McpModule, McpModules } from '../mcp/catalog.ts';
@@ -49,9 +49,13 @@ export const commandRevisionFrom = (
   command: Readonly<Record<string, unknown>>,
 ): number | undefined => {
   const revision = module?.revision;
-  const tag = command['_tag'];
   const field =
-    revision?.fieldsByCommandPrefix.find((entry) => typeof tag === 'string' && tag.startsWith(entry.prefix))?.field ??
+    revision?.fieldsByCommandPrefix.find((entry) =>
+      Match.value(command['_tag']).pipe(
+        Match.when(Match.string, (value) => value.startsWith(entry.prefix)),
+        Match.orElse(() => false),
+      ),
+    )?.field ??
     revision?.field ??
     'revision';
   let current: unknown = body;

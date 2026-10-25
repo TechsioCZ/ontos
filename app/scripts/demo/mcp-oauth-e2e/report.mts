@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 
+import { Predicate } from 'effect';
+
 export interface StepResult {
   readonly variant: string;
   readonly name: string;
@@ -34,7 +36,7 @@ export class Recorder {
       value = outcome.value;
     } catch (error) {
       pass = false;
-      detail = error instanceof Error ? error.message : String(error);
+      detail = Predicate.isError(error) ? error.message : String(error);
       value = undefined;
     }
     const ms = Date.now() - started;

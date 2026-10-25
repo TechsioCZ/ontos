@@ -1,7 +1,7 @@
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
-import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
+import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
@@ -91,7 +91,7 @@ it.effect('rejects a product move into an unknown category', () =>
       command({ _tag: 'UpdateProduct', id: 'p1', patch: { categoryId: 'missing' } }),
       input,
     ).pipe(Effect.flip);
-    expect(failure._tag).toBe('MerchandiseLifecycleConflict');
+    expect(Schema.is(MerchandiseLifecycleConflict)(failure)).toBe(true);
   }),
 );
 

@@ -24,6 +24,14 @@ import {
   getReachableStep,
   parseCheckoutDraft,
 } from "@/features/checkout/checkout-state";
+
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+const isCheckoutStockError = (value: unknown): value is CheckoutStockError =>
+  value !== null && value !== undefined && CheckoutStockError.prototype.isPrototypeOf(value);
+const isCheckoutPriceError = (value: unknown): value is CheckoutPriceError =>
+  value !== null && value !== undefined && CheckoutPriceError.prototype.isPrototypeOf(value);
+
 export interface PlacedOrder {
   id: string;
   orderId: string;
@@ -258,9 +266,9 @@ function CheckoutCartProvider({
       checkoutDispatch({
         type: "submit-error",
         error:
-          error instanceof CheckoutStockError ||
-          error instanceof CheckoutPriceError ||
-          (error instanceof Error &&
+          isCheckoutStockError(error) ||
+          isCheckoutPriceError(error) ||
+          (isError(error) &&
             (error.message.startsWith("Cena se změnila") ||
               error.message.startsWith("Košík nyní nelze ověřit")))
             ? error.message

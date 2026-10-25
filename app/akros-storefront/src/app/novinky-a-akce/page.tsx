@@ -8,6 +8,9 @@ import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 import { getCatalog, getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
 
+const isError = (value: unknown): value is Error =>
+  value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
+
 export const metadata: Metadata = { title: "Novinky a akce" };
 
 const isGenericPromotionGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
@@ -19,7 +22,7 @@ export default async function NewsPage() {
     try {
       return (await getCatalogPage({ flag, pageSize: 48 })).model;
     } catch (error) {
-      console.error("[AKROS] novinky", flag, error instanceof Error ? error.message : error);
+      console.error("[AKROS] novinky", flag, isError(error) ? error.message : error);
       return baseCatalog;
     }
   };

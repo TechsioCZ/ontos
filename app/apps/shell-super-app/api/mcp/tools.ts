@@ -5,7 +5,7 @@
  */
 import { agentCommandOf } from '@app/shared-contracts/agent-proposals';
 import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
-import { Duration, Effect, Result } from 'effect';
+import { Duration, Effect, Predicate, Result } from 'effect';
 
 import type { JsonObject, McpCatalogModule, McpCatalogTool } from './catalog.ts';
 import { findModule, findTool } from './catalog.ts';
@@ -188,7 +188,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
   };
 
   const toolError = (error: ToolFailure): ToolResult => {
-    if (error._tag !== 'ModuleProblem') {
+    if (!Predicate.isTagged(error, 'ModuleProblem')) {
       return errorResult(error.message);
     }
     if (error.status === 401) {
@@ -224,7 +224,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
         Effect.catch((error) => Effect.succeed(toolError(error))),
         // A tool never fails the MCP call: a defect becomes an error result like any other failure.
         Effect.catchDefect((defect) =>
-          Effect.succeed(errorResult(defect instanceof Error ? defect.message : String(defect))),
+          Effect.succeed(errorResult(Predicate.isError(defect) ? defect.message : String(defect))),
         ),
         Effect.timed,
         Effect.tap(([elapsed, result]) =>
@@ -350,7 +350,9 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       Effect.flatMap((revision) => send(revision, key)),
       Effect.catchIf(
         (error) =>
-          error._tag === 'ModuleProblem' && error.status === 409 && (error.code ?? '').endsWith('revision_conflict'),
+          Predicate.isTagged(error, 'ModuleProblem') &&
+          error.status === 409 &&
+          (error.code ?? '').endsWith('revision_conflict'),
         // Only a conflict needs a fresh snapshot. Its changed command body needs its own stable key.
         () =>
           revisionAnswer(module, tool).pipe(

@@ -3,7 +3,7 @@ import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Result, Schema, Struct } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
   SalesPipelineLifecycleConflict,
@@ -626,14 +626,14 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       expectedRevision: number,
       invocationId: string,
     ) {
-      const permission = command._tag === 'AiProposeChanges' ? 'read_all' : 'write_all';
+      const proposing = Predicate.isTagged(command, 'AiProposeChanges');
+      const permission = proposing ? 'read_all' : 'write_all';
       if (!(yield* contextGrant(scope, permission))) {
         return yield* new SalesPipelinePermissionDenied({
           code: 'sales_pipeline_permission_denied',
-          reason:
-            command._tag === 'AiProposeChanges'
-              ? 'Návrhy AI vyžadují čtení příležitostí'
-              : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do příležitostí',
+          reason: proposing
+            ? 'Návrhy AI vyžadují čtení příležitostí'
+            : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do příležitostí',
         });
       }
       const snapshot = yield* load();

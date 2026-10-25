@@ -7,7 +7,7 @@
 //                     (only when nobody changed the entity since); pending proposals of the batch are rejected.
 //
 // Native Action grants authorize execution; the reducer retains its write_all and proposal state checks.
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Match, Predicate, Result, Schema } from 'effect';
 import type {
   AiBatch,
   AiChange,
@@ -529,7 +529,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
         const changes: AiChange[] = [];
         const log: AiLogEntry[] = [];
         for (const [index, proposal] of value.changes.entries()) {
-          if (proposal.operation._tag === 'PairOrder' && proposal.operation.approveCustomerLink === true) {
+          if (Predicate.isTagged(proposal.operation, 'PairOrder') && proposal.operation.approveCustomerLink === true) {
             return yield* invalid(
               'AI smí navrhnout párování jedné objednávky, ne trvalé propojení externího zákazníka.',
             );
@@ -541,7 +541,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
             Effect.mapError((failure) => new Error(failureReason(failure))),
             Effect.result,
           );
-          if (dryRun._tag === 'Failure') {
+          if (Result.isFailure(dryRun)) {
             return yield* invalid(
               `Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${dryRun.failure.message}`,
             );
@@ -561,7 +561,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
             status: 'pending',
             summary: described.summary,
             target:
-              described.target.id === undefined && proposal.operation._tag === 'CreateClient'
+              described.target.id === undefined && Predicate.isTagged(proposal.operation, 'CreateClient')
                 ? { ...described.target, id: dryRun.success.entityIds[0] ?? '' }
                 : described.target,
           };
@@ -651,7 +651,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
           const applied = yield* runOperation(working, change.operation, subContext(context, `a${index}`)).pipe(
             Effect.result,
           );
-          if (applied._tag === 'Failure') {
+          if (Result.isFailure(applied)) {
             working = withSlice(working, {
               ...slice,
               changes: replaceChange(slice.changes, {
@@ -677,7 +677,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
             ...after,
             changes: replaceChange(after.changes, {
               ...decided,
-              ...(change.operation._tag === 'CreateClient'
+              ...(Predicate.isTagged(change.operation, 'CreateClient')
                 ? { target: { ...change.target, id: applied.success.entityIds[0] ?? change.target.id ?? '' } }
                 : {}),
               appliedAt: context.now,

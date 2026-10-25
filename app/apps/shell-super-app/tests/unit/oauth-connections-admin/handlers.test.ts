@@ -4,7 +4,7 @@ import type {
   ConnectionSummary,
   PrincipalRef,
 } from '@app/shared-contracts/agent-access';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -223,7 +223,7 @@ it.effect('refuses the company list to a person who is not a company admin', () 
   Effect.gen(function* forbiddenListTest() {
     const { deps } = makeDeps(fixture());
     const error = yield* Effect.flip(listForAdmin(caller({}), deps, { filter: {} }));
-    expect(error._tag).toBe('ConnectionsForbidden');
+    expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
   }),
 );
 
@@ -246,7 +246,7 @@ it.effect('rejects a write on a module the connection may only read', () =>
     const error = yield* Effect.flip(
       updateConnection(caller({}), deps, narrowing({ modules: [{ access: 'write', moduleId: 'finance' }] })),
     );
-    expect(error._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     expect(calls.updates.length).toBe(0);
   }),
 );
@@ -255,7 +255,7 @@ it.effect('rejects a write policy above the connection maximum', () =>
   Effect.gen(function* policyAboveMaxTest() {
     const { calls, deps } = makeDeps(fixture());
     const error = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ writePolicy: 'direct' })));
-    expect(error._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     expect(calls.updates.length).toBe(0);
   }),
 );
@@ -264,7 +264,7 @@ it.effect('refuses to update a connection of another person', () =>
   Effect.gen(function* otherPersonUpdateTest() {
     const { calls, deps } = makeDeps(fixture());
     const error = yield* Effect.flip(updateConnection(caller({ principalId: 'person-2' }), deps, narrowing()));
-    expect(error._tag).toBe('ConnectionsForbidden');
+    expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
     expect(calls.updates.length).toBe(0);
   }),
 );
@@ -301,7 +301,7 @@ it.effect('refuses to widen a connection beyond what was approved, even within l
     ];
     for (const attempt of attempts) {
       const error = yield* Effect.flip(updateConnection(caller({}), deps, attempt));
-      expect(error._tag).toBe('ConnectionsInvalid');
+      expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     }
     expect(calls.updates.length).toBe(0);
     yield* updateConnection(caller({}), deps, narrowing());
@@ -313,9 +313,9 @@ it.effect('answers a stale update or revoke with ConnectionsGone', () =>
   Effect.gen(function* staleTest() {
     const { calls, deps } = makeDeps(fixture());
     const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ grantId: 'g2' })));
-    expect(update._tag).toBe('ConnectionsGone');
+    expect(Predicate.isTagged(update, 'ConnectionsGone')).toBe(true);
     const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g2' }));
-    expect(revoke._tag).toBe('ConnectionsGone');
+    expect(Predicate.isTagged(revoke, 'ConnectionsGone')).toBe(true);
     expect(calls.updates.length + calls.revokes.length).toBe(0);
   }),
 );
@@ -324,12 +324,12 @@ it.effect('rejects an over-long revoke reason and an unknown status filter with 
   Effect.gen(function* validationTest() {
     const { calls, deps } = makeDeps(fixture());
     const long = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g1', reason: 'x'.repeat(501) }));
-    expect(long._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(long, 'ConnectionsInvalid')).toBe(true);
     expect(calls.revokes.length).toBe(0);
     const status = yield* Effect.flip(
       listForAdmin(caller({ isCompanyAdmin: true }), deps, { filter: { status: 'draft' } }),
     );
-    expect(status._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(status, 'ConnectionsInvalid')).toBe(true);
   }),
 );
 
@@ -348,7 +348,7 @@ it.effect('keeps a company B admin from revoking a company A connection', () =>
         { grantId: 'g1', reason: 'Odebrání přístupu' },
       ),
     );
-    expect(error._tag).toBe('ConnectionsForbidden');
+    expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
     expect(calls.revokes.length).toBe(0);
   }),
 );
@@ -360,7 +360,7 @@ it.effect('requires a reason when an admin revokes someone else connection', () 
     const error = yield* Effect.flip(
       revokeConnection(caller({ isCompanyAdmin: true, principalId: 'person-4' }), deps, { grantId: 'g3' }),
     );
-    expect(error._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     expect(calls.revokes.length).toBe(0);
 
     const response = yield* revokeConnection(caller({ isCompanyAdmin: true, principalId: 'person-4' }), deps, {
@@ -389,7 +389,7 @@ it.effect('refuses operator changes to a person who is not a company admin', () 
     const error = yield* Effect.flip(
       replaceAgentOperators(caller({}), deps, { agentPrincipalId: 'agent-1', operatorPrincipalIds: [] }),
     );
-    expect(error._tag).toBe('ConnectionsForbidden');
+    expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
   }),
 );
 
@@ -402,7 +402,7 @@ it.effect('does not find an agent of another company', () =>
         operatorPrincipalIds: [],
       }),
     );
-    expect(error._tag).toBe('ConnectionsNotFound');
+    expect(Predicate.isTagged(error, 'ConnectionsNotFound')).toBe(true);
   }),
 );
 
@@ -415,7 +415,7 @@ it.effect('rejects an operator from another company', () =>
         operatorPrincipalIds: ['person-3'],
       }),
     );
-    expect(error._tag).toBe('ConnectionsInvalid');
+    expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
   }),
 );
 

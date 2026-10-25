@@ -11,6 +11,7 @@
  * Environment: ONTOS_DEMO_SEED_URL (default http://localhost:3020), ONTOS_DEMO_PASSWORD (password1234).
  */
 import { randomUUID } from 'node:crypto';
+import { Predicate } from 'effect';
 import { demoId, demoTenantId } from './fixture-ids.mts';
 
 const USAGE = `Usage:
@@ -267,7 +268,9 @@ for (const agent of SEEDS) {
   try {
     await seed(agent);
   } catch (error) {
-    console.error(`[seed-agent-entities] ${agent.displayName}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `[seed-agent-entities] ${agent.displayName}: ${Predicate.isError(error) ? error.message : String(error)}`,
+    );
     failures += 1;
   }
 }
