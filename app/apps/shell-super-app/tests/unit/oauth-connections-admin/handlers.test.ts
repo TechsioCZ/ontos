@@ -1,15 +1,11 @@
-import type {
-  AgentWritePolicy,
-  ConnectionLimits,
-  ConnectionSummary,
-  PrincipalRef,
-} from '@app/shared-contracts/agent-access';
-import { Effect, Predicate } from 'effect';
+import type { ConnectionLimits, ConnectionSummary, PrincipalRef } from '@app/shared-contracts/agent-access';
+import { Effect, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import type { CompanyDirectoryPort } from '../../../api/oauth-connections-admin/company-directory.ts';
+import { ConnectionsUnavailable } from '../../../api/oauth-connections-admin/connections-unavailable.ts';
 import type {
   CompanyAgent,
-  CompanyDirectoryPort,
   ConnectionsAdminDeps,
   ConnectionsCaller,
   GrantAdminPort,
@@ -40,7 +36,6 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
   client: { clientId: 'client-a', host: 'claude.ai', kind: 'cimd', logoUri: null, name: 'Claude' },
   createdAt: '2026-10-01T10:00:00.000Z',
   delegatedBy: { displayName: 'Jana Nováková', principalId: 'person-1' },
-  grantId: 'g1',
   granted: {
     modules: [
       { access: 'write', moduleId: 'warehouse' },
@@ -48,6 +43,7 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
     ],
     writePolicy: 'approval',
   },
+  grantId: 'g1',
   lastUsedAt: null,
   legalEntityId: companyA.legalEntityId,
   legalName: companyA.legalName,
@@ -78,6 +74,7 @@ const caller = (overrides: Partial<ConnectionsCaller>): ConnectionsCaller => ({
   isCompanyAdmin: false,
   legalEntityId: companyA.legalEntityId,
   legalName: companyA.legalName,
+  principal: { authMethod: 'session', legalEntityId: companyA.legalEntityId, principalId: 'person-1', tenantId },
   principalId: 'person-1',
   tenantId,
   ...overrides,
@@ -88,33 +85,33 @@ const fixture = (): Fixture => ({
     {
       description: null,
       displayName: 'Agent Sklad',
+      hasProfile: false,
       legalEntityId: companyA.legalEntityId,
       modules: [{ access: 'read', moduleId: 'warehouse' }],
       ownerPrincipalId: null,
       principalId: 'agent-1',
-      hasProfile: false,
       status: 'active',
       writePolicy: 'approval',
     },
     {
       description: null,
       displayName: 'Agent Účet',
+      hasProfile: false,
       legalEntityId: companyA.legalEntityId,
       modules: [{ access: 'read', moduleId: 'finance' }],
       ownerPrincipalId: null,
       principalId: 'agent-2',
-      hasProfile: false,
       status: 'active',
       writePolicy: 'direct',
     },
     {
       description: null,
       displayName: 'Agent B',
+      hasProfile: false,
       legalEntityId: companyB.legalEntityId,
       modules: [],
       ownerPrincipalId: null,
       principalId: 'agent-b',
-      hasProfile: false,
       status: 'active',
       writePolicy: 'read_only',
     },
@@ -144,36 +141,44 @@ const fixture = (): Fixture => ({
   ],
 });
 
+interface Calls {
+  readonly operatorReplacements: Parameters<CompanyDirectoryPort<never>['replaceOperators']>[0][];
+  readonly revokes: Parameters<GrantAdminPort<never>['revoke']>[0][];
+  snapshots: number;
+  readonly updates: Parameters<GrantAdminPort<never>['update']>[0][];
+}
+
 const makeDeps = (state: Fixture) => {
-  const calls = {
-    operatorReplacements: [] as Parameters<CompanyDirectoryPort<never>['replaceOperators']>[0][],
-    revokes: [] as Parameters<GrantAdminPort<never>['revoke']>[0][],
-    updates: [] as Parameters<GrantAdminPort<never>['update']>[0][],
-  };
+  const calls: Calls = { operatorReplacements: [], revokes: [], snapshots: 0, updates: [] };
   const directory: CompanyDirectoryPort<never> = {
-    agents: (_tenant, _company, members) =>
-      Effect.succeed(state.agents.filter((agent) => members.includes(agent.principalId))),
-    members: (_tenant, legalEntityId) =>
-      Effect.succeed(
-        [...state.agents, ...state.people]
-          .filter((member) => member.legalEntityId === legalEntityId)
-          .map((member) => member.principalId),
-      ),
-    operatorsOf: (agentPrincipalId) => Effect.succeed(state.operators[agentPrincipalId] ?? []),
-    people: (_tenant, members) =>
-      Effect.succeed(
-        state.people
-          .filter((person) => members.includes(person.principalId))
-          .map(({ displayName, principalId }) => ({ displayName, principalId })),
-      ),
+    confirmArchived: () => Effect.void,
     replaceOperators: (input) => {
       calls.operatorReplacements.push(input);
       state.operators[input.agentPrincipalId] = [...input.operatorPrincipalIds];
       return Effect.void;
     },
+    snapshot: () => {
+      calls.snapshots += 1;
+      return Effect.succeed({
+        agents: state.agents
+          .filter((agent) => agent.legalEntityId === companyA.legalEntityId)
+          .map((agent) => ({
+            ...agent,
+            operatorCommand: null,
+            operatorPrincipalIds: state.operators[agent.principalId] ?? [],
+          })),
+        members: [...state.agents, ...state.people]
+          .filter((member) => member.legalEntityId === companyA.legalEntityId)
+          .map((member) => member.principalId),
+        people: state.people
+          .filter((person) => person.legalEntityId === companyA.legalEntityId)
+          .map(({ displayName, principalId }) => ({ displayName, principalId })),
+      });
+    },
   };
   const grants: GrantAdminPort<never> = {
-    get: (grantId) => Effect.succeed(state.connections.find((connection) => connection.grantId === grantId)),
+    get: (grantId) =>
+      Effect.succeed(Option.fromUndefinedOr(state.connections.find((connection) => connection.grantId === grantId))),
     list: (filter) =>
       Effect.succeed(
         state.connections.filter(
@@ -202,11 +207,13 @@ const makeDeps = (state: Fixture) => {
   return { calls, deps };
 };
 
-const narrowing = (overrides: Partial<Parameters<typeof updateConnection>[2]> = {}) => ({
+const narrowing = (
+  overrides: Partial<Parameters<typeof updateConnection>[2]> = {},
+): Parameters<typeof updateConnection>[2] => ({
   allModules: false,
   grantId: 'g1',
-  modules: [{ access: 'read' as const, moduleId: 'warehouse' }],
-  writePolicy: 'read_only' as AgentWritePolicy,
+  modules: [{ access: 'read', moduleId: 'warehouse' }],
+  writePolicy: 'read_only',
   ...overrides,
 });
 
@@ -306,6 +313,32 @@ it.effect('refuses to widen a connection beyond what was approved, even within l
     expect(calls.updates.length).toBe(0);
     yield* updateConnection(caller({}), deps, narrowing());
     expect(calls.updates.length).toBe(1);
+  }),
+);
+
+it.effect('answers an absent Option with ConnectionsNotFound without updating or revoking', () =>
+  Effect.gen(function* absentConnectionTest() {
+    const { calls, deps } = makeDeps(fixture());
+    const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ grantId: 'missing' })));
+    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'missing' }));
+    expect(Predicate.isTagged(update, 'ConnectionsNotFound')).toBe(true);
+    expect(Predicate.isTagged(revoke, 'ConnectionsNotFound')).toBe(true);
+    expect(calls.updates).toEqual([]);
+    expect(calls.revokes).toEqual([]);
+  }),
+);
+
+it.effect('hides a present connection belonging to another tenant', () =>
+  Effect.gen(function* otherTenantConnectionTest() {
+    const state = fixture();
+    state.connections[0] = summary({ tenantId: 'another-tenant' });
+    const { calls, deps } = makeDeps(state);
+    const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing()));
+    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g1' }));
+    expect(Predicate.isTagged(update, 'ConnectionsNotFound')).toBe(true);
+    expect(Predicate.isTagged(revoke, 'ConnectionsNotFound')).toBe(true);
+    expect(calls.updates).toEqual([]);
+    expect(calls.revokes).toEqual([]);
   }),
 );
 
@@ -430,5 +463,66 @@ it.effect('revokes the delegated connection of a removed operator', () =>
     expect(response.revokedConnections).toBe(1);
     expect(calls.revokes.map((revoke) => [revoke.grantId, revoke.reasonCode])).toEqual([['g1', 'operator_removed']]);
     expect(calls.operatorReplacements[0]?.operatorPrincipalIds).toEqual(['person-2']);
+    expect(calls.snapshots).toBe(1);
+    expect(calls.operatorReplacements[0]?.snapshot.agents[0]?.operatorPrincipalIds).toEqual(['person-1']);
+    expect(calls.operatorReplacements[0]).not.toHaveProperty('actorPrincipalId');
+    expect(calls.operatorReplacements[0]).not.toHaveProperty('tenantId');
+    expect(calls.operatorReplacements[0]).not.toHaveProperty('legalEntityId');
+  }),
+);
+
+it.effect('finishes removed-delegator revocation after a previously committed operator projection', () =>
+  Effect.gen(function* retryRevocationTest() {
+    const state = fixture();
+    state.operators['agent-1'] = ['person-2'];
+    const { calls, deps } = makeDeps(state);
+    yield* replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
+      agentPrincipalId: 'agent-1',
+      operatorPrincipalIds: ['person-2'],
+    });
+    expect(calls.revokes.map(({ grantId }) => grantId)).toEqual(['g1']);
+    expect(calls.snapshots).toBe(1);
+  }),
+);
+
+it.effect('rejects inactive agents before operator changes or connection revocation', () =>
+  Effect.gen(function* inactiveAgentTest() {
+    const state = fixture();
+    for (const [index, agent] of state.agents.entries()) {
+      if (agent.principalId === 'agent-1') {
+        state.agents[index] = { ...agent, status: 'disabled' };
+      }
+    }
+    const { calls, deps } = makeDeps(state);
+    const error = yield* Effect.flip(
+      replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
+        agentPrincipalId: 'agent-1',
+        operatorPrincipalIds: [],
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
+    expect(calls.operatorReplacements).toEqual([]);
+    expect(calls.revokes).toEqual([]);
+  }),
+);
+
+it.effect('does not revoke connections or report success before operator projection confirmation', () =>
+  Effect.gen(function* projectionFailureTest() {
+    const { calls, deps } = makeDeps(fixture());
+    const failing = {
+      ...deps,
+      directory: {
+        ...deps.directory,
+        replaceOperators: () => Effect.fail(new ConnectionsUnavailable({ cause: 'Projection still pending' })),
+      },
+    };
+    const error = yield* Effect.flip(
+      replaceAgentOperators(caller({ isCompanyAdmin: true }), failing, {
+        agentPrincipalId: 'agent-1',
+        operatorPrincipalIds: [],
+      }),
+    );
+    expect(Predicate.isTagged(error, 'ConnectionsUnavailable')).toBe(true);
+    expect(calls.revokes).toEqual([]);
   }),
 );
