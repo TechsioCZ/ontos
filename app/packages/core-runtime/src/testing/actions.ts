@@ -24,7 +24,7 @@ import type {
   PrepareActionInvocationInput,
   RejectPermissionDeniedInput,
 } from '../actions/repository.ts';
-import type { ActionRuntimeStage } from '../actions/runtime.ts';
+import type { ActionRuntimeOptions, ActionRuntimeStage } from '../actions/runtime.ts';
 import { ActionRuntime, makeActionRuntime } from '../actions/runtime.ts';
 import { DatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { PARTY_REGISTRY_REQUEST_IDENTITY, SHARED_RUNTIME_IDENTITY } from '../db/database-identity-manifest.ts';
@@ -35,6 +35,7 @@ import { checkModuleEntrypoint, makeModuleStateSnapshot } from '../modules/modul
 import type { TenantModuleState } from '../modules/tenant-module-state-service.ts';
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
+import { ActionAuthorizationPreflight } from '../permissions/action-authorization-preflight.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
@@ -110,6 +111,7 @@ export interface ActionTestHarnessOptions {
   readonly actionPermission?: ContextAccessDecision;
   /** Persist the first commit, then simulate a database connection losing its acknowledgement. */
   readonly commitAcknowledgement?: 'indeterminate-once';
+  readonly compositionRevision?: string;
   readonly legalEntityAccess?: ContextAccessDecision;
   readonly legalEntityPermission?: ContextAccessDecision;
   readonly moduleState?: TenantModuleState;
@@ -481,6 +483,22 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     }
     return () => Schema.decodeUnknownEffect(Schema.Any)(bindings.get(registration)).pipe(Effect.orDie);
   };
+  const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+  let runtimeOptions: ActionRuntimeOptions = {
+    contextAccess,
+    // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+    lockCompositionAuthority: () => Effect.succeed([]),
+    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+    moduleStateGate,
+    onStage: (stage) => {
+      stages.push(stage);
+    },
+    resolveCompositionRevision: () => Effect.succeed(options.compositionRevision ?? 'a'.repeat(64)),
+    resolveServiceFactory,
+  };
+  if (Option.isSome(authorizationPreflight)) {
+    runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+  }
   const runtime = makeActionRuntime(
     database,
     repository,
@@ -496,18 +514,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
           : Effect.succeed(options.actionPermission ?? 'denied'),
     },
     scopeResolver,
-    {
-      contextAccess,
-      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
-      lockCompositionAuthority: () => Effect.succeed([]),
-      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-      moduleStateGate,
-      onStage: (stage) => {
-        stages.push(stage);
-      },
-      resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
-      resolveServiceFactory,
-    },
+    runtimeOptions,
   );
   return Object.freeze({
     layer: Layer.succeed(ActionRuntime, runtime),

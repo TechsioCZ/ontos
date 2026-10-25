@@ -27,7 +27,7 @@ const ConnectionModuleGrantSchema = Schema.Struct({
 export const OAuthConnectionContextSchema = Schema.Struct({
   clientId: nonEmptyString.check(Schema.isMaxLength(500)),
   clientName: nonEmptyString.check(Schema.isMaxLength(200)),
-  grantId: uuid,
+  grantId: decodedStringBrand(uuid, 'OAuthGrantId'),
   modules: Schema.Union([
     Schema.Literal('all'),
     Schema.Array(ConnectionModuleGrantSchema).check(Schema.isMaxLength(100)),
@@ -94,7 +94,9 @@ const validateOAuthConnectionContext: PrincipalContextValidator = (context) =>
   context.impersonatedByPrincipalId !== undefined ||
   context.authContextRef !== `oauth-grant:${context.connection.grantId}` ||
   context.delegatedByPrincipalId === context.principalId
-    ? issue('oauth_connection context requires a binding, its grant reference, a legal entity and a distinct delegating principal')
+    ? issue(
+        'oauth_connection context requires a binding, its grant reference, a legal entity and a distinct delegating principal',
+      )
     : [];
 
 const principalContextValidators = {
@@ -124,3 +126,13 @@ export const TrustedPrincipalContextSchema = TrustedPrincipalContextFieldsSchema
 );
 
 export type TrustedPrincipalContext = Schema.Schema.Type<typeof TrustedPrincipalContextSchema>;
+
+/** Validates company scope without replacing the original admitted carrier. */
+export const TrustedCompanyPrincipalContextSchema = Schema.Struct({
+  ...TrustedPrincipalContextSchema.fields,
+  legalEntityId: LegalEntityIdSchema.check(Schema.isUUID()),
+}).check(
+  Schema.makeFilter((context) =>
+    Schema.is(TrustedPrincipalContextSchema)(context) ? undefined : 'A valid trusted company principal is required',
+  ),
+);

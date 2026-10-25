@@ -8,6 +8,7 @@ import { changePrincipalStatusAction } from './change-principal-status.action.ts
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
 import { configureAgentAction } from './configure-agent.action.ts';
 import { manageAgentStatusAction } from './manage-agent-status.action.ts';
+import { mutateAgentProposalsAction } from './mutate-agent-proposals.action.ts';
 import { configureDemoCompaniesAction } from './configure-demo-companies.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
 import { invitePersonAction } from './invite-person.action.ts';
@@ -33,6 +34,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   changeTenantModuleStateAction.descriptor,
   configureAgentAction.descriptor,
   manageAgentStatusAction.descriptor,
+  mutateAgentProposalsAction.descriptor,
   configureDemoCompaniesAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
   invitePersonAction.descriptor,

@@ -84,6 +84,109 @@ const has = (relationships: readonly v1.Relationship[], resourceType: string, re
 const grantId = (actionKey: string, company = legalEntityId) =>
   toSpiceDbActionGrantObjectId({ actionKey, legalEntityId: company, tenantId });
 
+const proposalLifecycle = {
+  actionKey: 'core.identity.mutate-agent-proposals',
+  legalEntityScope: 'required',
+  owningModuleKey: 'core.identity',
+} as const;
+const proposalActions = [
+  ...input.actions,
+  proposalLifecycle,
+  { ...proposalLifecycle, actionKey: 'core.identity.configure-agent' },
+];
+
+it('gives approval-only agents exactly lifecycle execution and selected business proposal rights', () => {
+  const result = agentGrantRelationships({ ...input, actions: proposalActions, writePolicy: 'approval' });
+  const grants = result.filter((item) => item.resource?.objectType === 'action_grant');
+  expect(grants.map((item) => [item.resource?.objectId, item.relation])).toEqual([
+    [grantId('unrelated.command'), 'proposer_role'],
+    [grantId(proposalLifecycle.actionKey), 'role'],
+  ]);
+  expect(
+    grants.every(
+      (item) =>
+        item.subject?.object?.objectId === agentScopedRoleObjectId(scope) &&
+        item.subject.object.objectType === 'scoped_role' &&
+        item.subject.optionalRelation === 'member',
+    ),
+  ).toBe(true);
+  expect(result.some((item) => item.resource?.objectType === 'action' || item.relation === 'executor')).toBe(false);
+  expect(result.some((item) => item.relation === 'writer_role')).toBe(false);
+  expect(has(result, 'action_grant', grantId(proposalLifecycle.actionKey, otherCompany), 'role')).toBe(false);
+  expect(
+    has(
+      result,
+      'action_grant',
+      toSpiceDbActionGrantObjectId({ actionKey: proposalLifecycle.actionKey, tenantId }),
+      'role',
+    ),
+  ).toBe(false);
+  expect(has(result, 'module_access', moduleAccess(legalEntityId, 'core.identity').resourceId, 'accessor_role')).toBe(
+    false,
+  );
+  const foreignTenant = toSpiceDbActionGrantObjectId({
+    actionKey: proposalLifecycle.actionKey,
+    legalEntityId,
+    tenantId: 'foreign-tenant',
+  });
+  expect(has(result, 'action_grant', foreignTenant, 'role')).toBe(false);
+});
+
+it('requires an exact published Core lifecycle descriptor and an actual proposable business grant', () => {
+  for (const actions of [
+    input.actions,
+    [...input.actions, { ...proposalLifecycle, owningModuleKey: 'work.tasks' }],
+    [...input.actions, { ...proposalLifecycle, legalEntityScope: 'optional' as const }],
+    [...input.actions, { ...proposalLifecycle, legalEntityScope: 'forbidden' as const }],
+  ]) {
+    const result = agentGrantRelationships({ ...input, actions, writePolicy: 'approval' });
+    expect(has(result, 'action_grant', grantId(proposalLifecycle.actionKey), 'role')).toBe(false);
+  }
+  for (const overrides of [
+    { writePolicy: 'read_only' as const },
+    { modules: [] },
+    { modules: [{ access: 'read' as const, moduleId: 'demo.crm' }] },
+    { actions: [proposalLifecycle] },
+    {
+      actions: [
+        proposalLifecycle,
+        { actionKey: 'tenant.only', legalEntityScope: 'forbidden' as const, owningModuleKey: 'demo.crm' },
+      ],
+    },
+  ]) {
+    const result = agentGrantRelationships({
+      ...input,
+      actions: proposalActions,
+      writePolicy: 'approval',
+      ...overrides,
+    });
+    expect(result.filter((item) => item.resource?.objectType === 'action_grant')).toEqual([]);
+  }
+});
+
+it('keeps direct business execution separate from the one lifecycle execution grant', () => {
+  const result = agentGrantRelationships({ ...input, actions: proposalActions });
+  expect(
+    result
+      .filter((item) => item.resource?.objectType === 'action_grant')
+      .map((item) => [item.resource?.objectId, item.relation]),
+  ).toEqual([
+    [grantId('unrelated.command'), 'role'],
+    [grantId(proposalLifecycle.actionKey), 'role'],
+  ]);
+});
+
+it('never treats a wrongly owned proposal lifecycle descriptor as a selected business Action', () => {
+  for (const writePolicy of ['approval', 'direct'] as const) {
+    const result = agentGrantRelationships({
+      ...input,
+      actions: [...input.actions, { ...proposalLifecycle, owningModuleKey: 'demo.crm' }],
+      writePolicy,
+    });
+    expect(result.some((item) => item.resource?.objectId === grantId(proposalLifecycle.actionKey))).toBe(false);
+  }
+});
+
 it('classifies the retained named-permission restriction and company module choices', () => {
   expect(isReadPermission('demo_crm.read_all')).toBe(true);
   expect(isReadPermission('demo.crm.assign')).toBe(false);

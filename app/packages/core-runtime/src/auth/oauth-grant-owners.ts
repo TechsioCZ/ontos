@@ -26,7 +26,7 @@ export class OAuthGrantOwners extends Context.Service<
       query: OAuthGrantOwnerQuery,
     ) => Effect.Effect<readonly OAuthGrantOwner[], OAuthAuthenticationAuditUnavailable>;
   }
->()('@app/core-runtime/auth/OAuthGrantOwners') {}
+>()('@app/core-runtime/auth/oauth-grant-owners/OAuthGrantOwners') {}
 
 export const retainedOAuthRevocationGrantOwners = (
   query: OAuthGrantOwnerQuery,

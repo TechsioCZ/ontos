@@ -116,7 +116,7 @@ export type OAuthAuthenticationObservation = typeof OAuthAuthenticationObservati
 
 /** Project the retained grant before strict decoding, so a full native grant row can be supplied structurally. */
 export const oauthAuthenticationAuditRow = (observation: OAuthAuthenticationObservation) =>
-  Schema.decodeUnknownEffect(OAuthAuthenticationObservationSchema, { onExcessProperty: 'error' })({
+  Schema.decodeEffect(OAuthAuthenticationObservationSchema, { onExcessProperty: 'error' })({
     ...observation,
     grant: {
       clientId: observation.grant.clientId,

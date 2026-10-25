@@ -109,11 +109,65 @@ export type {
 export { InvitePersonPayloadSchema, InvitePersonResultSchema } from './auth/person-invitation.ts';
 export type { InvitePersonPayload, InvitePersonResult } from './auth/person-invitation.ts';
 export { invitePersonAction } from './modules/actions/invite-person.action.ts';
+export { identityAdministrationAuditRead } from './auth/identity-administration-audit-read.ts';
+export { IdentityAdministrationAuditResultSchema } from './auth/identity-administration-audit-contract.ts';
+export {
+  IdentityAdministrationDeniedAudit,
+  IdentityAdministrationDeniedAuditLive,
+} from './auth/identity-administration-audit-denied.ts';
+export {
+  StaffRoleTemplateAccountProvider,
+  StaffRoleTemplateEmailsSchema,
+  StaffRoleTemplateAccountsSchema,
+} from './auth/staff-role-template-account-provider.ts';
+export { staffRoleTemplateBindingsRead } from './auth/staff-role-template-bindings-read.ts';
+export { mutateAgentProposalsAction } from './modules/actions/mutate-agent-proposals.action.ts';
+export {
+  AgentProposalCommandPayloadSchema,
+  AgentProposalCommandResultSchema,
+} from './auth/agent-proposal-command-contract.ts';
+export type {
+  AgentProposalCommandPayload,
+  AgentProposalCommandResult,
+} from './auth/agent-proposal-command-contract.ts';
+export { AgentProposalCommandError } from './auth/agent-proposal-command-error.ts';
+export {
+  AgentProposalCommandPreparation,
+  AgentProposalCommandPreparationLive,
+  AgentProposalCommandAuthorizationPreflightLive,
+} from './auth/agent-proposal-command-preparation.ts';
+export { agentProposalQueueRead } from './auth/agent-proposal-queue-read.ts';
+export {
+  AGENT_PROPOSAL_QUEUE_CANDIDATE_LIMIT,
+  AGENT_PROPOSAL_WITHDRAWAL_BATCH_LIMIT,
+  AgentProposalCommandRecoverySchema,
+  AgentProposalReservationSchema,
+  AgentProposalQueueInputSchema,
+  AgentProposalQueueModuleReview,
+  AgentProposalQueueRequestSchema,
+  AgentProposalQueueResultSchema,
+  AgentProposalQueueRiskSchema,
+  AgentProposalQueueRowSchema,
+  AgentProposalQueueStatusSchema,
+  AgentProposalQueueVisibilitySchema,
+} from './auth/agent-proposal-queue-contract.ts';
+export type {
+  AgentProposalCommandRecovery,
+  AgentProposalReservation,
+  AgentProposalQueueInput,
+  AgentProposalQueueModuleReviewService,
+  AgentProposalQueueRow,
+} from './auth/agent-proposal-queue-contract.ts';
 export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 export { OAuthAuthenticationAudit, OAuthAuthenticationAuditLive } from './auth/oauth-authentication-audit.ts';
 export { OAuthAuthenticationAuditUnavailable } from './auth/oauth-authentication-audit-unavailable.ts';
 export { OAuthConnectionCompanies, OAuthConnectionCompaniesLive } from './auth/oauth-connection-companies.ts';
 export { OAuthGrantOwners } from './auth/oauth-grant-owners.ts';
+export { OAuthGrantRegistry } from './auth/oauth-grant-registry-service.ts';
+export { OAuthGrantRegistryLive } from './auth/oauth-grant-registry-live.ts';
+export { OAuthGrantRegistryUnavailable } from './auth/oauth-grant-registry-unavailable.ts';
+export { OAuthGrantModulesSchema } from './auth/oauth-grant-registry-contract.ts';
+export type { OAuthGrantPrincipal, OAuthGrantRecord } from './auth/oauth-grant-registry-contract.ts';
 export {
   OAuthConnectionRevocationNotesInputSchema,
   OAuthConnectionRevocationNotesResultSchema,
@@ -487,6 +541,7 @@ export type {
   ResolveActionCommitInput,
   RunActionInput,
 } from './actions/runtime.ts';
+export { TrustedCompanyPrincipalContextSchema } from './actions/principal-context.ts';
 export {
   ActionTransportMetadataSchema,
   TrustedPrincipalContextSchema,

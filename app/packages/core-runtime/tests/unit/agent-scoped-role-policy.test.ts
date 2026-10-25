@@ -4,6 +4,8 @@ import { expect, it } from 'effect-rstest';
 
 import { agentGrantRelationships } from '../../src/install/agent-entity-grants.ts';
 import { readScopedRoleTemplatePolicy } from '../../src/install/demo-account-administration.ts';
+import { buildActionAuthorizationRelationships } from '../../src/install/action-authorization-provisioning.ts';
+import { toSpiceDbActionGrantObjectId } from '../../src/permissions/service.ts';
 import {
   planAgentScopedRoleReplacement,
   replaceAgentScopedRolePolicy,
@@ -96,6 +98,84 @@ const graph = (initial: readonly v1.Relationship[] = []) => {
   };
   return { control, reads, rpc, values: () => [...stored.values()], writes };
 };
+
+it.effect(
+  'revokes proposal lifecycle execution with its profile without touching installed Actions or another company',
+  () =>
+    Effect.gen(function* revokeProposalLifecycle() {
+      const lifecycle = 'core.identity.mutate-agent-proposals';
+      const input = {
+        ...scope,
+        actions: [
+          {
+            actionKey: 'example.module.command',
+            legalEntityScope: 'required' as const,
+            owningModuleKey: 'example.module',
+          },
+          { actionKey: lifecycle, legalEntityScope: 'required' as const, owningModuleKey: 'core.identity' },
+        ],
+        legalEntityWriteRelations: new Map<string, readonly string[]>(),
+        modules: [{ access: 'write' as const, moduleId: 'example.module' }],
+        template: [],
+        writePolicy: 'approval' as const,
+      };
+      const previous = agentGrantRelationships(input);
+      const foreign = agentGrantRelationships({ ...input, legalEntityId: 'company-b' });
+      const installed = buildActionAuthorizationRelationships([{ ...scope, actionKey: lifecycle }]);
+      const lifecycleId = toSpiceDbActionGrantObjectId({ ...scope, actionKey: lifecycle });
+      expect(previous.some((item) => item.resource?.objectId === lifecycleId && item.relation === 'role')).toBe(true);
+      for (const desired of [
+        agentGrantRelationships({ ...input, writePolicy: 'read_only' }),
+        agentGrantRelationships({ ...input, modules: [] }),
+        agentGrantRelationships({
+          ...input,
+          actions: input.actions.filter(({ actionKey }) => actionKey === lifecycle),
+        }),
+        [],
+      ]) {
+        const state = graph([...previous, ...foreign, ...installed]);
+        yield* replaceAgentScopedRolePolicy(state.rpc, {
+          ...scope,
+          currentPrincipalRelationships: directMemberships([...previous, ...foreign]),
+          desired,
+        });
+        expect(state.values().some((item) => item.resource?.objectId === lifecycleId)).toBe(false);
+        const remaining = new Set(state.values().map(identity));
+        expect([...foreign, ...installed].every((item) => remaining.has(identity(item)))).toBe(true);
+        expect(state.writes).toHaveLength(1);
+        expect(
+          state.writes[0]?.updates.some(
+            (update) =>
+              update.operation === v1.RelationshipUpdate_Operation.DELETE &&
+              update.relationship?.resource?.objectId === lifecycleId,
+          ),
+        ).toBe(true);
+      }
+      const foreignLifecycle = previous.find((item) => item.resource?.objectId === lifecycleId);
+      if (foreignLifecycle === undefined) {
+        expect.unreachable('missing proposal lifecycle grant');
+      }
+      const denied = graph();
+      const result = yield* Effect.result(
+        replaceAgentScopedRolePolicy(denied.rpc, {
+          ...scope,
+          currentPrincipalRelationships: [],
+          desired: [
+            v1.Relationship.create({
+              ...foreignLifecycle,
+              resource: {
+                objectId: toSpiceDbActionGrantObjectId({ ...scope, actionKey: lifecycle, legalEntityId: 'company-b' }),
+                objectType: 'action_grant',
+              },
+            }),
+          ],
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      expect(denied.reads).toHaveLength(0);
+      expect(denied.writes).toHaveLength(0);
+    }),
+);
 
 it.effect(
   'atomically replaces role policy and removes an unexpected second member without copying principal grants',

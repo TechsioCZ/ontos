@@ -73,7 +73,7 @@ const toOAuthGrantRecord = (row: DbGrant): Effect.Effect<OAuthGrantRecord, OAuth
 const firstGrant = (
   rows: readonly DbGrant[],
 ): Effect.Effect<Option.Option<OAuthGrantRecord>, OAuthGrantRegistryUnavailable> =>
-  rows[0] === undefined ? Effect.succeed(Option.none()) : toOAuthGrantRecord(rows[0]).pipe(Effect.map(Option.some));
+  rows[0] === undefined ? Effect.succeedNone : toOAuthGrantRecord(rows[0]).pipe(Effect.asSome);
 
 /** Same-key lookup of the "one profile per (user, company, acting principal, client)" rule. */
 
@@ -454,12 +454,12 @@ const makeRegistry = (executor: CoreDatabaseExecutor): (typeof OAuthGrantRegistr
               .where(and(eq(grants.tenantId, input.tenantId), eq(grants.authBindingId, input.authBindingId)))
               .for('update');
             if (grantRow === undefined) {
-              return;
+              return yield* Effect.void;
             }
             const grant = yield* toOAuthGrantRecord(grantRow);
             if (input.status === 'active') {
               if (grant.status !== 'active') {
-                yield* unavailable('Cannot activate a terminal grant binding');
+                return yield* unavailable('Cannot activate a terminal grant binding');
               }
               const activePrincipals = yield* transaction
                 .select()
@@ -479,10 +479,10 @@ const makeRegistry = (executor: CoreDatabaseExecutor): (typeof OAuthGrantRegistr
                 ) ||
                 !activePrincipals.some((row) => row.principalId === grant.userPrincipalId && row.kind === 'human')
               ) {
-                yield* unavailable('Cannot activate an inactive principal binding');
+                return yield* unavailable('Cannot activate an inactive principal binding');
               }
             }
-            yield* transaction
+            return yield* transaction
               .update(bindings)
               .set({
                 bindingRevision: sql`${bindings.bindingRevision} + 1`,
@@ -503,7 +503,8 @@ const makeRegistry = (executor: CoreDatabaseExecutor): (typeof OAuthGrantRegistr
                   ne(bindings.status, 'revoked'),
                   isNull(bindings.revokedAt),
                 ),
-              );
+              )
+              .pipe(Effect.asVoid);
           }),
         )
         .pipe(Effect.mapError(unavailable));

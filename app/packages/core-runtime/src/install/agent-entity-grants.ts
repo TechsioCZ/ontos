@@ -23,6 +23,7 @@ const invalid = (reason: string): never => {
   throw new AgentGrantInvariantError({ reason });
 };
 const companyScopedTypes: ReadonlySet<string> = new Set(['legal_entity', 'module_access', 'context_permission']);
+const proposalLifecycleActionKey = 'core.identity.mutate-agent-proposals';
 
 /** Legacy named-permission ceiling; role authority is persisted as graph policy, not derived at check time. */
 export const isReadPermission = (permission: string): boolean => /(?:^|[._])read(?:_all)?$/u.test(permission);
@@ -198,6 +199,7 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
   );
   const actionPolicy = input.actions.flatMap((action) =>
     input.writePolicy !== 'read_only' &&
+    action.actionKey !== proposalLifecycleActionKey &&
     selectedWriters.has(action.owningModuleKey) &&
     action.legalEntityScope !== 'forbidden'
       ? [
@@ -213,6 +215,28 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
         ]
       : [],
   );
+  // Proposal persistence is a Core lifecycle Action, not business execution or Core module administration.
+  // Require a published exact descriptor and an actual business Action grant; selections alone are not authority.
+  const proposalLifecyclePolicy =
+    actionPolicy.length > 0 &&
+    input.actions.some(
+      (action) =>
+        action.actionKey === proposalLifecycleActionKey &&
+        action.owningModuleKey === 'core.identity' &&
+        action.legalEntityScope === 'required',
+    )
+      ? [
+          policy(
+            'action_grant',
+            toSpiceDbActionGrantObjectId({
+              actionKey: proposalLifecycleActionKey,
+              legalEntityId: input.legalEntityId,
+              tenantId: input.tenantId,
+            }),
+            'role',
+          ),
+        ]
+      : [];
   const relationships = [
     v1.Relationship.create({
       relation: 'company_member',
@@ -225,6 +249,7 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
     ...shellAccess,
     ...modulePolicy,
     ...actionPolicy,
+    ...proposalLifecyclePolicy,
   ];
   return [...new Map(relationships.map((item) => [v1.Relationship.toJsonString(item), item])).values()];
 };

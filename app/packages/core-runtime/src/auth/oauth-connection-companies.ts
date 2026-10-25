@@ -21,7 +21,7 @@ export class OAuthConnectionCompanies extends Context.Service<
       legalEntityIds: readonly string[],
     ) => Effect.Effect<ReadonlyMap<string, string>, OAuthAuthenticationAuditUnavailable>;
   }
->()('@app/core-runtime/auth/OAuthConnectionCompanies') {}
+>()('@app/core-runtime/auth/oauth-connection-companies/OAuthConnectionCompanies') {}
 
 export const OAuthConnectionCompaniesLive = Layer.effect(
   OAuthConnectionCompanies,

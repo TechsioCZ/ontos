@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -177,67 +177,69 @@ it.effect('uses the real scoped actor factory and releases only labels/IDs after
   }),
 );
 
-it.effect('rejects activity input before any SQL or native authority lookup', () =>
-  Effect.gen(function* invalidActivity() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () => Effect.die('Invalid input must not reach SQL'),
-      operationTime,
-      scope,
-    });
-    const failure = yield* harness.runtime
-      .runRead({
-        input: { request: { limit: 0 }, visibleModules: ['work.tasks'] },
-        principal: scope,
-        registration: agentActivityRead,
-        transport,
-      })
-      .pipe(
-        Effect.flip,
-        Effect.provide(harness.layer),
-        Effect.provide(outboxWorkerCompositionLayer(makeOutboxWorkerComposition())),
-        Effect.provideService(ActionAuthority, {
-          checkActionAuthorities: () => Effect.die('Invalid input must not check Action authority'),
-          checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
-        }),
-      );
-    expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
-    expect(harness.snapshot().ownerQueries).toEqual([]);
-    expect(harness.snapshot().evidenceWrites).toBe(0);
-  }),
-);
+it.layer(outboxWorkerCompositionLayer(makeOutboxWorkerComposition()))('Empty activity composition', (suite) => {
+  suite.effect('rejects activity input before any SQL or native authority lookup', () =>
+    Effect.gen(function* invalidActivity() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.die('Invalid input must not reach SQL'),
+        operationTime,
+        scope,
+      });
+      const services = yield* Layer.build(harness.layer);
+      const failure = yield* harness.runtime
+        .runRead({
+          input: { request: { limit: 0 }, visibleModules: ['work.tasks'] },
+          principal: scope,
+          registration: agentActivityRead,
+          transport,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.provideService(ContextAccess, Context.get(services, ContextAccess)),
+          Effect.provideService(ActionAuthority, {
+            checkActionAuthorities: () => Effect.die('Invalid input must not check Action authority'),
+            checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
+          }),
+        );
+      expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(harness.snapshot().evidenceWrites).toBe(0);
+    }),
+  );
 
-it.effect('a requested module absent from approved authority cannot trigger activity SQL', () =>
-  Effect.gen(function* noAuthority() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () => Effect.die('A requested module is not authority'),
-      operationTime,
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope,
-    });
-    const result = yield* harness.runtime
-      .runRead({
-        input: { request: {}, visibleModules: ['work.tasks'] },
-        principal: scope,
-        registration: agentActivityRead,
-        transport,
-      })
-      .pipe(
-        Effect.provide(harness.layer),
-        Effect.provide(outboxWorkerCompositionLayer(makeOutboxWorkerComposition())),
-        Effect.provideService(ActionAuthority, {
-          checkActionAuthorities: (targets) => {
-            expect(targets).toEqual([]);
-            return Effect.succeed([]);
-          },
-          checkActionProposalPermission: () => Effect.die('Activity must never check proposal authority'),
-        }),
-      );
-    expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
-    expect(harness.snapshot().ownerQueries).toEqual([]);
-    expect(harness.snapshot().evidenceWrites).toBe(1);
-  }),
-);
+  suite.effect('a requested module absent from approved authority cannot trigger activity SQL', () =>
+    Effect.gen(function* noAuthority() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.die('A requested module is not authority'),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const services = yield* Layer.build(harness.layer);
+      const result = yield* harness.runtime
+        .runRead({
+          input: { request: {}, visibleModules: ['work.tasks'] },
+          principal: scope,
+          registration: agentActivityRead,
+          transport,
+        })
+        .pipe(
+          Effect.provideService(ContextAccess, Context.get(services, ContextAccess)),
+          Effect.provideService(ActionAuthority, {
+            checkActionAuthorities: (targets) => {
+              expect(targets).toEqual([]);
+              return Effect.succeed([]);
+            },
+            checkActionProposalPermission: () => Effect.die('Activity must never check proposal authority'),
+          }),
+        );
+      expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+    }),
+  );
+});
 
 it.effect(
   'binds activity candidates to installed company/tenant/agent/module and pages decisions by event chronology',
@@ -254,7 +256,7 @@ it.effect(
         }
         return Effect.succeed([]);
       });
-      const request = Schema.decodeUnknownSync(AgentActivityRequestSchema)({
+      const request = yield* Schema.decodeEffect(AgentActivityRequestSchema)({
         agentPrincipalId: agentId,
         cursor: { at: '2026-10-25T12:00:00.000Z', id: 'decision:60000000-0000-4000-8000-000000000001' },
         kind: 'decision',
@@ -301,9 +303,9 @@ const executableComposition = () => {
     throw new TypeError('Expected one fixture module');
   }
   const codec = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
-  const contract = Schema.decodeUnknownSync(codec)(module.contractDocument);
+  const contract = Schema.decodeSync(codec)(module.contractDocument);
   const contractDocument = Schema.encodeSync(codec)(
-    Schema.decodeUnknownSync(OntosModuleDeploymentContractSchema)({
+    Schema.decodeSync(OntosModuleDeploymentContractSchema)({
       ...contract,
       manifest: {
         ...contract.manifest,
@@ -351,59 +353,60 @@ const executableComposition = () => {
   };
 };
 
-for (const [name, execute, moduleDecision, sqlCount] of [
-  ['execution right', 'allowed', 'allowed', 4],
-  ['proposal right alone', 'denied', 'allowed', 0],
-  ['execution without module access', 'allowed', 'denied', 0],
-] as const) {
-  it.effect(`activity independently checks ${name}`, () =>
-    Effect.gen(function* executableAdmission() {
-      const harness = yield* makeReadTestHarness({
-        executeOwnerQuery: (query) => {
-          expect(query.scope).toEqual({ legalEntityId, tenantId });
-          return Effect.succeed([]);
-        },
-        operationTime,
-        ownerAuthorizationDecision: 'allowed',
-        permissionDecision: 'allowed',
-        scope,
-      });
-      const contextAccess = yield* ContextAccess.pipe(Effect.provide(harness.layer));
-      const executeDecision: ActionPermissionDecision = execute;
-      const result = yield* harness.runtime
-        .runRead({
-          input: { request: {}, visibleModules: ['work.tasks'] },
-          principal: scope,
-          registration: agentActivityRead,
-          transport,
-        })
-        .pipe(
-          Effect.provide(outboxWorkerCompositionLayer(executableComposition())),
-          Effect.provideService(ContextAccess, {
-            ...contextAccess,
-            modules: (target) => {
-              expect(target).toEqual({ legalEntityId, moduleIds: ['work.tasks'], principalId, tenantId });
-              return Effect.succeed([{ decision: moduleDecision, key: 'work.tasks' }]);
-            },
-          }),
-          Effect.provideService(ActionAuthority, {
-            checkActionAuthorities: (targets) => {
-              expect(targets).toEqual(
-                moduleDecision === 'allowed'
-                  ? [{ actionKey: 'work.tasks.update', legalEntityId, principalId, tenantId }]
-                  : [],
-              );
-              return Effect.succeed(
-                targets.map((target) => ({ ...target, execute: executeDecision, propose: 'allowed' as const })),
-              );
-            },
-            checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
-          }),
-          Effect.provide(harness.layer),
-        );
-      expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
-      expect(harness.snapshot().ownerQueries).toHaveLength(sqlCount);
-      expect(harness.snapshot().evidenceWrites).toBe(1);
-    }),
-  );
-}
+it.layer(outboxWorkerCompositionLayer(executableComposition()))('Executable activity composition', (suite) => {
+  for (const [name, execute, moduleDecision, sqlCount] of [
+    ['execution right', 'allowed', 'allowed', 4],
+    ['proposal right alone', 'denied', 'allowed', 0],
+    ['execution without module access', 'allowed', 'denied', 0],
+  ] as const) {
+    suite.effect(`activity independently checks ${name}`, () =>
+      Effect.gen(function* executableAdmission() {
+        const harness = yield* makeReadTestHarness({
+          executeOwnerQuery: (query) => {
+            expect(query.scope).toEqual({ legalEntityId, tenantId });
+            return Effect.succeed([]);
+          },
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope,
+        });
+        const services = yield* Layer.build(harness.layer);
+        const contextAccess = Context.get(services, ContextAccess);
+        const executeDecision: ActionPermissionDecision = execute;
+        const result = yield* harness.runtime
+          .runRead({
+            input: { request: {}, visibleModules: ['work.tasks'] },
+            principal: scope,
+            registration: agentActivityRead,
+            transport,
+          })
+          .pipe(
+            Effect.provideService(ContextAccess, {
+              ...contextAccess,
+              modules: (target) => {
+                expect(target).toEqual({ legalEntityId, moduleIds: ['work.tasks'], principalId, tenantId });
+                return Effect.succeed([{ decision: moduleDecision, key: 'work.tasks' }]);
+              },
+            }),
+            Effect.provideService(ActionAuthority, {
+              checkActionAuthorities: (targets) => {
+                expect(targets).toEqual(
+                  moduleDecision === 'allowed'
+                    ? [{ actionKey: 'work.tasks.update', legalEntityId, principalId, tenantId }]
+                    : [],
+                );
+                return Effect.succeed(
+                  targets.map((target) => ({ ...target, execute: executeDecision, propose: 'allowed' as const })),
+                );
+              },
+              checkActionProposalPermission: () => Effect.die('Activity never uses proposal permission'),
+            }),
+          );
+        expect(result).toEqual({ access: [], audit: [], names: [], proposalOnlyAgentIds: [], proposals: [] });
+        expect(harness.snapshot().ownerQueries).toHaveLength(sqlCount);
+        expect(harness.snapshot().evidenceWrites).toBe(1);
+      }),
+    );
+  }
+});

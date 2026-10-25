@@ -3,8 +3,101 @@ import { expect, it } from 'effect-rstest';
 
 import { currentAgentProfileRelationships } from '../../src/permissions/agent-profile-lifecycle.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
+import { buildInstalledModuleCatalog } from '../../src/modules/catalog.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { toSpiceDbActionGrantObjectId } from '../../src/permissions/service.ts';
 import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
 import { makeOutboxWorkerComposition } from '../support/outbox-worker-composition.ts';
+
+it.effect(
+  'includes intrinsic Core lifecycle execution only while active installed business proposal authority exists',
+  () =>
+    Effect.gen(function* proposalLifecyclePolicy() {
+      const tenantId = 'tenant-a';
+      const legalEntityId = 'company-a';
+      const moduleId = 'work.tasks';
+      const businessActionKey = 'work.tasks.apply-command';
+      const lifecycleActionKey = 'core.identity.mutate-agent-proposals';
+      const base = yield* buildApplicationCompositionCatalog(
+        makeOutboxWorkerComposition([{ appId: 'work-tasks', moduleId }]),
+      );
+      const catalog = buildInstalledModuleCatalog(
+        base.contracts.map((contract) => ({
+          contract: {
+            ...contract,
+            manifest: {
+              ...contract.manifest,
+              publicSurface: {
+                ...contract.manifest.publicSurface,
+                actions: [
+                  {
+                    actionKey: businessActionKey,
+                    auditProfile: 'standard',
+                    entrypoint: defineTenantModuleEntrypoint({
+                      access: 'write',
+                      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+                      entrypointKey: businessActionKey,
+                      moduleKey: moduleId,
+                      role: 'action',
+                    }),
+                    idempotency: 'required',
+                    legalEntityScope: 'required',
+                    owningModuleId: moduleId,
+                    schemaVersion: '1',
+                  },
+                ],
+              },
+            },
+          },
+          expectedAppId: contract.deployment.appId,
+        })),
+      );
+      const input = {
+        catalog,
+        company: {
+          active: true,
+          legalEntityId,
+          profile: { modules: [{ access: 'write' as const, moduleId }], writePolicy: 'approval' as const },
+        },
+        // Core is intrinsically installed, not a row in tenant_module_states or a business contract.
+        installedModuleKeys: new Set([moduleId]),
+        namedPermissions: [],
+        principalId: 'agent-a',
+        tenantId,
+      };
+      const lifecycleId = toSpiceDbActionGrantObjectId({ actionKey: lifecycleActionKey, legalEntityId, tenantId });
+      const businessId = toSpiceDbActionGrantObjectId({ actionKey: businessActionKey, legalEntityId, tenantId });
+      const active = currentAgentProfileRelationships(input);
+      expect(
+        active
+          .filter((item) => item.resource?.objectType === 'action_grant')
+          .map((item) => [item.resource?.objectId, item.relation]),
+      ).toEqual([
+        [businessId, 'proposer_role'],
+        [lifecycleId, 'role'],
+      ]);
+      for (const restricted of [
+        { ...input, installedModuleKeys: new Set<string>() },
+        { ...input, company: { ...input.company, active: false } },
+        { ...input, company: { ...input.company, profile: null } },
+        {
+          ...input,
+          company: { ...input.company, profile: { ...input.company.profile, writePolicy: 'read_only' as const } },
+        },
+        { ...input, company: { ...input.company, profile: { ...input.company.profile, modules: [] } } },
+      ]) {
+        const relationships = currentAgentProfileRelationships(restricted);
+        expect(relationships.filter((item) => item.resource?.objectType === 'action_grant')).toEqual([]);
+      }
+      const foreign = currentAgentProfileRelationships({
+        ...input,
+        company: { ...input.company, legalEntityId: 'company-b' },
+      });
+      expect(
+        foreign.some((item) => item.resource?.objectId === lifecycleId || item.resource?.objectId === businessId),
+      ).toBe(false);
+    }),
+);
 
 it.effect(
   'materializes current profile writes, approval/read-only ceilings, and installed-module boundaries without persona authority',

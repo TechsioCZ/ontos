@@ -16,7 +16,6 @@ import { principals } from '../../db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   readLatestAgentOperatorCommand,
-  replaceAgentOperatorsActionKey,
   ReplaceAgentOperatorsAuditEvidenceSchema,
   ReplaceAgentOperatorsPayloadSchema,
   ReplaceAgentOperatorsResultSchema,
@@ -49,7 +48,7 @@ interface Services {
   >;
 }
 
-const handle = Effect.fn('ReplaceAgentOperatorsAction.handle')(function* replaceAgentOperators(
+const handleReplaceAgentOperators = Effect.fn('ReplaceAgentOperatorsAction.handle')(function* replaceAgentOperators(
   payload: ReplaceAgentOperatorsPayload,
   context: ActionHandlerContext<typeof principalLifecycleDomainEvents, Services>,
 ) {
@@ -114,7 +113,7 @@ export const replaceAgentOperatorsAction = defineAction(
       captureMode: 'metadata_only',
       policyKey: 'core.identity.replace-agent-operators.access.v1',
     },
-    actionKey: replaceAgentOperatorsActionKey,
+    actionKey: 'core.identity.replace-agent-operators',
     auditEvidenceSchema: ReplaceAgentOperatorsAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
@@ -122,7 +121,7 @@ export const replaceAgentOperatorsAction = defineAction(
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
-      entrypointKey: replaceAgentOperatorsActionKey,
+      entrypointKey: 'core.identity.replace-agent-operators',
       moduleKey: 'core.identity',
       role: 'action',
     }),
@@ -134,7 +133,7 @@ export const replaceAgentOperatorsAction = defineAction(
     resultSchema: ReplaceAgentOperatorsResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  handleReplaceAgentOperators,
   (transaction) =>
     Effect.succeed({
       latestCommand: (agentPrincipalId: string) =>

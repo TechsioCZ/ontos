@@ -45,4 +45,4 @@ export class OAuthGrantRegistry extends Context.Service<
     readonly touchGrantLastUsed: (grantId: string) => RegistryResult<boolean>;
     readonly updateGrantAccess: (input: OAuthGrantAccessChange) => RegistryResult<Option.Option<OAuthGrantRecord>>;
   }
->()('@app/core-runtime/auth/OAuthGrantRegistry') {}
+>()('@app/core-runtime/auth/oauth-grant-registry-service/OAuthGrantRegistry') {}

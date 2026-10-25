@@ -10,6 +10,7 @@ import { demoAccountObjectIdParts } from '../install/demo-account-administration
 import type { DemoAccountRelationship } from '../install/demo-account-administration.ts';
 import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
 import type { InstalledModuleCatalog } from '../modules/catalog.ts';
+import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
 import { fullyConsistent } from './client.ts';
 import {
@@ -102,13 +103,18 @@ export const currentAgentProfileRelationships = (input: {
     ...input.namedPermissions,
   ];
   return agentGrantRelationships({
-    actions: contracts.flatMap(({ manifest }) =>
-      manifest.publicSurface.actions.map((action) => ({
-        actionKey: action.actionKey,
-        legalEntityScope: action.legalEntityScope,
-        owningModuleKey: action.owningModuleId,
-      })),
-    ),
+    actions: [
+      // Core Actions are intrinsically installed, as in deriveActionAuthorizationInstalledScopes.
+      // They are not business deployment contracts or selectable administration modules.
+      ...coreActionCatalog,
+      ...contracts.flatMap(({ manifest }) =>
+        manifest.publicSurface.actions.map((action) => ({
+          actionKey: action.actionKey,
+          legalEntityScope: action.legalEntityScope,
+          owningModuleKey: action.owningModuleId,
+        })),
+      ),
+    ],
     legalEntityId: company.legalEntityId,
     legalEntityWriteRelations: writeRelations,
     modules: company.profile.modules.filter(({ moduleId }) => published.has(moduleId)),

@@ -14,7 +14,7 @@ export class OAuthAuthenticationAudit extends Context.Service<
       observation: OAuthAuthenticationObservation,
     ) => Effect.Effect<void, OAuthAuthenticationAuditUnavailable>;
   }
->()('@app/core-runtime/auth/OAuthAuthenticationAudit') {}
+>()('@app/core-runtime/auth/oauth-authentication-audit/OAuthAuthenticationAudit') {}
 
 /**
  * Native authentication observer, like PrincipalResolver's pre-admission denial writer. It does not run an Action

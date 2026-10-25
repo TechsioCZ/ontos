@@ -19,13 +19,12 @@ export const activityActorsFromTransaction = (transaction: ScopedTransactionExec
         principalId: principals.principalId,
       })
       .from(principals)
-      .where(eq(principals.tenantId, transaction.scope.tenantId))
-      .pipe(Effect.mapError(agentActivityUnavailable));
-    return yield* Schema.decodeUnknownEffect(AgentActivityActorsResultSchema)({
+      .where(eq(principals.tenantId, transaction.scope.tenantId));
+    return yield* Schema.decodeEffect(AgentActivityActorsResultSchema)({
       agentIds: rows.flatMap((row) => (row.kind === 'agent' ? [row.principalId] : [])),
       names: rows.map(({ displayName, principalId }) => ({ displayName, principalId })),
-    }).pipe(Effect.mapError(agentActivityUnavailable));
-  }),
+    });
+  }, Effect.mapError(agentActivityUnavailable)),
 });
 
 type Services = ReturnType<typeof activityActorsFromTransaction>;
