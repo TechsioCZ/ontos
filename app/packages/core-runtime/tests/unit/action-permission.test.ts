@@ -1,5 +1,7 @@
+import { APP_ENV_PATH, APP_WORKSPACE_ROOT } from '@app/core-runtime/workspace-environment';
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Predicate, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Config, ConfigProvider, Effect, FileSystem, Path, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
@@ -49,29 +51,44 @@ const makeClient = (
   };
 };
 
-it.effect('loads the root SpiceDB environment independently of the invocation directory', () =>
-  Effect.gen(function* loadsTheRootSpiceDBEnvironmentIndependentlyOfThe() {
-    const originalDirectory = process.cwd();
-    const rootExamplePath = SPICEDB_ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
+it.layer(NodeServices.layer)((suite) => {
+  suite.effect('loads the root SpiceDB environment independently of the invocation directory', () =>
+    Effect.scoped(
+      Effect.gen(function* loadsTheRootSpiceDBEnvironmentIndependentlyOfThe() {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configuredEnvPath = yield* Config.String('APP_ENV_PATH')
+          .pipe(Config.withDefault('.env'))
+          .parse(ConfigProvider.fromEnv());
+        const originalDirectory = process.cwd();
+        const fixtureDirectory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-spicedb-config-' });
+        const fixturePath = path.join(fixtureDirectory, 'spicedb-config.fixture');
+        yield* fileSystem.writeFileString(
+          fixturePath,
+          'SPICEDB_ENDPOINT=localhost:50051\nSPICEDB_PRESHARED_KEY=spicedb-config-test-key\n',
+        );
 
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        process.chdir(originalDirectory);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            process.chdir(originalDirectory);
+          }),
+        );
+        process.chdir('/');
+        const configuration = yield* loadSpiceDbConfig({
+          environment: {},
+          envPath: fixturePath,
+        });
+
+        expect(SPICEDB_ROOT_ENV_PATH).toBe(APP_ENV_PATH);
+        expect(APP_ENV_PATH).toBe(path.resolve(APP_WORKSPACE_ROOT, configuredEnvPath));
+        expect(configuration).toEqual({
+          endpoint: 'localhost:50051',
+          preSharedKey: 'spicedb-config-test-key',
+        });
       }),
-    );
-    process.chdir('/');
-    const configuration = yield* loadSpiceDbConfig({
-      environment: {},
-      envPath: rootExamplePath,
-    });
-
-    expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
-    expect(configuration).toEqual({
-      endpoint: 'localhost:50051',
-      preSharedKey: 'ontos-local-development-key',
-    });
-  }),
-);
+    ),
+  );
+});
 
 it.effect('requires a complete configuration and accepts only a PEM certificate as SPICEDB_CA_CERT', () =>
   Effect.gen(function* requiresACompleteConfigurationAndAPemCaCertificate() {

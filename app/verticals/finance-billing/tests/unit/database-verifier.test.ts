@@ -64,7 +64,7 @@ const documentTable = {
 };
 it.effect('requires receipt immutability while retaining state CRUD and forced RLS', () =>
   Effect.gen(function* verifyPredicate() {
-    const valid = Schema.decodeSync(Schema.Array(CatalogSchema))([documentTable, stateTable, receiptTable]);
+    const valid = yield* Schema.decodeEffect(Schema.Array(CatalogSchema))([documentTable, stateTable, receiptTable]);
     expect(Exit.isSuccess(yield* Effect.exit(verifyTables(valid, 'admin')))).toBe(true);
     for (const invalid of [
       [{ ...documentTable, forceRls: false }, stateTable, receiptTable],
@@ -77,7 +77,7 @@ it.effect('requires receipt immutability while retaining state CRUD and forced R
       [documentTable, stateTable, { ...receiptTable, runtimeDelete: false }],
       [documentTable, stateTable, { ...receiptTable, primaryKey: ['jti'] }],
     ]) {
-      const tables = Schema.decodeSync(Schema.Array(CatalogSchema))(invalid);
+      const tables = yield* Schema.decodeEffect(Schema.Array(CatalogSchema))(invalid);
       expect(Exit.isFailure(yield* Effect.exit(verifyTables(tables, 'admin')))).toBe(true);
     }
   }),

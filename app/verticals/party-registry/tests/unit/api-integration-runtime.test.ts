@@ -1,7 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import {
+  ActionRuntime,
+  ActionTransportMetadataSchema,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import {
+  decodeTrustedPrincipalContext,
+  preserveSystemPrincipalContextTrust,
+} from '@app/core-runtime/auth/system-principal-context-provenance';
 import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
@@ -137,7 +146,7 @@ it.live(
       const assertion = yield* makeAssertion();
       let redemptionCalls = 0;
       let actionCalls = 0;
-      let actionCommitCalls = 0;
+      let actionExecutionCalls = 0;
       let aresCalls = 0;
       let aresLayerLoads = 0;
       let counterpartySearchCalls = 0;
@@ -146,12 +155,12 @@ it.live(
       let searchLayerLoads = 0;
       let compositionLoads = 0;
       const actionRuntime: ActionRuntimeService = {
-        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
-        resolveActionCommit: () =>
+        resolveActionExecution: () =>
           Effect.suspend(() => {
-            actionCommitCalls += 1;
-            return Effect.die('Action commit substitute reached through the assembled runtime');
+            actionExecutionCalls += 1;
+            return Effect.die('Action execution recovery substitute reached through the assembled runtime');
           }),
+        resolveActionCommit: () => Effect.die('Action commit lookup is outside this fixture'),
         runAction: () =>
           Effect.suspend(() => {
             actionCalls += 1;
@@ -178,9 +187,15 @@ it.live(
           }),
       } satisfies PartySearchProjectionGatewayService;
       const readRuntime: ReadRuntimeService = {
-        runRead: ({ registration }) =>
-          Effect.context<never>().pipe(
-            Effect.flatMap((context) => {
+        runRead: ({ registration, principal: invocationPrincipal, transport: invocationTransport }) =>
+          Effect.all({
+            context: Effect.context<never>(),
+            principal: decodeTrustedPrincipalContext(invocationPrincipal),
+            transport: Schema.decodeUnknownEffect(ActionTransportMetadataSchema)(invocationTransport),
+          }).pipe(
+            Effect.orDie,
+            Effect.flatMap(({ context, principal: readPrincipal, transport }) => {
+              const scope = preserveSystemPrincipalContextTrust(readPrincipal, { ...readPrincipal, ...transport });
               readCalls += 1;
               if (registration.descriptor.readKey === 'party.registry.api.ares-lookup') {
                 const service = Context.getOrUndefined(context, AresSubjectService);
@@ -196,24 +211,30 @@ it.live(
                 const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
                 assert.isOk(service !== undefined);
                 return service
-                  .searchParties({
-                    includeArchived: false,
-                    query: 'runtime assembly proof',
-                    tenantId: principal.tenantId,
-                  })
+                  .searchParties(
+                    {
+                      includeArchived: false,
+                      query: 'runtime assembly proof',
+                      tenantId: readPrincipal.tenantId,
+                    },
+                    scope,
+                  )
                   .pipe(Effect.orDie, Effect.andThen(Effect.die('Party search substitute completed unexpectedly')));
               }
               if (registration.descriptor.readKey === 'party.registry.search.counterparties') {
                 const service = Context.getOrUndefined(context, PartySearchProjectionGateway);
                 assert.isOk(service !== undefined);
                 return service
-                  .searchCounterparties({
-                    effectiveAt: '2026-09-07T00:00:00.000Z',
-                    includeArchived: false,
-                    legalEntityId: 'a5000000-0000-4000-8000-000000000001',
-                    query: 'runtime assembly proof',
-                    tenantId: principal.tenantId,
-                  })
+                  .searchCounterparties(
+                    {
+                      effectiveAt: '2026-09-07T00:00:00.000Z',
+                      includeArchived: false,
+                      legalEntityId: 'a5000000-0000-4000-8000-000000000001',
+                      query: 'runtime assembly proof',
+                      tenantId: readPrincipal.tenantId,
+                    },
+                    scope,
+                  )
                   .pipe(
                     Effect.orDie,
                     Effect.andThen(Effect.die('Counterparty search substitute completed unexpectedly')),
@@ -512,7 +533,7 @@ it.live(
         '/reads/party-match': { candidate },
       } as const;
       for (const [index, endpoint] of endpoints.entries()) {
-        const callsBefore: number = actionCalls + actionCommitCalls + readCalls;
+        const callsBefore: number = actionCalls + actionExecutionCalls + readCalls;
         const rawPayloadSchema = endpoint.payload.get('application/json')?.schemas[0];
         // Runtime HTTP descriptors erase codec types. These wire codecs require no services.
         const payloadSchema =
@@ -550,14 +571,14 @@ it.live(
         const response = yield* Effect.promise(() => runtime.handler(request));
         if (endpoint.path === '/party-registry/readiness') {
           expect(response.status).toBe(200);
-          expect(actionCalls + actionCommitCalls + readCalls).toBe(callsBefore);
+          expect(actionCalls + actionExecutionCalls + readCalls).toBe(callsBefore);
         } else {
           expect(
             response.status,
             `${endpoint.method} ${endpoint.path} must execute a supplied runtime substitute`,
           ).toBe(500);
           expect(
-            actionCalls + actionCommitCalls + readCalls,
+            actionCalls + actionExecutionCalls + readCalls,
             `${endpoint.method} ${endpoint.path} must reach exactly one supplied core runtime`,
           ).toBe(callsBefore + 1);
         }
@@ -565,7 +586,7 @@ it.live(
       expect(compositionLoads).toBe(1);
       assert.isOk(redemptionCalls > 0);
       assert.isOk(actionCalls > 0);
-      expect(actionCommitCalls).toBe(1);
+      expect(actionExecutionCalls).toBe(1);
       assert.isOk(readCalls > 0);
       expect(aresCalls).toBe(1);
       expect(aresLayerLoads).toBe(1);
@@ -574,7 +595,7 @@ it.live(
       expect(searchLayerLoads).toBe(1);
       const callsBeforePreflight = {
         actionCalls,
-        actionCommitCalls,
+        actionExecutionCalls,
         aresCalls,
         counterpartySearchCalls,
         partySearchCalls,
@@ -606,7 +627,7 @@ it.live(
       );
       expect({
         actionCalls,
-        actionCommitCalls,
+        actionExecutionCalls,
         aresCalls,
         counterpartySearchCalls,
         partySearchCalls,
