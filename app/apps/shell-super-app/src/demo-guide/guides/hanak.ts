@@ -131,7 +131,7 @@ export const hanakGuide: DemoGuide = {
         },
         {
           click:
-            'Obnovit seznam → dávka „Ověření kontaktů Bistra Král po dnešní schůzce“ (2 změny) → ukažte telefon a web před a po. Starší dávku s přidělením klienta neschvalujte. Když dávka chybí, technik ji připraví příkazem node scripts/demo/prepare-ai-c-batch.mts.',
+            'Obnovit seznam → otevřete čekající dávku AI agenta C a u každé změny ukažte pole před a po. Když žádná dávka nečeká, požádejte AI agenta C v ChatGPT nebo Claude o nový návrh změny kontaktu a pak stránku obnovte. Dávku teď neschvalujte.',
           id: 'hanak-ai-navrh',
           persona: vedouci,
           say: 'AI agent úrovně C poslal přes MCP konkrétní návrh. Dokud ho člověk neschválí, data klienta se nemění.',
@@ -140,7 +140,7 @@ export const hanakGuide: DemoGuide = {
         },
         {
           click:
-            'V dávce Bistra Král: u webu Zamítnout změnu → u telefonu Schválit změnu → Všechny dávky. Pak obnovte stránku.',
+            'V otevřené dávce: u jedné změny Zamítnout změnu → u druhé změny Schválit změnu → Všechny dávky. Pak obnovte stránku.',
           id: 'hanak-ai-rozhodnuti',
           persona: vedouci,
           say: 'Člověk rozhoduje po jednotlivých změnách a deník rozhodnutí zůstane i po obnovení stránky.',
@@ -149,7 +149,7 @@ export const hanakGuide: DemoGuide = {
         },
         {
           click:
-            'U dávky Bistra Král Vrátit vše → Potvrdit vrácení celé dávky → ověřte původní telefon. Před další ukázkou připraví technik novou dávku.',
+            'U dávky Vrátit vše → Potvrdit vrácení celé dávky → ověřte původní hodnotu kontaktu. Před další ukázkou požádejte AI agenta C o nový návrh.',
           id: 'hanak-ai-vraceni',
           persona: vedouci,
           say: 'Změny AI jde hromadně vrátit a vrácení se trvale zapíše. AI tedy není cesta kolem oprávnění ani kolem historie.',
