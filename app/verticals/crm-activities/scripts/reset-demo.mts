@@ -7,14 +7,12 @@ import { RelationshipsStateSchema } from '../shared/apis/records.ts';
 import { relationshipsStates, relationshipsRelations } from '../src/database/schema.ts';
 
 const FixtureSchema = Schema.Struct({
-  legalEntityId: Schema.Literal('71000000-0000-4000-8000-000000000020'),
+  legalEntityId: Schema.Literals(['71000000-0000-4000-8000-000000000020', '71000000-0000-4000-8000-000000000021']),
   state: RelationshipsStateSchema,
   tenantId: Schema.Literal('70000000-0000-4000-8000-000000000020'),
 });
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
-const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const data = yield* fs.readFileString(fixturePath);
+export const decodeDemoFixture = Effect.fn('ResetDemo.decodeDemoFixture')(function* decodeDemoFixture(data: string) {
   const input = yield* Schema.decodeEffect(Schema.fromJsonString(FixtureSchema))(data);
   if (
     input.state.activities.some(
@@ -28,6 +26,12 @@ const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: stri
   ) {
     return yield* new ResetInputError({ reason: 'Fixture references must match the fixed demo tenant' });
   }
+  return input;
+});
+const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const data = yield* fs.readFileString(fixturePath);
+  const input = yield* decodeDemoFixture(data);
   const state = yield* Schema.encodeEffect(RelationshipsStateSchema)(input.state);
   const db = yield* makeWithDefaults({ relations: relationshipsRelations });
   const now = yield* DateTime.now;
@@ -60,4 +64,6 @@ const mainLive = Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pip
   Layer.provide(resetPgLive),
   Layer.provide(Layer.mergeAll(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnv()))),
 );
-NodeRuntime.runMain(Effect.scoped(Layer.build(mainLive)));
+if (import.meta.main) {
+  NodeRuntime.runMain(Effect.scoped(Layer.build(mainLive)));
+}

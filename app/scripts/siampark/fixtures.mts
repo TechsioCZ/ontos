@@ -1,4 +1,5 @@
 import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { rentalDemoCompany } from '../../packages/core-runtime/src/install/demo-company-profiles.ts';
 import { CoreSearchProjectionDocumentSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { PropertyStateSchema } from '@app/property-portfolio/contracts/records';
@@ -606,14 +607,18 @@ const DemoOwnerStatesSchema = Schema.Struct({
   'property-portfolio': Schema.toEncoded(PropertyStateSchema),
   'work-tasks': Schema.toEncoded(WorkStateSchema),
 });
-const encodeOwnerFixture = <S extends Schema.Top>(schema: S, state: S['Encoded']) => {
+const encodeOwnerFixture = <S extends Schema.Top>(
+  schema: S,
+  state: S['Encoded'],
+  legalEntityId: typeof demoLegalEntityId | typeof rentalDemoCompany.legalEntityId = demoLegalEntityId,
+) => {
   const fixtureSchema = Schema.Struct({
-    legalEntityId: Schema.Literal(demoLegalEntityId),
+    legalEntityId: Schema.Literal(legalEntityId),
     state: Schema.toEncoded(schema),
     tenantId: Schema.Literal(demoTenantId),
   });
   return Schema.decodeUnknownEffect(fixtureSchema)({
-    legalEntityId: demoLegalEntityId,
+    legalEntityId,
     state,
     tenantId: demoTenantId,
   }).pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(fixtureSchema))));
@@ -639,6 +644,14 @@ export const demoOwnerPorts = Effect.gen(function* serializeOwnerFixtures() {
     },
     {
       encodedFixture: yield* encodeOwnerFixture(RelationshipsStateSchema, states['crm-activities']),
+      script: 'verticals/crm-activities/scripts/reset-demo.mts',
+    },
+    {
+      encodedFixture: yield* encodeOwnerFixture(
+        RelationshipsStateSchema,
+        { activities: [] },
+        rentalDemoCompany.legalEntityId,
+      ),
       script: 'verticals/crm-activities/scripts/reset-demo.mts',
     },
     {
