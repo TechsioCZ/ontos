@@ -41,6 +41,7 @@ const principalResource = 'core.principal';
 const crmReadAll = 'demo.crm.read_all';
 const crmWriteAll = 'demo.crm.write_all';
 const eshopAdministratorLabel = 'Správce e-shopu';
+const proposalLifecycleActionKey = 'core.identity.mutate-agent-proposals';
 
 /**
  * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, work-tasks,
@@ -121,6 +122,8 @@ export interface DemoRole {
   readonly contextPermissions?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
   readonly label: string;
   readonly modules: Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
+  /** Explicit company-scoped proposal lifecycle execution; target business rights remain independently required. */
+  readonly proposalReview?: true;
   /** Modules opened without the generic read_all/write_all grants (only `contextPermissions` apply). */
   readonly restrictedModules?: readonly DemoModuleId[];
   readonly tenantRole?: typeof tenantSuperadminRole;
@@ -140,6 +143,7 @@ export const demoRoles = {
       'legal.agreements': 'read',
       [partyModule]: 'read',
     },
+    proposalReview: true,
   },
   agentBot: {
     label: 'Agent (bot)',
@@ -160,10 +164,12 @@ export const demoRoles = {
     companyRole: 'admin',
     label: commercialAdministratorLabel,
     modules: { ...everything, 'privacy.core': 'write' },
+    proposalReview: true,
     tenantRole: tenantSuperadminRole,
   },
   salesRep: {
     label: 'Obchodník',
+    proposalReview: true,
     // Billing is visible but not writable: the rep cannot confirm or void invoices.
     modules: {
       [commerceModule]: 'write',
@@ -181,6 +187,7 @@ export const demoRoles = {
   warehouse: {
     label: 'Skladník',
     modules: { 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    proposalReview: true,
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 export type DemoRoleKey = keyof typeof demoRoles;
@@ -387,6 +394,17 @@ export const companyAdministratorWorkforceRelationships = (
   });
 };
 
+const proposalReviewActions = (role: DemoRole, actions: readonly DemoAction[]): readonly DemoAction[] =>
+  role.proposalReview === true
+    ? actions.filter(
+        (action) =>
+          action.actionKey === proposalLifecycleActionKey &&
+          action.owningModuleKey === 'core.identity' &&
+          action.legalEntityScope === 'required' &&
+          action.provisioning === 'explicit',
+      )
+    : [];
+
 /** Every relationship one principal needs for its role. `actions` is the current discovered Action set. */
 export const principalRelationships = (
   principalId: string,
@@ -467,10 +485,16 @@ export const principalRelationships = (
     }
     const actionKeys = role.actionKeys?.[moduleId];
     for (const action of moduleActions(actions, moduleId)) {
-      if (actionKeys === undefined ? access === 'write' : actionKeys.includes(action.actionKey)) {
+      if (
+        action.actionKey !== proposalLifecycleActionKey &&
+        (actionKeys === undefined ? access === 'write' : actionKeys.includes(action.actionKey))
+      ) {
         grantAction(action);
       }
     }
+  }
+  for (const lifecycle of proposalReviewActions(role, actions)) {
+    grantAction(lifecycle);
   }
   if (role.companyRole !== undefined) {
     const adminRole = toScopedRoleObjectId({ legalEntityId, roleKey: role.companyRole, tenantId });
@@ -502,6 +526,7 @@ export const rentalDemoRoles = {
       'property.leasing': 'read',
       'property.portfolio': 'read',
     },
+    proposalReview: true,
   },
   agentBot: {
     label: 'Agent pronájmů',
@@ -533,6 +558,7 @@ export const rentalDemoRoles = {
       'work.tasks': 'write',
       [workforceModule]: 'read',
     },
+    proposalReview: true,
   },
   salesRep: {
     label: 'Obchodník pronájmů',
@@ -550,6 +576,7 @@ export const rentalDemoRoles = {
       'property.portfolio': 'read',
       'work.tasks': 'write',
     },
+    proposalReview: true,
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
@@ -640,6 +667,7 @@ export const crmDemoRoles = {
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
+    proposalReview: true,
   },
   crmManager: {
     contextPermissions: { 'demo.crm': crmManagerPermissions },
@@ -652,10 +680,12 @@ export const crmDemoRoles = {
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
+    proposalReview: true,
   },
   crmRep: {
     contextPermissions: { 'demo.crm': crmRepPermissions },
     label: 'Obchodník',
+    proposalReview: true,
     // No party.registry: its customer list is company-wide and would bypass the assigned-client filter.
     modules: { 'demo.crm': 'write', 'work.tasks': 'write', [workforceModule]: 'read' },
   },
@@ -680,6 +710,7 @@ export const eshopDemoRoles = {
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
+    proposalReview: true,
   },
   akrosStorefront: {
     actionKeys: {
@@ -711,8 +742,9 @@ export const eshopDemoRoles = {
       'work.tasks': 'write',
       [workforceModule]: 'write',
     },
+    proposalReview: true,
   },
-  fulfilment: { label: 'Expedice', modules: { 'demo.merchandise': 'write' } },
+  fulfilment: { label: 'Expedice', modules: { 'demo.merchandise': 'write' }, proposalReview: true },
   /** Non-human storefront BFF: merchandise reads and the apply-command Action (PlaceStorefrontOrder). */
   storefront: { label: 'Storefront (API)', modules: { 'demo.merchandise': 'write' } },
 } as const satisfies Readonly<Record<string, DemoRole>>;

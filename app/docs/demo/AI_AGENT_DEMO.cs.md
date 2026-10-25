@@ -7,11 +7,11 @@ nevzniká skrytím tlačítek v chatu. Každá úroveň má vlastní technickou 
 připojení přes OAuth a vlastní oprávnění v jádru. Zakázaný zápis vrátí HTTP 403 i při přímém volání API a jádro ho
 zapíše do auditu jako zamítnutý pokus.
 
-| Úroveň | Identita (Principal)               | Smí                                                                  | Nesmí (backend vrací 403)                          |
-| ------ | ---------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------- |
-| A      | `ai-agent-a-obchod` (služba)       | číst objednávky, příležitosti, faktury, úkoly, zaměstnance, zákazníky, metriky | jakýkoli zápis                                     |
-| B      | `ai-agent-b-obchod` (služba)       | totéž + vytvořit / upravit úkol                                      | příležitosti, štítky, objednávky, faktury, zákazníci |
-| C      | `ai-agent-c-obchod` (služba)       | číst + **navrhnout** změnu příležitosti nebo objednávky (schválí člověk) | přímou změnu, schválení i vrácení              |
+| Úroveň | Identita (Principal)         | Smí                                                                            | Nesmí (backend vrací 403)                            |
+| ------ | ---------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| A      | `ai-agent-a-obchod` (služba) | číst objednávky, příležitosti, faktury, úkoly, zaměstnance, zákazníky, metriky | jakýkoli zápis                                       |
+| B      | `ai-agent-b-obchod` (služba) | totéž + vytvořit / upravit úkol                                                | příležitosti, štítky, objednávky, faktury, zákazníci |
+| C      | `ai-agent-c-obchod` (služba) | číst + **navrhnout** změnu příležitosti nebo objednávky (schválí člověk)       | přímou změnu, schválení i vrácení                    |
 
 Obě identity patří jen firmě **Obchodní firma**. Pokus použít stejného agenta pro Siampark jádro odmítne.
 Stejné tři úrovně existují i pro **Velkoobchod Hanák s.r.o.** (`ai-agent-a-hanak`, `ai-agent-b-hanak`,
@@ -121,7 +121,6 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
 - Aplikace se nepřipojí → ověřte, že běží shell (http://localhost:3020/cs) a že http://localhost:3020/.well-known/oauth-protected-resource/mcp vrací JSON.
 - Po odpojení v **Připojené aplikace** chce aplikace nové přihlášení: připojení bylo zrušeno, připojte ji znovu.
 - Na obrazovce Připojit chybí volba **Za agenta**: správce vás ještě nepřidal do **Kdo smí agenta připojit**.
-
 
 ## Úroveň C — návrhy CRM, lidské schválení a „Vrátit vše“
 
@@ -257,4 +256,8 @@ a `/cs/prodej/schvalovani-ai` zůstávají v modulech; stránka Ke schválení j
 
 Ukázková dávka pro Obchodní firmu (změna ceny produktu + nový úkol), z adresáře `app/`:
 
-    node scripts/demo/prepare-agent-platform-batch.mts
+    node scripts/demo/prepare-agent-platform-batch.mts --intent-file /absolute/path/to/proposal-intent.json
+
+Soubor obsahuje původní návrh a jeho hlavičku `idempotency-key`, nikoli přihlašovací údaje. Po přerušené nebo
+nejisté odpovědi spusťte příkaz znovu se stejným souborem; ceny ani příkazy se při opakování nepřepočítají.
+Pro nový záměr použijte novou cestu. Autorem je nadále agent ověřený přes `ONTOS_AGENT_API_KEY`, nikoli `runId`.
