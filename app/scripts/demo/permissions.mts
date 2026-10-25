@@ -11,10 +11,22 @@ import {
   toModuleAccessObjectId,
 } from '@app/core-runtime';
 import {
+  additionalDemoCompanies,
+  commercialDemoCompany,
+  rentalDemoCompany,
+} from '@app/core-runtime/demo-company-profiles';
+import {
+  bootstrapRelationshipsFromNative,
   companyMembershipAdmissionRelationships,
   scopedActionRoleBootstrapRelationships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import {
+  buildActionAuthorizationRelationships,
+  deriveScopedActionAuthorization,
+} from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { coreActionCatalog } from '../../packages/core-runtime/src/modules/actions/catalog.ts';
+import { deriveActionAuthorizationInstalledModuleScopes } from '../provision-current-action-authorization.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { Effect, Schema } from 'effect';
@@ -1026,9 +1038,36 @@ export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly
   return [...new Map(relationships.map((row) => [relationshipKey(row), row])).values()];
 };
 
+/** Installed Core topology is independent of role policy, including optional Actions in tenant context. */
+const demoCoreActionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const coreActionKeys = new Set(coreActionCatalog.map(({ actionKey }) => actionKey));
+  const scopes = deriveActionAuthorizationInstalledModuleScopes(
+    [],
+    [demoTenantId],
+    [],
+    [commercialDemoCompany, rentalDemoCompany, ...additionalDemoCompanies].map(({ legalEntityId }) => ({
+      legalEntityId,
+      status: 'active',
+      tenantId: demoTenantId,
+    })),
+  );
+  return bootstrapRelationshipsFromNative(
+    buildActionAuthorizationRelationships(
+      deriveScopedActionAuthorization(
+        actions.filter(({ actionKey }) => coreActionKeys.has(actionKey)),
+        scopes,
+      ),
+    ),
+  ).map((relationship) => {
+    const { subjectRelation, ...directSubject } = relationship;
+    return subjectRelation === '' ? directSubject : relationship;
+  });
+};
+
 /** Relationships for the four demo accounts and the bot, deduplicated. */
 export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const all = [
+    ...demoCoreActionRelationships(actions),
     ...demoHumanAccounts.flatMap((account) =>
       principalRelationships(account.principalId, demoRoles[account.role], actions),
     ),
