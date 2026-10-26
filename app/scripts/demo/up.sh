@@ -294,23 +294,8 @@ restart_server() { # restart_server <name> <directory>
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
-# Privacy reads its Commerce authority callback key at startup too; it must not retain the old credential.
-if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
-  restart_server privacy verticals/privacy
-  wait_http "http://127.0.0.1:$(port_of privacy)/.well-known/ontos-module-manifest.json" 180 privacy
-fi
 if printf '%s\n' "${VERTICALS[@]}" | grep -qx commerce-customer-context; then
-  if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
-    # The declared AKROS human operator has only two Privacy setup Actions and two catalog reads.
-    # COMPLETE checkpoints re-read native records only; unknown writes stop for governed reconciliation.
-    step privacy-marketing env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
-      "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
-      "${WITH_ENV[@]}" node scripts/demo/privacy-marketing.mts --apply \
-      --checkpoint "$SCRATCH/privacy-marketing.json" --env-file "$APP/.env"
-    reload_env_keys COMMERCE_MARKETING_PURPOSE_ID COMMERCE_MARKETING_PURPOSE_VERSION_ID \
-      COMMERCE_MARKETING_NOTICE_ID COMMERCE_MARKETING_NOTICE_VERSION_ID COMMERCE_MARKETING_CONTROLLER_REF
-  fi
-  # Start Commerce only after all owner-returned catalog references and workload credentials are reloaded.
+  # The demo newsletter is saved by Commerce; no Privacy catalog or callback setup is needed.
   restart_server commerce-customer-context verticals/commerce-customer-context
   wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json" 180 commerce-customer-context
 fi

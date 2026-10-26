@@ -11,6 +11,7 @@ import {
   numeric,
   pgPolicy,
   pgSchema,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -39,6 +40,7 @@ type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'access_mutation_journal',
   'customer_consent_receipts',
+  'demo_newsletter_choices',
   'address_book_reconciliation_receipts',
   'portal_enrollment_attempts',
   'portal_enrollment_owner_operations',
@@ -250,6 +252,30 @@ export const customerConsentReceipts = commerceCustomerContextSchema.table.withR
       sql`jsonb_typeof(${table.receipt}) = 'object' and length(${table.receipt}::text) <= 12000 and ${table.receipt}->>'requestId' = ${table.receiptId}::text`,
     ),
     ...scopedPolicies('ccc_consent_receipt_scope', table),
+  ],
+);
+
+/** One current demo newsletter decision per tenant, controller and Party. */
+export const demoNewsletterChoices = commerceCustomerContextSchema.table.withRLS(
+  'demo_newsletter_choices',
+  {
+    ...scopeColumns(),
+    changedAt: timestamp('changed_at', { withTimezone: true }).defaultNow().notNull(),
+    decision: text('decision').notNull(),
+    lastRequestId: uuid('last_request_id').notNull(),
+    noticeVersion: text('notice_version').notNull(),
+    partyId: uuid('party_id').notNull(),
+    revision: integer('revision').default(1).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.legalEntityId, table.partyId],
+      name: 'ccc_demo_newsletter_choice_scope_party_pk',
+    }),
+    check('ccc_demo_newsletter_choice_decision_ck', sql`${table.decision} in ('GRANTED', 'WITHDRAWN')`),
+    check('ccc_demo_newsletter_choice_revision_ck', sql`${table.revision} >= 1`),
+    check('ccc_demo_newsletter_choice_notice_ck', sql`${table.noticeVersion} = 'demo-newsletter.cs.v1'`),
+    ...scopedPolicies('ccc_demo_newsletter_choice_scope', table),
   ],
 );
 
@@ -2707,6 +2733,7 @@ const commerceCustomerContextDatabaseSchema = {
   customerProfileLifecycleHistory,
   customerProfiles,
   customerSettingRevisions,
+  demoNewsletterChoices,
   guestRetailAttributions,
   marketBootstrapPolicyCandidateGenerations,
   marketBootstrapPolicyCandidateRevisions,
@@ -2736,6 +2763,7 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   accessMutationJournal,
   addressBookReconciliationReceipts,
   customerConsentReceipts,
+  demoNewsletterChoices,
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
   counterpartyAccessInvitations,
