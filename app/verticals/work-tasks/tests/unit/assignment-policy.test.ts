@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { WorkCommandSchema } from '../../shared/actions/apply-command.ts';
 import { WorkStateSchema } from '../../shared/apis/records.ts';
-import { changedAssignmentTarget } from '../../src/services/assignment-policy.ts';
+import { assignmentPolicy, changedAssignmentTarget } from '../../src/services/assignment-policy.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const human = { principalId: '30000000-0000-4000-8000-000000000001', tenantId };
@@ -81,6 +81,7 @@ it.effect(
         { _tag: 'UpdateTask', taskRef, title: 'Updated title' },
         { _tag: 'UpdateTask', ownerPrincipalRef: human, taskRef, title: 'Updated title' },
         { ...project, _tag: 'UpdateProject', title: 'Updated project' },
+        { _tag: 'UpdateTask', ownerPrincipalRef: null, taskRef },
         { _tag: 'BulkAssignTasks', ids: ['task-1'], ownerPrincipalRef: null },
         { _tag: 'AddTaskComment', taskRef, text: 'Keep this historical work' },
       ]) {
@@ -94,6 +95,44 @@ it.effect(
       });
       expect(changedAssignmentTarget(explicit, saved)).toEqual(human);
     }),
+);
+
+it.effect('nullable updates still fail closed when assignment authorization cannot be established', () =>
+  Effect.gen(function* authorizeNullableAssignment() {
+    const context = {
+      action: { actionKey: 'work.tasks.apply-command', owningModuleKey: 'work.tasks', schemaVersion: '1' },
+      principal: {
+        authBindingId: '40000000-0000-4000-8000-000000000001',
+        authContextRef: 'session:test',
+        authMethod: 'session' as const,
+        legalEntityId: '50000000-0000-4000-8000-000000000001',
+        principalId: human.principalId,
+        tenantId,
+      },
+      target: {},
+      transport: { correlationId: 'test:assignment-clear' },
+    };
+    const assign = yield* Schema.decodeUnknownEffect(WorkCommandSchema)({
+      _tag: 'UpdateTask',
+      ownerPrincipalRef: agent,
+      taskRef,
+    });
+    // No Core directory/authorization service: a real target must fail closed, not become an unassignment.
+    const denied = yield* assignmentPolicy
+      .evaluate({
+        ...context,
+        payload: { command: assign, expectedRevision: 1 },
+      })
+      .pipe(Effect.flip);
+    expect(denied.reasonCode).toBe('assignment_unavailable');
+    for (const input of [
+      { _tag: 'UpdateTask', ownerPrincipalRef: null, taskRef },
+      { _tag: 'UpdateTask', taskRef },
+    ]) {
+      const command = yield* Schema.decodeUnknownEffect(WorkCommandSchema)(input);
+      yield* assignmentPolicy.evaluate({ ...context, payload: { command, expectedRevision: 1 } });
+    }
+  }),
 );
 
 it.effect('server preflight compares full tenant identity, never just the principal id', () =>

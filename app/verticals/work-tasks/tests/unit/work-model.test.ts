@@ -5,9 +5,10 @@ import {
   WorkReferenceUnavailable,
   SingleWorkCommandSchema,
 } from '../../shared/actions/apply-command.ts';
-import { Effect, DateTime, Schema } from 'effect';
+import { Effect, DateTime, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ContextAccess } from '@app/core-runtime';
+import { withHistory } from '../../src/services/work-history.ts';
 import { AssignablePrincipals, AssigneeIneligible } from '@app/core-runtime/auth/assignable-principals';
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
 import { type StorefrontInquiry, WorkStateSchema, CalendarDateSchema } from '../../shared/apis/records.ts';
@@ -147,12 +148,144 @@ it.effect('unrelated task edits preserve a historical assignment and its reassig
       changed.state,
       {
         _tag: 'UpdateTask',
-        ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        ownerPrincipalRef: Option.some({ principalId: scope.principalId, tenantId }),
         taskRef: task.ref,
       },
       { now, resourceId: 'departed', tenantId },
     );
     expect(retainedOwner.task).toMatchObject({ assignmentNeedsReassignment: true });
+  }),
+);
+
+it.effect('UpdateTask assigns, preserves an omitted owner, and clears through stored state, records and history', () =>
+  Effect.gen(function* clearAssignment() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      { _tag: 'CreateTask', title: 'Repair office lighting' },
+      { now, resourceId: 'clear-owner', tenantId },
+    );
+    const actor = { principalId: scope.principalId, tenantId };
+    const target = { principalId: scope.authBindingId, tenantId };
+    const taskRef = created.task.ref;
+    const assignedAt = DateTime.makeUnsafe('2026-10-05T10:01:00Z');
+    const clearedAt = DateTime.makeUnsafe('2026-10-05T10:02:00Z');
+    const assign = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      ownerPrincipalRef: target,
+      taskRef,
+    });
+    const assigned = yield* evolveWorkState(created.state, assign, { now: assignedAt, resourceId: 'unused', tenantId });
+    const assignedState = withHistory(created.state, assigned.state, actor, assignedAt);
+    expect(assignedState.tasks[0]?.ownerPrincipalRef).toEqual(target);
+    expect(assignedState.tasks[0]?.history?.[0]?.changes).toEqual([
+      { after: `${tenantId}:${target.principalId}`, field: 'ownerPrincipalRef' },
+    ]);
+
+    const omitted = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({ _tag: 'UpdateTask', taskRef });
+    expect(yield* Schema.encodeEffect(SingleWorkCommandSchema)(omitted)).not.toHaveProperty('ownerPrincipalRef');
+    const unchanged = yield* evolveWorkState(assignedState, omitted, {
+      now: assignedAt,
+      resourceId: 'unused',
+      tenantId,
+    });
+    const unchangedState = withHistory(assignedState, unchanged.state, actor, assignedAt);
+    expect(unchanged.task.ownerPrincipalRef).toEqual(target);
+    expect(unchangedState.tasks[0]?.history).toEqual(assignedState.tasks[0]?.history);
+
+    const clear = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      ownerPrincipalRef: null,
+      taskRef,
+    });
+    expect(yield* Schema.encodeEffect(SingleWorkCommandSchema)(clear)).toHaveProperty('ownerPrincipalRef', null);
+    const cleared = yield* evolveWorkState(unchangedState, clear, { now: clearedAt, resourceId: 'unused', tenantId });
+    const recorded = withHistory(unchangedState, cleared.state, actor, clearedAt, 'Manager');
+    const stored = yield* Schema.encodeEffect(WorkStateSchema)(recorded);
+    const reloaded = yield* Schema.decodeUnknownEffect(WorkStateSchema)(stored);
+    expect(reloaded.tasks[0]).not.toHaveProperty('ownerPrincipalRef');
+    expect(reloaded.tasks[0]?.history).toHaveLength(2);
+    expect(reloaded.tasks[0]?.history?.at(-1)).toEqual({
+      action: 'updated',
+      actorDisplayName: 'Manager',
+      actorPrincipalRef: actor,
+      at: clearedAt,
+      changes: [{ before: `${tenantId}:${target.principalId}`, field: 'ownerPrincipalRef' }],
+    });
+    const records = yield* finishWorkRecords(
+      { resourceId: taskRef.resourceId },
+      {
+        assignmentDirectory: { legalEntityId: scope.legalEntityId, members: [], tenantId },
+        names: new Map(),
+        revision: 3,
+        state: stored,
+      },
+      {
+        lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        readAll: true,
+        writeAll: true,
+      },
+      scope,
+    ).pipe(
+      Effect.provideService(ContextAccess, fakeAccess([])),
+      Effect.provideService(AssignablePrincipals, {
+        read: () => Effect.succeed([]),
+        resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'A clear has no assignment target' })),
+      }),
+    );
+    expect(records.items[0]).not.toHaveProperty('ownerPrincipalRef');
+    expect(records.items[0]?.history).toEqual(reloaded.tasks[0]?.history);
+    expect(records.indicators.openByAssignee).toEqual([]);
+  }),
+);
+
+it.effect('explicit unassignment removes stale assignment markers but rejects malformed and cross-tenant targets', () =>
+  Effect.gen(function* validateAssignmentPatch() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      { _tag: 'CreateTask', ownerPrincipalRef: { principalId: scope.principalId, tenantId }, title: 'Historical work' },
+      { now, resourceId: 'historical-clear', tenantId },
+    );
+    const historical = {
+      ...created.state,
+      tasks: [{ ...created.task, assignmentNeedsReassignment: true, assignmentWithoutLogin: true }],
+    };
+    const taskRef = created.task.ref;
+    for (const ownerPrincipalRef of ['', {}, { principalId: scope.principalId }, undefined]) {
+      expect(
+        yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+          _tag: 'UpdateTask',
+          ownerPrincipalRef,
+          taskRef,
+        }).pipe(Effect.isFailure),
+      ).toBe(true);
+    }
+    const foreign = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      ownerPrincipalRef: { principalId: scope.principalId, tenantId: scope.authBindingId },
+      taskRef,
+    });
+    expect(
+      yield* evolveWorkState(historical, foreign, { now, resourceId: 'unused', tenantId }).pipe(Effect.flip),
+    ).toBeInstanceOf(WorkScopeMismatch);
+    const clear = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
+      _tag: 'UpdateTask',
+      ownerPrincipalRef: null,
+      taskRef,
+    });
+    const cleared = yield* evolveWorkState(historical, clear, { now, resourceId: 'unused', tenantId });
+    expect(cleared.task).not.toHaveProperty('ownerPrincipalRef');
+    expect(cleared.task).not.toHaveProperty('assignmentNeedsReassignment');
+    expect(cleared.task).not.toHaveProperty('assignmentWithoutLogin');
+    const cancelled = yield* evolveWorkState(
+      historical,
+      { _tag: 'ChangeTaskState', state: 'CANCELLED', taskRef },
+      { now, resourceId: 'unused', tenantId },
+    );
+    expect(
+      yield* evolveWorkState(cancelled.state, clear, { now, resourceId: 'unused', tenantId }).pipe(Effect.flip),
+    ).toBeInstanceOf(WorkLifecycleConflict);
   }),
 );
 

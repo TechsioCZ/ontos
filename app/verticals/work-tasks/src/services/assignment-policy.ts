@@ -34,9 +34,9 @@ export const changedAssignmentTarget = (command: WorkCommand, state?: WorkState)
         const task = state?.tasks.find(
           ({ ref }) => ref.resourceId === taskRef.resourceId && ref.tenantId === taskRef.tenantId,
         );
-        return ownerPrincipalRef !== undefined && !samePrincipal(task?.ownerPrincipalRef, ownerPrincipalRef)
-          ? Option.some(ownerPrincipalRef)
-          : Option.none<PrincipalRef>();
+        return (ownerPrincipalRef ?? Option.none<PrincipalRef>()).pipe(
+          Option.filter((target) => !samePrincipal(task?.ownerPrincipalRef, target)),
+        );
       },
     }),
     Match.exhaustive,

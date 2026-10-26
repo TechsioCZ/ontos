@@ -10,7 +10,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Predicate, Random, Schedule, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Random, Schedule, Schema, Struct } from 'effect';
 import type { Types } from 'effect';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -34,7 +34,7 @@ import { TaskBulkBar, TaskFilterBar } from './tasks-filters.tsx';
 import { TaskFormDialog } from './task-form-dialog.tsx';
 import { WorkPlanning } from './work-planning.tsx';
 import { principalKey } from '../../../../shared/assignment.ts';
-import { selectedPrincipal } from './assignment-options.ts';
+import { assignmentPatch, selectedPrincipal } from './assignment-options.ts';
 import type { TaskFormSubmission } from './task-form-dialog.tsx';
 import {
   TaskTabSchema,
@@ -618,12 +618,7 @@ const useTasksPage = (
       priority: submission.priority,
       title: submission.title,
     };
-    if (
-      submission.ownerPrincipalRef !== undefined &&
-      (editor.mode === 'create' ||
-        editor.task.ownerPrincipalRef === undefined ||
-        principalKey(submission.ownerPrincipalRef) !== principalKey(editor.task.ownerPrincipalRef))
-    ) {
+    if (submission.ownerPrincipalRef !== undefined) {
       fields.ownerPrincipalRef = submission.ownerPrincipalRef;
     }
     if (submission.plannedHours !== undefined) {
@@ -646,7 +641,8 @@ const useTasksPage = (
         ? { _tag: 'CreateTask', ...fields }
         : {
             _tag: 'UpdateTask',
-            ...fields,
+            ...Struct.omit(fields, ['ownerPrincipalRef']),
+            ...assignmentPatch(editor.task.ownerPrincipalRef, submission.ownerPrincipalRef),
             // An edit always sends the due date, replacing the create-shaped one: None removes a saved date.
             dueDate: Option.fromUndefinedOr(submission.dueDate),
             plannedHours: Option.fromUndefinedOr(submission.plannedHours),

@@ -118,8 +118,8 @@ const decodeOptional = <A, I>(schema: Schema.Codec<A, I>, value: string) =>
   Option.getOrUndefined(Schema.decodeUnknownOption(schema)(value.trim()));
 
 /**
- * An emptied field is rejected when the task already has a value: the update contract cannot clear it. The due date
- * is the exception (UpdateTask accepts null for it), so it has no such check.
+ * Customer and opportunity references cannot be cleared by UpdateTask. Other nullable fields use its explicit
+ * clear contract instead.
  */
 const clearedError = (hadValue: boolean, hasValue: boolean): FieldError | undefined =>
   hadValue && !hasValue ? 'clear' : undefined;
@@ -152,7 +152,7 @@ const validate = (
   decoded: Decoded,
   opportunityOwner: string | undefined,
 ): FieldErrors => ({
-  assigneeId: clearedError(task?.ownerPrincipalRef !== undefined, decoded.ownerPrincipalRef !== undefined),
+  assigneeId: idError(values.assigneeId, false, decoded.ownerPrincipalRef !== undefined),
   // A typed year such as 0026 is a valid calendar date but not a real deadline. Only a changed date is checked.
   dueDate:
     values.dueDate !== undefined && values.dueDate !== task?.dueDate && !isPlausibleDueDate(values.dueDate)

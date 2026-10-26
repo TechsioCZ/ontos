@@ -201,9 +201,8 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
     Match.exhaustive,
   );
   const owner = Match.value(command).pipe(
-    Match.tag('CreateTask', 'UpdateTask', 'AssignTask', ({ ownerPrincipalRef }) =>
-      Option.fromUndefinedOr(ownerPrincipalRef),
-    ),
+    Match.tag('CreateTask', 'AssignTask', ({ ownerPrincipalRef }) => Option.fromUndefinedOr(ownerPrincipalRef)),
+    Match.tag('UpdateTask', ({ ownerPrincipalRef }) => ownerPrincipalRef ?? Option.none()),
     Match.tag('ChangeTaskState', 'SetTaskArchived', () => Option.none()),
     Match.exhaustive,
   );
@@ -318,44 +317,55 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
                   }),
                 ),
           ),
-          Match.tag('UpdateTask', ({ _tag, dueDate, plannedHours, projectId, taskRef, ...changes }) => {
-            void _tag;
-            void taskRef;
-            const ownerChanged =
-              changes.ownerPrincipalRef !== undefined &&
-              (existing.ownerPrincipalRef?.tenantId !== changes.ownerPrincipalRef.tenantId ||
-                existing.ownerPrincipalRef.principalId !== changes.ownerPrincipalRef.principalId);
-            const updated = {
-              ...(ownerChanged
-                ? Struct.omit(existing, ['assignmentNeedsReassignment', 'assignmentWithoutLogin'])
-                : existing),
-              ...changes,
-              updatedAt: input.now,
-            };
-            // An absent due date keeps the saved one; None removes the key, Some replaces it.
-            const withDate =
-              dueDate === undefined
-                ? updated
-                : Option.match(dueDate, {
-                    onNone: (): Task => Struct.omit(updated, ['dueDate']),
-                    onSome: (date) => ({ ...updated, dueDate: date }),
-                  });
-            const withProject =
-              projectId === undefined
-                ? withDate
-                : Option.match(projectId, {
-                    onNone: (): Task => Struct.omit(withDate, ['projectId']),
-                    onSome: (id) => ({ ...withDate, projectId: id }),
-                  });
-            return Effect.succeed(
-              plannedHours === undefined
-                ? withProject
-                : Option.match(plannedHours, {
-                    onNone: (): Task => Struct.omit(withProject, ['plannedHours']),
-                    onSome: (hours) => ({ ...withProject, plannedHours: hours }),
-                  }),
-            );
-          }),
+          Match.tag(
+            'UpdateTask',
+            ({ _tag, dueDate, ownerPrincipalRef, plannedHours, projectId, taskRef, ...changes }) => {
+              void _tag;
+              void taskRef;
+              const ownerChanged =
+                ownerPrincipalRef !== undefined &&
+                (Option.isNone(ownerPrincipalRef) ||
+                  existing.ownerPrincipalRef?.tenantId !== ownerPrincipalRef.value.tenantId ||
+                  existing.ownerPrincipalRef.principalId !== ownerPrincipalRef.value.principalId);
+              const updated = {
+                ...(ownerChanged
+                  ? Struct.omit(existing, ['assignmentNeedsReassignment', 'assignmentWithoutLogin'])
+                  : existing),
+                ...changes,
+                updatedAt: input.now,
+              };
+              const withOwner =
+                ownerPrincipalRef === undefined
+                  ? updated
+                  : Option.match(ownerPrincipalRef, {
+                      onNone: (): Task => Struct.omit(updated, ['ownerPrincipalRef']),
+                      onSome: (principalRef) => ({ ...updated, ownerPrincipalRef: principalRef }),
+                    });
+              // An absent due date keeps the saved one; None removes the key, Some replaces it.
+              const withDate =
+                dueDate === undefined
+                  ? withOwner
+                  : Option.match(dueDate, {
+                      onNone: (): Task => Struct.omit(withOwner, ['dueDate']),
+                      onSome: (date) => ({ ...withOwner, dueDate: date }),
+                    });
+              const withProject =
+                projectId === undefined
+                  ? withDate
+                  : Option.match(projectId, {
+                      onNone: (): Task => Struct.omit(withDate, ['projectId']),
+                      onSome: (id) => ({ ...withDate, projectId: id }),
+                    });
+              return Effect.succeed(
+                plannedHours === undefined
+                  ? withProject
+                  : Option.match(plannedHours, {
+                      onNone: (): Task => Struct.omit(withProject, ['plannedHours']),
+                      onSome: (hours) => ({ ...withProject, plannedHours: hours }),
+                    }),
+              );
+            },
+          ),
           Match.exhaustive,
         );
       }),
