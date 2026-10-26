@@ -172,7 +172,7 @@ it.effect('preserves optional note encoding and staff-only archive classificatio
   Effect.gen(function* commandCompatibility() {
     const commands = yield* Effect.forEach(
       [create, { ...create, note: null }, { ...create, note: 'Poznámka' }],
-      (input) => Schema.decodeUnknownEffect(PropertyCommandSchema)(input),
+      (input) => Schema.decodeEffect(PropertyCommandSchema)(input),
     );
     expect(commands).toEqual([create, { ...create, note: null }, { ...create, note: 'Poznámka' }]);
     expect(commands.map(isStaffOnlyPropertyCommand)).toEqual([false, false, false]);
