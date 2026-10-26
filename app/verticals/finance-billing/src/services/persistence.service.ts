@@ -437,6 +437,9 @@ const handleVoidInvoice = Effect.fn('Finance.handleVoidInvoice')(function* handl
   if (previous.businessState === 'VOIDED') {
     return unchanged(state, previous);
   }
+  if (deductedElsewhere(state, previous.ref.resourceId).has(previous.ref.resourceId)) {
+    return yield* conflict('void_requires_unreferenced_invoice');
+  }
   const settledByPrior = (previous.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
   if (
     previous.paidMinor !== (previous.businessState === 'CONFIRMED' ? settledByPrior : 0) ||

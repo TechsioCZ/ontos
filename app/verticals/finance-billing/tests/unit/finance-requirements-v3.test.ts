@@ -341,6 +341,133 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
     }),
   );
 
+  it.effect('cannot void a partial settlement source until its final invoice is voided', () =>
+    Effect.gen(function* referencedPartial() {
+      const partial = invoice('part-b', { businessState: 'DRAFT', documentKind: 'PARTIAL', totalMinor: 30_000 });
+      const finalC = invoice('final-c', { businessState: 'DRAFT', documentKind: 'FINAL', totalMinor: 30_000 });
+      const linkedB = yield* run(
+        { ...empty, invoices: [advance, partial, finalC] },
+        {
+          _tag: 'SetPriorSettlement',
+          entries: [{ amountMinor: 30_000, invoiceResourceId: advance.ref.resourceId }],
+          invoiceRef: partial.ref,
+        },
+      );
+      const readyB = yield* run(linkedB.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [partial.ref] });
+      const approvedB = yield* run(readyB.state, { _tag: 'ConfirmInvoice', invoiceRef: partial.ref });
+      expect(approvedB.invoice).toMatchObject({ businessState: 'CONFIRMED', paidMinor: 30_000, paymentState: 'PAID' });
+      const linkedC = yield* run(approvedB.state, {
+        _tag: 'SetPriorSettlement',
+        entries: [{ amountMinor: 30_000, invoiceResourceId: partial.ref.resourceId }],
+        invoiceRef: finalC.ref,
+      });
+      const readyC = yield* run(linkedC.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [finalC.ref] });
+      const approvedC = yield* run(readyC.state, { _tag: 'ConfirmInvoice', invoiceRef: finalC.ref });
+      expect(approvedC.invoice).toMatchObject({ businessState: 'CONFIRMED', paidMinor: 30_000, paymentState: 'PAID' });
+
+      const refused = yield* Effect.exit(run(approvedC.state, { _tag: 'VoidInvoice', invoiceRef: partial.ref }));
+      expect(failsWith(refused, 'void_requires_unreferenced_invoice')).toBe(true);
+
+      const secondFinal = invoice('final-d', { businessState: 'DRAFT', documentKind: 'FINAL' });
+      const reused = yield* Effect.exit(
+        run(
+          { ...approvedC.state, invoices: [...approvedC.state.invoices, secondFinal] },
+          {
+            _tag: 'SetPriorSettlement',
+            entries: [{ amountMinor: 1, invoiceResourceId: advance.ref.resourceId }],
+            invoiceRef: secondFinal.ref,
+          },
+        ),
+      );
+      expect(failsWith(reused, 'prior_settlement_exceeds_paid_amount')).toBe(true);
+
+      const voidedC = yield* run(approvedC.state, { _tag: 'VoidInvoice', invoiceRef: finalC.ref });
+      expect(voidedC.invoice?.businessState).toBe('VOIDED');
+      const voidedB = yield* run(voidedC.state, { _tag: 'VoidInvoice', invoiceRef: partial.ref });
+      expect(voidedB.invoice?.businessState).toBe('VOIDED');
+      const released = yield* run(
+        { ...voidedB.state, invoices: [...voidedB.state.invoices, secondFinal] },
+        {
+          _tag: 'SetPriorSettlement',
+          entries: [{ amountMinor: 30_000, invoiceResourceId: advance.ref.resourceId }],
+          invoiceRef: secondFinal.ref,
+        },
+      );
+      expect(released.invoice?.priorSettlement?.entries).toEqual([
+        { amountMinor: 30_000, invoiceResourceId: advance.ref.resourceId, number: advance.documentNumber },
+      ]);
+    }),
+  );
+
+  it.effect('a draft settlement also blocks voiding its source until the reference is removed', () =>
+    Effect.gen(function* draftReference() {
+      const partial = invoice('part-b', {
+        documentKind: 'PARTIAL',
+        paidMinor: 30_000,
+        paymentState: 'PARTIALLY_PAID',
+        priorSettlement: {
+          confirmedAt: now,
+          entries: [{ amountMinor: 30_000, invoiceResourceId: advance.ref.resourceId, number: advance.documentNumber }],
+        },
+      });
+      const linked = yield* run(
+        { ...empty, invoices: [advance, partial, final] },
+        {
+          _tag: 'SetPriorSettlement',
+          entries: [{ amountMinor: 30_000, invoiceResourceId: partial.ref.resourceId }],
+          invoiceRef: final.ref,
+        },
+      );
+      const refused = yield* Effect.exit(run(linked.state, { _tag: 'VoidInvoice', invoiceRef: partial.ref }));
+      expect(failsWith(refused, 'void_requires_unreferenced_invoice')).toBe(true);
+      const cleared = yield* run(linked.state, { _tag: 'SetPriorSettlement', entries: [], invoiceRef: final.ref });
+      const voided = yield* run(cleared.state, { _tag: 'VoidInvoice', invoiceRef: partial.ref });
+      expect(voided.invoice?.businessState).toBe('VOIDED');
+    }),
+  );
+
+  it.effect('still refuses voiding invoices with real payments or active accounting synchronization', () =>
+    Effect.gen(function* existingVoidRestrictions() {
+      const overrides: readonly Partial<Invoice>[] = [
+        { paidMinor: 30_001 },
+        { accountingSyncState: 'PENDING' },
+        { accountingSyncState: 'SYNCED' },
+      ];
+      for (const fields of overrides) {
+        const partial = invoice('part-b', {
+          documentKind: 'PARTIAL',
+          paidMinor: 30_000,
+          paymentState: 'PARTIALLY_PAID',
+          priorSettlement: {
+            confirmedAt: now,
+            entries: [
+              { amountMinor: 30_000, invoiceResourceId: advance.ref.resourceId, number: advance.documentNumber },
+            ],
+          },
+          ...fields,
+        });
+        const refused = yield* Effect.exit(
+          run({ ...empty, invoices: [advance, partial] }, { _tag: 'VoidInvoice', invoiceRef: partial.ref }),
+        );
+        expect(failsWith(refused, 'void_requires_unpaid_unsynchronized_invoice')).toBe(true);
+      }
+    }),
+  );
+
+  it.effect('unreferenced unpaid drafts and confirmed invoices can still be voided idempotently', () =>
+    Effect.gen(function* ordinaryVoiding() {
+      for (const businessState of ['DRAFT', 'CONFIRMED'] as const) {
+        const unpaid = invoice('unpaid', { businessState });
+        const voided = yield* run({ ...empty, invoices: [unpaid] }, { _tag: 'VoidInvoice', invoiceRef: unpaid.ref });
+        expect(voided.invoice?.businessState).toBe('VOIDED');
+        expect(voided.changed).toBe(true);
+        const repeated = yield* run(voided.state, { _tag: 'VoidInvoice', invoiceRef: unpaid.ref });
+        expect(repeated.changed).toBe(false);
+        expect(repeated.state).toBe(voided.state);
+      }
+    }),
+  );
+
   it.effect('a standard invoice cannot take earlier advances into account', () =>
     Effect.gen(function* standard() {
       const plain = invoice('std-1', { businessState: 'DRAFT' });
