@@ -1,1 +1,7 @@
-{ "reports": {} }
+{
+  "reports": {
+    "customPeriod": "Vlastní období",
+    "dateFrom": "Od",
+    "dateTo": "Do"
+  }
+}
