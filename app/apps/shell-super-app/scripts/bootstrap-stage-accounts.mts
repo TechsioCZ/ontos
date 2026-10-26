@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { NodeServices } from '@effect/platform-node';
+import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { readStageAccountsFileContents } from '@app/core-runtime/install/stage-accounts-file';
 import { Console, Effect, Exit, Layer } from 'effect';
 
-import { AuthConfig } from '../api/auth/config.ts';
-import { AuthDatabaseLive } from '../api/auth/db/client.ts';
+import { AuthDatabaseFromDatabaseConfigLive } from '../api/auth/db/client.ts';
 import { StageAccountsBootstrapError } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import type { StageAccountsFileReader } from '../api/auth/stage-accounts-bootstrap-contract.ts';
 import {
@@ -18,20 +18,20 @@ const readAccountsFile: StageAccountsFileReader = (path) =>
 
 const program = Effect.gen(function* bootstrapStageAccountsProgram() {
   const configuration = yield* loadStageAccountsConfiguration(readAccountsFile);
+  const databaseConfiguration = yield* parseDatabaseConfig({
+    DATABASE_URL: configuration.databaseAdminUrl,
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new StageAccountsBootstrapError({
+          code: 'stage_accounts_configuration_invalid',
+          reason: 'The stage administrator database configuration is invalid',
+        }),
+    ),
+  );
   const result = yield* bootstrapStageAccounts(configuration).pipe(
     Effect.provide(
-      AuthDatabaseLive.pipe(
-        Layer.provide(
-          Layer.succeed(AuthConfig, {
-            baseUrl: configuration.authBaseUrl,
-            connectionString: configuration.databaseAdminUrl,
-            secret: configuration.authSecret,
-            secureCookies: true,
-            supportUserIds: [],
-            trustedOrigins: [configuration.authBaseUrl],
-          }),
-        ),
-      ),
+      AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
     ),
     Effect.catchTag(
       'AuthDatabaseConnectionError',
