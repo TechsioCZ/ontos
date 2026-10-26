@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Cause, Deferred, Effect, Fiber, Logger, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Logger, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
@@ -1269,7 +1269,7 @@ it.effect('does not retain pending decisions after a batched client defects', ()
         const failed = yield* Effect.all([checkModules(access, ['crm']), checkModules(access, ['core.shell'])], {
           concurrency: 2,
         }).pipe(Effect.exit);
-        expect(failed._tag).toBe('Failure');
+        expect(Exit.isFailure(failed)).toBe(true);
         expect(yield* checkModules(access, ['crm', 'core.shell'])).toEqual([
           { decision: 'allowed', key: 'crm' },
           { decision: 'allowed', key: 'core.shell' },
