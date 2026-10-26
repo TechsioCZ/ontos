@@ -13,6 +13,7 @@ import { AccountShell } from "@/components/account-shell";
 import { useAccountProfileSnapshot } from "./use-account-profile";
 import { PasswordChange } from "./password-change";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
+import { AddressAutocomplete } from "@/features/checkout/address-autocomplete";
 import {
   accountProfileStorageKey,
   parseAccountProfile,
@@ -114,6 +115,39 @@ export function AccountProfilePage() {
       />
     </div>
   );
+  const addressInput = (delivery = false) => {
+    const streetKey = delivery ? "deliveryStreet" : "street";
+    const cityKey = delivery ? "deliveryCity" : "city";
+    const postalKey = delivery ? "deliveryPostalCode" : "postalCode";
+    return (
+      <div data-account-field className="max-w-(--akros-account-field-width)">
+        <AddressAutocomplete
+          id={`account-${streetKey}`}
+          label="Ulice"
+          required={!delivery}
+          value={profile[streetKey]}
+          country={profile.country}
+          error={errors[streetKey]}
+          onInput={(street) => update(streetKey, street)}
+          onSelect={(address) => {
+            setEdited((current) => ({
+              ...(current ?? profile),
+              ...(address.street ? { [streetKey]: address.street } : {}),
+              ...(address.city ? { [cityKey]: address.city } : {}),
+              ...(address.postalCode ? { [postalKey]: address.postalCode } : {}),
+            }));
+            setErrors((current) => ({
+              ...current,
+              ...(address.street ? { [streetKey]: undefined } : {}),
+              ...(address.city ? { [cityKey]: undefined } : {}),
+              ...(address.postalCode ? { [postalKey]: undefined } : {}),
+            }));
+            setFeedback("");
+          }}
+        />
+      </div>
+    );
+  };
   const phone = (key: "phone" | "phone2", label: string) => (
     <PhoneInput
       id={`account-${key}`}
@@ -248,7 +282,7 @@ export function AccountProfilePage() {
             <ProfileSection value="billing" title="Fakturační údaje" id="fakturacni-udaje">
               <div className="grid max-w-(--akros-account-billing-width) gap-x-(--dimension-24) gap-y-(--dimension-32) md:grid-cols-2">
                 {input("firstName", "Jméno", "billing given-name")}
-                {input("street", "Ulice", "billing street-address")}
+                {addressInput()}
                 {input("lastName", "Příjmení", "billing family-name")}
                 {input("city", "Město", "billing address-level2")}
                 {input("billingEmail", "Email", "billing email", "email")}
@@ -295,7 +329,7 @@ export function AccountProfilePage() {
             </ProfileSection>
             <ProfileSection value="delivery" title="Doručovací adresa" id="dorucovaci-adresa">
               <div className="grid max-w-(--akros-account-form-width) gap-(--dimension-24) md:grid-cols-2">
-                {input("deliveryStreet", "Ulice", "shipping street-address")}
+                {addressInput(true)}
                 {input("deliveryCity", "Město", "shipping address-level2")}
                 {input("deliveryPostalCode", "PSČ", "shipping postal-code")}
               </div>

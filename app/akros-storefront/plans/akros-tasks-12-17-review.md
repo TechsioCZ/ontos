@@ -305,3 +305,43 @@ a omezení pokrytí adresní služby. Nejde o nové regrese tohoto FE dokončen�
 FE výsledek je připravený ke commitům podle uživatelova pokynu. Commity jsou
 rozdělené podle selectů/responzivity, účtu a objednávek, hmotnosti, adresního
 klienta a dokumentace. GitHub issues, vzdálené větve a nasazení se tím nemění.
+
+## Navazující oprava adres v účtu a chráněném deployi — 23. 10. 2026
+
+Na pokyn uživatele používá fakturační i doručovací ulice v Mém účtu stejný
+našeptávač jako checkout. Návrh doplní jen dostupné části příslušné adresy;
+neúplné návrhy nemažou ostatní pole. Výběr není automatické uložení: změny
+se stále potvrzují tlačítkem „Změnit údaje“. Doručovací adresa zůstává volitelná.
+
+Chráněný Vercel preview odmítal adresní požadavky, protože klient používal
+`credentials: "omit"`. Relativní `/api/address-suggestions` nyní používá
+`same-origin`, takže funguje nezávisle na konkrétní doméně včetně preview cookie.
+Externí rewrite nahradila úzká GET route: pevný poskytovatel a parametry,
+žádné přeposílání Cookie/Authorization, timeout, zákaz redirectů a cachování.
+Poskytovatel při živé kontrole odpovídal i přes 4,5 sekundy: upstream má proto
+limit 8 sekund a klient 10 sekund včetně transportu/startu routy.
+Nejde o kopii adresního backendu; data stále poskytuje stávající Smart Address.
+
+Regresní testy ověřují oddělení přihlašovacích údajů, chybné odpovědi služby
+a neplatné dotazy. Prohlížečový scénář ověřuje přítomnost stejnooriginové cookie,
+adresy checkoutu i účtu, popupy od 320 do 1920 px a uložení až po potvrzení.
+Živý chráněný deploy bude možné definitivně ověřit až po novém nasazení;
+stávající URL obsahuje původní kód. Kvalita hledání krátkých názvů zůstává
+omezením poskytovatele. V této navazující změně se nic nenasazuje ani necommituje.
+
+Ověření: formatter, lint a TypeScript prošly; všech 214 testů ve 40 souborech
+prošlo s `vitest run --maxWorkers=2`, stejně jako produkční build. Výchozí
+souběžný běh narazil na 5s timeout staršího testu katalogového hledání; ten
+samostatně i při omezené souběžnosti prošel, bez změny testu nebo jeho limitu.
+Účet prošel regresí devíti šířek a dalších 48 rozložení. Živá služba bez mocků
+doplnila Bakalovo nábřeží a Brno v obou adresách účtu na 1920 i 390 px.
+
+## Uložení práce a směr integrace — 26. 10. 2026
+
+Uživatel schválil commit a push posledních adresních úprav na `feat/akros`.
+Pro budoucí integrační větev je základem `demo/sales-crm`: zachovat jeho skutečná
+data, backendové napojení, autentizaci, ukládání a objednávkové procesy a nad nimi
+aktualizovat UI podle schválených úprav z `feat/akros`. Nepřenášet zpět demo
+úložiště ani nahrazovat funkční integraci původní FE simulací. Nové ovládací
+prvky přizpůsobit existujícím skutečným datovým kontraktům. Slučování ani samotná
+integrace tímto pokynem ještě nezačíná.

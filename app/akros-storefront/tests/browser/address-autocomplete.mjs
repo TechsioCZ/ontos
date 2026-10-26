@@ -57,7 +57,12 @@ try {
   );
   let mode = "full";
   const requests = [];
+  await page.context().addCookies([{ name: "preview-test", value: "authenticated", url: base }]);
   await page.route(endpoint, async (route) => {
+    assert.ok(
+      (await route.request().allHeaders()).cookie?.includes("preview-test=authenticated"),
+      "same-origin requests must retain deployment authentication cookies",
+    );
     const q = new URL(route.request().url()).searchParams.get("q");
     requests.push(q);
     if (mode === "failed")
@@ -214,9 +219,74 @@ try {
   await page.getByRole("button", { name: "Změnit fakturační údaje", exact: true }).click();
   assert.equal(await street.inputValue(), "New street");
   assert.equal(await page.locator("#billing-city").inputValue(), "Praha");
+  // Account uses the same interaction, but selection must remain an unsaved edit.
+  mode = "full";
+  await page.goto(`${base}/muj-ucet#dorucovaci-adresa`);
+  await page.locator("#account-email").waitFor();
+  const beforeStored = await page.evaluate(() =>
+    localStorage.getItem("akros-demo-account-profile-v1"),
+  );
+  for (const width of [1920, 1440, 1280, 1024, 768, 761, 760, 640, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const key of ["street", "deliveryStreet"]) {
+      const field = page.locator(`[data-address-field="account-${key}"] input[role="combobox"]`);
+      await field.fill("Václavské");
+      const option = page.getByRole("option", { name: full.displayLabel, exact: true });
+      await option.waitFor();
+      const popup = page.locator('[data-scope="combobox"][data-part="content"][data-state="open"]');
+      const bounds = await popup.boundingBox();
+      assert.ok(
+        bounds.x >= -1 && bounds.x + bounds.width <= width + 1,
+        `account popup overflow: ${key}/${width}`,
+      );
+      if ([1920, 390].includes(width))
+        await page.screenshot({
+          path: `test-results/task-17/account-${key}-${width}.png`,
+          fullPage: true,
+        });
+      await option.click();
+      assert.equal(await field.inputValue(), "Václavské náměstí 846/1");
+      assert.equal(
+        await page
+          .locator(key === "street" ? "#account-city" : "#account-deliveryCity")
+          .inputValue(),
+        "Praha",
+      );
+      assert.equal(
+        await page
+          .locator(key === "street" ? "#account-postalCode" : "#account-deliveryPostalCode")
+          .inputValue(),
+        "110 00",
+      );
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
+        false,
+      );
+    }
+  }
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("akros-demo-account-profile-v1")),
+    beforeStored,
+  );
+  mode = "failed";
+  const accountStreet = page.locator(
+    '[data-address-field="account-street"] input[role="combobox"]',
+  );
+  await accountStreet.fill("Ruční adresa 1");
+  await page.locator(".akros-address-status").waitFor();
+  await accountStreet.press("Escape");
+  await page.getByRole("button", { name: "Změnit údaje", exact: true }).click();
+  await page.getByText("Údaje byly uložené v tomto prohlížeči.", { exact: true }).waitFor();
+  await page.reload();
+  assert.equal(await accountStreet.inputValue(), "Ruční adresa 1");
+  assert.equal(await page.locator("#account-city").inputValue(), "Praha");
+  assert.equal(
+    await page.locator("#account-deliveryStreet-input").inputValue(),
+    "Václavské náměstí 846/1",
+  );
   assert.deepEqual(errors, []);
   console.log(
-    `TASK 17: 14 widths, keyboard/pointer, billing/delivery isolation, partial data, empty/outage/manual entry, stale responses and reload passed (${requests.length} test requests).`,
+    `Address suggestions: checkout at 14 widths, account at 10 widths, same-origin cookies, keyboard/pointer, billing/delivery isolation, partial data, empty/outage/manual entry, explicit save and reload passed (${requests.length} test requests).`,
   );
 } finally {
   await browser.close();

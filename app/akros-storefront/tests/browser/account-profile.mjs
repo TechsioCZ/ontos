@@ -281,7 +281,7 @@ try {
     .locator('[data-part="control"]')
     .click();
   await page.getByRole("button", { name: "Doručovací adresa", exact: true }).click();
-  await page.locator("#account-deliveryStreet").fill("Lipová 1");
+  await page.locator("#account-deliveryStreet-input").fill("Lipová 1");
   await page.getByRole("button", { name: "Změnit údaje", exact: true }).click();
   await page.getByText("Vyplňte město.", { exact: true }).waitFor();
   await page.locator("#account-deliveryCity").fill("Brno");

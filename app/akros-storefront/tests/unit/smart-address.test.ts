@@ -46,7 +46,7 @@ describe("Smart Suggest public v1 integration", () => {
       }),
     ).toEqual([suggestion]);
   });
-  it("uses the deployed v1 endpoint and request shape without sending account credentials", async () => {
+  it("uses a relative endpoint with same-origin credentials for protected previews", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(new Response(JSON.stringify({ suggestions: [suggestion] })));
@@ -63,7 +63,7 @@ describe("Smart Suggest public v1 integration", () => {
       language: "cs",
       limit: "20",
     });
-    expect(options?.credentials).toBe("omit");
+    expect(options?.credentials).toBe("same-origin");
     expect(options?.signal).toBeInstanceOf(AbortSignal);
   });
   it("surfaces outage and malformed data instead of inventing address suggestions", async () => {

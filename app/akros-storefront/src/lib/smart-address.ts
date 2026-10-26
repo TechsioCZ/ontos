@@ -1,5 +1,5 @@
 /** Public v1 contract observed in the deployed Smart Suggest SDK, not the older /suggest SDK. */
-// A fixed Next rewrite keeps this same-origin because the service does not expose CORS.
+// Same-origin transport supports protected previews without exposing cookies to the provider.
 export const smartAddressEndpoint = "/api/address-suggestions";
 
 export interface AddressSuggestion {
@@ -71,8 +71,8 @@ export async function suggestAddresses(
   });
   const response = await fetch(`${smartAddressEndpoint}?${params}`, {
     headers: { Accept: "application/json" },
-    signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-    credentials: "omit",
+    signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+    credentials: "same-origin",
   });
   if (!response.ok) throw new Error(`Address service: ${response.status}`);
   return parseAddressSuggestions(await response.json());

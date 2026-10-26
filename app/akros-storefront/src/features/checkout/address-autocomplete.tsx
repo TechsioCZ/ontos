@@ -12,6 +12,8 @@ export function AddressAutocomplete({
   error,
   onInput,
   onSelect,
+  label = "Ulice, č.p.",
+  required = true,
 }: {
   id: string;
   value: string;
@@ -19,6 +21,8 @@ export function AddressAutocomplete({
   error?: string;
   onInput: (street: string) => void;
   onSelect: (address: ReturnType<typeof getSuggestedAddress>) => void;
+  label?: string;
+  required?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -65,12 +69,12 @@ export function AddressAutocomplete({
     <div className="akros-address-autocomplete" data-address-autocomplete data-address-field={id}>
       <Combobox
         id={id}
-        label="Ulice, č.p."
+        label={label}
         placeholder="Začněte psát ulici a číslo domu"
         size="sm"
         portalled={false}
         renderItem={(item) => <span className="akros-address-option-label">{item.label}</span>}
-        required
+        required={required}
         inputValue={value}
         value={[]}
         open={open}
