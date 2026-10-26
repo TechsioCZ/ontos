@@ -11,8 +11,7 @@ import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redac
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
-import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
+import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import {
@@ -723,29 +722,18 @@ export const initializeLocalDevelopment = (
       LOCAL_DEVELOPMENT_VERTICALS,
     );
     const relationships = yield* buildLocalDevelopmentRelationships(moduleIds);
-    const authUser = yield* ensureAuthUser(configuration).pipe(
-      Effect.provide(
-        AuthDatabaseLive.pipe(
-          Layer.provide(
-            Layer.succeed(AuthConfig, {
-              baseUrl: configuration.authBaseUrl,
-              connectionString: configuration.databaseAdminUrl,
-              secret: Redacted.value(configuration.authSecret),
-              secureCookies: false,
-              supportUserIds: [],
-              trustedOrigins: [configuration.authBaseUrl],
-            }),
-          ),
-        ),
-      ),
-      Effect.catchTag('AuthDatabaseConnectionError', () =>
-        failure('local_persistence_failed', 'The local authentication database could not be opened'),
-      ),
-    );
     const databaseConfiguration = yield* parseDatabaseConfig({
       DATABASE_URL: configuration.databaseAdminUrl,
     }).pipe(
       Effect.mapError(() => failure('local_configuration_invalid', 'The local Core database configuration is invalid')),
+    );
+    const authUser = yield* ensureAuthUser(configuration).pipe(
+      Effect.provide(
+        AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, databaseConfiguration))),
+      ),
+      Effect.catchTag('AuthDatabaseConnectionError', () =>
+        failure('local_persistence_failed', 'The local authentication database could not be opened'),
+      ),
     );
     yield* Effect.gen(function* initializeCore() {
       const database = yield* CoreDatabase;
