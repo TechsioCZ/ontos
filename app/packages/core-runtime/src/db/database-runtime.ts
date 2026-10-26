@@ -9,6 +9,8 @@ import type { DatabaseIdentity } from './database-identity-manifest.ts';
  * Hyperdrive binding.
  */
 export interface DatabaseRuntime {
+  /** Hyperdrive URL credentials describe the proxy transport, not the authenticated origin role. */
+  readonly connectionIdentity: 'direct' | 'hyperdrive';
   /** Layers the identity's platform connection URL over the process configuration. */
   readonly runtimeDatabaseProvider: (
     base: ConfigProvider.ConfigProvider,

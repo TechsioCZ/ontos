@@ -4,12 +4,13 @@ import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
-import type { DatabaseConfigValue } from './config.ts';
+import type { RuntimeDatabaseConfigValue } from './config.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from './config.ts';
 import { DatabaseConnectionError } from './connection-error.ts';
 import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { configureDatabasePool } from './pool-configuration.ts';
 import { coreRelations } from './schema.ts';
+import { verifyDatabaseSessionRole } from './session-identity.ts';
 import { guardPoolAcquisition, refuseInsideDatabaseTransaction } from './transaction-io-guard.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
@@ -43,7 +44,7 @@ export const guardedPgClientLayer = (
   );
 
 export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* makeDatabase(
-  configuration: DatabaseConfigValue & {
+  configuration: RuntimeDatabaseConfigValue & {
     readonly maxConnections?: number;
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
@@ -60,6 +61,7 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
     ),
   );
   const client = Context.get(context, PgClient.PgClient);
+  yield* verifyDatabaseSessionRole(client, configuration.expectedRole);
   return {
     // A marked transaction body that would check out a second pooled connection dies instead.
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(

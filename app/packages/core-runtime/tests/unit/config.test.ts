@@ -58,7 +58,7 @@ it.layer(NodeServices.layer)((suite) => {
         identity: SHARED_RUNTIME_IDENTITY,
       });
 
-      expect(configuration.user).toBe(SHARED_RUNTIME_IDENTITY.role);
+      expect(configuration.expectedRole).toBe(SHARED_RUNTIME_IDENTITY.role);
       expect(configuration.connectionString).toBe(connectionString);
     }),
   );
@@ -73,6 +73,7 @@ it.effect('parses valid local PostgreSQL connection settings', () =>
     expect(configuration).toEqual({
       connectionString: 'postgresql://ontos:ontos@localhost:5433/ontos',
       database: 'ontos',
+      expectedRole: 'ontos',
       host: 'localhost',
       port: 5433,
       user: 'ontos',
@@ -154,11 +155,11 @@ it.effect('each runtime identity loads from its own URL key and names that key w
       }),
     );
 
-    expect(issuer.user).toBe('shell_gateway_issuer');
-    expect(party.user).toBe('party_registry_runtime');
+    expect(issuer.expectedRole).toBe('shell_gateway_issuer');
+    expect(party.expectedRole).toBe('party_registry_runtime');
     expect(workerPair.runtime.user).toBe('party_registry_worker');
     expect(workerPair.admin.user).toBe('ontos_admin');
-    expect(shared.user).toBe('ontos_runtime');
+    expect(shared.expectedRole).toBe('ontos_runtime');
     expect(missing.reason).toBe('PARTY_REGISTRY_DATABASE_URL is required');
   }),
 );

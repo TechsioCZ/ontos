@@ -3,7 +3,13 @@ import {
   makeEffectDrizzleAuthAdapter,
 } from '@app/better-auth-effect-drizzle/server';
 import type { EffectDrizzleAuthTransaction } from '@app/better-auth-effect-drizzle/server';
-import { DatabaseConfig, acceptPersonInvitationFromTransaction, configureDatabasePool } from '@app/core-runtime';
+import {
+  DatabaseConfig,
+  SHARED_RUNTIME_IDENTITY,
+  acceptPersonInvitationFromTransaction,
+  configureDatabasePool,
+  verifyDatabaseSessionRole,
+} from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted, Schema } from 'effect';
@@ -44,6 +50,7 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );
+  yield* verifyDatabaseSessionRole(client, SHARED_RUNTIME_IDENTITY.role).pipe(Effect.mapError(connectionFailure));
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );

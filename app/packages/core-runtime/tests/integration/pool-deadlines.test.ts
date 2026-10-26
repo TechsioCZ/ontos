@@ -7,9 +7,10 @@ import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
-import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive } from '../../src/db/client.ts';
-import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
+import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive, makeCoreDatabase } from '../../src/db/client.ts';
+import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import { configureDatabasePool } from '../../src/db/pool-configuration.ts';
+import { verifyDatabaseSessionRole } from '../../src/db/session-identity.ts';
 
 class RuntimeDatabaseIdentity extends Context.Service<RuntimeDatabaseIdentity, string>()(
   '@app/core-runtime/tests/integration/pool-deadlines.test/RuntimeDatabaseIdentity',
@@ -36,6 +37,38 @@ it.live('keeps administrator and runtime identities distinct in one memoized ope
     expect(admin).toBe(configuration.admin.user);
     expect(runtime).toBe(configuration.runtime.user);
     expect(admin).not.toBe(runtime);
+  }),
+);
+
+it.live('refuses a database service when the authenticated session has the wrong enrolled role', () =>
+  Effect.gen(function* refuseWrongDatabaseRole() {
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+    const failure = yield* Effect.flip(
+      makeCoreDatabase({ ...configuration, expectedRole: SHELL_GATEWAY_ISSUER_IDENTITY.role }),
+    );
+
+    expect(Predicate.isTagged(failure, 'DatabaseConnectionError')).toBe(true);
+    expect(failure.reason).toBe('The PostgreSQL session does not match the required database identity');
+    expect(failure.cause).toBeUndefined();
+  }),
+);
+
+it.live('refuses a failed PostgreSQL role query without exposing the driver failure', () =>
+  Effect.gen(function* refuseFailedRoleQuery() {
+    const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
+    const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString));
+    const reactivity = yield* Reactivity.make;
+    const client = yield* PgClient.makeClient(poolConfiguration).pipe(
+      Effect.provideService(Reactivity.Reactivity, reactivity),
+    );
+    yield* client.unsafe('begin');
+    yield* Effect.flip(client.unsafe('select 1 / 0'));
+    const failure = yield* Effect.flip(verifyDatabaseSessionRole(client, configuration.expectedRole));
+
+    expect(Predicate.isTagged(failure, 'DatabaseConnectionError')).toBe(true);
+    expect(failure.reason).toBe('Unable to verify the PostgreSQL session role');
+    expect(failure.cause).toBeUndefined();
+    yield* client.unsafe('rollback');
   }),
 );
 
@@ -67,7 +100,7 @@ it.live('applies PostgreSQL connect and statement deadlines', () =>
     expect(settings[0]?.statement_timeout).toBe('120ms');
 
     const identity = yield* client.unsafe<{ current_user: string }>('select current_user');
-    expect(identity[0]?.current_user).toBe(databaseConfiguration.user);
+    expect(identity[0]?.current_user).toBe(databaseConfiguration.expectedRole);
 
     const pidResult = yield* client.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
     const pid = pidResult[0]?.pid;

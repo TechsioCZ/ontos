@@ -44,6 +44,7 @@ const makeDatabaseConfigValue = (fields: DatabaseConfigFields) =>
       return Redacted.value(fields.connectionString);
     },
     database: fields.database,
+    expectedRole: fields.user,
     host: fields.host,
     port: fields.port,
     user: fields.user,
@@ -51,12 +52,15 @@ const makeDatabaseConfigValue = (fields: DatabaseConfigFields) =>
 
 export type DatabaseConfigValue = ReturnType<typeof makeDatabaseConfigValue>;
 
+/** Runtime transport credentials carry an expected origin role, not inferred origin metadata. */
+export type RuntimeDatabaseConfigValue = Pick<DatabaseConfigValue, 'connectionString' | 'expectedRole'>;
+
 export interface DatabaseConnectionPair {
   readonly admin: DatabaseConfigValue;
   readonly runtime: DatabaseConfigValue;
 }
 
-export class DatabaseConfig extends Context.Service<DatabaseConfig, DatabaseConfigValue>()(
+export class DatabaseConfig extends Context.Service<DatabaseConfig, RuntimeDatabaseConfigValue>()(
   '@app/core-runtime/db/config/DatabaseConfig',
 ) {}
 
@@ -264,10 +268,15 @@ const loadWithProvider = <Value>(
 const parseIdentityDatabaseConfigWith = Effect.fn('Config.readIdentityDatabaseConfig')(
   function* readIdentityDatabaseConfigEffect(provider: ConfigProvider.ConfigProvider, identity: DatabaseIdentity) {
     const connection = yield* parseDatabaseConfigWith(provider, identity);
-    if (connection.user !== identity.role) {
+    if (databaseRuntime.connectionIdentity === 'direct' && connection.user !== identity.role) {
       return yield* configFailure(`${identity.urlKey} must connect as the ${identity.role} role`);
     }
-    return connection;
+    return Object.freeze({
+      get connectionString(): string {
+        return connection.connectionString;
+      },
+      expectedRole: identity.role,
+    });
   },
 );
 
@@ -277,7 +286,7 @@ const parseIdentityDatabaseConfigWith = Effect.fn('Config.readIdentityDatabaseCo
  */
 export const loadDatabaseConfig = (
   options: LoadDatabaseConfigOptions,
-): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> =>
+): Effect.Effect<RuntimeDatabaseConfigValue, DatabaseConfigError> =>
   loadWithProvider(
     (provider) =>
       databaseRuntime

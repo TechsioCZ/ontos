@@ -4,16 +4,22 @@ import { expect, it, rs } from 'effect-rstest';
 import { SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from '../../src/db/database-identities.ts';
 import type { DatabaseIdentity } from '../../src/db/database-identities.ts';
 import { databaseRuntime } from '../../src/db/database-runtime.workerd.ts';
+import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { FIXTURE_REQUEST_IDENTITY, FIXTURE_WORKER_IDENTITY } from '../support/database-identities.ts';
 
 const bindings = rs.hoisted(() => ({
   env: {
-    GATEWAY_ISSUER_HYPERDRIVE: { connectionString: 'postgresql://shell_gateway_issuer@hyperdrive.local:5432/ontos' },
-    HYPERDRIVE: { connectionString: 'postgresql://ontos_runtime@hyperdrive.local:5432/ontos' },
+    GATEWAY_ISSUER_HYPERDRIVE: {
+      connectionString: 'postgresql://issuer-proxy:proxy-secret@issuer.hyperdrive.local:5432/issuer-slot',
+    },
+    HYPERDRIVE: {
+      connectionString: 'postgresql://runtime-proxy:proxy-secret@runtime.hyperdrive.local:5432/runtime-slot',
+    },
   },
 }));
 
 rs.mock('cloudflare:workers', () => ({ env: bindings.env }));
+rs.mock('#database-runtime', () => ({ databaseRuntime }));
 
 const adminUrl = 'postgresql://ontos_admin@localhost:5433/ontos';
 const base = ConfigProvider.fromUnknown({ DATABASE_ADMIN_URL: adminUrl });
@@ -37,6 +43,27 @@ it.effect('each Worker identity reads its own Hyperdrive binding under its URL k
 
     expect(shared).toEqual([bindings.env.HYPERDRIVE.connectionString, adminUrl]);
     expect(issuer).toEqual([bindings.env.GATEWAY_ISSUER_HYPERDRIVE.connectionString, adminUrl]);
+  }),
+);
+
+it.effect('loads proxy transport credentials without claiming they identify the origin role or database', () =>
+  Effect.gen(function* proxyCredentialsAreNotOriginMetadata() {
+    for (const identity of [SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY]) {
+      const configuration = yield* loadDatabaseConfig({
+        environment: { DATABASE_URL: 'postgresql://untrusted-direct@localhost:5432/untrusted' },
+        envPath: '/nonexistent/ontos-worker-config-test/.env',
+        identity,
+      });
+      const expectedUrl =
+        identity.id === SHARED_RUNTIME_IDENTITY.id
+          ? bindings.env.HYPERDRIVE.connectionString
+          : bindings.env.GATEWAY_ISSUER_HYPERDRIVE.connectionString;
+
+      expect(configuration.connectionString).toBe(expectedUrl);
+      expect(configuration.expectedRole).toBe(identity.role);
+      expect(configuration).not.toHaveProperty('user');
+      expect(configuration).not.toHaveProperty('database');
+    }
   }),
 );
 
