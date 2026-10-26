@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
 import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
@@ -66,7 +66,12 @@ const run = (state: FinanceState, command: FinanceCommand, validators = trustedR
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  });
+  }).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' }),
+    ),
+  );
 };
 const validateAgainstXsd = (xml: string) => {
   if (!existsSync(XSD)) {
@@ -176,13 +181,17 @@ describe('S08 POHODA XML handover end-to-end', () => {
           counterparties: { 'fv-1': { ico: '12345678' } },
           counterpartyNames: { 'fv-1': 'Podvržená s.r.o.' },
           format: 'POHODA_XML',
+          host: 'untrusted.example.test',
           invoiceResourceIds: ['fv-1'],
           issuerName: 'Obchodní firma',
+          shellOrigin: 'https://untrusted.example.test',
         },
         expectedRevision: 0,
       });
       expect(Object.keys(payload.command)).not.toContain('issuerName');
       expect(Object.keys(payload.command)).not.toContain('counterparties');
+      expect(Object.keys(payload.command)).not.toContain('host');
+      expect(Object.keys(payload.command)).not.toContain('shellOrigin');
       const result = yield* run({ ...empty, invoices: [issued] }, payload.command, trustedReferences('Siampark'));
       const content = result.state.accountingExports?.[0]?.content ?? '';
       expect(content).toContain('<typ:company>Siampark</typ:company>');
@@ -191,6 +200,8 @@ describe('S08 POHODA XML handover end-to-end', () => {
       // The file names the authenticated principal, not the readable label the browser sent.
       expect(content).toContain('vytvořil uživatel OntOS principal-1');
       expect(content).not.toContain('ucetni@demo.ontos');
+      expect(content).toContain('https://shell.example.test/cs/finance?resourceId=fv-1');
+      expect(content).not.toContain('untrusted.example.test');
       validateAgainstXsd(content);
     }),
   );
