@@ -1,4 +1,3 @@
-import { CommerceConsentAuthorityApi, CommerceConsentNoticeAuthorityApi } from '@app/consent-authority-contracts/api';
 import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './portal-auth/consent-api.ts';
 import { identity } from 'effect';
 import {
@@ -174,8 +173,6 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthEnrollmentApi)
   .addHttpApi(EnrollmentCommandRecoveryApi)
   .addHttpApi(CommercePortalAuthVerificationApi)
-  .addHttpApi(CommerceConsentAuthorityApi)
-  .addHttpApi(CommerceConsentNoticeAuthorityApi)
   .addHttpApi(CustomerOwnConsentReadApi)
   .addHttpApi(CustomerOwnConsentUpdateApi)
   .addHttpApi(CustomerOwnProfileReadApi)

@@ -16,6 +16,13 @@ const StepSchema = Schema.Struct({
   run: Schema.optionalKey(Schema.String),
   'timeout-minutes': Schema.optionalKey(Schema.Number),
   uses: Schema.optionalKey(Schema.String),
+  with: Schema.optionalKey(
+    Schema.Struct({
+      'if-no-files-found': Schema.optionalKey(Schema.String),
+      name: Schema.optionalKey(Schema.String),
+      path: Schema.optionalKey(Schema.String),
+    }),
+  ),
   'working-directory': Schema.optionalKey(Schema.String),
 });
 const WorkflowSchema = Schema.Struct({
@@ -23,7 +30,7 @@ const WorkflowSchema = Schema.Struct({
     build: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     release: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     'release-script-tests': Schema.Struct({ steps: Schema.Array(StepSchema) }),
-    verify: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+    verify: Schema.Struct({ steps: Schema.Array(StepSchema), 'timeout-minutes': Schema.Number }),
   }),
 });
 const readJobs = () =>
@@ -250,38 +257,26 @@ it.effect('a real MCP schema source change forces the native Bash build selector
   ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-it('bootstraps native Privacy after workload configuration and publishes returned refs before Commerce restart', () => {
+it('restarts Commerce for the direct demo newsletter without Privacy provisioning or copied catalog IDs', () => {
   const script = readFileSync(localBootstrapScript, 'utf-8');
   const defaults = /^DEFAULT_VERTICALS="(?<owners>[^"]+)"/mu.exec(script)?.groups?.owners?.split(' ');
   expect(defaults).toContain('privacy');
   const portal = script.indexOf('step commerce-portal');
   const callbackReload = script.indexOf('ONTOS_PRIVACY_GATEWAY_API_KEY', portal);
-  const privacyRestart = script.indexOf('restart_server privacy verticals/privacy', callbackReload);
-  const seed = script.indexOf('step privacy-marketing env', privacyRestart);
-  const refsReload = script.indexOf('reload_env_keys COMMERCE_MARKETING_PURPOSE_ID', seed);
-  const commerceRestart = script.indexOf('restart_server commerce-customer-context', refsReload);
+  const shellRestart = script.indexOf('restart_server shell-super-app apps/shell-super-app', callbackReload);
+  const commerceRestart = script.indexOf('restart_server commerce-customer-context', shellRestart);
   expect(portal).toBeGreaterThan(0);
   expect(callbackReload).toBeGreaterThan(portal);
-  expect(privacyRestart).toBeGreaterThan(callbackReload);
-  expect(seed).toBeGreaterThan(privacyRestart);
-  expect(refsReload).toBeGreaterThan(seed);
-  expect(commerceRestart).toBeGreaterThan(refsReload);
-  expect(script.slice(seed, refsReload)).toContain('scripts/demo/privacy-marketing.mts --apply');
-  expect(script.slice(seed, refsReload)).toContain(
-    '--checkpoint "$SCRATCH/privacy-marketing.json" --env-file "$APP/.env"',
+  expect(shellRestart).toBeGreaterThan(callbackReload);
+  expect(commerceRestart).toBeGreaterThan(shellRestart);
+  expect(script).not.toContain('restart_server privacy verticals/privacy');
+  expect(script).not.toContain('step privacy-marketing');
+  expect(script).not.toContain('scripts/demo/privacy-marketing.mts');
+  expect(script).not.toContain('reload_env_keys COMMERCE_MARKETING_PURPOSE_ID');
+  expect(script).not.toContain('COMMERCE_MARKETING_NOTICE_VERSION_ID');
+  expect(script.slice(commerceRestart)).toContain(
+    'wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json"',
   );
-  expect(script.slice(refsReload, commerceRestart)).toContain('COMMERCE_MARKETING_NOTICE_VERSION_ID');
-  const setup = readFileSync(new URL('../demo/privacy-marketing.mts', import.meta.url), 'utf-8');
-  expect(setup).toContain('const { email, principalId: governanceOwnerId } = privacyMarketingOperator');
-  expect(setup).toContain('const target = { legalEntityId: akrosDemoLegalEntityId, shellUrl, tenantId: demoTenantId }');
-  expect(setup).not.toContain('ONTOS_DEMO_SEED_EMAIL');
-  expect(setup).not.toContain('ONTOS_DEMO_SEED_GOVERNANCE_OWNER_ID');
-  expect(setup).toContain("checkpoint.phase === 'PURPOSE_PENDING' || checkpoint.phase === 'NOTICE_PENDING'");
-  expect(setup).toContain("if (checkpoint.phase === 'EMPTY')");
-  expect(setup).toContain("if (checkpoint.phase === 'PURPOSE_CREATED')");
-  expect(setup).toContain('return yield* verifyRecords(client, checkpoint)');
-  expect(setup).not.toContain('record-consent-decision');
-  expect(setup).not.toContain('writeAiRelationships');
 });
 
 it.effect(
@@ -331,6 +326,52 @@ it('keeps the real MCP propose/reject proof outside every customer demo tenant',
   expect(proof?.run).toContain('--variant=1 --verification');
   expect(proof?.run).not.toContain('--variant=all');
   expect(proof?.run).not.toContain('--keep');
+});
+
+it('runs the existing newsletter browser proof after Chromium even if timing fails, but not on outbox-only retries', () => {
+  const { verify } = readJobs();
+  const { steps } = verify;
+  const proofName = 'Prove the native newsletter grant and withdrawal';
+  const proof = steps.find(({ name }) => name === proofName);
+  const timingName = 'Time /cs, OAuth metadata and the storefront home';
+  const timing = steps.find(({ name }) => name === timingName);
+  const fixture = readJobs().release.steps.find(({ name }) => name === 'Prepare the native demo customer fixture');
+  expect(fixture?.if).toBe(fullPublicationCondition);
+  expect(proof?.if).toBe('(success() || failure()) && !inputs.outbox_only');
+  expect(proof?.['continue-on-error']).toBeUndefined();
+  expect(proof?.['working-directory']).toBe('app');
+  expect(proof?.env).toEqual({
+    AKROS_EVIDENCE_DIR: ['${{', 'runner.temp', '}}/newsletter-consent'].join(' '),
+    AKROS_TEST_BASE_URL: ['${{', 'env.STAGE_STOREFRONT_URL', '}}'].join(' '),
+  });
+  const mcp = steps.find(({ name }) => name === 'Prove MCP over OAuth end to end');
+  expect(proof?.run?.split('\n')[0]).toBe(mcp?.run?.split('\n')[0]);
+  expect(proof?.run).toContain('export E2E_PLAYWRIGHT_MODULE');
+  expect(proof?.run).toContain('mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs');
+  expect(indexOf(steps, proofName)).toBeGreaterThan(
+    indexOf(steps, 'Install headless Chromium for the OAuth consent screens'),
+  );
+  expect(indexOf(steps, proofName)).toBeGreaterThan(indexOf(steps, timingName));
+  expect(timing?.run).toBe('mise exec -- node scripts/ops/stage-demo-verify.mjs');
+  expect(timing?.['continue-on-error']).toBeUndefined();
+  expect(timing?.env).toBeUndefined();
+  expect(verify['timeout-minutes']).toBe(20);
+});
+
+it('uploads only runner-temp newsletter screenshots even when the browser proof fails', () => {
+  const { steps } = readJobs().verify;
+  const uploadName = 'Upload the newsletter screenshots';
+  const upload = steps.find(({ name }) => name === uploadName);
+  expect(upload?.if).toBe('always() && !inputs.outbox_only');
+  expect(upload?.uses).toMatch(/^actions\/upload-artifact@/u);
+  expect(upload?.with).toEqual({
+    'if-no-files-found': 'ignore',
+    name: 'newsletter-consent',
+    path: ['${{', 'runner.temp', '}}/newsletter-consent/*.png'].join(' '),
+  });
+  expect(indexOf(steps, uploadName)).toBeGreaterThan(
+    indexOf(steps, 'Prove the native newsletter grant and withdrawal'),
+  );
 });
 
 it('reconciles service grants and the isolated verification context after migrations and before publication', () => {

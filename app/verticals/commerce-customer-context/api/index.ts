@@ -1,9 +1,4 @@
-import {
-  customerOwnConsentReadApiLive,
-  customerOwnConsentUpdateApiLive,
-  commerceConsentAuthorityApiLive,
-  commerceConsentNoticeAuthorityApiLive,
-} from './portal-auth/consent/http.ts';
+import { customerOwnConsentReadApiLive, customerOwnConsentUpdateApiLive } from './portal-auth/consent/http.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
@@ -892,8 +887,6 @@ export const makeCommerceCustomerContextApiRuntime = (
     commercePortalAuthVerificationApiLive,
     customerOwnConsentReadApiLive,
     customerOwnConsentUpdateApiLive,
-    commerceConsentAuthorityApiLive,
-    commerceConsentNoticeAuthorityApiLive,
     customerOwnProfileReadApiLive,
     customerOwnProfileUpdateApiLive,
     // <generated-governed-http-handler-layers>

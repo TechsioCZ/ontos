@@ -705,6 +705,27 @@ jobs:
         working-directory: app
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs
 
+      # The timing probe remains blocking, but its failure must not skip this independent browser proof.
+      - name: Prove the native newsletter grant and withdrawal
+        if: (success() || failure()) && !inputs.outbox_only
+        working-directory: app
+        env:
+          AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
+          AKROS_EVIDENCE_DIR: ${{ runner.temp }}/newsletter-consent
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
+
+      - name: Upload the newsletter screenshots
+        if: always() && !inputs.outbox_only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: newsletter-consent
+          path: ${{ runner.temp }}/newsletter-consent/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Prove MCP over OAuth end to end
         working-directory: app
         env:
