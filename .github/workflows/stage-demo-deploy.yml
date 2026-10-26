@@ -623,16 +623,6 @@ jobs:
           fi
           tail -15 "$RUNNER_TEMP/outbox-new.log"
 
-      - name: Clear the runner-owned Zerops VPN
-        if: always() && steps.composition-vpn.outputs.state-directory != ''
-        uses: ./.github/actions/zerops-vpn
-        with:
-          operation: clear
-          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
-          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
-
       - name: Download the storefront build output
         if: ${{ !inputs.outbox_only }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -661,6 +651,16 @@ jobs:
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: mise exec -- pnpm exec node scripts/demo/prepare-stage-customer.mts
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
       # One short check, no load: the stage Workers CPU budget is capped.
       - name: Smoke the Shell login and OAuth metadata

@@ -101,6 +101,9 @@ it.effect('prepares the single native fixture only after publication, host readi
     expect(fixtureIndex).toBeGreaterThan(index('Require the new host to admit the published composition'));
     expect(fixtureIndex).toBeGreaterThan(index('Deploy the AKROS storefront'));
     expect(fixtureIndex).toBeLessThan(index('Smoke the Shell login and OAuth metadata'));
+    const cleanupIndex = index('Clear the runner-owned Zerops VPN');
+    expect(fixtureIndex).toBeLessThan(cleanupIndex);
+    expect(steps[cleanupIndex]?.if).toBe("always() && steps.composition-vpn.outputs.state-directory != ''");
     expect(fixture?.if).toBe(['${{', '!inputs.outbox_only', '}}'].join(' '));
     expect(fixture?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
     expect(fixture?.env?.COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL).toBe(
