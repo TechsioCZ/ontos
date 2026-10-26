@@ -1079,7 +1079,9 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       if (orderMovesStock(state, existing)) {
         const quantities = new Map<string, { delta: number; line: OrderLine }>();
         for (const line of existing.lines) {
-          quantities.set(lineKey(line), { delta: line.quantity, line });
+          const key = lineKey(line);
+          const entry = quantities.get(key);
+          quantities.set(key, { delta: (entry?.delta ?? 0) + line.quantity, line });
         }
         for (const line of nextLines) {
           const entry = quantities.get(lineKey(line));

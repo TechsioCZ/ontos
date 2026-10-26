@@ -183,6 +183,62 @@ it.effect('CreateOrder rejects lines that exceed stock, including a product list
   }),
 );
 
+it.effect('EditOrder sums repeated original product and variant lines before reconciling stock', () =>
+  Effect.gen(function* editRepeatedLines() {
+    for (const variantId of [undefined, 'variants-v1']) {
+      const created = yield* addProduct(empty, 'product-1', 'KAB-1', 19_900);
+      const catalog =
+        variantId === undefined
+          ? created
+          : yield* apply(
+              created.state,
+              {
+                _tag: 'UpdateProduct',
+                id: 'product-1',
+                patch: {
+                  variants: [{ attributes: 'Standard', name: 'Standard', priceMinor: 19_900, sku: 'KAB-1-STD' }],
+                },
+              },
+              'variants',
+            );
+      const selection = variantId === undefined ? { productId: 'product-1' } : { productId: 'product-1', variantId };
+      const stocked = yield* apply(
+        catalog.state,
+        { _tag: 'RecordStockMovement', delta: 10, reason: 'RECEIPT', ...selection },
+        'rec-1',
+      );
+      const ordered = yield* apply(
+        stocked.state,
+        {
+          _tag: 'CreateOrder',
+          id: 'order-1',
+          lines: [
+            { ...selection, quantity: 2 },
+            { ...selection, quantity: 3 },
+          ],
+          partyId: 'party-1',
+        },
+        'ord-1',
+      );
+      expect(ordered.state.orders[0]?.lines.map((line) => line.quantity)).toEqual([2, 3]);
+      expect(onHand(ordered.state, 'product-1')).toBe(5);
+      for (const quantity of [4, 6]) {
+        const command = { _tag: 'EditOrder', id: 'order-1', lines: [{ ...selection, quantity }] } as const;
+        const edited = yield* apply(ordered.state, command, `edit-${quantity}`);
+        expect(edited.state.orders[0]?.lines.map((line) => line.quantity)).toEqual([quantity]);
+        expect(onHand(edited.state, 'product-1')).toBe(10 - quantity);
+        expect(edited.state.movements.slice(ordered.state.movements.length)).toEqual([
+          expect.objectContaining({ delta: 5 - quantity, reason: 'ORDER', ...selection }),
+        ]);
+        const unchanged = yield* apply(edited.state, command, `edit-same-${quantity}`);
+        expect(unchanged.state.movements).toBe(edited.state.movements);
+        const cancelled = yield* setOrderStatus(edited.state, 'order-1', 'CANCELLED', `cancel-${quantity}`);
+        expect(onHand(cancelled.state, 'product-1')).toBe(10);
+      }
+    }
+  }),
+);
+
 it.effect('cancelling an order restores its stock with compensating movements', () =>
   Effect.gen(function* case9() {
     const created = yield* addProduct(empty, 'product-1', 'KAB-1', 19_900);
