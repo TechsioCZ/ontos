@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Exit } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
@@ -60,7 +60,12 @@ const run = (state: FinanceState, command: FinanceCommand) => {
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  });
+  }).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' }),
+    ),
+  );
 };
 
 describe('S07 invoices', () => {
@@ -186,7 +191,7 @@ describe('S08 accounting handover', () => {
       expect(created?.content.trim().split('\r\n').length).toBe(4);
       expect(created?.version).toBe(1);
       for (const id of ['a', 'b', 'c']) {
-        expect(created?.content).toContain(`http://localhost:3020/cs/finance?resourceId=${id}`);
+        expect(created?.content).toContain(`https://shell.example.test/cs/finance?resourceId=${id}`);
       }
       expect(created?.content).not.toContain('ontos://');
       const second = yield* run(first.state, {

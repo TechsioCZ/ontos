@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { DateTime, Effect, Exit } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
@@ -76,7 +76,12 @@ const run = (state: FinanceState, command: FinanceCommand) => {
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  });
+  }).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' }),
+    ),
+  );
 };
 const failsWith = (exit: Exit.Exit<unknown, unknown>, reason: string) =>
   Exit.isFailure(exit) && JSON.stringify(exit.cause).includes(reason);
