@@ -22,6 +22,7 @@ import {
   type DeliveryMethod,
   createCheckoutDraft,
   getReachableStep,
+  getDeliveryAddress,
   parseCheckoutDraft,
 } from "@/features/checkout/checkout-state";
 
@@ -181,6 +182,7 @@ function CheckoutCartProvider({
   }, []);
   const storageRef = useRef<CheckoutStorage | null>(null);
   const completed = useRef<PlacedOrder | null>(null);
+  const submitting = useRef(false);
 
   useEffect(() => {
     try {
@@ -213,9 +215,10 @@ function CheckoutCartProvider({
   }, [draft, hydrated, draftStorageKey]);
 
   async function completeOrder(): Promise<PlacedOrder | null> {
-    if (completed.current) return completed.current;
+    if (completed.current && cart.lines.length === 0) return completed.current;
+    if (submitting.current) return null;
     checkoutDispatch({ type: "submit-error", error: "" });
-    if (!hydrated || !cartReady || getReachableStep(3, cart, draft, methods) !== 3) return null;
+    if (!hydrated || !cartReady) return null;
     if (!accountEmail) {
       checkoutDispatch({
         type: "submit-error",
@@ -225,18 +228,56 @@ function CheckoutCartProvider({
     }
 
     let order: PlacedOrder;
+    submitting.current = true;
     try {
       if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
-      // Store the exact request BEFORE sending. Retries, double-submit and refresh reuse it verbatim.
       const key = `akros-ontos-pending:${activeCartId}`;
-      const signature = JSON.stringify({ cart, draft });
+      // Match the order route's inputs, not refreshed catalog/display metadata or unused draft fields.
+      const signature = JSON.stringify({
+        lines: cart.lines.map((line) => ({
+          productId: line.productId,
+          variantId: line.variantId || undefined,
+          quantity: line.quantity,
+          priceMinor: line.priceMinor,
+        })),
+        accountEmail,
+        deliveryId: draft.deliveryId,
+        billing: draft.billing,
+        delivery: getDeliveryAddress(draft),
+        note: [
+          draft.company,
+          draft.companyId && `IČ: ${draft.companyId}`,
+          draft.vatId && `DIČ: ${draft.vatId}`,
+        ]
+          .filter(Boolean)
+          .join("; ")
+          .slice(0, 1000),
+      });
       const previous = JSON.parse(storageRef.current.getItem(key) ?? "null");
+      if (previous?.sent && previous.signature !== signature) {
+        checkoutDispatch({
+          type: "submit-error",
+          error:
+            "Předchozí objednávka zatím nebyla potvrzena. Obnovte původní položky a dodací údaje a zkuste odeslání znovu, nebo ověřte stav objednávky ve svém účtu. Změněnou objednávku nyní nelze odeslat.",
+        });
+        return null;
+      }
+      const clientRequestId =
+        previous?.signature === signature
+          ? previous.clientRequestId
+          : `akros-${crypto.randomUUID()}`;
       const pending =
         previous?.signature === signature
           ? previous
-          : { signature, clientRequestId: `akros-${crypto.randomUUID()}` };
-      storageRef.current.setItem(key, JSON.stringify(pending));
+          : {
+              signature,
+              clientRequestId,
+              body: JSON.stringify({ cart, draft, clientRequestId }),
+              sent: false,
+            };
       if (!pending.sent) {
+        if (getReachableStep(3, cart, draft, methods) !== 3) return null;
+        storageRef.current.setItem(key, JSON.stringify(pending));
         const checkResponse = await fetch("/api/ontos/cart", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -253,15 +294,24 @@ function CheckoutCartProvider({
                 ),
           );
       }
+      // Persist before sending; an uncertain retry must replay these exact bytes, even after refresh.
       pending.sent = true;
       storageRef.current.setItem(key, JSON.stringify(pending));
       const response = await fetch("/api/ontos/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
+        body: pending.body,
       });
-      const result = await readOrderResponse(response);
+      const result = await readOrderResponse(response).catch((error: unknown) => {
+        if (isCheckoutStockError(error) || isCheckoutPriceError(error)) {
+          // An explicit rejection is not an uncertain commit; edits may start a new request.
+          pending.sent = false;
+          storageRef.current!.setItem(key, JSON.stringify(pending));
+        }
+        throw error;
+      });
       order = { id: result.orderNumber, orderId: result.orderId };
+      storageRef.current.setItem(key, "null");
     } catch (error) {
       checkoutDispatch({
         type: "submit-error",
@@ -275,6 +325,8 @@ function CheckoutCartProvider({
             : checkoutSaveError,
       });
       return null;
+    } finally {
+      submitting.current = false;
     }
     completed.current = order;
     checkoutDispatch({ type: "submitted" });
