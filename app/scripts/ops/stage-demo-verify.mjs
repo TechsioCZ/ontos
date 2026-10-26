@@ -12,7 +12,7 @@ import { SignInPayloadSchema } from '../../apps/shell-super-app/shared/api.ts';
 const DEFAULT_SHELL_URL = 'https://ontos-stage.bleeding.dev';
 const DEFAULT_STOREFRONT_URL = 'https://ontos-stage-akros.bleeding.dev';
 const DEFAULT_PERSONA = 'management@siampark.demo';
-const DEFAULT_PASSWORD = Redacted.make('password1234');
+export const DEFAULT_PASSWORD = Redacted.make('password1234');
 const REQUEST_TIMEOUT_MS = 60_000;
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 

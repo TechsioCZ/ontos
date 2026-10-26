@@ -242,6 +242,7 @@ jobs:
           scripts/tests/stage-demo-deploy-workflow.test.mts
           scripts/tests/stage-demo-migrate.test.mts
           scripts/tests/verify-stage-migration-continuation.test.mts
+          scripts/tests/prepare-stage-customer.test.mts
           scripts/tests/typecheck-project-references.test.mts
           scripts/tests/database-identity-environment.test.mts
           scripts/tests/cloudflare-data-plane-bindings.test.mts
@@ -651,6 +652,15 @@ jobs:
         run: |
           tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
           mise exec -- pnpm run cloudflare:deploy
+
+      - name: Prepare the native demo customer fixture
+        if: ${{ !inputs.outbox_only }}
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: mise exec -- pnpm exec node scripts/demo/prepare-stage-customer.mts
 
       # One short check, no load: the stage Workers CPU budget is capped.
       - name: Smoke the Shell login and OAuth metadata
