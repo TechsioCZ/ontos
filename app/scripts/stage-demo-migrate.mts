@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Effect, Layer, Path, Schema } from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { ChildProcess } from 'effect/unstable/process';
 
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   runApplicationCompositionMigration,
+  verifyMigratedApplicationCompositionForPublication,
 } from './application-composition-authority-publication.mts';
 import { verifyInitialCompositionCutover } from './initial-composition-cutover.mts';
 import { ZeropsPublicApiLive } from './zerops-public-api.mts';
@@ -52,10 +54,32 @@ export const migrateStageDemoOwnerSchemas = Effect.fn('StageDemo.migrateOwnerSch
   },
 );
 
+/** Continuation is explicit; the workflow separately verifies the completed migration's source and run. */
+const runStageDemoMigration = Effect.fn('StageDemo.runMigration')(function* runStageDemoMigration(
+  continuePublication: boolean,
+) {
+  if (!continuePublication) {
+    return yield* migrateStageDemoOwnerSchemas();
+  }
+  const expectedRevision = yield* Config.String('ONTOS_RETIRED_COMPOSITION_REVISION').pipe(
+    Effect.mapError(() => new StageDemoMigrationError({ message: 'The retired composition revision is required' })),
+  );
+  return yield* verifyMigratedApplicationCompositionForPublication(expectedRevision);
+});
+
+export const stageDemoMigrationCommand = Command.make(
+  'stage-demo-migrate',
+  { continuePublication: Flag.Boolean('continue-publication').pipe(Flag.withDefault(false)) },
+  ({ continuePublication }) => runStageDemoMigration(continuePublication),
+);
+
 if (import.meta.main) {
   const services = Layer.mergeAll(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive).pipe(
     Layer.provideMerge(FetchHttpClient.layer),
-    Layer.provideMerge(NodeServices.layer),
   );
-  NodeRuntime.runMain(migrateStageDemoOwnerSchemas().pipe(Effect.provide(services)));
+  NodeRuntime.runMain(
+    Command.run({ version: '1.0.0' })(
+      stageDemoMigrationCommand.pipe(Command.provide(() => services)),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 }

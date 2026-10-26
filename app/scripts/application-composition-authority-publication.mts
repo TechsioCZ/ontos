@@ -277,6 +277,43 @@ export const resumeApplicationCompositionDurableWork = Effect.fn('ApplicationCom
   },
 );
 
+/** Checks a completed migration without changing authority or running another migration. */
+export const verifyMigratedApplicationCompositionForPublication = Effect.fn(
+  'ApplicationCompositionAuthority.verifyMigratedForPublication',
+)(function* verifyMigratedForPublication(expectedRevision: string) {
+  if (!/^[a-f0-9]{64}$/u.test(expectedRevision)) {
+    return yield* unavailable('An exact retired Application Composition revision is required');
+  }
+  const database = yield* CoreDatabase;
+  return yield* withApplicationCompositionPublicationLock(
+    Effect.gen(function* verifyCompletedMigrationAuthority() {
+      const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
+        sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
+        'objects',
+      );
+      if (!schema?.initialized) {
+        return yield* unavailable('Replacement publication requires an existing migrated authority');
+      }
+      const [current] = yield* database.executor
+        .select({
+          durableWorkAdmission: applicationCompositionAuthority.durableWorkAdmission,
+          phase: applicationCompositionAuthority.phase,
+          revision: applicationCompositionAuthority.revision,
+        })
+        .from(applicationCompositionAuthority)
+        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+      if (
+        current?.phase !== 'migrated' ||
+        current.revision !== expectedRevision ||
+        current.durableWorkAdmission !== 'closed'
+      ) {
+        return yield* unavailable('Replacement publication requires the exact migrated and closed retired authority');
+      }
+      return yield* Effect.void;
+    }),
+  );
+});
+
 /** Sealing is committed before the migration; the session lock remains held until its native callback finishes. */
 export const runApplicationCompositionMigration = Effect.fn('ApplicationCompositionAuthority.migrate')(
   function* runApplicationCompositionMigration<Value, Failure, Requirements, InitialFailure, InitialRequirements>(

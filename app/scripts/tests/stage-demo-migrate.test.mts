@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, Fiber, Layer, Match, Schema, Sink, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
+import { Command } from 'effect/unstable/cli';
 import { HttpClient } from 'effect/unstable/http';
 import { ChildProcessSpawner } from 'effect/unstable/process';
 import type { ChildProcess } from 'effect/unstable/process';
@@ -10,18 +11,27 @@ import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import type { applicationCompositionAuthority } from '../../packages/core-runtime/src/db/schema.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
-import { migrateStageDemoOwnerSchemas, StageDemoMigrationError } from '../stage-demo-migrate.mts';
+import {
+  migrateStageDemoOwnerSchemas,
+  stageDemoMigrationCommand,
+  StageDemoMigrationError,
+} from '../stage-demo-migrate.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 
-const REVISION = `sha256:${'1'.repeat(64)}`;
+const REVISION = '1'.repeat(64);
+const CONTINUE_PUBLICATION = '--continue-publication';
+const runStageDemoMigration = Command.runWith(stageDemoMigrationCommand, { renderErrors: false, version: '1.0.0' });
 const DURABLE_DRAINED = 'DURABLE DRAINED';
 const CHILD_RELEASED = 'CHILD RELEASED';
 const COMMITTED_MIGRATED = 'COMMITTED migrated';
 const AuthorityChangeSchema = Schema.Literals(['closed', 'draining', 'sealed', 'migrated']);
 type Phase = (typeof applicationCompositionAuthority.$inferSelect)['phase'];
 interface FixtureOptions {
+  readonly authorityMissing?: boolean;
+  readonly durableAdmission?: 'open' | 'closed';
   readonly durableBlocks?: readonly boolean[];
   readonly exitCode?: number;
+  readonly initialized?: boolean;
   readonly initialPhase?: Phase;
   readonly outboxBlocks?: readonly boolean[];
   readonly sealBlocked?: boolean;
@@ -30,13 +40,14 @@ interface FixtureOptions {
 /** Runs the real native lifecycle over scripted SQL and the native process service, without a database or child. */
 const migrationFixture = (options: FixtureOptions = {}) => {
   let phase = options.initialPhase ?? 'active';
-  let admission = phase === 'active' ? 'open' : 'closed';
+  let admission = options.durableAdmission ?? (phase === 'active' ? 'open' : 'closed');
   let pending: typeof AuthorityChangeSchema.Type | null = null;
   let transactionDepth = 0;
   let locked = false;
   let durableRead = 0;
   let outboxRead = 0;
   const events: string[] = [];
+  const queries: string[] = [];
   const commands: ChildProcess.Command[] = [];
   const noNetwork = Layer.succeed(
     HttpClient.HttpClient,
@@ -60,6 +71,9 @@ const migrationFixture = (options: FixtureOptions = {}) => {
     }
   };
   const readAuthority = (sql: string) => {
+    if (options.authorityMissing === true) {
+      return [];
+    }
     // The scripted connection maps Object.values to Drizzle's selected column order.
     if (sql.includes('"durable_work_admission"')) {
       return [{ durableWorkAdmission: admission, phase, revision: REVISION }];
@@ -87,6 +101,7 @@ const migrationFixture = (options: FixtureOptions = {}) => {
     CoreDatabase,
     makeTestDatabase((sql, params) =>
       Effect.sync(() => {
+        queries.push(sql);
         recordTransaction(sql);
         if (sql.includes('pg_advisory_unlock(')) {
           locked = false;
@@ -99,7 +114,7 @@ const migrationFixture = (options: FixtureOptions = {}) => {
           return [];
         }
         if (sql.includes('as initialized')) {
-          return [{ initialized: true }];
+          return [{ initialized: options.initialized ?? true }];
         }
         if (sql.includes('as isolation')) {
           return [{ isolation: 'read committed' }];
@@ -163,7 +178,7 @@ const migrationFixture = (options: FixtureOptions = {}) => {
     ZeropsPublicApiLive.pipe(Layer.provide(noNetwork)),
     ConfigProvider.layer(ConfigProvider.fromUnknown({})),
   );
-  return { commands, events, layer, phase: () => phase };
+  return { commands, events, layer, phase: () => phase, queries };
 };
 
 it.effect(
@@ -254,6 +269,63 @@ it.effect(
       expect(migrated.commands).toEqual([]);
       expect(migrated.events).toEqual(['LOCK', 'UNLOCK']);
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const continuationConfiguration = (revision: string) =>
+  ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_RETIRED_COMPOSITION_REVISION: revision }));
+
+it.effect('continues only the exact migrated and closed authority without SQL writes or a migration child', () =>
+  Effect.gen(function* continuesCompletedMigration() {
+    const fixture = migrationFixture({ initialPhase: 'migrated' });
+    yield* runStageDemoMigration([CONTINUE_PUBLICATION]).pipe(
+      Effect.provide(continuationConfiguration(REVISION)),
+      Effect.provide(fixture.layer),
+    );
+    expect(fixture.phase()).toBe('migrated');
+    expect(fixture.commands).toEqual([]);
+    expect(fixture.events).toEqual(['LOCK', 'UNLOCK']);
+    expect(fixture.queries.every((query) => query.startsWith('select'))).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses missing, incomplete, open, wrong-revision and malformed continuation targets', () =>
+  Effect.gen(function* rejectsUnprovenContinuation() {
+    const cases: readonly { readonly options: FixtureOptions; readonly revision: string }[] = [
+      { options: { initialPhase: 'active' }, revision: REVISION },
+      { options: { initialPhase: 'draining' }, revision: REVISION },
+      { options: { initialPhase: 'sealed' }, revision: REVISION },
+      { options: { initialized: false, initialPhase: 'migrated' }, revision: REVISION },
+      { options: { authorityMissing: true, initialPhase: 'migrated' }, revision: REVISION },
+      { options: { durableAdmission: 'open', initialPhase: 'migrated' }, revision: REVISION },
+      { options: { initialPhase: 'migrated' }, revision: '2'.repeat(64) },
+      { options: { initialPhase: 'migrated' }, revision: 'not-a-composition-revision' },
+    ];
+    for (const { options, revision } of cases) {
+      const fixture = migrationFixture(options);
+      const failure = yield* runStageDemoMigration([CONTINUE_PUBLICATION]).pipe(
+        Effect.provide(continuationConfiguration(revision)),
+        Effect.provide(fixture.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(fixture.commands).toEqual([]);
+      expect(fixture.queries.every((query) => query.startsWith('select'))).toBe(true);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('rejects unsupported arguments and a missing continuation revision before touching authority', () =>
+  Effect.gen(function* rejectsInvalidContinuationInvocation() {
+    yield* Effect.forEach([['--skip-migrations'], [CONTINUE_PUBLICATION, 'extra'], [CONTINUE_PUBLICATION]], (args) =>
+      Effect.gen(function* rejectsArguments() {
+        const fixture = migrationFixture({ initialPhase: 'migrated' });
+        const failure = yield* runStageDemoMigration(args).pipe(Effect.provide(fixture.layer), Effect.flip);
+        expect(Schema.is(StageDemoMigrationError)(failure)).toBe(args.length === 1 && args[0] === CONTINUE_PUBLICATION);
+        expect(fixture.queries).toEqual([]);
+        expect(fixture.commands).toEqual([]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect('never starts the runner migration when the native final seal discovers unfinished outbox work', () =>
