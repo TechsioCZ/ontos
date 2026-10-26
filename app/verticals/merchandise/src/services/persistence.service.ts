@@ -1039,7 +1039,11 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
           request.variantId === undefined
             ? record
             : record.variantRecords?.find((variant) => variant.id === request.variantId);
-        if (unit === undefined || !isOrderQuantityValid(request.quantity, orderQuantityRules(unit))) {
+        const alreadyDebitedQuantity = orderMovesStock(state, existing) ? (kept?.quantity ?? 0) : 0;
+        if (
+          unit === undefined ||
+          !isOrderQuantityValid(request.quantity, orderQuantityRules(unit, alreadyDebitedQuantity))
+        ) {
           return yield* conflict('Množství musí odpovídat dostupné zásobě, minimu a velikosti balení varianty');
         }
       }

@@ -195,7 +195,10 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
     const product = [...products, ...addedProducts].find((entry) => entry.id === line.productId);
     const unit =
       line.variantId === undefined ? product : product?.variantRecords?.find((entry) => entry.id === line.variantId);
-    return orderQuantityRules(unit ?? { stockOnHand: 1_000_000 });
+    const original = order.lines.find(
+      (entry) => entry.productId === line.productId && entry.variantId === line.variantId,
+    );
+    return orderQuantityRules(unit ?? { stockOnHand: 1_000_000 }, movesStock ? (original?.quantity ?? 0) : 0);
   };
   const parsedLines = draft.lines.map((line) => {
     const quantity = parseQuantity(line.quantityText);

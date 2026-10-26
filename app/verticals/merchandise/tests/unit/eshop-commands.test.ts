@@ -10,6 +10,7 @@ import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 
 const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
   toProductRecord(product, stockLevelsOf(movements, product.id));
@@ -240,6 +241,83 @@ it.effect('PlaceStorefrontOrder rejects sold-out variants and missing variant ch
     expect(noVariant.storefrontOrder?.issues.map((issue) => issue.code)).toEqual(['VARIANT_REQUIRED']);
   }),
 );
+
+it.effect('EditOrder credits only its existing debited variant when checking replacement stock', () =>
+  Effect.gen(function* editDebitedStock() {
+    const state = yield* seeded;
+    const placed = yield* apply(
+      state,
+      guestOrder({ lines: [{ expectedUnitPriceMinor: 28_900, productId: 'p1', quantity: 8, variantId: 'u1-v1' }] }),
+      'inv-place',
+    );
+    const [order] = placed.state.orders;
+    const [product] = state.products;
+    if (order === undefined || product === undefined) {
+      return yield* Effect.die(new Error('The native fixture must place its product order'));
+    }
+    expect(recordOf(product, placed.state.movements).variantRecords?.[0]?.stockOnHand).toBe(2);
+    for (const quantity of [8, 7, 10]) {
+      const edited = yield* apply(
+        placed.state,
+        { _tag: 'EditOrder', id: order.id, lines: [{ productId: 'p1', quantity, variantId: 'u1-v1' }] },
+        `inv-edit-${quantity}`,
+      );
+      expect(edited.state.orders[0]?.lines[0]?.quantity).toBe(quantity);
+      expect(recordOf(product, edited.state.movements).variantRecords?.[0]?.stockOnHand).toBe(10 - quantity);
+      const added = edited.state.movements.slice(placed.state.movements.length);
+      expect(added.map((movement) => movement.delta)).toEqual(quantity === 8 ? [] : [8 - quantity]);
+      expect(added.every((movement) => movement.reason === 'ORDER' && movement.reference === order.number)).toBe(true);
+    }
+    const reduced = yield* apply(
+      placed.state,
+      { _tag: 'EditOrder', id: order.id, lines: [{ productId: 'p1', quantity: 7, variantId: 'u1-v1' }] },
+      'inv-reduce',
+    );
+    const increased = yield* apply(
+      reduced.state,
+      { _tag: 'EditOrder', id: order.id, lines: [{ productId: 'p1', quantity: 10, variantId: 'u1-v1' }] },
+      'inv-increase',
+    );
+    expect(recordOf(product, increased.state.movements).variantRecords?.[0]?.stockOnHand).toBe(0);
+    const unreserved = { ...placed.state, movements: state.movements };
+    const unreservedEdit = yield* Effect.flip(
+      apply(
+        unreserved,
+        { _tag: 'EditOrder', id: order.id, lines: [{ productId: 'p1', quantity: 11, variantId: 'u1-v1' }] },
+        'inv-unreserved',
+      ),
+    );
+    expect(isConflict(unreservedEdit)).toBe(true);
+    for (const lines of [
+      [{ productId: 'p1', quantity: 11, variantId: 'u1-v1' }],
+      [{ productId: 'p1', quantity: 1, variantId: 'u1-v2' }],
+      [
+        { productId: 'p1', quantity: 7, variantId: 'u1-v1' },
+        { productId: 'p1', quantity: 7, variantId: 'u1-v1' },
+      ],
+    ]) {
+      const rejected = yield* Effect.flip(
+        apply(placed.state, { _tag: 'EditOrder', id: order.id, lines }, 'inv-reject'),
+      );
+      expect(isConflict(rejected)).toBe(true);
+    }
+    return yield* Effect.void;
+  }),
+);
+
+it('order edit quantity rules retain minimum, package and absolute limits after restoring its debit', () => {
+  const unit = { minimumQuantity: 4, packageQuantity: 2, stockOnHand: 2 };
+  const rules = orderQuantityRules(unit, 8);
+  expect(rules).toEqual({ maximum: 10, minimum: 4, packageRequired: true, step: 2 });
+  for (const quantity of [4, 6, 8, 10]) {
+    expect(isOrderQuantityValid(quantity, rules)).toBe(true);
+  }
+  for (const quantity of [2, 7, 12]) {
+    expect(isOrderQuantityValid(quantity, rules)).toBe(false);
+  }
+  expect(orderQuantityRules(unit).maximum).toBe(2);
+  expect(orderQuantityRules({ stockOnHand: 1_000_000 }, 8).maximum).toBe(1_000_000);
+});
 
 it.effect('EditOrder recomputes totals and records before/after history; DELIVERED needs SHIPPED first', () =>
   Effect.gen(function* edit() {
