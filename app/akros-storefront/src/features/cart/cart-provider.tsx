@@ -51,6 +51,7 @@ interface CartContextValue {
   selectCart: (id: string) => void;
   addCart: (name: string) => void;
   removeCart: (id: string) => void;
+  clearCart: (id: string) => void;
   cart: CartState;
   dispatch: Dispatch<CartAction>;
   itemCount: number;
@@ -96,6 +97,7 @@ type CartProviderAction =
   | { type: "select-cart"; id: string }
   | { type: "add-cart"; id: string; name: string }
   | { type: "remove-cart"; id: string }
+  | { type: "clear-cart"; id: string }
   | { type: "undo-remove"; id: number }
   | { type: "dismiss-remove"; id: number };
 
@@ -212,7 +214,15 @@ const providerReducer = (
       },
     };
   }
-  if (action.type === "clear") {
+  if (action.type === "clear-cart" && action.id !== state.activeCartId) {
+    return {
+      ...state,
+      carts: state.carts.map((entry) =>
+        entry.id === action.id ? { ...entry, cart: createEmptyCart() } : entry,
+      ),
+    };
+  }
+  if (action.type === "clear" || action.type === "clear-cart") {
     return { ...state, cart: createEmptyCart(), feedback: null, removedItem: null };
   }
   if (action.type === "remove") {
@@ -357,6 +367,7 @@ export function CartProvider({
     [],
   );
   const removeCart = useCallback((id: string) => providerDispatch({ type: "remove-cart", id }), []);
+  const clearCart = useCallback((id: string) => providerDispatch({ type: "clear-cart", id }), []);
   const dispatch: Dispatch<CartAction> = providerDispatch;
   const undoRemove = useCallback((id: number) => providerDispatch({ type: "undo-remove", id }), []);
   const dismissRemove = useCallback(
@@ -402,6 +413,7 @@ export function CartProvider({
       selectCart,
       addCart,
       removeCart,
+      clearCart,
       dispatch,
       itemCount: getCartItemCount(cart),
       ready,
@@ -420,6 +432,7 @@ export function CartProvider({
       selectCart,
       addCart,
       removeCart,
+      clearCart,
       dispatch,
       ready,
       feedback,

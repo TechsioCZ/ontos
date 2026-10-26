@@ -711,14 +711,15 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
       ),
     ];
   }
+  const orderNumberPattern = `^${ORDER_NUMBER_PREFIX}[0-9]+$`;
   const lastOrderNumber =
     request.lastOrderNumber === true
       ? (yield* query(
           db
             .select({ number: orders.number })
             .from(orders)
-            .where(and(whereScope(orders, scope), like(orders.number, `${likeEscape(ORDER_NUMBER_PREFIX)}%`)))
-            .orderBy(desc(orders.number))
+            .where(and(whereScope(orders, scope), sql`${orders.number} ~ ${orderNumberPattern}`))
+            .orderBy(desc(sql`substring(${orders.number} from ${ORDER_NUMBER_PREFIX.length + 1})::numeric`))
             .limit(1),
         ))[0]?.number
       : undefined;

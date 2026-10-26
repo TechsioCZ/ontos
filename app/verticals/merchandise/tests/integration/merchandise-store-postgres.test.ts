@@ -304,6 +304,49 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
   ),
 );
 
+it.live('both order creation paths advance past the highest numeric sequence after 9999', () =>
+  withMerchandise(
+    decodeState({
+      ...catalogInput,
+      orders: catalogInput.orders.map((order, index) => ({
+        ...order,
+        number: index === 0 ? 'OBJ-2026-9999' : 'OBJ-2026-10000',
+      })),
+    }),
+    (fixture) =>
+      Effect.gen(function* numericOrderSequence() {
+        const staffOrderId = randomUUID();
+        const staff = yield* runCommand(fixture, {
+          _tag: 'CreateOrder',
+          id: staffOrderId,
+          lines: [{ productId: 'p1', quantity: 1, variantId: 'v1' }],
+          partyId: 'test-customer-party',
+        });
+        expect(staff.working.state.lastOrderNumber).toBe('OBJ-2026-10000');
+        expect(staff.change.state.orders.find((order) => order.id === staffOrderId)?.number).toBe('OBJ-2026-10001');
+
+        const storefront = yield* runCommand(fixture, {
+          _tag: 'PlaceStorefrontOrder',
+          clientRequestId: randomUUID(),
+          contact: { email: 'customer@example.test', name: 'Customer' },
+          deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Hlavní 1' },
+          lines: [{ expectedUnitPriceMinor: 121, productId: 'p1', quantity: 1, variantId: 'v1' }],
+          partyId: 'test-customer-party',
+          shippingMethod: 'OSOBNI_ODBER',
+        });
+        expect(storefront.working.state.lastOrderNumber).toBe('OBJ-2026-10001');
+        expect(storefront.change.storefrontOrder?.orderNumber).toBe('OBJ-2026-10002');
+        const stored = yield* rowsOf(fixture);
+        expect(stored.orders.map((order) => order.number)).toEqual([
+          'OBJ-2026-9999',
+          'OBJ-2026-10000',
+          'OBJ-2026-10001',
+          'OBJ-2026-10002',
+        ]);
+      }),
+  ),
+);
+
 const tieredInput = {
   ...catalogInput,
   products: catalogInput.products.map((product) =>

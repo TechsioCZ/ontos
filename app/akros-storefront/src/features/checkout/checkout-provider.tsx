@@ -92,7 +92,7 @@ function CheckoutCartProvider({
   children: ReactNode;
   storage?: CheckoutStorage;
 }) {
-  const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
+  const { cart, clearCart, ready: cartReady, activeCartId } = useCart();
   const draftStorageKey = activeCartId === "default" ? draftKey : `${draftKey}:${activeCartId}`;
   const [{ draft, hydrated, storageError, submitError, submitted }, checkoutDispatch] = useReducer(
     checkoutReducer,
@@ -278,7 +278,7 @@ function CheckoutCartProvider({
     }
     completed.current = order;
     checkoutDispatch({ type: "submitted" });
-    dispatch({ type: "clear" });
+    clearCart(activeCartId);
     return order;
   }
 
