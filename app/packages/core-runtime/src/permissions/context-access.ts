@@ -6,7 +6,20 @@ import {
 } from '@authzed/authzed-node/v1/permissions';
 import type { CheckBulkPermissionsPair } from '@authzed/authzed-node/v1/permissions';
 import { createHash } from 'node:crypto';
-import { Cause, Clock, Context, Deferred, Effect, Layer, Option, Result, Schema } from 'effect';
+import {
+  Cause,
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Request,
+  RequestResolver,
+  Result,
+  Schema,
+} from 'effect';
 import type { Scope } from 'effect';
 
 import {
@@ -768,7 +781,29 @@ const sameRequest = (
  * the effect that `withRequestPermissionDecisions` wraps, and an `unavailable` decision is never reused. Wrap
  * only work that writes no relationships.
  */
-type RequestPermissionDecisionMemo = Map<string, Deferred.Deferred<ContextAccessDecision>>;
+interface PermissionDecisionRequest extends Request.Request<ContextAccessDecision> {
+  readonly item: CheckBulkPermissionsRequestItem;
+}
+
+const permissionDecisionRequest = Request.of<PermissionDecisionRequest>();
+
+interface RequestPermissionDecisionMemo {
+  readonly decisions: Map<string, Deferred.Deferred<ContextAccessDecision>>;
+  readonly resolvers: Map<SpiceDbPermissionClient, RequestResolver.RequestResolver<PermissionDecisionRequest>>;
+}
+
+// Concurrent reads share a bounded transport batch, never a timer or a cross-request queue.
+const PERMISSION_BATCH_SIZE = 256;
+
+const completePermissionDecisions = (
+  entries: readonly Request.Entry<PermissionDecisionRequest>[],
+  decisions: readonly ContextAccessDecision[],
+) =>
+  Effect.sync(() => {
+    for (const [index, entry] of entries.entries()) {
+      entry.completeUnsafe(Exit.succeed(decisions[index] ?? 'unavailable'));
+    }
+  });
 
 export const RequestPermissionDecisions = Context.Reference<Option.Option<RequestPermissionDecisionMemo>>(
   '@app/core-runtime/permissions/context-access/RequestPermissionDecisions',
@@ -783,7 +818,9 @@ export const withRequestPermissionDecisions = <Value, Failure, Requirements>(
   effect: Effect.Effect<Value, Failure, Requirements>,
 ): Effect.Effect<Value, Failure, Requirements> =>
   Effect.updateService(effect, RequestPermissionDecisions, (current) =>
-    Option.isSome(current) ? current : Option.some<RequestPermissionDecisionMemo>(new Map()),
+    Option.isSome(current)
+      ? current
+      : Option.some<RequestPermissionDecisionMemo>({ decisions: new Map(), resolvers: new Map() }),
   );
 
 /** SpiceDB's own relationship notation; object types, ids and relations never contain `:`, `#` or `@`. */
@@ -805,8 +842,8 @@ const settleOwnedDecisions = (
   Effect.sync(() => {
     for (const [index, entry] of owned.entries()) {
       const decision = decisions[index] ?? 'unavailable';
-      if (decision === 'unavailable') {
-        memo.delete(entry.identity);
+      if (decision === 'unavailable' && memo.decisions.get(entry.identity) === entry.deferred) {
+        memo.decisions.delete(entry.identity);
       }
       Deferred.doneUnsafe(entry.deferred, Effect.succeed(decision));
     }
@@ -817,12 +854,12 @@ const claimDecisions = (memo: RequestPermissionDecisionMemo, requests: readonly 
   const owned: OwnedDecision[] = [];
   const pending = requests.map((request) => {
     const identity = requestIdentity(request);
-    const known = memo.get(identity);
+    const known = memo.decisions.get(identity);
     if (known !== undefined) {
       return known;
     }
     const deferred = Deferred.makeUnsafe<ContextAccessDecision>();
-    memo.set(identity, deferred);
+    memo.decisions.set(identity, deferred);
     owned.push({ deferred, identity, request });
     return deferred;
   });
@@ -831,67 +868,67 @@ const claimDecisions = (memo: RequestPermissionDecisionMemo, requests: readonly 
 
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   /** One CheckBulkPermissions call: a decision per request, or every one `unavailable` when the answer does not match. */
-  const decide = (
+  const decide = Effect.fn('ContextAccess.decide')(function* decideWithDiagnostics(
     requests: readonly CheckBulkPermissionsRequestItem[],
-  ): Effect.Effect<readonly ContextAccessDecision[]> =>
-    Effect.gen(function* decideWithDiagnostics() {
-      const startedAt = yield* Clock.currentTimeMillis;
-      const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
-      const reportUnavailable = (
-        failureKind:
-          | 'timeout'
-          | 'client_failure'
-          | 'response_count_mismatch'
-          | 'response_request_mismatch'
-          | 'response_unavailable',
-      ) =>
-        Clock.currentTimeMillis.pipe(
-          Effect.flatMap((now) =>
-            Effect.logWarning('SpiceDB bulk permission check unavailable').pipe(
-              Effect.annotateLogs({
-                elapsedMs: now - startedAt,
-                failureKind,
-                operation: 'CheckBulkPermissions',
-                requestCount: requests.length,
-              }),
-            ),
+  ): Effect.fn.Return<readonly ContextAccessDecision[]> {
+    const startedAt = yield* Clock.currentTimeMillis;
+    const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
+    const reportUnavailable = (
+      failureKind:
+        | 'timeout'
+        | 'client_failure'
+        | 'response_count_mismatch'
+        | 'response_request_mismatch'
+        | 'response_unavailable',
+    ) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          Effect.logWarning('SpiceDB bulk permission check unavailable').pipe(
+            Effect.annotateLogs({
+              elapsedMs: now - startedAt,
+              failureKind,
+              operation: 'CheckBulkPermissions',
+              requestCount: requests.length,
+            }),
           ),
-          Effect.as(unavailableAll),
-        );
-      return yield* client
-        .checkBulkPermissions(
-          CheckBulkPermissionsRequest.create({
-            consistency: fullyConsistent,
-            items: [...requests],
-            withTracing: false,
-          }),
-        )
-        .pipe(
-          Effect.flatMap((response) => {
-            if (response.pairs.length !== requests.length) {
-              return reportUnavailable('response_count_mismatch');
-            }
-            const decisions = response.pairs.map((pair, index) => {
-              const expected = requests[index];
-              return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
-            });
-            if (!decisions.every((decision): decision is ContextAccessDecision => decision !== null)) {
-              return reportUnavailable('response_request_mismatch');
-            }
-            if (decisions.some((decision) => decision === 'unavailable')) {
-              return reportUnavailable('response_unavailable').pipe(Effect.as(decisions));
-            }
-            return Effect.succeed(decisions);
-          }),
-          Effect.catchTag('SpiceDbPermissionClientError', (error) =>
-            reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure'),
-          ),
-        );
-    });
+        ),
+        Effect.as(unavailableAll),
+      );
+    return yield* client
+      .checkBulkPermissions(
+        CheckBulkPermissionsRequest.create({
+          consistency: fullyConsistent,
+          items: [...requests],
+          withTracing: false,
+        }),
+      )
+      .pipe(
+        Effect.flatMap((response) => {
+          if (response.pairs.length !== requests.length) {
+            return reportUnavailable('response_count_mismatch');
+          }
+          const decisions = response.pairs.map((pair, index) => {
+            const expected = requests[index];
+            return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
+          });
+          if (!decisions.every((decision): decision is ContextAccessDecision => decision !== null)) {
+            return reportUnavailable('response_request_mismatch');
+          }
+          if (decisions.some((decision) => decision === 'unavailable')) {
+            return reportUnavailable('response_unavailable').pipe(Effect.as(decisions));
+          }
+          return Effect.succeed(decisions);
+        }),
+        Effect.catchTag('SpiceDbPermissionClientError', (error) =>
+          reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure'),
+        ),
+      );
+  });
 
   /**
-   * Joins the decisions this request already has or is waiting for and asks SpiceDB, in one call, only for the
-   * rest. Inside a governed transaction the memo is bypassed, so the transaction guard still refuses the call.
+   * Joins existing decisions and coalesces distinct concurrent checks through a request-owned Effect resolver.
+   * No resolver or pending I/O crosses request boundaries. Inside a governed transaction the memo is bypassed,
+   * so the transaction guard still refuses the call.
    */
   const decideWithin = Effect.fn('ContextAccess.decideWithinRequest')(function* decideWithinRequest(
     memo: RequestPermissionDecisionMemo,
@@ -899,10 +936,24 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
   ) {
     const { owned, pending } = claimDecisions(memo, requests);
     if (owned.length > 0) {
-      yield* decide(owned.map(({ request }) => request)).pipe(
-        Effect.flatMap((decisions) => settleOwnedDecisions(memo, owned, decisions)),
-        Effect.onInterrupt(() => settleOwnedDecisions(memo, owned, [])),
-      );
+      let resolver = memo.resolvers.get(client);
+      if (resolver === undefined) {
+        resolver = RequestResolver.make<PermissionDecisionRequest>((entries) =>
+          decide(entries.map(({ request }) => request.item)).pipe(
+            Effect.flatMap((decisions) => completePermissionDecisions(entries, decisions)),
+          ),
+        ).pipe(RequestResolver.batchN(PERMISSION_BATCH_SIZE));
+        memo.resolvers.set(client, resolver);
+      }
+      const requestResolver = resolver;
+      yield* Effect.forEach(
+        owned,
+        (entry) =>
+          Effect.request(permissionDecisionRequest({ item: entry.request }), requestResolver).pipe(
+            Effect.flatMap((decision) => settleOwnedDecisions(memo, [entry], [decision])),
+          ),
+        { concurrency: PERMISSION_BATCH_SIZE, discard: true },
+      ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? settleOwnedDecisions(memo, owned, []) : Effect.void)));
     }
     return yield* Effect.forEach(pending, (deferred) => Deferred.await(deferred), { concurrency: pending.length });
   });
