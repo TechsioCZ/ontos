@@ -66,8 +66,13 @@ const product: CatalogProduct = {
 };
 
 function CartLines() {
-  const { cart } = useCart();
-  return <output aria-label="Řádky košíku">{JSON.stringify(cart.lines)}</output>;
+  const { cart, purchaseError } = useCart();
+  return (
+    <>
+      <output aria-label="Řádky košíku">{JSON.stringify(cart.lines)}</output>
+      <output aria-label="Chyba nákupu">{purchaseError}</output>
+    </>
+  );
 }
 
 afterEach(cleanup);
@@ -324,6 +329,95 @@ describe("ProductPurchaseForm", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "validates the cumulative quantity tier before adding a product (variant list: %s)",
+    async (variantList) => {
+      const user = userEvent.setup();
+      const priceTiers = [
+        { minimumQuantity: 4, priceMinor: 60, priceExcludingVatMinor: 50 },
+        { minimumQuantity: 2, priceMinor: 70, priceExcludingVatMinor: 58 },
+      ];
+      const requests: { quantity: number; priceMinor: number }[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn<(url: string, init: { body: string }) => Promise<Response>>(async (_url, init) => {
+          const { cart } = JSON.parse(init.body);
+          const line = cart.lines[0];
+          requests.push({ quantity: line.quantity, priceMinor: line.priceMinor });
+          const priceMinor = line.quantity >= 4 ? 60 : 70;
+          const priceChanged = line.priceMinor !== priceMinor;
+          return Response.json({
+            cart: { ...cart, lines: [{ ...line, priceMinor }] },
+            priceChanged,
+            issues: [],
+            canCheckout: !priceChanged,
+          });
+        }),
+      );
+      const tieredProduct = { ...product, detail: { ...product.detail, priceTiers } };
+      const tieredVariant = { ...variants[0], minimumQuantity: 1, packageQuantity: 1, priceTiers };
+      render(
+        <CartProvider storage={null}>
+          <ProductPurchaseForm
+            product={tieredProduct}
+            variants={variantList ? [tieredVariant] : undefined}
+          />
+          <CartLines />
+        </CartProvider>,
+      );
+      const quantity = screen.getByRole("spinbutton", {
+        name: variantList ? "Množství M 2 × 5" : "Množství",
+      });
+      await user.clear(quantity);
+      await user.type(quantity, "2");
+      await user.tab();
+      const buy = screen.getByRole("button", { name: variantList ? "Koupit M 2 × 5" : "Koupit" });
+      await user.click(buy);
+      await waitFor(() =>
+        expect(
+          JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0],
+        ).toMatchObject({
+          quantity: 2,
+          priceMinor: 70,
+        }),
+      );
+      await user.click(buy);
+      await waitFor(() =>
+        expect(
+          JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")[0],
+        ).toMatchObject({
+          quantity: 4,
+          priceMinor: 60,
+        }),
+      );
+      expect(requests).toEqual([
+        { quantity: 2, priceMinor: 70 },
+        { quantity: 4, priceMinor: 60 },
+      ]);
+    },
+  );
+
+  it("still rejects an owner price change instead of silently accepting it", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<() => Promise<Response>>(async () =>
+        Response.json({ cart: { version: 3, lines: [] }, priceChanged: true, canCheckout: false }),
+      ),
+    );
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} />
+        <CartLines />
+      </CartProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Koupit" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Chyba nákupu").textContent).toContain("Cena se změnila"),
+    );
+    expect(screen.getByLabelText("Řádky košíku").textContent).toBe("[]");
+  });
+
   it("adds a single source variant through the simple purchase control", async () => {
     const user = userEvent.setup();
     const singleVariant = {
@@ -363,8 +457,8 @@ describe("ProductPurchaseForm", () => {
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url: string, init: RequestInit) => {
-      const { cart } = JSON.parse(String(init.body));
+    vi.fn(async (_url: string, init: { body: string }) => {
+      const { cart } = JSON.parse(init.body);
       const blocked = cart.lines.some(
         (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
       );

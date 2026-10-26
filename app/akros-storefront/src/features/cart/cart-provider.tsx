@@ -24,6 +24,7 @@ import {
 } from "@/features/cart/cart-state";
 
 import { parseStoredCart } from "@/features/cart/cart-storage";
+import type { CatalogPriceTier } from "@/ontos/catalog-types";
 import {
   type CartCollection,
   createCartCollection,
@@ -38,7 +39,11 @@ const isError = (value: unknown): value is Error =>
 const storageKey = "akros-demo-cart-v3";
 
 interface CartContextValue {
-  addItem: (item: CartItemSnapshot, quantity: number) => Promise<boolean>;
+  addItem: (
+    item: CartItemSnapshot,
+    quantity: number,
+    priceTiers?: readonly CatalogPriceTier[],
+  ) => Promise<boolean>;
   adding: boolean;
   purchaseError: string;
   carts: CartCollection["carts"];
@@ -271,7 +276,11 @@ export function CartProvider({
   stateRef.current = state;
   const addBusy = useRef(false);
   const addItem = useCallback(
-    async (item: CartItemSnapshot, quantity: number): Promise<boolean> => {
+    async (
+      item: CartItemSnapshot,
+      quantity: number,
+      priceTiers: readonly CatalogPriceTier[] = [],
+    ): Promise<boolean> => {
       if (addBusy.current) return false;
       addBusy.current = true;
       setAdding(true);
@@ -283,11 +292,20 @@ export function CartProvider({
         const previous = current.cart.lines.find(
           (line) => line.productId === item.productId && line.variantId === item.variantId,
         );
+        const cumulativeQuantity = (previous?.quantity ?? 0) + quantity;
+        const tier = [...priceTiers]
+          .filter((entry) => entry.minimumQuantity <= cumulativeQuantity)
+          .sort((left, right) => right.minimumQuantity - left.minimumQuantity)[0];
         const proposed = {
           version: 3,
           lines: [
             ...current.cart.lines.filter((line) => line !== previous),
-            { ...item, quantity: (previous?.quantity ?? 0) + quantity },
+            {
+              ...item,
+              quantity: cumulativeQuantity,
+              priceMinor: tier?.priceMinor ?? item.priceMinor,
+              priceExcludingVatMinor: tier?.priceExcludingVatMinor ?? item.priceExcludingVatMinor,
+            },
           ],
         };
         const response = await fetch("/api/ontos/cart", {

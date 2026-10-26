@@ -423,7 +423,7 @@ export function ProductPurchaseForm({
   );
   const addVariant = useCallback(
     (variant: CatalogPurchaseVariant, selectedQuantity: number) => {
-      void addItem(getVariantCartItem(product, variant), selectedQuantity);
+      void addItem(getVariantCartItem(product, variant), selectedQuantity, variant.priceTiers);
     },
     [addItem, product],
   );
@@ -502,7 +502,11 @@ export function ProductPurchaseForm({
           }
           icon="token-icon-cart"
           onClick={() => {
-            void addItem(productCartItem, quantity);
+            void addItem(
+              productCartItem,
+              quantity,
+              variant?.priceTiers ?? product.detail.priceTiers,
+            );
           }}
           size="md"
           uppercase
