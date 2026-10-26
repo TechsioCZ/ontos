@@ -1,7 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { ownerRequest } from "./gateway";
+import { OntosError, ownerRequest } from "./gateway";
 import { getConfig } from "./config";
 import { RequestError } from "./http";
 
@@ -34,14 +34,14 @@ export const portalCookie = (cookie: string | null): string =>
     .filter((part) => /^(?:__Secure-)?commerce-portal\.[\w.-]+=/.test(part))
     .join("; ");
 
-export const portalRequest = (
+export const portalRequest = async (
   path: string,
   origin: string,
   cookie: string | null,
   body?: unknown,
   idempotencyKey?: string,
-) =>
-  ownerRequest(owner, `${base}${path}`, {
+): Promise<Response> => {
+  const init: RequestInit = {
     method: body === undefined ? "GET" : "POST",
     headers: {
       origin,
@@ -50,7 +50,29 @@ export const portalRequest = (
       ...(idempotencyKey === undefined ? {} : { "idempotency-key": idempotencyKey }),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  };
+  // A transient admission read must not strand a verified login. Only these reads are safe:
+  // email verification also uses GET, but consumes a one-time token and must never be replayed.
+  const readOnly =
+    body === undefined && (path === "/customer-account" || path === "/enrollment/current");
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await ownerRequest(owner, `${base}${path}`, init);
+      if (!readOnly || response.status !== 503 || attempt >= 2) return response;
+      await response.body?.cancel();
+    } catch (error) {
+      if (
+        !readOnly ||
+        !OntosError.is(error) ||
+        error.status !== 503 ||
+        error.code === "storefront_not_configured" ||
+        attempt >= 2
+      )
+        throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+  }
+};
 
 export const accountMessage = (status: number, code?: string): string => {
   if (code === "verification_required")
