@@ -1,6 +1,5 @@
-// @effect-diagnostics globalFetch:off preferSchemaOverJson:off -- Browser boundary: before sign-in the login page asks Better Auth for the public name of the OAuth client that requests access. expires: 2027-03-31.
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
+import { useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -9,18 +8,19 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
-import { signInReason, signInReturnPath } from '../../sign-in-return.ts';
+import { openSignedInPage, signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginError, readOAuthLoginRequest } from './oauth-handoff.ts';
-import type { OAuthLoginErrorCode, OAuthLoginRequest } from './oauth-handoff.ts';
+import type { OAuthLoginRequest } from './oauth-handoff.ts';
 
 interface LoginValidation {
   loginMissing: boolean;
@@ -41,6 +41,51 @@ const SignInFormSchema = Schema.fromFormData(
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
 
+const subscribeToLoginLocation = (onChange: () => void) => {
+  window.addEventListener('popstate', onChange);
+  return () => window.removeEventListener('popstate', onChange);
+};
+const browserLoginHref = () => window.location.href;
+const serverLoginHref = () => '';
+const loginReason = (href: string, language: string): SignInReason | 'sign_in_required' | undefined =>
+  href === ''
+    ? undefined
+    : (signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'));
+
+const OAuthPreloginPayload = Schema.Struct({ client_id: Schema.String, oauth_query: Schema.String });
+const readOAuthClientName = Effect.fn('Login.readOAuthClientName')(function* readOAuthClientNameEffect(
+  request: OAuthLoginRequest,
+) {
+  const clientRequest = yield* HttpClientRequest.schemaBodyJson(OAuthPreloginPayload)(
+    HttpClientRequest.post(new URL(OAUTH_PRELOGIN_PATH, window.location.href)),
+    { client_id: request.clientId, oauth_query: request.signedQuery },
+  );
+  return yield* HttpClient.execute(clientRequest).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((response) => response.json),
+    Effect.map(clientNameFrom),
+    Effect.timeout('10 seconds'),
+  );
+});
+
+const oauthBannerText = (
+  request: OAuthLoginRequest | undefined,
+  clientName: string | undefined,
+  t: ReturnType<typeof useModernI18n>['t'],
+) =>
+  request === undefined
+    ? undefined
+    : {
+        client: clientName ?? (request.clientHost === '' ? t('shell.login.oauth.unknownClient') : request.clientHost),
+        description:
+          clientName !== undefined && request.clientHost !== ''
+            ? t('shell.login.oauth.request', { host: request.clientHost })
+            : t('shell.login.oauth.requestNoHost'),
+        warning: request.knownClient
+          ? undefined
+          : t('shell.login.oauth.unverified', { client: clientName ?? request.clientId }),
+      };
+
 const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
   Match.value(error).pipe(
     Match.tag('InvalidCredentialsProblem', () => 'shell.login.error.invalid' as const),
@@ -52,7 +97,6 @@ const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
 
 const LoginPage = () => {
   const { language, t } = useModernI18n();
-  const navigate = useNavigate();
   const router = useRouter();
   const toaster = useToast();
   const loginRef = useRef<HTMLInputElement>(null);
@@ -67,41 +111,30 @@ const LoginPage = () => {
   const [submissionError, setSubmissionError] = useState<string>();
   // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
   // A protected page opened without signing in arrives with only the page to return to: "not signed in".
-  // Read after mount: the server render has no browser URL, so both renders start without the notice.
-  const [reason, setReason] = useState<SignInReason | 'sign_in_required'>();
-  const [oauthRequest, setOAuthRequest] = useState<OAuthLoginRequest>();
-  const [oauthClientName, setOAuthClientName] = useState<string>();
-  const [oauthError, setOAuthError] = useState<OAuthLoginErrorCode>();
+  // The server snapshot keeps hydration's first render free of browser-only notices.
+  const href = useSyncExternalStore(subscribeToLoginLocation, browserLoginHref, serverLoginHref);
+  const reason = loginReason(href, language);
+  const oauthRequest = readOAuthLoginRequest(href);
+  const oauthError = readOAuthLoginError(href);
+  const [clientName, setClientName] = useState<string>();
+  const oauthBanner = oauthBannerText(oauthRequest, clientName, t);
   useEffect(() => {
-    const { href } = window.location;
-    setReason(
-      signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'),
-    );
-    setOAuthRequest(readOAuthLoginRequest(href));
-    setOAuthError(readOAuthLoginError(href));
-  }, [language]);
-  useEffect(() => {
-    if (oauthRequest === undefined) {
-      return;
-    }
-    let active = true;
-    void fetch(OAUTH_PRELOGIN_PATH, {
-      body: JSON.stringify({ client_id: oauthRequest.clientId, oauth_query: oauthRequest.signedQuery }),
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      method: 'POST',
-    })
-      .then((response): Promise<unknown> | undefined => (response.ok ? response.json() : undefined))
-      .then((body: unknown) => {
-        if (active) {
-          setOAuthClientName(clientNameFrom(body));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [oauthRequest]);
+    const request = readOAuthLoginRequest(href);
+    return request === undefined
+      ? undefined
+      : browserRuntime.runCallback(
+          readOAuthClientName(request).pipe(
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Match.value(error).pipe(
+                  Match.tag('HttpBodyError', 'HttpClientError', 'TimeoutError', () => Effect.void),
+                  Match.exhaustive,
+                ),
+              onSuccess: (name) => Effect.sync(() => setClientName(name)),
+            }),
+          ),
+        );
+  }, [href]);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -175,17 +208,7 @@ const LoginPage = () => {
                     setAttempt('opening');
                     return router.invalidate({ sync: true });
                   }).pipe(
-                    Effect.andThen(
-                      Effect.tryPromise(() => {
-                        // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
-                        // data while it reloads in the background, so the signed-in user would briefly see the
-                        // logged-out view. Without a cache entry the next page loads before it renders.
-                        router.clearCache();
-                        // A protected deep link sent the visitor here; return there instead of the home page.
-                        const returnPath = signInReturnPath(window.location.href, language);
-                        return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
-                      }),
-                    ),
+                    Effect.andThen(Effect.suspend(() => openSignedInPage(router, window.location.href, language))),
                     Effect.timeout('10 seconds'),
                     Effect.matchEffect({
                       onFailure: handleNavigationFailure,
@@ -193,8 +216,8 @@ const LoginPage = () => {
                     }),
                   ),
                 )
-              : // OAuth connect flow: back to the authorization server; no company picker and no shell page in between.
-                Effect.sync(() => {
+              : Effect.sync(() => {
+                  // OAuth connect flow: back to authorization without opening a Shell page.
                   setAttempt('opening');
                   globalThis.location.assign(oauthRequest.authorizeUrl);
                 }),
@@ -220,29 +243,29 @@ const LoginPage = () => {
           </div>
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
           {oauthError === undefined ? null : (
-            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm" data-testid="oauth-login-error" role="alert">
+            <div
+              className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm"
+              data-testid="oauth-login-error"
+              role="alert"
+            >
               <h1 className="font-semibold text-lg">{t('shell.login.oauth.error.title')}</h1>
               <p>{t(`shell.login.oauth.error.${oauthError}`)}</p>
               <p className="text-fg-secondary">{t('shell.login.oauth.error.next')}</p>
             </div>
           )}
-          {oauthRequest === undefined || oauthError !== undefined ? null : (
-            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" data-testid="oauth-login-banner" role="status">
-              <p>
-                <strong>
-                  {oauthClientName ?? (oauthRequest.clientHost === '' ? t('shell.login.oauth.unknownClient') : oauthRequest.clientHost)}
-                </strong>{' '}
-                {oauthClientName !== undefined && oauthRequest.clientHost !== ''
-                  ? t('shell.login.oauth.request', { host: oauthRequest.clientHost })
-                  : t('shell.login.oauth.requestNoHost')}
-              </p>
-              <p>{t('shell.login.oauth.continue')}</p>
-              {oauthRequest.knownClient ? null : (
-                <p className="text-fg-secondary">
-                  {t('shell.login.oauth.unverified', { client: oauthClientName ?? oauthRequest.clientId })}
-                </p>
+          {oauthBanner === undefined || oauthError !== undefined ? null : (
+            <output
+              className="ontos-tile block rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm"
+              data-testid="oauth-login-banner"
+            >
+              <span className="block">
+                <strong>{oauthBanner.client}</strong> {oauthBanner.description}
+              </span>
+              <span className="block">{t('shell.login.oauth.continue')}</span>
+              {oauthBanner.warning === undefined ? null : (
+                <span className="block text-fg-secondary">{oauthBanner.warning}</span>
               )}
-            </div>
+            </output>
           )}
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
@@ -281,10 +304,10 @@ const LoginPage = () => {
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
-                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="status">
-                  <p className="font-semibold">{t(`shell.login.notice.${reason}.title`)}</p>
-                  <p>{t(`shell.login.notice.${reason}.body`)}</p>
-                </div>
+                <output className="ontos-tile block rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm">
+                  <span className="block font-semibold">{t(`shell.login.notice.${reason}.title`)}</span>
+                  <span className="block">{t(`shell.login.notice.${reason}.body`)}</span>
+                </output>
               )}
               {submissionError === undefined ? null : (
                 <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="alert">
