@@ -1,7 +1,6 @@
 "use client";
 import {
-  CheckoutStockError,
-  CheckoutPriceError,
+  CheckoutRejectionError,
   checkoutSaveError,
   readCheckoutQuote,
   readOrderResponse,
@@ -28,10 +27,8 @@ import {
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
-const isCheckoutStockError = (value: unknown): value is CheckoutStockError =>
-  value !== null && value !== undefined && CheckoutStockError.prototype.isPrototypeOf(value);
-const isCheckoutPriceError = (value: unknown): value is CheckoutPriceError =>
-  value !== null && value !== undefined && CheckoutPriceError.prototype.isPrototypeOf(value);
+const isCheckoutRejectionError = (value: unknown): value is CheckoutRejectionError =>
+  value !== null && value !== undefined && CheckoutRejectionError.prototype.isPrototypeOf(value);
 
 export interface PlacedOrder {
   id: string;
@@ -51,6 +48,7 @@ interface CheckoutContextValue {
   ready: boolean;
   storageError: string;
   submitted: boolean;
+  hasUnconfirmedOrder: boolean;
   updateDraft: (update: DraftUpdate) => void;
   completeOrder: () => Promise<PlacedOrder | null>;
 }
@@ -183,10 +181,15 @@ function CheckoutCartProvider({
   const storageRef = useRef<CheckoutStorage | null>(null);
   const completed = useRef<PlacedOrder | null>(null);
   const submitting = useRef(false);
+  const [hasUnconfirmedOrder, setHasUnconfirmedOrder] = useState(false);
 
   useEffect(() => {
     try {
       storageRef.current = storage ?? window.sessionStorage;
+      setHasUnconfirmedOrder(
+        JSON.parse(storageRef.current.getItem(`akros-ontos-pending:${activeCartId}`) ?? "null")
+          ?.sent === true,
+      );
       checkoutDispatch({
         type: "hydrate",
         draft: parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
@@ -199,7 +202,7 @@ function CheckoutCartProvider({
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [storage, draftStorageKey]);
+  }, [storage, draftStorageKey, activeCartId]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -297,27 +300,29 @@ function CheckoutCartProvider({
       // Persist before sending; an uncertain retry must replay these exact bytes, even after refresh.
       pending.sent = true;
       storageRef.current.setItem(key, JSON.stringify(pending));
+      setHasUnconfirmedOrder(true);
       const response = await fetch("/api/ontos/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: pending.body,
       });
       const result = await readOrderResponse(response).catch((error: unknown) => {
-        if (isCheckoutStockError(error) || isCheckoutPriceError(error)) {
+        if (isCheckoutRejectionError(error)) {
           // An explicit rejection is not an uncertain commit; edits may start a new request.
           pending.sent = false;
           storageRef.current!.setItem(key, JSON.stringify(pending));
+          setHasUnconfirmedOrder(false);
         }
         throw error;
       });
       order = { id: result.orderNumber, orderId: result.orderId };
       storageRef.current.setItem(key, "null");
+      setHasUnconfirmedOrder(false);
     } catch (error) {
       checkoutDispatch({
         type: "submit-error",
         error:
-          isCheckoutStockError(error) ||
-          isCheckoutPriceError(error) ||
+          isCheckoutRejectionError(error) ||
           (isError(error) &&
             (error.message.startsWith("Cena se změnila") ||
               error.message.startsWith("Košík nyní nelze ověřit")))
@@ -344,6 +349,7 @@ function CheckoutCartProvider({
         accountReady,
         ready: hydrated && cartReady,
         submitted,
+        hasUnconfirmedOrder,
         storageError: submitError || storageError,
         updateDraft: (update) => checkoutDispatch({ type: "update", update }),
         completeOrder,

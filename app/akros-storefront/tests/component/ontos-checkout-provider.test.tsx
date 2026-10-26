@@ -7,6 +7,19 @@ import { type CheckoutDraft, createCheckoutDraft } from "@/features/checkout/che
 import type { CartLine } from "@/features/cart/cart-state";
 import { cartCollectionStorageKey, createCartCollection } from "@/features/cart/cart-collection";
 import { checkoutSaveError } from "@/ontos/checkout-response";
+import { CheckoutLayout } from "@/features/checkout/checkout-layout";
+import { ReviewStep } from "@/features/checkout/review-step";
+import { CartQuoteProvider } from "@/ontos/cart-revalidation";
+
+const router = vi.hoisted(() => ({
+  push: vi.fn<(href: string) => void>(),
+  replace: vi.fn<(href: string) => void>(),
+}));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/kosik/shrnuti",
+  useRouter: () => router,
+}));
+vi.mock("next/font/local", () => ({ default: () => ({ variable: "checkout-font" }) }));
 
 function Probe({
   lineChange,
@@ -104,6 +117,88 @@ beforeEach(() => {
   );
 });
 describe("OntOS submission recovery", () => {
+  it.each([
+    { failure: "stock", remount: false },
+    { failure: "price", remount: false },
+    { failure: "unavailable", remount: false },
+    { failure: "stock", remount: true },
+    { failure: "price", remount: true },
+    { failure: "unavailable", remount: true },
+  ])(
+    "recovers through the real layout after $failure refresh, remount=$remount",
+    async ({ failure, remount }) => {
+      const user = userEvent.setup();
+      const requests: string[] = [];
+      let rejectedRefreshes = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, options?: { body: string }) => {
+          if (url.endsWith("/account"))
+            return Response.json({ account: { email: "verified@example.test" } });
+          if (url.endsWith("/checkout"))
+            return Response.json({
+              shippingMethods:
+                requests.length && remount ? [] : [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+            });
+          if (url.endsWith("/cart")) {
+            if (requests.length) rejectedRefreshes++;
+            if (requests.length && failure === "unavailable")
+              return new Response(null, { status: 503 });
+            return Response.json({
+              cart: JSON.parse(options!.body).cart,
+              canCheckout: requests.length === 0,
+              priceChanged: requests.length > 0 && failure === "price",
+              issues: requests.length ? ["Stock or price changed after placement"] : [],
+            });
+          }
+          requests.push(options!.body);
+          if (requests.length === 1) throw new TypeError("Lost committed response");
+          return Response.json({
+            outcome: "REPLAYED",
+            orderId: "persisted-order",
+            orderNumber: "OBJ-1",
+            totalMinor: 121,
+            totalVatMinor: 21,
+          });
+        }),
+      );
+      const checkout = () =>
+        render(
+          <CartProvider>
+            <CheckoutProvider>
+              <CartQuoteProvider>
+                <CheckoutLayout recommendations={[]}>
+                  <ReviewStep />
+                </CheckoutLayout>
+              </CartQuoteProvider>
+            </CheckoutProvider>
+          </CartProvider>,
+        );
+      let view = checkout();
+      const submit = await screen.findByRole("button", { name: "Odeslat objednávku" });
+      await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+      await user.click(submit);
+      await screen.findByText(checkoutSaveError);
+      if (remount) {
+        view.unmount();
+        view = checkout();
+      } else {
+        act(() => window.dispatchEvent(new Event("focus")));
+      }
+      await waitFor(() => expect(rejectedRefreshes).toBeGreaterThan(0));
+      const retry = await screen.findByRole("button", { name: "Ověřit předchozí objednávku" });
+      expect(retry.hasAttribute("disabled")).toBe(false);
+      await user.click(retry);
+      await waitFor(() => expect(requests).toHaveLength(2));
+      expect(requests[1]).toBe(requests[0]);
+      await waitFor(() =>
+        expect(sessionStorage.getItem("akros-ontos-pending:default")).toBe("null"),
+      );
+      expect(router.push).toHaveBeenCalledWith("/potvrzeni-objednavky?order=persisted-order");
+      view.unmount();
+    },
+  );
+
   it.each<{
     name: string;
     lineChange?: Partial<CartLine>;
@@ -220,74 +315,84 @@ describe("OntOS submission recovery", () => {
     },
   );
 
-  it.each(["quote", "stock", "price"])(
-    "allows semantic edits after a confirmed %s rejection",
-    async (rejection) => {
-      const user = userEvent.setup();
-      const requests: string[] = [];
-      let quoteChecks = 0;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: string, options: { body: string }) => {
-          if (url.endsWith("/checkout"))
-            return Response.json({
-              shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
-            });
-          if (url.endsWith("/account"))
-            return Response.json({ account: { email: "verified@example.test" } });
-          if (url.endsWith("/cart")) {
-            quoteChecks++;
-            const blocked = rejection === "quote" && quoteChecks === 1;
-            return Response.json({
-              canCheckout: !blocked,
-              priceChanged: false,
-              issues: blocked ? ["Unavailable"] : [],
-            });
-          }
-          requests.push(options.body);
-          if (rejection !== "quote" && requests.length === 1)
-            return Response.json(
-              {
-                issues: [
-                  {
-                    code: rejection === "stock" ? "INSUFFICIENT_STOCK" : "PRICE_CHANGED",
-                    message: "Rejected",
-                  },
-                ],
-              },
-              { status: 409 },
-            );
+  it.each([
+    "quote",
+    "NOT_FOUND",
+    "NOT_AVAILABLE",
+    "VARIANT_REQUIRED",
+    "OUT_OF_STOCK",
+    "INSUFFICIENT_STOCK",
+    "AVAILABILITY_UNKNOWN",
+    "MINIMUM_QUANTITY",
+    "PACKAGE_QUANTITY",
+    "PRICE_CHANGED",
+    "PRICE_UNAVAILABLE",
+    "SHIPPING_PRICE_CHANGED",
+  ])("allows semantic edits after a confirmed %s rejection", async (rejection) => {
+    const user = userEvent.setup();
+    const requests: string[] = [];
+    let quoteChecks = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, options: { body: string }) => {
+        if (url.endsWith("/checkout"))
           return Response.json({
-            outcome: "PLACED",
-            orderId: "order-2",
-            orderNumber: "OBJ-2",
-            totalMinor: 242,
-            totalVatMinor: 42,
+            shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
           });
-        }),
-      );
-      render(
-        <CartProvider>
-          <CheckoutProvider>
-            <Probe lineChange={{ quantity: 2 }} />
-          </CheckoutProvider>
-        </CartProvider>,
-      );
-      await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
-      await user.click(screen.getByText("Submit"));
-      await waitFor(() => expect(screen.getByLabelText("Error").textContent).not.toBe(""));
-      const pending = JSON.parse(sessionStorage.getItem("akros-ontos-pending:default") ?? "null");
-      expect(pending.sent).toBe(false);
-      await user.click(screen.getByText("Edit order"));
-      await user.click(screen.getByText("Submit"));
-      await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
-      const placed = JSON.parse(requests[requests.length - 1]);
-      expect(placed.clientRequestId).not.toBe(pending.clientRequestId);
-      expect(placed.cart.lines[0].quantity).toBe(2);
-      expect(quoteChecks).toBe(2);
-      expect(requests).toHaveLength(rejection === "quote" ? 1 : 2);
-    },
-  );
+        if (url.endsWith("/account"))
+          return Response.json({ account: { email: "verified@example.test" } });
+        if (url.endsWith("/cart")) {
+          quoteChecks++;
+          const blocked = rejection === "quote" && quoteChecks === 1;
+          return Response.json({
+            canCheckout: !blocked,
+            priceChanged: false,
+            issues: blocked ? ["Unavailable"] : [],
+          });
+        }
+        requests.push(options.body);
+        if (rejection !== "quote" && requests.length === 1)
+          return Response.json(
+            {
+              issues: [
+                {
+                  code: rejection,
+                  message: "Rejected",
+                },
+              ],
+            },
+            { status: 409 },
+          );
+        return Response.json({
+          outcome: "PLACED",
+          orderId: "order-2",
+          orderNumber: "OBJ-2",
+          totalMinor: 242,
+          totalVatMinor: 42,
+        });
+      }),
+    );
+    render(
+      <CartProvider>
+        <CheckoutProvider>
+          <Probe lineChange={{ quantity: 2 }} />
+        </CheckoutProvider>
+      </CartProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
+    await user.click(screen.getByText("Submit"));
+    await waitFor(() => expect(screen.getByLabelText("Error").textContent).not.toBe(""));
+    const pending = JSON.parse(sessionStorage.getItem("akros-ontos-pending:default") ?? "null");
+    expect(pending.sent).toBe(false);
+    await user.click(screen.getByText("Edit order"));
+    await user.click(screen.getByText("Submit"));
+    await waitFor(() => expect(screen.getByLabelText("Submitted").textContent).toBe("true"));
+    const placed = JSON.parse(requests[requests.length - 1]);
+    expect(placed.clientRequestId).not.toBe(pending.clientRequestId);
+    expect(placed.cart.lines[0].quantity).toBe(2);
+    expect(quoteChecks).toBe(2);
+    expect(requests).toHaveLength(rejection === "quote" ? 1 : 2);
+  });
 
   it("clears only the submitted cart after switching carts during an order request", async () => {
     const user = userEvent.setup();
@@ -347,7 +452,14 @@ describe("OntOS submission recovery", () => {
     expect(screen.getByLabelText("Cart").textContent).toBe("1");
   });
 
-  it.each(["http", "json-shape", "invalid-json", "network", "network-remount"])(
+  it.each([
+    "http",
+    "json-shape",
+    "invalid-json",
+    "network",
+    "network-remount",
+    "unknown-rejection",
+  ])(
     "replays the exact pending request after %s failure and a stock-only refresh",
     async (failure) => {
       const user = userEvent.setup();
@@ -374,6 +486,11 @@ describe("OntOS submission recovery", () => {
           requests.push(options.body);
           if (!attempted) {
             attempted = true;
+            if (failure === "unknown-rejection")
+              return Response.json(
+                { issues: [{ code: "OUT_OF_STOCK" }, { code: "UNKNOWN_REJECTION" }] },
+                { status: 409 },
+              );
             if (failure.startsWith("network")) throw new TypeError("Failed to fetch");
             if (failure === "http") return Response.json({ error: "unavailable" }, { status: 503 });
             if (failure === "json-shape") return Response.json({});

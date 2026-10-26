@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CheckoutStockError,
+  CheckoutRejectionError,
   CheckoutPriceError,
   checkoutSaveError,
   readCheckoutQuote,
@@ -31,20 +32,23 @@ describe("connected checkout response boundary", () => {
       readOrderResponse(Response.json(body, { status: status as number })),
     ).rejects.toThrow(checkoutSaveError);
   });
-  it("shows the owner INSUFFICIENT_STOCK message when stock ran out after the cart check", async () => {
-    const issue = {
-      code: "INSUFFICIENT_STOCK",
-      availableQuantity: 7,
-      message: "Kartáč (dvouřadý): k dispozici je jen 7 ks.",
-    };
-    const error = await readOrderResponse(
-      Response.json({ message: "ignored", issues: [issue] }, { status: 409 }),
-    ).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(CheckoutStockError);
-    expect((error as Error).message).toBe(
-      "Kartáč (dvouřadý): k dispozici je jen 7 ks. Upravte množství v košíku a objednávku odešlete znovu.",
-    );
-  });
+  it.each(["INSUFFICIENT_STOCK", "OUT_OF_STOCK"])(
+    "shows the owner %s message when stock ran out after the cart check",
+    async (code) => {
+      const issue = {
+        code,
+        availableQuantity: 7,
+        message: "Kartáč (dvouřadý): k dispozici je jen 7 ks.",
+      };
+      const error = await readOrderResponse(
+        Response.json({ message: "ignored", issues: [issue] }, { status: 409 }),
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(CheckoutStockError);
+      expect((error as Error).message).toBe(
+        "Kartáč (dvouřadý): k dispozici je jen 7 ks. Upravte množství v košíku a objednávku odešlete znovu.",
+      );
+    },
+  );
   it.each(["PRICE_CHANGED", "SHIPPING_PRICE_CHANGED"])(
     "requires fresh price acceptance for %s without exposing upstream text",
     async (code) => {
@@ -57,13 +61,27 @@ describe("connected checkout response boundary", () => {
     },
   );
   it.each([
-    { issues: [{ code: "INSUFFICIENT_STOCK", message: "x".repeat(301) }] },
+    { issues: [{ code: "UNKNOWN_REJECTION", message: "Private upstream text" }] },
+    { issues: [{ code: "OUT_OF_STOCK" }, { code: "UNKNOWN_REJECTION" }] },
+    { issues: [] },
     { message: "k dispozici je jen 7 ks." },
   ])("keeps other 409 bodies behind the generic retry guidance %j", async (body) => {
     await expect(readOrderResponse(Response.json(body, { status: 409 }))).rejects.toThrow(
       checkoutSaveError,
     );
   });
+  it.each([undefined, "", "x".repeat(301)])(
+    "retires a recognized stock rejection with safe guidance when its message is invalid: %j",
+    async (message) => {
+      const error = await readOrderResponse(
+        Response.json({ issues: [{ code: "OUT_OF_STOCK", message }] }, { status: 409 }),
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(CheckoutRejectionError);
+      expect(error).toBeInstanceOf(CheckoutStockError);
+      expect((error as Error).message).toContain("Zboží již není dostupné");
+      expect((error as Error).message).not.toContain("x".repeat(301));
+    },
+  );
   it("keeps the OntOS order id for the live status when the owner returns it", async () => {
     expect(
       await readOrderResponse(

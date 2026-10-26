@@ -6,18 +6,33 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const minor = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-/** OntOS refused the order because stock ran out after the cart check; the customer must change the cart. */
-export class CheckoutStockError extends Error {}
-export class CheckoutPriceError extends Error {}
+/** A recognized owner rejection confirms that this attempt did not place an order. */
+export class CheckoutRejectionError extends Error {}
+export class CheckoutStockError extends CheckoutRejectionError {}
+export class CheckoutPriceError extends CheckoutRejectionError {}
 
-/** Only owner-authored INSUFFICIENT_STOCK issues are shown; any other upstream text stays hidden. */
+const rejectionCodes = new Set([
+  "NOT_FOUND",
+  "NOT_AVAILABLE",
+  "VARIANT_REQUIRED",
+  "OUT_OF_STOCK",
+  "INSUFFICIENT_STOCK",
+  "AVAILABILITY_UNKNOWN",
+  "MINIMUM_QUANTITY",
+  "PACKAGE_QUANTITY",
+  "PRICE_CHANGED",
+  "PRICE_UNAVAILABLE",
+  "SHIPPING_PRICE_CHANGED",
+]);
+
+/** Only bounded owner-authored stock messages are shown; other upstream text stays hidden. */
 const stockMessage = (value: unknown): string | undefined => {
   if (!record(value) || !Array.isArray(value.issues)) return undefined;
   const messages = value.issues
     .filter(
       (issue): issue is { message: string } =>
         record(issue) &&
-        issue.code === "INSUFFICIENT_STOCK" &&
+        ["OUT_OF_STOCK", "INSUFFICIENT_STOCK"].includes(String(issue.code)) &&
         typeof issue.message === "string" &&
         issue.message.length > 0 &&
         issue.message.length <= 300,
@@ -35,16 +50,30 @@ async function json(response: Response): Promise<unknown> {
     if (
       record(value) &&
       Array.isArray(value.issues) &&
-      value.issues.some(
-        (issue) =>
-          record(issue) && ["PRICE_CHANGED", "SHIPPING_PRICE_CHANGED"].includes(String(issue.code)),
+      value.issues.length > 0 &&
+      value.issues.every((issue) => record(issue) && rejectionCodes.has(String(issue.code)))
+    ) {
+      if (
+        value.issues.some((issue) =>
+          ["PRICE_CHANGED", "SHIPPING_PRICE_CHANGED"].includes(String(issue.code)),
+        )
       )
-    )
-      throw new CheckoutPriceError(
-        "Cena zboží nebo dopravy se změnila. Vraťte se do košíku, ověřte aktuální ceny a odešlete objednávku znovu.",
+        throw new CheckoutPriceError(
+          "Cena zboží nebo dopravy se změnila. Vraťte se do košíku, ověřte aktuální ceny a odešlete objednávku znovu.",
+        );
+      if (
+        value.issues.some((issue) =>
+          ["OUT_OF_STOCK", "INSUFFICIENT_STOCK"].includes(String(issue.code)),
+        )
+      )
+        throw new CheckoutStockError(
+          stockMessage(value) ??
+            "Zboží již není dostupné v požadovaném množství. Upravte košík a objednávku odešlete znovu.",
+        );
+      throw new CheckoutRejectionError(
+        "OntOS objednávku odmítl. Zkontrolujte položky, množství a aktuální ceny v košíku a odešlete objednávku znovu.",
       );
-    const message = stockMessage(value);
-    if (message) throw new CheckoutStockError(message);
+    }
   }
   if (!response.ok) throw new Error(checkoutSaveError);
   try {

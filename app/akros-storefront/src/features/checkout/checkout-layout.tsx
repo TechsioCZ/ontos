@@ -1,6 +1,7 @@
 "use client";
 import StoreLink from "@/components/store-link";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Button } from "@techsio/ui-kit/atoms/button";
 import { usePathname, useRouter } from "next/navigation";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
@@ -11,6 +12,54 @@ import { checkoutSteps, getReachableStep } from "@/features/checkout/checkout-st
 import { useCheckout } from "./checkout-provider";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 import { CheckoutSummary } from "./checkout-summary";
+
+function UnconfirmedOrder() {
+  const { completeOrder, accountEmail, storageError } = useCheckout();
+  const router = useRouter();
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  return (
+    <section
+      className="order-1 grid gap-4 rounded-sm bg-(--color-base) p-6"
+      aria-label="Nepotvrzená objednávka"
+    >
+      <h1 className="font-bold">Ověření předchozí objednávky</h1>
+      <p>
+        Výsledek odeslání zatím nebyl potvrzen. Ověříme původní požadavek, nevytvoříme novou
+        objednávku. Aktuální dostupnost košíku toto ověření neblokuje.
+      </p>
+      {storageError && (
+        <p role="alert" className="text-sm text-(--color-danger)">
+          {storageError}
+        </p>
+      )}
+      {!accountEmail && (
+        <StoreLink href="/prihlaseni" className="underline">
+          Před ověřením se přihlaste
+        </StoreLink>
+      )}
+      <Button
+        type="button"
+        disabled={sending || !accountEmail}
+        onClick={async () => {
+          if (sendingRef.current) return;
+          sendingRef.current = true;
+          setSending(true);
+          try {
+            const order = await completeOrder();
+            if (order)
+              router.push(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`);
+          } finally {
+            sendingRef.current = false;
+            setSending(false);
+          }
+        }}
+      >
+        {sending ? "Ověřuji v OntOS…" : "Ověřit předchozí objednávku"}
+      </Button>
+    </section>
+  );
+}
 
 export function CheckoutLayout({
   children,
@@ -24,8 +73,16 @@ export function CheckoutLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { cart } = useCart();
-  const { draft, methods, ready, storageError, submitted, accountEmail, accountReady } =
-    useCheckout();
+  const {
+    draft,
+    methods,
+    ready,
+    storageError,
+    submitted,
+    accountEmail,
+    accountReady,
+    hasUnconfirmedOrder,
+  } = useCheckout();
   const signedIn = accountEmail !== null;
   const step = Math.max(
     0,
@@ -40,9 +97,9 @@ export function CheckoutLayout({
     },
   });
   useEffect(() => {
-    if (ready && accountReady && !submitted && reachable !== step)
+    if (ready && accountReady && !submitted && !hasUnconfirmedOrder && reachable !== step)
       router.replace(checkoutSteps[reachable].href);
-  }, [ready, accountReady, reachable, router, step, submitted]);
+  }, [ready, accountReady, reachable, router, step, submitted, hasUnconfirmedOrder]);
   return (
     <div
       data-akros-checkout
@@ -79,27 +136,29 @@ export function CheckoutLayout({
                 </Steps.Item>
               ))}
             </Steps.List>
-            {storageError && step !== 3 && (
+            {storageError && step !== 3 && !hasUnconfirmedOrder && (
               <p role="alert" className="mb-4 text-sm text-(--color-danger)">
                 {storageError}
               </p>
             )}
-            {!ready || reachable !== step ? (
+            {ready && hasUnconfirmedOrder && <UnconfirmedOrder />}
+            {hasUnconfirmedOrder && step === 3 ? null : !ready || reachable !== step ? (
               <output className="block py-12 text-center">Načítám košík…</output>
             ) : (
               <Steps.Content index={step} className="order-1 min-w-0">
                 {pricesVisible ? (
                   children
                 ) : (
-                  <p role="status">
+                  <output>
                     Ceny a dostupnost nejsou aktuálně ověřené. Po úspěšném ověření se obsah košíku
                     znovu zobrazí.
-                  </p>
+                  </output>
                 )}
               </Steps.Content>
             )}
             {ready &&
               cart.lines.length > 0 &&
+              !hasUnconfirmedOrder &&
               step === 0 &&
               (!accountReady ? (
                 <output>Ověřuji přihlášení…</output>
@@ -127,7 +186,7 @@ export function CheckoutLayout({
                   </div>
                 </section>
               ))}
-            {ready && cart.lines.length > 0 && step < 3 && (
+            {ready && !hasUnconfirmedOrder && cart.lines.length > 0 && step < 3 && (
               <section
                 className="order-4 mt-(--dimension-60) min-w-0"
                 aria-labelledby="checkout-recommendations"
@@ -145,7 +204,9 @@ export function CheckoutLayout({
           {ready && (
             <div className="order-2 grid min-w-0 gap-(--dimension-16) 2xl:order-none">
               <CartSelector />
-              {pricesVisible && cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
+              {!hasUnconfirmedOrder && pricesVisible && cart.lines.length > 0 && step < 3 && (
+                <CheckoutSummary />
+              )}
             </div>
           )}
         </div>
