@@ -62,7 +62,8 @@
     "@app/property-leasing": "workspace:*",
     "@app/finance-billing": "workspace:*",
     "@app/work-tasks": "workspace:*",
-    "@app/crm-activities": "workspace:*"
+    "@app/crm-activities": "workspace:*",
+    "@app/workforce": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",

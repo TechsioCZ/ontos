@@ -15,6 +15,9 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { listEmployees } from '@app/workforce/clients/records';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
@@ -132,7 +135,15 @@ interface RecordsInput {
 const propertyRecords = definePageData({
   key: (input: RecordsInput) => input.legalEntityId,
   load: () =>
-    Random.nextInt.pipe(Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`))),
+    Effect.all(
+      {
+        employees: listEmployees().pipe(Effect.result),
+        records: Random.nextInt.pipe(
+          Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`)),
+        ),
+      },
+      { concurrency: 2 },
+    ),
   runtime: browserRuntime,
 });
 const recordsInput = (context: ModulePageProps['context']): RecordsInput => ({
@@ -179,7 +190,15 @@ const usePropertyRecords = (legalEntityId: string) => {
   useEffect(() => {
     propertyRecords.ensure({ legalEntityId });
   }, [legalEntityId]);
-  const records = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const records = snapshot.state === 'ready' ? snapshot.value.records : undefined;
+  const employees = snapshot.state === 'ready' ? Result.getOrUndefined(snapshot.value.employees) : undefined;
+  const employeesMessage =
+    snapshot.state === 'ready' && Result.isFailure(snapshot.value.employees)
+      ? Match.value(snapshot.value.employees.failure).pipe(
+          Match.tag('RecordsForbiddenProblem', () => t(`${key}.editor.employeesForbidden`)),
+          Match.orElse(() => t(`${key}.editor.employeesUnavailable`)),
+        )
+      : '';
   const recordsLoading = snapshot.state === 'pending' || snapshot.refreshing;
   const message =
     snapshot.state === 'failed'
@@ -388,12 +407,14 @@ const usePropertyRecords = (legalEntityId: string) => {
   ];
   return {
     agreements,
-    language: language ?? 'cs',
     asset,
     assets,
     availability,
+    employees,
+    employeesMessage,
     finance,
     key,
+    language: language ?? 'cs',
     loadSummary,
     message,
     money,
@@ -426,9 +447,607 @@ const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-
 const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
+interface RecordConfirmation {
+  readonly kind: 'archive' | 'retire';
+  readonly label: string;
+  readonly onConfirm: (reason: string) => void;
+}
+interface RecordsView {
+  readonly availabilityLabel: (id: string, lifecycle: string) => string;
+  readonly editor: ReturnType<typeof usePropertyEditor>;
+  readonly leasable: (lifecycle: string) => boolean;
+  readonly model: ReturnType<typeof usePropertyRecords>;
+  readonly requestConfirmation: (request: RecordConfirmation) => void;
+}
+const unitLeaseBlock = ({ leasable, model }: RecordsView) => {
+  const { unit } = model;
+  let block: Parameters<typeof UnitStory>[0]['leaseBlock'];
+  if (unit !== undefined) {
+    if (unit.archive !== undefined || model.property?.archive !== undefined || unit.lifecycleState === 'RETIRED') {
+      block = 'retired';
+    } else if (unit.lifecycleState !== 'ACTIVE') {
+      block = 'outOfService';
+    } else if (!leasable(unit.lifecycleState)) {
+      block = 'building';
+    }
+  }
+  return block;
+};
+const renderPropertyEditor = (view: RecordsView) => {
+  const { editor, model } = view;
+  const { key, t } = model;
+  const selectedEmployeeIds = new Set(editor.draft?.responsibleEmployeeIds);
+  const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
+  const handleCancelEditor = editor.cancel;
+  return (
+    editor.draft !== undefined && (
+      <form
+        className={`${detailCardClass} sp-property-editor`}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          editor.save();
+        }}
+      >
+        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
+          {t(`${key}.editor.${editor.title}`)}
+        </h2>
+        {editor.fields.map((field) =>
+          field === 'responsibleEmployeeIds' ? (
+            <Combobox
+              allowCustomValue={false}
+              closeOnSelect={false}
+              disabled={editor.busy}
+              error={model.employeesMessage || undefined}
+              id="property-responsible-employees"
+              items={[
+                ...(model.employees ?? []).flatMap((employee) =>
+                  employee.active || selectedEmployeeIds.has(employee.id)
+                    ? [{ label: employee.fullName, value: employee.id }]
+                    : [],
+                ),
+                ...(editor.draft?.responsibleEmployeeIds ?? []).flatMap((id) =>
+                  availableEmployeeIds.has(id)
+                    ? []
+                    : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
+                ),
+              ]}
+              key={field}
+              label={t(`${key}.editor.responsiblePerson`)}
+              loading={model.recordsLoading}
+              loadingMessage={t(`${key}.editor.employeesLoading`)}
+              multiple
+              name="responsibleEmployeeIds"
+              noResultsMessage={t(`${key}.editor.employeesEmpty`)}
+              onChange={(value) => editor.changeResponsibleEmployees(value)}
+              onRetry={() => model.refresh()}
+              openOnClick
+              placeholder={t(`${key}.editor.employeesPlaceholder`)}
+              required
+              retryLabel={t(`${key}.editor.employeesRetry`)}
+              value={[...(editor.draft?.responsibleEmployeeIds ?? [])]}
+              {...(editor.errors.responsibleEmployeeIds === undefined
+                ? {}
+                : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
+            />
+          ) : (
+            <FormInput
+              disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
+              id={`property-${field}`}
+              key={field}
+              label={t(`${key}.editor.${field}`)}
+              onChange={(event) => editor.change(field, event.target.value)}
+              required={field !== 'note'}
+              value={editor.draft?.[field] ?? ''}
+              {...(editor.errors[field] === undefined
+                ? {}
+                : { helpText: editor.errors[field], validateStatus: 'error' as const })}
+            />
+          ),
+        )}
+        {editor.draft.unitFor === undefined && (
+          <label className="sp-property-state">
+            {t(`${key}.state`)}
+            <select
+              aria-label={t(`${key}.state`)}
+              onChange={(event) => editor.changeLifecycle(event.target.value)}
+              value={editor.draft.lifecycleState}
+            >
+              {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
+                <option key={state} value={state}>
+                  {t(`${key}.states.${state}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="sp-property-editor-actions propertyportfolio:flex propertyportfolio:gap-3">
+          <Button disabled={editor.busy} type="submit" variant="warning">
+            {t(`${key}.editor.save`)}
+          </Button>
+          <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
+            {t(`${key}.editor.cancel`)}
+          </Button>
+        </div>
+      </form>
+    )
+  );
+};
+const renderRecordTables = (view: RecordsView, showArchived: boolean, showClosed: boolean) => {
+  const { availabilityLabel, editor, model } = view;
+  const { key, t, unit } = model;
+  return (
+    <>
+      {model.tables.flatMap((group) =>
+        (group.kind !== 'properties' && model.property === undefined) ||
+        (group.kind === 'assets' && group.rows.length === 0)
+          ? []
+          : [
+              <div className={tableWrapperClass} key={group.kind}>
+                <Table className="propertyportfolio:w-full" size="sm" variant="line">
+                  <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
+                  <Table.Header>
+                    <Table.Row>
+                      {['code', 'name', 'state', 'detail'].map((column) => (
+                        <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
+                      ))}
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
+                    {group.rows.flatMap((item) =>
+                      (showArchived || !item.archived) &&
+                      (showClosed ||
+                        group.kind === 'assets' ||
+                        ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
+                        item.id === model.property?.propertyRef.resourceId ||
+                        item.id === unit?.unitRef.resourceId)
+                        ? [
+                            <Table.Row key={item.id}>
+                              <Table.Cell>{item.code}</Table.Cell>
+                              <Table.Cell>{item.name}</Table.Cell>
+                              <Table.Cell>
+                                <span className="propertyportfolio:inline-flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2">
+                                  <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                                    {t(`${key}.states.${item.state}`)}
+                                  </Badge>
+                                  {item.archived && (
+                                    <Badge size="sm" variant="secondary">
+                                      Archivováno
+                                    </Badge>
+                                  )}
+                                  {group.kind === 'units' && (
+                                    <span className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</span>
+                                  )}
+                                </span>
+                              </Table.Cell>
+                              <Table.Cell>
+                                <div className="sp-property-row-actions">
+                                  <Button
+                                    disabled={model.pending || editor.busy}
+                                    onClick={() => group.select(item.id)}
+                                    size="sm"
+                                    theme="outlined"
+                                    variant="secondary"
+                                  >
+                                    {t(`${key}.detail`)}
+                                  </Button>
+                                  {item.property !== null && (
+                                    <Button
+                                      disabled={editor.busy}
+                                      onClick={() => editor.begin(item.property)}
+                                      size="sm"
+                                      theme="outlined"
+                                      variant="secondary"
+                                    >
+                                      {t(`${key}.editor.edit`)}
+                                    </Button>
+                                  )}
+                                </div>
+                              </Table.Cell>
+                            </Table.Row>,
+                          ]
+                        : [],
+                    )}
+                  </Table.Body>
+                </Table>
+              </div>,
+            ],
+      )}
+    </>
+  );
+};
+const renderUnitActions = (view: RecordsView) => {
+  const { editor, model, requestConfirmation } = view;
+  const { unit } = model;
+  const unitArchive = unit?.archive ?? model.property?.archive;
+  return (
+    unit !== undefined && (
+      <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
+        {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
+          <Button
+            disabled={editor.busy}
+            onClick={() => {
+              requestConfirmation({
+                kind: 'archive',
+                label: unit.code,
+                onConfirm: (reason) => editor.archiveUnit(unit, reason),
+              });
+            }}
+            size="sm"
+            theme="outlined"
+            variant="danger"
+          >
+            Archivovat jednotku
+          </Button>
+        )}
+        {unit.archive !== undefined && model.property?.archive === undefined && (
+          <Button
+            disabled={editor.busy}
+            onClick={() => editor.restoreUnit(unit)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Obnovit z archivu
+          </Button>
+        )}
+        {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
+          <Button
+            disabled={editor.busy}
+            onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Dočasně mimo provoz
+          </Button>
+        )}
+        {unitArchive === undefined &&
+          unit.lifecycleState === 'OUT_OF_SERVICE' &&
+          model.property?.lifecycleState !== 'DISPOSED' && (
+            <Button
+              disabled={editor.busy}
+              onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Vrátit do provozu
+            </Button>
+          )}
+        {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
+          <Button
+            disabled={editor.busy}
+            onClick={() => {
+              requestConfirmation({
+                kind: 'retire',
+                label: unit.code,
+                onConfirm: () => editor.changeUnitLifecycle(unit, 'RETIRED'),
+              });
+            }}
+            size="sm"
+            theme="outlined"
+            variant="danger"
+          >
+            Vyřadit jednotku
+          </Button>
+        )}
+      </div>
+    )
+  );
+};
+const renderUnitDetail = (view: RecordsView) => {
+  const { availabilityLabel, model } = view;
+  const { key, t, unit } = model;
+  const unitArchive = unit?.archive ?? model.property?.archive;
+  return (
+    unit !== undefined && (
+      <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
+        <h3 className={detailHeadingClass}>
+          {unit.code} · {unit.name}
+        </h3>
+        <p className={secondaryTextClass}>
+          {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
+          {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
+        </p>
+        {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
+        {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
+          <p className={secondaryTextClass}>Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.</p>
+        )}
+        {unit.lifecycleState === 'RETIRED' && (
+          <p className={secondaryTextClass}>
+            Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
+          </p>
+        )}
+        {unitArchive !== undefined && (
+          <output className={secondaryTextClass}>
+            Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
+          </output>
+        )}
+        {renderUnitActions(view)}
+        <UnitStory
+          agreements={model.agreements}
+          language={model.language}
+          leaseBlock={unitLeaseBlock(view)}
+          occupancy={model.occupancy}
+          t={t}
+          tasks={model.work?.items}
+          unit={unit}
+        />
+        <RecordDiscussion
+          subject={{ id: unit.unitRef.resourceId, kind: 'unit', label: `${unit.code} · ${unit.name}` }}
+        />
+      </aside>
+    )
+  );
+};
+const renderPropertyActions = (view: RecordsView) => {
+  const { editor, model, requestConfirmation } = view;
+  const { key, t } = model;
+  const handleLoadSummary = model.loadSummary;
+  if (model.property === undefined) {
+    return null;
+  }
+  return (
+    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
+      {model.property.archive === undefined ? (
+        <>
+          <Button
+            disabled={editor.busy}
+            onClick={() => {
+              if (model.property !== undefined) {
+                editor.toggleLifecycle(model.property);
+              }
+            }}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+          </Button>
+          <Button
+            disabled={editor.busy}
+            onClick={() => {
+              if (model.property !== undefined) {
+                editor.beginUnit(model.property);
+              }
+            }}
+            size="sm"
+            variant="warning"
+          >
+            {t(`${key}.editor.createUnit`)}
+          </Button>
+          {model.property.lifecycleState !== 'ACTIVE' && (
+            <Button
+              disabled={editor.busy}
+              onClick={() => {
+                const { property } = model;
+                if (property !== undefined) {
+                  requestConfirmation({
+                    kind: 'archive',
+                    label: property.code,
+                    onConfirm: (reason) => editor.archiveProperty(property, reason),
+                  });
+                }
+              }}
+              size="sm"
+              theme="outlined"
+              variant="danger"
+            >
+              Archivovat záznam
+            </Button>
+          )}
+        </>
+      ) : (
+        <Button
+          disabled={editor.busy}
+          onClick={() => {
+            if (model.property !== undefined) {
+              editor.restoreProperty(model.property);
+            }
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Obnovit z archivu
+        </Button>
+      )}
+      <Button disabled={model.pending} onClick={handleLoadSummary} size="sm" theme="outlined" variant="secondary">
+        {t(`${key}.loadSummary`)}
+      </Button>
+    </div>
+  );
+};
+const renderPropertyDetail = (view: RecordsView) => {
+  const { model } = view;
+  const { asset, key, relatedSections, t, unit } = model;
+  return (
+    model.property !== undefined && (
+      <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
+        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
+          {model.property.code} · {model.property.name}
+        </h2>
+        <p className={secondaryTextClass}>{model.property.address}</p>
+        <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
+        {model.property.archive !== undefined && (
+          <output className={secondaryTextClass}>
+            Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}. Záznam
+            se nezobrazuje v seznamech ani výběrech ostatních agend.
+          </output>
+        )}
+        {renderPropertyActions(view)}
+        <div className={relatedCardClass}>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
+          </p>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.responsiblePerson`)}:{' '}
+            {model.property.responsibleEmployeeIds === undefined
+              ? (model.property.responsiblePerson ?? t(`${key}.editor.responsibleNotSet`))
+              : model.property.responsibleEmployeeIds
+                  .map(
+                    (id) =>
+                      model.employees?.find((employee) => employee.id === id)?.fullName ??
+                      t(`${key}.editor.employeeUnknown`, { id }),
+                  )
+                  .join(', ')}
+          </p>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
+          </p>
+        </div>
+        <output aria-live="polite" className={messageClass}>
+          {model.summaryMessage}
+        </output>
+        {unit === undefined && model.property !== undefined && (
+          <RecordDiscussion
+            subject={{
+              id: model.property.propertyRef.resourceId,
+              kind: 'property',
+              label: model.property.name,
+            }}
+          />
+        )}
+        {renderUnitDetail(view)}
+        {model.finance !== undefined && (
+          <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
+            <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
+            <p className={secondaryTextClass}>
+              {model.finance.state.invoices.length === 0
+                ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
+                : t(`${key}.financialValues`, {
+                    cost: model.money(model.finance.indicators.costMinor),
+                    outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
+                    revenue: model.money(model.finance.indicators.revenueMinor),
+                  })}
+            </p>
+            <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+              {model.finance.state.invoices.map((invoice) => (
+                <li key={invoice.ref.resourceId}>
+                  <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
+                    {invoice.documentNumber} · {model.money(invoice.totalMinor)}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <div className="propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-2">
+          {relatedSections.flatMap((section) =>
+            section.enabled
+              ? [
+                  <section aria-label={section.title} className={relatedCardClass} key={section.title}>
+                    <h3 className={detailHeadingClass}>{section.title}</h3>
+                    {section.items.length === 0 && <p className={secondaryTextClass}>{t(`${key}.emptyRelated`)}</p>}
+                    <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+                      {section.items.map((item) => (
+                        <li key={item.href}>
+                          <Link href={item.href}>{item.label}</Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>,
+                ]
+              : [],
+          )}
+        </div>
+        {asset !== undefined && (
+          <aside className={relatedCardClass}>
+            <h3 className={detailHeadingClass}>
+              {asset.code} · {asset.name}
+            </h3>
+            <p className={secondaryTextClass}>
+              {asset.category} · {asset.serialNumber ?? '—'}
+            </p>
+            {model.work !== undefined && (
+              <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+                {model.work.items.flatMap((task) =>
+                  task.contextRefs.some(
+                    (ref) =>
+                      ref.moduleId === asset.assetRef.moduleId &&
+                      ref.resourceType === asset.assetRef.resourceType &&
+                      ref.tenantId === asset.assetRef.tenantId &&
+                      ref.resourceId === asset.assetRef.resourceId,
+                  )
+                    ? [
+                        <li key={task.ref.resourceId}>
+                          <Link href={model.ownerHref('ukoly', task.ref.resourceId)}>{task.title}</Link>
+                        </li>,
+                      ]
+                    : [],
+                )}
+              </ul>
+            )}
+            <p className={secondaryTextClass}>
+              {t(`${key}.lastService`)}: {asset.lastServiceAt ?? '—'} · {t(`${key}.nextService`)}:{' '}
+              {asset.nextServiceAt ?? '—'}
+            </p>
+          </aside>
+        )}
+      </article>
+    )
+  );
+};
+
+interface ConfirmationView {
+  readonly confirmation: RecordConfirmation | undefined;
+  readonly onClose: () => void;
+  readonly onReasonChange: (reason: string) => void;
+  readonly reason: string;
+}
+const renderRecordConfirmation = (
+  { editor, model }: RecordsView,
+  { confirmation, onClose, onReasonChange, reason }: ConfirmationView,
+) => {
+  const { key, t } = model;
+  return (
+    <Dialog
+      actions={
+        <>
+          <Button onClick={() => onClose()} theme="outlined" type="button" variant="secondary">
+            {t(`${key}.editor.cancel`)}
+          </Button>
+          <Button
+            disabled={editor.busy || (confirmation?.kind === 'archive' && reason.trim().length === 0)}
+            onClick={() => {
+              confirmation?.onConfirm(reason.trim());
+              onClose();
+            }}
+            type="button"
+            variant="danger"
+          >
+            {t(`${key}.editor.${confirmation?.kind ?? 'archive'}Confirm`)}
+          </Button>
+        </>
+      }
+      closeLabel={t(`${key}.editor.cancel`)}
+      customTrigger
+      description={t(`${key}.editor.${confirmation?.kind ?? 'archive'}Description`, { label: confirmation?.label })}
+      onOpenChange={(details) => {
+        if (!details.open) {
+          onClose();
+        }
+      }}
+      open={confirmation !== undefined}
+      role="alertdialog"
+      size="sm"
+      title={t(`${key}.editor.${confirmation?.kind ?? 'archive'}Title`, { label: confirmation?.label })}
+    >
+      {confirmation?.kind === 'archive' && (
+        <FormInput
+          label={t(`${key}.editor.archiveReason`)}
+          onChange={(event) => onReasonChange(event.target.value)}
+          required
+          value={reason}
+        />
+      )}
+    </Dialog>
+  );
+};
 const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
   const model = usePropertyRecords(legalEntityId);
-  const editor = usePropertyEditor(model.records, model.refresh);
+  const editor = usePropertyEditor(model.records, model.employees, model.refresh);
   // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
   const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
   const selectedProperty = model.property;
@@ -437,9 +1056,8 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
       loadSummaryOnSelect();
     }
   }, [selectedProperty]);
-  const { asset, key, relatedSections, t, unit } = model;
+  const { key, t, unit } = model;
   const handleRefresh = model.refresh;
-  const handleLoadSummary = model.loadSummary;
   // A unit is offered only while both the unit and its building are in operation; retired or archived units
   // and units of a building out of operation never advertise availability.
   const leasable = (lifecycle: string) =>
@@ -459,19 +1077,25 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
     }
     return t(`${key}.availability.${model.availability(id)}`);
   };
-  const archiveReason = (label: string) =>
-    globalThis.prompt(
-      `Archivovat ${label}? Záznam zmizí ze všech seznamů a výběrů; data i historie zůstanou a lze jej obnovit. Důvod archivace:`,
-      'Testovací záznam z ověřování',
-    );
-  const handleCancelEditor = editor.cancel;
   const [showClosed, setShowClosed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const unitArchive = unit?.archive ?? model.property?.archive;
+  const [confirmation, setConfirmation] = useState<RecordConfirmation>();
+  const [confirmationReason, setConfirmationReason] = useState('');
+  const requestConfirmation = (request: RecordConfirmation) => {
+    setConfirmationReason(request.kind === 'archive' ? t(`${key}.editor.archiveDefaultReason`) : '');
+    setConfirmation(request);
+  };
+  const view: RecordsView = { availabilityLabel, editor, leasable, model, requestConfirmation };
   const archivedCount = model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0;
   return (
     <>
       <UltramodernRouteHead />
+      {renderRecordConfirmation(view, {
+        confirmation,
+        onClose: () => setConfirmation(undefined),
+        onReasonChange: setConfirmationReason,
+        reason: confirmationReason,
+      })}
       <section
         aria-labelledby="records-heading"
         className="propertyportfolio:w-full propertyportfolio:min-w-0 propertyportfolio:max-w-none propertyportfolio:space-y-6 propertyportfolio:p-0 propertyportfolio:text-(--color-page-fg)"
@@ -509,58 +1133,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 {t(`${key}.editor.${editor.feedback}`)}
               </output>
             )}
-            {editor.draft !== undefined && (
-              <form
-                className={`${detailCardClass} sp-property-editor`}
-                noValidate
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  editor.save();
-                }}
-              >
-                <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-                  {t(`${key}.editor.${editor.title}`)}
-                </h2>
-                {editor.fields.map((field) => (
-                  <FormInput
-                    disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
-                    id={`property-${field}`}
-                    key={field}
-                    label={t(`${key}.editor.${field}`)}
-                    onChange={(event) => editor.change(field, event.target.value)}
-                    required={field !== 'note'}
-                    value={editor.draft?.[field] ?? ''}
-                    {...(editor.errors[field] === undefined
-                      ? {}
-                      : { helpText: editor.errors[field], validateStatus: 'error' as const })}
-                  />
-                ))}
-                {editor.draft.unitFor === undefined && (
-                  <label className="sp-property-state">
-                    {t(`${key}.state`)}
-                    <select
-                      aria-label={t(`${key}.state`)}
-                      value={editor.draft.lifecycleState}
-                      onChange={(event) => editor.changeLifecycle(event.target.value)}
-                    >
-                      {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
-                        <option key={state} value={state}>
-                          {t(`${key}.states.${state}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <div className="sp-property-editor-actions propertyportfolio:flex propertyportfolio:gap-3">
-                  <Button disabled={editor.busy} type="submit" variant="warning">
-                    {t(`${key}.editor.save`)}
-                  </Button>
-                  <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
-                    {t(`${key}.editor.cancel`)}
-                  </Button>
-                </div>
-              </form>
-            )}
+            {renderPropertyEditor(view)}
             <label className={`${secondaryTextClass} sp-property-toggle`}>
               <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
               Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
@@ -575,84 +1148,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 Zobrazit archivované záznamy ({archivedCount})
               </label>
             )}
-            {model.tables.flatMap((group) =>
-              (group.kind !== 'properties' && model.property === undefined) ||
-              (group.kind === 'assets' && group.rows.length === 0)
-                ? []
-                : [
-                    <div className={tableWrapperClass} key={group.kind}>
-                      <Table className="propertyportfolio:w-full" size="sm" variant="line">
-                        <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
-                        <Table.Header>
-                          <Table.Row>
-                            {['code', 'name', 'state', 'detail'].map((column) => (
-                              <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                            ))}
-                          </Table.Row>
-                        </Table.Header>
-                        <Table.Body>
-                          {group.rows
-                            .filter(
-                              (item) =>
-                                (showArchived || !item.archived) &&
-                                (showClosed ||
-                                  group.kind === 'assets' ||
-                                  ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
-                                  item.id === model.property?.propertyRef.resourceId ||
-                                  item.id === unit?.unitRef.resourceId),
-                            )
-                            .map((item) => (
-                              <Table.Row key={item.id}>
-                                <Table.Cell>{item.code}</Table.Cell>
-                                <Table.Cell>{item.name}</Table.Cell>
-                                <Table.Cell>
-                                  <span className="propertyportfolio:inline-flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2">
-                                    <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
-                                      {t(`${key}.states.${item.state}`)}
-                                    </Badge>
-                                    {item.archived && (
-                                      <Badge size="sm" variant="secondary">
-                                        Archivováno
-                                      </Badge>
-                                    )}
-                                    {group.kind === 'units' && (
-                                      <span className={secondaryTextClass}>
-                                        {availabilityLabel(item.id, item.state)}
-                                      </span>
-                                    )}
-                                  </span>
-                                </Table.Cell>
-                                <Table.Cell>
-                                  <div className="sp-property-row-actions">
-                                    <Button
-                                      disabled={model.pending || editor.busy}
-                                      onClick={() => group.select(item.id)}
-                                      size="sm"
-                                      theme="outlined"
-                                      variant="secondary"
-                                    >
-                                      {t(`${key}.detail`)}
-                                    </Button>
-                                    {item.property !== null && (
-                                      <Button
-                                        disabled={editor.busy}
-                                        onClick={() => editor.begin(item.property)}
-                                        size="sm"
-                                        theme="outlined"
-                                        variant="secondary"
-                                      >
-                                        {t(`${key}.editor.edit`)}
-                                      </Button>
-                                    )}
-                                  </div>
-                                </Table.Cell>
-                              </Table.Row>
-                            ))}
-                        </Table.Body>
-                      </Table>
-                    </div>,
-                  ],
-            )}
+            {renderRecordTables(view, showArchived, showClosed)}
             {model.property !== undefined && (
               <PropertyEquipment
                 key={`${model.property.propertyRef.resourceId}:${unit?.unitRef.resourceId ?? ''}`}
@@ -661,305 +1157,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 unitId={unit?.unitRef.resourceId}
               />
             )}
-            {model.property !== undefined && (
-              <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
-                <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-                  {model.property.code} · {model.property.name}
-                </h2>
-                <p className={secondaryTextClass}>{model.property.address}</p>
-                <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
-                {model.property.archive !== undefined && (
-                  <p className={secondaryTextClass} role="status">
-                    Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}.
-                    Záznam se nezobrazuje v seznamech ani výběrech ostatních agend.
-                  </p>
-                )}
-                <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-                  {model.property.archive === undefined ? (
-                    <>
-                      <Button
-                        disabled={editor.busy}
-                        onClick={() => {
-                          if (model.property !== undefined) {
-                            editor.toggleLifecycle(model.property);
-                          }
-                        }}
-                        size="sm"
-                        theme="outlined"
-                        variant="secondary"
-                      >
-                        {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
-                      </Button>
-                      <Button
-                        disabled={editor.busy}
-                        onClick={() => {
-                          if (model.property !== undefined) {
-                            editor.beginUnit(model.property);
-                          }
-                        }}
-                        size="sm"
-                        variant="warning"
-                      >
-                        {t(`${key}.editor.createUnit`)}
-                      </Button>
-                      {model.property.lifecycleState !== 'ACTIVE' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            const property = model.property;
-                            const reason = property === undefined ? null : archiveReason(`nemovitost ${property.code}`);
-                            if (property !== undefined && reason !== null && reason.trim() !== '')
-                              editor.archiveProperty(property, reason.trim());
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Archivovat záznam
-                        </Button>
-                      )}
-                    </>
-                  ) : (
-                    <Button
-                      disabled={editor.busy}
-                      onClick={() => {
-                        if (model.property !== undefined) editor.restoreProperty(model.property);
-                      }}
-                      size="sm"
-                      theme="outlined"
-                      variant="secondary"
-                    >
-                      Obnovit z archivu
-                    </Button>
-                  )}
-                  <Button
-                    disabled={model.pending}
-                    onClick={handleLoadSummary}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {t(`${key}.loadSummary`)}
-                  </Button>
-                </div>
-                <div className={relatedCardClass}>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
-                  </p>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.responsiblePerson`)}: {model.property.responsiblePerson ?? 'Neuvedeno'}
-                  </p>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
-                  </p>
-                </div>
-                <output aria-live="polite" className={messageClass}>
-                  {model.summaryMessage}
-                </output>
-                {unit === undefined && model.property !== undefined && (
-                  <RecordDiscussion
-                    subject={{
-                      kind: 'property',
-                      id: model.property.propertyRef.resourceId,
-                      label: model.property.name,
-                    }}
-                  />
-                )}
-                {unit !== undefined && (
-                  <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
-                    <h3 className={detailHeadingClass}>
-                      {unit.code} · {unit.name}
-                    </h3>
-                    <p className={secondaryTextClass}>
-                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
-                      {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
-                    </p>
-                    {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
-                    {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
-                      <p className={secondaryTextClass}>
-                        Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.
-                      </p>
-                    )}
-                    {unit.lifecycleState === 'RETIRED' && (
-                      <p className={secondaryTextClass}>
-                        Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
-                      </p>
-                    )}
-                    {unitArchive !== undefined && (
-                      <p className={secondaryTextClass} role="status">
-                        Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
-                      </p>
-                    )}
-                    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-                      {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            const reason = archiveReason(`jednotku ${unit.code}`);
-                            if (reason !== null && reason.trim() !== '') editor.archiveUnit(unit, reason.trim());
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Archivovat jednotku
-                        </Button>
-                      )}
-                      {unit.archive !== undefined && model.property?.archive === undefined && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => editor.restoreUnit(unit)}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          Obnovit z archivu
-                        </Button>
-                      )}
-                      {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          Dočasně mimo provoz
-                        </Button>
-                      )}
-                      {unitArchive === undefined &&
-                        unit.lifecycleState === 'OUT_OF_SERVICE' &&
-                        model.property?.lifecycleState !== 'DISPOSED' && (
-                          <Button
-                            disabled={editor.busy}
-                            onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
-                            size="sm"
-                            theme="outlined"
-                            variant="secondary"
-                          >
-                            Vrátit do provozu
-                          </Button>
-                        )}
-                      {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            if (
-                              globalThis.confirm(
-                                `Vyřadit jednotku ${unit.code}? Jednotka se přestane nabízet k pronájmu, historie nájmů a smluv zůstane zachována.`,
-                              )
-                            )
-                              editor.changeUnitLifecycle(unit, 'RETIRED');
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Vyřadit jednotku
-                        </Button>
-                      )}
-                    </div>
-                    <UnitStory
-                      agreements={model.agreements}
-                      leaseBlock={
-                        unitArchive !== undefined || unit.lifecycleState === 'RETIRED'
-                          ? 'retired'
-                          : unit.lifecycleState !== 'ACTIVE'
-                            ? 'outOfService'
-                            : leasable(unit.lifecycleState)
-                              ? undefined
-                              : 'building'
-                      }
-                      language={model.language}
-                      occupancy={model.occupancy}
-                      t={t}
-                      tasks={model.work?.items}
-                      unit={unit}
-                    />
-                    <RecordDiscussion
-                      subject={{ kind: 'unit', id: unit.unitRef.resourceId, label: `${unit.code} · ${unit.name}` }}
-                    />
-                  </aside>
-                )}
-                {model.finance !== undefined && (
-                  <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
-                    <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
-                    <p className={secondaryTextClass}>
-                      {model.finance.state.invoices.length === 0
-                        ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
-                        : t(`${key}.financialValues`, {
-                            cost: model.money(model.finance.indicators.costMinor),
-                            outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
-                            revenue: model.money(model.finance.indicators.revenueMinor),
-                          })}
-                    </p>
-                    <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                      {model.finance.state.invoices.map((invoice) => (
-                        <li key={invoice.ref.resourceId}>
-                          <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
-                            {invoice.documentNumber} · {model.money(invoice.totalMinor)}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-                <div className="propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-2">
-                  {relatedSections.flatMap((section) =>
-                    section.enabled
-                      ? [
-                          <section aria-label={section.title} className={relatedCardClass} key={section.title}>
-                            <h3 className={detailHeadingClass}>{section.title}</h3>
-                            {section.items.length === 0 && (
-                              <p className={secondaryTextClass}>{t(`${key}.emptyRelated`)}</p>
-                            )}
-                            <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                              {section.items.map((item) => (
-                                <li key={item.href}>
-                                  <Link href={item.href}>{item.label}</Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </section>,
-                        ]
-                      : [],
-                  )}
-                </div>
-                {asset !== undefined && (
-                  <aside className={relatedCardClass}>
-                    <h3 className={detailHeadingClass}>
-                      {asset.code} · {asset.name}
-                    </h3>
-                    <p className={secondaryTextClass}>
-                      {asset.category} · {asset.serialNumber ?? '—'}
-                    </p>
-                    {model.work !== undefined && (
-                      <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                        {model.work.items.flatMap((task) =>
-                          task.contextRefs.some(
-                            (ref) =>
-                              ref.moduleId === asset.assetRef.moduleId &&
-                              ref.resourceType === asset.assetRef.resourceType &&
-                              ref.tenantId === asset.assetRef.tenantId &&
-                              ref.resourceId === asset.assetRef.resourceId,
-                          )
-                            ? [
-                                <li key={task.ref.resourceId}>
-                                  <Link href={model.ownerHref('ukoly', task.ref.resourceId)}>{task.title}</Link>
-                                </li>,
-                              ]
-                            : [],
-                        )}
-                      </ul>
-                    )}
-                    <p className={secondaryTextClass}>
-                      {t(`${key}.lastService`)}: {asset.lastServiceAt ?? '—'} · {t(`${key}.nextService`)}:{' '}
-                      {asset.nextServiceAt ?? '—'}
-                    </p>
-                  </aside>
-                )}
-              </article>
-            )}
+            {renderPropertyDetail(view)}
           </>
         )}
       </section>
