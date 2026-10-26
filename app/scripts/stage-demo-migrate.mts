@@ -78,8 +78,8 @@ if (import.meta.main) {
     Layer.provideMerge(FetchHttpClient.layer),
   );
   NodeRuntime.runMain(
-    Command.run({ version: '1.0.0' })(
-      stageDemoMigrationCommand.pipe(Command.provide(() => services)),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    Command.run({ version: '1.0.0' })(stageDemoMigrationCommand.pipe(Command.provide(() => services))).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
   );
 }
