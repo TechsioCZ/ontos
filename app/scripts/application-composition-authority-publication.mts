@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
-import { Config, Context, DateTime, Duration, Effect, Layer, Option, Redacted } from 'effect';
+import { Clock, Config, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
@@ -28,6 +28,168 @@ import { settleParkedEnrollmentPublicationWork } from '../verticals/commerce-cus
 
 const unavailable = (reason: string) =>
   new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
+
+const AUTHORITY_MISSING = 'authority-missing';
+const DURABLE_DRAIN = 'durable-drain';
+const DIAGNOSTIC_TIMEOUT = 'diagnostic-timeout';
+const DIAGNOSTIC_UNAVAILABLE = 'diagnostic-unavailable';
+
+/** Phase ceilings do not extend the existing twenty-minute migration envelope. */
+export const APPLICATION_COMPOSITION_PUBLICATION_BUDGETS = {
+  diagnosticMs: 50_000,
+  drainMs: 300_000,
+  migrationMs: 840_000,
+  totalMs: 1_200_000,
+} as const;
+
+export class ApplicationCompositionPublicationTimeout extends Schema.TaggedError<ApplicationCompositionPublicationTimeout>()(
+  'ApplicationCompositionPublicationTimeout',
+  {
+    authorityPhase: Schema.Literals(['active', 'draining', 'sealed', 'migrated', 'absent', 'unknown']),
+    budgetMs: Schema.Number,
+    message: Schema.String,
+    migrationsCompleted: Schema.Boolean,
+    migrationStarted: Schema.Boolean,
+    phase: Schema.Literals([
+      'publication-lock',
+      'close-admission',
+      DURABLE_DRAIN,
+      'enter-draining',
+      'outbox-drain',
+      'seal',
+      'migration',
+      'migration-complete',
+    ]),
+  },
+) {}
+
+type PublicationState = {
+  -readonly [
+    Key in 'authorityPhase' | 'migrationStarted' | 'migrationsCompleted' | 'phase'
+  ]: ApplicationCompositionPublicationTimeout[Key];
+};
+
+export interface ApplicationCompositionMigrationBudgets {
+  readonly drainMs?: number;
+  readonly migrationMs?: number;
+  readonly totalMs?: number;
+}
+
+const validBudget = (budgetMs: number, ceilingMs: number) =>
+  Number.isSafeInteger(budgetMs) && budgetMs > 0 && budgetMs <= ceilingMs;
+
+export const ApplicationCompositionReadinessSchema = Schema.Struct({
+  advisoryOnly: Schema.Literal(true),
+  authority: Schema.optionalKey(
+    Schema.Struct({
+      durableWorkAdmission: Schema.Literals(['open', 'closed']),
+      phase: Schema.Literals(['active', 'draining', 'sealed', 'migrated']),
+      revision: Schema.String,
+    }),
+  ),
+  /** Counts are capped at eleven. Eleven means at least eleven, not an exact total. */
+  blockers: Schema.optionalKey(
+    Schema.Struct({ deliveries: Schema.Number, durable: Schema.Number, messages: Schema.Number }),
+  ),
+  reason: Schema.Literals([
+    'drained',
+    'pending-work',
+    'authority-expired',
+    'authority-sealed',
+    'replacement-publication-required',
+    AUTHORITY_MISSING,
+    DIAGNOSTIC_TIMEOUT,
+    DIAGNOSTIC_UNAVAILABLE,
+  ]),
+  status: Schema.Literals(['ready', 'blocked', 'unknown']),
+});
+export type ApplicationCompositionReadiness = typeof ApplicationCompositionReadinessSchema.Type;
+
+const unknownReadiness = (
+  reason: typeof DIAGNOSTIC_TIMEOUT | typeof DIAGNOSTIC_UNAVAILABLE,
+): ApplicationCompositionReadiness => ({ advisoryOnly: true, reason, status: 'unknown' });
+
+/** Wrap provisioning as well as reads at the CLI boundary. Unknown never grants migration admission. */
+export const withApplicationCompositionReadinessDeadline = <Failure, Requirements>(
+  check: Effect.Effect<ApplicationCompositionReadiness, Failure, Requirements>,
+  budgetMs = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.diagnosticMs,
+) =>
+  check.pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.millis(
+        validBudget(budgetMs, APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.diagnosticMs) ? budgetMs : 1,
+      ),
+      orElse: () => Effect.succeed(unknownReadiness(DIAGNOSTIC_TIMEOUT)),
+    }),
+    Effect.matchEffect({
+      onFailure: () => Effect.succeed(unknownReadiness(DIAGNOSTIC_UNAVAILABLE)),
+      onSuccess: Effect.succeed,
+    }),
+    Effect.catchDefect((defect) =>
+      isSqlError(defect) ? Effect.succeed(unknownReadiness(DIAGNOSTIC_UNAVAILABLE)) : Effect.die(defect),
+    ),
+  );
+
+/** Advisory SELECTs only: no lock, settlement, renewal, admission write, or native drain transition. */
+export const readApplicationCompositionReadiness = Effect.gen(function* readPublicationReadiness() {
+  const database = yield* CoreDatabase;
+  const [schema] = yield* database.executor.execute<{ readonly initialized: boolean }>(
+    sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
+    'objects',
+  );
+  if (!schema?.initialized) {
+    return {
+      advisoryOnly: true,
+      reason: AUTHORITY_MISSING,
+      status: 'unknown',
+    } satisfies ApplicationCompositionReadiness;
+  }
+  // One statement observes authority and the global durable/outbox predicate in one snapshot.
+  const [row] = yield* database.executor.execute<{
+    readonly admission: 'open' | 'closed';
+    readonly deliveries: number;
+    readonly durable: number;
+    readonly fresh: boolean;
+    readonly messages: number;
+    readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
+    readonly revision: string;
+  }>(
+    sql`select phase, revision, durable_work_admission as admission,
+    valid_until > clock_timestamp() as fresh,
+    (select count(*)::integer from (select 1 from ${applicationCompositionDurableWork} limit 11) d) as durable,
+    (select count(*)::integer from (select 1 from ${outboxMessages} where matched_at is null limit 11) m) as messages,
+    (select count(*)::integer from (select 1 from ${outboxDeliveries} where status <> 'done' limit 11) d) as deliveries
+    from ${applicationCompositionAuthority} where authority_key = 'active'`,
+    'objects',
+  );
+  if (row === undefined) {
+    return {
+      advisoryOnly: true,
+      reason: AUTHORITY_MISSING,
+      status: 'unknown',
+    } satisfies ApplicationCompositionReadiness;
+  }
+  const result = {
+    authority: { durableWorkAdmission: row.admission, phase: row.phase, revision: row.revision },
+    blockers: { deliveries: row.deliveries, durable: row.durable, messages: row.messages },
+  };
+  let reason: ApplicationCompositionReadiness['reason'] = 'drained';
+  if (row.phase === 'migrated') {
+    reason = 'replacement-publication-required';
+  } else if (row.phase === 'sealed') {
+    reason = 'authority-sealed';
+  } else if (!row.fresh) {
+    reason = 'authority-expired';
+  } else if (row.durable + row.messages + row.deliveries > 0) {
+    reason = 'pending-work';
+  }
+  return {
+    ...result,
+    advisoryOnly: true,
+    reason,
+    status: reason === 'drained' ? 'ready' : 'blocked',
+  } satisfies ApplicationCompositionReadiness;
+});
 
 /** Logs only controlled phase names and explicit blocker metadata, never request bodies or credentials. */
 export const withApplicationCompositionPublicationProgress = <
@@ -126,26 +288,29 @@ const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withS
         // Reserve one native session without BEGIN. Incompatible ALTER statements must not wait
         // on a table lock retained by the publication serialization transaction itself.
         const connection = yield* client.reserve;
-        yield* Effect.acquireRelease(
-          withApplicationCompositionPublicationProgress(
-            'acquire publication serialization lock',
-            connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
-          ),
-          () =>
-            connection.executeValues(`select pg_advisory_unlock(${lock.key})`, [...lock.params]).pipe(
-              Effect.flatMap((rows) =>
-                rows[0]?.[0] === true
-                  ? Effect.void
-                  : Effect.fail(unavailable('Application Composition publication lock was not released')),
-              ),
-              // Never return a live session with an advisory lock to its pool.
-              Effect.catch((error) =>
-                connection
-                  .executeValues('select pg_terminate_backend(pg_backend_pid())', [])
-                  .pipe(Effect.ignore, Effect.andThen(Effect.die(error))),
-              ),
+        let acquired = false;
+        // Register cleanup before the interruptible lock query. Even if cancellation races with
+        // PostgreSQL granting the lock, unlock/readback runs on this same reserved session.
+        yield* Effect.acquireRelease(Effect.void, () =>
+          connection.executeValues(`select pg_advisory_unlock(${lock.key})`, [...lock.params]).pipe(
+            Effect.flatMap((rows) =>
+              rows[0]?.[0] === true || (!acquired && rows[0]?.[0] === false)
+                ? Effect.void
+                : Effect.fail(unavailable('Application Composition publication lock was not released')),
             ),
+            // Never return a live session with an advisory lock to its pool.
+            Effect.catch((error) =>
+              connection
+                .executeValues('select pg_terminate_backend(pg_backend_pid())', [])
+                .pipe(Effect.ignore, Effect.andThen(Effect.die(error))),
+            ),
+          ),
         );
+        yield* withApplicationCompositionPublicationProgress(
+          'acquire publication serialization lock',
+          connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
+        );
+        acquired = true;
         return yield* publication;
       }),
     ).pipe(
@@ -200,68 +365,104 @@ interface CurrentApplicationCompositionAuthority {
   readonly validUntil: Date;
 }
 
-const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuthority.prepareDrain')(
-  function* prepareApplicationCompositionDrain(current: CurrentApplicationCompositionAuthority) {
+const waitForDurablePublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForDurableWork')(
+  function* waitForDurablePublicationWork(revision: string) {
     const database = yield* CoreDatabase;
-    const [lease] = yield* database.executor.execute<{ readonly remaining: number }>(
-      sql`select (extract(epoch from (${current.validUntil}::timestamptz - clock_timestamp())) * 1000)::double precision as remaining`,
-      'objects',
-    );
-    if (lease === undefined || !Number.isFinite(lease.remaining) || lease.remaining <= 30_000) {
-      return yield* unavailable('The old Application Composition lease must be renewed before draining');
+    while (
+      !(yield* database.executor.transaction((transaction) =>
+        // Settlement is confined to the lock-owning mutating path, never the diagnostic reader.
+        settleParkedEnrollmentPublicationWork(transaction, revision).pipe(
+          Effect.andThen(isApplicationCompositionDurableWorkDrained(transaction, revision)),
+        ),
+      ))
+    ) {
+      yield* Effect.sleep(Duration.seconds(3));
     }
-    yield* Effect.gen(function* finishOldCompositionWork() {
-      if (current.phase === 'active') {
+  },
+);
+
+const waitForOutboxPublicationWork = Effect.fn('ApplicationCompositionAuthority.waitForOutboxWork')(
+  function* waitForOutboxPublicationWork(revision: string) {
+    const database = yield* CoreDatabase;
+    while (
+      !(yield* database.executor.transaction((transaction) =>
+        isApplicationCompositionWorkDrained(transaction, revision),
+      ))
+    ) {
+      yield* Effect.sleep(Duration.seconds(3));
+    }
+  },
+);
+
+const prepareApplicationCompositionDrain = Effect.fn('ApplicationCompositionAuthority.prepareDrain')(
+  function* prepareApplicationCompositionDrain(
+    current: CurrentApplicationCompositionAuthority,
+    budgetMs: number = APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs,
+    state?: PublicationState,
+  ) {
+    const progressState: PublicationState = state ?? {
+      authorityPhase: current.phase,
+      migrationsCompleted: false,
+      migrationStarted: false,
+      phase: DURABLE_DRAIN,
+    };
+    const timeout = () =>
+      Effect.fail(
+        new ApplicationCompositionPublicationTimeout({
+          ...progressState,
+          budgetMs,
+          message:
+            'The bounded drain deadline expired; pending work is not proof of a dead owner. The migration did not start and admission was not reopened.',
+        }),
+      );
+    return yield* Effect.gen(function* boundedDrain() {
+      const database = yield* CoreDatabase;
+      progressState.phase = DURABLE_DRAIN;
+      const [lease] = yield* database.executor.execute<{ readonly remaining: number }>(
+        sql`select (extract(epoch from (${current.validUntil}::timestamptz - clock_timestamp())) * 1000)::double precision as remaining`,
+        'objects',
+      );
+      if (lease === undefined || !Number.isFinite(lease.remaining) || lease.remaining <= 30_000) {
+        return yield* unavailable('The old Application Composition lease must be renewed before draining');
+      }
+      yield* Effect.gen(function* finishOldCompositionWork() {
+        if (current.phase === 'active') {
+          progressState.phase = 'close-admission';
+          yield* withApplicationCompositionPublicationProgress(
+            'close durable admission (authority fence)',
+            database.executor.transaction((transaction) =>
+              closeApplicationCompositionDurableAdmission(transaction, current.revision),
+            ),
+          );
+          progressState.phase = DURABLE_DRAIN;
+          yield* withApplicationCompositionPublicationProgress(
+            'drain durable workflows',
+            waitForDurablePublicationWork(current.revision),
+            logApplicationCompositionDrainBlockers,
+          );
+          progressState.phase = 'enter-draining';
+          yield* withApplicationCompositionPublicationProgress(
+            'enter draining (authority fence)',
+            database.executor.transaction((transaction) =>
+              drainApplicationCompositionAuthority(transaction, current.revision),
+            ),
+          );
+        }
+        progressState.authorityPhase = 'draining';
+        progressState.phase = 'outbox-drain';
         yield* withApplicationCompositionPublicationProgress(
-          'close durable admission (authority fence)',
-          database.executor.transaction((transaction) =>
-            closeApplicationCompositionDurableAdmission(transaction, current.revision),
-          ),
-        );
-        yield* withApplicationCompositionPublicationProgress(
-          'drain durable workflows',
-          Effect.gen(function* waitForDurableWork() {
-            while (
-              !(yield* database.executor.transaction((transaction) =>
-                // Settle journal-proven parked answers before this run can ship owner migrations.
-                settleParkedEnrollmentPublicationWork(transaction, current.revision).pipe(
-                  Effect.andThen(isApplicationCompositionDurableWorkDrained(transaction, current.revision)),
-                ),
-              ))
-            ) {
-              yield* Effect.sleep(Duration.seconds(3));
-            }
-          }),
+          'drain unmatched messages and unfinished deliveries',
+          waitForOutboxPublicationWork(current.revision),
           logApplicationCompositionDrainBlockers,
         );
-        yield* withApplicationCompositionPublicationProgress(
-          'enter draining (authority fence)',
-          database.executor.transaction((transaction) =>
-            drainApplicationCompositionAuthority(transaction, current.revision),
-          ),
-        );
-      }
-      yield* withApplicationCompositionPublicationProgress(
-        'drain unmatched messages and unfinished deliveries',
-        Effect.gen(function* waitForOutboxWork() {
-          while (
-            !(yield* database.executor.transaction((transaction) =>
-              isApplicationCompositionWorkDrained(transaction, current.revision),
-            ))
-          ) {
-            yield* Effect.sleep(Duration.seconds(3));
-          }
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.millis(Math.max(1, lease.remaining - 30_000)),
+          orElse: timeout,
         }),
-        logApplicationCompositionDrainBlockers,
       );
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.millis(Math.min(Duration.toMillis(Duration.minutes(20)), lease.remaining - 30_000)),
-        orElse: () =>
-          Effect.fail(unavailable('Old Application Composition work did not finish within its freshness lease')),
-      }),
-    );
-    return yield* Effect.void;
+      return yield* Effect.void;
+    }).pipe(Effect.timeoutOrElse({ duration: Duration.millis(budgetMs), orElse: timeout }));
   },
 );
 
@@ -319,7 +520,37 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
   function* runApplicationCompositionMigration<Value, Failure, Requirements, InitialFailure, InitialRequirements>(
     migration: Effect.Effect<Value, Failure, Requirements>,
     verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
+    budgets: ApplicationCompositionMigrationBudgets = {},
   ) {
+    const drainMs = budgets.drainMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs;
+    const migrationMs = budgets.migrationMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.migrationMs;
+    const totalMs = budgets.totalMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs;
+    if (
+      !validBudget(drainMs, APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs) ||
+      !validBudget(migrationMs, APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs) ||
+      !validBudget(totalMs, APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs)
+    ) {
+      return yield* unavailable(
+        'Publication budgets must be positive millisecond integers within the existing twenty-minute ceiling',
+      );
+    }
+    const startedAt = yield* Clock.currentTimeMillis;
+    const deadline = startedAt + totalMs;
+    const state: PublicationState = {
+      authorityPhase: 'unknown',
+      migrationsCompleted: false,
+      migrationStarted: false,
+      phase: 'publication-lock',
+    };
+    const timeout = (budgetMs: number) =>
+      Effect.fail(
+        new ApplicationCompositionPublicationTimeout({
+          ...state,
+          budgetMs,
+          message:
+            'The publication phase deadline expired; pending work is not proof of a dead owner. Authority completion is uncertain; admission was not reopened. Inspect native state before retrying.',
+        }),
+      );
     const database = yield* CoreDatabase;
     return yield* withApplicationCompositionPublicationLock(
       Effect.gen(function* migrateSealedComposition() {
@@ -337,6 +568,7 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
               .from(applicationCompositionAuthority)
               .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
           : undefined;
+        state.authorityPhase = current?.phase ?? 'absent';
         if (current === undefined) {
           yield* verifyInitialCutover;
           yield* requireNoLegacyRuntimeTransactions();
@@ -345,19 +577,44 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
             'The completed migration requires replacement publication before another migration',
           );
         } else if (current.phase !== 'sealed') {
-          yield* prepareApplicationCompositionDrain(current);
+          const remainingDrainMs = Math.max(1, Math.min(drainMs, deadline - (yield* Clock.currentTimeMillis)));
+          state.phase = DURABLE_DRAIN;
+          yield* prepareApplicationCompositionDrain(current, remainingDrainMs, state);
+          state.phase = 'seal';
           yield* database.executor.transaction((transaction) =>
             sealApplicationCompositionAuthority(transaction, current.revision),
           );
+          state.authorityPhase = 'sealed';
         }
-        const value = yield* migration;
+        state.phase = 'migration';
+        const remainingMs = Math.min(migrationMs, deadline - (yield* Clock.currentTimeMillis));
+        if (remainingMs <= 0) {
+          return yield* timeout(totalMs);
+        }
+        state.migrationStarted = true;
+        const value = yield* migration.pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(remainingMs),
+            orElse: () => timeout(remainingMs),
+          }),
+        );
+        state.migrationsCompleted = true;
+        state.phase = 'migration-complete';
         if (current !== undefined) {
           yield* database.executor.transaction((transaction) =>
             markApplicationCompositionMigrationComplete(transaction, current.revision),
           );
+          state.authorityPhase = 'migrated';
         }
         return value;
       }),
+    ).pipe(
+      Effect.timeoutOrElse({ duration: Duration.millis(totalMs), orElse: () => timeout(totalMs) }),
+      Effect.onInterrupt(() =>
+        Effect.logWarning('Application Composition migration interrupted; inspect native state before retrying', {
+          ...state,
+        }),
+      ),
     );
   },
 );

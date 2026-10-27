@@ -28,6 +28,7 @@ import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-cont
 import {
   resumeApplicationCompositionDurableWork,
   runApplicationCompositionMigration,
+  ApplicationCompositionPublicationTimeout,
 } from '../application-composition-authority-publication.mts';
 import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
 import { assertPublishedShellIngressSnapshot } from '../publish-active-application-composition.mts';
@@ -310,12 +311,23 @@ it.effect('never admits a Shell from missing, malformed, unavailable, or expired
     ];
     for (const source of sources) {
       const { layer, requests } = gateFixture(source.value, [authorityRow(snapshot)], source.status);
-      const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
+      const check = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
         Effect.provide(layer),
         Effect.flip,
+        Effect.forkChild,
       );
+      if (source.status === 503) {
+        // The production reader retries after one and two seconds. Its child must sleep while
+        // this test drives the virtual clock; awaiting it here would leave both retries suspended.
+        yield* TestClock.adjust('0 seconds');
+        expect(requests.map(({ method }) => method)).toEqual(['GET']);
+        yield* TestClock.adjust('1 second');
+        expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET']);
+        yield* TestClock.adjust('2 seconds');
+      }
+      const failure = yield* Fiber.join(check);
       expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
+      expect(requests.map(({ method }) => method)).toEqual(source.status === 503 ? ['GET', 'GET', 'GET'] : ['GET']);
     }
     yield* TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil));
     const expired = gateFixture(encoded, [authorityRow(snapshot)]);
@@ -642,7 +654,7 @@ it.effect('bounds durable draining by the lease and leaves the current release a
     yield* TestClock.adjust('5 seconds');
     const failure = yield* Fiber.join(fiber);
 
-    expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+    expect(Schema.is(ApplicationCompositionPublicationTimeout)(failure)).toBe(true);
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('closed');
     expect(fixture.events).not.toContain(COMMITTED_DRAINING);
