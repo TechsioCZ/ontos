@@ -100,6 +100,15 @@ const MODERN_CONFIG_FACTORY_SOURCES: ReadonlySet<string> = new Set([
   '@modern-js/ultramodern-app-tools',
 ]);
 
+const invokesModernBuild = (script: string): boolean => {
+  const nativeCommand = /^modern[ \t]+build(?:[ \t]|$)/u;
+  if (nativeCommand.test(script)) {
+    return true;
+  }
+  // Recognize an unquoted generation command followed by the real compiler, not shell text or comments.
+  return !/[\\'"`#$;|\r\n]/u.test(script) && script.split('&&').some((command) => nativeCommand.test(command.trim()));
+};
+
 /** The native compiler owns this define only in an application's compiled source tree. */
 const hasModernCompilerOwner = (filename: string): boolean => {
   let directory = nodePath.dirname(filename);
@@ -123,7 +132,7 @@ const hasModernCompilerOwner = (filename: string): boolean => {
     if (
       !dependencies['@modern-js/app-tools'] ||
       !dependencies['@modern-js/runtime'] ||
-      !/^modern[ \t]+build(?:[ \t]|$)/u.test(manifest.scripts.build)
+      !invokesModernBuild(manifest.scripts.build)
     ) {
       return false;
     }
