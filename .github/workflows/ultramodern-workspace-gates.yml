@@ -562,6 +562,15 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      # Compose seeds only the shared role. Provision every manifest identity in this ephemeral
+      # loopback database before either suite's fail-closed reconcile bootstrap.
+      - name: Initialize the fresh CI database identities from the grant manifest
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
         if: matrix.suite == 'integration'
         working-directory: app
@@ -824,6 +833,15 @@ jobs:
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 
+      # The bare PostgreSQL service has no runtime roles. Keep creation outside migration policy.
+      - name: Initialize the fresh CI database identities from the grant manifest
+        if: matrix.proof == 'node'
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
+
       - name: Migrate the Node proof database and provision its runtime identities
         if: matrix.proof == 'node'
         working-directory: app
@@ -1015,6 +1033,14 @@ jobs:
         run: |
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
+
+      - name: Initialize the fresh CI database identities from the grant manifest
+        if: matrix.proof == 'topology'
+        working-directory: app
+        env:
+          DATABASE_LOGIN_ROLE_POLICY: initialize-local
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: development
+        run: mise exec -- pnpm db:bootstrap-runtime-role
 
       - name: Migrate and initialize the local tenant for the Worker topology
         if: matrix.proof == 'topology'

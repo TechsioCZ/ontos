@@ -87,7 +87,7 @@ import {
 import type { Types } from 'effect';
 import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
-import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from './database-identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
@@ -2965,7 +2965,7 @@ const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.
   Layer.provide(compositionSourceLive),
 );
 const approvedModuleCatalogLive = ShellInstalledModuleCatalogLive.pipe(Layer.provide(activeApplicationCompositionLive));
-const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(APP_DATABASE_IDENTITY_ENROLLMENT);
+const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(SHELL_DATABASE_IDENTITY_ENROLLMENT);
 const approvedGatewayIssuerLive = GatewayIssuerLive.pipe(
   Layer.provide(approvedModuleCatalogLive),
   Layer.provide(GatewayScopeGrantRegistrarLive),

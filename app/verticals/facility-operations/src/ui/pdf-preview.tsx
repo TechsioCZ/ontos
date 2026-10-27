@@ -1,34 +1,56 @@
+/// <reference types="@modern-js/ultramodern-app-tools/react-types" />
 // Render the already-authorized file in-page rather than relying on a browser PDF plug-in (absent
 // in headless browsers and on many phones). No public file URL or external document service is used.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { Effect, Fiber } from 'effect';
+import { Effect, Fiber, Option } from 'effect';
 import { constVoid } from 'effect/Function';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { pdfRenderLifecycle, PdfPreviewFailed } from './pdf-render-lifecycle.ts';
 import type { NativePdfRenderTask } from './pdf-render-lifecycle.ts';
 
 const k = 'facility-operations.documents';
+const pdfOperationTimeout = '30 seconds';
+
+interface PdfPreviewProps {
+  readonly height: string;
+  readonly name: string;
+  readonly url: string;
+}
+
+const loadPdfRenderer = () => {
+  // Modern replaces this exact compiler branch before collecting the SSR module graph.
+  if (import.meta.env.MODERN_TARGET === 'browser') {
+    return Effect.gen(function* importRenderer() {
+      const rendererImport = import('pdfjs-dist');
+      const renderer = yield* Effect.tryPromise({
+        catch: (cause) => new PdfPreviewFailed({ cause }),
+        try: rendererImport.finally.bind(rendererImport, undefined),
+      }).pipe(Effect.timeout(pdfOperationTimeout));
+      // Federation serves classic chunks without module-worker CORS headers. Keep PDF.js's bundled,
+      // in-page worker and parse only the bytes returned by the authorized file read.
+      const workerImport = import('pdfjs-dist/build/pdf.worker.mjs');
+      yield* Effect.tryPromise({
+        catch: (cause) => new PdfPreviewFailed({ cause }),
+        try: workerImport.finally.bind(workerImport, undefined),
+      }).pipe(Effect.timeout(pdfOperationTimeout));
+      return Option.some(renderer);
+    });
+  }
+  return Effect.succeed(Option.none());
+};
 
 const loadPdf = Effect.fn('FacilityOperations.loadPdf')(function* loadPdf(url: string) {
-  const rendererImport = import('pdfjs-dist');
-  const renderer = yield* Effect.tryPromise({
-    catch: (cause) => new PdfPreviewFailed({ cause }),
-    try: rendererImport.finally.bind(rendererImport, undefined),
-  });
-  // Federation serves classic chunks without module-worker CORS headers. Keep PDF.js's bundled,
-  // in-page worker and parse only the bytes returned by the authorized file read.
-  const workerImport = import('pdfjs-dist/build/pdf.worker.mjs');
-  yield* Effect.tryPromise({
-    catch: (cause) => new PdfPreviewFailed({ cause }),
-    try: workerImport.finally.bind(workerImport, undefined),
-  });
+  const renderer = yield* loadPdfRenderer();
+  if (Option.isNone(renderer)) {
+    return Option.none<PDFDocumentProxy>();
+  }
   const task = yield* Effect.acquireRelease(
     Effect.try({
       catch: (cause) => new PdfPreviewFailed({ cause }),
-      try: () => renderer.getDocument({ isEvalSupported: false, url }),
+      try: () => renderer.value.getDocument({ isEvalSupported: false, url }),
     }),
     (loadingTask) =>
       Effect.tryPromise({
@@ -42,8 +64,8 @@ const loadPdf = Effect.fn('FacilityOperations.loadPdf')(function* loadPdf(url: s
   return yield* Effect.tryPromise({
     catch: (cause) => new PdfPreviewFailed({ cause }),
     try: task.promise.finally.bind(task.promise, undefined),
-  });
-}, Effect.timeout('30 seconds'));
+  }).pipe(Effect.map(Option.some));
+}, Effect.timeout(pdfOperationTimeout));
 
 const preparePdfPage = Effect.fn('FacilityOperations.preparePdfPage')(function* preparePdfPage(input: {
   readonly canvas: HTMLCanvasElement;
@@ -54,7 +76,7 @@ const preparePdfPage = Effect.fn('FacilityOperations.preparePdfPage')(function* 
   const sheet = yield* Effect.tryPromise({
     catch: (cause) => new PdfPreviewFailed({ cause }),
     try: input.pdf.getPage.bind(input.pdf, input.page),
-  }).pipe(Effect.timeout('30 seconds'));
+  }).pipe(Effect.timeout(pdfOperationTimeout));
   return (): NativePdfRenderTask => {
     const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
     const viewport = sheet.getViewport({ scale: input.width / sheet.getViewport({ scale: 1 }).width });
@@ -103,15 +125,7 @@ const pdfView = (input: {
   };
 };
 
-export const PdfPreview = ({
-  height,
-  name,
-  url,
-}: {
-  readonly height: string;
-  readonly name: string;
-  readonly url: string;
-}) => {
+export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
   const { t } = useModernI18n();
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -142,10 +156,10 @@ export const PdfPreview = ({
 
   useEffect(() => {
     let alive = true;
-    const onLoaded = (loaded: PDFDocumentProxy) =>
+    const onLoaded = (loaded: Option.Option<PDFDocumentProxy>) =>
       Effect.sync(() => {
-        if (alive) {
-          setDocument({ failed: false, page: 1, pdf: loaded, url });
+        if (alive && Option.isSome(loaded)) {
+          setDocument({ failed: false, page: 1, pdf: loaded.value, url });
         }
       });
     const fiber = browserRuntime.runFork(
