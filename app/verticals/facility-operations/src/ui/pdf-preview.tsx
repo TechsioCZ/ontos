@@ -1,3 +1,4 @@
+/// <reference types="@modern-js/ultramodern-app-tools/react-types" />
 // @effect-diagnostics asyncFunction:off -- Private PDF.js adapter consumes its native Promise-based parsing/render tasks, never a BFF port; remove-when: PDF.js publishes an Effect adapter.
 // Render the already-authorized file in-page rather than relying on a browser PDF plug-in (absent
 // in headless browsers and on many phones). No public file URL or external document service is used.
