@@ -82,7 +82,7 @@
         }
       },
       "records": {
-        "title": "Properties, units and assets",
+        "title": "Properties",
         "refresh": "Load properties",
         "unavailable": "Unable to load properties. Check your permissions and try again.",
         "properties": "Properties",
@@ -111,7 +111,7 @@
         "financialValues": "Revenue {{revenue}} · Costs {{cost}} · Outstanding {{outstanding}}",
         "summaryNotLoaded": "Summary not loaded",
         "outOfService": "Out of service",
-        "availabilityLabel": "Availability on 5 October 2026",
+        "availabilityLabel": "Occupancy today",
         "occupancyRecord": "Occupancy {{start}} → {{end}}",
         "availability": {
           "AVAILABLE": "Available",
@@ -177,7 +177,14 @@
           "employeesForbidden": "You do not have permission to view employees.",
           "employeesUnavailable": "Employees could not be loaded.",
           "employeesRetry": "Reload employees",
-          "employeeUnknown": "Unavailable employee ({{id}})"
+          "employeeUnknown": "Unavailable employee",
+          "createUnitIn": "Add a unit to {{name}}",
+          "editUnit": "Edit unit {{name}}",
+          "required": "Fill in {{field}}.",
+          "tooLong": "Use at most 300 characters.",
+          "duplicateCode": "Another record already uses this code.",
+          "alreadyCommitted": "The change has already been saved. Refresh the records and check the result before making another change.",
+          "commitIndeterminate": "The save result cannot be confirmed yet. Do not save again until the result has been checked."
         },
         "unitStory": {
           "newLease": "New lease",
@@ -209,6 +216,37 @@
             "DONE": "Done",
             "CANCELLED": "Cancelled"
           }
+        },
+        "archived": "Archived",
+        "includeClosed": "Include inactive and retired records",
+        "includeArchived": "Include archived records ({{count}})",
+        "notFound": "The selected record is not available. Select a property from the portfolio.",
+        "loading": "Loading…",
+        "noUnits": "This property has no units in the current selection.",
+        "notProvided": "Not provided",
+        "archiveDetails": "Archived {{date}}. {{reason}}",
+        "buildingBlocked": "This property is not in operation. Its units cannot be let or reserved.",
+        "retiredDescription": "This unit is retired. Its lease and contract history is retained.",
+        "retiredAvailability": "Retired, not offered for rent",
+        "archiveProperty": "Archive property",
+        "archiveUnit": "Archive unit",
+        "restore": "Restore from archive",
+        "setOutOfService": "Take out of service",
+        "returnToService": "Return to service",
+        "retireUnit": "Retire unit",
+        "propertyLabel": "property {{code}}",
+        "unitLabel": "unit {{code}}",
+        "financialEmpty": "No invoices or payments are registered for this property yet.",
+        "retry": "Try again",
+        "tabs": {
+          "units": "Units",
+          "leases": "Leases and stays",
+          "agreements": "Agreements",
+          "documents": "Documents",
+          "tasks": "Tasks",
+          "equipment": "Equipment",
+          "finance": "Finance",
+          "discussion": "Discussion"
         }
       }
     }

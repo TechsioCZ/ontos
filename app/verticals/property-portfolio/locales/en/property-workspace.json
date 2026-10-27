@@ -1,0 +1,13 @@
+{
+  "properties": "Properties",
+  "emptyProperties": "There is no property here yet.",
+  "addProperty": "Add property",
+  "unitCount_one": "{{count}} unit",
+  "unitCount_other": "{{count}} units",
+  "backToPortfolio": "Back to portfolio",
+  "propertyHierarchy": "Properties and units",
+  "units": "Units",
+  "noUnits": "This property has no units yet.",
+  "addUnit": "Add unit",
+  "archived": "Archived"
+}
