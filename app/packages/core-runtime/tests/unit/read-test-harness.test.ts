@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { tenants } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineRead } from '../../src/reads/definition.ts';
@@ -68,6 +69,9 @@ const registration = defineRead(
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );
 const invocation = { input: {}, principal: scope, registration, transport: { correlationId: scope.correlationId } };
+const compositionRevision = 'a'.repeat(64);
+const composedScope = trustVerifiedGatewayPrincipalContext(scope, compositionRevision);
+const composedInvocation = { ...invocation, principal: composedScope };
 
 it.layer(NodeCrypto.layer)('read test harness', (suite) => {
   suite.effect('defaults permission to denied before owner SQL and persists denied evidence', () =>
@@ -145,6 +149,66 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
       expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
       expect(harness.snapshot().evidenceWrites).toBe(0);
+      expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
+    }),
+  );
+
+  suite.effect('admits composed reads through the combined scope fence before distinct owner SQL', () =>
+    Effect.gen(function* composedReadLifecycle() {
+      const harness = yield* makeReadTestHarness({
+        compositionRevision,
+        executeOwnerQuery: (query) => {
+          expect(query.sql).toContain('from "core"."tenants"');
+          expect(query.sql).toContain('transaction_timestamp()');
+          expect(query.sql).not.toContain('publication_lock');
+          expect(query.scope).toEqual({ legalEntityId: '', tenantId: scope.tenantId });
+          return Effect.succeed([{ tenantId: scope.tenantId }]);
+        },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: composedScope,
+      });
+      expect(yield* harness.runtime.runRead(composedInvocation)).toEqual([scope.tenantId]);
+      const { evidenceWrites, ownerQueries, stages, statements } = harness.snapshot();
+      expect(ownerQueries).toHaveLength(1);
+      const fenceIndex = statements.findIndex((statement) => statement.includes('as publication_lock'));
+      expect(fenceIndex).toBeGreaterThan(-1);
+      expect(statements[fenceIndex]).toContain('set_config');
+      expect(statements[fenceIndex]).toContain("current_setting('transaction_isolation')");
+      expect(statements[fenceIndex]).toContain('pg_advisory_xact_lock_shared');
+      expect(statements[fenceIndex]).not.toContain('from "core"."application_composition_authority"');
+      expect(statements[fenceIndex + 1]).toContain('from "core"."application_composition_authority"');
+      expect(statements[fenceIndex + 2]).toBe(ownerQueries[0]?.sql);
+      expect(statements[fenceIndex + 3]).toBe('COMMIT');
+      expect(evidenceWrites).toBe(1);
+      expect(stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
+      expect(statements.at(-2)).toContain('data_access_events');
+      expect(statements.at(-1)).toBe('COMMIT');
+    }),
+  );
+
+  suite.effect('does not treat composed owner SQL containing transaction time as infrastructure', () =>
+    Effect.gen(function* composedOwnerOutage() {
+      const harness = yield* makeReadTestHarness({
+        compositionRevision,
+        executeOwnerQuery: (query) => {
+          expect(query.sql).toContain('from "core"."tenants"');
+          expect(query.sql).toContain('transaction_timestamp()');
+          expect(query.scope).toEqual({ legalEntityId: '', tenantId: scope.tenantId });
+          return Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled owner outage' }) }));
+        },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope: composedScope,
+      });
+      const failure = yield* harness.runtime.runRead(composedInvocation).pipe(Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(harness.snapshot().evidenceWrites).toBe(0);
+      expect(harness.snapshot().stages).toContain('scope_installed');
+      expect(harness.snapshot().stages).not.toContain('handler_executed');
       expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
     }),
   );

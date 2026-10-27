@@ -181,6 +181,26 @@ const problems = makeGovernedReadProblems({
   unavailable: CurrentRelevantStockPositionSetUnavailableProblemSchema,
 });
 
+const expectCommittedEvidenceAfterOwner = (statements: readonly string[]) => {
+  const ownerQueryIndex = statements.findIndex((statement) => statement.includes('from "inventory"."stock_items"'));
+  const ownerCommitIndex = statements.indexOf('COMMIT');
+  const evidenceBeginIndex = statements.indexOf('BEGIN', ownerCommitIndex + 1);
+  const evidenceIndex = statements.findIndex((statement) =>
+    statement.startsWith('insert into "core"."data_access_events"'),
+  );
+  expect(ownerQueryIndex).toBeGreaterThan(-1);
+  expect(ownerCommitIndex).toBeGreaterThan(ownerQueryIndex);
+  expect(evidenceBeginIndex).toBeGreaterThan(ownerCommitIndex);
+  expect(evidenceIndex).toBeGreaterThan(evidenceBeginIndex);
+  expect(
+    statements.slice(evidenceBeginIndex + 1, evidenceIndex).some((statement) => statement.includes('set_config')),
+  ).toBe(true);
+  expect(statements.filter((statement) => statement === 'COMMIT')).toHaveLength(2);
+  expect(statements).not.toContain('ROLLBACK');
+  expect(statements.at(-2)).toContain('insert into "core"."data_access_events"');
+  expect(statements.at(-1)).toBe('COMMIT');
+};
+
 describe('Current relevant StockPosition set HTTP request contract', () => {
   it.live('registered runtime and published client return the real broader owner-complete candidate set', () =>
     Effect.gen(function* registeredBroaderSet() {
@@ -198,9 +218,8 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
       expect(runtime.snapshot().stages).toContain('evidence_persisted');
-      // Allowed evidence follows the committed owner transaction.
-      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
-      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
+      // Evidence commits in its own scoped transaction after the owner observation commits.
+      expectCommittedEvidenceAfterOwner(runtime.snapshot().statements);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
@@ -232,8 +251,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       // (00dc1c50c), so the denial stops the read before any result is decoded or released.
       expect(runtime.snapshot().stages).toContain('handler_executed');
       expect(runtime.snapshot().stages).not.toContain('result_decoded');
-      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
-      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
+      expectCommittedEvidenceAfterOwner(runtime.snapshot().statements);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
