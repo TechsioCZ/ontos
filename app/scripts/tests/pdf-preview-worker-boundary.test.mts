@@ -11,7 +11,7 @@ import { collectToolingProcess } from './tooling-process-fixture.mts';
 const workspace = fileURLToPath(new URL('../../', import.meta.url));
 const owner = path.join(workspace, 'verticals/facility-operations');
 const preview = path.join(owner, 'src/ui/pdf-preview.tsx');
-const browserBoundary = "if (process.env.MODERN_TARGET === 'browser') {";
+const browserBoundary = "if (import.meta.env.MODERN_TARGET === 'browser') {";
 const unsafeImportMessage = 'Cloudflare worker bundles must not contain non-static dynamic module imports.';
 const Compilation = Schema.fromJsonString(
   Schema.Struct({
@@ -67,7 +67,7 @@ const compiler = rspack({
   },
   optimization: { concatenateModules: false, minimize: false, moduleIds: 'named' },
   output: { filename: 'preview.mjs', library: { type: 'module' }, module: true, path: directory },
-  plugins: [new DefinePlugin({ 'process.env.MODERN_TARGET': JSON.stringify(target) })],
+  plugins: [new DefinePlugin({ 'import.meta.env.MODERN_TARGET': JSON.stringify(target) })],
   resolve: {
     alias: { '../runtime/browser-effect-runtime.ts': path.join(owner, 'src/runtime/browser-effect-runtime.ts') },
     extensions: ['.tsx', '.ts', '.js', '.mjs'],

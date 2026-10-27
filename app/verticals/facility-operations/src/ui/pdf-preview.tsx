@@ -20,24 +20,26 @@ class PdfRendererUnavailable extends Schema.TaggedError<PdfRendererUnavailable>(
   cause: Schema.Unknown,
 }) {}
 
-const loadPdfRenderer = Effect.fn('PdfPreview.importRenderer')(function* importRenderer() {
+const loadPdfRenderer = () => {
   // Modern replaces this exact compiler branch before collecting the SSR module graph.
-  if (process.env.MODERN_TARGET === 'browser') {
-    const renderer = yield* Effect.tryPromise({
-      catch: (cause) => new PdfRendererUnavailable({ cause }),
-      try: async () => await import('pdfjs-dist'),
-    }).pipe(Effect.timeout('30 seconds'));
-    // Keep the parser in-page. Federation chunks do not provide cross-origin module-worker headers.
-    yield* Effect.tryPromise({
-      catch: (cause) => new PdfRendererUnavailable({ cause }),
-      try: async () => {
-        await import('pdfjs-dist/build/pdf.worker.mjs');
-      },
-    }).pipe(Effect.timeout('30 seconds'));
-    return Option.some(renderer);
+  if (import.meta.env.MODERN_TARGET === 'browser') {
+    return Effect.gen(function* importRenderer() {
+      const renderer = yield* Effect.tryPromise({
+        catch: (cause) => new PdfRendererUnavailable({ cause }),
+        try: async () => await import('pdfjs-dist'),
+      }).pipe(Effect.timeout('30 seconds'));
+      // Keep the parser in-page. Federation chunks do not provide cross-origin module-worker headers.
+      yield* Effect.tryPromise({
+        catch: (cause) => new PdfRendererUnavailable({ cause }),
+        try: async () => {
+          await import('pdfjs-dist/build/pdf.worker.mjs');
+        },
+      }).pipe(Effect.timeout('30 seconds'));
+      return Option.some(renderer);
+    });
   }
-  return Option.none();
-});
+  return Effect.succeed(Option.none());
+};
 
 const PdfDocumentPreview = ({ height, name, url }: PdfPreviewProps) => {
   const { t } = useModernI18n();
