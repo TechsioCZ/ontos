@@ -1,5 +1,6 @@
 import type { AgentEntity } from '@app/shared-contracts/agent-access';
 import { cleanup, render, screen } from '@testing-library/react';
+import { Effect } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
 import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
@@ -61,13 +62,14 @@ afterEach(() => {
   fixture.agent.principalId = fixture.target;
 });
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
-it('opens the linked real agent editor in-place, without a workforce route or redirect', async () => {
-  HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
-  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-  const editor = await screen.findByTestId('agent-editor');
-  expect(editor.textContent).toBe('Asistent provozu');
-});
+it.live('opens the linked real agent editor in-place, without a workforce route or redirect', () =>
+  Effect.gen(function* openLinkedAgent() {
+    HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
+    render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+    const editor = yield* Effect.promise(() => screen.findByTestId('agent-editor'));
+    expect(editor.textContent).toBe('Asistent provozu');
+  }),
+);
 
 it('shows an absent profile honestly instead of claiming a configured write policy', () => {
   fixture.agent.hasProfile = false;
@@ -78,15 +80,16 @@ it('shows an absent profile honestly instead of claiming a configured write poli
   expect(screen.queryByText('shell.agents.section.noWrites')).toBeNull();
 });
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
-it('drops an old agent detail when the selected company no longer admits that principal', async () => {
-  HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
-  const view = render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
-  await screen.findByTestId('agent-editor');
-  fixture.agent = { ...fixture.agent, principalId: '00000000-0000-4000-8000-000000000009' };
-  view.rerender(<AgentEntitiesSection legalEntityId="other-company" onNotify={() => {}} />);
-  expect(screen.queryByTestId('agent-editor')).toBeNull();
-});
+it.live('drops an old agent detail when the selected company no longer admits that principal', () =>
+  Effect.gen(function* dropUnadmittedAgent() {
+    HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
+    const view = render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+    yield* Effect.promise(() => screen.findByTestId('agent-editor'));
+    fixture.agent = { ...fixture.agent, principalId: '00000000-0000-4000-8000-000000000009' };
+    view.rerender(<AgentEntitiesSection legalEntityId="other-company" onNotify={() => {}} />);
+    expect(screen.queryByTestId('agent-editor')).toBeNull();
+  }),
+);
 
 it('does not render an admin-only creation control for a member without agent administration', () => {
   fixture.forbidden = true;

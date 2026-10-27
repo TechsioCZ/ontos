@@ -23,10 +23,11 @@ import type {
   ExternalIdentityVerificationResult,
   OntosExternalIdentityProviderInput,
 } from '@app/core-runtime/auth/external-identity-provider';
-import { Clock, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
 import { makeExternalIdentityProviderDeployment } from '../../api/auth/external-identity-provider-deployment.ts';
 import {
   ExternalIdentityProviderConfigurationSchema,
@@ -50,11 +51,12 @@ import {
 } from '../../api/auth/external-identity/request-context.ts';
 import type { ExternalIdentityHttpWorkloadContextValue } from '../../api/auth/external-identity/request-context.ts';
 import { GatewayIssuer, GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
-import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
-import type {
-  ShellInstalledCatalog,
-  ShellInstalledModuleCatalogService,
+import {
+  makeInstalledModuleCatalogLoader,
+  ShellInstalledModuleCatalog,
 } from '../../api/modules/installed-module-catalog.ts';
+import type { ShellInstalledModuleCatalogService } from '../../api/modules/installed-module-catalog.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const PROVIDER_NAMESPACE = 'ontos.example.portal.v1';
 const PROVIDER_APP_ID = 'example-portal';
@@ -69,24 +71,26 @@ const declaration = {
 /** A composition with one module whose contract declares `providers`. */
 const catalogDeclaring = (
   providers: readonly OntosExternalIdentityProviderInput[],
-): ShellInstalledModuleCatalogService => ({
-  load: Effect.succeed(
-    // SAFETY: test double; the provider resolution reads only `composition.modules[].{backend.baseUrl,deployment.appId,contractDocument}`.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- Test double of the installed catalog.
-    {
-      composition: {
-        modules: [
+): ShellInstalledModuleCatalogService => {
+  const contract = makeModuleContractFixture({ appId: PROVIDER_APP_ID, moduleId: 'example.portal' });
+  return {
+    load: makeInstalledModuleCatalogLoader(
+      makeCompositionSnapshot(
+        [
           {
-            backend: { baseUrl: PROVIDER_RELEASE_ORIGIN },
-            contractDocument: JSON.stringify({ manifest: { publicSurface: { externalIdentityProviders: providers } } }),
-            deployment: { appId: PROVIDER_APP_ID },
-            moduleId: 'example.portal',
+            ...contract,
+            manifest: {
+              ...contract.manifest,
+              publicSurface: { ...contract.manifest.publicSurface, externalIdentityProviders: providers },
+            },
           },
         ],
-      },
-    } as unknown as ShellInstalledCatalog,
-  ),
-});
+        60_000,
+        PROVIDER_RELEASE_ORIGIN,
+      ),
+    ),
+  };
+};
 const catalog = catalogDeclaring([declaration]);
 const installed: InstalledExternalIdentityProvider = {
   appId: PROVIDER_APP_ID,
@@ -158,14 +162,15 @@ const providerBase = (catalogService: ShellInstalledModuleCatalogService) => {
   );
 };
 
-const lookupWith = (
+const lookupWith = Effect.fn(function* lookupWith(
   catalogService: ShellInstalledModuleCatalogService,
   id: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>,
-) =>
-  AuthenticationNamespaceRegistry.pipe(
-    Effect.flatMap((registry) => registry.lookup(id)),
-    Effect.provide(ExternalIdentityProviderNamespaceRegistryLive.pipe(Layer.provide(providerBase(catalogService)))),
+) {
+  const context = yield* Layer.build(
+    ExternalIdentityProviderNamespaceRegistryLive.pipe(Layer.provide(providerBase(catalogService))),
   );
+  return yield* Context.get(context, AuthenticationNamespaceRegistry).lookup(id);
+});
 
 const workloadPrincipal = decode(TrustedPrincipalContextSchema, {
   authBindingId: '10000000-0000-4000-8000-000000000006',
@@ -413,13 +418,12 @@ it.effect('projects an ALLOWED provider response into a binding revision bound t
         return Effect.succeed(makeAllowedResult(request));
       },
     };
-    const service = yield* TrustedAdmissionObservation.pipe(
-      Effect.provide(
-        ProviderAdmissionObservationLive.pipe(
-          Layer.provide(Layer.merge(providerBase(catalog), Layer.succeed(ExternalIdentityVerificationClient, client))),
-        ),
+    const context = yield* Layer.build(
+      ProviderAdmissionObservationLive.pipe(
+        Layer.provide(Layer.merge(providerBase(catalog), Layer.succeed(ExternalIdentityVerificationClient, client))),
       ),
     );
+    const service = Context.get(context, TrustedAdmissionObservation);
     const request: AuthenticationAdmissionRequest = {
       audience: providerEndpointAudience,
       authBindingId,
@@ -474,13 +478,12 @@ it.effect('sends the provider receiving audience while preserving a downstream g
         return Effect.succeed(makeAllowedResult(request));
       },
     };
-    const service = yield* TrustedAdmissionObservation.pipe(
-      Effect.provide(
-        ProviderAdmissionObservationLive.pipe(
-          Layer.provide(Layer.merge(providerBase(catalog), Layer.succeed(ExternalIdentityVerificationClient, client))),
-        ),
+    const context = yield* Layer.build(
+      ProviderAdmissionObservationLive.pipe(
+        Layer.provide(Layer.merge(providerBase(catalog), Layer.succeed(ExternalIdentityVerificationClient, client))),
       ),
     );
+    const service = Context.get(context, TrustedAdmissionObservation);
     const request: AuthenticationAdmissionRequest = {
       audience: gatewayAudience,
       authBindingId,
@@ -535,16 +538,17 @@ it.effect('routes the production deployment client to the verification path the 
       },
       issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
-    const fakeFetch: typeof fetch = async (input, init) => {
+    const fakeFetch: typeof fetch = (input, init) => {
       const outboundRequest = new Request(input, init);
       outboundUrls.push(outboundRequest.url);
       outboundAssertions.push(outboundRequest.headers.get('authorization') ?? '');
-      const rawBody = await outboundRequest.text();
+      // The native Effect JSON encoder sends UTF-8 bytes to the Fetch adapter.
+      const rawBody = new TextDecoder().decode(Schema.decodeUnknownSync(Schema.Uint8Array)(init?.body));
       const request = Schema.decodeUnknownSync(ExternalIdentityVerificationRequestSchema)(
         Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(rawBody),
       );
       outboundOperations.push(request.operation);
-      return Response.json(makeAllowedResult(request), { status: 200 });
+      return Promise.resolve(Response.json(makeAllowedResult(request), { status: 200 }));
     };
     const match = {
       audience: providerEndpointAudience,
@@ -556,6 +560,12 @@ it.effect('routes the production deployment client to the verification path the 
       subjectType: 'user' as const,
       tenantId,
     };
+    const context = yield* Layer.build(
+      Layer.merge(
+        makeExternalIdentityProviderDeployment(rawConfiguration).externalIdentityDeploymentLayer,
+        ExternalIdentityProviderNamespaceRegistryLive.pipe(Layer.provide(providerBase(catalog))),
+      ).pipe(Layer.provide(Layer.succeed(ShellInstalledModuleCatalog, catalog))),
+    );
     const run = Effect.gen(function* runProductionDeployment() {
       const service = yield* TrustedExternalSubjectAdmissionService;
       return yield* provideExternalIdentityHttpWorkload(
@@ -570,9 +580,7 @@ it.effect('routes the production deployment client to the verification path the 
         service.admit(match),
       );
     }).pipe(
-      Effect.provide(makeExternalIdentityProviderDeployment(rawConfiguration).externalIdentityDeploymentLayer),
-      Effect.provide(ExternalIdentityProviderNamespaceRegistryLive.pipe(Layer.provide(providerBase(catalog)))),
-      Effect.provideService(ShellInstalledModuleCatalog, catalog),
+      Effect.provideContext(context),
       Effect.provideService(ExternalIdentityWorkloadAuthorization, workloadAuthorization),
       Effect.provideService(GatewayIssuer, issuer),
       Effect.provideService(Clock.Clock, fixedClock),

@@ -67,132 +67,149 @@ beforeEach(() => {
   commands.linked.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
-it('invites a person by email and explicit affiliation, never by principal ID or agent kind', async () => {
-  const user = userEvent.setup();
-  const onCommitted = rstest.fn();
-  commands.invite.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: { delivery: 'pending', invitationId: '00000000-0000-4000-8000-000000000009', membership, principalRef },
-    }),
-  );
-  render(
-    <InvitePersonButton
-      onCommitted={(change) => {
-        onCommitted(change);
-      }}
-    />,
-  );
-  await user.click(screen.getByRole('button', { name: 'Pozvat člověka' }));
-  await screen.findByRole('dialog');
-  expect(screen.queryByLabelText('ID principála')).toBeNull();
-  expect(screen.queryByLabelText('Druh přihlášení')).toBeNull();
-  await user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana Nováková');
-  await user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test');
-  await user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external');
-  await user.click(screen.getByRole('button', { name: 'Vytvořit pozvánku' }));
-  await waitFor(() =>
-    expect(commands.invite).toHaveBeenCalledWith({
-      affiliation: 'external',
-      displayName: 'Jana Nováková',
-      email: 'jana@example.test',
-    }),
-  );
-  await waitFor(() =>
-    expect(onCommitted).toHaveBeenCalledWith({ kind: 'membership', result: { membership, projection: 'pending' } }),
-  );
-});
+it.live('invites a person by email and explicit affiliation, never by principal ID or agent kind', () =>
+  Effect.gen(function* invitePerson() {
+    const user = userEvent.setup();
+    const onCommitted = rstest.fn();
+    commands.invite.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: { delivery: 'pending', invitationId: '00000000-0000-4000-8000-000000000009', membership, principalRef },
+      }),
+    );
+    render(
+      <InvitePersonButton
+        onCommitted={(change) => {
+          onCommitted(change);
+        }}
+      />,
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Pozvat člověka' })));
+    yield* Effect.promise(() => screen.findByRole('dialog'));
+    expect(screen.queryByLabelText('ID principála')).toBeNull();
+    expect(screen.queryByLabelText('Druh přihlášení')).toBeNull();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana Nováková'));
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test'));
+    yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Vytvořit pozvánku' })));
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(commands.invite).toHaveBeenCalledWith({
+          affiliation: 'external',
+          displayName: 'Jana Nováková',
+          email: 'jana@example.test',
+        }),
+      ),
+    );
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(onCommitted).toHaveBeenCalledWith({ kind: 'membership', result: { membership, projection: 'pending' } }),
+      ),
+    );
+  }),
+);
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
-it('opens the real person from a governed deep link in the same Shell page', async () => {
-  render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
-  await screen.findByRole('dialog', { name: 'Jana Nováková' });
-  expect(commands.linked).toHaveBeenCalledWith('company', principalRef.principalId);
-  expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
-});
+it.live('opens the real person from a governed deep link in the same Shell page', () =>
+  Effect.gen(function* openLinkedPerson() {
+    render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+    yield* Effect.promise(() => screen.findByRole('dialog', { name: 'Jana Nováková' }));
+    expect(commands.linked).toHaveBeenCalledWith('company', principalRef.principalId);
+    expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
+  }),
+);
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
-it('keeps committed membership changes processing while the actual projection disagrees', async () => {
-  const user = userEvent.setup();
-  const departed = { ...membership, revision: 2, status: 'departed' } as const;
-  commands.membership.mockReturnValue(
-    Effect.succeed({ status: 'ok', value: { membership: departed, projection: 'pending' } }),
-  );
-  render(<PeoplePanel companyId={companyId} />);
-  await user.click(await screen.findByRole('button', { name: 'Upravit členství' }));
-  await user.selectOptions(screen.getByLabelText('Stav členství'), 'departed');
-  await user.type(screen.getByLabelText(/Důvod změny/u), 'Odchod z firmy');
-  commands.list.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: {
-        ...list,
-        items: [
-          {
-            ...person,
-            selectedCompanyMembership: departed,
-            selectedCompanyMembershipProjection: { expectedMember: false, observedMember: true },
-          },
-        ],
-      },
-    }),
-  );
-  await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
-  await screen.findByText(/Zpracovává se 1 změna\./u);
-  expect(screen.getByText(/Osoba odešla z firmy/u)).toBeDefined();
-});
+it.live('keeps committed membership changes processing while the actual projection disagrees', () =>
+  Effect.gen(function* keepMembershipPending() {
+    const user = userEvent.setup();
+    const departed = { ...membership, revision: 2, status: 'departed' } as const;
+    commands.membership.mockReturnValue(
+      Effect.succeed({ status: 'ok', value: { membership: departed, projection: 'pending' } }),
+    );
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.flatMap(
+      Effect.promise(() => screen.findByRole('button', { name: 'Upravit členství' })),
+      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+    );
+    yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Stav členství'), 'departed'));
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Odchod z firmy'));
+    commands.list.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          ...list,
+          items: [
+            {
+              ...person,
+              selectedCompanyMembership: departed,
+              selectedCompanyMembershipProjection: { expectedMember: false, observedMember: true },
+            },
+          ],
+        },
+      }),
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+    yield* Effect.promise(() => screen.findByText(/Zpracovává se 1 změna\./u));
+    expect(screen.getByText(/Osoba odešla z firmy/u)).toBeDefined();
+  }),
+);
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
-it('selects a named role from the governed catalog without exposing identifiers', async () => {
-  const user = userEvent.setup();
-  commands.role.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: {
-        operation: 'assign',
-        principalRef,
-        projection: 'pending',
-        role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
-      },
-    }),
-  );
-  render(<PeoplePanel companyId={companyId} />);
-  await user.click(await screen.findByRole('button', { name: 'Spravovat role' }));
-  expect(screen.queryByLabelText('Klíč role')).toBeNull();
-  expect(screen.queryByText(/SpiceDB/u)).toBeNull();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales');
-  expect(screen.getByText('Práce s přidělenými klienty.')).toBeDefined();
-  await user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů');
-  await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
-  await waitFor(() =>
-    expect(commands.role).toHaveBeenCalledWith('company', {
-      operation: 'assign',
-      principalRef,
-      reason: 'Převzetí klientů',
-      roleKey: 'crm-sales',
-    }),
-  );
-});
+it.live('selects a named role from the governed catalog without exposing identifiers', () =>
+  Effect.gen(function* assignNamedRole() {
+    const user = userEvent.setup();
+    commands.role.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          operation: 'assign',
+          principalRef,
+          projection: 'pending',
+          role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
+        },
+      }),
+    );
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.flatMap(
+      Effect.promise(() => screen.findByRole('button', { name: 'Spravovat role' })),
+      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+    );
+    expect(screen.queryByLabelText('Klíč role')).toBeNull();
+    expect(screen.queryByText(/SpiceDB/u)).toBeNull();
+    yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
+    expect(screen.getByText('Práce s přidělenými klienty.')).toBeDefined();
+    yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+    yield* Effect.promise(() =>
+      waitFor(() =>
+        expect(commands.role).toHaveBeenCalledWith('company', {
+          operation: 'assign',
+          principalRef,
+          reason: 'Převzetí klientů',
+          roleKey: 'crm-sales',
+        }),
+      ),
+    );
+  }),
+);
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
-it('renders role chips with Czech names rather than internal keys', async () => {
-  commands.list.mockReturnValue(
-    Effect.succeed({
-      status: 'ok',
-      value: {
-        ...list,
-        items: [{ ...person, roleAssignments: [{ roleKey: 'crm-sales', scope: list.scope, tenantId }] }],
-      },
-    }),
-  );
-  render(<PeoplePanel companyId={companyId} />);
-  await screen.findByText('Obchodník');
-  expect(screen.queryByText(/crm-sales/u)).toBeNull();
-  expect(screen.queryByText(/00000000/u)).toBeNull();
-});
+it.live('renders role chips with Czech names rather than internal keys', () =>
+  Effect.gen(function* displayRoleNames() {
+    commands.list.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          ...list,
+          items: [{ ...person, roleAssignments: [{ roleKey: 'crm-sales', scope: list.scope, tenantId }] }],
+        },
+      }),
+    );
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.promise(() => screen.findByText('Obchodník'));
+    expect(screen.queryByText(/crm-sales/u)).toBeNull();
+    expect(screen.queryByText(/00000000/u)).toBeNull();
+  }),
+);
 
-it.effect('uses Czech cardinal forms as pending changes accumulate', () =>
+it.live('uses Czech cardinal forms as pending changes accumulate', () =>
   Effect.gen(function* pendingCounts() {
     const user = userEvent.setup();
     commands.role.mockReturnValue(
@@ -209,38 +226,45 @@ it.effect('uses Czech cardinal forms as pending changes accumulate', () =>
     render(<PeoplePanel companyId={companyId} />);
     yield* Effect.forEach(
       ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
-      (expected) =>
-        Effect.promise(async () => {
-          await user.click(await screen.findByRole('button', { name: 'Spravovat role' }));
-          await user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales');
-          await user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy');
-          await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
-          await screen.findByText((text) => text.startsWith(`Zpracovává se ${expected}`));
-        }),
+      Effect.fn(function* advancePendingCount(expected: string) {
+        yield* Effect.flatMap(
+          Effect.promise(() => screen.findByRole('button', { name: 'Spravovat role' })),
+          (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+        );
+        yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales'));
+        yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy'));
+        yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Potvrdit změnu' })));
+        const matchesExpectedCount = (text: string) => text.startsWith(`Zpracovává se ${expected}`);
+        yield* Effect.promise(() => screen.findByText(matchesExpectedCount));
+      }),
       { concurrency: 1, discard: true },
     );
   }),
 );
 
-// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
-it('stacks full-width person-detail actions on narrow screens without fixed-height buttons', async () => {
-  const user = userEvent.setup();
-  render(<PeoplePanel companyId={companyId} />);
-  await user.click(await screen.findByRole('button', { name: person.displayName }));
-  const dialog = screen.getByRole('dialog');
-  const roles = within(dialog).getByRole('button', { name: 'Spravovat role' });
-  const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
-  expect(roles.parentElement).toBe(membershipAction.parentElement);
-  expect(roles.parentElement?.className).toContain('grid w-full');
-  for (const button of [roles, membershipAction]) {
-    expect(button.className).toContain('w-full');
-    expect(button.className).toContain('whitespace-normal');
-    expect(button.className).not.toMatch(/(?:^|\s)h-/u);
-  }
-});
+it.live('stacks full-width person-detail actions on narrow screens without fixed-height buttons', () =>
+  Effect.gen(function* renderResponsiveActions() {
+    const user = userEvent.setup();
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.flatMap(
+      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
+      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+    );
+    const dialog = screen.getByRole('dialog');
+    const roles = within(dialog).getByRole('button', { name: 'Spravovat role' });
+    const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
+    expect(roles.parentElement).toBe(membershipAction.parentElement);
+    expect(roles.parentElement?.className).toContain('grid w-full');
+    for (const button of [roles, membershipAction]) {
+      expect(button.className).toContain('w-full');
+      expect(button.className).toContain('whitespace-normal');
+      expect(button.className).not.toMatch(/(?:^|\s)h-/u);
+    }
+  }),
+);
 
-it.effect('refreshes a person detail from waiting to the native undeliverable receipt', () =>
-  Effect.promise(async () => {
+it.live('refreshes a person detail from waiting to the native undeliverable receipt', () =>
+  Effect.gen(function* refreshInvitationReceipt() {
     const user = userEvent.setup();
     commands.list.mockReturnValue(
       Effect.succeed({
@@ -252,8 +276,11 @@ it.effect('refreshes a person detail from waiting to the native undeliverable re
       }),
     );
     render(<PeoplePanel companyId={companyId} />);
-    await user.click(await screen.findByRole('button', { name: person.displayName }));
-    await screen.findByText('E-mail s pozvánkou: čeká na odeslání.');
+    yield* Effect.flatMap(
+      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
+      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+    );
+    yield* Effect.promise(() => screen.findByText('E-mail s pozvánkou: čeká na odeslání.'));
     commands.list.mockReturnValue(
       Effect.succeed({
         status: 'ok',
@@ -263,18 +290,23 @@ it.effect('refreshes a person detail from waiting to the native undeliverable re
         },
       }),
     );
-    await user.click(screen.getByRole('button', { name: 'Zavřít' }));
-    await user.click(screen.getByRole('button', { name: 'Obnovit seznam' }));
-    await user.click(await screen.findByRole('button', { name: person.displayName }));
-    await screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.');
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Zavřít' })));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Obnovit seznam' })));
+    yield* Effect.flatMap(
+      Effect.promise(() => screen.findByRole('button', { name: person.displayName })),
+      (awaitedValue0) => Effect.promise(() => user.click(awaitedValue0)),
+    );
+    yield* Effect.promise(() =>
+      screen.findByText('E-mail s pozvánkou: nelze doručit. Na tuto e-mailovou adresu nelze odesílat zprávy.'),
+    );
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
     expect(screen.queryByText(/undeliverable_recipient/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Poslat pozvánku znovu' })).toBeNull();
   }),
 );
 
-it.effect('loads the terminal invitation receipt on a fresh person deep link without local invite state', () =>
-  Effect.promise(async () => {
+it.live('loads the terminal invitation receipt on a fresh person deep link without local invite state', () =>
+  Effect.gen(function* loadTerminalInvitationReceipt() {
     commands.linked.mockReturnValue(
       Effect.succeed({
         status: 'ok',
@@ -285,35 +317,33 @@ it.effect('loads the terminal invitation receipt on a fresh person deep link wit
       }),
     );
     render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
-    await screen.findByText(/E-mail s pozvánkou: nelze doručit/u);
+    yield* Effect.promise(() => screen.findByText(/E-mail s pozvánkou: nelze doručit/u));
     expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
   }),
 );
 
-it.effect('distinguishes accepted mail from an unconfirmed interrupted delivery', () =>
-  Effect.gen(function* honestMailStatus() {
-    yield* Effect.forEach(
-      [
-        { delivery: { status: 'sent' }, expected: /E-mail s pozvánkou: odesláno/u },
-        { delivery: { status: 'unknown' }, expected: /E-mail s pozvánkou: doručení nelze ověřit/u },
-      ] as const,
-      ({ delivery, expected }) =>
-        Effect.promise(async () => {
-          commands.linked.mockReturnValue(
-            Effect.succeed({
-              status: 'ok',
-              value: {
-                ...list,
-                items: [{ ...person, invitationDelivery: delivery }],
-              },
-            }),
-          );
-          render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
-          await screen.findByText(expected);
-          expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
-          cleanup();
-        }),
-      { concurrency: 1, discard: true },
-    );
-  }),
+it.live('distinguishes accepted mail from an unconfirmed interrupted delivery', () =>
+  Effect.forEach(
+    [
+      { delivery: { status: 'sent' }, expected: /E-mail s pozvánkou: odesláno/u },
+      { delivery: { status: 'unknown' }, expected: /E-mail s pozvánkou: doručení nelze ověřit/u },
+    ] as const,
+    ({ delivery, expected }) =>
+      Effect.gen(function* displayDeliveryStatus() {
+        commands.linked.mockReturnValue(
+          Effect.succeed({
+            status: 'ok',
+            value: {
+              ...list,
+              items: [{ ...person, invitationDelivery: delivery }],
+            },
+          }),
+        );
+        render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
+        yield* Effect.promise(() => screen.findByText(expected));
+        expect(screen.queryByText(/čeká na odeslání/u)).toBeNull();
+        cleanup();
+      }),
+    { concurrency: 1, discard: true },
+  ),
 );
