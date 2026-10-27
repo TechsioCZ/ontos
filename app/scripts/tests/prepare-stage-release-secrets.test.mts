@@ -18,6 +18,7 @@ import type { StageReleaseSecretInput } from '../prepare-stage-release-secrets.m
 
 const SHELL = 'shell-super-app';
 const PROJECTS = 'projects';
+const BINDING_INVALID = 'binding-invalid';
 const SHARED_KEY = 'synthetic-shared-spicedb-credential';
 const PRIVATE_AUTH = 'synthetic-private-shell-auth-never-copy';
 const CONFLICTING_VALUE = 'conflicting-value';
@@ -106,6 +107,151 @@ it('renders configuration failures without inventing an owner or binding', () =>
   const error = new StageReleaseSecretPreparationError({ reason: 'configuration-invalid' });
   expect(error.message).toBe('reason=configuration-invalid');
 });
+
+it.effect('preserves an owner with no configured outbound gateway client without inventing a credential', () =>
+  Effect.gen(function* preservesUnconfiguredGatewayClient() {
+    const { bundle, input, original } = yield* fixture;
+    const existing = {
+      ...original,
+      'commerce-market-catalog': withoutKey(
+        withoutKey(bundle['commerce-market-catalog'], 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+        'ONTOS_SHELL_GATEWAY_BASE_URL',
+      ),
+    };
+    const result = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(JSON.stringify(existing)),
+    });
+    const prepared = decodeBundle(Redacted.value(result.bundle));
+    expect(withoutKey(prepared, PROJECTS)).toEqual(existing);
+    expect(prepared['commerce-market-catalog']).not.toHaveProperty('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY');
+    expect(prepared['commerce-market-catalog']).not.toHaveProperty('ONTOS_SHELL_GATEWAY_BASE_URL');
+    expect(result.repairedProjects).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('preserves Pricing native unavailable issuers without inventing a caller credential', () =>
+  Effect.gen(function* preservesUnconfiguredPricingClient() {
+    const { bundle, input } = yield* fixture;
+    const pricing = withoutKey(
+      withoutKey(bundle.pricing, 'ONTOS_PRICING_GATEWAY_API_KEY'),
+      'ONTOS_SHELL_GATEWAY_BASE_URL',
+    );
+    const result = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(JSON.stringify({ ...bundle, pricing })),
+    });
+    expect(decodeBundle(Redacted.value(result.bundle)).pricing).toEqual(pricing);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('preserves CRM native destination derivation from its trusted issuer while retaining its own key', () =>
+  Effect.gen(function* preservesCrmIssuerDestination() {
+    const { bundle, input } = yield* fixture;
+    const crm = withoutKey(bundle.crm, 'ONTOS_SHELL_GATEWAY_BASE_URL');
+    const result = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(JSON.stringify({ ...bundle, crm })),
+    });
+    expect(decodeBundle(Redacted.value(result.bundle)).crm).toEqual(crm);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('never treats a foreign CRM issuer as the trusted destination fallback', () =>
+  Effect.gen(function* rejectsForeignCrmDestination() {
+    const { bundle, input } = yield* fixture;
+    const crm = {
+      ...withoutKey(bundle.crm, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+      ONTOS_GATEWAY_ISSUER: 'https://foreign.invalid',
+    };
+    const error = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(JSON.stringify({ ...bundle, crm })),
+    }).pipe(Effect.flip);
+    expect(error.reason).toBe(BINDING_INVALID);
+    expect(error.appId).toBe('crm');
+    expect(error.binding).toBe('ONTOS_SHELL_GATEWAY_BASE_URL');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const binding of [
+  'ONTOS_GATEWAY_ISSUER',
+  'ONTOS_GATEWAY_PUBLIC_JWKS',
+  'SPICEDB_ENDPOINT',
+  'SPICEDB_PRESHARED_KEY',
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+]) {
+  it.effect(
+    `still requires the owner foundation binding ${binding} when no outbound gateway client is configured`,
+    () =>
+      Effect.gen(function* requiresFoundationBinding() {
+        const { bundle, input } = yield* fixture;
+        const owner = withoutKey(
+          withoutKey(bundle['commerce-market-catalog'], 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+          'ONTOS_SHELL_GATEWAY_BASE_URL',
+        );
+        const error = yield* prepareStageReleaseSecrets({
+          ...input,
+          bundle: Redacted.make(JSON.stringify({ ...bundle, 'commerce-market-catalog': withoutKey(owner, binding) })),
+        }).pipe(Effect.flip);
+        expect(error.reason).toBe(BINDING_INVALID);
+        expect(error.appId).toBe('commerce-market-catalog');
+        expect(error.binding).toBe(binding);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const binding of ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', 'ONTOS_SHELL_GATEWAY_BASE_URL']) {
+  it.effect(`rejects a partially configured owner gateway client with missing ${binding}`, () =>
+    Effect.gen(function* rejectsPartialGatewayClient() {
+      const { bundle, input } = yield* fixture;
+      const error = yield* prepareStageReleaseSecrets({
+        ...input,
+        bundle: Redacted.make(
+          JSON.stringify({
+            ...bundle,
+            'commerce-market-catalog': withoutKey(bundle['commerce-market-catalog'], binding),
+          }),
+        ),
+      }).pipe(Effect.flip);
+      expect(error.reason).toBe(BINDING_INVALID);
+      expect(error.appId).toBe('commerce-market-catalog');
+      expect(error.binding).toBe(binding);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const binding of ['ONTOS_PRICING_GATEWAY_API_KEY', 'ONTOS_SHELL_GATEWAY_BASE_URL']) {
+  it.effect(`rejects a partially configured Pricing client with missing ${binding}`, () =>
+    Effect.gen(function* rejectsPartialPricingClient() {
+      const { bundle, input } = yield* fixture;
+      const error = yield* prepareStageReleaseSecrets({
+        ...input,
+        bundle: Redacted.make(JSON.stringify({ ...bundle, pricing: withoutKey(bundle.pricing, binding) })),
+      }).pipe(Effect.flip);
+      expect(error.reason).toBe(BINDING_INVALID);
+      expect(error.appId).toBe('pricing');
+      expect(error.binding).toBe(binding);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('still requires the configured Commerce enrollment client instead of disabling it', () =>
+  Effect.gen(function* requiresEnrollmentClient() {
+    const { bundle, input } = yield* fixture;
+    const owner = withoutKey(
+      withoutKey(bundle['commerce-customer-context'], 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+      'ONTOS_SHELL_GATEWAY_BASE_URL',
+    );
+    const error = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(JSON.stringify({ ...bundle, 'commerce-customer-context': owner })),
+    }).pipe(Effect.flip);
+    expect(error.reason).toBe(BINDING_INVALID);
+    expect(error.appId).toBe('commerce-customer-context');
+    expect(error.binding).toBe('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect('adds only the exact five native Projects bindings while retaining every original JSON byte', () =>
   Effect.gen(function* addsProjectsOnly() {

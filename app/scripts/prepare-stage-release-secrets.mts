@@ -9,7 +9,12 @@ import { Command, Flag } from 'effect/cli';
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
 import { ApplicationReleaseIntentSchema } from './application-release-intent.mts';
 import type { ApplicationReleaseIntent } from './application-release-intent.mts';
-import { gatewayPublicJwksFor, spicedbGatewayHostname, workerSecretPlan } from './ops/cloudflare-stage-cutover.mts';
+import {
+  gatewayPublicJwksFor,
+  spicedbGatewayHostname,
+  workerReleaseSecretNames,
+  workerSecretPlan,
+} from './ops/cloudflare-stage-cutover.mts';
 import type { StageOrigins, WorkerSecretSources } from './ops/cloudflare-stage-cutover.mts';
 import { readEdgeUnits } from './ops/stage-edge-units.mts';
 import type { EdgeUnit } from './ops/stage-edge-units.mts';
@@ -264,7 +269,7 @@ const validateExistingOwners = (
       if (required === undefined) {
         return yield* failure(INVENTORY_INVALID);
       }
-      for (const binding of Object.keys(required)) {
+      for (const binding of workerReleaseSecretNames(unit, required, owner)) {
         if (!Object.hasOwn(owner, binding) || !opaqueValue(owner[binding] ?? '')) {
           return yield* bindingFailure(unit.id, binding);
         }

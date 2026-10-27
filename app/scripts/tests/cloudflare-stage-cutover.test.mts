@@ -20,6 +20,7 @@ import {
   stageBuildEnvironment,
   verifyCutover,
   vpcServiceDrift,
+  workerReleaseSecretNames,
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
@@ -941,6 +942,45 @@ const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
   });
   return Object.fromEntries([...plan].map(([worker, secrets]) => [worker, Object.keys(secrets)]));
 });
+
+it.effect(
+  'preserves the full cutover plan while distinguishing the catalog outbound client from release prerequisites',
+  () =>
+    Effect.gen(function* preservesCutoverRequirements() {
+      const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+      const names = yield* plannedSecretNames;
+      const catalog = units.find(({ id }) => id === 'commerce-market-catalog');
+      expect(catalog).toBeDefined();
+      if (catalog === undefined) {
+        return;
+      }
+      const full = names[catalog.workerName];
+      const planned = Object.fromEntries(full.map((name) => [name, Redacted.make(SHELL_ORIGIN)]));
+      const key = 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY';
+      const base = 'ONTOS_SHELL_GATEWAY_BASE_URL';
+      expect(full).toContain(key);
+      expect(full).toContain(base);
+      expect(workerReleaseSecretNames(catalog, planned, {})).toEqual(
+        full.filter((name) => name !== key && name !== base),
+      );
+      expect(workerReleaseSecretNames(catalog, planned, { [key]: 'configured' })).toEqual(full);
+      expect(workerReleaseSecretNames(catalog, planned, { [base]: SHELL_GATEWAY_BASE })).toEqual(full);
+      expect(workerReleaseSecretNames(catalog, planned, { [base]: SHELL_GATEWAY_BASE, [key]: 'configured' })).toEqual(
+        full,
+      );
+      expect(names[catalog.workerName]).toEqual(full);
+      for (const unit of units.filter(({ id }) => id !== 'commerce-market-catalog' && id !== 'pricing')) {
+        const required = names[unit.workerName];
+        const unitPlan = Object.fromEntries(required.map((name) => [name, Redacted.make(SHELL_ORIGIN)]));
+        expect(workerReleaseSecretNames(unit, unitPlan, {})).toEqual(required);
+        if (unit.id === 'crm') {
+          expect(workerReleaseSecretNames(unit, unitPlan, { ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN })).toEqual(
+            required.filter((name) => name !== base),
+          );
+        }
+      }
+    }),
+);
 
 /** Every cost guard as `provision` leaves it, with the kill switch off. */
 const guardedAccount = Effect.gen(function* guardedAccountEffect() {

@@ -555,7 +555,7 @@ jobs:
           import { Effect, Redacted, Schema } from 'effect';
           import { OntosDeploymentAppIdSchema } from './packages/core-runtime/src/modules/manifest.ts';
           import { ApplicationReleaseIntentSchema } from './scripts/application-release-intent.mts';
-          import { workerSecretPlan } from './scripts/ops/cloudflare-stage-cutover.mts';
+          import { workerReleaseSecretNames, workerSecretPlan } from './scripts/ops/cloudflare-stage-cutover.mts';
           import { readEdgeUnits } from './scripts/ops/stage-edge-units.mts';
 
           const failures = [];
@@ -602,7 +602,7 @@ jobs:
                   failures.push(`${unit.id}: missing or invalid owner secret object`);
                   continue;
                 }
-                for (const key of Object.keys(plan.get(unit.workerName))) {
+                for (const key of workerReleaseSecretNames(unit, plan.get(unit.workerName), owner)) {
                   if (!Object.hasOwn(owner, key) || typeof owner[key] !== 'string' || owner[key].trim() === '') {
                     failures.push(`${unit.id}.${key}: missing or invalid required binding`);
                   }

@@ -293,24 +293,61 @@ const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
     ['ONTOS_GATEWAY_PRIVATE_JWK', sources.gatewayPrivateJwk],
   ]);
 
+const gatewayApiKeys = new Map<string, { readonly binding: string; readonly source: keyof WorkerSecretSources }>([
+  [
+    'commerce-customer-context',
+    { binding: 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', source: 'commerceCustomerContextGatewayApiKey' },
+  ],
+  [
+    'commerce-market-catalog',
+    { binding: 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', source: 'commerceMarketCatalogGatewayApiKey' },
+  ],
+  ['crm', { binding: 'ONTOS_CRM_PARTY_INTAKE_API_KEY', source: 'crmPartyIntakeApiKey' }],
+  ['pricing', { binding: 'ONTOS_PRICING_GATEWAY_API_KEY', source: 'pricingGatewayApiKey' }],
+]);
+const SHELL_GATEWAY_BASE_URL = 'ONTOS_SHELL_GATEWAY_BASE_URL';
+
+/**
+ * Full cutover provisions every outbound client. Immutable release preserves the native unavailable
+ * client state in Market Catalog and Pricing; their dependent operations still fail closed.
+ * Configuring either binding requires both. CRM can derive its URL from the trusted stage issuer.
+ * Foundation, Shell, and the Commerce enrollment client's bindings remain mandatory.
+ */
+export const workerReleaseSecretNames = (
+  unit: EdgeUnit,
+  planned: SecretValues,
+  configured: Readonly<Record<string, string>>,
+): readonly string[] => {
+  const plannedNames = Object.keys(planned);
+  const issuer = planned.ONTOS_GATEWAY_ISSUER;
+  if (
+    unit.id === 'crm' &&
+    !Object.hasOwn(configured, SHELL_GATEWAY_BASE_URL) &&
+    issuer !== undefined &&
+    configured.ONTOS_GATEWAY_ISSUER === Redacted.value(issuer)
+  ) {
+    return plannedNames.filter((name) => name !== SHELL_GATEWAY_BASE_URL);
+  }
+  if (unit.id !== 'commerce-market-catalog' && unit.id !== 'pricing') {
+    return plannedNames;
+  }
+  const client = gatewayApiKeys.get(unit.id);
+  if (
+    client === undefined ||
+    Object.hasOwn(configured, client.binding) ||
+    Object.hasOwn(configured, SHELL_GATEWAY_BASE_URL)
+  ) {
+    return plannedNames;
+  }
+  return plannedNames.filter((name) => name !== client.binding && name !== SHELL_GATEWAY_BASE_URL);
+};
+
 const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerSecretSources) => {
   const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
-  const gatewayApiKeys = new Map<string, readonly [string, Redacted.Redacted]>([
-    [
-      'commerce-customer-context',
-      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', sources.commerceCustomerContextGatewayApiKey] as const,
-    ],
-    [
-      'commerce-market-catalog',
-      ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', sources.commerceMarketCatalogGatewayApiKey] as const,
-    ],
-    ['crm', ['ONTOS_CRM_PARTY_INTAKE_API_KEY', sources.crmPartyIntakeApiKey] as const],
-    ['pricing', ['ONTOS_PRICING_GATEWAY_API_KEY', sources.pricingGatewayApiKey] as const],
-  ]);
   const gatewayApiKey = gatewayApiKeys.get(unit.id);
   if (gatewayApiKey !== undefined) {
-    secrets.set(gatewayApiKey[0], gatewayApiKey[1]);
-    secrets.set('ONTOS_SHELL_GATEWAY_BASE_URL', Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
+    secrets.set(gatewayApiKey.binding, sources[gatewayApiKey.source]);
+    secrets.set(SHELL_GATEWAY_BASE_URL, Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
   }
   return secrets;
 };

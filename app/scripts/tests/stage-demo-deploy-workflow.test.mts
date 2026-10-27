@@ -451,8 +451,95 @@ const PROJECTS_BINDING = 'projects.SPICEDB_PRESHARED_KEY';
 const encodeBundle = (bundle: SyntheticReleaseBundle) => JSON.stringify(bundle);
 const withoutSecretName = (owner: Readonly<Record<string, string>>, key: string) =>
   Object.fromEntries(Object.entries(owner).filter(([name]) => name !== key));
+const withoutCatalogGatewayClient = (owner: Readonly<Record<string, string>>) =>
+  withoutSecretName(
+    withoutSecretName(owner, 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+    'ONTOS_SHELL_GATEWAY_BASE_URL',
+  );
 const secretInventoryExamples: readonly SecretInventoryExample[] = [
   { input: encodeBundle, name: 'complete native inventory', passes: true },
+  {
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        'commerce-market-catalog': withoutCatalogGatewayClient(bundle['commerce-market-catalog']),
+      }),
+    name: 'existing catalog without the outbound gateway client capability',
+    passes: true,
+  },
+  {
+    diagnostic: 'commerce-market-catalog.ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        'commerce-market-catalog': withoutSecretName(
+          bundle['commerce-market-catalog'],
+          'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
+        ),
+      }),
+    name: 'catalog gateway URL without its caller key',
+    passes: false,
+  },
+  {
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        pricing: withoutSecretName(
+          withoutSecretName(bundle.pricing, 'ONTOS_PRICING_GATEWAY_API_KEY'),
+          'ONTOS_SHELL_GATEWAY_BASE_URL',
+        ),
+      }),
+    name: 'existing Pricing with native unavailable outbound issuers',
+    passes: true,
+  },
+  {
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        crm: {
+          ...withoutSecretName(bundle.crm, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+          ONTOS_GATEWAY_ISSUER: TEST_STAGE_URL,
+        },
+      }),
+    name: 'CRM using its own key and trusted issuer-derived destination',
+    passes: true,
+  },
+  {
+    diagnostic: 'crm.ONTOS_SHELL_GATEWAY_BASE_URL',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        crm: {
+          ...withoutSecretName(bundle.crm, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+          ONTOS_GATEWAY_ISSUER: 'https://foreign.invalid',
+        },
+      }),
+    name: 'CRM missing both an explicit destination and a trusted issuer',
+    passes: false,
+  },
+  {
+    diagnostic: 'commerce-market-catalog.ONTOS_SHELL_GATEWAY_BASE_URL',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        'commerce-market-catalog': withoutSecretName(bundle['commerce-market-catalog'], 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+      }),
+    name: 'catalog caller key without its gateway URL',
+    passes: false,
+  },
+  {
+    diagnostic: 'commerce-market-catalog.ONTOS_GATEWAY_PUBLIC_JWKS',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        'commerce-market-catalog': withoutSecretName(
+          withoutCatalogGatewayClient(bundle['commerce-market-catalog']),
+          'ONTOS_GATEWAY_PUBLIC_JWKS',
+        ),
+      }),
+    name: 'catalog without the mandatory inbound gateway verifier',
+    passes: false,
+  },
   {
     diagnostic: 'projects',
     input: (bundle) => JSON.stringify(Object.fromEntries(Object.entries(bundle).filter(([id]) => id !== 'projects'))),
