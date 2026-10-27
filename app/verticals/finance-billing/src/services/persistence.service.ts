@@ -1115,8 +1115,9 @@ const handleMarkInvoicesPrepared = Effect.fn('Finance.handleMarkInvoicesPrepared
     command.invoiceRefs,
     (ref) =>
       findInvoice(context.state, ref, context.scope).pipe(
-        Effect.flatMap((invoice): Effect.Effect<Invoice, FinanceConflict> =>
-          invoice.businessState === 'DRAFT' ? Effect.succeed(invoice) : Effect.fail(conflict('prepare_requires_draft')),
+        Effect.filterOrFail(
+          (invoice) => invoice.businessState === 'DRAFT',
+          () => conflict('prepare_requires_draft'),
         ),
       ),
     { concurrency: 1 },
