@@ -1,5 +1,4 @@
 import { PropertyEquipment, RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
-import { UnitRefSchema } from '../../../../shared/resources/unit.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -12,14 +11,15 @@ import { executeRecords as readFinance } from '@app/finance-billing/clients/reco
 import { executeRecords as readWork } from '@app/work-tasks/clients/records';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
+import { DateTime, Effect, Match, Random, Result, Schema } from 'effect';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { listEmployees } from '@app/workforce/clients/records';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { usePropertyEditor } from './use-property-editor.ts';
-import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import type { LeaseBlock } from './unit-story.tsx';
 import { executeRecords } from '../../../api/records-client';
@@ -28,113 +28,40 @@ import { browserRuntime } from '../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-portfolio.json';
 import enResource from '../../../../locales/en/property-portfolio.json';
+import { projectPropertyRelatedRecords } from './property-relations.ts';
+import {
+  PropertySearchInputSchema,
+  propertyRecordVisible,
+  propertySelection,
+  propertyTabs,
+  readPropertySearch,
+  selectedPropertyTab,
+  selectPropertyResource,
+} from './property-navigation.ts';
+import type { PropertySearch, PropertyTab } from './property-navigation.ts';
+import { PropertyWorkspace } from './property-workspace.tsx';
+import csWorkspace from '../../../../locales/cs/property-workspace.json';
+import enWorkspace from '../../../../locales/en/property-workspace.json';
 import '../../index.css';
 
 const currencyFormatters = {
   cs: new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }),
   en: new Intl.NumberFormat('en-GB', { currency: 'CZK', style: 'currency' }),
 };
-const searchSchema = Schema.Struct({
-  resourceId: Schema.optional(UnitRefSchema.fields.resourceId.check(Schema.isUUID())),
-});
 const propertyPortfolioI18nResources = {
-  cs: { 'property-portfolio': csResource },
-  en: { 'property-portfolio': enResource },
+  cs: { 'property-portfolio': csResource, 'property-workspace': csWorkspace },
+  en: { 'property-portfolio': enResource, 'property-workspace': enWorkspace },
 } as const;
 
-type Agreements = Effect.Success<ReturnType<typeof readAgreements>>;
-type Occupancies = Effect.Success<ReturnType<typeof readOccupancy>>;
-type Work = Effect.Success<ReturnType<typeof readWork>>;
-interface RelatedSources {
-  readonly agreements?:
-    | {
-        readonly contracts: readonly Pick<
-          Agreements['contracts'][number],
-          'contractRef' | 'endDate' | 'lifecycleState' | 'propertyRef' | 'startDate' | 'unitRef'
-        >[];
-        readonly documents: readonly Pick<
-          Agreements['documents'][number],
-          'contractRef' | 'documentRef' | 'fileName' | 'signedDocumentReference' | 'title'
-        >[];
-      }
-    | undefined;
-  readonly assets: readonly Pick<RecordsResponse['assets'][number], 'assetRef'>[];
-  readonly occupancy?:
-    | {
-        readonly occupancies: readonly Pick<
-          Occupancies['occupancies'][number],
-          'endDate' | 'occupancyRef' | 'startDate' | 'state' | 'unitRef'
-        >[];
-      }
-    | undefined;
-  readonly property?: Pick<RecordsResponse['properties'][number], 'propertyRef'> | undefined;
-  readonly units: readonly Pick<RecordsResponse['units'][number], 'unitRef'>[];
-  readonly work?:
-    | { readonly items: readonly Pick<Work['items'][number], 'contextRefs' | 'ref' | 'title'>[] }
-    | undefined;
-}
-export const projectPropertyRelatedRecords = ({
-  agreements,
-  assets,
-  occupancy,
-  property,
-  units,
-  work,
-}: RelatedSources) => {
-  const activeOccupancies =
-    occupancy?.occupancies.filter(
-      (item) =>
-        item.state === 'ACTIVE' &&
-        units.some(
-          (record) =>
-            record.unitRef.tenantId === item.unitRef.tenantId && record.unitRef.resourceId === item.unitRef.resourceId,
-        ),
-    ) ?? [];
-  const propertyContracts =
-    agreements?.contracts.filter(
-      (item) =>
-        property !== undefined &&
-        ((item.propertyRef?.tenantId === property.propertyRef.tenantId &&
-          item.propertyRef.resourceId === property.propertyRef.resourceId) ||
-          (item.propertyRef === null &&
-            units.some(
-              (record) =>
-                record.unitRef.tenantId === item.unitRef?.tenantId &&
-                record.unitRef.resourceId === item.unitRef.resourceId,
-            ))),
-    ) ?? [];
-  const propertyDocuments =
-    agreements?.documents.filter((item) =>
-      propertyContracts.some(
-        (record) =>
-          record.contractRef.tenantId === item.contractRef?.tenantId &&
-          record.contractRef.resourceId === item.contractRef.resourceId,
-      ),
-    ) ?? [];
-  const propertyTasks =
-    work?.items.filter((item) =>
-      item.contextRefs.some((reference) =>
-        [
-          ...(property === undefined ? [] : [property.propertyRef]),
-          ...units.map((record) => record.unitRef),
-          ...assets.map((record) => record.assetRef),
-        ].some(
-          (owned) =>
-            reference.tenantId === owned.tenantId &&
-            reference.moduleId === owned.moduleId &&
-            reference.resourceType === owned.resourceType &&
-            reference.resourceId === owned.resourceId,
-        ),
-      ),
-    ) ?? [];
-  return { activeOccupancies, propertyContracts, propertyDocuments, propertyTasks };
-};
+export { projectPropertyRelatedRecords } from './property-relations.ts';
 interface RecordsInput {
   readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
 }
 /** The register of buildings, units and assets (archived included); the selection only filters it. */
 const propertyRecords = definePageData({
-  key: (input: RecordsInput) => input.legalEntityId,
+  key: (input: RecordsInput) => `${input.tenantId}:${input.legalEntityId}:${input.principalId}`,
   load: () =>
     Effect.all(
       {
@@ -147,50 +74,102 @@ const propertyRecords = definePageData({
     ),
   runtime: browserRuntime,
 });
+interface SummaryInput extends RecordsInput {
+  readonly propertyId: string;
+  readonly revision: number;
+}
+const propertySummary = definePageData({
+  key: (input: SummaryInput) =>
+    `${input.tenantId}:${input.legalEntityId}:${input.principalId}:${input.propertyId}:${input.revision}`,
+  load: (input: SummaryInput) => {
+    const requestId = Random.nextInt.pipe(Effect.map((id) => `property-portfolio.summary:${id}`));
+    return Effect.all(
+      {
+        agreements: requestId.pipe(
+          Effect.flatMap((id) => readAgreements({}, id)),
+          Effect.result,
+        ),
+        finance: requestId.pipe(
+          Effect.flatMap((id) => readFinance({ propertyId: input.propertyId }, id)),
+          Effect.result,
+        ),
+        occupancy: requestId.pipe(
+          Effect.flatMap((id) => readOccupancy({}, id)),
+          Effect.result,
+        ),
+        work: requestId.pipe(
+          Effect.flatMap((id) => readWork({}, id)),
+          Effect.result,
+        ),
+      },
+      { concurrency: 4 },
+    );
+  },
+  runtime: browserRuntime,
+});
 const recordsInput = (context: ModulePageProps['context']): RecordsInput => ({
   legalEntityId: context?.legalEntityId ?? '',
+  principalId: context?.principalId ?? '',
+  tenantId: context?.tenantId ?? '',
 });
 export const preloadPage = modulePagePreload((props) => propertyRecords.preload(recordsInput(props.context)));
-interface Selection {
-  readonly assetId: string;
-  readonly propertyId: string;
-  readonly unitId: string;
-}
-const noSelection: Selection = { assetId: '', propertyId: '', unitId: '' };
-/** The URL's resourceId names a building, a unit or an asset; a unit or an asset also selects its building. */
-const selectionFor = (records: RecordsResponse | undefined, resourceId: string | undefined): Selection => {
-  if (records === undefined || resourceId === undefined) {
-    return noSelection;
-  }
-  const selectedUnit = records.units.find((item) => item.unitRef.resourceId === resourceId);
-  const selectedAsset = records.assets.find((item) => item.assetRef.resourceId === resourceId);
-  const selectedProperty = records.properties.find((item) => item.propertyRef.resourceId === resourceId);
-  return {
-    assetId: selectedAsset?.assetRef.resourceId ?? '',
-    propertyId:
-      selectedProperty?.propertyRef.resourceId ??
-      selectedUnit?.propertyRef.resourceId ??
-      selectedAsset?.propertyRef.resourceId ??
-      '',
-    unitId: selectedUnit?.unitRef.resourceId ?? '',
-  };
-};
-const usePropertyRecords = (legalEntityId: string) => {
-  const { language, t } = useModernI18n();
-  const rawSearch: unknown = useRouterState().location.search;
-  const search = Schema.is(Schema.toEncoded(searchSchema))(rawSearch)
-    ? Schema.decodeOption(searchSchema)(rawSearch)
-    : Option.none();
-  const resourceId = Option.getOrUndefined(search)?.resourceId;
-  const key = 'property-portfolio.pages.records';
+const usePropertySummary = (input: SummaryInput) => {
+  const { legalEntityId, principalId, propertyId, revision, tenantId } = input;
   const snapshot = useSyncExternalStore(
-    propertyRecords.subscribe,
-    () => propertyRecords.snapshot({ legalEntityId }),
+    propertySummary.subscribe,
+    () => (propertyId === '' ? pageDataPending : propertySummary.snapshot(input)),
     () => pageDataPending,
   );
   useEffect(() => {
-    propertyRecords.ensure({ legalEntityId });
-  }, [legalEntityId]);
+    if (propertyId !== '') {
+      propertySummary.ensure({ legalEntityId, principalId, propertyId, revision, tenantId });
+    }
+  }, [legalEntityId, tenantId, principalId, propertyId, revision]);
+  const summary = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const summaryFailures: string[] = [];
+  if (summary !== undefined) {
+    if (Result.isFailure(summary.agreements)) {
+      summaryFailures.push('agreementsUnavailable');
+    }
+    if (Result.isFailure(summary.finance)) {
+      summaryFailures.push('financeUnavailable');
+    }
+    if (Result.isFailure(summary.occupancy)) {
+      summaryFailures.push('occupancyUnavailable');
+    }
+    if (Result.isFailure(summary.work)) {
+      summaryFailures.push('tasksUnavailable');
+    }
+  }
+  return {
+    agreements: summary === undefined ? undefined : Result.getOrUndefined(summary.agreements),
+    finance: summary === undefined ? undefined : Result.getOrUndefined(summary.finance),
+    loadSummary: () => {
+      if (propertyId !== '') {
+        browserRuntime.runFork(propertySummary.refresh(input));
+      }
+    },
+    occupancy: summary === undefined ? undefined : Result.getOrUndefined(summary.occupancy),
+    summaryFailures,
+    summaryPending: propertyId !== '' && (snapshot.state === 'pending' || snapshot.refreshing),
+    work: summary === undefined ? undefined : Result.getOrUndefined(summary.work),
+  };
+};
+const usePropertyRecords = (input: RecordsInput) => {
+  const { legalEntityId, principalId, tenantId } = input;
+  const { language, t } = useModernI18n();
+  const rawSearch: unknown = useRouterState().location.search;
+  const search = readPropertySearch(Schema.is(PropertySearchInputSchema)(rawSearch) ? rawSearch : null);
+  const { resourceId } = search;
+  const key = 'property-portfolio.pages.records';
+  const snapshot = useSyncExternalStore(
+    propertyRecords.subscribe,
+    () => propertyRecords.snapshot(input),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    propertyRecords.ensure({ legalEntityId, principalId, tenantId });
+  }, [legalEntityId, tenantId, principalId]);
   const records = snapshot.state === 'ready' ? snapshot.value.records : undefined;
   const employees = snapshot.state === 'ready' ? Result.getOrUndefined(snapshot.value.employees) : undefined;
   const employeesMessage =
@@ -208,101 +187,38 @@ const usePropertyRecords = (legalEntityId: string) => {
           Match.orElse(() => t(`${key}.unavailable`)),
         )
       : '';
-  // A click shows its selection at once; the URL (and with it this page, keyed by location) follows right after.
-  const [selection, setSelection] = useState<Selection>();
-  const { assetId, propertyId, unitId } = selection ?? selectionFor(records, resourceId);
+  const { assetId, propertyId, unitId } = propertySelection(records, resourceId);
   const navigate = useNavigate();
-  const selectResource = (id: string) => {
-    void navigate({ replace: true, search: { resourceId: id }, to: '.' });
+  const updateSearch = (next: PropertySearch) => {
+    void navigate({ search: next, to: '.' });
   };
-  const setUnitId = (selectedUnitId: string) => {
-    setSelection({ assetId: '', propertyId, unitId: selectedUnitId });
-    selectResource(selectedUnitId || propertyId);
-  };
-  const setAssetId = (selectedAssetId: string) => {
-    setSelection({ assetId: selectedAssetId, propertyId, unitId: '' });
-    selectResource(selectedAssetId || propertyId);
-  };
-  const [summaryPending, setSummaryPending] = useState(false);
-  const [summary, setSummary] = useState<{
-    readonly agreements?: Effect.Success<ReturnType<typeof readAgreements>> | undefined;
-    readonly finance?: Effect.Success<ReturnType<typeof readFinance>> | undefined;
-    readonly occupancy?: Effect.Success<ReturnType<typeof readOccupancy>> | undefined;
-    readonly work?: Effect.Success<ReturnType<typeof readWork>> | undefined;
-  }>({});
-  const { agreements, finance, occupancy, work } = summary;
-  const [summaryMessage, setSummaryMessage] = useState('');
-  const selectProperty = (selectedPropertyId: string) => {
-    selectResource(selectedPropertyId);
-    setSelection({ assetId: '', propertyId: selectedPropertyId, unitId: '' });
-    setSummary({});
-    setSummaryMessage('');
-  };
-  const refresh = () => {
-    void browserRuntime.runPromise(propertyRecords.refresh({ legalEntityId }));
+  const selectResource = (id: string | undefined) => {
+    const next = selectPropertyResource(search, id);
+    if (id !== undefined) {
+      const target = propertySelection(records, id);
+      if (target.propertyId === '') {
+        delete next.tab;
+      } else {
+        next.tab = selectedPropertyTab(search, target.unitId !== '', target.assetId !== '');
+      }
+    }
+    updateSearch(next);
   };
   const property = records?.properties.find((item) => item.propertyRef.resourceId === propertyId);
   const units = records?.units.filter((item) => item.propertyRef.resourceId === propertyId) ?? [];
   const assets = records?.assets.filter((item) => item.propertyRef.resourceId === propertyId) ?? [];
   const unit = units.find((item) => item.unitRef.resourceId === unitId);
   const asset = assets.find((item) => item.assetRef.resourceId === assetId);
+  const { agreements, finance, loadSummary, occupancy, summaryFailures, summaryPending, work } = usePropertySummary({
+    ...input,
+    propertyId,
+    revision: records?.revision ?? 0,
+  });
+  const summaryMessage = summaryFailures.map((failure) => t(`${key}.${failure}`)).join(' · ');
   const ownerHref = (owner: string, id: string) => `/${language ?? 'cs'}/${owner}?resourceId=${encodeURIComponent(id)}`;
-  const loadSummary = () => {
-    if (property === undefined) {
-      return;
-    }
-    setSummaryPending(true);
-    setSummary({});
-    const requestId = Random.nextInt.pipe(Effect.map((id) => `property-portfolio.summary:${id}`));
-    void browserRuntime.runPromise(
-      Effect.all(
-        {
-          agreements: requestId.pipe(
-            Effect.flatMap((id) => readAgreements({}, id)),
-            Effect.result,
-          ),
-          finance: requestId.pipe(
-            Effect.flatMap((id) => readFinance({ propertyId: property.propertyRef.resourceId }, id)),
-            Effect.result,
-          ),
-          occupancy: requestId.pipe(
-            Effect.flatMap((id) => readOccupancy({}, id)),
-            Effect.result,
-          ),
-          work: requestId.pipe(
-            Effect.flatMap((id) => readWork({}, id)),
-            Effect.result,
-          ),
-        },
-        { concurrency: 4 },
-      ).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            setSummary({
-              agreements: Result.getOrUndefined(result.agreements),
-              finance: Result.getOrUndefined(result.finance),
-              occupancy: Result.getOrUndefined(result.occupancy),
-              work: Result.getOrUndefined(result.work),
-            });
-            const unavailable: string[] = [];
-            if (Result.isFailure(result.agreements)) {
-              unavailable.push(t(`${key}.agreementsUnavailable`));
-            }
-            if (Result.isFailure(result.occupancy)) {
-              unavailable.push(t(`${key}.occupancyUnavailable`));
-            }
-            if (Result.isFailure(result.finance)) {
-              unavailable.push(t(`${key}.financeUnavailable`));
-            }
-            if (Result.isFailure(result.work)) {
-              unavailable.push(t(`${key}.tasksUnavailable`));
-            }
-            setSummaryMessage(unavailable.join(' · '));
-            setSummaryPending(false);
-          }),
-        ),
-      ),
-    );
+  const refresh = () => {
+    browserRuntime.runFork(propertyRecords.refresh(input));
+    loadSummary();
   };
   const referenceDate = pragueToday();
   const availability = (id: string) => {
@@ -310,6 +226,7 @@ const usePropertyRecords = (legalEntityId: string) => {
       occupancy?.occupancies.filter(
         (item) =>
           item.unitRef.resourceId === id &&
+          item.unitRef.tenantId === property?.propertyRef.tenantId &&
           item.startDate <= referenceDate &&
           (item.endDate === null || referenceDate < item.endDate),
       ) ?? [];
@@ -325,6 +242,7 @@ const usePropertyRecords = (legalEntityId: string) => {
     assets,
     occupancy,
     property,
+    unit,
     units,
     work,
   });
@@ -340,6 +258,7 @@ const usePropertyRecords = (legalEntityId: string) => {
           t(`${key}.occupancyStates.${item.state}`),
         ].join(' · '),
       })),
+      kind: 'leases' as const,
       title: t(`${key}.occupancies`),
     },
     {
@@ -352,6 +271,7 @@ const usePropertyRecords = (legalEntityId: string) => {
           t(`${key}.agreementStates.${item.lifecycleState}`),
         ].join(' · '),
       })),
+      kind: 'agreements' as const,
       title: t(`${key}.agreements`),
     },
     {
@@ -360,27 +280,17 @@ const usePropertyRecords = (legalEntityId: string) => {
         href: ownerHref('smlouvy', item.contractRef?.resourceId ?? ''),
         label: [item.title, item.fileName].filter(Boolean).join(' · '),
       })),
+      kind: 'documents' as const,
       title: t(`${key}.documents`),
     },
     {
       enabled: work !== undefined,
       items: propertyTasks.map((item) => ({ href: ownerHref('ukoly', item.ref.resourceId), label: item.title })),
+      kind: 'tasks' as const,
       title: t(`${key}.tasks`),
     },
   ];
   const tables = [
-    {
-      kind: 'properties',
-      rows: (records?.properties ?? []).map((item) => ({
-        archived: item.archive !== undefined,
-        code: item.code,
-        id: item.propertyRef.resourceId,
-        name: item.name,
-        property: item,
-        state: item.lifecycleState,
-      })),
-      select: selectProperty,
-    },
     {
       kind: 'units',
       rows: units.map((item) => ({
@@ -391,19 +301,26 @@ const usePropertyRecords = (legalEntityId: string) => {
         property: null,
         state: item.lifecycleState,
       })),
-      select: setUnitId,
+      select: selectResource,
     },
     {
       kind: 'assets',
-      rows: assets.map((item) => ({
-        archived: property?.archive !== undefined,
-        code: item.code,
-        id: item.assetRef.resourceId,
-        name: item.name,
-        property: null,
-        state: item.lifecycleState,
-      })),
-      select: setAssetId,
+      rows: assets.flatMap((item) =>
+        unit === undefined ||
+        (item.unitRef?.resourceId === unit.unitRef.resourceId && item.unitRef.tenantId === unit.unitRef.tenantId)
+          ? [
+              {
+                archived: property?.archive !== undefined,
+                code: item.code,
+                id: item.assetRef.resourceId,
+                name: item.name,
+                property: null,
+                state: item.lifecycleState,
+              },
+            ]
+          : [],
+      ),
+      select: selectResource,
     },
   ];
   return {
@@ -427,25 +344,21 @@ const usePropertyRecords = (legalEntityId: string) => {
     recordsLoading,
     refresh,
     relatedSections,
-    selectProperty,
-    setAssetId,
-    setUnitId,
+    search,
+    selectResource,
     summaryMessage,
     t,
     tables,
     unit,
     units,
+    updateSearch,
     work,
   };
 };
 const secondaryTextClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
-const detailCardClass =
-  'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5';
-const relatedCardClass =
-  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
-const detailHeadingClass = 'propertyportfolio:text-sm propertyportfolio:font-semibold';
+const relatedCardClass = 'propertyportfolio:min-w-0 propertyportfolio:space-y-250';
+const detailHeadingClass = 'propertyportfolio:font-semibold';
 const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
-const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
 type RecordsModel = ReturnType<typeof usePropertyRecords>;
@@ -549,372 +462,422 @@ const unitLeaseBlock = (
 const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model } = view;
   const { key, t } = model;
-  const selectedEmployeeIds = new Set(editor.draft?.responsibleEmployeeIds);
+  const { draft } = editor;
+  const selectedEmployeeIds = new Set(draft?.responsibleEmployeeIds);
   const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
-  const handleCancelEditor = editor.cancel;
+  if (draft === undefined) {
+    return null;
+  }
+  const propertyDraft = draft.unitFor === undefined && draft.unit === undefined;
   return (
-    editor.draft !== undefined && (
+    <Dialog
+      actions={
+        <>
+          <Button disabled={editor.busy} onClick={() => editor.cancel()} theme="outlined" variant="secondary">
+            {t(`${key}.editor.cancel`)}
+          </Button>
+          <Button
+            disabled={editor.busy || editor.blocked || (propertyDraft && model.employees === undefined)}
+            form="property-record-editor"
+            isLoading={editor.busy}
+            type="submit"
+            variant="primary"
+          >
+            {t(`${key}.editor.save`)}
+          </Button>
+        </>
+      }
+      closeLabel={t(`${key}.editor.cancel`)}
+      customTrigger
+      onOpenChange={({ open }) => {
+        if (!open && !editor.busy) {
+          editor.cancel();
+        }
+      }}
+      open
+      size="lg"
+      title={
+        draft.unitFor === undefined
+          ? t(`${key}.editor.${editor.title}`, { name: draft.unit?.name ?? draft.property?.name ?? '' })
+          : t(`${key}.editor.createUnitIn`, { name: draft.unitFor.name })
+      }
+    >
       <form
-        className={`${detailCardClass} sp-property-editor`}
+        className="propertyportfolio:grid propertyportfolio:gap-250"
+        id="property-record-editor"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
           editor.save();
         }}
       >
-        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-          {t(`${key}.editor.${editor.title}`)}
-        </h2>
-        {editor.fields.map((field) =>
-          field === 'responsibleEmployeeIds' ? (
-            <Combobox
-              allowCustomValue={false}
-              closeOnSelect={false}
-              disabled={editor.busy}
-              error={model.employeesMessage || undefined}
-              id="property-responsible-employees"
-              items={[
-                ...(model.employees ?? []).flatMap((employee) =>
-                  employee.active || selectedEmployeeIds.has(employee.id)
-                    ? [{ label: employee.fullName, value: employee.id }]
-                    : [],
-                ),
-                ...(editor.draft?.responsibleEmployeeIds ?? []).flatMap((id) =>
-                  availableEmployeeIds.has(id)
-                    ? []
-                    : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
-                ),
-              ]}
-              key={field}
-              label={t(`${key}.editor.responsiblePerson`)}
-              loading={model.recordsLoading}
-              loadingMessage={t(`${key}.editor.employeesLoading`)}
-              multiple
-              name="responsibleEmployeeIds"
-              noResultsMessage={t(`${key}.editor.employeesEmpty`)}
-              onChange={(value) => editor.changeResponsibleEmployees(value)}
-              onRetry={() => model.refresh()}
-              openOnClick
-              placeholder={t(`${key}.editor.employeesPlaceholder`)}
-              required
-              retryLabel={t(`${key}.editor.employeesRetry`)}
-              value={[...(editor.draft?.responsibleEmployeeIds ?? [])]}
-              {...(editor.errors.responsibleEmployeeIds === undefined
-                ? {}
-                : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
-            />
-          ) : (
+        {editor.fields.map((field) => {
+          if (field === 'responsibleEmployeeIds') {
+            return (
+              <Combobox
+                allowCustomValue={false}
+                closeOnSelect={false}
+                disabled={editor.busy}
+                error={model.employeesMessage}
+                id="property-responsible-employees"
+                items={[
+                  ...(model.employees ?? []).flatMap((employee) =>
+                    employee.active || selectedEmployeeIds.has(employee.id)
+                      ? [{ label: employee.fullName, value: employee.id }]
+                      : [],
+                  ),
+                  ...(draft.responsibleEmployeeIds ?? []).flatMap((id) =>
+                    availableEmployeeIds.has(id)
+                      ? []
+                      : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
+                  ),
+                ]}
+                key={field}
+                label={t(`${key}.editor.responsiblePerson`)}
+                loading={model.recordsLoading}
+                loadingMessage={t(`${key}.editor.employeesLoading`)}
+                multiple
+                name="responsibleEmployeeIds"
+                noResultsMessage={t(`${key}.editor.employeesEmpty`)}
+                onChange={(value) => editor.changeResponsibleEmployees(value)}
+                onRetry={() => model.refresh()}
+                openOnClick
+                placeholder={t(`${key}.editor.employeesPlaceholder`)}
+                required
+                retryLabel={t(`${key}.editor.employeesRetry`)}
+                value={[...draft.responsibleEmployeeIds]}
+                {...(editor.errors.responsibleEmployeeIds === undefined
+                  ? {}
+                  : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
+              />
+            );
+          }
+          if (field === 'note') {
+            return (
+              <FormTextarea
+                disabled={editor.busy}
+                id="property-note"
+                key={field}
+                label={t(`${key}.editor.note`)}
+                onChange={(event) => editor.change('note', event.target.value)}
+                value={draft.note}
+              />
+            );
+          }
+          return (
             <FormInput
-              disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
+              disabled={editor.busy || (field === 'code' && draft.property !== undefined)}
               id={`property-${field}`}
               key={field}
               label={t(`${key}.editor.${field}`)}
               onChange={(event) => editor.change(field, event.target.value)}
-              required={field !== 'note'}
-              value={editor.draft?.[field] ?? ''}
+              required
+              value={draft[field]}
               {...(editor.errors[field] === undefined
                 ? {}
-                : { helpText: editor.errors[field], validateStatus: 'error' as const })}
+                : {
+                    helpText: t(`${key}.editor.${editor.errors[field]}`, { field: t(`${key}.editor.${field}`) }),
+                    validateStatus: 'error' as const,
+                  })}
             />
-          ),
+          );
+        })}
+        {propertyDraft && (
+          <Combobox
+            allowCustomValue={false}
+            disabled={editor.busy}
+            id="property-lifecycle"
+            items={(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((value) => ({
+              label: t(`${key}.states.${value}`),
+              value,
+            }))}
+            label={t(`${key}.state`)}
+            onChange={(value) => editor.changeLifecycle(Array.isArray(value) ? (value[0] ?? '') : value)}
+            value={[draft.lifecycleState]}
+          />
         )}
-        {editor.draft.unitFor === undefined && (
-          <label className="sp-property-state">
-            {t(`${key}.state`)}
-            <select
-              aria-label={t(`${key}.state`)}
-              onChange={(event) => editor.changeLifecycle(event.target.value)}
-              value={editor.draft.lifecycleState}
-            >
-              {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
-                <option key={state} value={state}>
-                  {t(`${key}.states.${state}`)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="sp-property-editor-actions propertyportfolio:flex propertyportfolio:gap-3">
-          <Button disabled={editor.busy} type="submit" variant="warning">
-            {t(`${key}.editor.save`)}
-          </Button>
-          <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
-            {t(`${key}.editor.cancel`)}
-          </Button>
-        </div>
+        {editor.feedback !== undefined && <output>{t(`${key}.editor.${editor.feedback}`)}</output>}
       </form>
-    )
+    </Dialog>
   );
 };
 
-const RecordsTables = ({
-  showArchived,
-  showClosed,
-  view,
-}: {
-  readonly showArchived: boolean;
-  readonly showClosed: boolean;
-  readonly view: RecordsView;
-}) => {
+const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; readonly view: RecordsView }) => {
   const { availabilityLabel, editor, model } = view;
-  const { key, t, unit } = model;
-  return model.tables.flatMap((group) =>
-    (group.kind !== 'properties' && model.property === undefined) ||
-    (group.kind === 'assets' && group.rows.length === 0)
-      ? []
-      : [
-          <div className={tableWrapperClass} key={group.kind}>
-            <Table className="propertyportfolio:w-full" size="sm" variant="line">
-              <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
-              <Table.Header>
-                <Table.Row>
-                  {['code', 'name', 'state', 'detail'].map((column) => (
-                    <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                  ))}
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {group.rows.flatMap((item) => {
-                  const visible =
-                    (showArchived || !item.archived) &&
-                    (showClosed ||
-                      group.kind === 'assets' ||
-                      ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
-                      item.id === model.property?.propertyRef.resourceId ||
-                      item.id === unit?.unitRef.resourceId);
-                  if (!visible) {
-                    return [];
-                  }
-                  return [
-                    <Table.Row key={item.id}>
-                      <Table.Cell>{item.code}</Table.Cell>
-                      <Table.Cell>{item.name}</Table.Cell>
-                      <Table.Cell>
-                        <span className="propertyportfolio:inline-flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2">
-                          <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
-                            {t(`${key}.states.${item.state}`)}
-                          </Badge>
-                          {item.archived && (
-                            <Badge size="sm" variant="secondary">
-                              Archivováno
-                            </Badge>
-                          )}
-                          {group.kind === 'units' && (
-                            <span className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</span>
-                          )}
-                        </span>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <div className="sp-property-row-actions">
-                          <Button
-                            disabled={model.pending || editor.busy}
-                            onClick={() => group.select(item.id)}
-                            size="sm"
-                            theme="outlined"
-                            variant="secondary"
-                          >
-                            {t(`${key}.detail`)}
-                          </Button>
-                          {item.property !== null && (
-                            <Button
-                              disabled={editor.busy}
-                              onClick={() => editor.begin(item.property)}
-                              size="sm"
-                              theme="outlined"
-                              variant="secondary"
-                            >
-                              {t(`${key}.editor.edit`)}
-                            </Button>
-                          )}
-                        </div>
-                      </Table.Cell>
-                    </Table.Row>,
-                  ];
-                })}
-              </Table.Body>
-            </Table>
-          </div>,
-        ],
+  const { key, t } = model;
+  const group = model.tables.find((item) => item.kind === kind);
+  const rows =
+    group?.rows.filter((item) =>
+      propertyRecordVisible(
+        {
+          archived: item.archived,
+          closed: kind === 'units' && item.state === 'RETIRED',
+          selected: item.id === model.search.resourceId || item.id === model.unit?.unitRef.resourceId,
+        },
+        model.search,
+      ),
+    ) ?? [];
+  if (rows.length === 0) {
+    return kind === 'units' ? <p>{t(`${key}.noUnits`)}</p> : null;
+  }
+  return (
+    <div className={tableWrapperClass}>
+      <Table size="sm" variant="line">
+        <Table.Caption className="propertyportfolio:sr-only">{t(`${key}.${kind}`)}</Table.Caption>
+        <Table.Header>
+          <Table.Row>
+            {['code', 'name', 'state', 'detail'].map((column) => (
+              <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
+            ))}
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {rows.map((item) => (
+            <Table.Row key={item.id}>
+              <Table.Cell>{item.code}</Table.Cell>
+              <Table.Cell>{item.name}</Table.Cell>
+              <Table.Cell>
+                <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                  {t(`${key}.states.${item.state}`)}
+                </Badge>
+                {item.archived && (
+                  <Badge size="sm" variant="secondary">
+                    {t(`${key}.archived`)}
+                  </Badge>
+                )}
+                {kind === 'units' && <p className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</p>}
+              </Table.Cell>
+              <Table.Cell>
+                <Button
+                  disabled={editor.busy}
+                  onClick={() => model.selectResource(item.id)}
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  {t(`${key}.detail`)}
+                </Button>
+              </Table.Cell>
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    </div>
   );
 };
 
 const RecordsUnitActions = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model, requestArchive, requestRetire } = view;
-  const { unit } = model;
+  const { key, t, unit } = model;
+  const disabled = editor.busy || editor.blocked;
   if (unit === undefined) {
     return null;
   }
-  const unitArchive = unit.archive ?? model.property?.archive;
+  const archived = unit.archive ?? model.property?.archive;
   return (
-    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-      {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
+    <>
+      {archived === undefined && (
+        <Button disabled={disabled} onClick={() => editor.beginUnitEdit(unit)} theme="outlined" variant="secondary">
+          {t(`${key}.editor.editUnit`, { name: unit.name })}
+        </Button>
+      )}
+      {unit.lifecycleState === 'RETIRED' && archived === undefined && (
         <Button
-          disabled={editor.busy}
-          onClick={() => {
-            requestArchive(`jednotku ${unit.code}`, (reason) => editor.archiveUnit(unit, reason));
-          }}
-          size="sm"
+          disabled={disabled}
+          onClick={() =>
+            requestArchive(t(`${key}.unitLabel`, { code: unit.code }), (reason) => editor.archiveUnit(unit, reason))
+          }
           theme="outlined"
           variant="danger"
         >
-          Archivovat jednotku
+          {t(`${key}.archiveUnit`)}
         </Button>
       )}
       {unit.archive !== undefined && model.property?.archive === undefined && (
-        <Button
-          disabled={editor.busy}
-          onClick={() => editor.restoreUnit(unit)}
-          size="sm"
-          theme="outlined"
-          variant="secondary"
-        >
-          Obnovit z archivu
+        <Button disabled={disabled} onClick={() => editor.restoreUnit(unit)} theme="outlined" variant="secondary">
+          {t(`${key}.restore`)}
         </Button>
       )}
-      {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
+      {archived === undefined && unit.lifecycleState === 'ACTIVE' && (
         <Button
-          disabled={editor.busy}
+          disabled={disabled}
           onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
-          size="sm"
           theme="outlined"
           variant="secondary"
         >
-          Dočasně mimo provoz
+          {t(`${key}.setOutOfService`)}
         </Button>
       )}
-      {unitArchive === undefined &&
+      {archived === undefined &&
         unit.lifecycleState === 'OUT_OF_SERVICE' &&
         model.property?.lifecycleState !== 'DISPOSED' && (
           <Button
-            disabled={editor.busy}
+            disabled={disabled}
             onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
-            size="sm"
             theme="outlined"
             variant="secondary"
           >
-            Vrátit do provozu
+            {t(`${key}.returnToService`)}
           </Button>
         )}
-      {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
+      {archived === undefined && unit.lifecycleState !== 'RETIRED' && (
+        <Button disabled={disabled} onClick={() => requestRetire(unit)} theme="outlined" variant="danger">
+          {t(`${key}.retireUnit`)}
+        </Button>
+      )}
+    </>
+  );
+};
+
+const RecordsPropertyActions = ({ view }: { readonly view: RecordsView }) => {
+  const { editor, model, requestArchive } = view;
+  const { key, property, t } = model;
+  if (property === undefined) {
+    return null;
+  }
+  if (property.archive !== undefined) {
+    return (
+      <Button
+        disabled={editor.busy || editor.blocked}
+        onClick={() => editor.restoreProperty(property)}
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${key}.restore`)}
+      </Button>
+    );
+  }
+  return (
+    <>
+      <Button
+        disabled={editor.busy || editor.blocked}
+        onClick={() => editor.begin(property)}
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${key}.editor.edit`)}
+      </Button>
+      <Button
+        disabled={editor.busy || editor.blocked}
+        onClick={() => editor.toggleLifecycle(property)}
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${key}.editor.${property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+      </Button>
+      {property.lifecycleState !== 'ACTIVE' && (
         <Button
-          disabled={editor.busy}
-          onClick={() => {
-            requestRetire(unit);
-          }}
-          size="sm"
+          disabled={editor.busy || editor.blocked}
+          onClick={() =>
+            requestArchive(t(`${key}.propertyLabel`, { code: property.code }), (reason) =>
+              editor.archiveProperty(property, reason),
+            )
+          }
           theme="outlined"
           variant="danger"
         >
-          Vyřadit jednotku
+          {t(`${key}.archiveProperty`)}
+        </Button>
+      )}
+    </>
+  );
+};
+
+const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
+  const { model } = view;
+  const { key, property, t, unit } = model;
+  if (property === undefined) {
+    return null;
+  }
+  const archive = unit?.archive ?? property.archive;
+  const note = unit === undefined ? property.note : unit.note;
+  return (
+    <div className="propertyportfolio:space-y-200">
+      <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{unit?.name ?? property.name}</h2>
+      <p className={secondaryTextClass}>{unit === undefined ? property.address : unit.code}</p>
+      {unit === undefined ? (
+        <dl className="propertyportfolio:grid propertyportfolio:gap-200 propertyportfolio:sm:grid-cols-2">
+          <div>
+            <dt className={secondaryTextClass}>{t(`${key}.editor.propertyType`)}</dt>
+            <dd>{property.propertyType ?? t(`${key}.notProvided`)}</dd>
+          </div>
+          <div>
+            <dt className={secondaryTextClass}>{t(`${key}.editor.responsiblePerson`)}</dt>
+            <dd>
+              {property.responsibleEmployeeIds === undefined
+                ? (property.responsiblePerson ?? t(`${key}.editor.responsibleNotSet`))
+                : property.responsibleEmployeeIds
+                    .map(
+                      (id) =>
+                        model.employees?.find((employee) => employee.id === id)?.fullName ??
+                        t(`${key}.editor.employeeUnknown`, { id }),
+                    )
+                    .join(', ')}
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        <dl className="propertyportfolio:grid propertyportfolio:gap-200 propertyportfolio:sm:grid-cols-2">
+          <div>
+            <dt className={secondaryTextClass}>{t(`${key}.kind`)}</dt>
+            <dd>{unit.unitKind ?? t(`${key}.notProvided`)}</dd>
+          </div>
+          <div>
+            <dt className={secondaryTextClass}>{t(`${key}.capacity`)}</dt>
+            <dd>{unit.capacity ?? t(`${key}.notProvided`)}</dd>
+          </div>
+        </dl>
+      )}
+      {note !== null && note !== '' && <p>{note}</p>}
+      {archive !== undefined && (
+        <output>
+          {t(`${key}.archiveDetails`, { date: formatArchivedAt(archive.archivedAt), reason: archive.reason })}
+        </output>
+      )}
+      {unit?.lifecycleState === 'RETIRED' && <p>{t(`${key}.retiredDescription`)}</p>}
+      {property.lifecycleState !== 'ACTIVE' && <p>{t(`${key}.buildingBlocked`)}</p>}
+    </div>
+  );
+};
+
+const RecordsUnavailable = ({ failure, view }: { readonly failure: string; readonly view: RecordsView }) => {
+  const { model } = view;
+  const { key, t } = model;
+  return (
+    <div className="propertyportfolio:space-y-200">
+      <output>{t(`${key}.${model.pending ? 'loading' : failure}`)}</output>
+      {!model.pending && (
+        <Button onClick={() => model.loadSummary()} theme="outlined" variant="secondary">
+          {t(`${key}.retry`)}
         </Button>
       )}
     </div>
   );
 };
 
-const RecordsUnitDetails = ({ view }: { readonly view: RecordsView }) => {
-  const { availabilityLabel, leasable, model } = view;
-  const { key, t, unit } = model;
-  const unitArchive = unit?.archive ?? model.property?.archive;
-  return (
-    unit !== undefined && (
-      <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
-        <h3 className={detailHeadingClass}>
-          {unit.code} · {unit.name}
-        </h3>
-        <p className={secondaryTextClass}>
-          {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
-          {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
-        </p>
-        {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
-        {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
-          <p className={secondaryTextClass}>Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.</p>
-        )}
-        {unit.lifecycleState === 'RETIRED' && (
-          <p className={secondaryTextClass}>
-            Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
-          </p>
-        )}
-        {unitArchive !== undefined && (
-          <output className={secondaryTextClass}>
-            Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
-          </output>
-        )}
-        <RecordsUnitActions view={view} />
-        <UnitStory
-          agreements={model.agreements}
-          language={model.language}
-          leaseBlock={unitLeaseBlock(unit, unitArchive !== undefined, leasable)}
-          occupancy={model.occupancy}
-          t={t}
-          tasks={model.work?.items}
-          unit={unit}
-        />
-        <RecordDiscussion
-          subject={{ id: unit.unitRef.resourceId, kind: 'unit', label: `${unit.code} · ${unit.name}` }}
-        />
-      </aside>
-    )
-  );
-};
-
-const RecordsRelatedDetails = ({ view }: { readonly view: RecordsView }) => {
+const RecordsEquipment = ({ view }: { readonly view: RecordsView }) => {
   const { model } = view;
-  const { asset, key, relatedSections, t } = model;
+  const { asset, key, property, t, unit } = model;
+  if (property === undefined) {
+    return null;
+  }
   return (
-    <>
-      {model.finance !== undefined && (
-        <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
-          <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
-          <p className={secondaryTextClass}>
-            {model.finance.state.invoices.length === 0
-              ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
-              : t(`${key}.financialValues`, {
-                  cost: model.money(model.finance.indicators.costMinor),
-                  outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
-                  revenue: model.money(model.finance.indicators.revenueMinor),
-                })}
-          </p>
-          <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-            {model.finance.state.invoices.map((invoice) => (
-              <li key={invoice.ref.resourceId}>
-                <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
-                  {invoice.documentNumber} · {model.money(invoice.totalMinor)}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      <div className="propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-2">
-        {relatedSections.flatMap((section) =>
-          section.enabled
-            ? [
-                <section aria-label={section.title} className={relatedCardClass} key={section.title}>
-                  <h3 className={detailHeadingClass}>{section.title}</h3>
-                  {section.items.length === 0 && <p className={secondaryTextClass}>{t(`${key}.emptyRelated`)}</p>}
-                  <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                    {section.items.map((item) => (
-                      <li key={item.href}>
-                        <Link href={item.href}>{item.label}</Link>
-                      </li>
-                    ))}
-                  </ul>
-                </section>,
-              ]
-            : [],
-        )}
-      </div>
+    <div className="propertyportfolio:space-y-300">
+      <RecordsTables kind="assets" view={view} />
       {asset !== undefined && (
-        <aside className={relatedCardClass}>
+        <section aria-label={asset.name} className={relatedCardClass}>
           <h3 className={detailHeadingClass}>
             {asset.code} · {asset.name}
           </h3>
-          <p className={secondaryTextClass}>
-            {asset.category} · {asset.serialNumber ?? '—'}
+          <p>
+            {asset.category} · {asset.serialNumber ?? t(`${key}.notProvided`)}
+          </p>
+          <p>
+            {t(`${key}.lastService`)}: {asset.lastServiceAt ?? t(`${key}.notProvided`)} · {t(`${key}.nextService`)}:{' '}
+            {asset.nextServiceAt ?? t(`${key}.notProvided`)}
           </p>
           {model.work !== undefined && (
-            <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+            <ul>
               {model.work.items.flatMap((task) =>
                 task.contextRefs.some(
                   (ref) =>
@@ -932,173 +895,183 @@ const RecordsRelatedDetails = ({ view }: { readonly view: RecordsView }) => {
               )}
             </ul>
           )}
-          <p className={secondaryTextClass}>
-            {t(`${key}.lastService`)}: {asset.lastServiceAt ?? '—'} · {t(`${key}.nextService`)}:{' '}
-            {asset.nextServiceAt ?? '—'}
-          </p>
-        </aside>
+        </section>
       )}
-    </>
+      <PropertyEquipment
+        key={`${property.propertyRef.resourceId}:${unit?.unitRef.resourceId ?? ''}`}
+        language={model.language}
+        propertyId={property.propertyRef.resourceId}
+        unitId={unit?.unitRef.resourceId}
+      />
+    </div>
   );
 };
 
-const RecordsPropertyDetails = ({ view }: { readonly view: RecordsView }) => {
-  const { editor, model, requestArchive } = view;
-  const { key, t, unit } = model;
-  const handleLoadSummary = model.loadSummary;
+const RecordsFinance = ({ view }: { readonly view: RecordsView }) => {
+  const { model } = view;
+  const { finance, key, t } = model;
+  if (finance === undefined) {
+    return <RecordsUnavailable failure="financeUnavailable" view={view} />;
+  }
   return (
-    model.property !== undefined && (
-      <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
-        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-          {model.property.code} · {model.property.name}
-        </h2>
-        <p className={secondaryTextClass}>{model.property.address}</p>
-        <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
-        {model.property.archive !== undefined && (
-          <output className={secondaryTextClass}>
-            Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}. Záznam
-            se nezobrazuje v seznamech ani výběrech ostatních agend.
-          </output>
-        )}
-        <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-          {model.property.archive === undefined ? (
-            <>
-              <Button
-                disabled={editor.busy}
-                onClick={() => {
-                  if (model.property !== undefined) {
-                    editor.toggleLifecycle(model.property);
-                  }
-                }}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
-              </Button>
-              <Button
-                disabled={editor.busy}
-                onClick={() => {
-                  if (model.property !== undefined) {
-                    editor.beginUnit(model.property);
-                  }
-                }}
-                size="sm"
-                variant="warning"
-              >
-                {t(`${key}.editor.createUnit`)}
-              </Button>
-              {model.property.lifecycleState !== 'ACTIVE' && (
-                <Button
-                  disabled={editor.busy}
-                  onClick={() => {
-                    const { property } = model;
-                    if (property !== undefined) {
-                      requestArchive(`nemovitost ${property.code}`, (reason) =>
-                        editor.archiveProperty(property, reason),
-                      );
-                    }
-                  }}
-                  size="sm"
-                  theme="outlined"
-                  variant="danger"
-                >
-                  Archivovat záznam
-                </Button>
-              )}
-            </>
-          ) : (
-            <Button
-              disabled={editor.busy}
-              onClick={() => {
-                if (model.property !== undefined) {
-                  editor.restoreProperty(model.property);
-                }
-              }}
-              size="sm"
-              theme="outlined"
-              variant="secondary"
-            >
-              Obnovit z archivu
-            </Button>
-          )}
-          <Button disabled={model.pending} onClick={handleLoadSummary} size="sm" theme="outlined" variant="secondary">
-            {t(`${key}.loadSummary`)}
-          </Button>
-        </div>
-        <div className={relatedCardClass}>
-          <p className={secondaryTextClass}>
-            {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
-          </p>
-          <p className={secondaryTextClass}>
-            {t(`${key}.editor.responsiblePerson`)}:{' '}
-            {model.property.responsibleEmployeeIds === undefined
-              ? (model.property.responsiblePerson ?? t(`${key}.editor.responsibleNotSet`))
-              : model.property.responsibleEmployeeIds
-                  .map(
-                    (id) =>
-                      model.employees?.find((employee) => employee.id === id)?.fullName ??
-                      t(`${key}.editor.employeeUnknown`, { id }),
-                  )
-                  .join(', ')}
-          </p>
-          <p className={secondaryTextClass}>
-            {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
-          </p>
-        </div>
-        <output aria-live="polite" className={messageClass}>
-          {model.summaryMessage}
-        </output>
-        {unit === undefined && model.property !== undefined && (
-          <RecordDiscussion
-            subject={{
-              id: model.property.propertyRef.resourceId,
-              kind: 'property',
-              label: model.property.name,
-            }}
-          />
-        )}
-        <RecordsUnitDetails view={view} />
-        <RecordsRelatedDetails view={view} />
-      </article>
-    )
+    <div className="propertyportfolio:space-y-250">
+      <p>
+        {finance.state.invoices.length === 0
+          ? t(`${key}.financialEmpty`)
+          : t(`${key}.financialValues`, {
+              cost: model.money(finance.indicators.costMinor),
+              outstanding: model.money(finance.indicators.grossOutstandingMinor),
+              revenue: model.money(finance.indicators.revenueMinor),
+            })}
+      </p>
+      <ul>
+        {finance.state.invoices.map((invoice) => (
+          <li key={invoice.ref.resourceId}>
+            <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
+              {invoice.documentNumber} · {model.money(invoice.totalMinor)}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 };
 
-const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
-  const model = usePropertyRecords(legalEntityId);
-  const editor = usePropertyEditor(model.records, model.employees, model.refresh);
-  // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
-  const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
-  const selectedProperty = model.property;
-  useEffect(() => {
-    if (selectedProperty !== undefined) {
-      loadSummaryOnSelect();
-    }
-  }, [selectedProperty]);
-  const { key, t, unit } = model;
-  const handleRefresh = model.refresh;
-  // A unit is offered only while both the unit and its building are in operation; retired or archived units
-  // and units of a building out of operation never advertise availability.
+const RelatedTabSchema = Schema.Literals(['leases', 'agreements', 'documents', 'tasks']);
+type RelatedTab = typeof RelatedTabSchema.Type;
+const sourceFailure = {
+  agreements: 'agreementsUnavailable',
+  documents: 'agreementsUnavailable',
+  leases: 'occupancyUnavailable',
+  tasks: 'tasksUnavailable',
+} as const;
+const RecordsSource = ({ tab, view }: { readonly tab: RelatedTab; readonly view: RecordsView }) => {
+  const { leasable, model } = view;
+  const { key, property, t, unit } = model;
+  const source = model.relatedSections.find((section) => section.kind === tab);
+  if (source === undefined || !source.enabled) {
+    return <RecordsUnavailable failure={sourceFailure[tab]} view={view} />;
+  }
+  if (unit !== undefined && tab !== 'documents') {
+    return (
+      <UnitStory
+        agreements={model.agreements}
+        language={model.language}
+        leaseBlock={unitLeaseBlock(unit, (unit.archive ?? property?.archive) !== undefined, leasable)}
+        occupancy={model.occupancy}
+        section={tab}
+        t={t}
+        tasks={model.work?.items}
+        unit={unit}
+        unitAssets={model.assets.flatMap((item) =>
+          item.unitRef?.tenantId === unit.unitRef.tenantId &&
+          item.unitRef.moduleId === unit.unitRef.moduleId &&
+          item.unitRef.resourceType === unit.unitRef.resourceType &&
+          item.unitRef.resourceId === unit.unitRef.resourceId
+            ? [item.assetRef]
+            : [],
+        )}
+      />
+    );
+  }
+  if (source.items.length === 0) {
+    return <p>{t(`${key}.emptyRelated`)}</p>;
+  }
+  return (
+    <ul className="propertyportfolio:space-y-200">
+      {source.items.map((item) => (
+        <li key={item.href}>
+          <Link href={item.href}>{item.label}</Link>
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+const RecordsTabContent = ({ tab, view }: { readonly tab: PropertyTab; readonly view: RecordsView }) => {
+  const { property, unit } = view.model;
+  if (property === undefined) {
+    return null;
+  }
+  const subject =
+    unit === undefined
+      ? { id: property.propertyRef.resourceId, kind: 'property' as const, label: property.name }
+      : { id: unit.unitRef.resourceId, kind: 'unit' as const, label: `${unit.code} · ${unit.name}` };
+  return Match.value(tab).pipe(
+    Match.when('units', () => <RecordsTables kind="units" view={view} />),
+    Match.when('equipment', () => <RecordsEquipment view={view} />),
+    Match.when('finance', () => <RecordsFinance view={view} />),
+    Match.when('discussion', () => <RecordDiscussion section="comments" subject={subject} />),
+    Match.when('documents', () => (
+      <div className="propertyportfolio:space-y-300">
+        <RecordsSource tab="documents" view={view} />
+        <RecordDiscussion section="documents" subject={subject} />
+      </div>
+    )),
+    Match.whenOr('leases', 'agreements', 'tasks', (relatedTab) => <RecordsSource tab={relatedTab} view={view} />),
+    Match.exhaustive,
+  );
+};
+
+const RecordsFilters = ({ view }: { readonly view: RecordsView }) => {
+  const { editor, model } = view;
+  const { key, search, t } = model;
+  const archivedCount =
+    (model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0) +
+    (model.records?.units.filter((item) => item.archive !== undefined).length ?? 0);
+  return (
+    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-250">
+      <FormCheckbox
+        checked={search.includeClosed === true}
+        disabled={editor.busy}
+        label={t(`${key}.includeClosed`)}
+        onCheckedChange={(checked) => model.updateSearch({ ...search, includeClosed: checked ? true : undefined })}
+      />
+      {archivedCount > 0 && (
+        <FormCheckbox
+          checked={search.includeArchived === true}
+          disabled={editor.busy}
+          label={t(`${key}.includeArchived`, { count: archivedCount })}
+          onCheckedChange={(checked) => model.updateSearch({ ...search, includeArchived: checked ? true : undefined })}
+        />
+      )}
+      <Button
+        disabled={editor.busy}
+        isLoading={model.recordsLoading}
+        onClick={() => model.refresh()}
+        theme="outlined"
+        variant="secondary"
+      >
+        {t(`${key}.refresh`)}
+      </Button>
+    </div>
+  );
+};
+
+const RecordsPageContent = (input: RecordsInput) => {
+  const model = usePropertyRecords(input);
+  const editor = usePropertyEditor(model.records, model.employees, (result) => {
+    model.refresh();
+    model.selectResource(result.resourceRef.resourceId);
+  });
+  const { key, property, search, t, unit } = model;
   const leasable = (lifecycle: string) =>
-    lifecycle === 'ACTIVE' && model.property?.lifecycleState === 'ACTIVE' && model.property.archive === undefined;
+    lifecycle === 'ACTIVE' && property?.lifecycleState === 'ACTIVE' && property.archive === undefined;
   const availabilityLabel = (id: string, lifecycle: string) => {
     if (lifecycle === 'RETIRED') {
-      return 'Vyřazena – nenabízí se k pronájmu';
+      return t(`${key}.retiredAvailability`);
     }
     if (lifecycle !== 'ACTIVE') {
       return t(`${key}.outOfService`);
     }
     if (!leasable(lifecycle)) {
-      return 'Budova není v provozu – nenabízí se k pronájmu';
+      return t(`${key}.buildingBlocked`);
     }
     if (model.occupancy === undefined) {
-      return t(`${key}.summaryNotLoaded`);
+      return t(`${key}.${model.pending ? 'loading' : 'occupancyUnavailable'}`);
     }
     return t(`${key}.availability.${model.availability(id)}`);
   };
-  const [showClosed, setShowClosed] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
   const [confirmation, setConfirmation] = useState<RecordConfirmation>();
   const requestArchive = (label: string, onConfirm: (reason: string) => void) =>
     setConfirmation({
@@ -1113,85 +1086,125 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
       onConfirm: () => editor.changeUnitLifecycle(item, 'RETIRED'),
       title: t(`${key}.editor.retireTitle`, { label: item.code }),
     });
-  const archivedCount = model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0;
   const view: RecordsView = { availabilityLabel, editor, leasable, model, requestArchive, requestRetire };
+  const propertyItem = (item: RecordsResponse['properties'][number]) => ({
+    address: item.address,
+    archived: item.archive !== undefined,
+    code: item.code,
+    id: item.propertyRef.resourceId,
+    name: item.name,
+    stateLabel: t(`${key}.states.${item.lifecycleState}`),
+    unitCount:
+      model.records?.units.filter(
+        (record) =>
+          record.propertyRef.resourceId === item.propertyRef.resourceId &&
+          record.propertyRef.tenantId === item.propertyRef.tenantId &&
+          record.archive === undefined,
+      ).length ?? 0,
+  });
+  const unitItem = (item: RecordsResponse['units'][number]) => ({
+    archived: item.archive !== undefined || property?.archive !== undefined,
+    availabilityLabel: availabilityLabel(item.unitRef.resourceId, item.lifecycleState),
+    code: item.code,
+    id: item.unitRef.resourceId,
+    name: item.name,
+    stateLabel: t(`${key}.states.${item.lifecycleState}`),
+  });
+  const visibleProperties =
+    model.records?.properties.filter((item) =>
+      propertyRecordVisible(
+        {
+          archived: item.archive !== undefined,
+          closed: !['ACTIVE', 'PLANNED'].includes(item.lifecycleState),
+          selected: item.propertyRef.resourceId === property?.propertyRef.resourceId,
+        },
+        search,
+      ),
+    ) ?? [];
+  const visibleUnits = model.units.filter((item) =>
+    propertyRecordVisible(
+      {
+        archived: item.archive !== undefined || property?.archive !== undefined,
+        closed: item.lifecycleState === 'RETIRED',
+        selected: item.unitRef.resourceId === unit?.unitRef.resourceId,
+      },
+      search,
+    ),
+  );
+  const activeTab = selectedPropertyTab(search, unit !== undefined, model.asset !== undefined);
   return (
     <>
+      <UltramodernRouteHead />
+      <h1 className="propertyportfolio:mb-300 propertyportfolio:text-3xl propertyportfolio:font-semibold">
+        {t(`${key}.title`)}
+      </h1>
       {confirmation !== undefined && (
         <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} view={view} />
       )}
-      <UltramodernRouteHead />
-      <section
-        aria-labelledby="records-heading"
-        className="propertyportfolio:w-full propertyportfolio:min-w-0 propertyportfolio:max-w-none propertyportfolio:space-y-6 propertyportfolio:p-0 propertyportfolio:text-(--color-page-fg)"
-      >
-        <header className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-start propertyportfolio:justify-between propertyportfolio:gap-4 propertyportfolio:pb-5">
-          <div className="propertyportfolio:min-w-0 propertyportfolio:space-y-2">
-            <h1
-              className="propertyportfolio:text-3xl propertyportfolio:font-semibold propertyportfolio:tracking-tight"
-              id="records-heading"
-            >
-              {t(`${key}.title`)}
-            </h1>
-            <p className={secondaryTextClass}>{t(`${key}.description`)}</p>
-          </div>
-          <Button
-            disabled={editor.busy}
-            isLoading={model.recordsLoading}
-            onClick={handleRefresh}
-            size="sm"
-            variant="warning"
-          >
-            {t(`${key}.refresh`)}
-          </Button>
-        </header>
-        <output aria-live="polite" className={messageClass}>
-          {model.message}
-        </output>
-        {model.records !== undefined && (
-          <>
-            <Button disabled={editor.busy} onClick={() => editor.begin()} size="sm" variant="warning">
-              {t(`${key}.editor.create`)}
+      {model.records === undefined ? (
+        <section>
+          <output>{model.recordsLoading ? t(`${key}.loading`) : model.message}</output>
+          {!model.recordsLoading && (
+            <Button onClick={() => model.refresh()} variant="secondary">
+              {t(`${key}.retry`)}
             </Button>
-            {editor.feedback !== undefined && (
-              <output aria-live="polite" className={messageClass}>
-                {t(`${key}.editor.${editor.feedback}`)}
-              </output>
-            )}
-            <RecordsEditorForm view={view} />
-            <label className={`${secondaryTextClass} sp-property-toggle`}>
-              <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
-              Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
-            </label>
-            {archivedCount > 0 && (
-              <label className={`${secondaryTextClass} sp-property-toggle`}>
-                <input
-                  checked={showArchived}
-                  onChange={(event) => setShowArchived(event.target.checked)}
-                  type="checkbox"
-                />{' '}
-                Zobrazit archivované záznamy ({archivedCount})
-              </label>
-            )}
-            <RecordsTables showArchived={showArchived} showClosed={showClosed} view={view} />
-            {model.property !== undefined && (
-              <PropertyEquipment
-                key={`${model.property.propertyRef.resourceId}:${unit?.unitRef.resourceId ?? ''}`}
-                language={model.language}
-                propertyId={model.property.propertyRef.resourceId}
-                unitId={unit?.unitRef.resourceId}
-              />
-            )}
-            <RecordsPropertyDetails view={view} />
-          </>
-        )}
-      </section>
+          )}
+        </section>
+      ) : (
+        <PropertyWorkspace
+          actions={
+            <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-200">
+              {unit === undefined ? <RecordsPropertyActions view={view} /> : <RecordsUnitActions view={view} />}
+            </div>
+          }
+          activeTab={activeTab}
+          busy={editor.busy || editor.blocked}
+          canCreateUnit={property !== undefined && property.archive === undefined}
+          details={<RecordsMetadata view={view} />}
+          editor={<RecordsEditorForm view={view} />}
+          filters={<RecordsFilters view={view} />}
+          messages={
+            <>
+              {model.message !== '' && <output>{model.message}</output>}
+              {editor.feedback !== undefined && editor.draft === undefined && (
+                <output>{t(`${key}.editor.${editor.feedback}`)}</output>
+              )}
+              {search.resourceId !== undefined && property === undefined && !model.recordsLoading && (
+                <output>{t(`${key}.notFound`)}</output>
+              )}
+            </>
+          }
+          onCreateProperty={() => editor.begin()}
+          onCreateUnit={() => {
+            if (property !== undefined) {
+              editor.beginUnit(property);
+            }
+          }}
+          onSelectResource={(id) => model.selectResource(id)}
+          onSelectTab={(tab) => {
+            const next = propertyTabs(unit !== undefined).find((value) => value === tab);
+            if (next !== undefined) {
+              model.updateSearch({ ...search, tab: next });
+            }
+          }}
+          properties={visibleProperties.map(propertyItem)}
+          property={property === undefined ? undefined : propertyItem(property)}
+          t={(name, values) => t(`property-workspace:${name}`, values)}
+          tabs={propertyTabs(unit !== undefined).map((tab) => ({
+            content: <RecordsTabContent tab={tab} view={view} />,
+            label: t(`${key}.tabs.${tab}`),
+            value: tab,
+          }))}
+          unit={unit === undefined ? undefined : unitItem(unit)}
+          units={visibleUnits.map(unitItem)}
+        />
+      )}
     </>
   );
 };
 
 export const RecordsPage = ({ context }: Pick<ModulePageProps, 'context'>) => {
-  const location = useRouterState({ select: (state) => state.location.href });
+  const input = recordsInput(context);
   return (
     <FederatedI18nBoundary
       defaultNamespace="property-portfolio"
@@ -1199,7 +1212,7 @@ export const RecordsPage = ({ context }: Pick<ModulePageProps, 'context'>) => {
       resources={propertyPortfolioI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} {...recordsInput(context)} />
+      <RecordsPageContent key={`${input.tenantId}:${input.legalEntityId}:${input.principalId}`} {...input} />
     </FederatedI18nBoundary>
   );
 };
