@@ -1,5 +1,5 @@
 import type { ModulePagePreload, ModulePageProps } from '@app/shared-contracts/page-data';
-import { Cache, Effect, Exit, MutableHashMap, Predicate, Schema } from 'effect';
+import { Cache, Context, Effect, Exit, MutableHashMap, Predicate, Schema } from 'effect';
 import type { Duration, Option } from 'effect';
 import type { ComponentType } from 'react';
 
@@ -146,6 +146,14 @@ export const loadRemotePage = (target: RemotePage): Effect.Effect<RemoteState> =
     Effect.orElseSucceed((): RemoteState => ({ reason: 'incompatible', state: 'unavailable' })),
   );
 
+/** Native boundary for module code loading and the legacy recorded-read fallback. */
+export const RemotePagePreparation = Context.Reference<{
+  readonly load: typeof loadRemotePage;
+  readonly prefetch: typeof prefetchRecordedReads;
+}>('RemotePagePreparation', {
+  defaultValue: () => ({ load: loadRemotePage, prefetch: prefetchRecordedReads }),
+});
+
 /** The props a page and its `preloadPage` both receive: the person's context, the route parameters and the query. */
 export const modulePageProps = (
   shell: HomePageModel,
@@ -181,10 +189,10 @@ const preloadPageData = (remote: RemoteState, props: ModulePageProps) => {
 };
 
 /**
- * Prepares a page before it is revealed: loads its remote page module and then runs the module's `preloadPage` with
- * the props the page will receive, beside the warm-up of the reads the path made on its last visit. Waits at most
- * `budget`; answers the module's state, or none when the budget ran out first. A no-op on the server, where a remote
- * never loads.
+ * Loads the remote module, then uses its declared preload or the legacy recorded reads, never both. Waiting for
+ * the module delays the legacy fallback, but avoids replaying an old request beside a fresh declared read.
+ * Module loading and data preparation share the caller's budget. A declared failure or timeout never selects
+ * the fallback. A no-op on the server, where a remote never loads.
  */
 export const prepareModulePage = (
   target: RemotePage,
@@ -194,15 +202,13 @@ export const prepareModulePage = (
 ): Effect.Effect<Option.Option<RemoteState>> =>
   Effect.suspend(() =>
     'document' in globalThis
-      ? Effect.all(
-          [
-            loadRemotePage(target).pipe(Effect.tap((remote) => preloadPageData(remote, props))),
-            prefetchRecordedReads(pathname),
-          ],
-          { concurrency: 2 },
-        ).pipe(
-          Effect.map(([remote]) => remote),
-          Effect.timeoutOption(budget),
-        )
+      ? Effect.gen(function* prepareRemotePage() {
+          const { load, prefetch } = yield* RemotePagePreparation;
+          const remote = yield* load(target);
+          yield* remote.state === 'ready' && remote.preloadPage !== undefined
+            ? preloadPageData(remote, props)
+            : prefetch(pathname);
+          return remote;
+        }).pipe(Effect.timeoutOption(budget))
       : Effect.succeedNone,
   );
