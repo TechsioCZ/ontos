@@ -168,15 +168,18 @@ it.effect('attaches the redeemed token as the scope assertion only after redempt
     const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
     expect(readVerifiedGatewayScopeAssertion(signatureOnly)).toBeUndefined();
 
-    const replayed = yield* Effect.exit(
+    // An already-recorded valid assertion is an idempotent reuse under the redemption contract.
+    // An unavailable durable redemption must still fail before provenance can be attached.
+    const unavailable = yield* Effect.exit(
       verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
         ...verificationOptions,
         redemption: {
-          consume: () => Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
+          consume: () =>
+            Effect.fail(new GatewayAssertionRedemptionUnavailableError({ reason: 'Redemption is unavailable' })),
         },
       }),
     );
-    expect(Exit.isFailure(replayed)).toBe(true);
+    expect(Exit.isFailure(unavailable)).toBe(true);
 
     const redeemed = yield* verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
       ...verificationOptions,
