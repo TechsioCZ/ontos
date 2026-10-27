@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 
 import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import { Schema } from 'effect';
+import * as Schema from 'effect/Schema';
 
 import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
