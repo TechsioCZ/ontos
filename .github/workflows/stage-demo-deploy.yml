@@ -261,7 +261,7 @@ jobs:
   # Building runs dependency code, so build jobs get no environment and no deploy credentials.
   build:
     name: Build ${{ matrix.unit.id }}
-    needs: [plan]
+    needs: [plan, release-script-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -344,6 +344,9 @@ jobs:
     needs: [plan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -382,9 +385,35 @@ jobs:
           scripts/tests/verification-context.test.mts
           scripts/tests/mcp-proof-transport.test.mts
 
+      # Reject missing protected bindings before paying for every deployment build. This check
+      # has no provider/database credentials and removes its private bundle on every exit.
+      # Release still prepares and validates its own fresh bundle under the deployment lock.
+      - name: Check release secret bindings before deployment builds
+        if: github.event_name == 'push' || inputs.deploy
+        timeout-minutes: 3
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+        run: |
+          umask 077
+          directory=""
+          cleanup() {
+            if [[ -n "$directory" ]]; then
+              rm -f -- "$directory/bundle.json"
+              rmdir -- "$directory"
+            fi
+          }
+          trap cleanup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          directory="$(mktemp -d "$RUNNER_TEMP/stage-release-secrets.XXXXXX")"
+          chmod 700 "$directory"
+          mise exec -- node scripts/prepare-stage-release-secrets.mts --output-file "$directory/bundle.json"
+
   build-storefront:
     name: Build akros-storefront
-    needs: [plan]
+    needs: [plan, release-script-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

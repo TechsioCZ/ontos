@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { Array as Arr, Effect, FileSystem, Order, Redacted, Schema } from 'effect';
+import { Array as Arr, Cause, Effect, FileSystem, Order, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ApplicationReleaseIntentSchema } from '../application-release-intent.mts';
@@ -78,6 +78,33 @@ const fixture = Effect.gen(function* canonicalBundleFixture() {
     units,
   };
   return { bundle, input, original, plan, publicJwks, raw };
+});
+
+it.effect('renders the exact missing owner binding in the native runtime diagnostic without secret values', () =>
+  Effect.gen(function* rendersMissingBinding() {
+    const { bundle, input } = yield* fixture;
+    const error = yield* prepareStageReleaseSecrets({
+      ...input,
+      bundle: Redacted.make(
+        JSON.stringify({
+          ...bundle,
+          crm: withoutKey(bundle.crm, 'ONTOS_CRM_PARTY_INTAKE_API_KEY'),
+        }),
+      ),
+    }).pipe(Effect.flip);
+    const rendered = Cause.pretty(Cause.fail(error));
+    expect(rendered).toContain('reason=binding-invalid');
+    expect(rendered).toContain('appId=crm');
+    expect(rendered).toContain('binding=ONTOS_CRM_PARTY_INTAKE_API_KEY');
+    for (const forbidden of [PRIVATE_AUTH, WORKLOAD_KEY, SHARED_KEY, privateKey, SHELL_URL]) {
+      expect(rendered).not.toContain(forbidden);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it('renders configuration failures without inventing an owner or binding', () => {
+  const error = new StageReleaseSecretPreparationError({ reason: 'configuration-invalid' });
+  expect(error.message).toBe('reason=configuration-invalid');
 });
 
 it.effect('adds only the exact five native Projects bindings while retaining every original JSON byte', () =>

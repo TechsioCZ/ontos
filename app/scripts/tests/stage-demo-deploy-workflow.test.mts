@@ -32,10 +32,14 @@ const StepSchema = Schema.Struct({
 const WorkflowSchema = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Struct({
-    build: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+    build: Schema.Struct({ needs: Schema.Array(Schema.String), steps: Schema.Array(StepSchema) }),
+    'build-storefront': Schema.Struct({ needs: Schema.Array(Schema.String) }),
     'profile-recovery': Schema.Struct({ if: Schema.String, steps: Schema.Array(StepSchema) }),
     release: Schema.Struct({ steps: Schema.Array(StepSchema) }),
-    'release-script-tests': Schema.Struct({ steps: Schema.Array(StepSchema) }),
+    'release-script-tests': Schema.Struct({
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      steps: Schema.Array(StepSchema),
+    }),
     verify: Schema.Struct({ steps: Schema.Array(StepSchema), 'timeout-minutes': Schema.Number }),
   }),
 });
@@ -74,6 +78,31 @@ const TEST_STAGE_ZONE = 'example.test';
 const RUNNER_TEMP_CONTEXT = 'runner.temp';
 const SECRET_CLEANUP_CONDITION = "always() && steps.release-secrets.outputs.directory != ''";
 const OUTBOX_ONLY_SUCCESS = 'outbox-only-success';
+const EARLY_SECRET_CHECK = 'Check release secret bindings before deployment builds';
+
+it('checks the protected release secret inventory before builds without creating a deployment or retaining a bundle', () => {
+  const jobs = readJobs();
+  const checks = jobs['release-script-tests'];
+  expect(checks.environment).toEqual({ deployment: false, name: 'stage-edge' });
+  expect(jobs.build.needs).toContain('release-script-tests');
+  expect(jobs['build-storefront'].needs).toContain('release-script-tests');
+  const preflight = checks.steps.find(({ name }) => name === EARLY_SECRET_CHECK);
+  const testsIndex = checks.steps.findIndex(({ run }) => run?.includes('rstest') === true);
+  expect(testsIndex).toBeGreaterThan(-1);
+  expect(indexOf(checks.steps, EARLY_SECRET_CHECK)).toBeGreaterThan(testsIndex);
+  expect(preflight?.if).toBe("github.event_name == 'push' || inputs.deploy");
+  expect(preflight?.env).toEqual({ ALL_RELEASE_SECRETS: secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS') });
+  expect(preflight?.['continue-on-error']).toBeUndefined();
+  expect(preflight?.run).toContain('umask 077');
+  expect(preflight?.run).toContain('trap cleanup EXIT');
+  expect(preflight?.run).toContain("trap 'exit 143' TERM");
+  expect(preflight?.run).toContain('prepare-stage-release-secrets.mts --output-file "$directory/bundle.json"');
+  expect(preflight?.run).toContain('rm -f -- "$directory/bundle.json"');
+  expect(preflight?.run).toContain('rmdir -- "$directory"');
+  expect(preflight?.run).not.toContain('GITHUB_OUTPUT');
+  expect(checks.steps.filter(({ env }) => env?.ALL_RELEASE_SECRETS !== undefined)).toEqual([preflight]);
+  expect(checks.steps.some(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true)).toBe(false);
+});
 
 // Deliberately bounded to the conditions used by the producer and its file consumers.
 // An unfamiliar condition fails this test model instead of being treated as unreachable.

@@ -61,7 +61,15 @@ export class StageReleaseSecretPreparationError extends Schema.TaggedError<Stage
       'configuration-invalid',
     ]),
   },
-) {}
+) {
+  override get message(): string {
+    return [
+      `reason=${this.reason}`,
+      ...(this.appId === undefined ? [] : [`appId=${this.appId}`]),
+      ...(this.binding === undefined ? [] : [`binding=${this.binding}`]),
+    ].join(' ');
+  }
+}
 
 type FailureReason = StageReleaseSecretPreparationError['reason'];
 const failure = (reason: FailureReason) => new StageReleaseSecretPreparationError({ reason });
