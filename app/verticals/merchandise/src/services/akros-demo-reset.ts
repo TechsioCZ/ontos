@@ -1,6 +1,6 @@
 import { Base64 } from 'effect/encoding';
 // In-app reset of the AKROS demo company to the same predictable baseline `demo:seed:akros --reset` writes. The
-// baseline ships inside the server bundle (akros-baseline.generated.ts), so the reset needs no filesystem and runs
+// baseline's generated TypeScript chunks ship inside the server bundle, so the reset needs no filesystem and runs
 // the same on Node and Cloudflare Workers; parts are decoded and inserted one at a time to keep memory bounded. The
 // parts are loaded only when a reset runs, so they cost nothing on a cold isolate's first request.
 import { Effect, Result, Schema } from 'effect';
