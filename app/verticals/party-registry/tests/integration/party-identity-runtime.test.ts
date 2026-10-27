@@ -24,7 +24,7 @@ import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import type { Row } from 'effect/unstable/sql/SqlConnection';
+import type { Row } from 'effect/sql/SqlConnection';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { testCoreDatabase, deleteTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
@@ -53,7 +53,7 @@ type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
 
 const testAuthenticationNamespaceId = 'test.party.identity-runtime.v1';
 const sharedIco = '27074358';
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const freshTransport = nextUuid.pipe(
   Effect.map((idempotencyKey) => ({
     correlationId: `identity-runtime-${idempotencyKey}`,

@@ -2,14 +2,19 @@
 // ACL-projected aggregate; one governed apply-command Action changes it. Pages never filter for security.
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
-import { Effect, Predicate, Random } from 'effect';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Effect, Option, Predicate, Random, Schema, flow } from 'effect';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import { partyLinksOf } from '../../shared/commands/index.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { executeRecords } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { commandResultOutcome } from './client-party-sync-outcome.ts';
+import type { CrmCommandOutcome } from './client-party-sync-outcome.ts';
+
+export type { CrmCommandOutcome } from './client-party-sync-outcome.ts';
 
 export type CrmRecordsState =
   | { readonly kind: 'loading' }
@@ -23,18 +28,24 @@ const randomToken = Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, 
 
 const correlation = (purpose: string) => randomToken.pipe(Effect.map((token) => `crm:${purpose}:${token}`));
 
-const isForbidden = (error: unknown) =>
-  Predicate.isTagged(error, 'RecordsForbiddenProblem') || Predicate.isTagged(error, 'GatewayForbiddenProblem');
+const isForbidden = Predicate.or(
+  Predicate.isTagged('RecordsForbiddenProblem'),
+  Predicate.isTagged('GatewayForbiddenProblem'),
+);
 
-const isConflict = (error: unknown) => Predicate.isTagged(error, 'ApplyCommandActionConflictProblem');
+const isConflict = Predicate.isTagged('ApplyCommandActionConflictProblem');
 
+export interface CrmRecordsInput {
+  readonly clientId?: string;
+}
+
+const allRecords: CrmRecordsInput = {};
+const recordsInput = (clientId: string | undefined): CrmRecordsInput =>
+  clientId === undefined ? allRecords : { clientId };
 export const loadCrmRecords = (clientId?: string) =>
   correlation('records').pipe(
     Effect.flatMap((requestCorrelation) =>
-      executeRecords(
-        { ...(clientId === undefined ? {} : { clientId }), refreshToken: requestCorrelation },
-        requestCorrelation,
-      ),
+      executeRecords({ ...recordsInput(clientId), refreshToken: requestCorrelation }, requestCorrelation),
     ),
   );
 
@@ -43,46 +54,44 @@ export const loadCrmRecords = (clientId?: string) =>
  * Party Registry identity forwards one single-use registry assertion per link, so the CRM server can read the
  * Counterparty with the signed-in user's own rights before it stores the PartyRef.
  */
-export const runCrmCommand = (command: CrmCommand, expectedRevision: number) =>
-  Effect.gen(function* runCommand() {
-    const [requestCorrelation, idempotencyKey] = yield* Effect.all([correlation('command'), randomToken]);
-    const links = partyLinksOf(command);
-    const referenceCredentials =
-      links.length === 0 ? undefined : yield* makeReferenceGatewayCredentials(links.map(() => 'party-registry'));
-    return yield* executeApplyCommand({ command, expectedRevision }, requestCorrelation, {
-      idempotencyKey,
-      ...(referenceCredentials === undefined ? {} : { referenceCredentials }),
-    });
+export const runCrmCommand = Effect.fn('Crm.runCommand')(function* runCommand(
+  command: CrmCommand,
+  expectedRevision: number,
+) {
+  const [requestCorrelation, idempotencyKey] = yield* Effect.all([correlation('command'), randomToken], {
+    concurrency: 1,
   });
+  const links = partyLinksOf(command);
+  const referenceCredentials =
+    links.length === 0 ? undefined : yield* makeReferenceGatewayCredentials(links.map(() => 'party-registry'));
+  const options = { idempotencyKey };
+  return yield* executeApplyCommand(
+    { command, expectedRevision },
+    requestCorrelation,
+    referenceCredentials === undefined ? options : { ...options, referenceCredentials },
+  );
+});
 
 /** Human-readable reason of a failed command (domain errors carry Czech reasons). */
-export const commandErrorMessage = (error: unknown): string | undefined => {
-  if (typeof error === 'object' && error !== null) {
-    const record = error as Record<string, unknown>;
-    for (const field of ['detail', 'reason', 'title', 'message']) {
-      const value = record[field];
-      if (typeof value === 'string' && value !== '') {
-        return value;
-      }
-    }
-  }
-  return undefined;
-};
-
-export interface CrmCommandOutcome {
-  readonly ok: boolean;
-  readonly entityIds: readonly string[];
-  readonly message?: string;
-}
-
-export interface CrmRecordsInput {
-  readonly clientId?: string;
-}
-
-const allRecords: CrmRecordsInput = {};
-
-const recordsInput = (clientId: string | undefined): CrmRecordsInput =>
-  clientId === undefined ? allRecords : { clientId };
+const CommandMessageSchema = Schema.Struct({
+  detail: Schema.optionalKey(Schema.String),
+  message: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.String),
+});
+export const commandErrorMessage = (
+  error: Effect.Error<ReturnType<typeof runCrmCommand> | ReturnType<typeof loadCrmRecords>>,
+): string | undefined =>
+  Schema.decodeUnknownOption(CommandMessageSchema)(error).pipe(
+    Option.flatMap((record) =>
+      Option.fromUndefinedOr(
+        [record.detail, record.reason, record.title, record.message].find(
+          (value) => value !== undefined && value !== '',
+        ),
+      ),
+    ),
+    Option.getOrUndefined,
+  );
 
 /**
  * The governed records read of the signed-in principal, one entry per client filter ('all' without one). The Shell
@@ -117,6 +126,7 @@ const serverSnapshot = (): CrmRecordsSnapshot => pageDataPending;
  * `state.records.state` / `state.records.viewer`.
  */
 export const useCrmRecords = (clientId?: string) => {
+  const { t } = useModernI18n();
   const snapshot = useSyncExternalStore(
     crmRecordsData.subscribe,
     () => crmRecordsData.snapshot(recordsInput(clientId)),
@@ -124,37 +134,30 @@ export const useCrmRecords = (clientId?: string) => {
   );
   const [busy, setBusy] = useState(false);
   useEffect(() => crmRecordsData.ensure(recordsInput(clientId)), [clientId]);
-  const load = useCallback(() => {
+  const load = () => {
     browserRuntime.runFork(crmRecordsData.refresh(recordsInput(clientId)));
-  }, [clientId]);
+  };
   const revision = snapshot.state === 'ready' ? snapshot.value.revision : 0;
-  const submit = useCallback(
-    (command: CrmCommand): Promise<CrmCommandOutcome> => {
-      setBusy(true);
-      return browserRuntime
-        .runPromise(
-          runCrmCommand(command, revision).pipe(
-            // Another user changed the CRM since our last read (several personas demo at once): re-read the
-            // current revision and try once more. Domain checks run again on the server, so this is safe.
-            Effect.catchIf(isConflict, () =>
-              loadCrmRecords().pipe(Effect.flatMap((latest) => runCrmCommand(command, latest.revision))),
-            ),
-            Effect.match({
-              onFailure: (error): CrmCommandOutcome => {
-                const message = commandErrorMessage(error);
-                return message === undefined ? { entityIds: [], ok: false } : { entityIds: [], message, ok: false };
-              },
-              onSuccess: (result): CrmCommandOutcome => ({ entityIds: result.entityIds, ok: true }),
-            }),
-            Effect.tap(() => crmRecordsData.refresh(recordsInput(clientId))),
-          ),
-        )
-        .then((outcome) => {
-          setBusy(false);
-          return outcome;
-        });
-    },
-    [clientId, revision],
+  const submit = flow(
+    (command: CrmCommand) =>
+      Effect.sync(() => setBusy(true)).pipe(
+        Effect.andThen(runCrmCommand(command, revision)),
+        // Another user changed the CRM since our last read (several personas demo at once): re-read the
+        // current revision and try once more. Domain checks run again on the server, so this is safe.
+        Effect.catchIf(isConflict, () =>
+          loadCrmRecords().pipe(Effect.flatMap((latest) => runCrmCommand(command, latest.revision))),
+        ),
+        Effect.match({
+          onFailure: (error): CrmCommandOutcome => {
+            const message = commandErrorMessage(error);
+            return message === undefined ? { entityIds: [], ok: false } : { entityIds: [], message, ok: false };
+          },
+          onSuccess: (result): CrmCommandOutcome => commandResultOutcome(command, result, t),
+        }),
+        Effect.tap(() => crmRecordsData.refresh(recordsInput(clientId))),
+        Effect.ensuring(Effect.sync(() => setBusy(false))),
+      ),
+    browserRuntime.runPromise,
   );
   return { busy, load, state: stateOf(snapshot), submit };
 };

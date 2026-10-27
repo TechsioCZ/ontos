@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { PriceScheduleReadResultSchema } from '@app/pricing-contracts/domain/price-schedule';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const PriceScheduleRequestSchema = Schema.Struct({ priceRef: PriceRefSchema });
 export type PriceScheduleRequest = typeof PriceScheduleRequestSchema.Type;

@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import type { HttpClient } from 'effect/unstable/http';
+import type { HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { loadDotEnvProvider } from '../../src/environment/dotenv-provider.ts';
@@ -144,9 +144,9 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
   const transports = yield* makeTransports;
   const crypto = yield* Crypto.Crypto;
   const [tenantId, memberId, strangerId] = yield* Effect.all([
-    crypto.randomUUIDv4,
-    crypto.randomUUIDv4,
-    crypto.randomUUIDv4,
+    crypto.randomUUIDv4(),
+    crypto.randomUUIDv4(),
+    crypto.randomUUIDv4(),
   ]);
 
   // WriteSchema: the bootstrapped schema rewrites idempotently; an invalid schema is rejected alike.

@@ -2,7 +2,7 @@
 import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
 
 import { Config, Effect, Exit, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import type { DatabaseConfigValue } from '../../packages/core-runtime/src/db/config.ts';

@@ -516,6 +516,115 @@ export const captureUnknown = (db: unknown) => db;
   }),
 };
 
+it.live('proves scoped Core identity queries without treating pure PostgreSQL failure decoding as a capability', () =>
+  Effect.gen(function* scopedCoreIdentityQueries() {
+    const violations = yield* checkFixtures({
+      ...canonicalTypeFixtures,
+      'packages/core-runtime/src/index.ts': `${canonicalTypeFixtures['packages/core-runtime/src/index.ts']}
+export { humanPrincipalCandidatesForTransaction } from './private/scoped-candidates.ts';
+export { isPostgresUniqueViolation } from './private/postgres-failure.ts';
+`,
+      'packages/core-runtime/src/private/postgres-failure.ts':
+        "export const isPostgresUniqueViolation = (failure: { code: string }) => failure.code === '23505';\n",
+      'packages/core-runtime/src/private/scoped-candidates.ts': `${ownerInputImports}
+export const humanPrincipalCandidatesForTransaction = (db: Pick<Executor, 'select' | 'scope'>) => ({
+  find: (principalId: string) => db.select().where(db.scope.tenantId, principalId),
+});
+`,
+      ...scopedOwnerFixtures({
+        'scoped-candidates': `
+import { humanPrincipalCandidatesForTransaction, isPostgresUniqueViolation } from '@app/core-runtime';
+export const make = (transaction: Executor, scope: OperationalScope) => {
+  const principals = humanPrincipalCandidatesForTransaction(transaction);
+  return { find: principals.find, isConflict: isPostgresUniqueViolation };
+};
+`,
+      }),
+    });
+    expect(violations).toEqual([]);
+  }),
+);
+
+it.live('rejects scoped Core query inputs that escape, mutate, or claim undeclared database operations', () =>
+  Effect.gen(function* scopedCoreQueryLeakControls() {
+    const consumers = {
+      'boxed-input': "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => ({ database: db });",
+      'captured-input':
+        "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => { capture(db); return {}; };",
+      'counterfeit-executor':
+        "import type { NativeExecutor as Db } from '@app/counterfeit'; export const consume = (db: Pick<Db, 'select' | 'scope'>) => ({ find: () => db.select() });",
+      'global-database':
+        "import { CoreDatabase } from '@app/core-runtime'; export const consume = (db: Pick<Executor, 'select' | 'scope'>) => ({ find: () => CoreDatabase });",
+      'mutated-input':
+        "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => { db = replacement; return { find: () => db.select() }; };",
+      'raw-input': "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => db;",
+      'raw-method': "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => db.select;",
+      'scope-only': "export const consume = (db: Pick<Executor, 'scope'>) => db.scope;",
+      'shadowed-pick':
+        "type Pick<T, K> = T; export const consume = (db: Pick<Executor, 'select' | 'scope'>) => ({ find: () => db.select() });",
+      'undeclared-update':
+        "export const consume = (db: Pick<Executor, 'select' | 'scope'>) => ({ update: () => db.update() });",
+      'unknown-forwarder':
+        "import { captureUnknown } from '@app/core-runtime'; export const consume = (db: Pick<Executor, 'select' | 'scope'>) => captureUnknown(db);",
+    };
+    const helpers = Object.fromEntries(
+      Object.entries(consumers).map(([name, source]) => [
+        `packages/core-runtime/src/private/${name}.ts`,
+        ownerInputImports + source,
+      ]),
+    );
+    const owners = Object.fromEntries(
+      Object.keys(consumers).map((name) => [
+        name,
+        `import { consume } from '../../../../packages/core-runtime/src/private/${name}.ts';
+export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);`,
+      ]),
+    );
+    const violations = yield* checkFixtures({
+      ...canonicalTypeFixtures,
+      ...helpers,
+      ...scopedOwnerFixtures(owners),
+    });
+    expectRejectedOwners(violations, Object.keys(consumers));
+  }),
+);
+
+it.live('does not confuse written property names with scoped query consumer bindings', () =>
+  Effect.gen(function* scopedQueryPropertyNames() {
+    const positives = {
+      'destructured-property':
+        'let selected; ({ selectRows: selected } = metadata); return { read: () => selectRows(transaction) };',
+      'updated-property': 'metadata.selectRows++; return { read: () => selectRows(transaction) };',
+      'written-property': 'metadata.selectRows = true; return { read: () => selectRows(transaction) };',
+    };
+    const owners = Object.fromEntries(
+      Object.entries(positives).map(([name, body]) => [
+        name,
+        `import { selectRows } from '@app/core-runtime';
+export const make = (transaction: Executor, scope: OperationalScope) => { const metadata = {}; ${body} };`,
+      ]),
+    );
+    expect(yield* checkFixtures({ ...canonicalTypeFixtures, ...scopedOwnerFixtures(owners) })).toEqual([]);
+  }),
+);
+
+it.live('still rejects real query consumer writes and mutation of scoped database inputs', () =>
+  Effect.gen(function* scopedQueryBindingWrites() {
+    const negatives = {
+      'consumer-destructuring':
+        "import { selectRows } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => { ({ selectRows } = replacement); return { read: () => selectRows(transaction) }; };",
+      'consumer-reassignment':
+        "import { selectRows } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => { selectRows = replacement; return { read: () => selectRows(transaction) }; };",
+      'consumer-update':
+        "import { selectRows } from '@app/core-runtime'; export const make = (transaction: Executor, scope: OperationalScope) => { selectRows++; return { read: () => selectRows(transaction) }; };",
+      'database-member-mutation':
+        "const consume = (db: Pick<Executor, 'select'>) => { db.select = replacement; return {}; }; export const make = (transaction: Executor, scope: OperationalScope) => consume(transaction);",
+    };
+    const violations = yield* checkFixtures({ ...canonicalTypeFixtures, ...scopedOwnerFixtures(negatives) });
+    expectRejectedOwners(violations, Object.keys(negatives));
+  }),
+);
+
 const nativeRoutineImport = "import type { ScopedRoutineInvoker as Invoker } from '@app/core-runtime';\n";
 const nativeRoutineDeclaration = `export interface ScopedRoutineInvoker {
   readonly invoke: <Row, Parameters extends readonly unknown[]>(routine: Routine<Row, Parameters>, values: Parameters) => Effect.Effect<readonly Row[], InvocationError>;

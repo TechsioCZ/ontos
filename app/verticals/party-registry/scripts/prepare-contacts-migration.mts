@@ -4,7 +4,7 @@ import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { NodeFileSystem, NodeRuntime } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, ConfigProvider, Duration, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 export const ContactsJournalStateSchema = Schema.Literals(['ambiguous', 'contacts', 'fresh', 'legacy']);
 export type ContactsJournalState = typeof ContactsJournalStateSchema.Type;

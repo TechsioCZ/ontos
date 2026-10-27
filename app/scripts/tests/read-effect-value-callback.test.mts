@@ -52,7 +52,7 @@ export const api = HttpApi.make('InventoryApi')
   ],
   [
     `${owner}/shared/apis/stock-list.ts`,
-    `${header}import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+    `${header}import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 ${problemKinds.map(([key, suffix, status]) => `export const StockList${suffix}ProblemSchema = ${key === 'unavailable' ? 'makeRetryableProblemDetailsSchema' : 'makeProblemDetailsSchema'}('StockList${suffix}Problem', ${status});`).join('\n')}
 export const StockListApi = HttpApi.make('StockListApi').add(HttpApiGroup.make('stockList').add(HttpApiEndpoint.post('execute', '/reads/stock-list', {

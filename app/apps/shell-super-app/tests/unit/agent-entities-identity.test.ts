@@ -6,7 +6,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
 import { expect, it, rs } from 'effect-rstest';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   bindActionTestServices,

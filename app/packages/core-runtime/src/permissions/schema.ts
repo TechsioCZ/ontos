@@ -84,10 +84,21 @@ definition resource {
   permission write = (writer + module->write_all) & module->access
 }
 
-// Named permissions explicitly declare their read/write scope; auditor rights
-// never depend on guessing a permission name or copying another person's grants.
-// Customer self-service grants name one exact profile without conferring company membership.
-// A Price Group may inherit the same permission from its exact containing catalog.
+// Tenant-owned references remain independent of a selected Legal Entity.
+// Assignment eligibility is an explicit target grant, never mere membership.
+definition tenant_resource {
+  relation tenant: tenant
+  relation reader: principal
+  relation writer: principal
+  relation assignee: principal
+  permission read = reader & tenant->access
+  permission write = writer & tenant->access
+  permission assign = assignee & tenant->access
+}
+
+// Each object ID encodes the stable permission code and exact tenant/business scope.
+// Tenant-only Pricing targets use tenant access; existing Retail and Counterparty targets use Legal Entity access.
+// A Price Group may inherit the same permission from its exact containing catalog through an explicit relation.
 definition business_permission {
   relation tenant: tenant
   relation legal_entity: legal_entity

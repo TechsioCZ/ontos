@@ -1,4 +1,5 @@
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { NodeCrypto } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
@@ -130,17 +131,17 @@ const provisionContactsAccess = Effect.fn('provisionContactsAccess')(function* p
 export const createAuthenticationFixture = Effect.fn('createAuthenticationFixture')(
   function* createAuthenticationFixtureEffect() {
     const crypto = yield* Crypto.Crypto;
-    const fixtureId = yield* crypto.randomUUIDv4;
+    const fixtureId = yield* crypto.randomUUIDv4();
     const e2eCredentials = {
       email: `e2e.${fixtureId}@example.test`,
       password: 'e2e-correct-horse-battery-staple',
     };
     const makeTenant = (name: string) =>
       Effect.all({
-        legalEntityId: crypto.randomUUIDv4,
+        legalEntityId: crypto.randomUUIDv4(),
         name: Effect.succeed(name),
-        principalId: crypto.randomUUIDv4,
-        tenantId: crypto.randomUUIDv4,
+        principalId: crypto.randomUUIDv4(),
+        tenantId: crypto.randomUUIDv4(),
       });
     const e2eTenants = yield* Effect.all({
       first: makeTenant('E2E Alpha tenant'),
@@ -154,7 +155,9 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     );
     const coreClient = yield* makeTestPgClient(connectionString, { connectTimeout, startupParameters });
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(makeAuthDatabase({ connectionString }));
+    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(
+      makeAuthDatabase({ connectionString, expectedRole: SHARED_RUNTIME_IDENTITY.role }),
+    );
     const authentication = betterAuth({
       baseURL,
       database: adapter,

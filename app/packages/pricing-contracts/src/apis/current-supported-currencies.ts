@@ -2,7 +2,7 @@
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { DateTime, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import {
   CurrencySupportCurrentnessEvidenceSchema,
   CurrencySupportEffectivePeriodSchema,
@@ -41,8 +41,8 @@ export {
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 
-const brandedReference = <Brand extends string>(brand: Brand) =>
-  stableReference.pipe(Schema.brand(brand), Schema.decodeTo(Schema.String));
+const brandedReference = <Brand extends string>(brand: Parameters<typeof Schema.brand<Brand>>[0]) =>
+  stableReference.pipe(Schema.brand<Brand>(brand), Schema.decodeTo(Schema.String));
 
 export const PricingStorefrontIdSchema = brandedReference('PricingStorefrontId');
 export const PricingCartIdSchema = brandedReference('PricingCartId');

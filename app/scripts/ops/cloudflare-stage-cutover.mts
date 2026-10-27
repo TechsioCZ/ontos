@@ -17,9 +17,9 @@ import {
   Schedule,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   SHARED_RUNTIME_IDENTITY,
@@ -101,7 +101,7 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * `database-identities` login roles (from a host on the Zerops VPN), and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
  * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus the caller credentials
  * ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY, ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY,
- * and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
+ * ONTOS_CRM_PARTY_INTAKE_API_KEY and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
@@ -278,6 +278,7 @@ export interface WorkerSecretSources {
   readonly betterAuthSecret: Redacted.Redacted;
   readonly commerceCustomerContextGatewayApiKey: Redacted.Redacted;
   readonly commerceMarketCatalogGatewayApiKey: Redacted.Redacted;
+  readonly crmPartyIntakeApiKey: Redacted.Redacted;
   readonly gatewayPrivateJwk: Redacted.Redacted;
   readonly gatewayPublicJwks: Redacted.Redacted;
   readonly pricingGatewayApiKey: Redacted.Redacted;
@@ -303,6 +304,7 @@ const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerS
       'commerce-market-catalog',
       ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', sources.commerceMarketCatalogGatewayApiKey] as const,
     ],
+    ['crm', ['ONTOS_CRM_PARTY_INTAKE_API_KEY', sources.crmPartyIntakeApiKey] as const],
     ['pricing', ['ONTOS_PRICING_GATEWAY_API_KEY', sources.pricingGatewayApiKey] as const],
   ]);
   const gatewayApiKey = gatewayApiKeys.get(unit.id);
@@ -418,13 +420,14 @@ const readWorkerSecretSources = Effect.gen(function* readWorkerSecretSourcesEffe
     ...(yield* Config.all({
       commerceCustomerContextGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
       commerceMarketCatalogGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+      crmPartyIntakeApiKey: Config.Redacted('ONTOS_CRM_PARTY_INTAKE_API_KEY'),
       pricingGatewayApiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
     }).pipe(
       Effect.mapError(
         (cause) =>
           new StageOperationError({
             cause,
-            message: 'the workload gateway API keys are missing; provide all three caller keys in the settings',
+            message: 'the workload gateway API keys are missing; provide all four caller keys in the settings',
           }),
       ),
     )),

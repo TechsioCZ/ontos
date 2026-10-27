@@ -13,8 +13,8 @@
 // (`Effect.fn`) are the same program, and both are silent. Calling either from an operation is still
 // reported — see `invalid/layer-factory-called-per-operation.ts`.
 import { Context, Effect, Layer } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpClient } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientService {

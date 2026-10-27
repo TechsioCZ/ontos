@@ -1,7 +1,7 @@
 // expect-count: 4
 // A9/A1: one client factory rebuilt for every Shell authentication operation.
 import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 import { ShellAuthenticationApi } from './api.ts';
 
 interface ShellClientOptions {

@@ -1,5 +1,5 @@
 import { Effect, Layer, Predicate } from 'effect';
-import { HttpServerRequest } from 'effect/unstable/http';
+import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ActiveApplicationCompositionService, ContextAccess, agentGrantRelationships } from '@app/core-runtime';
 import type { AgentGrantWritePolicy } from '@app/core-runtime';

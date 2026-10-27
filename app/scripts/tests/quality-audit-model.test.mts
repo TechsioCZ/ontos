@@ -566,7 +566,7 @@ it.live(
       consumer,
       [
         "import { Effect, Path } from 'effect';",
-        "import { ChildProcess } from 'effect/unstable/process';",
+        "import { ChildProcess } from 'effect/process';",
         "const OWNERS = ['one', 'two'] as const;",
         "const unusedOwners = ['dead'] as const;",
         `const ownerScript = (owner: string) => \`verticals/\${owner}/scripts/reset.mts\`;`,
@@ -691,7 +691,7 @@ it.live(
       root,
       `${core}/tests/unit/consumer.test.ts`,
       [
-        "import { ChildProcess as Process } from 'effect/unstable/process';",
+        "import { ChildProcess as Process } from 'effect/process';",
         "import nativePath from 'node:path';",
         "const packageRoot = nativePath.resolve(import.meta.dirname, '../..');",
         "Process.make(process.execPath, [nativePath.join(packageRoot, 'tests/fixtures/directory.fixture.ts')], { cwd: packageRoot });",
@@ -709,7 +709,7 @@ it.live(
     write(
       root,
       `${core}/${executableMutationConsumer}`,
-      "import { ChildProcess } from 'effect/unstable/process';\nprocess.execPath = '/usr/bin/printf';\nprocess.exitCode = 0;\nChildProcess.make(process.execPath, ['../../scripts/mutated-executable.fixture.mts']);",
+      "import { ChildProcess } from 'effect/process';\nprocess.execPath = '/usr/bin/printf';\nprocess.exitCode = 0;\nChildProcess.make(process.execPath, ['../../scripts/mutated-executable.fixture.mts']);",
     );
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(
@@ -1483,7 +1483,7 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       const consumerPath = path.join(root, auditConsumersFile);
       const source = [
         effectImportSource,
-        "import { ChildProcess } from 'effect/unstable/process';",
+        "import { ChildProcess } from 'effect/process';",
         fileUrlImportSource,
         "const ownerPaths = ['./owner.mts'] as const;",
         "const unusedPaths = ['./unused.mts'] as const;",
@@ -1618,7 +1618,9 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       const consumerPath = path.join(root, auditConsumersFile);
       const model = yield* buildKnipModel(root, config, consumerPath);
       const ports = model.evidence.filter((fact) => fact.reason.startsWith('Literal owner port'));
-      expect(ports).toHaveLength(valid.length);
+      expect(ports.map((fact) => fact.target).toSorted()).toEqual(
+        [...valid, 'verticals/crm-activities/scripts/reset-demo.mts'].toSorted(),
+      );
       expect(new Set(ports.map((fact) => fact.target))).toEqual(new Set(valid));
       expect(ports.some((fact) => fact.target === dead)).toBe(false);
       for (const target of checked) {

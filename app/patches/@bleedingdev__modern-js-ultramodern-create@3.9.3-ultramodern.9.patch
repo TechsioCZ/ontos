@@ -1,0 +1,432 @@
+diff --git a/dist/cjs/ultramodern-workspace/add-shell.cjs b/dist/cjs/ultramodern-workspace/add-shell.cjs
+--- a/dist/cjs/ultramodern-workspace/add-shell.cjs
++++ b/dist/cjs/ultramodern-workspace/add-shell.cjs
+@@ -197,6 +197,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, app));
++        (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, app));
+     }
+     topology.shells ??= [];
+     topology.shells.push({
+@@ -313,6 +314,7 @@
+     (0, external_delivery_unit_stamp_cjs_namespaceObject.stampDeliveryUnitIdentity)(finalEntry, scope, resolvedShell, version);
+     (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, constants_cjs_namespaceObject.TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+     (0, external_fs_io_cjs_namespaceObject.writeFile)(options.workspaceRoot, buildArtifactPath, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, resolvedShell));
++    (0, external_fs_io_cjs_namespaceObject.writeFile)(options.workspaceRoot, `${resolvedShell.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, resolvedShell));
+     Object.assign(shell, resolvedShell);
+     const afterFiles = (0, external_generation_result_cjs_namespaceObject.createFileSnapshot)(options.workspaceRoot);
+     const { createdPaths, rewrittenPaths } = (0, external_generation_result_cjs_namespaceObject.diffFileSnapshots)(beforeFiles, afterFiles);
+diff --git a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
+--- a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
++++ b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
+@@ -131,6 +131,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, app));
++        (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, app));
+     }
+     const newPackagePath = external_node_path_default().join(options.workspaceRoot, vertical.directory, 'package.json');
+     const newPackage = JSON.parse(external_node_fs_default().readFileSync(newPackagePath, 'utf-8'));
+@@ -199,11 +200,8 @@
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])(0, external_shell_files_cjs_namespaceObject.rewriteShellAppFiles)(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    (0, external_shell_files_cjs_namespaceObject.rewriteShellAppFiles)(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         enableTailwind: previousTailwind
+     }, canonicalFormatter);
+@@ -277,6 +275,7 @@
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, external_constants_cjs_namespaceObject.TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, external_constants_cjs_namespaceObject.DEVELOPMENT_OVERLAY_PATH, `${JSON.stringify(finalOverlay, null, 2)}\n`);
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(options.workspaceRoot, buildArtifactPath, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, resolvedVertical));
++        (0, external_fs_io_cjs_namespaceObject.writeFile)(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+     } else {
+         const authoredArtifact = (0, external_preflight_cjs_namespaceObject.readRequiredJsonObject)(external_node_path_default().join(options.workspaceRoot, vertical.directory, 'shared/ultramodern-build.json'));
+@@ -294,6 +293,7 @@
+         (0, external_delivery_unit_stamp_cjs_namespaceObject.stampDeliveryUnitIdentity)(entry, scope, resolvedVertical, resolvedVertical.deliveryUnit.version);
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, external_constants_cjs_namespaceObject.TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, buildArtifactPath, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, resolvedVertical));
++        (0, external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+         (0, renderer_cjs_namespaceObject.assertRendererProjection)(entry);
+         const catalogs = utils_namespaceObject.yaml.load(external_node_fs_default().readFileSync(external_node_path_default().join(options.workspaceRoot, 'pnpm-workspace.yaml'), 'utf8'));
+diff --git a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
+--- a/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
++++ b/dist/cjs/ultramodern-workspace/module-federation/reexport-module.cjs
+@@ -70,10 +70,11 @@
+         }
+     }, null, 2)}\n`;
+ }
+-function createUltramodernBuildModule(_scope, app, includeUiMarker = (0, external_descriptors_cjs_namespaceObject.appEmitsBrowserUi)(app)) {
+-    return `import buildArtifact = require('./ultramodern-build.json');
+-import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
++function createUltramodernBuildModule(scope, app, includeUiMarker = (0, external_descriptors_cjs_namespaceObject.appEmitsBrowserUi)(app)) {
++    return `import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
+ 
++const buildArtifact = ${createUltramodernBuildArtifactJson(scope, app).trimEnd()} as const;
++
+ declare const ULTRAMODERN_BUILD_MARKER: string;
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+ 
+diff --git a/dist/cjs/ultramodern-workspace/native-app.cjs b/dist/cjs/ultramodern-workspace/native-app.cjs
+--- a/dist/cjs/ultramodern-workspace/native-app.cjs
++++ b/dist/cjs/ultramodern-workspace/native-app.cjs
+@@ -70,7 +70,7 @@
+     const tsconfig = (0, external_package_json_cjs_namespaceObject.createAppTsConfig)(app, remotes);
+     const config = (0, external_module_federation_cjs_namespaceObject.createAppModernConfig)(app, enableTailwind);
+     const backendConfig = (0, external_descriptors_cjs_namespaceObject.appHasApi)(app) ? (0, external_module_federation_cjs_namespaceObject.createBackendModuleFederationConfig)(app) : void 0;
+-    const buildModule = (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, app);
++    const buildModule = app.routerBindings ? (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, app) : void 0;
+     const buildJson = app.routerBindings ? (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, app) : void 0;
+     const write = (relativePath, content)=>(0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${app.directory}/${relativePath}`, content);
+     (0, external_fs_io_cjs_namespaceObject.writeJson)(targetDir, `${app.directory}/package.json`, manifest);
+@@ -81,7 +81,7 @@
+ /// <reference types="${generation.jsxImportSource}" />
+ `);
+     write('src/routes/index.css', (0, external_app_files_cjs_namespaceObject.createAppStyles)(enableTailwind, scope, app));
+-    write('shared/ultramodern-build.ts', buildModule);
++    if (buildModule) write('shared/ultramodern-build.ts', buildModule);
+     if (buildJson) write('shared/ultramodern-build.json', buildJson);
+     write('src/ultramodern-build.ts', (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildReexportModule)(app));
+     if (enableTailwind) write('tailwind.config.ts', (0, external_app_files_cjs_namespaceObject.createTailwindConfig)());
+diff --git a/dist/cjs/ultramodern-workspace/write-app.cjs b/dist/cjs/ultramodern-workspace/write-app.cjs
+--- a/dist/cjs/ultramodern-workspace/write-app.cjs
++++ b/dist/cjs/ultramodern-workspace/write-app.cjs
+@@ -87,8 +87,10 @@
+     (0, external_fs_io_cjs_namespaceObject.writeJson)(targetDir, `${resolvedApp.directory}/tsconfig.mf-types.json`, (0, external_package_json_cjs_namespaceObject.createAppMfTypesTsConfig)(resolvedApp));
+     if (emitsUi) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/src/modern-app-env.d.ts`, (0, external_app_files_cjs_namespaceObject.createAppEnvDts)(resolvedApp, remotes, scope));
+     if ('api-only' !== resolvedApp.surfaceProfile) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/src/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildReexportModule)(resolvedApp));
+-    (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, resolvedApp));
+-    if (!emitsUi || resolvedApp.routerBindings) (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, resolvedApp));
++    if (!emitsUi || resolvedApp.routerBindings) {
++        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, resolvedApp));
++        (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, resolvedApp));
++    }
+     if (emitsUi) {
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, publicWeb.jsonLdHelperFile.path, publicWeb.jsonLdHelperFile.content);
+         (0, external_fs_io_cjs_namespaceObject.writeFile)(targetDir, publicWeb.routeMetadataFile.path, publicWeb.routeMetadataFile.content);
+diff --git a/dist/cjs/ultramodern-workspace/write-workspace.cjs b/dist/cjs/ultramodern-workspace/write-workspace.cjs
+--- a/dist/cjs/ultramodern-workspace/write-workspace.cjs
++++ b/dist/cjs/ultramodern-workspace/write-workspace.cjs
+@@ -221,6 +221,7 @@
+     for (const app of reconciledApps){
+         const artifactPath = `${app.directory}/shared/ultramodern-build.json`;
+         (deferredUiArtifactPaths.has(artifactPath) ? external_fs_io_cjs_namespaceObject.writeFile : external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.targetDir, artifactPath, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildArtifactJson)(scope, app));
++        (deferredUiArtifactPaths.has(artifactPath) ? external_fs_io_cjs_namespaceObject.writeFile : external_fs_io_cjs_namespaceObject.writeFileReplacing)(options.targetDir, `${app.directory}/shared/ultramodern-build.ts`, (0, external_module_federation_cjs_namespaceObject.createUltramodernBuildModule)(scope, app));
+     }
+     (0, workspace_cjs_namespaceObject.validateWorkspace)(options.targetDir, (0, external_workspace_validation_contract_cjs_namespaceObject.createWorkspaceValidationContract)(scope, enableTailwind, external_descriptors_cjs_namespaceObject.sharedPackages.map((sharedPackage)=>({
+             id: sharedPackage.id,
+diff --git a/dist/esm/ultramodern-workspace/add-shell.js b/dist/esm/ultramodern-workspace/add-shell.js
+--- a/dist/esm/ultramodern-workspace/add-shell.js
++++ b/dist/esm/ultramodern-workspace/add-shell.js
+@@ -13,7 +13,7 @@
+ import { projectAddedShellDevelopmentOverlay } from "./development-overlay-projection.js";
+ import { formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJsonFile } from "./fs-io.js";
+ import { assertOverlayKeptExistingSource, createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "./module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "./module-federation.js";
+ import { assertUniqueTailwindPrefixes, packageName, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+ import { createCloudflareDeployContract } from "./policy.js";
+@@ -153,6 +153,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, app));
++        writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     topology.shells ??= [];
+     topology.shells.push({
+@@ -269,6 +270,7 @@
+     stampDeliveryUnitIdentity(finalEntry, scope, resolvedShell, version);
+     writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+     writeFile(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedShell));
++    writeFile(options.workspaceRoot, `${resolvedShell.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedShell));
+     Object.assign(shell, resolvedShell);
+     const afterFiles = createFileSnapshot(options.workspaceRoot);
+     const { createdPaths, rewrittenPaths } = diffFileSnapshots(beforeFiles, afterFiles);
+diff --git a/dist/esm/ultramodern-workspace/add-vertical/execute.js b/dist/esm/ultramodern-workspace/add-vertical/execute.js
+--- a/dist/esm/ultramodern-workspace/add-vertical/execute.js
++++ b/dist/esm/ultramodern-workspace/add-vertical/execute.js
+@@ -9,7 +9,7 @@
+ import { projectAddedVerticalDevelopmentOverlay, projectResolvedDevelopmentOverlay } from "../development-overlay-projection.js";
+ import { formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJsonFile } from "../fs-io.js";
+ import { assertOverlayKeptExistingSource, createFileSnapshot, createGenerationResult, diffFileSnapshots } from "../generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "../module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "../module-federation.js";
+ import { runCodeSmithOverlays } from "../overlays.js";
+ import { createRootTsConfig } from "../package-json.js";
+ import { captureWorkspaceRendererEvaluations } from "../renderer-config-evaluation.js";
+@@ -87,6 +87,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, app));
++        writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     const newPackagePath = node_path.join(options.workspaceRoot, vertical.directory, 'package.json');
+     const newPackage = JSON.parse(node_fs.readFileSync(newPackagePath, 'utf-8'));
+@@ -155,11 +156,8 @@
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         enableTailwind: previousTailwind
+     }, canonicalFormatter);
+@@ -233,6 +231,7 @@
+         writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         writeFileReplacing(options.workspaceRoot, DEVELOPMENT_OVERLAY_PATH, `${JSON.stringify(finalOverlay, null, 2)}\n`);
+         writeFile(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedVertical));
++        writeFile(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+     } else {
+         const authoredArtifact = readRequiredJsonObject(node_path.join(options.workspaceRoot, vertical.directory, 'shared/ultramodern-build.json'));
+@@ -250,6 +249,7 @@
+         stampDeliveryUnitIdentity(entry, scope, resolvedVertical, resolvedVertical.deliveryUnit.version);
+         writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         writeFileReplacing(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedVertical));
++        writeFileReplacing(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+         assertRendererProjection(entry);
+         const catalogs = yaml.load(node_fs.readFileSync(node_path.join(options.workspaceRoot, 'pnpm-workspace.yaml'), 'utf8'));
+diff --git a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+--- a/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
++++ b/dist/esm/ultramodern-workspace/module-federation/reexport-module.js
+@@ -36,10 +36,11 @@
+         }
+     }, null, 2)}\n`;
+ }
+-function createUltramodernBuildModule(_scope, app, includeUiMarker = appEmitsBrowserUi(app)) {
+-    return `import buildArtifact = require('./ultramodern-build.json');
+-import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
++function createUltramodernBuildModule(scope, app, includeUiMarker = appEmitsBrowserUi(app)) {
++    return `import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
+ 
++const buildArtifact = ${createUltramodernBuildArtifactJson(scope, app).trimEnd()} as const;
++
+ declare const ULTRAMODERN_BUILD_MARKER: string;
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+ 
+diff --git a/dist/esm/ultramodern-workspace/native-app.js b/dist/esm/ultramodern-workspace/native-app.js
+--- a/dist/esm/ultramodern-workspace/native-app.js
++++ b/dist/esm/ultramodern-workspace/native-app.js
+@@ -38,7 +38,7 @@
+     const tsconfig = createAppTsConfig(app, remotes);
+     const config = createAppModernConfig(app, enableTailwind);
+     const backendConfig = appHasApi(app) ? createBackendModuleFederationConfig(app) : void 0;
+-    const buildModule = createUltramodernBuildModule(scope, app);
++    const buildModule = app.routerBindings ? createUltramodernBuildModule(scope, app) : void 0;
+     const buildJson = app.routerBindings ? createUltramodernBuildArtifactJson(scope, app) : void 0;
+     const write = (relativePath, content)=>writeFile(targetDir, `${app.directory}/${relativePath}`, content);
+     writeJson(targetDir, `${app.directory}/package.json`, manifest);
+@@ -49,7 +49,7 @@
+ /// <reference types="${generation.jsxImportSource}" />
+ `);
+     write('src/routes/index.css', createAppStyles(enableTailwind, scope, app));
+-    write('shared/ultramodern-build.ts', buildModule);
++    if (buildModule) write('shared/ultramodern-build.ts', buildModule);
+     if (buildJson) write('shared/ultramodern-build.json', buildJson);
+     write('src/ultramodern-build.ts', createUltramodernBuildReexportModule(app));
+     if (enableTailwind) write('tailwind.config.ts', createTailwindConfig());
+diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
+--- a/dist/esm/ultramodern-workspace/write-app.js
++++ b/dist/esm/ultramodern-workspace/write-app.js
+@@ -55,8 +55,10 @@
+     writeJson(targetDir, `${resolvedApp.directory}/tsconfig.mf-types.json`, createAppMfTypesTsConfig(resolvedApp));
+     if (emitsUi) writeFile(targetDir, `${resolvedApp.directory}/src/modern-app-env.d.ts`, createAppEnvDts(resolvedApp, remotes, scope));
+     if ('api-only' !== resolvedApp.surfaceProfile) writeFile(targetDir, `${resolvedApp.directory}/src/ultramodern-build.ts`, createUltramodernBuildReexportModule(resolvedApp));
+-    writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedApp));
+-    if (!emitsUi || resolvedApp.routerBindings) writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, resolvedApp));
++    if (!emitsUi || resolvedApp.routerBindings) {
++        writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedApp));
++        writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, resolvedApp));
++    }
+     if (emitsUi) {
+         writeFile(targetDir, publicWeb.jsonLdHelperFile.path, publicWeb.jsonLdHelperFile.content);
+         writeFile(targetDir, publicWeb.routeMetadataFile.path, publicWeb.routeMetadataFile.content);
+diff --git a/dist/esm/ultramodern-workspace/write-workspace.js b/dist/esm/ultramodern-workspace/write-workspace.js
+--- a/dist/esm/ultramodern-workspace/write-workspace.js
++++ b/dist/esm/ultramodern-workspace/write-workspace.js
+@@ -8,7 +8,7 @@
+ import { appEmitsBrowserUi, createShellHost, sharedPackages } from "./descriptors.js";
+ import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
+ import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "./module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "./module-federation.js";
+ import { assertUniqueTailwindPrefixes, packageName, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+ import { createRootPackageJson, createRootTsConfig, createSharedContractsIndex, createSharedPackage, createSharedPackageTsConfig, createTsConfigBase } from "./package-json.js";
+@@ -178,6 +178,7 @@
+     for (const app of reconciledApps){
+         const artifactPath = `${app.directory}/shared/ultramodern-build.json`;
+         (deferredUiArtifactPaths.has(artifactPath) ? writeFile : writeFileReplacing)(options.targetDir, artifactPath, createUltramodernBuildArtifactJson(scope, app));
++        (deferredUiArtifactPaths.has(artifactPath) ? writeFile : writeFileReplacing)(options.targetDir, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     validateWorkspace(options.targetDir, createWorkspaceValidationContract(scope, enableTailwind, sharedPackages.map((sharedPackage)=>({
+             id: sharedPackage.id,
+diff --git a/dist/esm-node/ultramodern-workspace/add-shell.js b/dist/esm-node/ultramodern-workspace/add-shell.js
+--- a/dist/esm-node/ultramodern-workspace/add-shell.js
++++ b/dist/esm-node/ultramodern-workspace/add-shell.js
+@@ -14,7 +14,7 @@
+ import { projectAddedShellDevelopmentOverlay } from "./development-overlay-projection.js";
+ import { formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJsonFile } from "./fs-io.js";
+ import { assertOverlayKeptExistingSource, createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "./module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "./module-federation.js";
+ import { assertUniqueTailwindPrefixes, packageName, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+ import { createCloudflareDeployContract } from "./policy.js";
+@@ -154,6 +154,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, app));
++        writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     topology.shells ??= [];
+     topology.shells.push({
+@@ -270,6 +271,7 @@
+     stampDeliveryUnitIdentity(finalEntry, scope, resolvedShell, version);
+     writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+     writeFile(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedShell));
++    writeFile(options.workspaceRoot, `${resolvedShell.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedShell));
+     Object.assign(shell, resolvedShell);
+     const afterFiles = createFileSnapshot(options.workspaceRoot);
+     const { createdPaths, rewrittenPaths } = diffFileSnapshots(beforeFiles, afterFiles);
+diff --git a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
+--- a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
++++ b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
+@@ -10,7 +10,7 @@
+ import { projectAddedVerticalDevelopmentOverlay, projectResolvedDevelopmentOverlay } from "../development-overlay-projection.js";
+ import { formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJsonFile } from "../fs-io.js";
+ import { assertOverlayKeptExistingSource, createFileSnapshot, createGenerationResult, diffFileSnapshots } from "../generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "../module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "../module-federation.js";
+ import { runCodeSmithOverlays } from "../overlays.js";
+ import { createRootTsConfig } from "../package-json.js";
+ import { captureWorkspaceRendererEvaluations } from "../renderer-config-evaluation.js";
+@@ -88,6 +88,7 @@
+             if (app.rendererGenerationProfile && !app.rendererGenerationProfile.capabilities.workers) delete entry.cloudflare;
+         }
+         writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, app));
++        writeFileReplacing(options.workspaceRoot, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     const newPackagePath = node_path.join(options.workspaceRoot, vertical.directory, 'package.json');
+     const newPackage = JSON.parse(node_fs.readFileSync(newPackagePath, 'utf-8'));
+@@ -156,11 +157,8 @@
+         ...updatedVerticals,
+         ...nextAdditionalShells
+     ])}\n`);
+-    for (const shellToRefresh of [
+-        nextPrimaryShell,
+-        ...nextAdditionalShells
+-    ])rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, shellToRefresh.id === nextTargetShell.id ? nextTargetShell : shellToRefresh, {
+-        shell: previousProjection(previousApps).find((app)=>app.id === shellToRefresh.id),
++    rewriteShellAppFiles(options.workspaceRoot, scope, packageSource, enableTailwind, updatedVerticals, bridge, nextTargetShell, {
++        shell: previousProjection(previousApps).find((app)=>app.id === nextTargetShell.id),
+         remotes: existingVerticals,
+         enableTailwind: previousTailwind
+     }, canonicalFormatter);
+@@ -234,6 +232,7 @@
+         writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         writeFileReplacing(options.workspaceRoot, DEVELOPMENT_OVERLAY_PATH, `${JSON.stringify(finalOverlay, null, 2)}\n`);
+         writeFile(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedVertical));
++        writeFile(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+     } else {
+         const authoredArtifact = readRequiredJsonObject(node_path.join(options.workspaceRoot, vertical.directory, 'shared/ultramodern-build.json'));
+@@ -251,6 +250,7 @@
+         stampDeliveryUnitIdentity(entry, scope, resolvedVertical, resolvedVertical.deliveryUnit.version);
+         writeFileReplacing(options.workspaceRoot, TOPOLOGY_PATH, `${JSON.stringify(finalTopology, null, 2)}\n`);
+         writeFileReplacing(options.workspaceRoot, buildArtifactPath, createUltramodernBuildArtifactJson(scope, resolvedVertical));
++        writeFileReplacing(options.workspaceRoot, `${resolvedVertical.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedVertical));
+         Object.assign(vertical, resolvedVertical);
+         assertRendererProjection(entry);
+         const catalogs = yaml.load(node_fs.readFileSync(node_path.join(options.workspaceRoot, 'pnpm-workspace.yaml'), 'utf8'));
+diff --git a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
+--- a/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
++++ b/dist/esm-node/ultramodern-workspace/module-federation/reexport-module.js
+@@ -37,10 +37,11 @@
+         }
+     }, null, 2)}\n`;
+ }
+-function createUltramodernBuildModule(_scope, app, includeUiMarker = appEmitsBrowserUi(app)) {
+-    return `import buildArtifact = require('./ultramodern-build.json');
+-import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
++function createUltramodernBuildModule(scope, app, includeUiMarker = appEmitsBrowserUi(app)) {
++    return `import { resolveUltramodernBuildArtifact } from '@modern-js/backend-federation-contracts';
+ 
++const buildArtifact = ${createUltramodernBuildArtifactJson(scope, app).trimEnd()} as const;
++
+ declare const ULTRAMODERN_BUILD_MARKER: string;
+ declare const ULTRAMODERN_SOURCE_REVISION: string;
+ 
+diff --git a/dist/esm-node/ultramodern-workspace/native-app.js b/dist/esm-node/ultramodern-workspace/native-app.js
+--- a/dist/esm-node/ultramodern-workspace/native-app.js
++++ b/dist/esm-node/ultramodern-workspace/native-app.js
+@@ -39,7 +39,7 @@
+     const tsconfig = createAppTsConfig(app, remotes);
+     const config = createAppModernConfig(app, enableTailwind);
+     const backendConfig = appHasApi(app) ? createBackendModuleFederationConfig(app) : void 0;
+-    const buildModule = createUltramodernBuildModule(scope, app);
++    const buildModule = app.routerBindings ? createUltramodernBuildModule(scope, app) : void 0;
+     const buildJson = app.routerBindings ? createUltramodernBuildArtifactJson(scope, app) : void 0;
+     const write = (relativePath, content)=>writeFile(targetDir, `${app.directory}/${relativePath}`, content);
+     writeJson(targetDir, `${app.directory}/package.json`, manifest);
+@@ -50,7 +50,7 @@
+ /// <reference types="${generation.jsxImportSource}" />
+ `);
+     write('src/routes/index.css', createAppStyles(enableTailwind, scope, app));
+-    write('shared/ultramodern-build.ts', buildModule);
++    if (buildModule) write('shared/ultramodern-build.ts', buildModule);
+     if (buildJson) write('shared/ultramodern-build.json', buildJson);
+     write('src/ultramodern-build.ts', createUltramodernBuildReexportModule(app));
+     if (enableTailwind) write('tailwind.config.ts', createTailwindConfig());
+diff --git a/dist/esm-node/ultramodern-workspace/write-app.js b/dist/esm-node/ultramodern-workspace/write-app.js
+--- a/dist/esm-node/ultramodern-workspace/write-app.js
++++ b/dist/esm-node/ultramodern-workspace/write-app.js
+@@ -56,8 +56,10 @@
+     writeJson(targetDir, `${resolvedApp.directory}/tsconfig.mf-types.json`, createAppMfTypesTsConfig(resolvedApp));
+     if (emitsUi) writeFile(targetDir, `${resolvedApp.directory}/src/modern-app-env.d.ts`, createAppEnvDts(resolvedApp, remotes, scope));
+     if ('api-only' !== resolvedApp.surfaceProfile) writeFile(targetDir, `${resolvedApp.directory}/src/ultramodern-build.ts`, createUltramodernBuildReexportModule(resolvedApp));
+-    writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedApp));
+-    if (!emitsUi || resolvedApp.routerBindings) writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, resolvedApp));
++    if (!emitsUi || resolvedApp.routerBindings) {
++        writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, resolvedApp));
++        writeFile(targetDir, `${resolvedApp.directory}/shared/ultramodern-build.json`, createUltramodernBuildArtifactJson(scope, resolvedApp));
++    }
+     if (emitsUi) {
+         writeFile(targetDir, publicWeb.jsonLdHelperFile.path, publicWeb.jsonLdHelperFile.content);
+         writeFile(targetDir, publicWeb.routeMetadataFile.path, publicWeb.routeMetadataFile.content);
+diff --git a/dist/esm-node/ultramodern-workspace/write-workspace.js b/dist/esm-node/ultramodern-workspace/write-workspace.js
+--- a/dist/esm-node/ultramodern-workspace/write-workspace.js
++++ b/dist/esm-node/ultramodern-workspace/write-workspace.js
+@@ -9,7 +9,7 @@
+ import { appEmitsBrowserUi, createShellHost, sharedPackages } from "./descriptors.js";
+ import { copyRootTemplate, formatGeneratedWorkspaceFiles, writeFile, writeFileReplacing, writeJson } from "./fs-io.js";
+ import { createFileSnapshot, createGenerationResult, diffFileSnapshots } from "./generation-result.js";
+-import { createUltramodernBuildArtifactJson } from "./module-federation.js";
++import { createUltramodernBuildArtifactJson, createUltramodernBuildModule } from "./module-federation.js";
+ import { assertUniqueTailwindPrefixes, packageName, toPackageScope } from "./naming.js";
+ import { runCodeSmithOverlays } from "./overlays.js";
+ import { createRootPackageJson, createRootTsConfig, createSharedContractsIndex, createSharedPackage, createSharedPackageTsConfig, createTsConfigBase } from "./package-json.js";
+@@ -179,6 +179,7 @@
+     for (const app of reconciledApps){
+         const artifactPath = `${app.directory}/shared/ultramodern-build.json`;
+         (deferredUiArtifactPaths.has(artifactPath) ? writeFile : writeFileReplacing)(options.targetDir, artifactPath, createUltramodernBuildArtifactJson(scope, app));
++        (deferredUiArtifactPaths.has(artifactPath) ? writeFile : writeFileReplacing)(options.targetDir, `${app.directory}/shared/ultramodern-build.ts`, createUltramodernBuildModule(scope, app));
+     }
+     validateWorkspace(options.targetDir, createWorkspaceValidationContract(scope, enableTailwind, sharedPackages.map((sharedPackage)=>({
+             id: sharedPackage.id,

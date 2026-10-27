@@ -1,8 +1,8 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { demoId, demoLegalEntityId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import {
   catalog,
@@ -23,6 +23,7 @@ import { refreshObchodOrderPresentation } from './order-presentation.ts';
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
 
 type EncodedMerchandiseState = typeof MerchandiseStateSchema.Encoded;
+const equivalentState = Schema.toEquivalence(Schema.toEncoded(MerchandiseStateSchema));
 
 /** Fixed reference instant (same as the workforce seed) so repeated resets write byte-identical state. */
 const SEED_INSTANT = DateTime.makeUnsafe('2026-10-13T08:00:00Z');
@@ -181,14 +182,17 @@ const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoSt
 /** Explicit non-destructive mode: patch only untouched old open fixtures in Obchodní firma. */
 const repairOrderPresentation = Effect.gen(function* repairOrderPresentation() {
   const current = yield* readCompanySnapshot(scope);
-  if (current === undefined) return yield* Effect.fail(new Error('Obchodní firma merchandise must already exist'));
+  if (current === undefined) {
+    return yield* Effect.fail(new Error('Obchodní firma merchandise must already exist'));
+  }
   const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(current.state);
   const repaired = refreshObchodOrderPresentation(encoded);
-  if (JSON.stringify(repaired) === JSON.stringify(encoded))
+  if (equivalentState(repaired, encoded)) {
     return yield* Console.log('Obchodní firma open orders already presentable; nothing changed');
+  }
   const state = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired);
   yield* writeCompanySnapshot(scope, state);
-  yield* Console.log(
+  return yield* Console.log(
     'Obchodní firma: five old open fixture dates and matching stock timestamps refreshed; completed history, prices and statuses preserved',
   );
 });

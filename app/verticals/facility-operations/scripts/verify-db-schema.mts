@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Console, Effect, Exit, Layer, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import {
   agendaStates,

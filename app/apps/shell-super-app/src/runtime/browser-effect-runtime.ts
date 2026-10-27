@@ -1,4 +1,4 @@
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { Layer, Logger, ManagedRuntime, Random, References, Tracer } from 'effect';
 

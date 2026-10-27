@@ -4,7 +4,7 @@
  * Layer body, are not per-call construction — neither must report.
  */
 export const renderClientLayer = (name: string): string => `import { Context, Effect, Layer } from 'effect';
-import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 export class ${name}Client extends Context.Tag('${name}Client')<${name}Client, HttpApiClient.Client<typeof ${name}Api>>() {}
 

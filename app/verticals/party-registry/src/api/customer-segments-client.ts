@@ -21,7 +21,7 @@ import { makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { DateTime, Effect, Option, Random, Redacted, Schedule, Schema, SchemaGetter } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { CounterpartyRefSchema } from '../../shared/resources/counterparty.ts';
 import type { CounterpartyRef } from '../../shared/resources/counterparty.ts';

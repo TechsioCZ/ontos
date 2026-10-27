@@ -1,7 +1,6 @@
 import type { ActionRuntime, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
-import { DateTime, Effect, Option, Schema } from 'effect';
-import { randomUUID } from 'node:crypto';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 import { and, asc, eq } from 'drizzle-orm';
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread, effect-native/no-sequential-independent-yields, eslint/no-negated-condition, eslint/prefer-destructuring, perfectionist/sort-object-types, perfectionist/sort-objects, typescript/consistent-type-specifier-style -- Drizzle rows and optional SQL columns are decoded at this tenant-scoped persistence boundary; generated insert key order and transactional read ordering are intentional. expires: 2027-03-31. */
@@ -398,21 +397,35 @@ const insertLifecycleEvent = (
 export interface CatalogPersistence {
   readonly correct: (
     input: CorrectProductPersistenceInput,
-  ) => Effect.Effect<CorrectProductPersistenceOutcome, CatalogPersistenceConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    CorrectProductPersistenceOutcome,
+    CatalogPersistenceConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly create: (
     input: CreateProductPersistenceInput,
-  ) => Effect.Effect<CreateProductPersistenceOutcome, CatalogPersistenceConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    CreateProductPersistenceOutcome,
+    CatalogPersistenceConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly getCreatedByInvocation: (
     invocationId: string,
     principalId: string,
   ) => Effect.Effect<Option.Option<CreateProductResult>, CatalogPersistenceUnavailable>;
-  readonly getCurrent: (productId: string) => Effect.Effect<Option.Option<Product>, CatalogPersistenceUnavailable>;
+  readonly getCurrent: (
+    productId: string,
+  ) => Effect.Effect<Option.Option<Product>, CatalogPersistenceUnavailable, Crypto.Crypto>;
   readonly getHistory: (
     productId: string,
-  ) => Effect.Effect<Option.Option<ProductHistory>, CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<Option.Option<ProductHistory>, CatalogPersistenceUnavailable, Crypto.Crypto>;
   readonly reactivate: (
     input: ReactivateProductPersistenceInput,
-  ) => Effect.Effect<ReactivateProductPersistenceOutcome, CatalogPersistenceConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    ReactivateProductPersistenceOutcome,
+    CatalogPersistenceConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly recoverCreateProduct: (
     invocationId: string,
   ) => Effect.Effect<CatalogActionRecovery<CreateProductResult>, never, ActionRuntime>;
@@ -421,10 +434,18 @@ export interface CatalogPersistence {
   ) => Effect.Effect<CatalogActionRecovery<UpdateProductResult>, never, ActionRuntime>;
   readonly retire: (
     input: RetireProductPersistenceInput,
-  ) => Effect.Effect<RetireProductPersistenceOutcome, CatalogPersistenceConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    RetireProductPersistenceOutcome,
+    CatalogPersistenceConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
   readonly update: (
     input: UpdateProductPersistenceInput,
-  ) => Effect.Effect<UpdateProductPersistenceOutcome, CatalogPersistenceConflict | CatalogPersistenceUnavailable>;
+  ) => Effect.Effect<
+    UpdateProductPersistenceOutcome,
+    CatalogPersistenceConflict | CatalogPersistenceUnavailable,
+    Crypto.Crypto
+  >;
 }
 
 export const catalogPersistenceForScope = (
@@ -537,8 +558,10 @@ export const catalogPersistenceForScope = (
   );
 
   const create: CatalogPersistence['create'] = Effect.fn('CatalogPersistence.create')(function* create(input) {
-    const productId = randomUUID();
-    const variantId = input.variantId ?? randomUUID();
+    const crypto = yield* Crypto.Crypto;
+    const newId = crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const productId = yield* newId;
+    const variantId = input.variantId ?? (yield* newId);
     yield* transaction
       .insert(products)
       .values({

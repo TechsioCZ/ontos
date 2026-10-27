@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, Console, Effect, Exit, FileSystem, Path, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseIdentityConnections } from '../packages/core-runtime/src/db/config.ts';
 

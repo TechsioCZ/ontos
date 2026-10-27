@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 
+import { createPresetUltramodernWorkspaceConfig } from '@modern-js/ultramodern-app-tools';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
@@ -20,7 +21,8 @@ const OverlaySchema = Schema.Struct({
 });
 const VerticalSchema = Schema.Struct({
   id: Schema.String,
-  moduleFederation: Schema.Struct({ name: Schema.String }),
+  // Headless (api-only) units have no UI Module Federation boundary.
+  moduleFederation: Schema.optional(Schema.Struct({ name: Schema.String })),
   path: Schema.String,
 });
 const TopologySchema = Schema.Struct({
@@ -92,18 +94,26 @@ it('names each unit only by its own port in the overlay and the reference topolo
 
 it('starts each vertical dev server on its overlay port', () => {
   for (const vertical of verticals) {
-    const defaults = [...readText(`${vertical.path}/modern.config.ts`).matchAll(/defaultPort: (?<port>\d+),/gu)].map(
-      (match) => match.groups?.port,
-    );
-    expect(`${vertical.id} ${defaults.join(',')}`).toBe(`${vertical.id} ${portOf(vertical.id)}`);
+    const config = createPresetUltramodernWorkspaceConfig({
+      appId: vertical.id,
+      deployTarget: 'node',
+      environment: {},
+      from: new URL(`${vertical.path}/modern.config.ts`, appRoot),
+    });
+    expect(config.server?.port, vertical.id).toBe(portOf(vertical.id));
+    expect(readText(`${vertical.path}/modern.config.ts`)).toContain('presetUltramodernWorkspace(');
   }
 });
 
 it('starts the Shell and its browser tests on the Shell overlay port', () => {
   const shellPort = portOf(topology.shell.id);
-  expect(readText(`${topology.shell.path}/modern.config.ts`)).toMatch(
-    new RegExp(`getBuildConfigEnvironment\\('SHELL_SUPER_APP_PORT'\\)[^;]*\\(\\) => ${shellPort},`, 'u'),
-  );
+  const config = createPresetUltramodernWorkspaceConfig({
+    appId: topology.shell.id,
+    deployTarget: 'node',
+    environment: {},
+    from: new URL(`${topology.shell.path}/modern.config.ts`, appRoot),
+  });
+  expect(config.server?.port).toBe(shellPort);
   expect(readText(`${topology.shell.path}/playwright.config.ts`)).toContain(
     `playwrightConfig.SHELL_SUPER_APP_PORT ?? ${shellPort};`,
   );
@@ -160,7 +170,7 @@ it('serves each vertical development module contract the Shell discovers', () =>
       ...(dev.startsWith(`node ../../scripts/prepare-dev-module-contract.mts ${id} && `)
         ? []
         : [`${id} dev script does not prepare its module contract`]),
-      ...(/createModernConfig\(|createDevelopmentContractMiddleware\(|'\/\.well-known\/ontos-module-manifest\.json'/u.test(
+      ...(/createModernConfig\(|createHeadlessModernConfig\(|createWorkspaceModernConfig\(|createDevelopmentContractMiddleware\(|'\/\.well-known\/ontos-module-manifest\.json'/u.test(
         config,
       )
         ? []

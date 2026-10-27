@@ -29,16 +29,28 @@ import type {
   VerticalRuntimeRegistration,
 } from '@app/core-runtime';
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import type { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
-import { Clock, Config, ConfigProvider, DateTime, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
+import {
+  Clock,
+  Config,
+  ConfigProvider,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Logger,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpApi } from 'effect/unstable/httpapi';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { HttpApi } from 'effect/http-api';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
 
 import {
@@ -617,7 +629,7 @@ it.live(
     const moduleStateGate = makeModuleStateGate(moduleStates);
     const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
     const scopeResolver = withNamespaceRegistry(
-      makeOperationalScopeResolver(
+      yield* makeOperationalScopeResolver(
         makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         contextAccess,
       ),
@@ -1253,7 +1265,7 @@ it.live(
     ]);
     const unavailableContextAccess = makeContextAccessDouble('unavailable');
     const unavailableResolver: OperationalScopeResolverService = withNamespaceRegistry(
-      makeOperationalScopeResolver(
+      yield* makeOperationalScopeResolver(
         makeOperationalScopeRepository(runtimeDatabase, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
         unavailableContextAccess,
       ),
@@ -1310,7 +1322,7 @@ it.live(
     );
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
@@ -1472,5 +1484,5 @@ it.live(
     expect(generatedServerSource).toMatch(/makeGovernedReadHttpHandler\(\{/u);
     expect(generatedServerSource).toMatch(/registration: resourceDetailRead/u);
     expect(generatedServerSource).not.toMatch(/yield\* ReadRuntime|\.runRead\(/u);
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );

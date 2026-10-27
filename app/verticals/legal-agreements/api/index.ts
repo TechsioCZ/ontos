@@ -26,8 +26,8 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { Reactivity } from 'effect/reactivity';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
@@ -141,10 +141,10 @@ const legalAgreementsReadinessLayer = HttpApiBuilder.group(legalAgreementsApi, '
 
 const apiHandlersLive = legalAgreementsReadinessLayer;
 const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
-  GovernedReadLayer.provideMerge(NodeCrypto.layer),
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
   GovernedReadLayer.provideMerge(databaseIdentitiesLive),
+  GovernedReadLayer.provideMerge(NodeCrypto.layer),
   GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger]),

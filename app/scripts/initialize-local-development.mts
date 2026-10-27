@@ -8,7 +8,7 @@ import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { and, eq, or } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../apps/shell-super-app/api/auth/db/client.ts';

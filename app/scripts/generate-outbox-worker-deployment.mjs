@@ -1,6 +1,13 @@
 import { NodeServices } from '@effect/platform-node';
 import { Array as Arr, Effect, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
+import { isMap, isScalar, isSeq, Scalar, YAMLMap, YAMLSeq } from 'yaml';
+
+import {
+  readZeropsDeployment,
+  renderZeropsDeployment,
+  updateZeropsService,
+} from './generate-zerops-provider-deployment.mts';
 
 import {
   PARTY_REGISTRY_REQUEST_SECRET,
@@ -14,6 +21,7 @@ import {
   outboxWorkerDelivery,
   outboxWorkerHostDelivery,
 } from './outbox-worker-delivery.mjs';
+import { readDevelopmentPorts } from './topology-development-ports.mjs';
 
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
@@ -24,7 +32,6 @@ const TopologySchema = Schema.fromJsonString(
     verticals: Schema.Array(
       Schema.Struct({
         id: Schema.String,
-        moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
         path: Schema.String,
       }),
@@ -69,7 +76,7 @@ const DEDICATED_WORKER_IDENTITIES = [
 /**
  * @param {string} ownerId Topology identifier of the owner.
  * @param {string} workerId Setup of the dedicated worker.
- * @param {string} service Worker section cloned from the owner section.
+ * @param {import('yaml').YAMLMap} service Worker section cloned from the owner section.
  */
 const withWorkerDatabaseIdentity = (ownerId, workerId, service) =>
   Effect.gen(function* replaceWorkerDatabaseIdentity() {
@@ -77,14 +84,17 @@ const withWorkerDatabaseIdentity = (ownerId, workerId, service) =>
     if (dedicated === undefined) {
       return service;
     }
-    const requestLine = `        ${dedicated.request.identity.urlKey}: ${zeropsIdentityDatabaseUrl(dedicated.request, ownerId)}`;
-    if (!service.includes(`\n${requestLine}\n`)) {
+    const expected = zeropsIdentityDatabaseUrl(dedicated.request, ownerId);
+    if (service.getIn(['run', 'envVariables', dedicated.request.identity.urlKey]) !== expected) {
       return yield* Effect.fail(failure(`Missing ${dedicated.request.identity.urlKey} for ${ownerId}`));
     }
-    return service.replace(
-      requestLine,
-      `        ${dedicated.worker.identity.urlKey}: ${zeropsIdentityDatabaseUrl(dedicated.worker, workerId)}`,
+    service.deleteIn(['run', 'envVariables', dedicated.request.identity.urlKey]);
+    service.deleteIn(['run', 'envVariables', 'DATABASE_URL']);
+    service.setIn(
+      ['run', 'envVariables', dedicated.worker.identity.urlKey],
+      zeropsIdentityDatabaseUrl(dedicated.worker, workerId),
     );
+    return service;
   });
 
 /** @param {string} id Topology identifier. */
@@ -101,11 +111,9 @@ export const readOutboxWorkerHost = (root) =>
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
       yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
     );
+    const ports = yield* readDevelopmentPorts(root);
     for (const vertical of topology.verticals) {
-      const port = yield* Effect.try({
-        catch: () => failure(`Invalid topology manifest URL for ${vertical.id}`),
-        try: () => new URL(vertical.moduleFederation.manifestUrl).port,
-      });
+      const port = String(ports[vertical.id] ?? '');
       if (port === OUTBOX_WORKER_HOST_HEALTH_PORT) {
         return yield* Effect.fail(failure(`${vertical.id} uses the Outbox Worker host health port`));
       }
@@ -163,40 +171,64 @@ export const renderCoreSystemOutboxWorkerEntry = (coreOwner) =>
     '',
   ].join('\n');
 
+/** @param {string} value Runtime environment string, independent of the input YAML quote style. */
+const quoted = (value) => {
+  const scalar = new Scalar(value);
+  scalar.type = 'QUOTE_SINGLE';
+  return scalar;
+};
+
 /**
- * @param {string} service Generated worker service section.
- * @returns {Map<string, string>} Worker run environment.
+ * Changes values only inside an owned service clone; never interprets provider secret references.
+ * @param {unknown} node YAML node.
+ * @param {(value: string) => string} transform Scalar transformation.
+ */
+const transformServiceStrings = (node, transform) => {
+  if (isMap(node)) {
+    for (const pair of node.items) {
+      transformServiceStrings(pair.value, transform);
+    }
+  } else if (isSeq(node)) {
+    for (const item of node.items) {
+      transformServiceStrings(item, transform);
+    }
+  } else if (isScalar(node) && Schema.is(Schema.String)(node.value)) {
+    node.value = transform(node.value);
+  }
+};
+
+/**
+ * @param {import('yaml').YAMLMap} service Worker service node.
+ * @returns {Map<string, import('yaml').Scalar>} Worker run environment.
  */
 const runEnvironment = (service) => {
-  const block =
-    /\n {6}envVariables:\n(?<lines>(?: {8}[^\n]*\n)+)/u.exec(`${service.slice(service.indexOf('\n    run:\n'))}\n`)
-      ?.groups?.lines ?? '';
-  /** @type {Map<string, string>} */
+  const variables = service.getIn(['run', 'envVariables'], true);
+  /** @type {Map<string, import('yaml').Scalar>} */
   const environment = new Map();
-  for (const match of block.matchAll(/^ {8}(?<key>[A-Z][A-Z0-9_]*): (?<value>.*)$/gmu)) {
-    const { key, value } = match.groups ?? {};
-    if (key !== undefined && value !== undefined) {
-      environment.set(key, value);
+  if (isMap(variables)) {
+    for (const { key, value } of variables.items) {
+      const name = isScalar(key) ? key.value : key;
+      if (Schema.is(Schema.String)(name) && isScalar(value)) {
+        environment.set(name, value);
+      }
     }
   }
   return environment;
 };
 
 /**
- * One service runs every owner's entry: the build of the first dedicated worker and their shared
- * run environment, which must agree on every shared key.
- * @param {readonly string[]} services Generated dedicated worker services, in topology order.
+ * @param {readonly import('yaml').YAMLMap[]} services Dedicated workers in topology order.
  * @param {readonly string[]} serviceIds Their setups.
  * @param {string} rootPackageName Workspace root package name.
- * @param {{ readonly id: string, readonly stageSetup: string }} delivery Combined or dedicated Core service.
+ * @param {{ readonly id: string, readonly stageSetup: string }} delivery Host or Core service.
  */
 const renderHostService = (services, serviceIds, rootPackageName, delivery) =>
   Effect.gen(function* renderHostServiceEffect() {
-    /** @type {Map<string, string>} */
+    /** @type {Map<string, import('yaml').Scalar>} */
     const environment = new Map([
-      ['OUTBOX_WORKER_HEALTH_PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
-      ['PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
-      ['ULTRAMODERN_ZEROPS_SERVICE', delivery.id],
+      ['OUTBOX_WORKER_HEALTH_PORT', quoted(OUTBOX_WORKER_HOST_HEALTH_PORT)],
+      ['PORT', quoted(OUTBOX_WORKER_HOST_HEALTH_PORT)],
+      ['ULTRAMODERN_ZEROPS_SERVICE', new Scalar(delivery.id)],
     ]);
     for (const [index, service] of services.entries()) {
       for (const [key, value] of runEnvironment(service)) {
@@ -208,50 +240,158 @@ const renderHostService = (services, serviceIds, rootPackageName, delivery) =>
           continue;
         }
         const current = environment.get(key);
-        if (current !== undefined && current !== value) {
+        if (current !== undefined && String(current.value) !== String(value.value)) {
           return yield* Effect.fail(
             failure(`Hosted Outbox Worker owners disagree on ${key} (${serviceIds[index] ?? ''})`),
           );
         }
-        environment.set(key, value);
+        environment.set(key, value.clone());
       }
     }
     const [template] = services;
     const [templateId] = serviceIds;
-    if (template === undefined || templateId === undefined) {
+    const service = template?.clone();
+    if (!isMap(service) || templateId === undefined) {
       return yield* Effect.fail(failure('The Outbox Worker host has no owners'));
     }
-    const runStart = template.indexOf('\n    run:\n');
     const runtimeDir = `app/.zerops/runtime/${delivery.id}`;
-    const buildAndDeploy = template
-      .slice(0, runStart)
-      .replace(`setup: '${templateId}'`, `setup: '${delivery.stageSetup}'`)
-      .replaceAll(`app/.zerops/runtime/${templateId}`, runtimeDir)
-      .replace(
-        /--app '[^']*' --package '[^']*' --package-dir '[^']*' --worker/u,
-        `--app '${delivery.id}' --package '${rootPackageName}' --package-dir '.' --worker`,
-      )
-      .replace(/^(?<key> {10}port: )[0-9]+$/mu, `$<key>${OUTBOX_WORKER_HOST_HEALTH_PORT}`);
-    const runBase = /^ {6}base: (?<base>.*)$/mu.exec(template.slice(runStart))?.groups?.base;
-    if (runBase === undefined) {
-      return yield* Effect.fail(failure(`Missing run base for ${templateId}`));
+    transformServiceStrings(service, (value) =>
+      value
+        .replaceAll(`app/.zerops/runtime/${templateId}`, runtimeDir)
+        .replace(
+          /--app (?:'[^']*'|"[^"]*"|\S+) --package (?:'[^']*'|"[^"]*"|\S+) --package-dir (?:'[^']*'|"[^"]*"|\S+) --worker/u,
+          `--app '${delivery.id}' --package '${rootPackageName}' --package-dir '.' --worker`,
+        ),
+    );
+    service.set('setup', quoted(delivery.stageSetup));
+    const variables = new YAMLMap(service.schema);
+    for (const key of Arr.sort([...environment.keys()], Order.String)) {
+      variables.set(key, environment.get(key));
     }
-    return [
-      buildAndDeploy,
-      '    run:',
-      `      base: ${runBase}`,
-      '      ports:',
-      `        - port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
-      '          protocol: tcp',
-      '          httpSupport: true',
-      '      envVariables:',
-      ...Arr.sort([...environment.keys()], Order.String).map((key) => `        ${key}: ${environment.get(key) ?? ''}`),
-      '      healthCheck:',
-      '        httpGet:',
-      `          port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
-      "          path: '/live'",
-      `      start: sh -c 'cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
-    ].join('\n');
+    service.setIn(['run', 'envVariables'], variables);
+    const ports = new YAMLSeq(service.schema);
+    const port = new YAMLMap(service.schema);
+    port.set('port', Number(OUTBOX_WORKER_HOST_HEALTH_PORT));
+    port.set('protocol', 'tcp');
+    port.set('httpSupport', true);
+    ports.add(port);
+    service.setIn(['run', 'ports'], ports);
+    for (const branch of [
+      ['deploy', 'readinessCheck'],
+      ['run', 'healthCheck'],
+    ]) {
+      service.setIn([...branch, 'httpGet', 'port'], Number(OUTBOX_WORKER_HOST_HEALTH_PORT));
+      service.setIn([...branch, 'httpGet', 'path'], quoted('/live'));
+    }
+    service.setIn(
+      ['run', 'start'],
+      `sh -c 'cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
+    );
+    return service;
+  });
+
+/**
+ * Keeps custom commands while converting only the owner's managed build and materialization steps.
+ * @param {import('yaml').YAMLMap} service Owned clone.
+ * @param {string} ownerId Exact owner identity.
+ */
+const prepareWorkerBuild = (service, ownerId) =>
+  Effect.gen(function* prepareBuild() {
+    const commands = service.getIn(['build', 'buildCommands'], true);
+    if (!isSeq(commands)) {
+      return yield* Effect.fail(failure(`Missing build commands for ${ownerId}`));
+    }
+    commands.items = commands.items.filter(
+      (command) =>
+        !(
+          isScalar(command) &&
+          Schema.is(Schema.String)(command.value) &&
+          (/pnpm --filter .+ run build$/u.test(command.value) || /^cp ['"]?app\/topology\//u.test(command.value))
+        ),
+    );
+    for (const command of commands.items) {
+      if (!isScalar(command) || !Schema.is(Schema.String)(command.value)) {
+        return yield* Effect.fail(failure(`Invalid build command for ${ownerId}`));
+      }
+      let { value } = command;
+      if (value.includes('run zerops:materialize')) {
+        if (!value.includes('ULTRAMODERN_SOURCE_REVISION=')) {
+          value = value.replace('cd app && ', 'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ');
+        }
+        if (!/(?:^|\s)--worker(?:\s|$)/u.test(value)) {
+          value += ' --worker';
+        }
+      }
+      command.value = value;
+    }
+    return yield* Effect.void;
+  });
+
+/**
+ * @param {import('yaml').YAMLMap | undefined} owner Exact source owner, never a generated worker.
+ * @param {string} ownerId Owner identity.
+ * @param {string} workerId Dedicated worker identity.
+ * @param {number | undefined} expectedPort Development overlay port.
+ */
+const renderDedicatedWorker = (owner, ownerId, workerId, expectedPort) =>
+  Effect.gen(function* renderDedicated() {
+    const service = owner?.clone();
+    if (!isMap(service)) {
+      return yield* Effect.fail(failure(`Missing owner deployment for ${ownerId}`));
+    }
+    const port = yield* Schema.decodeUnknownEffect(Schema.Union([Schema.String, Schema.Number]))(
+      service.getIn(['run', 'envVariables', 'PORT']),
+    ).pipe(
+      Effect.map(String),
+      Effect.mapError(() => failure(`Owner port disagrees with topology for ${ownerId}`)),
+    );
+    if (port.length === 0 || port !== String(expectedPort ?? '')) {
+      return yield* Effect.fail(failure(`Owner port disagrees with topology for ${ownerId}`));
+    }
+    service.set('setup', quoted(workerId));
+    transformServiceStrings(service, (value) => value.replaceAll(`runtime/${ownerId}`, `runtime/${workerId}`));
+    yield* prepareWorkerBuild(service, ownerId);
+    const variables = service.getIn(['run', 'envVariables'], true);
+    if (isMap(variables)) {
+      variables.items = variables.items.filter(({ key }) => {
+        const name = isScalar(key) ? key.value : key;
+        return !(Schema.is(Schema.String)(name) && name.startsWith('VERTICAL_'));
+      });
+    }
+    const start = service.getIn(['run', 'start']);
+    if (!Schema.is(Schema.String)(start) || !start.includes('exec npm run serve')) {
+      return yield* Effect.fail(failure(`Invalid owner start command for ${ownerId}`));
+    }
+    service.setIn(['run', 'start'], start.replace('exec npm run serve', `exec node ${OUTBOX_WORKER_BUNDLE}`));
+    service.setIn(['run', 'envVariables', 'PORT'], quoted(port));
+    service.setIn(['run', 'envVariables', 'OUTBOX_WORKER_HEALTH_PORT'], quoted(port));
+    service.setIn(['run', 'envVariables', 'ULTRAMODERN_ZEROPS_SERVICE'], workerId);
+    for (const branch of [
+      ['deploy', 'readinessCheck'],
+      ['run', 'healthCheck'],
+    ]) {
+      if (service.hasIn([...branch, 'httpGet'])) {
+        service.setIn([...branch, 'httpGet', 'path'], quoted('/live'));
+      }
+    }
+    return service;
+  });
+
+/**
+ * @param {import('effect').Effect.Success<ReturnType<typeof readZeropsDeployment>>} deployment Parsed source.
+ * @param {string} id Exact managed setup identity.
+ * @param {import('yaml').YAMLMap} service Desired managed settings.
+ */
+const saveWorkerDeployment = (deployment, id, service) =>
+  Effect.gen(function* saveWorker() {
+    const current = deployment.services.get(id);
+    if (current === undefined) {
+      deployment.setups.add(service);
+      deployment.services.set(id, service);
+      return service;
+    }
+    yield* updateZeropsService(current, service).pipe(Effect.mapError((error) => failure(error.reason)));
+    return current;
   });
 
 /**
@@ -264,11 +404,9 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
     const path = yield* Path.Path;
     const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
-    let result = source.replace(
-      /\n {2}# <generated-outbox-worker-deployments>[\s\S]*? {2}# <\/generated-outbox-worker-deployments>\n?/u,
-      '\n',
-    );
-    /** @type {string[]} */
+    const ports = yield* readDevelopmentPorts(root);
+    const deployment = yield* readZeropsDeployment(source).pipe(Effect.mapError((error) => failure(error.reason)));
+    /** @type {import('yaml').YAMLMap[]} */
     const services = [];
     /** @type {string[]} */
     const serviceIds = [];
@@ -279,50 +417,25 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
       if (delivery === undefined) {
         continue;
       }
-      const ownerSection = result
-        .split(/(?=^ {2}(?:- setup:|# <\/generated-vertical-provider-deployments>))/mu)
-        .find((section) => section.startsWith(`  - setup: '${vertical.id}'\n`));
-      if (ownerSection === undefined) {
-        return yield* Effect.fail(failure(`Missing owner deployment for ${vertical.id}`));
+      const service = yield* renderDedicatedWorker(
+        deployment.services.get(vertical.id),
+        vertical.id,
+        delivery.id,
+        ports[vertical.id],
+      );
+      yield* withWorkerDatabaseIdentity(vertical.id, delivery.id, service);
+      const current = yield* saveWorkerDeployment(deployment, delivery.id, service);
+      const dedicated = DEDICATED_WORKER_IDENTITIES.find(({ owner: id }) => id === vertical.id);
+      if (dedicated !== undefined) {
+        current.deleteIn(['run', 'envVariables', dedicated.request.identity.urlKey]);
+        current.deleteIn(['run', 'envVariables', 'DATABASE_URL']);
       }
-      const port = /^ {8}PORT: '(?<port>[0-9]+)'$/mu.exec(ownerSection)?.groups?.port;
-      const topologyPort = yield* Effect.try({
-        catch: () => failure(`Invalid topology manifest URL for ${vertical.id}`),
-        try: () => new URL(vertical.moduleFederation.manifestUrl).port,
-      });
-      if (port === undefined || port.length === 0 || port !== topologyPort) {
-        return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));
-      }
-      // The worker keeps its owner's generated PostgreSQL binding. Referencing the owner's variable instead
-      // (`${owner}_DATABASE_URL`) reaches the worker unresolved: Zerops does not expand the `${db18_*}`
-      // references nested inside another service's variable, so the worker exited on a malformed URL.
-      const service = ownerSection
-        .trimEnd()
-        .replace(`setup: '${vertical.id}'`, `setup: '${delivery.id}'`)
-        .replaceAll(`runtime/${vertical.id}`, `runtime/${delivery.id}`)
-        .split('\n')
-        .filter(
-          (line) =>
-            !line.includes(' run build') && !line.includes("- cp 'app/topology/") && !line.includes('VERTICAL_'),
-        )
-        .map((line) =>
-          line.includes('run zerops:materialize')
-            ? line.replace('cd app && ', 'cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ')
-            : line,
-        )
-        .join('\n')
-        .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
-        .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/live')
-        .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
-        // npm does not wait for its child on SIGTERM, so the worker would never drain; exec Node directly.
-        .replace('exec npm run serve', `exec node ${OUTBOX_WORKER_BUNDLE}`)
-        .replace(`        PORT: '${port}'`, `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'`);
-      services.push(yield* withWorkerDatabaseIdentity(vertical.id, delivery.id, service));
+      services.push(current);
       serviceIds.push(delivery.id);
     }
     const host = yield* readOutboxWorkerHost(root);
     if (host === undefined) {
-      return { coreEntry: null, deployment: result, hostEntry: null };
+      return { coreEntry: null, deployment: yield* renderZeropsDeployment(deployment), hostEntry: null };
     }
     const rootPackage = yield* Schema.decodeUnknownEffect(RootPackageSchema)(
       yield* fs.readFileString(path.join(root, 'package.json')),
@@ -342,10 +455,21 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
     // The `dedicated` Outbox Worker mode deploys each owner's own worker; the `host` mode deploys the host instead.
     const hostService = yield* renderHostService(services, serviceIds, rootPackage.name, OUTBOX_WORKER_HOST);
     const coreService = yield* renderHostService(services, serviceIds, rootPackage.name, CORE_SYSTEM_OUTBOX_WORKER);
-    result = `${result.trimEnd()}\n\n  # <generated-outbox-worker-deployments>\n${[...services, coreService, hostService].join('\n\n')}\n  # </generated-outbox-worker-deployments>\n`;
+    for (const { id, service } of [
+      { id: CORE_SYSTEM_OUTBOX_WORKER.stageSetup, service: coreService },
+      { id: OUTBOX_WORKER_HOST.stageSetup, service: hostService },
+    ]) {
+      const current = yield* saveWorkerDeployment(deployment, id, service);
+      for (const { request, worker } of DEDICATED_WORKER_IDENTITIES) {
+        current.deleteIn(['run', 'envVariables', request.identity.urlKey]);
+        if (id === CORE_SYSTEM_OUTBOX_WORKER.stageSetup) {
+          current.deleteIn(['run', 'envVariables', worker.identity.urlKey]);
+        }
+      }
+    }
     return {
       coreEntry: renderCoreSystemOutboxWorkerEntry(host.coreOwner),
-      deployment: result,
+      deployment: yield* renderZeropsDeployment(deployment),
       hostEntry: renderOutboxWorkerHostEntry(host),
     };
   });

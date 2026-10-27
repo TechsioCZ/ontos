@@ -2,7 +2,7 @@
 /** Reviewed nine-row replay. --mode apply is an explicit operator cutover step, never bootstrap side work. */
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { readReviewedAgentProfiles, reviewedProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';

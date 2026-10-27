@@ -1,7 +1,7 @@
 // Module-level rebindings that are NOT client constructors must stay silent.
 import * as bff from '@modern-js/bff-effect/effect-client';
 import { Effect } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 /** A local helper aliased at module level: no import binding behind it. */

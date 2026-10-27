@@ -3,7 +3,7 @@
 // per-operation client in a per-operation Layer that is immediately `Effect.provide`d silences
 // the rule while rebuilding the transport (and the whole layer graph) on every call.
 import { Context, Effect, Layer } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientService {

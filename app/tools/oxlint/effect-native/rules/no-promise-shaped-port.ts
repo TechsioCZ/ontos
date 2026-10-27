@@ -293,7 +293,7 @@ export const rule = defineRule({
       if (node.type === 'CallExpression') {
         const path = imported(node.callee) ?? '';
         // Only known forced SDK construction; an arbitrary imported first-party factory is not proof.
-        return /^(?:better-auth:betterAuth|drizzle-orm\/[^:]+:drizzle)$/u.test(path);
+        return /^(?:better-auth(?:\/minimal)?:betterAuth|drizzle-orm\/[^:]+:drizzle)$/u.test(path);
       }
       return false;
     };

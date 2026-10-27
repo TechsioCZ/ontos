@@ -118,6 +118,56 @@ export const tokenizeGovernedClient = (source: string): readonly GovernedClientT
   return tokens;
 };
 
+const isLiteralPropertyReference = (tokens: readonly GovernedClientToken[], index: number): boolean =>
+  tokenKind(tokens, index - 1) === SyntaxKind.ColonToken &&
+  [SyntaxKind.CommaToken, SyntaxKind.CloseBraceToken].includes(tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown);
+
+/** Resolve only module-local string constants with no computed, shadowed or reassigned uses. */
+const immutableLiteralBindings = (source: string): ReadonlyMap<string, string> => {
+  const tokens = tokenizeGovernedClient(source);
+  const bindings = new Map<string, string>();
+  const depth = new DelimiterDepth();
+  for (let index = 0; index < tokens.length; index += 1) {
+    const name = tokens[index + 1];
+    const value = tokens[index + 3];
+    const plainEnd = tokenKind(tokens, index + 4) === SyntaxKind.SemicolonToken;
+    const assertedEnd =
+      tokenKind(tokens, index + 4) === SyntaxKind.AsKeyword &&
+      tokenKind(tokens, index + 5) === SyntaxKind.ConstKeyword &&
+      tokenKind(tokens, index + 6) === SyntaxKind.SemicolonToken;
+    if (
+      depth.isTopLevel() &&
+      tokenKind(tokens, index) === SyntaxKind.ConstKeyword &&
+      name?.kind === SyntaxKind.Identifier &&
+      tokenKind(tokens, index + 2) === SyntaxKind.EqualsToken &&
+      value?.kind === SyntaxKind.StringLiteral &&
+      (plainEnd || assertedEnd) &&
+      tokens.every(
+        (token, occurrence) =>
+          token.kind !== SyntaxKind.Identifier ||
+          token.value !== name.value ||
+          occurrence === index + 1 ||
+          isLiteralPropertyReference(tokens, occurrence),
+      )
+    ) {
+      bindings.set(name.value, value.value);
+    }
+    depth.update(tokenDelimiter.get(tokenKind(tokens, index) ?? SyntaxKind.Unknown));
+  }
+  return bindings;
+};
+
+const resolvedPropertyTokens = (source: string, slot = source): readonly GovernedClientToken[] => {
+  const bindings = immutableLiteralBindings(source);
+  const tokens = tokenizeGovernedClient(slot);
+  return tokens.map((token, index) => {
+    const value = token.kind === SyntaxKind.Identifier ? bindings.get(token.value) : undefined;
+    return value !== undefined && isLiteralPropertyReference(tokens, index)
+      ? { kind: SyntaxKind.StringLiteral, value }
+      : token;
+  });
+};
+
 const importStateAfter = (kind: SyntaxKind, inImport: boolean): boolean | undefined => {
   if (kind === SyntaxKind.SingleLineCommentTrivia || kind === SyntaxKind.MultiLineCommentTrivia) {
     return inImport;
@@ -1890,7 +1940,7 @@ const hasGeneratedReadContract = (
   role: 'api' | 'report' | 'search',
   authorization?: GeneratedReadAuthorization,
 ): boolean => {
-  const tokens = tokenizeGovernedClient(source);
+  const tokens = resolvedPropertyTokens(source);
   const camel = toCamelCase(name);
   const entrypointName = `${camel}Entrypoint`;
   const entrypoint = topLevelCallObject(tokens, entrypointName, 'defineTenantModuleEntrypoint', false);
@@ -1980,7 +2030,7 @@ export const hasMatchingGeneratedProviderAuthorization = (
   if (entrypoint === undefined || shellSlot === undefined) {
     return false;
   }
-  const shellTokens = tokenizeGovernedClient(shellSlot);
+  const shellTokens = resolvedPropertyTokens(manifest, shellSlot);
   const identity = findSequenceAtBraceDepth(
     shellTokens,
     [
@@ -2606,8 +2656,8 @@ export const hasGeneratedProviderManifest = (
   if (descriptorSlot === undefined || shellSlot === undefined) {
     return false;
   }
-  const descriptorTokens = tokenizeGovernedClient(descriptorSlot);
-  const shellTokens = tokenizeGovernedClient(shellSlot);
+  const descriptorTokens = resolvedPropertyTokens(manifest, descriptorSlot);
+  const shellTokens = resolvedPropertyTokens(manifest, shellSlot);
   const descriptorKey = `${moduleId}.${name}`;
   const shellContributionKey = `${moduleId}.${kind}.${name}`;
   const descriptorIdentity = [

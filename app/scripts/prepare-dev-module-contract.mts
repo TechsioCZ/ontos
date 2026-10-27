@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Console, Effect, Exit, FileSystem, Path, Schema } from 'effect';
-import { Argument, Command } from 'effect/unstable/cli';
+import { Argument, Command } from 'effect/cli';
 
 import { generateOntosModuleContract } from './generate-ontos-module-contract.mts';
 import { loadCoreNodeServices } from './shared/core-node-services.mts';

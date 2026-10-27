@@ -11,9 +11,10 @@ import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvis
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import { ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
 import type { ConnectionSummary, ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
+import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { beforeEach, expect, it, rs } from 'effect-rstest';
 
 import {
@@ -394,7 +395,7 @@ const fixture = (options: ReplayOptions = {}) =>
       ownerAuthorizationDecision: 'allowed',
       permissionDecision: 'allowed',
       scope: { ...principal, correlationId: transport.correlationId },
-    });
+    }).pipe(Effect.provide(NodeCrypto.layer));
     const actions: { readonly payload: unknown; readonly principal: unknown; readonly transport: unknown }[] = [];
     const proposalActions: typeof actions = [];
     const readInputs: { readonly input: unknown; readonly principal: unknown; readonly transport: unknown }[] = [];

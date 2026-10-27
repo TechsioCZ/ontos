@@ -5,16 +5,26 @@
 // provoz screens. Commands are still encoded with Finance's own command schema.
 import { ApplyCommandPayloadSchema } from '@app/finance-billing/contracts/apply-command';
 import type { ApplyCommandPayload } from '@app/finance-billing/contracts/apply-command';
-import { issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
+import { CalendarDateWireSchema, issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import type { EffectBffClientOptions } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Effect, Redacted, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const FINANCE_AUDIENCE = 'finance-billing' as const;
 const FINANCE_API_PREFIX = '/finance-billing-api';
+type FinanceTransportOptions = { -readonly [K in keyof EffectBffClientOptions]: EffectBffClientOptions[K] };
 
-const RefSchema = Schema.Struct({ resourceId: Schema.String });
+const FinanceResourceIdSchema = Schema.String.pipe(
+  Schema.brand('FacilityFinanceResourceId'),
+  Schema.decodeTo(Schema.String),
+);
+const FinanceActorPrincipalIdSchema = Schema.String.pipe(
+  Schema.brand('FacilityFinanceActorPrincipalId'),
+  Schema.decodeTo(Schema.String),
+);
+const RefSchema = Schema.Struct({ resourceId: FinanceResourceIdSchema });
 const optionalText = Schema.optionalKey(Schema.String);
 
 /** The invoice fields provoz reads (deadlines, overview, purchase/sales links, document options). */
@@ -26,8 +36,8 @@ export const FinanceInvoiceViewSchema = Schema.Struct({
   counterpartyRef: RefSchema,
   direction: Schema.String,
   documentNumber: Schema.String,
-  dueDate: Schema.String,
-  issueDate: Schema.String,
+  dueDate: CalendarDateWireSchema,
+  issueDate: CalendarDateWireSchema,
   note: optionalText,
   number: optionalText,
   paidMinor: Schema.Finite,
@@ -56,18 +66,18 @@ export type FinanceBudgetLineView = typeof FinanceBudgetLineViewSchema.Type;
 /** A file uploaded in Finance (e.g. the supplier's invoice PDF); its bytes are read on demand. */
 export const FinanceFileViewSchema = Schema.Struct({
   actorLabel: optionalText,
-  actorPrincipalId: optionalText,
+  actorPrincipalId: Schema.optionalKey(FinanceActorPrincipalIdSchema),
   fileName: Schema.String,
   id: Schema.String,
-  invoiceResourceId: optionalText,
+  invoiceResourceId: Schema.optionalKey(FinanceResourceIdSchema),
   mimeType: Schema.String,
   sizeBytes: Schema.Finite,
-  uploadedAt: Schema.String,
+  uploadedAt: Schema.DateTimeUtcFromString,
 });
 export type FinanceFileView = typeof FinanceFileViewSchema.Type;
 
 export const FinanceRecordsViewSchema = Schema.Struct({
-  businessDate: optionalText,
+  businessDate: Schema.optionalKey(CalendarDateWireSchema),
   /** Whether the person may change Finance records (create invoice drafts etc.); Finance decides. */
   canWrite: Schema.Boolean,
   document: Schema.optionalKey(
@@ -87,7 +97,11 @@ export const FinanceRecordsViewSchema = Schema.Struct({
 });
 export type FinanceRecordsView = typeof FinanceRecordsViewSchema.Type;
 
-const FinanceRecordsRequestSchema = Schema.Struct({ documentId: optionalText });
+const FinanceDocumentIdSchema = Schema.String.pipe(
+  Schema.brand('FacilityFinanceDocumentId'),
+  Schema.decodeTo(Schema.String),
+);
+const FinanceRecordsRequestSchema = Schema.Struct({ documentId: Schema.optionalKey(FinanceDocumentIdSchema) });
 
 const problemCode = { code: Schema.optionalKey(Schema.String) };
 
@@ -176,8 +190,12 @@ export const applyFinanceCommand = (
 ) =>
   gateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
     Schema.encodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
-      Effect.flatMap((encoded) =>
-        makeGovernedEffectBffClient(
+      Effect.flatMap((encoded) => {
+        const transportOptions: FinanceTransportOptions = { baseUrl: apiBaseUrl, compositionRevision };
+        if (options.referenceCredentials !== undefined) {
+          transportOptions.referenceCredentials = options.referenceCredentials;
+        }
+        return makeGovernedEffectBffClient(
           {
             api: FinanceApplyCommandApi,
             credential: Redacted.make(credential),
@@ -185,14 +203,8 @@ export const applyFinanceCommand = (
             idempotencyKey: options.idempotencyKey,
             requestCorrelation,
           },
-          {
-            baseUrl: apiBaseUrl,
-            compositionRevision,
-            ...(options.referenceCredentials === undefined
-              ? {}
-              : { referenceCredentials: options.referenceCredentials }),
-          },
-        ).pipe(Effect.flatMap((client) => client.applyCommand.execute({ payload: encoded }))),
-      ),
+          transportOptions,
+        ).pipe(Effect.flatMap((client) => client.applyCommand.execute({ payload: encoded })));
+      }),
     ),
   );

@@ -21,8 +21,8 @@ import {
   Schedule,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import {
   ONTOS_MODULE_CONTRACT_PATH,
@@ -77,12 +77,14 @@ const topologySchema = Schema.fromJsonString(
 );
 const moduleJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const shellJson = Schema.fromJsonString(OntosShellRuntimeContractSchema);
+const defaultDatabaseName = 'siampark_demo';
+const federationManifestPath = '/mf-manifest.json';
 
 /** This operator cannot publish against an original or remotely hosted database. */
 export const validateDevelopmentDatabase = Effect.fn('SiamparkComposition.validateDatabase')(function* validateDatabase(
   environment: string,
   urls: { readonly DATABASE_ADMIN_URL: string; readonly DATABASE_URL: string },
-  databaseName = 'siampark_demo',
+  databaseName: string = defaultDatabaseName,
 ) {
   if (environment !== 'development') {
     return yield* fail('An explicit development environment is required');
@@ -226,7 +228,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
     Config.withDefault('development'),
   );
   const [runtime, admin] = yield* Effect.all([Config.Redacted('DATABASE_URL'), Config.Redacted('DATABASE_ADMIN_URL')]);
-  const databaseName = configuration.databaseName ?? 'siampark_demo';
+  const databaseName = configuration.databaseName ?? defaultDatabaseName;
   const connections = yield* validateDevelopmentDatabase(
     environment,
     {
@@ -248,19 +250,31 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
       return topology.verticals.filter((owner) => ids.has(owner.id));
     },
   });
-  const owners = yield* Effect.forEach(selectedOwners, (owner) =>
-    Effect.gen(function* configuredOwner() {
-      if (configuration.ownerOrigins === undefined) return owner;
-      const origin = configuration.ownerOrigins[owner.id];
-      if (origin === undefined) return yield* fail(`Missing explicit origin for ${owner.id}`);
-      const url = yield* Effect.try({ try: () => new URL(origin), catch: () => fail('Invalid explicit owner origin') });
-      yield* validateDevelopmentArtifactUrl(url);
-      if (url.origin !== origin) return yield* fail('Explicit owner origins must not contain a path');
-      return {
-        ...owner,
-        moduleFederation: { ...owner.moduleFederation, manifestUrl: new URL('/mf-manifest.json', url) },
-      };
-    }),
+  const owners = yield* Effect.forEach(
+    selectedOwners,
+    (owner) =>
+      Effect.gen(function* configuredOwner() {
+        if (configuration.ownerOrigins === undefined) {
+          return owner;
+        }
+        const origin = configuration.ownerOrigins[owner.id];
+        if (origin === undefined) {
+          return yield* fail(`Missing explicit origin for ${owner.id}`);
+        }
+        const url = yield* Effect.try({
+          catch: () => fail('Invalid explicit owner origin'),
+          try: () => new URL(origin),
+        });
+        yield* validateDevelopmentArtifactUrl(url);
+        if (url.origin !== origin) {
+          return yield* fail('Explicit owner origins must not contain a path');
+        }
+        return {
+          ...owner,
+          moduleFederation: { ...owner.moduleFederation, manifestUrl: new URL(federationManifestPath, url) },
+        };
+      }),
+    { concurrency: 1 },
   );
   const shellPort = yield* Config.schema(portSchema, topology.shell.portEnv).pipe(Config.withDefault(3020));
   const shellOrigin = `http://127.0.0.1:${shellPort}`;
@@ -324,7 +338,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
           };
           return owner.surfaceProfile === 'api-only'
             ? module
-            : { ...module, federationManifest: yield* observe(new URL('/mf-manifest.json', base)) };
+            : { ...module, federationManifest: yield* observe(new URL(federationManifestPath, base)) };
         }),
       { concurrency: 1 },
     );
@@ -346,7 +360,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
       environment,
       modules,
       observedAt: yield* DateTime.now,
-      shell: { federationManifest: yield* observe(new URL('/mf-manifest.json', shellOrigin)), runtimeContract },
+      shell: { federationManifest: yield* observe(new URL(federationManifestPath, shellOrigin)), runtimeContract },
       validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
     });
   });

@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Schema, Stream } from 'effect';
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 

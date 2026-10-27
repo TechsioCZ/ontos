@@ -1,9 +1,21 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Cause, DateTime, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
+import {
+  Cause,
+  Context,
+  Crypto,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Exit,
+  Fiber,
+  Option,
+  Schema,
+  Predicate,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -91,7 +103,6 @@ const ActionPolicyDeniedFailureSchema = Schema.TaggedStruct('ActionPolicyDenied'
 });
 const decodeActionPolicyDeniedFailure = Schema.decodeUnknownOption(ActionPolicyDeniedFailureSchema);
 
-const tenantId = randomUUID();
 const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
   Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
@@ -130,19 +141,27 @@ const testOperationalScopeResolver: OperationalScopeResolverService = {
       return yield* baseTestOperationalScopeResolver.resolve(input);
     }),
 };
-const legalEntityId = randomUUID();
-const principalId = randomUUID();
-const authBindingId = randomUUID();
+const makeActionRuntimeSuite = Effect.gen(function* makeActionRuntimeSuite() {
+  const crypto = yield* Crypto.Crypto;
+  const tenantId = yield* crypto.randomUUIDv4();
+  const legalEntityId = yield* crypto.randomUUIDv4();
+  const principalId = yield* crypto.randomUUIDv4();
+  const authBindingId = yield* crypto.randomUUIDv4();
+  const principal = {
+    authBindingId,
+    authContextRef: `better-auth-session:${authBindingId}`,
+    authenticationNamespaceId: staffAuthenticationNamespaceId,
+    authMethod: 'session',
+    legalEntityId,
+    principalId,
+    tenantId,
+  } as const;
+  return { authBindingId, crypto, legalEntityId, principal, principalId, tenantId };
+});
 
-const principal = {
-  authBindingId,
-  authContextRef: `better-auth-session:${authBindingId}`,
-  authenticationNamespaceId: staffAuthenticationNamespaceId,
-  authMethod: 'session',
-  legalEntityId,
-  principalId,
-  tenantId,
-} as const;
+class ActionRuntimeSuite extends Context.Service<ActionRuntimeSuite, Effect.Success<typeof makeActionRuntimeSuite>>()(
+  '@app/core-runtime/tests/integration/action-runtime.test/ActionRuntimeSuite',
+) {}
 
 const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   correlationId: `integration-${idempotencyKey}`,
@@ -273,14 +292,17 @@ const invocationEvidence = (database: ContextServiceContract, key: string) =>
   });
 
 const persistedActionEvidence = (database: ContextServiceContract, key: string, moduleStateKey: string) =>
-  Effect.all([
-    database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
-    database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
-    database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
-    database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
-    database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
-    database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
-  ]);
+  Effect.gen(function* persistedActionEvidenceProgram() {
+    const { tenantId } = yield* ActionRuntimeSuite;
+    return yield* Effect.all([
+      database.executor.select().from(tenantModuleStates).where(eq(tenantModuleStates.moduleKey, moduleStateKey)),
+      database.executor.select().from(actionInvocations).where(eq(actionInvocations.idempotencyKey, key)),
+      database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
+      database.executor.select().from(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId)),
+      database.executor.select().from(domainEvents).where(eq(domainEvents.subjectResourceId, moduleStateKey)),
+      database.executor.select().from(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+    ]);
+  });
 
 const EvidencePersistenceStageSchema = Schema.Literals([
   'audit',
@@ -338,71 +360,71 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   };
 };
 
-const prepare = (() =>
-  withDatabase(
-    Effect.fn(function* integrationProgram1(database) {
-      yield* database.executor.insert(tenants).values({
-        defaultLocale: 'en',
-        name: 'Action Runtime Integration',
-        slug: `action-runtime-${tenantId}`,
-        status: 'active',
-        tenantId,
-      });
-      yield* database.executor.insert(legalEntities).values({
-        legalEntityId,
-        legalName: 'Action Runtime Integration',
-        registrationCountry: 'CZ',
-        registrationNumber: tenantId,
-        status: 'active',
-        tenantId,
-      });
-      yield* database.executor.insert(principals).values({
-        displayName: 'Action Runtime Integration',
-        kind: 'human',
-        principalId,
-        status: 'active',
-        tenantId,
-      });
-      yield* database.executor.insert(principalAuthBindings).values({
-        authenticationNamespaceId: staffAuthenticationNamespaceId,
-        principalAuthBindingId: authBindingId,
-        principalId,
-        provider: 'better_auth',
-        providerSubjectId: `action-runtime-${principalId}`,
-        status: 'active',
-        subjectType: 'user',
-        tenantId,
-      });
-      yield* database.executor.insert(tenantModuleStates).values({
-        moduleKey: 'inventory.stock',
-        state: 'active',
-        tenantId,
-      });
-    }),
-  ))();
+const prepare = withDatabase(
+  Effect.fn(function* integrationProgram1(database) {
+    const { authBindingId, legalEntityId, principalId, tenantId } = yield* ActionRuntimeSuite;
+    yield* database.executor.insert(tenants).values({
+      defaultLocale: 'en',
+      name: 'Action Runtime Integration',
+      slug: `action-runtime-${tenantId}`,
+      status: 'active',
+      tenantId,
+    });
+    yield* database.executor.insert(legalEntities).values({
+      legalEntityId,
+      legalName: 'Action Runtime Integration',
+      registrationCountry: 'CZ',
+      registrationNumber: tenantId,
+      status: 'active',
+      tenantId,
+    });
+    yield* database.executor.insert(principals).values({
+      displayName: 'Action Runtime Integration',
+      kind: 'human',
+      principalId,
+      status: 'active',
+      tenantId,
+    });
+    yield* database.executor.insert(principalAuthBindings).values({
+      authenticationNamespaceId: staffAuthenticationNamespaceId,
+      principalAuthBindingId: authBindingId,
+      principalId,
+      provider: 'better_auth',
+      providerSubjectId: `action-runtime-${principalId}`,
+      status: 'active',
+      subjectType: 'user',
+      tenantId,
+    });
+    yield* database.executor.insert(tenantModuleStates).values({
+      moduleKey: 'inventory.stock',
+      state: 'active',
+      tenantId,
+    });
+  }),
+);
 
-const cleanup = (() =>
-  withDatabase(
-    Effect.fn(function* integrationProgram2(database) {
-      yield* Effect.forEach(
-        [
-          outboxMessages,
-          domainEvents,
-          dataAccessEvents,
-          auditEvents,
-          tenantModuleStateChanges,
-          tenantModuleStates,
-          actionInvocations,
-          principalAuthBindings,
-          principals,
-          legalEntities,
-          tenants,
-        ],
-        (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
-        { discard: true },
-      );
-    }),
-  ))();
+const cleanup = withDatabase(
+  Effect.fn(function* integrationProgram2(database) {
+    const { tenantId } = yield* ActionRuntimeSuite;
+    yield* Effect.forEach(
+      [
+        outboxMessages,
+        domainEvents,
+        dataAccessEvents,
+        auditEvents,
+        tenantModuleStateChanges,
+        tenantModuleStates,
+        actionInvocations,
+        principalAuthBindings,
+        principals,
+        legalEntities,
+        tenants,
+      ],
+      (table) => database.executor.delete(table).where(eq(table.tenantId, tenantId)),
+      { discard: true },
+    );
+  }),
+);
 
 const TestDomainEvents = {
   'test-state.changed': Schema.Struct({ value: Schema.String }),
@@ -546,6 +568,7 @@ const hasFailure = <Failure>(exit: Exit.Exit<unknown, Failure>, tag: string): bo
 const testProgram1 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram3(database) {
+      const { crypto, principal } = yield* ActionRuntimeSuite;
       yield* database.executor
         .update(tenantModuleStates)
         .set({ state: 'active' })
@@ -597,7 +620,7 @@ const testProgram1 = () =>
       );
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         liveModuleStateOptions(database),
@@ -680,6 +703,7 @@ const testProgram1 = () =>
   );
 
 const testProgram2 = Effect.fn(function* integrationProgram4() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const key = 'atomic-success';
   const moduleStateKey = `test.${key}.${tenantId}`;
 
@@ -687,7 +711,7 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
     Effect.fn(function* integrationProgram5(database) {
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -722,6 +746,7 @@ const testProgram2 = Effect.fn(function* integrationProgram4() {
 });
 
 const testProgram3 = Effect.fn(function* integrationProgram6() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const key = 'policy-allowed';
   const moduleStateKey = `test.${key}.${tenantId}`;
   const observed: string[] = [];
@@ -737,7 +762,7 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
     Effect.fn(function* integrationProgram7(database) {
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -772,6 +797,7 @@ const testProgram3 = Effect.fn(function* integrationProgram6() {
 });
 
 const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectionIntegration() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const key = 'committed-domain-rejection';
   const moduleStateKey = `test.${key}.${tenantId}`;
 
@@ -779,7 +805,7 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
     Effect.fn(function* verifyCommittedDomainRejection(database) {
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -818,6 +844,7 @@ const testCommittedDomainRejection = Effect.fn(function* committedDomainRejectio
 });
 
 const testProgram4 = Effect.fn(function* integrationProgram8() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const scenarios = [
     {
       actionKey: 'shell.test.policy-denied-global',
@@ -898,7 +925,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
     Effect.fn(function* integrationProgram9(database) {
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -983,6 +1010,7 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
 });
 
 const testProgram5 = Effect.fn(function* integrationProgram11() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const policy = defineGlobalPolicy<{ readonly value: string }>({
     evaluate: () => Effect.fail(denyPolicy('blocked', 'This operation is blocked')),
     policyKey: 'global.blocked.v1',
@@ -998,7 +1026,7 @@ const testProgram5 = Effect.fn(function* integrationProgram11() {
           let handlerExecutions = 0;
           const runtime = makeActionRuntime(
             withEvidencePersistenceFailure(database, stage),
-            makeActionRepository(),
+            makeActionRepository(crypto),
             allowedPermission,
             testOperationalScopeResolver,
             openActionRuntimeOptions,
@@ -1036,6 +1064,7 @@ const testProgram5 = Effect.fn(function* integrationProgram11() {
 });
 
 const testProgram6 = Effect.fn(function* integrationProgram14() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const scenarios = [
     {
       actionKey: 'shell.test.domain-rejection',
@@ -1064,7 +1093,7 @@ const testProgram6 = Effect.fn(function* integrationProgram14() {
         const moduleStateKey = `test.${scenario.key}.${tenantId}`;
         const runtime = makeActionRuntime(
           scenario.key === 'evidence-failure' ? withEvidencePersistenceFailure(database, 'audit') : database,
-          makeActionRepository(),
+          makeActionRepository(crypto),
           allowedPermission,
           testOperationalScopeResolver,
           openActionRuntimeOptions,
@@ -1127,6 +1156,7 @@ const testProgram6 = Effect.fn(function* integrationProgram14() {
 });
 
 const testProgram7 = Effect.fn(function* integrationProgram16() {
+  const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
   const stages: readonly EvidencePersistenceStage[] = [
     'audit',
     'data-access',
@@ -1151,7 +1181,7 @@ const testProgram7 = Effect.fn(function* integrationProgram16() {
           .where(eq(outboxMessages.tenantId, tenantId));
         const runtime = makeActionRuntime(
           withEvidencePersistenceFailure(database, stage),
-          makeActionRepository(),
+          makeActionRepository(crypto),
           allowedPermission,
           testOperationalScopeResolver,
           openActionRuntimeOptions,
@@ -1206,9 +1236,10 @@ const testProgram7 = Effect.fn(function* integrationProgram16() {
 const testProgram8 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram18(database) {
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -1306,7 +1337,8 @@ const testProgram8 = () =>
 const testProgram9 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram19(database) {
-      const repository = makeActionRepository();
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
+      const repository = makeActionRepository(crypto);
       const allowedRuntime = makeActionRuntime(
         database,
         repository,
@@ -1370,6 +1402,7 @@ const testProgram9 = () =>
 const testProgram10 = () =>
   withDatabase(
     Effect.fn(function* concurrencyProof(database) {
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const handlerStarted = yield* Deferred.make<null>();
       const handlerRelease = yield* Deferred.make<null>();
       const secondPermissionChecked = yield* Deferred.make<null>();
@@ -1385,7 +1418,7 @@ const testProgram10 = () =>
       };
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         concurrentAllowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
@@ -1475,6 +1508,7 @@ const testProgram10 = () =>
 const testProgram11 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram20(database) {
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const firstCommitRelease = yield* Deferred.make<null>();
       const firstFlushed = yield* Deferred.make<null>();
       const secondInsertStarted = yield* Deferred.make<null>();
@@ -1496,7 +1530,7 @@ const testProgram11 = () =>
         Object.create(database.executor),
         delayedTransaction,
       );
-      const repository = makeActionRepository();
+      const repository = makeActionRepository(crypto);
       const firstRuntime = makeActionRuntime(
         { executor: delayedExecutor },
         repository,
@@ -1576,7 +1610,8 @@ const testProgram11 = () =>
 const testProgram12 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram21(database) {
-      const repository = makeActionRepository();
+      const { authBindingId, crypto, principal, principalId, tenantId } = yield* ActionRuntimeSuite;
+      const repository = makeActionRepository(crypto);
       const key = 'lost-acknowledgement';
       const moduleStateKey = `test.lost-ack.${tenantId}`;
       const actionRegistration = makeRegistration({
@@ -1625,7 +1660,7 @@ const testProgram12 = () =>
           invocationId,
           principal: {
             ...principal,
-            principalId: randomUUID(),
+            principalId: yield* crypto.randomUUIDv4(),
           },
         }),
       );
@@ -1701,9 +1736,9 @@ const testProgram12 = () =>
       for (const outsideScope of [
         { ...keyedLookup, actionKey: 'shell.test.other-action' },
         { ...keyedLookup, idempotencyKey: 'unknown-key' },
-        { ...keyedLookup, principal: { ...principal, tenantId: randomUUID() } },
-        { ...keyedLookup, principal: { ...principal, principalId: randomUUID() } },
-        { ...keyedLookup, principal: { ...principal, legalEntityId: randomUUID() } },
+        { ...keyedLookup, principal: { ...principal, tenantId: yield* crypto.randomUUIDv4() } },
+        { ...keyedLookup, principal: { ...principal, principalId: yield* crypto.randomUUIDv4() } },
+        { ...keyedLookup, principal: { ...principal, legalEntityId: yield* crypto.randomUUIDv4() } },
         {
           ...keyedLookup,
           principal: {
@@ -1819,6 +1854,7 @@ const testProgram12 = () =>
 const testProgram13 = () =>
   withDatabase(
     Effect.fn(function* integrationProgram22(database) {
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const moduleKey = 'inventory.state-matrix';
       yield* database.executor
         .insert(tenantModuleStates)
@@ -1860,7 +1896,7 @@ const testProgram13 = () =>
       );
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         allowedPermission,
         testOperationalScopeResolver,
         liveModuleStateOptions(database),
@@ -1928,6 +1964,7 @@ const fixtureOwnerConnectionFailure = (cause: unknown) =>
 const testCompositionTransactionFence = () =>
   withDatabase(
     Effect.fn(function* nativeCompositionTransactionFence(database) {
+      const { crypto, principal, tenantId } = yield* ActionRuntimeSuite;
       const configuration = yield* loadDatabaseConnectionPair();
       const adminDatabase = yield* makeCoreDatabase({ ...configuration.admin, maxConnections: 3 });
       const revision = 'a'.repeat(64);
@@ -1981,7 +2018,7 @@ const testCompositionTransactionFence = () =>
       const handlerRelease = yield* Deferred.make<null>();
       const ownerBackend = yield* Deferred.make<number>();
       const drainStarted = yield* Deferred.make<null>();
-      const repository = makeActionRepository();
+      const repository = makeActionRepository(crypto);
       let handlerExecutions = 0;
       let invocationLocks = 0;
       const runtime = makeActionRuntime(
@@ -2006,8 +2043,8 @@ const testCompositionTransactionFence = () =>
           resolveCompositionRevision: () => Effect.succeed(revision),
         },
       );
-      const key = `composition-owner-${randomUUID()}`;
-      const moduleStateKey = `core.composition-owner-${randomUUID()}`;
+      const key = `composition-owner-${yield* crypto.randomUUIDv4()}`;
+      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
       const registration = makeRegistration({
         actionKey: 'shell.test.composition-write',
         completionGate: handlerRelease,
@@ -2068,7 +2105,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'draining' },
             principal,
             registration,
-            transport: transport(`composition-draining-${randomUUID()}`),
+            transport: transport(`composition-draining-${yield* crypto.randomUUIDv4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(drainingFailure)).toBe(true);
@@ -2089,7 +2126,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'superseded' },
             principal,
             registration,
-            transport: transport(`composition-stale-${randomUUID()}`),
+            transport: transport(`composition-stale-${yield* crypto.randomUUIDv4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(staleFailure)).toBe(true);
@@ -2101,7 +2138,10 @@ const testCompositionTransactionFence = () =>
 
 it.layer(
   Layer.merge(
-    Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))),
+    Layer.effectDiscard(Effect.acquireRelease(prepare, () => cleanup.pipe(Effect.orDie))).pipe(
+      Layer.provideMerge(Layer.effect(ActionRuntimeSuite, makeActionRuntimeSuite)),
+      Layer.provideMerge(NodeCrypto.layer),
+    ),
     Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
   ),
   {

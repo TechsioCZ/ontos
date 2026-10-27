@@ -2,7 +2,7 @@
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 class OwnerVerificationError extends Schema.TaggedError<OwnerVerificationError>()('OwnerVerificationError', {
   reason: Schema.String,

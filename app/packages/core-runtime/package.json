@@ -41,13 +41,13 @@
     "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./testing/actions": "./src/testing/actions.ts",
+    "./testing/gateway-scope-grant": "./src/testing/gateway-scope-grant.ts",
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
     "./testing/reads": "./src/testing/reads.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts",
-    "./testing/gateway-scope-grant": "./src/testing/gateway-scope-grant.ts",
     "./testing/owner-evidence": "./src/testing/owner-evidence.ts"
   },
   "imports": {
@@ -68,7 +68,7 @@
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
-    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:migrate": "node ../../scripts/migration-convergence-cli.mts core",
     "db:test": "rstest --project unit --project integration",
     "db:verify": "node ../../scripts/verify-core-db-schema.mts",
     "test:unit": "rstest --project unit",
@@ -81,10 +81,11 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "@effect/platform-node": "4.0.0-rc.117",
-    "@effect/sql-pg": "4.0.0-rc.117",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@noble/hashes": "2.2.0",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",

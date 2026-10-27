@@ -7,6 +7,7 @@ import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../share
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { ProductRecordSchema } from '../../shared/apis/records.ts';
 import type { RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
+import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { reviewProductProposal, targetProductId } from './agent-review.ts';
 
@@ -19,7 +20,7 @@ const reviewProductIds = (input: AgentReviewRequest) => [
 ];
 /** The person's own records read for a review: catalog rights and only the targeted products. */
 const reviewRecordsRequest = (input: AgentReviewRequest, scope: OperationalScope) => {
-  const productIds = reviewProductIds(input);
+  const productIds = reviewProductIds(input).map((id) => ProductIdSchema.make(id));
   const view: RecordsView = { limit: productIds.length, ordersLimit: 0, productIds };
   return storefrontReadRequest(scope.authMethod, scope.legalEntityId, { view });
 };
@@ -48,7 +49,33 @@ const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<Retu
     ),
   );
 
-const encodeProduct = Schema.encodeSync(ProductRecordSchema);
+const encodeProduct = Schema.encodeEffect(ProductRecordSchema);
+const reviewItem = Effect.fn('Merchandise.agentReview.item')(function* reviewItem(
+  request: AgentReviewRequest['items'][number],
+  records: RecordsResponse | undefined,
+) {
+  const productId = targetProductId(request.command);
+  const product = productId === undefined ? undefined : records?.products.find((entry) => entry.id === productId);
+  return reviewProductProposal({
+    product:
+      product === undefined
+        ? undefined
+        : yield* encodeProduct(product).pipe(
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new OperationContextUnavailable({
+                  code: 'operation_context_unavailable',
+                  reason: 'Owner records services are temporarily unavailable',
+                }),
+                'cause',
+                { value: cause },
+              ),
+            ),
+          ),
+    request,
+    rights: records,
+  });
+});
 
 export const agentReviewRead = defineRead(
   {
@@ -76,38 +103,34 @@ export const agentReviewRead = defineRead(
         Effect.orElseSucceed(Option.none),
       ),
     load: (input: AgentReviewRequest, context) =>
-      Effect.gen(function* () {
-        const live = input.items.some(
-          (item) => item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
-        );
-        const productIds = reviewProductIds(input);
-        // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
-        // answer open.
-        const grants = context.prepared;
-        const records: RecordsResponse | undefined =
-          live && Option.isSome(grants)
-            ? yield* context.services
-                .records(reviewRecordsRequest(input, context.scope), grants.value, {
-                  detailLimit: productIds.length,
-                })
-                .pipe(
-                  Effect.map(Option.some<RecordsResponse>),
-                  Effect.orElseSucceed(Option.none<RecordsResponse>),
-                  Effect.map(Option.getOrUndefined),
-                )
-            : undefined;
-        const items = input.items.map((request) => {
-          const productId = targetProductId(request.command);
-          const product =
-            productId === undefined ? undefined : records?.products.find((entry) => entry.id === productId);
-          return reviewProductProposal({
-            product: product === undefined ? undefined : encodeProduct(product),
-            request,
-            rights: records,
+      Effect.suspend(() =>
+        Effect.gen(function* loadReview() {
+          const live = input.items.some(
+            (item) =>
+              item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
+          );
+          const productIds = reviewProductIds(input).map((id) => ProductIdSchema.make(id));
+          // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
+          // answer open.
+          const grants = context.prepared;
+          const records: RecordsResponse | undefined =
+            live && Option.isSome(grants)
+              ? yield* context.services
+                  .records(reviewRecordsRequest(input, context.scope), grants.value, {
+                    detailLimit: productIds.length,
+                  })
+                  .pipe(
+                    Effect.map(Option.some<RecordsResponse>),
+                    Effect.orElseSucceed(Option.none<RecordsResponse>),
+                    Effect.map(Option.getOrUndefined),
+                  )
+              : undefined;
+          const items = yield* Effect.forEach(input.items, (request) => reviewItem(request, records), {
+            concurrency: 1,
           });
-        });
-        return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
-      }),
+          return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
+        }),
+      ).pipe(Effect.withSpan('Merchandise.agentReview.load')),
     // oxlint-enable perfectionist/sort-objects
   },
   makeAgentReviewServices,

@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { Clock, Config, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 import { CoreDatabase, CoreDatabaseLive } from '../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, parseDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';

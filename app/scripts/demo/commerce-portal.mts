@@ -35,8 +35,8 @@ import {
   Redacted,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
@@ -391,19 +391,18 @@ const servicesLive = Layer.mergeAll(
   ),
 );
 
-/** Provision the native service principals, grants and managed keys without reading or writing dotenv. */
+/** Compose once at the caller's executable root; both services and the program share the explicit configuration. */
+export const commercePortalProvisionLive = (environment: Readonly<Record<string, string>>) =>
+  servicesLive.pipe(Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))));
+
+/** Provision without dotenv I/O; callers supply commercePortalProvisionLive(environment) at their executable root. */
 export const provisionCommercePortal = (
   environment: Readonly<Record<string, string>>,
   existing: ReadonlyMap<string, string> = new Map(),
-) =>
-  main(existing, environment).pipe(
-    Effect.provide(servicesLive),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
-    Effect.scoped,
-  );
+) => main(existing, environment).pipe(Effect.scoped);
 
 const persistConfiguration = (envFileOption: string | undefined) =>
-  Effect.gen(function* persistConfiguration() {
+  Effect.gen(function* writePortalConfiguration() {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const root = yield* path.fromFileUrl(workspaceRoot);

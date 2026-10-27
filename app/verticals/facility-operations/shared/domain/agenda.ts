@@ -10,9 +10,9 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
-import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, opsIdOf } from './common.ts';
+import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, OpsIdSchema } from './common.ts';
 
-export const CalendarEventIdSchema = opsIdOf('FacilityCalendarEventId');
+export const CalendarEventIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityCalendarEventId'));
 export type CalendarEventId = typeof CalendarEventIdSchema.Type;
 
 export const CalendarEventKindSchema = Schema.Literals(['DEADLINE', 'INSPECTION', 'MEETING', 'REMINDER']);
@@ -23,12 +23,12 @@ export type CalendarEventStatus = typeof CalendarEventStatusSchema.Type;
 
 export const CalendarEventSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: CalendarEventIdSchema,
-  title: TextSchema(300),
+  assignee: Schema.optionalKey(PrincipalRefSchema),
   date: IsoDateSchema,
+  id: CalendarEventIdSchema,
   kind: CalendarEventKindSchema,
   related: Schema.optionalKey(PropertyRefSchema),
-  assignee: Schema.optionalKey(PrincipalRefSchema),
+  title: TextSchema(300),
   /** Display snapshot of the assignee (e-mail or name) taken when assigned. */
   assigneeLabel: Schema.optionalKey(TextSchema(200)),
   note: Schema.optionalKey(NoteSchema),
@@ -37,7 +37,7 @@ export const CalendarEventSchema = Schema.Struct({
 });
 export type CalendarEvent = typeof CalendarEventSchema.Type;
 
-export const NotificationIdSchema = opsIdOf('FacilityNotificationId');
+export const NotificationIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityNotificationId'));
 export type NotificationId = typeof NotificationIdSchema.Type;
 
 /** ASSIGNED = someone assigned me; DEADLINE = approaching; OVERDUE = past due; CHANGE = significant change. */
@@ -48,30 +48,30 @@ export type NotificationCategory = typeof NotificationCategorySchema.Type;
 export const EventKeySchema = TextSchema(400);
 
 export const NotificationSchema = Schema.Struct({
+  category: NotificationCategorySchema,
+  detail: Schema.optionalKey(TextSchema(500)),
+  eventKey: EventKeySchema,
   id: NotificationIdSchema,
   recipient: PrincipalRefSchema,
-  eventKey: EventKeySchema,
-  category: NotificationCategorySchema,
   title: TextSchema(300),
-  detail: Schema.optionalKey(TextSchema(500)),
   /** Source module id (agreements, occupancy, work, finance, property, ops). */
   source: TextSchema(80),
   /** Link to the source record (in-app path). */
-  href: Schema.optionalKey(TextSchema(500)),
-  dueDate: Schema.optionalKey(IsoDateSchema),
   createdAt: Schema.DateTimeUtcFromString,
   createdBy: PrincipalRefSchema,
+  dueDate: Schema.optionalKey(IsoDateSchema),
+  href: Schema.optionalKey(TextSchema(500)),
   readAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });
 export type Notification = typeof NotificationSchema.Type;
 
 export const ExportRecordSchema = Schema.Struct({
-  id: opsIdOf('FacilityExportId'),
-  list: TextSchema(120),
-  rowCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  filter: Schema.optionalKey(TextSchema(500)),
   exportedAt: Schema.DateTimeUtcFromString,
   exportedBy: PrincipalRefSchema,
+  filter: Schema.optionalKey(TextSchema(500)),
+  id: OpsIdSchema.pipe(Schema.brand('FacilityExportId')),
+  list: TextSchema(120),
+  rowCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ExportRecord = typeof ExportRecordSchema.Type;
 
@@ -93,8 +93,8 @@ export type NotificationPreference = typeof NotificationPreferenceSchema.Type;
 
 export const AgendaStateSchema = Schema.Struct({
   events: Schema.Array(CalendarEventSchema),
-  notifications: Schema.optionalKey(Schema.Array(NotificationSchema)),
   exports: Schema.optionalKey(Schema.Array(ExportRecordSchema)),
+  notifications: Schema.optionalKey(Schema.Array(NotificationSchema)),
   preferences: Schema.optionalKey(Schema.Array(NotificationPreferenceSchema)),
 });
 export type AgendaState = typeof AgendaStateSchema.Type;
@@ -105,12 +105,13 @@ export const emptyAgendaState: AgendaStateEncoded = { events: [], exports: [], n
 
 /** Personal inbox, preferences and export history are filtered before leaving the server, not just in the UI. */
 export const agendaStateForPrincipal = (state: AgendaState, actor: PrincipalRef): AgendaState => {
-  const mine = (principal: PrincipalRef) => principal.principalId === actor.principalId && principal.tenantId === actor.tenantId;
+  const mine = (principal: PrincipalRef) =>
+    principal.principalId === actor.principalId && principal.tenantId === actor.tenantId;
   return {
     ...state,
+    exports: (state.exports ?? []).filter((entry) => mine(entry.exportedBy)),
     notifications: (state.notifications ?? []).filter((entry) => mine(entry.recipient)),
     preferences: (state.preferences ?? []).filter((entry) => mine(entry.principal)),
-    exports: (state.exports ?? []).filter((entry) => mine(entry.exportedBy)),
   };
 };
 

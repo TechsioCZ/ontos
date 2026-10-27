@@ -1,6 +1,8 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
 import { withCause } from '../../problems-support.ts';
@@ -117,20 +119,19 @@ const challengeExpiresAt = (record: CommercePortalAuthAuthoritativeSession, now:
     : undefined;
 };
 
-const hashChallengeId = (challengeId: string): string =>
-  createHash('sha256').update(challengeId, 'utf-8').digest('base64url');
+const hashChallengeId = (challengeId: string): string => Base64Url.encode(sha256(utf8ToBytes(challengeId)));
 
-const newChallengeId = (): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
-  Effect.try({
-    catch: (cause) => unavailable('challenge-id', cause),
-    try: () => randomBytes(32).toString('base64url'),
-  });
+const newChallengeId = (crypto: Crypto.Crypto): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
+  crypto.randomBytes(32).pipe(
+    Effect.map(Base64Url.encode),
+    Effect.mapError((cause) => unavailable('challenge-id', cause)),
+  );
 
-const newAttemptReservationId = (): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
-  Effect.try({
-    catch: (cause) => unavailable('attempt-reservation-id', cause),
-    try: () => randomBytes(16).toString('base64url'),
-  });
+const newAttemptReservationId = (crypto: Crypto.Crypto): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
+  crypto.randomBytes(16).pipe(
+    Effect.map(Base64Url.encode),
+    Effect.mapError((cause) => unavailable('attempt-reservation-id', cause)),
+  );
 
 const sessionRecord = Effect.fn('CommercePortalAuthStepUp.sessionRecord')(function* sessionRecordEffect(
   sessionReader: CommercePortalAuthSessionReader,
@@ -160,11 +161,13 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
     | CommercePortalAuthStepUpCodeVerifierService
     | CommercePortalAuthSessionLifecycle
     | CommercePortalAuthSessionReaderService
+    | Crypto.Crypto
   > {
     const challengeStore = yield* CommercePortalAuthStepUpChallengeStoreService;
     const codeVerifier = yield* CommercePortalAuthStepUpCodeVerifierService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     const sessionReader = yield* CommercePortalAuthSessionReaderService;
+    const crypto = yield* Crypto.Crypto;
     const emitAudit = commercePortalAuthAuditEmitter(audit);
 
     const issue = Effect.fn('CommercePortalAuthStepUp.issue')(function* issueEffect(
@@ -182,7 +185,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       if (expiresAt === undefined) {
         return yield* rejected('Commerce portal step-up challenge cannot outlive its session');
       }
-      const generatedChallengeId = yield* newChallengeId();
+      const generatedChallengeId = yield* newChallengeId(crypto);
       const challengeId = yield* Schema.decodeEffect(CommercePortalAuthStepUpChallengeIdSchema)(
         generatedChallengeId,
       ).pipe(Effect.mapError((cause) => unavailable('challenge-id', cause)));
@@ -269,7 +272,7 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       }
       yield* sessionRecord(sessionReader, request.providerSubjectId, sessionId, now);
 
-      const reservationId = yield* newAttemptReservationId();
+      const reservationId = yield* newAttemptReservationId(crypto);
       const reserved = yield* challengeStore
         .reserveAttempt({
           challengeIdHash,

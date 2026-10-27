@@ -57,7 +57,7 @@ export interface PartySearchProjectionGatewayService {
 /**
  * Owner-facing port implemented by OntOS Core Search. Party Registry supplies business semantics;
  * the implementation supplies only the rebuildable, eventually-consistent projection/query runtime.
- * Every query carries the Read factory's OperationalScope for Core Search to install.
+ * Every query carries the Read factory's OperationalScope, which Core Search installs for its query.
  */
 export class PartySearchProjectionGateway extends Context.Service<
   PartySearchProjectionGateway,

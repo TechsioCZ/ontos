@@ -5,7 +5,7 @@ import { is } from 'drizzle-orm';
 import { getTableConfig, PgPolicy, PgTable } from 'drizzle-orm/pg-core';
 import { Array as EffectArray, Config, Effect, FileSystem, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { makeCoreMigrationSchema } from '../../database/core-schema.ts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';

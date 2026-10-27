@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Clock, Config, Console, Deferred, Duration, Effect, Exit, Layer, Option, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { ChildProcess } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
+import { ChildProcess } from 'effect/process';
 
 import {
   APPLICATION_COMPOSITION_PUBLICATION_BUDGETS,

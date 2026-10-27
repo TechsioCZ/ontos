@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
 import { CommerceEnrollmentContinuation } from '../../src/enrollment/continuation/enrollment-continuation.ts';

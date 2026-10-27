@@ -1,7 +1,7 @@
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { compareCommerceCustomerContextCatalog } from '../src/database/catalog.ts';
 import { COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, COMMERCE_CUSTOMER_CONTEXT_TABLES } from '../src/database/schema.ts';

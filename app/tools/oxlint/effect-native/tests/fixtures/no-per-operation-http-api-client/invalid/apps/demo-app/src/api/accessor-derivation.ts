@@ -3,8 +3,8 @@
 // rebuild the transport — but deriving the accessor, its Schema wiring and its error channel per
 // operation is still A9 per-operation wiring. They get their own message.
 import { Effect } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpClient } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 export const listCustomers = (page: number) =>

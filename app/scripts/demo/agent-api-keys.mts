@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Redacted } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { IdentityLifecycle } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';

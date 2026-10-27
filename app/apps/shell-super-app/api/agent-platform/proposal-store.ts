@@ -1,5 +1,7 @@
 /** Native Core proposal operations; Shell owns only presentation mapping and orchestration. */
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import {
   ActionRuntime,
@@ -143,8 +145,10 @@ export const proposalSubcommandKey = (
   ingressKey: string,
   operation: AgentProposalCommandPayload['operation'],
   target: string,
-) =>
-  `agent-proposal:${createHash('sha256').update(ingressKey).update('\0').update(operation).update('\0').update(target).digest('hex')}`;
+) => {
+  const digest = Hex.encode(sha256(utf8ToBytes(`${ingressKey}\0${operation}\0${target}`)));
+  return `agent-proposal:${digest}`;
+};
 
 /** Core verifies the exact invocation, original payload hash and retained audit/result before recovering a result.
  * A running or rejected invocation is not retry authority. There is no elapsed-time takeover.

@@ -1,70 +1,62 @@
-# Stage deployment topology. Secrets are configured in the corresponding
-# Zerops services and are never stored in this file.
-# Stage topology provisioned for partyregistry and partyregistryworker.
-# Full stage rollout requested after PostgreSQL 18 migration.
-# ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL points to the native Cloudflare KV value.
-# ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN is the stable read-only credential.
-# Configure both as inherited Zerops project variables; publication updates KV bytes,
-# and running consumers read them afresh without service restarts. Cold boot and
-# readiness remain independent of the composition source.
-
 zerops:
-  - setup: 'migrator'
+  - setup: migrator
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/node/'
       deployFiles:
-        - 'app/.mise.toml'
-        - 'app/.zerops/node'
-        - 'app/apps/shell-super-app'
-        - 'app/node_modules'
-        - 'app/package.json'
-        - 'app/packages'
-        - 'app/pnpm-lock.yaml'
-        - 'app/pnpm-workspace.yaml'
-        - 'app/scripts'
-        - 'app/tsconfig.base.json'
-        - 'app/verticals/catalog'
-        - 'app/verticals/assortment'
-        - 'app/verticals/commerce-customer-context'
-        - 'app/verticals/commerce-market-catalog'
-        - 'app/verticals/inventory'
-        - 'app/verticals/party-registry'
-        - 'app/verticals/payment-term-catalog'
-        - 'app/verticals/price-group-catalog'
-        - 'app/verticals/pricing'
-        - 'app/verticals/privacy'
-        - 'app/verticals/storefront-registry'
-        - 'app/verticals/tax'
-        - 'app/verticals/property-portfolio'
-        - 'app/verticals/property-leasing'
-        - 'app/verticals/legal-agreements'
-        - 'app/verticals/work-tasks'
-        - 'app/verticals/workforce'
-        - 'app/verticals/tagging'
-        - 'app/verticals/crm'
-        - 'app/verticals/sales-pipeline'
-        - 'app/verticals/merchandise'
-        - 'app/verticals/facility-operations'
-        - 'app/verticals/sales-insights'
-        - 'app/verticals/finance-billing'
-        - 'app/verticals/crm-activities'
+        - app/.mise.toml
+        - app/.zerops/node
+        - app/apps/shell-super-app
+        - app/node_modules
+        - app/package.json
+        - app/packages
+        - app/pnpm-lock.yaml
+        - app/pnpm-workspace.yaml
+        - app/scripts
+        - app/tsconfig.base.json
+        - app/verticals/catalog
+        - app/verticals/assortment
+        - app/verticals/commerce-customer-context
+        - app/verticals/commerce-market-catalog
+        - app/verticals/inventory
+        - app/verticals/party-registry
+        - app/verticals/payment-term-catalog
+        - app/verticals/price-group-catalog
+        - app/verticals/pricing
+        - app/verticals/privacy
+        - app/verticals/storefront-registry
+        - app/verticals/tax
+        - app/verticals/property-portfolio
+        - app/verticals/property-leasing
+        - app/verticals/legal-agreements
+        - app/verticals/work-tasks
+        - app/verticals/workforce
+        - app/verticals/tagging
+        - app/verticals/crm
+        - app/verticals/sales-pipeline
+        - app/verticals/merchandise
+        - app/verticals/facility-operations
+        - app/verticals/sales-insights
+        - app/verticals/finance-billing
+        - app/verticals/crm-activities
+        - app/verticals/projects
+        - 'app/database'
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 8080
-          path: '/ready'
+          path: /ready
         failureTimeout: 10m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 8080
           protocol: tcp
@@ -78,8 +70,7 @@ zerops:
         PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SHELL_GATEWAY_ISSUER_DATABASE_URL: postgresql://shell_gateway_issuer:${SHELL_GATEWAY_ISSUER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
-        # The migrator bootstraps the same datastore identity that the SpiceDB service consumes.
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_DATABASE_PASSWORD: ${spicedb_SPICEDB_DATABASE_PASSWORD}
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
@@ -87,26 +78,24 @@ zerops:
       healthCheck:
         httpGet:
           port: 8080
-          path: '/ready'
+          path: /ready
       start: sh -c 'cd app && PATH="$PWD/.zerops/node/bin:$PATH" exec node scripts/run-zerops-migrator.mjs'
-
-  - setup: 'spicedb'
+  - setup: spicedb
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       deployFiles:
-        - 'app/packages/core-runtime/spicedb/stage-bootstrap.yaml'
-        - 'app/scripts/run-zerops-spicedb.sh'
-        - 'app/scripts/spicedb-datastore-uri.sh'
+        - app/packages/core-runtime/spicedb/stage-bootstrap.yaml
+        - app/scripts/run-zerops-spicedb.sh
+        - app/scripts/spicedb-datastore-uri.sh
     deploy:
       temporaryShutdown: true
-      # Both listeners serve TLS, so the checks probe gRPC inside the named SpiceDB container.
       readinessCheck:
         exec:
           command: docker exec spicedb /usr/local/bin/grpc_health_probe -addr=localhost:50051 -tls -tls-ca-cert=/tls/grpc-cert.pem
         failureTimeout: 5m
         retryPeriod: 10s
     run:
-      base: 'alpine/docker@26.1'
+      base: alpine/docker@26.1
       prepareCommands:
         - docker image pull authzed/spicedb:v1.56.0
         - docker image pull postgres:18.6-alpine
@@ -120,18 +109,14 @@ zerops:
       envVariables:
         SPICEDB_DATABASE_HOST: ${db18_hostname}
         SPICEDB_DATABASE_PORT: ${db18_port}
-        # SPICEDB_DATABASE_PASSWORD is this service's secret; the datastore URI is built from these parts.
         SPICEDB_DATASTORE_ENGINE: postgres
       healthCheck:
         exec:
           command: docker exec spicedb /usr/local/bin/grpc_health_probe -addr=localhost:50051 -tls -tls-ca-cert=/tls/grpc-cert.pem
       start: sh app/scripts/run-zerops-spicedb.sh
-
-  # The Cloudflare Tunnel connector that carries Workers VPC traffic to db18 and SpiceDB.
-  # TUNNEL_TOKEN is this service's secret, set when `stage:cloudflare provision` imports it.
-  - setup: 'cloudflared'
+  - setup: cloudflared
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       prepareCommands:
         - sudo apk add --no-cache curl
       buildCommands:
@@ -140,17 +125,17 @@ zerops:
         - echo '77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2  app/.zerops/runtime/cloudflared/cloudflared' | sha256sum -c -
         - chmod +x 'app/.zerops/runtime/cloudflared/cloudflared'
       deployFiles:
-        - 'app/.zerops/runtime/cloudflared'
+        - app/.zerops/runtime/cloudflared
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 2000
-          path: '/ready'
+          path: /ready
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       ports:
         - port: 2000
           protocol: tcp
@@ -158,44 +143,39 @@ zerops:
       healthCheck:
         httpGet:
           port: 2000
-          path: '/ready'
-      # Workers VPC needs the QUIC transport. quic-go's UDP GSO batching and ECN marking lose ~20% of
-      # tunnel packets on the Zerops network, which capped Hyperdrive/SpiceDB replies at ~100 kB/s.
+          path: /ready
       envVariables:
         QUIC_GO_DISABLE_GSO: 'true'
         QUIC_GO_DISABLE_ECN: 'true'
       start: sh -c 'test -n "$TUNNEL_TOKEN" || { echo "TUNNEL_TOKEN is required" >&2; exit 1; }; exec app/.zerops/runtime/cloudflared/cloudflared tunnel --no-autoupdate --metrics 0.0.0.0:2000 run'
-
-  # <generated-vertical-provider-deployments>
-  - setup: 'party-registry'
+  - setup: party-registry
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/party-registry' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/party-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/party-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/party-registry/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/party-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry/node/'
+        - mkdir 'app/.zerops/runtime/party-registry/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/party-registry/node/'
       deployFiles:
-        - 'app/.zerops/runtime/party-registry'
+        - app/.zerops/runtime/party-registry
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4102
-          path: '/party-registry-api/party-registry/readiness'
+          path: /party-registry-api/party-registry/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4102
           protocol: tcp
@@ -205,7 +185,7 @@ zerops:
         NODE_ENV: production
         PORT: '4102'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: party-registry
@@ -213,38 +193,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4102
-          path: '/party-registry-api/party-registry/readiness'
+          path: /party-registry-api/party-registry/readiness
       start: sh -c 'cd app/.zerops/runtime/party-registry && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'commerce-customer-context'
+  - setup: commerce-customer-context
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-customer-context' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/commerce-customer-context' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-customer-context/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-customer-context/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/commerce-customer-context/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context/node/'
+        - mkdir 'app/.zerops/runtime/commerce-customer-context/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/commerce-customer-context/node/'
       deployFiles:
-        - 'app/.zerops/runtime/commerce-customer-context'
+        - app/.zerops/runtime/commerce-customer-context
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4101
-          path: '/commerce-customer-context-api/commerce-customer-context/readiness'
+          path: /commerce-customer-context-api/commerce-customer-context/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4101
           protocol: tcp
@@ -252,10 +230,10 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: http://pricegroupcatalog:4108/price-group-catalog-api
         PORT: '4101'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: commerce-customer-context
@@ -263,38 +241,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4101
-          path: '/commerce-customer-context-api/commerce-customer-context/readiness'
+          path: /commerce-customer-context-api/commerce-customer-context/readiness
       start: sh -c 'cd app/.zerops/runtime/commerce-customer-context && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'payment-term-catalog'
+  - setup: payment-term-catalog
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/payment-term-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/payment-term-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/payment-term-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/payment-term-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/payment-term-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/payment-term-catalog/node/'
+        - mkdir 'app/.zerops/runtime/payment-term-catalog/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/payment-term-catalog/node/'
       deployFiles:
-        - 'app/.zerops/runtime/payment-term-catalog'
+        - app/.zerops/runtime/payment-term-catalog
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4103
-          path: '/payment-term-catalog-api/payment-term-catalog/readiness'
+          path: /payment-term-catalog-api/payment-term-catalog/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4103
           protocol: tcp
@@ -304,7 +280,7 @@ zerops:
         NODE_ENV: production
         PORT: '4103'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: payment-term-catalog
@@ -312,38 +288,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4103
-          path: '/payment-term-catalog-api/payment-term-catalog/readiness'
+          path: /payment-term-catalog-api/payment-term-catalog/readiness
       start: sh -c 'cd app/.zerops/runtime/payment-term-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'commerce-market-catalog'
+  - setup: commerce-market-catalog
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-market-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/commerce-market-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-market-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-market-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/commerce-market-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-market-catalog/node/'
+        - mkdir 'app/.zerops/runtime/commerce-market-catalog/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/commerce-market-catalog/node/'
       deployFiles:
-        - 'app/.zerops/runtime/commerce-market-catalog'
+        - app/.zerops/runtime/commerce-market-catalog
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4109
-          path: '/commerce-market-catalog-api/commerce-market-catalog/readiness'
+          path: /commerce-market-catalog-api/commerce-market-catalog/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4109
           protocol: tcp
@@ -353,7 +327,7 @@ zerops:
         NODE_ENV: production
         PORT: '4109'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: commerce-market-catalog
@@ -361,38 +335,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4109
-          path: '/commerce-market-catalog-api/commerce-market-catalog/readiness'
+          path: /commerce-market-catalog-api/commerce-market-catalog/readiness
       start: sh -c 'cd app/.zerops/runtime/commerce-market-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'catalog'
+  - setup: catalog
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/catalog/node/'
+        - mkdir 'app/.zerops/runtime/catalog/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/catalog/node/'
       deployFiles:
-        - 'app/.zerops/runtime/catalog'
+        - app/.zerops/runtime/catalog
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4105
-          path: '/catalog-api/catalog/readiness'
+          path: /catalog-api/catalog/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4105
           protocol: tcp
@@ -402,7 +374,7 @@ zerops:
         NODE_ENV: production
         PORT: '4105'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: catalog
@@ -410,38 +382,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4105
-          path: '/catalog-api/catalog/readiness'
+          path: /catalog-api/catalog/readiness
       start: sh -c 'cd app/.zerops/runtime/catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'pricing'
+  - setup: pricing
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/pricing' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/pricing' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/pricing/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/pricing/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/pricing/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/pricing/node/'
+        - mkdir 'app/.zerops/runtime/pricing/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/pricing/node/'
       deployFiles:
-        - 'app/.zerops/runtime/pricing'
+        - app/.zerops/runtime/pricing
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4106
-          path: '/pricing-api/pricing/readiness'
+          path: /pricing-api/pricing/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4106
           protocol: tcp
@@ -451,7 +421,7 @@ zerops:
         NODE_ENV: production
         PORT: '4106'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: pricing
@@ -459,38 +429,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4106
-          path: '/pricing-api/pricing/readiness'
+          path: /pricing-api/pricing/readiness
       start: sh -c 'cd app/.zerops/runtime/pricing && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'storefront-registry'
+  - setup: storefront-registry
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/storefront-registry' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/storefront-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/storefront-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/storefront-registry/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/storefront-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/storefront-registry/node/'
+        - mkdir 'app/.zerops/runtime/storefront-registry/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/storefront-registry/node/'
       deployFiles:
-        - 'app/.zerops/runtime/storefront-registry'
+        - app/.zerops/runtime/storefront-registry
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4107
-          path: '/storefront-registry-api/storefront-registry/readiness'
+          path: /storefront-registry-api/storefront-registry/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4107
           protocol: tcp
@@ -500,7 +468,7 @@ zerops:
         NODE_ENV: production
         PORT: '4107'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: storefront-registry
@@ -508,38 +476,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4107
-          path: '/storefront-registry-api/storefront-registry/readiness'
+          path: /storefront-registry-api/storefront-registry/readiness
       start: sh -c 'cd app/.zerops/runtime/storefront-registry && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'price-group-catalog'
+  - setup: price-group-catalog
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/price-group-catalog' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/price-group-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/price-group-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/price-group-catalog/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/price-group-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog/node/'
+        - mkdir 'app/.zerops/runtime/price-group-catalog/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/price-group-catalog/node/'
       deployFiles:
-        - 'app/.zerops/runtime/price-group-catalog'
+        - app/.zerops/runtime/price-group-catalog
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4108
-          path: '/price-group-catalog-api/price-group-catalog/readiness'
+          path: /price-group-catalog-api/price-group-catalog/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4108
           protocol: tcp
@@ -549,7 +515,7 @@ zerops:
         NODE_ENV: production
         PORT: '4108'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: price-group-catalog
@@ -557,38 +523,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4108
-          path: '/price-group-catalog-api/price-group-catalog/readiness'
+          path: /price-group-catalog-api/price-group-catalog/readiness
       start: sh -c 'cd app/.zerops/runtime/price-group-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'inventory'
+  - setup: inventory
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/inventory' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/inventory' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/inventory/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/inventory/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/inventory/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/inventory/node/'
+        - mkdir 'app/.zerops/runtime/inventory/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/inventory/node/'
       deployFiles:
-        - 'app/.zerops/runtime/inventory'
+        - app/.zerops/runtime/inventory
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4110
-          path: '/inventory-api/inventory/readiness'
+          path: /inventory-api/inventory/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4110
           protocol: tcp
@@ -598,7 +562,7 @@ zerops:
         NODE_ENV: production
         PORT: '4110'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: inventory
@@ -606,38 +570,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4110
-          path: '/inventory-api/inventory/readiness'
+          path: /inventory-api/inventory/readiness
       start: sh -c 'cd app/.zerops/runtime/inventory && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'assortment'
+  - setup: assortment
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/assortment' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'assortment' --package '@app/assortment' --package-dir 'verticals/assortment'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/assortment' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'assortment' --package '@app/assortment' --package-dir 'verticals/assortment'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/assortment/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/assortment/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/assortment/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/assortment/node/'
+        - mkdir 'app/.zerops/runtime/assortment/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/assortment/node/'
       deployFiles:
-        - 'app/.zerops/runtime/assortment'
+        - app/.zerops/runtime/assortment
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4104
-          path: '/assortment-api/assortment/readiness'
+          path: /assortment-api/assortment/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4104
           protocol: tcp
@@ -647,7 +609,7 @@ zerops:
         NODE_ENV: production
         PORT: '4104'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: assortment
@@ -655,38 +617,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4104
-          path: '/assortment-api/assortment/readiness'
+          path: /assortment-api/assortment/readiness
       start: sh -c 'cd app/.zerops/runtime/assortment && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'availability'
+  - setup: availability
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/availability' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'availability' --package '@app/availability' --package-dir 'verticals/availability'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/availability' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'availability' --package '@app/availability' --package-dir 'verticals/availability'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/availability/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/availability/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/availability/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/availability/node/'
+        - mkdir 'app/.zerops/runtime/availability/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/availability/node/'
       deployFiles:
-        - 'app/.zerops/runtime/availability'
+        - app/.zerops/runtime/availability
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4111
-          path: '/availability-api/availability/readiness'
+          path: /availability-api/availability/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4111
           protocol: tcp
@@ -696,7 +656,7 @@ zerops:
         NODE_ENV: production
         PORT: '4111'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: availability
@@ -704,38 +664,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4111
-          path: '/availability-api/availability/readiness'
+          path: /availability-api/availability/readiness
       start: sh -c 'cd app/.zerops/runtime/availability && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'privacy'
+  - setup: privacy
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/privacy' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/privacy' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/privacy/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/privacy/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/privacy/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/privacy/node/'
+        - mkdir 'app/.zerops/runtime/privacy/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/privacy/node/'
       deployFiles:
-        - 'app/.zerops/runtime/privacy'
+        - app/.zerops/runtime/privacy
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4113
-          path: '/privacy-api/privacy/readiness'
+          path: /privacy-api/privacy/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4113
           protocol: tcp
@@ -745,7 +703,7 @@ zerops:
         NODE_ENV: production
         PORT: '4113'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: privacy
@@ -753,38 +711,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4113
-          path: '/privacy-api/privacy/readiness'
+          path: /privacy-api/privacy/readiness
       start: sh -c 'cd app/.zerops/runtime/privacy && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'tax'
+  - setup: tax
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/tax' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'tax' --package '@app/tax' --package-dir 'verticals/tax'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/tax' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'tax' --package '@app/tax' --package-dir 'verticals/tax'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/tax/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/tax/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/tax/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/tax/node/'
+        - mkdir 'app/.zerops/runtime/tax/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/tax/node/'
       deployFiles:
-        - 'app/.zerops/runtime/tax'
+        - app/.zerops/runtime/tax
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4112
-          path: '/tax-api/tax/readiness'
+          path: /tax-api/tax/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4112
           protocol: tcp
@@ -794,7 +750,7 @@ zerops:
         NODE_ENV: production
         PORT: '4112'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: tax
@@ -802,38 +758,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4112
-          path: '/tax-api/tax/readiness'
+          path: /tax-api/tax/readiness
       start: sh -c 'cd app/.zerops/runtime/tax && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'property-portfolio'
+  - setup: property-portfolio
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/property-portfolio' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'property-portfolio' --package '@app/property-portfolio' --package-dir 'verticals/property-portfolio'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/property-portfolio' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'property-portfolio' --package '@app/property-portfolio' --package-dir 'verticals/property-portfolio'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/property-portfolio/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/property-portfolio/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/property-portfolio/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/property-portfolio/node/'
+        - mkdir 'app/.zerops/runtime/property-portfolio/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/property-portfolio/node/'
       deployFiles:
-        - 'app/.zerops/runtime/property-portfolio'
+        - app/.zerops/runtime/property-portfolio
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4114
-          path: '/property-portfolio-api/property-portfolio/readiness'
+          path: /property-portfolio-api/property-portfolio/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4114
           protocol: tcp
@@ -843,7 +797,7 @@ zerops:
         NODE_ENV: production
         PORT: '4114'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: property-portfolio
@@ -851,38 +805,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4114
-          path: '/property-portfolio-api/property-portfolio/readiness'
+          path: /property-portfolio-api/property-portfolio/readiness
       start: sh -c 'cd app/.zerops/runtime/property-portfolio && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'property-leasing'
+  - setup: property-leasing
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/property-leasing' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'property-leasing' --package '@app/property-leasing' --package-dir 'verticals/property-leasing'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/property-leasing' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'property-leasing' --package '@app/property-leasing' --package-dir 'verticals/property-leasing'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/property-leasing/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/property-leasing/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/property-leasing/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/property-leasing/node/'
+        - mkdir 'app/.zerops/runtime/property-leasing/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/property-leasing/node/'
       deployFiles:
-        - 'app/.zerops/runtime/property-leasing'
+        - app/.zerops/runtime/property-leasing
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4115
-          path: '/property-leasing-api/property-leasing/readiness'
+          path: /property-leasing-api/property-leasing/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4115
           protocol: tcp
@@ -892,7 +844,7 @@ zerops:
         NODE_ENV: production
         PORT: '4115'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: property-leasing
@@ -900,38 +852,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4115
-          path: '/property-leasing-api/property-leasing/readiness'
+          path: /property-leasing-api/property-leasing/readiness
       start: sh -c 'cd app/.zerops/runtime/property-leasing && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'legal-agreements'
+  - setup: legal-agreements
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/legal-agreements' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'legal-agreements' --package '@app/legal-agreements' --package-dir 'verticals/legal-agreements'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/legal-agreements' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'legal-agreements' --package '@app/legal-agreements' --package-dir 'verticals/legal-agreements'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/legal-agreements/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/legal-agreements/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/legal-agreements/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/legal-agreements/node/'
+        - mkdir 'app/.zerops/runtime/legal-agreements/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/legal-agreements/node/'
       deployFiles:
-        - 'app/.zerops/runtime/legal-agreements'
+        - app/.zerops/runtime/legal-agreements
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4116
-          path: '/legal-agreements-api/legal-agreements/readiness'
+          path: /legal-agreements-api/legal-agreements/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4116
           protocol: tcp
@@ -941,7 +891,7 @@ zerops:
         NODE_ENV: production
         PORT: '4116'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: legal-agreements
@@ -949,38 +899,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4116
-          path: '/legal-agreements-api/legal-agreements/readiness'
+          path: /legal-agreements-api/legal-agreements/readiness
       start: sh -c 'cd app/.zerops/runtime/legal-agreements && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'work-tasks'
+  - setup: work-tasks
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/work-tasks' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'work-tasks' --package '@app/work-tasks' --package-dir 'verticals/work-tasks'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/work-tasks' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'work-tasks' --package '@app/work-tasks' --package-dir 'verticals/work-tasks'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/work-tasks/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/work-tasks/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/work-tasks/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/work-tasks/node/'
+        - mkdir 'app/.zerops/runtime/work-tasks/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/work-tasks/node/'
       deployFiles:
-        - 'app/.zerops/runtime/work-tasks'
+        - app/.zerops/runtime/work-tasks
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4117
-          path: '/work-tasks-api/work-tasks/readiness'
+          path: /work-tasks-api/work-tasks/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4117
           protocol: tcp
@@ -990,7 +938,7 @@ zerops:
         NODE_ENV: production
         PORT: '4117'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: work-tasks
@@ -998,38 +946,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4117
-          path: '/work-tasks-api/work-tasks/readiness'
+          path: /work-tasks-api/work-tasks/readiness
       start: sh -c 'cd app/.zerops/runtime/work-tasks && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'workforce'
+  - setup: workforce
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/workforce' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'workforce' --package '@app/workforce' --package-dir 'verticals/workforce'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/workforce' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'workforce' --package '@app/workforce' --package-dir 'verticals/workforce'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/workforce/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/workforce/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/workforce/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/workforce/node/'
+        - mkdir 'app/.zerops/runtime/workforce/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/workforce/node/'
       deployFiles:
-        - 'app/.zerops/runtime/workforce'
+        - app/.zerops/runtime/workforce
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4120
-          path: '/workforce-api/workforce/readiness'
+          path: /workforce-api/workforce/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4120
           protocol: tcp
@@ -1039,7 +985,7 @@ zerops:
         NODE_ENV: production
         PORT: '4120'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: workforce
@@ -1047,38 +993,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4120
-          path: '/workforce-api/workforce/readiness'
+          path: /workforce-api/workforce/readiness
       start: sh -c 'cd app/.zerops/runtime/workforce && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'tagging'
+  - setup: tagging
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/tagging' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'tagging' --package '@app/tagging' --package-dir 'verticals/tagging'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/tagging' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'tagging' --package '@app/tagging' --package-dir 'verticals/tagging'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/tagging/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/tagging/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/tagging/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/tagging/node/'
+        - mkdir 'app/.zerops/runtime/tagging/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/tagging/node/'
       deployFiles:
-        - 'app/.zerops/runtime/tagging'
+        - app/.zerops/runtime/tagging
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4121
-          path: '/tagging-api/tagging/readiness'
+          path: /tagging-api/tagging/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4121
           protocol: tcp
@@ -1088,7 +1032,7 @@ zerops:
         NODE_ENV: production
         PORT: '4121'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: tagging
@@ -1096,38 +1040,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4121
-          path: '/tagging-api/tagging/readiness'
+          path: /tagging-api/tagging/readiness
       start: sh -c 'cd app/.zerops/runtime/tagging && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'sales-pipeline'
+  - setup: sales-pipeline
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/sales-pipeline' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'sales-pipeline' --package '@app/sales-pipeline' --package-dir 'verticals/sales-pipeline'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/sales-pipeline' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'sales-pipeline' --package '@app/sales-pipeline' --package-dir 'verticals/sales-pipeline'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/sales-pipeline/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/sales-pipeline/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/sales-pipeline/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/sales-pipeline/node/'
+        - mkdir 'app/.zerops/runtime/sales-pipeline/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/sales-pipeline/node/'
       deployFiles:
-        - 'app/.zerops/runtime/sales-pipeline'
+        - app/.zerops/runtime/sales-pipeline
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4122
-          path: '/sales-pipeline-api/sales-pipeline/readiness'
+          path: /sales-pipeline-api/sales-pipeline/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4122
           protocol: tcp
@@ -1137,7 +1079,7 @@ zerops:
         NODE_ENV: production
         PORT: '4122'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: sales-pipeline
@@ -1145,38 +1087,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4122
-          path: '/sales-pipeline-api/sales-pipeline/readiness'
+          path: /sales-pipeline-api/sales-pipeline/readiness
       start: sh -c 'cd app/.zerops/runtime/sales-pipeline && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'merchandise'
+  - setup: merchandise
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/merchandise' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'merchandise' --package '@app/merchandise' --package-dir 'verticals/merchandise'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/merchandise' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'merchandise' --package '@app/merchandise' --package-dir 'verticals/merchandise'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/merchandise/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/merchandise/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/merchandise/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/merchandise/node/'
+        - mkdir 'app/.zerops/runtime/merchandise/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/merchandise/node/'
       deployFiles:
-        - 'app/.zerops/runtime/merchandise'
+        - app/.zerops/runtime/merchandise
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4123
-          path: '/merchandise-api/merchandise/readiness'
+          path: /merchandise-api/merchandise/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4123
           protocol: tcp
@@ -1186,7 +1126,7 @@ zerops:
         NODE_ENV: production
         PORT: '4123'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: merchandise
@@ -1194,38 +1134,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4123
-          path: '/merchandise-api/merchandise/readiness'
+          path: /merchandise-api/merchandise/readiness
       start: sh -c 'cd app/.zerops/runtime/merchandise && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'facility-operations'
+  - setup: facility-operations
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/facility-operations' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'facility-operations' --package '@app/facility-operations' --package-dir 'verticals/facility-operations'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/facility-operations' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'facility-operations' --package '@app/facility-operations' --package-dir 'verticals/facility-operations'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/facility-operations/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/facility-operations/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/facility-operations/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/facility-operations/node/'
+        - mkdir 'app/.zerops/runtime/facility-operations/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/facility-operations/node/'
       deployFiles:
-        - 'app/.zerops/runtime/facility-operations'
+        - app/.zerops/runtime/facility-operations
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4126
-          path: '/facility-operations-api/facility-operations/readiness'
+          path: /facility-operations-api/facility-operations/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4126
           protocol: tcp
@@ -1235,7 +1173,7 @@ zerops:
         NODE_ENV: production
         PORT: '4126'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: facility-operations
@@ -1243,38 +1181,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4126
-          path: '/facility-operations-api/facility-operations/readiness'
+          path: /facility-operations-api/facility-operations/readiness
       start: sh -c 'cd app/.zerops/runtime/facility-operations && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'sales-insights'
+  - setup: sales-insights
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/sales-insights' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'sales-insights' --package '@app/sales-insights' --package-dir 'verticals/sales-insights'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/sales-insights' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'sales-insights' --package '@app/sales-insights' --package-dir 'verticals/sales-insights'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/sales-insights/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/sales-insights/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/sales-insights/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/sales-insights/node/'
+        - mkdir 'app/.zerops/runtime/sales-insights/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/sales-insights/node/'
       deployFiles:
-        - 'app/.zerops/runtime/sales-insights'
+        - app/.zerops/runtime/sales-insights
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4124
-          path: '/sales-insights-api/sales-insights/readiness'
+          path: /sales-insights-api/sales-insights/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4124
           protocol: tcp
@@ -1284,7 +1220,7 @@ zerops:
         NODE_ENV: production
         PORT: '4124'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: sales-insights
@@ -1292,38 +1228,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4124
-          path: '/sales-insights-api/sales-insights/readiness'
+          path: /sales-insights-api/sales-insights/readiness
       start: sh -c 'cd app/.zerops/runtime/sales-insights && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'finance-billing'
+  - setup: finance-billing
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/finance-billing' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'finance-billing' --package '@app/finance-billing' --package-dir 'verticals/finance-billing'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/finance-billing' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'finance-billing' --package '@app/finance-billing' --package-dir 'verticals/finance-billing'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/finance-billing/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/finance-billing/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/finance-billing/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/finance-billing/node/'
+        - mkdir 'app/.zerops/runtime/finance-billing/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/finance-billing/node/'
       deployFiles:
-        - 'app/.zerops/runtime/finance-billing'
+        - app/.zerops/runtime/finance-billing
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4118
-          path: '/finance-billing-api/finance-billing/readiness'
+          path: /finance-billing-api/finance-billing/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4118
           protocol: tcp
@@ -1333,7 +1267,7 @@ zerops:
         NODE_ENV: production
         PORT: '4118'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: finance-billing
@@ -1341,38 +1275,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4118
-          path: '/finance-billing-api/finance-billing/readiness'
+          path: /finance-billing-api/finance-billing/readiness
       start: sh -c 'cd app/.zerops/runtime/finance-billing && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'crm-activities'
+  - setup: crm-activities
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/crm-activities' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'crm-activities' --package '@app/crm-activities' --package-dir 'verticals/crm-activities'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/crm-activities' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'crm-activities' --package '@app/crm-activities' --package-dir 'verticals/crm-activities'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/crm-activities/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/crm-activities/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/crm-activities/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/crm-activities/node/'
+        - mkdir 'app/.zerops/runtime/crm-activities/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/crm-activities/node/'
       deployFiles:
-        - 'app/.zerops/runtime/crm-activities'
+        - app/.zerops/runtime/crm-activities
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4119
-          path: '/crm-activities-api/crm-activities/readiness'
+          path: /crm-activities-api/crm-activities/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4119
           protocol: tcp
@@ -1382,7 +1314,7 @@ zerops:
         NODE_ENV: production
         PORT: '4119'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: crm-activities
@@ -1390,38 +1322,36 @@ zerops:
       healthCheck:
         httpGet:
           port: 4119
-          path: '/crm-activities-api/crm-activities/readiness'
+          path: /crm-activities-api/crm-activities/readiness
       start: sh -c 'cd app/.zerops/runtime/crm-activities && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  - setup: 'crm'
+  - setup: crm
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/crm' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'crm' --package '@app/crm' --package-dir 'verticals/crm'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/crm' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'crm' --package '@app/crm' --package-dir 'verticals/crm'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/crm/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/crm/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/crm/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/crm/node/'
+        - mkdir 'app/.zerops/runtime/crm/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/crm/node/'
       deployFiles:
-        - 'app/.zerops/runtime/crm'
+        - app/.zerops/runtime/crm
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4125
-          path: '/crm-api/crm/readiness'
+          path: /crm-api/crm/readiness
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4125
           protocol: tcp
@@ -1431,7 +1361,7 @@ zerops:
         NODE_ENV: production
         PORT: '4125'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: crm
@@ -1439,41 +1369,37 @@ zerops:
       healthCheck:
         httpGet:
           port: 4125
-          path: '/crm-api/crm/readiness'
+          path: /crm-api/crm/readiness
       start: sh -c 'cd app/.zerops/runtime/crm && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-  # </generated-vertical-provider-deployments>
-
-  - setup: 'shellsuperapp'
+  - setup: shellsuperapp
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Approved remote origins come from the runtime composition, independent of the Shell build.
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/shell-super-app' run build
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/shell-super-app' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/shell-super-app/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/shell-super-app/local-overlay.json'
-        - mkdir 'app/.zerops/runtime/shell-super-app/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/shell-super-app/node/'
+        - mkdir 'app/.zerops/runtime/shell-super-app/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/shell-super-app/node/'
       deployFiles:
-        - 'app/.zerops/runtime/shell-super-app'
+        - app/.zerops/runtime/shell-super-app
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 3020
-          path: '/'
+          path: /
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 3020
           protocol: tcp
@@ -1485,43 +1411,40 @@ zerops:
         PORT: '3020'
         SHELL_SUPER_APP_PORT: '3020'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: 'shell-super-app'
+        ULTRAMODERN_ZEROPS_SERVICE: shell-super-app
       healthCheck:
         httpGet:
           port: 3020
-          path: '/'
+          path: /
       start: sh -c 'cd app/.zerops/runtime/shell-super-app && PATH="$PWD/node/bin:$PATH" exec npm run serve'
-
-  # <generated-outbox-worker-deployments>
-  - setup: 'party-registry-worker'
+  - setup: party-registry-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
-        - mkdir 'app/.zerops/runtime/party-registry-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
+        - mkdir 'app/.zerops/runtime/party-registry-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/party-registry-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/party-registry-worker'
+        - app/.zerops/runtime/party-registry-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4102
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4102
           protocol: tcp
@@ -1532,42 +1455,40 @@ zerops:
         PORT: '4102'
         OUTBOX_WORKER_HEALTH_PORT: '4102'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: party-registry-worker
       healthCheck:
         httpGet:
           port: 4102
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'commerce-customer-context-worker'
+  - setup: commerce-customer-context-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
-        - mkdir 'app/.zerops/runtime/commerce-customer-context-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
+        - mkdir 'app/.zerops/runtime/commerce-customer-context-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/commerce-customer-context-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/commerce-customer-context-worker'
+        - app/.zerops/runtime/commerce-customer-context-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4101
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4101
           protocol: tcp
@@ -1575,46 +1496,44 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: http://pricegroupcatalog:4108/price-group-catalog-api
         PORT: '4101'
         OUTBOX_WORKER_HEALTH_PORT: '4101'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: commerce-customer-context-worker
       healthCheck:
         httpGet:
           port: 4101
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'price-group-catalog-worker'
+  - setup: price-group-catalog-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
-        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
+        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/price-group-catalog-worker'
+        - app/.zerops/runtime/price-group-catalog-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4108
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4108
           protocol: tcp
@@ -1625,42 +1544,40 @@ zerops:
         PORT: '4108'
         OUTBOX_WORKER_HEALTH_PORT: '4108'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: price-group-catalog-worker
       healthCheck:
         httpGet:
           port: 4108
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'inventory-worker'
+  - setup: inventory-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory' --worker
-        - mkdir 'app/.zerops/runtime/inventory-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/inventory-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'inventory' --package '@app/inventory' --package-dir 'verticals/inventory' --worker
+        - mkdir 'app/.zerops/runtime/inventory-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/inventory-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/inventory-worker'
+        - app/.zerops/runtime/inventory-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4110
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4110
           protocol: tcp
@@ -1671,42 +1588,40 @@ zerops:
         PORT: '4110'
         OUTBOX_WORKER_HEALTH_PORT: '4110'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: inventory-worker
       healthCheck:
         httpGet:
           port: 4110
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/inventory-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'privacy-worker'
+  - setup: privacy-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy' --worker
-        - mkdir 'app/.zerops/runtime/privacy-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/privacy-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'privacy' --package '@app/privacy' --package-dir 'verticals/privacy' --worker
+        - mkdir 'app/.zerops/runtime/privacy-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/privacy-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/privacy-worker'
+        - app/.zerops/runtime/privacy-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4113
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4113
           protocol: tcp
@@ -1717,42 +1632,40 @@ zerops:
         PORT: '4113'
         OUTBOX_WORKER_HEALTH_PORT: '4113'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: privacy-worker
       healthCheck:
         httpGet:
           port: 4113
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/privacy-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'finance-billing-worker'
+  - setup: finance-billing-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'finance-billing' --package '@app/finance-billing' --package-dir 'verticals/finance-billing' --worker
-        - mkdir 'app/.zerops/runtime/finance-billing-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/finance-billing-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'finance-billing' --package '@app/finance-billing' --package-dir 'verticals/finance-billing' --worker
+        - mkdir 'app/.zerops/runtime/finance-billing-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/finance-billing-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/finance-billing-worker'
+        - app/.zerops/runtime/finance-billing-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4118
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4118
           protocol: tcp
@@ -1763,42 +1676,40 @@ zerops:
         PORT: '4118'
         OUTBOX_WORKER_HEALTH_PORT: '4118'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: finance-billing-worker
       healthCheck:
         httpGet:
           port: 4118
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/finance-billing-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'core-system-worker'
+  - setup: core-system-worker
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'core-system-worker' --package 'app' --package-dir '.' --worker
-        - mkdir 'app/.zerops/runtime/core-system-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/core-system-worker/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'core-system-worker' --package 'app' --package-dir '.' --worker
+        - mkdir 'app/.zerops/runtime/core-system-worker/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/core-system-worker/node/'
       deployFiles:
-        - 'app/.zerops/runtime/core-system-worker'
+        - app/.zerops/runtime/core-system-worker
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4100
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4100
           protocol: tcp
@@ -1806,46 +1717,44 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: http://pricegroupcatalog:4108/price-group-catalog-api
         OUTBOX_WORKER_HEALTH_PORT: '4100'
         PORT: '4100'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: core-system-worker
       healthCheck:
         httpGet:
           port: 4100
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/core-system-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-
-  - setup: 'outbox-worker-host'
+  - setup: outbox-worker-host
     build:
-      base: 'alpine@3.23'
+      base: alpine@3.23
       envVariables:
-        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
-        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
+        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
       deployFiles:
-        - 'app/.zerops/runtime/outbox-worker-host'
+        - app/.zerops/runtime/outbox-worker-host
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4100
-          path: '/live'
+          path: /live
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: nodejs@24
       ports:
         - port: 4100
           protocol: tcp
@@ -1853,18 +1762,64 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: http://pricegroupcatalog:4108/price-group-catalog-api
         OUTBOX_WORKER_HEALTH_PORT: '4100'
         PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:${migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD}@${db18_hostname}:${db18_port}/${db18_dbName}
         PORT: '4100'
         SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
-        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_ENDPOINT: spicedb:50051
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host
       healthCheck:
         httpGet:
           port: 4100
-          path: '/live'
+          path: /live
       start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
-  # </generated-outbox-worker-deployments>
+  - setup: projects
+    build:
+      base: alpine@3.23
+      envVariables:
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm --filter '@app/projects' run build
+        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'projects' --package '@app/projects' --package-dir 'verticals/projects'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/projects/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/projects/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/projects/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/projects/node/'
+      deployFiles:
+        - app/.zerops/runtime/projects
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4127
+          path: /projects-api/projects/readiness
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: nodejs@24
+      ports:
+        - port: 4127
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        PORT: '4127'
+        SPICEDB_CA_CERT: ${spicedb_SPICEDB_GRPC_TLS_CERT}
+        SPICEDB_ENDPOINT: spicedb:50051
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: projects
+        VERTICAL_PROJECTS_PORT: '4127'
+      healthCheck:
+        httpGet:
+          port: 4127
+          path: /projects-api/projects/readiness
+      start: sh -c 'cd app/.zerops/runtime/projects && PATH="$PWD/node/bin:$PATH" exec npm run serve'

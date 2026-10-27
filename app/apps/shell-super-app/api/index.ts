@@ -11,6 +11,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import type {
   ActionCoreError,
   ContextAccess,
+  DatabaseConfigError,
   PrincipalManagementError,
   PrincipalResolutionError,
   OperationalScopeRequest,
@@ -59,6 +60,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
 import type { ApiKeyGatewayContextRequest, GatewayContextProblem } from '@app/shared-contracts';
+import type { PgClient } from '@effect/sql-pg';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { runEffectRequest } from '@modern-js/bff-effect/effect-client';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -84,12 +86,13 @@ import {
   Tracer,
 } from 'effect';
 import type { Types } from 'effect';
-import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlError } from 'effect/sql/SqlError';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
-import { EmailTransportLive } from './email/transport.ts';
+import { EmailDatabaseLive, EmailDeliveryTransportLive, EmailProviderTransportLive } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
 import {
@@ -2106,13 +2109,15 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
   const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: yield* random.randomUUIDv4.pipe(
-        Effect.catch((error) =>
-          Effect.logError('Unable to create a gateway correlation identifier', error).pipe(
-            Effect.andThen(failApiKeyGatewayProblem(gatewayAuthorizationUnavailableProblem())),
+      correlationId: yield* random
+        .randomUUIDv4()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError('Unable to create a gateway correlation identifier', error).pipe(
+              Effect.andThen(failApiKeyGatewayProblem(gatewayAuthorizationUnavailableProblem())),
+            ),
           ),
         ),
-      ),
       legalEntityScope: 'optional',
       principal,
     })
@@ -2316,6 +2321,7 @@ const agentPlatformFailure = (error: AgentPlatformError) => {
   }
   return Match.value(error).pipe(
     Match.tags({
+      AgentModuleCallError: () => failIdentityProblem(shellCapabilityUnavailableProblem()),
       AgentPlatformForbidden: ({ reason }) =>
         failIdentityProblem(
           problemDetails(
@@ -2428,13 +2434,15 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
   const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: yield* random.randomUUIDv4.pipe(
-        Effect.catch((error) =>
-          Effect.logError('Unable to create an agent correlation identifier', error).pipe(
-            Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+      correlationId: yield* random
+        .randomUUIDv4()
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logError('Unable to create an agent correlation identifier', error).pipe(
+              Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+            ),
           ),
         ),
-      ),
       legalEntityScope: 'required',
       principal: caller.principal,
     })
@@ -2858,6 +2866,30 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
 const authenticationIsolateRuntime = ManagedRuntime.make(Layer.merge(BetterAuthRuntimeLive, OAuthAccessTokensLive));
 const authenticationIsolateLive = Layer.effectContext(authenticationIsolateRuntime.contextEffect);
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+// Only the email delivery routes acquire this client, inside their current request scope.
+const emailRequestDatabaseLive = EmailDatabaseLive.pipe(
+  Layer.provide(Layer.merge(DatabaseConfigLive, Reactivity.layer)),
+);
+const emailDatabaseUnavailableResponse = (failure: DatabaseConfigError | SqlError) =>
+  Effect.logError('Email database unavailable', failure).pipe(
+    Effect.andThen(
+      HttpServerResponse.json(
+        { error: 'email_unavailable' },
+        { headers: { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' }, status: 503 },
+      ),
+    ),
+  );
+const emailRequestDatabaseMiddleware = HttpRouter.middleware<{ provides: PgClient.PgClient }>()((handler) =>
+  Layer.build(emailRequestDatabaseLive).pipe(
+    Effect.flatMap((services) => Effect.provideContext(handler, services)),
+    Effect.catchTags({
+      DatabaseConfigError: emailDatabaseUnavailableResponse,
+      SqlError: emailDatabaseUnavailableResponse,
+    }),
+    Effect.withSpan('Shell.emailDatabaseRequestScope'),
+  ),
+);
+
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
 const betterAuthNativeAdapterLive = BetterAuthNativeAdapterLive.pipe(Layer.provide(authPersistenceLive));
@@ -2896,8 +2928,9 @@ const oauthEndpointGuardsLive = OAuthEndpointGuardsLive.pipe(
 );
 const authenticationServiceLive = AuthenticationServiceLive.pipe(
   Layer.provide(Layer.mergeAll(authenticationDependenciesLive, betterAuthFrameworkLive, oauthEndpointGuardsLive)),
+  Layer.provide(ShellCryptoLive),
 );
-const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
+const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authPersistenceLive, ShellCryptoLive)));
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
 }).pipe(Layer.provide(corePersistenceLive));
@@ -2997,7 +3030,7 @@ export const mcpRequestIdentityMiddleware = HttpRouter.middleware()(
       }
       const correlationId =
         headers.value['x-correlation-id'] === undefined
-          ? yield* crypto.randomUUIDv4.pipe(Effect.option)
+          ? yield* crypto.randomUUIDv4().pipe(Effect.option)
           : Option.some(headers.value['x-correlation-id']);
       if (Option.isNone(correlationId)) {
         return yield* handler;
@@ -3226,11 +3259,10 @@ export const makeShellAuthenticationApiRuntime = (
     shellGovernedReadsLayer,
     readRuntimeLayer,
     runtimeObservabilityLive,
-    ShellCryptoLive,
     externalIdentityWorkloadAuthorizationLive,
     externalIdentityDeploymentLayer,
     OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
-  );
+  ).pipe(Layer.provideMerge(ShellCryptoLive));
   const apiHandlersLive = Layer.mergeAll(
     authenticationGroupLive,
     identityGroupLive,
@@ -3270,7 +3302,8 @@ export const makeShellAuthenticationApiRuntime = (
     services: requestServicesLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive,
-      EmailTransportLive,
+      EmailProviderTransportLive,
+      EmailDeliveryTransportLive.pipe(Layer.provide(emailRequestDatabaseMiddleware.layer)),
       // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
       OAuthServerTransportLive,
       InvitationTransportLive,

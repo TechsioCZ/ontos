@@ -3,7 +3,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import { EmployeeIdSchema } from '../resources/employee.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { EmployeeIdSchema } from '../resources/employee.ts';
 export type { EmployeeId } from '../resources/employee.ts';

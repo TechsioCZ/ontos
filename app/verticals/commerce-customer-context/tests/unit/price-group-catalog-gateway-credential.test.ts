@@ -4,7 +4,7 @@ import {
   makePriceGroupCatalogGatewayCredentialLayer,
 } from '../../api/price-group-catalog-gateway-credential.ts';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';

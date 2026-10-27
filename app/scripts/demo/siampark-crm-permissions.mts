@@ -9,7 +9,7 @@
  */
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,

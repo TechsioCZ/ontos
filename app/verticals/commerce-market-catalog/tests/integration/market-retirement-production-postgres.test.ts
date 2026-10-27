@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -15,7 +16,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Cause, ConfigProvider, DateTime, Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
@@ -498,6 +499,6 @@ it.live(
           'RELEASE',
         ]);
       }),
-    ),
+    ).pipe(Effect.provide(NodeCrypto.layer)),
   240_000,
 );

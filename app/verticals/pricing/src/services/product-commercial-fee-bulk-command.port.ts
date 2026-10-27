@@ -6,8 +6,10 @@ import type {
   PricingCommercialFeeRevisionId,
   PricingCommercialFeeScheduleAcknowledgement,
 } from '@app/pricing-contracts/domain/commercial-fee';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Context } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { Effect } from 'effect';
 
 import type { ManageProductCommercialFeeOperation } from '../../shared/actions/manage-product-commercial-fees-bulk.ts';
@@ -58,9 +60,9 @@ export interface ProductCommercialFeeBulkCommand<Operation> extends ProductComme
 
 /** Stable owner-local Action identity used to reconcile one target across later bulk retries. */
 export const productCommercialFeeBulkActionInvocationIdFor = (tenantId: string, intentId: string): string => {
-  const digest = createHash('sha256')
-    .update(`commerce.pricing:product-commercial-fee-bulk:${tenantId}:${intentId}`)
-    .digest('hex');
+  const digest = Hex.encode(
+    sha256(utf8ToBytes(`commerce.pricing:product-commercial-fee-bulk:${tenantId}:${intentId}`)),
+  );
   const variant = ['8', '9', 'a', 'b'][Number.parseInt(digest[16] ?? '0', 16) % 4] ?? '8';
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-${variant}${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 };

@@ -2,7 +2,7 @@ import type { executePricingPurposeEquivalenceWithAuthorization } from '@app/cat
 import { CatalogQuantityHandoffReadySchema } from '@app/catalog/domain/catalog-quantity-handoff';
 import { QuantityTierAggregationAttemptSchema } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { Effect, Redacted, Schema } from 'effect';
-import { HttpClientError, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClientError, HttpClientRequest } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';

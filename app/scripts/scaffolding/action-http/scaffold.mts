@@ -10,6 +10,7 @@ import {
   GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
   GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
+  PLATFORM_NODE_DEPENDENCY,
   createOrUpdateOwnedGeneratedMutationEffect,
   deduplicateGeneratedSlotEntries,
   discoverOntosModuleEffect,
@@ -28,6 +29,7 @@ import {
   toPascalCase,
   tryScaffold,
   updateMutation,
+  withExactDependencies,
 } from '../shared.mts';
 import type {
   ActionHttpScaffoldConfig,
@@ -350,7 +352,7 @@ export const renderActionHttpContract = (
 // @ontos-action-http-slug ${action}
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import {
   ${type}PayloadSchema,
   ${type}ResultSchema,
@@ -655,7 +657,7 @@ const renderActionHttpServer = (vertical: OntosVerticalMetadata, action: string)
 // @ontos-action-http-slug ${action}
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { ${toCamelCase(vertical.slug)}Api } from '../shared/api.ts';
 import { ${value}Action } from '../src/actions/${action}.action.ts';
@@ -827,6 +829,20 @@ const patchClientRoot = (content: string, action: string): string => {
   return nextContent;
 };
 
+const NODE_CRYPTO_IMPORT = "import { NodeCrypto } from '@effect/platform-node';";
+const ASSEMBLER_IMPORT = "import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';";
+
+/** The production Action runtime composes the Node platform `Crypto` beside the database configuration. */
+const withNodeCryptoImport = (content: string, vertical: OntosVerticalMetadata): string => {
+  if (content.includes(NODE_CRYPTO_IMPORT)) {
+    return content;
+  }
+  if (!content.includes(ASSEMBLER_IMPORT)) {
+    return raiseScaffoldFailure(`vertical ${vertical.slug} API root lacks the pinned Effect BFF assembler import`);
+  }
+  return content.replace(ASSEMBLER_IMPORT, `${NODE_CRYPTO_IMPORT}\n${ASSEMBLER_IMPORT}`);
+};
+
 export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, layerValue: string): string => {
   let nextContent = deduplicateGeneratedSlotEntries(
     content,
@@ -851,7 +867,7 @@ export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadat
   defineActionHttpDatabaseIdentityEnrollment([]),
 );
 const productionActionRuntimeLive = ${actionLive}.pipe(
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
   Layer.provide(actionHttpDatabaseIdentitiesLive),
 );
 `;
@@ -861,9 +877,12 @@ const productionActionRuntimeLive = ${actionLive}.pipe(
   makeDatabaseIdentityEnrollmentLive as makeActionHttpDatabaseIdentityEnrollmentLive,
 } from '@app/core-runtime';
 ${nextContent}`;
-    nextContent = nextContent.replace(
-      readRuntimeDefinition,
-      `${actionRuntimeDefinition}${readRuntimeDefinition}\n  Layer.provide(actionHttpDatabaseIdentitiesLive),`,
+    nextContent = withNodeCryptoImport(
+      nextContent.replace(
+        readRuntimeDefinition,
+        `${actionRuntimeDefinition}${readRuntimeDefinition}\n  Layer.provide(actionHttpDatabaseIdentitiesLive),`,
+      ),
+      vertical,
     );
   }
   nextContent = nextContent.replace(
@@ -1089,11 +1108,17 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
   const nextClientRoot = yield* tryScaffold('failed to patch Action HTTP client root', () =>
     patchClientRoot(clientRoot, action),
   );
+  const platformDependency = nextRuntimeRoot.includes(NODE_CRYPTO_IMPORT)
+    ? yield* tryScaffold('failed to ensure the Node platform dependency', () =>
+        withExactDependencies(vertical, Object.fromEntries([PLATFORM_NODE_DEPENDENCY])),
+      )
+    : undefined;
   const mutations: Mutation[] = generated.flatMap(Option.toArray);
   appendDefinedMutations(mutations, [
     updateMutation(sharedApiPath, sharedApi, nextSharedApi),
     updateMutation(runtimeRootPath, runtimeRoot, nextRuntimeRoot),
     updateMutation(clientRootPath, clientRoot, nextClientRoot),
+    platformDependency,
   ]);
   yield* tryScaffold('Action HTTP mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
   return {

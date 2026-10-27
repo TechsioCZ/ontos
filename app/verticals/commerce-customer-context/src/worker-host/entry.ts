@@ -36,7 +36,8 @@ import {
 
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 
-import { FetchHttpClient } from 'effect/unstable/http';
+import { NodeCrypto } from '@effect/platform-node';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
@@ -114,6 +115,7 @@ const compositionLive = ActiveApplicationCompositionConfigLive.pipe(
  */
 const commerceEnrollmentRecoveryLive = CommerceEnrollmentContinuationLive(ultramodernApiMarker).pipe(
   Layer.provide(Layer.mergeAll(ownerTransactionsLive, ownerEffectsLive, subjectLive, compositionLive)),
+  Layer.provide(NodeCrypto.layer),
 );
 // </owner-worker-host-composition>
 const compiledOutboxWorkerEntry = defineOutboxWorkerEntry({
@@ -139,6 +141,7 @@ const compiledOutboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),

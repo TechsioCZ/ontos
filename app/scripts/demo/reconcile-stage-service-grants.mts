@@ -4,8 +4,8 @@ import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   ActiveApplicationCompositionConfigLive,

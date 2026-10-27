@@ -75,7 +75,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const connections = yield* loadDatabaseConnectionPair({ identity: FIXTURE_WORKER_IDENTITY });
   yield* installSearchTestAuthority();
   const [tenantId, legalEntityId, eventId] = yield* Effect.all(
-    [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
+    [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
     { concurrency: 'unbounded' },
   );
   const admin = yield* makeTestPgClient(connections.admin.connectionString);
@@ -89,7 +89,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   );
   const insertEvent = (id: string) =>
     Effect.gen(function* insertDomainEvent() {
-      const subjectId = yield* crypto.randomUUIDv4;
+      const subjectId = yield* crypto.randomUUIDv4();
       const rows = yield* admin.unsafe<{ tenant_sequence_no: string }>(
         `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
         [id, tenantId, subjectId],
@@ -117,7 +117,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     );
     const originalVersion = yield* insertEvent(eventId);
     const [claimId, deliveryId, messageId] = yield* Effect.all(
-      [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
+      [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
       { concurrency: 'unbounded' },
     );
     const context = attestOutboxWorkerHandlerContext({
@@ -141,7 +141,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         expect(snapshot.projectionVersion).toBe('1');
         expect(snapshot.eventWatermark).toBe(originalVersion);
         const settings = yield* snapshot.forLegalEntity(legalEntityId, readEventSettings);
-        const newerEventId = yield* crypto.randomUUIDv4;
+        const newerEventId = yield* crypto.randomUUIDv4();
         newerVersion = yield* insertEvent(newerEventId);
         const rows = yield* snapshot.tenant(readMaxTenantVersion);
         return { settings, version: rows[0]?.version };
@@ -180,7 +180,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       )
       .pipe(Effect.forkChild);
     yield* Deferred.await(started);
-    const latestEventId = yield* crypto.randomUUIDv4;
+    const latestEventId = yield* crypto.randomUUIDv4();
     const latestEvent = yield* insertEvent(latestEventId);
     const secondResult = yield* readSnapshotPosition(source, context);
     yield* Deferred.succeed(release, null);
@@ -192,7 +192,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     // Business transactions may commit event allocation sequences out of order.
     // Both snapshots below have the same event max but must get new generations.
     const [pendingEventId, pendingSubjectId, higherEventId] = yield* Effect.all(
-      [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
+      [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
       { concurrency: 'unbounded' },
     );
     const lateCommitSnapshot = (pending: PgClient.PgClient) =>

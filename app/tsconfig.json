@@ -111,6 +111,9 @@
     },
     {
       "path": "verticals/crm-activities"
+    },
+    {
+      "path": "./verticals/projects"
     }
   ]
 }

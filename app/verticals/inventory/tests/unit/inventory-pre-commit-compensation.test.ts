@@ -250,7 +250,7 @@ const makeHarness = (
     const releaseService = makeInventoryReservationReleaseService({
       effects: releasePersistence,
       ledger,
-      makeMutationId: () => ReservationReleaseMutationIdSchema.make('99999999-9999-4999-8999-999999999999'),
+      makeMutationId: Effect.succeed(ReservationReleaseMutationIdSchema.make('99999999-9999-4999-8999-999999999999')),
       obligations: {
         read: () =>
           Ref.update(releaseCalls, (calls) => [...calls, request.reservation.ref.resourceId]).pipe(

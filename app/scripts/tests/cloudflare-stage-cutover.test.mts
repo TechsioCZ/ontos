@@ -1,11 +1,10 @@
 import { readFileSync } from 'node:fs';
 
 import { Array as Arr, ConfigProvider, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it, rs } from 'effect-rstest';
 
 import { CloudflareApiError } from '../ops/cloudflare-api-error.mts';
-
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
 import type { CloudflareVpcService } from '../ops/cloudflare-api.mts';
 import {
@@ -55,6 +54,7 @@ import {
 import type { FakeCloudflareAccount, FakeFiles, FakeStage, FakeZeropsApi } from './stage-operations-fixture.mts';
 
 const SHELL_ORIGIN = 'https://app.stage.example.com';
+const SHELL_GATEWAY_BASE = `${SHELL_ORIGIN}/shell-super-app-api`;
 const CI_TOKEN = 'ci-token-secret';
 const DATABASE_CREDENTIAL = 'db-password-secret';
 const AUTH_SECRET = 'better-auth-secret';
@@ -70,6 +70,7 @@ const PRIVATE_JWK = JSON.stringify({
 });
 const SPICEDB_KEY = 'spicedb-key-secret';
 const CUSTOMER_CONTEXT_GATEWAY_API_KEY = 'customer-context-gateway-key-secret';
+const CRM_PARTY_INTAKE_API_KEY = 'crm-party-intake-key-secret';
 const MARKET_GATEWAY_API_KEY = 'market-gateway-key-secret';
 const PRICING_GATEWAY_API_KEY = 'pricing-gateway-key-secret';
 // The public half of PRIVATE_JWK, which every vertical verifies Shell gateway tokens with.
@@ -81,11 +82,16 @@ const PUBLIC_JWKS = JSON.stringify({
 const COMPOSITION_KV = 'ontos-stage-active-application-composition';
 const COMPOSITION_KV_ID = 'kv-1';
 const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
+const CRM_WORKER = 'app-crm';
 const MARKET_WORKER = 'app-commerce-market-catalog';
 const PRICING_WORKER = 'app-pricing';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
+const expectedUnitCount =
+  Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ verticals: Schema.Array(Schema.Unknown) })))(
+    readFileSync(`${APP_DIRECTORY}/${TOPOLOGY_FILE}`, 'utf-8'),
+  ).verticals.length + 1;
 const RUNTIME_HYPERDRIVE = 'ontos-stage-runtime';
 const PARTY_REGISTRY_HYPERDRIVE = 'ontos-stage-party-registry';
 const GATEWAY_ISSUER_HYPERDRIVE = 'ontos-stage-gateway-issuer';
@@ -131,6 +137,7 @@ const VERTICAL_HOSTS = [
   'inventory',
   'tax',
   'privacy',
+  'projects',
 ];
 
 const SECRET_VALUES = {
@@ -148,6 +155,7 @@ const SENSITIVE_KEYS = ['db18_password', 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'];
 const SHELL_SETTINGS = {
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
   ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
+  ONTOS_CRM_PARTY_INTAKE_API_KEY: CRM_PARTY_INTAKE_API_KEY,
   ONTOS_PRICING_GATEWAY_API_KEY: PRICING_GATEWAY_API_KEY,
   shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
   shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
@@ -161,6 +169,7 @@ const SECRETS = [
   'private-jwk-secret',
   SPICEDB_KEY,
   CUSTOMER_CONTEXT_GATEWAY_API_KEY,
+  CRM_PARTY_INTAKE_API_KEY,
   MARKET_GATEWAY_API_KEY,
   PRICING_GATEWAY_API_KEY,
   'tunnel-connector-token',
@@ -429,7 +438,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
       ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: SHELL_ORIGIN,
     });
-    expect(placement.units).toHaveLength(27);
+    expect(placement.units).toHaveLength(expectedUnitCount);
     expect(stage.environments.has(STAGE_EDGE)).toBe(true);
     expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe('account-1');
     expect(stage.inputs.find(({ command }) => command.startsWith('gh secret set CLOUDFLARE_API_TOKEN'))?.stdin).toBe(
@@ -438,7 +447,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
 
     // Every placed Worker receives its secrets through `wrangler secret bulk` on stdin.
     const bulk = stage.inputs.filter(({ command }) => command.includes('wrangler secret bulk'));
-    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(27);
+    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(expectedUnitCount);
     const shell = bulk.find(({ command }) => command.endsWith('--name app-shell-super-app'));
     expect(Schema.decodeUnknownSync(StringRecord)(shell?.stdin)).toStrictEqual({
       BETTER_AUTH_SECRET: AUTH_SECRET,
@@ -881,6 +890,7 @@ it.effect('requires every caller key before writing any Worker secret', () =>
     for (const missingKey of [
       'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY',
       'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
+      'ONTOS_CRM_PARTY_INTAKE_API_KEY',
       'ONTOS_PRICING_GATEWAY_API_KEY',
     ]) {
       const account = fakeCloudflareAccount({});
@@ -888,7 +898,7 @@ it.effect('requires every caller key before writing any Worker secret', () =>
       const settingsFile = Object.fromEntries(Object.entries(SHELL_SETTINGS).filter(([key]) => key !== missingKey));
       const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
       expect(error.message).toBe(
-        'the workload gateway API keys are missing; provide all three caller keys in the settings',
+        'the workload gateway API keys are missing; provide all four caller keys in the settings',
       );
       expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
       expectNoSecretInArguments(stage, account);
@@ -923,6 +933,7 @@ const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
     betterAuthSecret: secret,
     commerceCustomerContextGatewayApiKey: secret,
     commerceMarketCatalogGatewayApiKey: secret,
+    crmPartyIntakeApiKey: secret,
     gatewayPrivateJwk: secret,
     gatewayPublicJwks: secret,
     pricingGatewayApiKey: secret,
@@ -1301,6 +1312,7 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
       betterAuthSecret: secret,
       commerceCustomerContextGatewayApiKey: Redacted.make(CUSTOMER_CONTEXT_GATEWAY_API_KEY),
       commerceMarketCatalogGatewayApiKey: Redacted.make(MARKET_GATEWAY_API_KEY),
+      crmPartyIntakeApiKey: Redacted.make(CRM_PARTY_INTAKE_API_KEY),
       gatewayPrivateJwk: secret,
       gatewayPublicJwks: secret,
       pricingGatewayApiKey: Redacted.make(PRICING_GATEWAY_API_KEY),
@@ -1309,14 +1321,18 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
     const reveal = (worker: string) =>
       Object.fromEntries(Object.entries(plan.get(worker) ?? {}).map(([key, value]) => [key, Redacted.value(value)]));
 
-    expect([...plan.keys()]).toHaveLength(27);
+    expect([...plan.keys()]).toHaveLength(expectedUnitCount);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
       ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
-      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
+      ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE,
     });
     expect(reveal(MARKET_WORKER)).toMatchObject({
       ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
-      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
+      ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE,
+    });
+    expect(reveal(CRM_WORKER)).toMatchObject({
+      ONTOS_CRM_PARTY_INTAKE_API_KEY: CRM_PARTY_INTAKE_API_KEY,
+      ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE,
     });
     expect(Arr.sort(Object.keys(reveal(PRICING_WORKER)), Order.String)).toStrictEqual([
       'ONTOS_GATEWAY_ISSUER',
@@ -1337,6 +1353,7 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
     for (const [worker, variable] of [
       [CUSTOMER_CONTEXT_WORKER, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'],
       [MARKET_WORKER, 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'],
+      [CRM_WORKER, 'ONTOS_CRM_PARTY_INTAKE_API_KEY'],
       [PRICING_WORKER, 'ONTOS_PRICING_GATEWAY_API_KEY'],
     ] as const) {
       expect(Object.entries(reveal(worker))).toContainEqual([variable, SHELL_SETTINGS[variable]]);
@@ -1346,5 +1363,118 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
         }
       }
     }
+  }),
+);
+
+it('derives each Hyperdrive build variable from its database identity', () => {
+  expect([
+    HYPERDRIVE_ID_VARIABLE,
+    PARTY_REGISTRY_HYPERDRIVE_ID_VARIABLE,
+    GATEWAY_ISSUER_HYPERDRIVE_ID_VARIABLE,
+  ]).toStrictEqual([
+    'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
+  ]);
+  expect(DATABASE_IDENTITY_SECRETS.map(({ secretKey }) => migratorSecretReference(secretKey))).toStrictEqual(
+    Object.keys(IDENTITY_PASSWORDS),
+  );
+});
+
+it.effect('database-identities creates only the missing passwords and re-ensures every login role', () =>
+  Effect.gen(function* ensuresDatabaseIdentities() {
+    const stage = newStage({}, { databaseIdentities: false });
+    stage.projectValues.set('migrator_PARTY_REGISTRY_DB_PASSWORD', PARTY_REGISTRY_CREDENTIAL);
+    const account = fakeCloudflareAccount({});
+    const files = fakeFiles();
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
+
+    yield* run(ensureStageDatabaseIdentities, { account, files, roles, stage, zerops });
+
+    expect(zerops.serviceSecrets.map(({ key, serviceId }) => `${serviceId} ${key}`)).toStrictEqual([
+      `${MIGRATOR_ID} PARTY_REGISTRY_WORKER_DB_PASSWORD`,
+      `${MIGRATOR_ID} SHELL_GATEWAY_ISSUER_DB_PASSWORD`,
+    ]);
+    const firstRun = [...roles.calls];
+    expect(firstRun.map(({ role }) => role)).toStrictEqual([
+      'party_registry_runtime',
+      'party_registry_worker',
+      'shell_gateway_issuer',
+    ]);
+    expect(firstRun[0]?.password).toBe(PARTY_REGISTRY_CREDENTIAL);
+
+    // A re-run keeps every password and alters each role to the same one.
+    yield* run(ensureStageDatabaseIdentities, { account, files, roles, stage, zerops });
+
+    expect(zerops.serviceSecrets).toHaveLength(2);
+    expect(roles.calls.slice(3)).toStrictEqual(firstRun);
+    expect(account.requests).toStrictEqual([]);
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('database-identities creates nothing and touches no role in a dry run', () =>
+  Effect.gen(function* dryRunDatabaseIdentities() {
+    const stage = newStage({}, { databaseIdentities: false });
+    const roles = fakeLoginRoles();
+    const zerops = fakeZeropsApi(stage);
+
+    yield* run(ensureStageDatabaseIdentities, {
+      account: fakeCloudflareAccount({}),
+      dryRun: true,
+      files: fakeFiles(),
+      roles,
+      stage,
+      zerops,
+    });
+
+    expect(zerops.serviceSecrets).toStrictEqual([]);
+    expect(roles.calls).toStrictEqual([]);
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset while the migrator service lacks the identity passwords', () =>
+  Effect.gen(function* refusesMissingIdentityPasswords() {
+    const stage = newStage(
+      { deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] },
+      { databaseIdentities: false },
+    );
+
+    const error = yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'the Zerops migrator service holds every database identity password: missing PARTY_REGISTRY_DB_PASSWORD, PARTY_REGISTRY_WORKER_DB_PASSWORD, SHELL_GATEWAY_ISSUER_DB_PASSWORD; run database-identities',
+    );
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('refuses to reuse an identity Hyperdrive config with the shared limit or another login', () =>
+  Effect.gen(function* refusesDriftedIdentityHyperdrive() {
+    const account = fakeCloudflareAccount({
+      hyperdrives: [
+        {
+          caching: { disabled: true },
+          id: OLD_HYPERDRIVE_ID,
+          name: PARTY_REGISTRY_HYPERDRIVE,
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin_connection_limit: 40,
+        },
+      ],
+    });
+    const stage = newStage();
+    const files = fakeFiles();
+
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 40, user ontos_runtime',
+    );
+    expect(files.writes.size).toBe(0);
   }),
 );

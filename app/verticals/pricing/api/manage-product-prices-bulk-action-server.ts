@@ -2,7 +2,7 @@
 // @ontos-action-http-owner commerce.pricing
 // @ontos-action-http-slug manage-product-prices-bulk
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { pricingApi } from '../shared/api.ts';
 import { manageProductPricesBulkAction } from '../src/actions/manage-product-prices-bulk.action.ts';

@@ -1,7 +1,7 @@
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import {
   PartyCommandCommitIndeterminateProblemSchema,

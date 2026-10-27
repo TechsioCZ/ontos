@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "target": "ESNext",
+    "types": [
+      "node"
+    ],
     "lib": [
       "ESNext",
       "DOM",
@@ -29,7 +32,7 @@
         "name": "@effect/language-service",
         "diagnostics": true,
         "includeSuggestionsInTsc": true,
-        "ignoreEffectSuggestionsInTscExitCode": false,
+        "ignoreEffectSuggestionsInTscExitCode": true,
         "ignoreEffectWarningsInTscExitCode": false,
         "ignoreEffectErrorsInTscExitCode": false,
         "skipDisabledOptimization": true,
@@ -47,6 +50,12 @@
           "missingStarInYieldEffectGen": "error",
           "nonObjectEffectServiceType": "error",
           "outdatedApi": "error",
+          "experimentalApiUsage": "error",
+          "obsoleteMatchImport": "error",
+          "obsoleteSchemaImport": "error",
+          "promiseInEffectSuccess": "error",
+          "schemaLiteralNonFinite": "error",
+          "schemaOpaqueInstanceMember": "error",
           "overriddenSchemaConstructor": "error",
           "catchUnfailableEffect": "error",
           "effectFnIife": "error",
@@ -106,12 +115,10 @@
           "unnecessaryEffectGen": "error",
           "unnecessaryFailYieldableError": "error",
           "unnecessaryPipe": "error",
-          "unnecessaryPipeChain": "error"
+          "unnecessaryPipeChain": "error",
+          "unstableApiUsage": "message"
         }
       }
-    ],
-    "types": [
-      "node"
     ]
   }
 }

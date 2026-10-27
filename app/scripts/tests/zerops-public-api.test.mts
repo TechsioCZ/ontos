@@ -1,8 +1,8 @@
 import { ConfigProvider, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import type { HttpClientRequest } from 'effect/unstable/http';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import type { HttpClientRequest } from 'effect/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from '../zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';

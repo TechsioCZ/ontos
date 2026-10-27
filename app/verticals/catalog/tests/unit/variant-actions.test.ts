@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -229,7 +230,7 @@ describe('Variant Action handlers', () => {
         run.value,
       ).pipe(Effect.flip);
       expect(error).toMatchObject({ code: 'variant_action_conflict', conflict: 'INVALID_CHANGE' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('decodes legacy change input but fails closed before persistence without Current Product evidence', () =>
@@ -252,7 +253,7 @@ describe('Variant Action handlers', () => {
       ).pipe(Effect.flip);
       expect(Schema.is(VariantCurrentBasisUnavailable)(error)).toBe(true);
       expect(error.reason).toContain('Current Product evidence');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('returns the exact correction decision for durable result capture', () =>
@@ -282,7 +283,7 @@ describe('Variant Action handlers', () => {
         reason: 'Wrong record',
         variantRef,
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a record correction without evidence naming the original data error', () =>
@@ -307,7 +308,7 @@ describe('Variant Action handlers', () => {
       expect(Schema.is(VariantActionConflict)(error)).toBe(true);
       expect(error).toMatchObject({ conflict: 'INVALID_CHANGE' });
       expect(error.reason).toContain('original data error');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when Cart cannot prove the complete open-selection impact', () =>
@@ -339,7 +340,7 @@ describe('Variant Action handlers', () => {
       ).pipe(Effect.flip);
       expect(Schema.is(VariantCurrentBasisUnavailable)(error)).toBe(true);
       expect(error.reason).toBe('Cart population unavailable');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves parent-correction intent and fails closed when current basis is unavailable', () =>
@@ -375,7 +376,7 @@ describe('Variant Action handlers', () => {
       ).pipe(Effect.flip);
       expect(error.code).toBe('variant_current_basis_unavailable');
       expect(run.reads).toEqual([]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects cross-tenant parent correction before persistence', () =>
@@ -398,7 +399,7 @@ describe('Variant Action handlers', () => {
         run.value,
       ).pipe(Effect.flip);
       expect(error.code).toBe('variant_action_not_found');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps retired and colliding reactivation outcomes typed', () =>
@@ -431,7 +432,7 @@ describe('Variant Action handlers', () => {
         collision.value,
       ).pipe(Effect.flip);
       expect(reactivateError).toMatchObject({ code: 'variant_action_conflict', conflict: 'IDENTITY' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps an open-selection revalidation requirement distinct from a lifecycle conflict', () =>
@@ -449,6 +450,6 @@ describe('Variant Action handlers', () => {
       ).pipe(Effect.flip);
       expect(error).toMatchObject({ code: 'variant_action_conflict', conflict: 'SELECTION_REVALIDATION' });
       expect(Schema.is(VariantActionConflict)(error) && error.conflict).not.toBe('LIFECYCLE');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

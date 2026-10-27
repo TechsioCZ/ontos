@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
@@ -200,7 +201,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
       expect(result.selectionRevalidation).toEqual({ kind: 'NOT_REQUIRED' });
       expect(state.events.map(({ eventType }) => eventType)).toEqual(['commerce.catalog.product-corrected.v1']);
       expect(state.audit).toHaveLength(1);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves identity for a documented dimension correction and hands open selections to #479', () =>
@@ -237,7 +238,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         'commerce.catalog.product-corrected.v1',
         'commerce.catalog.selection-revalidation-required.v1',
       ]);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a genuinely new atomic realization or Product from the correction path', () =>
@@ -281,7 +282,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         expect(error.reason).toContain('owning Variant or Product creation Action');
         expect(state.events).toHaveLength(0);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('creates and durably captures the evidenced successor under its new Product identity', () =>
@@ -325,7 +326,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         },
       });
       expect(captured?.classification).toEqual(result.classification);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('requires a distinct, explicitly superseded Product identity for a new-Product decision', () => {
@@ -508,7 +509,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         classification: { evidenceRefs: ['urn:evidence:always-90'], reason },
         product: { productRef, revision: 2 },
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('binds the correction decision to the exact Product scope and stated reason', () =>
@@ -553,6 +554,6 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
       ).pipe(Effect.flip);
       expect(mismatchedReason.reason).toContain('same Product and reason');
       expect(state.events).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

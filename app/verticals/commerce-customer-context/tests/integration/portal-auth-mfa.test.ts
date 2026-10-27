@@ -6,7 +6,7 @@ import { splitSetCookieHeader, applySetCookies, parseCookies } from 'better-auth
 import type { Auth } from 'better-auth';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import { Config, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Config, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import type { SchemaAST, Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -47,6 +47,7 @@ import {
 import { makeCommercePortalAuthSessionLifecycle } from '../../api/portal-auth/session/lifecycle.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import type { CommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { portalAuthAuditEvent } from '../../src/portal-auth/audit/audit-tables.ts';
@@ -821,7 +822,7 @@ interface FreshnessFixture {
 }
 
 const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegration.makeFixture')(
-  function* makeFreshnessFixtureEffect(): Effect.fn.Return<FreshnessFixture, unknown, Scope.Scope> {
+  function* makeFreshnessFixtureEffect(): Effect.fn.Return<FreshnessFixture, unknown, Scope.Scope | Crypto.Crypto> {
     const connectionString = yield* PORTAL_AUTH_DATABASE_URL;
     const configuration = yield* parseCommercePortalAuthConfig({
       COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
@@ -874,7 +875,7 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
       },
     ]);
 
-    const store = makeCommercePortalAuthSessionStore(database.executor);
+    const store = makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto);
     const lifecycle = makeCommercePortalAuthSessionLifecycle(
       store,
       {
@@ -1007,7 +1008,7 @@ it.live('gates MFA enrollment on the persisted authentication stamp, not on the 
         { eventType: 'commerce.portal-auth.session-refreshed.v1', operation: 'rotate-identifier' },
       ]);
     }),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.effect('proves the Commerce realm stages a TOTP factor at /enable and activates it only at confirm', () =>

@@ -1,5 +1,5 @@
 // The blessed seam, in a TSX file, with a cast around the argv argument.
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 
 declare const command: never;
 

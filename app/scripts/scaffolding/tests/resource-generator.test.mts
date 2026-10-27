@@ -89,7 +89,7 @@ const createFixture = (): Effect.Effect<string, unknown> =>
     yield* write(
       root,
       'verticals/property-registry/shared/api.ts',
-      `import { HttpApi } from 'effect/unstable/httpapi';
+      `import { HttpApi } from 'effect/http-api';
 
 export const propertyRegistryApi = HttpApi.make('PropertyRegistryApi');
 `,

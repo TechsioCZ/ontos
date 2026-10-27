@@ -97,7 +97,7 @@ export const useIdleRoutePreload = (
 
   useEffect(() => {
     const fiber =
-      __ONTOS_BROWSER_BUILD__ && settledPath !== undefined && language !== undefined
+      settledPath !== undefined && language !== undefined
         ? browserRuntime.runFork(
             Effect.sleep(SETTLE_DELAY).pipe(
               Effect.andThen(awaitModuleTrafficQuiet),

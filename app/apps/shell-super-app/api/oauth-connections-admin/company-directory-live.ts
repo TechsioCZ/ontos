@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import {
   ActionRuntime,
@@ -107,11 +109,9 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
               (cause) => new ConnectionsInvalid({ cause, reason: 'Tuto změnu operátorů nelze provést.' }),
             ),
           );
-          const idempotencyKey = createHash('sha256')
-            .update(request.transport.idempotencyKey ?? '')
-            .update('\0')
-            .update(encoded)
-            .digest('hex');
+          const idempotencyKey = Hex.encode(
+            sha256(utf8ToBytes(`${request.transport.idempotencyKey ?? ''}\0${encoded}`)),
+          );
           yield* actions
             .runAction({
               payload,

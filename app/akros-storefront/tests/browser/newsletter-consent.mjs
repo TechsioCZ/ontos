@@ -158,12 +158,14 @@ try {
     "The storefront must strip browser-selected authority",
   );
   assert.deepEqual((await forgedIdentity.json()).consent, granted);
-  phase = "conflicting payload, invented notice and cross-origin refusal";
+  phase = "changed payload with the latest request UUID";
   const changed = await context.request.post(url, {
     headers,
     data: { ...grant, decision: "WITHDRAWN" },
   });
+  console.log(`Newsletter changed-payload check: HTTP ${changed.status()}, expected 409.`);
   assert.equal(changed.status(), 409, "A latest request UUID cannot authorize changed input");
+  phase = "invented notice version refusal";
   const versionForgery = await context.request.post(url, {
     headers,
     data: {
@@ -173,16 +175,21 @@ try {
       noticeVersionId: randomUUID(),
     },
   });
+  console.log(`Newsletter notice-version check: HTTP ${versionForgery.status()}, expected 409.`);
   assert.equal(versionForgery.status(), 409, "A browser cannot invent a demo notice version");
+  phase = "stale revision refusal";
   const staleRevision = await context.request.post(url, {
     headers,
     data: { ...grant, requestId: randomUUID() },
   });
+  console.log(`Newsletter stale-revision check: HTTP ${staleRevision.status()}, expected 409.`);
   assert.equal(staleRevision.status(), 409, "A new request must use the current revision");
+  phase = "cross-origin refusal";
   const crossOrigin = await context.request.post(url, {
     headers: { origin: "https://other.example" },
     data: grant,
   });
+  console.log(`Newsletter cross-origin check: HTTP ${crossOrigin.status()}, expected 403.`);
   assert.equal(crossOrigin.status(), 403);
   assert.deepEqual(await fresh(), granted);
   phase = "grant reload and screenshot";

@@ -1,5 +1,5 @@
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
-import { Url, UrlParams } from 'effect/unstable/http';
+import { Url, UrlParams } from 'effect/http';
 
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
 import { searchResources } from '../../../api/auth-client.ts';

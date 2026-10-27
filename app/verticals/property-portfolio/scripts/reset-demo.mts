@@ -2,8 +2,8 @@ import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 
 import { PropertyStateSchema } from '../shared/apis/records.ts';
 import { propertyRelations, propertyState } from '../src/database/schema.ts';

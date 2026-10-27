@@ -11,8 +11,8 @@ import {
   NoticeVersionsResponseSchema,
 } from '@app/privacy/api';
 import { Config, Console, DateTime, Effect, Exit, FileSystem, Layer, Option, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
 import { privacyMarketingOperator } from './permissions.mts';
 import { connectSeedClient, DemoSeedError } from './seed-client.mts';

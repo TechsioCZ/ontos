@@ -61,6 +61,7 @@ import {
 import type { CommerceEnrollmentCommitResolutionServicePort } from '../../src/enrollment/commit-resolution/commit-resolution-service.ts';
 import { CommercePortalAccountSubjectSchema } from '../../shared/enrollment-contracts.ts';
 import type { CommercePortalAccountSubject } from '../../shared/enrollment-contracts.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
 import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
@@ -322,7 +323,7 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
       actionRuntimeLive,
       scopeResolverLive,
       identityServicesLive,
-    ).pipe(Layer.orDie);
+    ).pipe(Layer.provide(commercePortalAuthPlatformCryptoLive), Layer.orDie);
     const fixtureScope = yield* Effect.scope;
     const context = yield* Layer.buildWithScope(fixtureLive, fixtureScope);
     return {

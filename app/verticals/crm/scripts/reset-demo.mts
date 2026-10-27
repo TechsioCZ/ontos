@@ -6,7 +6,7 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { demoId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { CrmStateSchema } from '../shared/apis/records.ts';
@@ -19,7 +19,9 @@ class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputE
 
 /** CRM demo company "Velkoobchod Hanák s.r.o." (fixed identity, see BRIEF). */
 export const crmLegalEntityId = '71000000-0000-4000-8000-000000000022';
-const seedPrincipal = demoId('core.principal', 'hanak-spravce');
+const principalNamespace = 'core.principal';
+const leadPrincipalKey = 'hanak-vedouci';
+const seedPrincipal = demoId(principalNamespace, 'hanak-spravce');
 
 /** Salespeople; principal ids match the companies lane personas (scripts/demo/permissions.mts). */
 const SALESPEOPLE = [
@@ -29,7 +31,7 @@ const SALESPEOPLE = [
     id: demoId('crm.salesperson', 'a'),
     name: 'Jan Novák',
     phone: '+420 602 111 222',
-    principalId: demoId('core.principal', 'hanak-obchodnik-a'),
+    principalId: demoId(principalNamespace, 'hanak-obchodnik-a'),
   },
   {
     active: true,
@@ -37,7 +39,7 @@ const SALESPEOPLE = [
     id: demoId('crm.salesperson', 'b'),
     name: 'Petra Svobodová',
     phone: '+420 603 333 444',
-    principalId: demoId('core.principal', 'hanak-obchodnik-b'),
+    principalId: demoId(principalNamespace, 'hanak-obchodnik-b'),
   },
 ] as const;
 const [repA, repB] = SALESPEOPLE;
@@ -47,13 +49,13 @@ const seedState = (now: DateTime.Utc) => {
   // crm-clients: Moravian B2B clients with contacts, assignment history and change log (scripts/seed/clients.mts).
   const clients = seedClients({
     adminPrincipalId: seedPrincipal,
-    leadPrincipalId: demoId('core.principal', 'hanak-vedouci'),
+    leadPrincipalId: demoId(principalNamespace, leadPrincipalKey),
     now,
     repA,
     repB,
   });
   const visits = seedVisits({
-    leadPrincipalId: demoId('core.principal', 'hanak-vedouci'),
+    leadPrincipalId: demoId(principalNamespace, leadPrincipalKey),
     now,
     repA,
     repB,
@@ -71,7 +73,7 @@ const writeState = Effect.fn('Crm.writeDemoState')(function* writeDemoState() {
   const decoded = yield* Schema.decodeUnknownEffect(CrmStateSchema)(seedState(now));
   // crm-imports: approved customer links + one completed CSV import (demo-data/01-uvodni-import-objednavek.csv).
   const state = yield* seedImports(decoded, {
-    by: demoId('core.principal', 'hanak-vedouci'),
+    by: demoId(principalNamespace, leadPrincipalKey),
     clientIdOf: (key) => demoId('crm.client', key),
     importedAt: DateTime.formatIso(DateTime.subtract(now, { days: 1, hours: 3 })),
     invocationId: demoId('crm.import', 'initial'),

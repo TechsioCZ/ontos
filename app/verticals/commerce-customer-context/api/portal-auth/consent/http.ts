@@ -1,12 +1,12 @@
-import { createHash, randomUUID } from 'node:crypto';
 import type { ModuleEntrypointDescriptor, TrustedPrincipalContext } from '@app/core-runtime';
 import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import { HttpApiBuilder, HttpApiMiddleware, Layer } from '@modern-js/bff-effect/effect-edge';
-import { DateTime, Effect, Option, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
+import type { HttpServerRequest } from 'effect/http';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import {
   CustomerOwnConsentSchema,
@@ -66,11 +66,12 @@ const admitted = Effect.fn('CustomerConsent.admit')(function* admit(
   if (current.workloadPrincipal.legalEntityId === undefined) {
     return yield* Effect.fail(consentForbidden());
   }
+  const crypto = yield* Crypto.Crypto;
   const scope = {
     compositionRevision: yield* activeRevision,
     legalEntityId: current.workloadPrincipal.legalEntityId,
     partyId: current.account.partyId,
-    requestCorrelation: randomUUID(),
+    requestCorrelation: yield* crypto.randomUUIDv4().pipe(Effect.mapError(consentUnavailable)),
     tenantId: current.workloadPrincipal.tenantId,
   };
   // Archived/merged/aliased Parties require real owner reconciliation, not a guessed successor.
@@ -101,8 +102,12 @@ const update = Effect.fn('CustomerConsent.update')(function* updateConsent(
     return yield* Effect.fail(consentConflict());
   }
   const audit = yield* CommercePortalAuthAudit;
+  const crypto = yield* Crypto.Crypto;
+  const correlationDigest = yield* crypto
+    .digest('SHA-256', new TextEncoder().encode(input.requestId))
+    .pipe(Effect.map(Hex.encode), Effect.mapError(consentUnavailable));
   const event = {
-    correlationDigest: createHash('sha256').update(input.requestId).digest('hex'),
+    correlationDigest,
     operation: 'customer-newsletter-consent',
     providerSubjectId: current.session.providerSubjectId,
     sessionRef: current.session.sessionRef,

@@ -15,16 +15,16 @@ import type {
 } from '@app/pricing-contracts/domain/unit-price-calculation';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import type { OwnerVerifiableSetCompletenessEvidence } from '@app/shared-contracts';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 const encodePriceIdentityKey = Schema.encodeUnknownResult(Schema.fromJsonString(PriceIdentityKeySchema));
 
 /** Stable owner predicate for the complete Current set at one exact Group Price key. */
 export const unitPriceGroupAbsencePredicateRef = (request: ExactPriceLookupRequest): string =>
-  `commerce.pricing.current-exact-group-price:${createHash('sha256')
-    .update(Result.getOrThrow(encodePriceIdentityKey(request.exactKey)))
-    .digest('hex')}`;
+  `commerce.pricing.current-exact-group-price:${Hex.encode(sha256(utf8ToBytes(Result.getOrThrow(encodePriceIdentityKey(request.exactKey)))))}`;
 
 /** The only safely broader scope accepted by this gate: the Tenant's complete Current Price set. */
 export const unitPriceGroupAbsenceDeclaredScopeRef = (request: ExactPriceLookupRequest): string =>

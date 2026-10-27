@@ -1,8 +1,9 @@
+import { Base64 } from 'effect/encoding';
 // In-app reset of the AKROS demo company to the same predictable baseline `demo:seed:akros --reset` writes. The
 // baseline ships inside the server bundle (akros-baseline.generated.ts), so the reset needs no filesystem and runs
 // the same on Node and Cloudflare Workers; parts are decoded and inserted one at a time to keep memory bounded. The
 // parts are loaded only when a reset runs, so they cost nothing on a cold isolate's first request.
-import { Effect, Encoding, Result, Schema } from 'effect';
+import { Effect, Result, Schema } from 'effect';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandisePersistenceUnavailable } from '../../shared/errors/merchandise-persistence-unavailable.ts';
@@ -23,15 +24,23 @@ const decodeState = Schema.decodeUnknownEffect(Schema.fromJsonString(Merchandise
 export const decodeAkrosBaselinePart = Effect.fn('Merchandise.decodeAkrosBaselinePart')(function* decodePart(
   part: string,
 ) {
-  const bytes = yield* Result.match(Encoding.decodeBase64(part), {
+  const bytes = yield* Result.match(Base64.decode(part), {
     onFailure: (cause) => Effect.fail(baselineUnavailable('AKROS baseline part is not base64', cause)),
     onSuccess: Effect.succeed,
   });
+  const response = yield* Effect.try({
+    catch: (cause) => baselineUnavailable('AKROS baseline part does not decompress', cause),
+    try: () => new Response(new Blob([new Uint8Array(bytes)]).stream().pipeThrough(new DecompressionStream('gzip'))),
+  });
   const json = yield* Effect.tryPromise({
     catch: (cause) => baselineUnavailable('AKROS baseline part does not decompress', cause),
-    try: () =>
-      new Response(new Blob([new Uint8Array(bytes)]).stream().pipeThrough(new DecompressionStream('gzip'))).text(),
-  });
+    try: response.text.bind(response),
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: '30 seconds',
+      orElse: () => Effect.fail(baselineUnavailable('AKROS baseline part decompression timed out')),
+    }),
+  );
   return yield* decodeState(json).pipe(
     Effect.mapError((cause) => baselineUnavailable('AKROS baseline does not match the model', cause)),
   );
@@ -52,8 +61,10 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
   const head = yield* decodeAkrosBaselinePart(first);
   yield* deleteScope(db, scope);
   yield* insertSnapshotPart(db, scope, head);
-  for (const part of rest) {
-    yield* insertSnapshotPart(db, scope, yield* decodeAkrosBaselinePart(part));
-  }
+  yield* Effect.forEach(
+    rest,
+    (part) => decodeAkrosBaselinePart(part).pipe(Effect.flatMap((state) => insertSnapshotPart(db, scope, state))),
+    { concurrency: 1, discard: true },
+  );
   return yield* writeSnapshotHead(db, scope, head);
 });

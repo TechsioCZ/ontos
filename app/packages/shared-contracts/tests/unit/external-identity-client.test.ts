@@ -30,7 +30,7 @@ import { GatewayContextResponseSchema, GatewayReloadRequiredProblemSchema } from
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 const baseUrl = 'https://fixture.ontos.test/shell-super-app-api';
 const shellApiPrefix = '/shell-super-app-api';

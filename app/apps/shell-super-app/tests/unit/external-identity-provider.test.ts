@@ -25,7 +25,7 @@ import type {
 } from '@app/core-runtime/auth/external-identity-provider';
 import { Clock, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { makeExternalIdentityProviderDeployment } from '../../api/auth/external-identity-provider-deployment.ts';
 import {

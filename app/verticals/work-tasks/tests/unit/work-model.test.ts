@@ -11,7 +11,13 @@ import { ContextAccess } from '@app/core-runtime';
 import { withHistory } from '../../src/services/work-history.ts';
 import { AssignablePrincipals, AssigneeIneligible } from '@app/core-runtime/auth/assignable-principals';
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
-import { type StorefrontInquiry, WorkStateSchema, CalendarDateSchema } from '../../shared/apis/records.ts';
+import {
+  ContextRefSchema,
+  StorefrontInquirySchema,
+  ProjectIdSchema,
+  WorkStateSchema,
+  CalendarDateSchema,
+} from '../../shared/apis/records.ts';
 import {
   evolveWorkState,
   finishWorkRecords,
@@ -77,8 +83,8 @@ it.effect('a restricted persona sees its own tasks, never another principal’s 
       state,
       {
         _tag: 'CreateTask',
-        title: 'Vlastní úkol',
         ownerPrincipalRef: { principalId: scope.principalId, tenantId },
+        title: 'Vlastní úkol',
       },
       { now, resourceId: 'own', tenantId },
     );
@@ -86,8 +92,8 @@ it.effect('a restricted persona sees its own tasks, never another principal’s 
       own.state,
       {
         _tag: 'CreateTask',
-        title: 'Cizí úkol',
         ownerPrincipalRef: { principalId: scope.authBindingId, tenantId },
+        title: 'Cizí úkol',
       },
       { now, resourceId: 'other', tenantId },
     );
@@ -306,7 +312,7 @@ it.effect('projects departed task and project owners without rewriting their sto
       projects: [
         {
           createdAt: now,
-          id: 'historical-project',
+          id: yield* Schema.decodeEffect(ProjectIdSchema)('historical-project'),
           milestones: [],
           plannedEnd: '2026-10-31',
           plannedStart: '2026-10-01',
@@ -522,38 +528,38 @@ it.effect('task property, unit and contract context can be replaced or cleared o
       { _tag: 'CreateTask', title: 'Kontrola nájemního prostoru' },
       { now, resourceId: 'context-task', tenantId },
     );
-    const contextRefs = [
+    const contextRefs = yield* Schema.decodeEffect(Schema.Array(ContextRefSchema))([
       {
         moduleId: 'property.portfolio',
-        resourceType: 'property.portfolio.property',
         resourceId: '20000000-0000-4000-8000-000000000011',
+        resourceType: 'property.portfolio.property',
         tenantId,
       },
       {
         moduleId: 'legal.agreements',
-        resourceType: 'legal.agreements.contract',
         resourceId: '20000000-0000-4000-8000-000000000012',
+        resourceType: 'legal.agreements.contract',
         tenantId,
       },
-    ];
+    ]);
     const update = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
-      taskRef: created.task.ref,
       contextRefs,
+      taskRef: created.task.ref,
     });
     const linked = yield* evolveWorkState(created.state, update, { now, resourceId: 'unused', tenantId });
     expect(linked.task.contextRefs).toEqual(contextRefs);
     const clear = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
-      taskRef: created.task.ref,
       contextRefs: [],
+      taskRef: created.task.ref,
     });
     const cleared = yield* evolveWorkState(linked.state, clear, { now, resourceId: 'unused', tenantId });
     expect(cleared.task.contextRefs).toEqual([]);
     const foreign = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
-      taskRef: created.task.ref,
       contextRefs: [{ ...contextRefs[0], tenantId: '20000000-0000-4000-8000-000000000099' }],
+      taskRef: created.task.ref,
     });
     expect(
       yield* Effect.flip(evolveWorkState(created.state, foreign, { now, resourceId: 'unused', tenantId })),
@@ -567,7 +573,7 @@ it.effect('task property, unit and contract context can be replaced or cleared o
 it.effect('retains a real storefront inquiry as an actionable task with its product identity', () =>
   Effect.gen(function* storefrontInquiryTask() {
     const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
-    const inquiry = {
+    const inquiry = yield* Schema.decodeEffect(StorefrontInquirySchema)({
       email: 'pavel@example.com',
       kind: 'PRODUCT_QUESTION',
       message: 'Prosím o potvrzení jakosti.',
@@ -577,7 +583,7 @@ it.effect('retains a real storefront inquiry as an actionable task with its prod
       productSlug: 'sroub',
       requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
       subject: 'Jakost materiálu',
-    } satisfies StorefrontInquiry;
+    });
     const command = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
       _tag: 'CreateTask',
       description: inquiry.message,

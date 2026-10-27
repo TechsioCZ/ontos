@@ -44,7 +44,7 @@ const REPORT_KIND = 'report';
 const SEARCH_PROVIDER_KIND = 'search-provider';
 const GOVERNED_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
 const GOVERNED_HANDLER_LAYER_SLOT_END = '// </generated-governed-http-handler-layers>';
-const HTTP_API_CONTRACT_MODULE = 'effect/unstable/httpapi';
+const HTTP_API_CONTRACT_MODULE = 'effect/http-api';
 const GOVERNED_HTTP_API_IDENTITY_ALIAS = 'governedHttpApiIdentity';
 
 const GovernedReadKindSchema = Schema.Literals([MODULE_API_KIND, REPORT_KIND, SEARCH_PROVIDER_KIND]);
@@ -2787,13 +2787,13 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         input.manifest,
         '// <generated-module-manifest-actions>',
         '// </generated-module-manifest-actions>',
-        new RegExp(`${escapedActionValue},`, 'gu'),
+        new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
       slotHasExactlyOneCodeMatch(
         input.registration,
         '// <generated-module-registration-actions>',
         '// </generated-module-registration-actions>',
-        new RegExp(`${escapedActionValue},`, 'gu'),
+        new RegExp(`\\b${escapedActionValue},`, 'gu'),
       ),
     ];
     const labels = [

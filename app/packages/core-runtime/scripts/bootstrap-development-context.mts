@@ -2,7 +2,7 @@ import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../src/auth/staff-authentication-namespace.ts';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';

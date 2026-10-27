@@ -1,7 +1,7 @@
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
 import { Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { makeGovernedEffectBffClient } from '../../src/client-runtime.ts';
 import { makeGovernedReadProblems } from '../../src/effect-bff-runtime.ts';

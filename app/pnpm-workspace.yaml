@@ -5,34 +5,34 @@ packageImportMethod: clone-or-copy
 
 catalogs:
   ultramodern:
-    '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.0-ultramodern.28'
-    '@modern-js/app-tools': 'npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.28'
-    '@modern-js/app-tools-extensions': 'npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28'
-    '@modern-js/bff-effect': 'npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28'
-    '@modern-js/boundary-debugger': 'npm:@bleedingdev/modern-js-boundary-debugger@3.9.0-ultramodern.28'
-    '@modern-js/code-tools': 'npm:@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28'
-    '@modern-js/federation-runtime': 'npm:@bleedingdev/modern-js-federation-runtime@3.9.0-ultramodern.28'
-    '@modern-js/i18n-integration': 'npm:@bleedingdev/modern-js-i18n-integration@3.9.0-ultramodern.28'
-    '@modern-js/plugin-bff': 'npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.28'
-    '@modern-js/plugin-bff-build-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28'
-    '@modern-js/plugin-bff-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28'
-    '@modern-js/plugin-i18n': 'npm:@bleedingdev/modern-js-plugin-i18n@3.9.0-ultramodern.28'
-    '@modern-js/plugin-tanstack': 'npm:@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28'
-    '@modern-js/runtime': 'npm:@bleedingdev/modern-js-runtime@3.9.0-ultramodern.28'
-    '@modern-js/runtime-extensions': 'npm:@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.28'
-    '@modern-js/runtime-renderer-extensions': 'npm:@bleedingdev/modern-js-runtime-renderer-extensions@3.9.0-ultramodern.28'
-    '@modern-js/ultramodern-app-tools': 'npm:@bleedingdev/modern-js-ultramodern-app-tools@3.9.0-ultramodern.28'
-    '@modern-js/ultramodern-create': 'npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28'
+    '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.9'
+    '@modern-js/app-tools': 'npm:@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.9'
+    '@modern-js/app-tools-extensions': 'npm:@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.9'
+    '@modern-js/backend-federation-contracts': 'npm:@bleedingdev/modern-js-backend-federation-contracts@3.9.3-ultramodern.9'
+    '@modern-js/bff-effect': 'npm:@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.9'
+    '@modern-js/boundary-debugger': 'npm:@bleedingdev/modern-js-boundary-debugger@3.9.3-ultramodern.9'
+    '@modern-js/code-tools': 'npm:@bleedingdev/modern-js-code-tools@3.9.3-ultramodern.9'
+    '@modern-js/federation-runtime': 'npm:@bleedingdev/modern-js-federation-runtime@3.9.3-ultramodern.9'
+    '@modern-js/i18n-integration': 'npm:@bleedingdev/modern-js-i18n-integration@3.9.3-ultramodern.9'
+    '@modern-js/plugin-bff': 'npm:@bleedingdev/modern-js-plugin-bff@3.9.3-ultramodern.9'
+    '@modern-js/plugin-bff-build-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.3-ultramodern.9'
+    '@modern-js/plugin-bff-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.3-ultramodern.9'
+    '@modern-js/plugin-i18n': 'npm:@bleedingdev/modern-js-plugin-i18n@3.9.3-ultramodern.9'
+    '@modern-js/plugin-tanstack': 'npm:@bleedingdev/modern-js-plugin-tanstack@3.9.3-ultramodern.9'
+    '@modern-js/runtime': 'npm:@bleedingdev/modern-js-runtime@3.9.3-ultramodern.9'
+    '@modern-js/runtime-extensions': 'npm:@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.9'
+    '@modern-js/runtime-renderer-extensions': 'npm:@bleedingdev/modern-js-runtime-renderer-extensions@3.9.3-ultramodern.9'
+    '@modern-js/ultramodern-app-tools': 'npm:@bleedingdev/modern-js-ultramodern-app-tools@3.9.3-ultramodern.9'
+    '@modern-js/ultramodern-create': 'npm:@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.9'
 
 packages:
-  - akros-storefront
   - apps/*
   - verticals/*
   - packages/*
+  - akros-storefront
 enableGlobalVirtualStore: false
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-  - '@techsio/ui-kit@0.57.0'
   - '@bleedingdev/mf-bridge-react@2.9.2'
   - '@bleedingdev/mf-cli@2.9.2'
   - '@bleedingdev/mf-dts-plugin@2.9.2'
@@ -46,44 +46,56 @@ minimumReleaseAgeExclude:
   - '@bleedingdev/mf-runtime-tools@2.9.2'
   - '@bleedingdev/mf-runtime@2.9.2'
   - '@bleedingdev/mf-webpack-bundler-runtime@2.9.2'
-  - '@bleedingdev/modern-js-adapter-rstest@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-backend-federation-contracts@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-bff-core@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-boundary-debugger@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-builder@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-create-request@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-federation-runtime@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-i18n-integration@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-i18n-runtime-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-i18n-utils@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-data-loader@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-i18n@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-plugin@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-prod-server@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-render@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-runtime-renderer-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-runtime-utils@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-runtime@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-server-core@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-server-runtime-extensions@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-server-runtime@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-server@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-surface-resolution@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-types@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-ultramodern-app-tools@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28'
-  - '@bleedingdev/modern-js-utils@3.9.0-ultramodern.28'
-  - 'better-auth@1.7.12'
+  - '@bleedingdev/modern-js-adapter-rstest@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-app-tools@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-backend-federation-contracts@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-bff-core@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-boundary-debugger@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-builder@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-code-tools@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-create-request@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-federation-runtime@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-i18n-integration@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-i18n-runtime-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-i18n-utils@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-bff-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-bff@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-data-loader@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-i18n@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin-tanstack@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-plugin@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-prod-server@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-render@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-renderer-core@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-renderer-octane@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-renderer-solid@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-runtime-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-runtime-renderer-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-runtime-utils@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-runtime@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-server-core@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-server-runtime-extensions@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-server-runtime@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-server-utils@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-server@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-surface-resolution@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-types@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-ultramodern-app-tools@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.9'
+  - '@bleedingdev/modern-js-utils@3.9.3-ultramodern.9'
+  - '@effect/tsgo-darwin-arm64@0.53.1'
+  - '@effect/tsgo-darwin-x64@0.53.1'
+  - '@effect/tsgo-linux-arm64@0.53.1'
+  - '@effect/tsgo-linux-arm@0.53.1'
+  - '@effect/tsgo-linux-x64@0.53.1'
+  - '@effect/tsgo-win32-arm64@0.53.1'
+  - '@effect/tsgo-win32-x64@0.53.1'
+  - '@effect/tsgo@0.53.1'
+  - '@techsio/ui-kit@0.57.0'
+  - better-auth@1.7.12
   - '@better-auth/api-key@1.7.12'
   - '@better-auth/cimd@1.7.12'
   - '@better-auth/core@1.7.12'
@@ -99,8 +111,6 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade
 trustPolicyIgnoreAfter: 1440
-trustPolicyExclude:
-  - '@effect/opentelemetry@4.0.0-rc.117'
 blockExoticSubdeps: true
 engineStrict: true
 pmOnFail: error
@@ -110,15 +120,18 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
-  '@techsio/ui-kit': 'catalog:'
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
-  '@effect/opentelemetry': 4.0.0-rc.117
-  '@effect/platform-node-shared': 4.0.0-rc.117
-  '@rsbuild/core': 2.2.9
+  '@effect/opentelemetry': 4.0.5
+  '@effect/platform-node-shared': 4.0.5
+  '@rsbuild/core': 2.2.11
   node-fetch: ^3.3.2
   '@tanstack/history': 1.162.4
   zod: 4.6.5
+  # UltraModern workspace policy: the signed braces fork bounds parser nesting; sharp 0.35.5 is the patched release.
+  'braces@>=3.0.0 <3.0.4': npm:@bleedingdev/braces@3.0.4
+  'sharp@>=0.35.0 <0.35.5': 0.35.5
+  '@techsio/ui-kit': 'catalog:'
 allowBuilds:
   '@parcel/watcher': true
   '@swc/core': true
@@ -129,31 +142,24 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
-  '@authzed/authzed-node@1.6.1': patches/@authzed__authzed-node@1.6.1.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/pull/210 (+ one Effect BFF dispatcher per Worker isolate)
-  '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/bff-effect (lazy OpenAPI; api built once, services per request on the edge)
-  '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-bff-effect@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/code-tools
-  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/cli/plugin-bff-build-extensions
-  '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/cli/plugin-bff-extensions
-  '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-bff-extensions@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/runtime/plugin-tanstack
-  '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-tanstack@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/utils (retain project references and rebase external relative imports)
-  '@bleedingdev/modern-js-server-utils@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-server-utils@3.9.0-ultramodern.28.patch
-  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create
-  '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-ultramodern-create@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/pull/210 (root routes and OAuth metadata forwarding)
+  '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.3-ultramodern.9.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/bff-effect (request-scoped edge services)
+  '@bleedingdev/modern-js-bff-effect@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-bff-effect@3.9.3-ultramodern.9.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create (preserve unrelated shells)
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.9': patches/@bleedingdev__modern-js-ultramodern-create@3.9.3-ultramodern.9.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
-  # local until upstreamed to @techsio/ui-kit: label/translations props (Toaster, Combobox, DatePicker, Dialog,
-  # DataTable row labels, Switch role), DatePicker label/aria-controls ids and Czech segment announcements
-  '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
-  # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
+  # upstream: https://github.com/ScriptedAlchemy/effect-rstest (latest build cbbf87e still imports effect/unstable/arbitrary; Effect 4.0.0 exports Arbitrary from the effect root)
+  effect-rstest: patches/effect-rstest-effect-4.0.0-arbitrary.patch
+  # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380 (optional policy/role fields)
+  # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError path and Schema.isBetweenLength; merged on rc5, unreleased)
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
-  # Handle omitted optional AST children in the upstream CFG traverser.
+  # upstream: https://github.com/authzed/authzed-node (typed leaf exports)
+  '@authzed/authzed-node@1.6.1': patches/@authzed__authzed-node@1.6.1.patch
+  # upstream: https://www.npmjs.com/package/@techsio/ui-kit/v/0.57.0 (label and translation accessibility props)
+  '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
+  # upstream: https://github.com/oxc-project/oxc (handle omitted optional AST children in the CFG traverser)
   oxlint@1.81.0: patches/oxlint@1.81.0.patch
-  # Require array evidence before suggesting Set membership; strings use substring matching.
+  # upstream: https://github.com/millionco/react-doctor (require array evidence before suggesting Set membership)
   oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch

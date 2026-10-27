@@ -1,5 +1,5 @@
 import { Effect, Random, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import {
   PEOPLE_PATHS,

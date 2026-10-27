@@ -3,11 +3,14 @@ import {
   ActiveApplicationCompositionService,
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
-import { createHmac } from 'node:crypto';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import { Base64Url } from 'effect/encoding';
+import type { HttpServerRequest } from 'effect/http';
 
 import { bindGovernedActionHttp } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap, TrustedPrincipalContext } from '@app/core-runtime';
@@ -148,7 +151,7 @@ const runActionHttpAs = (principal: TrustedPrincipalContext) =>
  * than a readable list of the addresses people are enrolling with.
  */
 const enrollmentSubjectKey = (subject: string, secret: Redacted.Redacted): string =>
-  createHmac('sha256', Redacted.value(secret)).update(subject).digest('base64url');
+  Base64Url.encode(hmac(sha256, utf8ToBytes(Redacted.value(secret)), utf8ToBytes(subject)));
 
 /**
  * Keys are scoped to the verified Principal and this route, not the unattributable

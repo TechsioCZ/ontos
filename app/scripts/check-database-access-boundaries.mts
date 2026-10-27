@@ -91,6 +91,8 @@ const globalDatabaseImplementationImport = new RegExp(
   String.raw`${valueImportPrefix}['"](?:${postgresDriver}|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]`,
   'u',
 );
+const containsGlobalDatabaseCapability = (source: string, exposures: readonly number[]): boolean =>
+  globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source) || exposures.length > 0;
 // The native Effect client is the only PostgreSQL driver; a second one opens a second pool per owner.
 const secondPostgresDriverImport = new RegExp(String.raw`${valueImportPrefix}['"](?:${postgresDriver})['"]`, 'gu');
 
@@ -295,6 +297,7 @@ interface CapabilitySource {
   readonly functionTypes: Map<OwnerFunction, TSType>;
   readonly functionWrappers: Map<LexicalName, CallExpression>;
   readonly program: Program;
+  readonly source: string;
   readonly syntaxError: boolean;
   readonly valueAliases: ReadonlyMap<LexicalName, LexicalName>;
   readonly writes: readonly Span[];
@@ -457,6 +460,7 @@ const capabilitySource = (file: string, source: string): CapabilitySource => {
     functionTypes,
     functionWrappers,
     program: parsed.program,
+    source,
     syntaxError: parsed.errors.length > 0,
     valueAliases,
     writes,
@@ -481,14 +485,26 @@ const bindingWritten = (model: CapabilitySource, binding: LexicalName): boolean 
   if (model.writes.length === 0) {
     return false;
   }
+  const propertyNames = new Set<Span>();
   new Visitor({
     Identifier: (identifier) => {
       if (
+        !propertyNames.has(identifier) &&
         identifier.name === binding.name &&
         bindingAt(model, identifier.name, identifier) === binding &&
         model.writes.some((write) => containsSpan(write, identifier))
       ) {
         written = true;
+      }
+    },
+    MemberExpression: (node) => {
+      if (!node.computed) {
+        propertyNames.add(node.property);
+      }
+    },
+    Property: (node) => {
+      if (!node.computed && !node.shorthand) {
+        propertyNames.add(node.key);
       }
     },
   }).visit(model.program);
@@ -544,6 +560,28 @@ const unshadowedUtility = (
   bindingAt(model, name, type) === undefined
     ? type
     : undefined;
+
+/** Core identity queries consume select plus an immutable scope snapshot, not a global database. */
+const scopedReadInput = (model: CapabilitySource, type: TSType | undefined): boolean => {
+  const projection = unshadowedUtility(model, type, 'Pick');
+  if (projection?.typeArguments?.params.length !== 2) {
+    return false;
+  }
+  const [executor, keys] = projection.typeArguments.params;
+  if (
+    namedTypeAuthority(model, executor) !== executorAuthority ||
+    keys?.type !== 'TSUnionType' ||
+    keys.types.length !== 2
+  ) {
+    return false;
+  }
+  const members = new Set(
+    keys.types.flatMap((key) =>
+      key.type === 'TSLiteralType' && key.literal.type === 'Literal' ? [key.literal.value] : [],
+    ),
+  );
+  return members.has('select') && members.has('scope');
+};
 
 const readFactoryType = (model: CapabilitySource, type: TSType | undefined): boolean => {
   if (
@@ -1134,11 +1172,13 @@ const wrappedInputFunction = (model: CapabilitySource, binding: LexicalName): Ow
   return effect !== undefined && isEffectValueImport(model, effect) && !bindingWritten(model, effect) ? fn : undefined;
 };
 
-/** A routine input has only invoke: no SQL members, local rebinding/boxing, or wider receiving signatures. */
-const routineInputUseIndexes = (
+/** Bound inputs may call only declared methods; optional scope reads never expose the raw input. */
+const boundedInputUseIndexes = (
   model: CapabilitySource,
   inputs: ReadonlySet<LexicalName>,
   acceptsInput: (consumer: LexicalName, index: number) => boolean,
+  methods: ReadonlySet<string> = new Set(['invoke']),
+  allowScopeSnapshot = false,
 ): readonly number[] => {
   if (inputs.size === 0) {
     return [];
@@ -1150,7 +1190,7 @@ const routineInputUseIndexes = (
       callee.type === 'MemberExpression' &&
       !callee.computed &&
       callee.property.type === 'Identifier' &&
-      callee.property.name === 'invoke' &&
+      methods.has(callee.property.name) &&
       callee.object.type === 'Identifier'
     ) {
       allowed.add(callee.object);
@@ -1180,6 +1220,9 @@ const routineInputUseIndexes = (
       if (!node.computed) {
         allowed.add(node.property);
       }
+      if (allowScopeSnapshot && isScopeSnapshot(node) && node.object.type === 'Identifier') {
+        allowed.add(node.object);
+      }
     },
     MethodDefinition: propertyName,
     Property: (node) => {
@@ -1205,6 +1248,18 @@ const routineInputUseIndexes = (
   }).visit(model.program);
   return invalid;
 };
+
+const scopedReadConsumer = (
+  model: CapabilitySource,
+  parameter: ParamPattern,
+  requiredAuthority: symbol | undefined,
+): boolean =>
+  requiredAuthority === undefined &&
+  parameter.type === 'Identifier' &&
+  !bindingWritten(model, parameter) &&
+  !containsGlobalDatabaseCapability(model.source, []) &&
+  scopedReadInput(model, parameter.typeAnnotation?.typeAnnotation) &&
+  boundedInputUseIndexes(model, new Set([parameter]), () => false, new Set(['select']), true).length === 0;
 
 /** Unknown consumers may retain a raw value. Only explicit, unchanged owner-input signatures qualify. */
 const privateInputProof = (graph: CapabilityGraph) => {
@@ -1296,7 +1351,9 @@ const privateInputProof = (graph: CapabilityGraph) => {
       const parameter = fn?.params[index];
       if (fn !== undefined && parameter !== undefined) {
         if (!isPrivateInput(model, fn, parameter)) {
-          return false;
+          // Do not widen SQL-only owner input annotations. Prove the actual scoped-read
+          // consumer body, including Core helpers reached through public export barrels.
+          return scopedReadConsumer(model, parameter, requiredAuthority);
         }
         const authority = parameterAuthority(model, parameter);
         if (requiredAuthority === undefined && authority !== routineInvokerAuthority) {
@@ -1308,7 +1365,7 @@ const privateInputProof = (graph: CapabilityGraph) => {
         }
         const nextSeen = new Set([...seen, key]);
         return (
-          routineInputUseIndexes(model, new Set([parameter]), (consumer, inputIndex) =>
+          boundedInputUseIndexes(model, new Set([parameter]), (consumer, inputIndex) =>
             proof.local(model, consumer, inputIndex, nextSeen, routineInvokerAuthority),
           ).length === 0
         );
@@ -1644,15 +1701,12 @@ const scopedTransactionExposureIndexes = (graph: CapabilityGraph, model: Capabil
   const inputProof = privateInputProof(graph);
   invalid.push(
     ...rawEscapeIndexes(graph, model, rawNames, callbackInputs),
-    ...routineInputUseIndexes(model, routineInputs, (consumer, index) =>
+    ...boundedInputUseIndexes(model, routineInputs, (consumer, index) =>
       inputProof.local(model, consumer, index, new Set(), routineInvokerAuthority),
     ),
   );
   return EffectArray.sort([...new Set(invalid)], Order.Number);
 };
-
-const containsGlobalDatabaseCapability = (source: string, exposures: readonly number[]): boolean =>
-  globalDatabaseImplementationImport.test(source) || hiddenCapability.test(source) || exposures.length > 0;
 
 const globalDatabaseCapabilityClosure = (
   sources: ReadonlyMap<string, string>,

@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { Context, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -34,23 +33,21 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
-const tenantId = randomUUID();
-const otherTenantId = randomUUID();
-const sellerA = randomUUID();
-const sellerB = randomUUID();
-const principalId = randomUUID();
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 
-const scopeFor = (tenant: string, legalEntityId: string): OperationalScope => ({
-  authContextRef: `better-auth-session:${randomUUID()}`,
-  authMethod: 'session',
-  correlationId: randomUUID(),
-  legalEntityId,
-  principalId,
-  tenantId: tenant,
-});
-const scopeA = scopeFor(tenantId, sellerA);
-const scopeB = scopeFor(tenantId, sellerB);
-const otherTenantScope = scopeFor(otherTenantId, sellerA);
+const scopeFor = (principalId: string, tenant: string, legalEntityId: string) =>
+  Effect.gen(function* makeTaxGovernanceScope() {
+    const [authContextId, correlationId] = yield* Effect.all([nextUuid, nextUuid]);
+    const scope: OperationalScope = {
+      authContextRef: `better-auth-session:${authContextId}`,
+      authMethod: 'session',
+      correlationId,
+      legalEntityId,
+      principalId,
+      tenantId: tenant,
+    };
+    return scope;
+  });
 
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
@@ -73,22 +70,25 @@ const runScoped = <Value, Failure>(
 /** Fixed trusted operation time, so lifecycle assertions never depend on the wall clock. */
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
 
-const invocation = (scope: OperationalScope, at: Date = operationTime) => ({
-  actionInvocationId: randomUUID(),
-  actorPrincipalId: principalId,
-  legalEntityId: scope.legalEntityId ?? '',
-  operationTime: at,
-  tenantId: scope.tenantId,
-});
+const invocation = (scope: OperationalScope, at: Date = operationTime) =>
+  nextUuid.pipe(
+    Effect.map((actionInvocationId) => ({
+      actionInvocationId,
+      actorPrincipalId: scope.principalId,
+      legalEntityId: scope.legalEntityId ?? '',
+      operationTime: at,
+      tenantId: scope.tenantId,
+    })),
+  );
 
-const ruleRef = (resourceId: string) =>
+const ruleRef = (tenantId: string, resourceId: string) =>
   ({
     moduleId: 'commerce.tax',
     resourceId,
     resourceType: 'commerce.tax.tax-rule',
     tenantId,
   }) as const;
-const revisionRef = (resourceId: string) =>
+const revisionRef = (tenantId: string, resourceId: string) =>
   ({
     moduleId: 'commerce.tax',
     resourceId,
@@ -135,12 +135,12 @@ const CorrectedSchema = Schema.Struct({
   wrongRevisionId: RevisionIdSchema,
 });
 
-const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
+const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>, tenants: readonly string[]) =>
   admin.transaction((transaction) =>
     Effect.gen(function* cleanupTaxGovernanceRows() {
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
-      for (const tenant of [tenantId, otherTenantId]) {
+      for (const tenant of tenants) {
         yield* transaction.delete(taxRuleCorrections).where(eq(taxRuleCorrections.tenantId, tenant));
         yield* transaction.delete(taxRuleRevisionEndFacts).where(eq(taxRuleRevisionEndFacts.tenantId, tenant));
         yield* transaction.delete(taxRuleRevisions).where(eq(taxRuleRevisions.tenantId, tenant));
@@ -166,7 +166,9 @@ const ruleHistory = (runtime: CoreTestDatabase, scope: OperationalScope) => (tax
   withReads(
     runtime,
     scope,
-  )((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(taxRuleId) })).pipe(Effect.map(Option.getOrThrow));
+  )((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(scope.tenantId, taxRuleId) })).pipe(
+    Effect.map(Option.getOrThrow),
+  );
 
 const applicableRequest = (taxRelevantTime: string) =>
   Schema.decodeEffect(ApplicableTaxRuleSetRequestContractSchema)({
@@ -194,9 +196,21 @@ const acquireDatabases = Effect.gen(function* acquireTaxTestDatabases() {
   const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
   // Owner services run as the least-privilege runtime role so forced RLS is part of every assertion.
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
-  yield* cleanup(admin);
-  yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { admin, adminClient, runtime };
+  const [tenantId, otherTenantId, sellerA, sellerB, principalId] = yield* Effect.all([
+    nextUuid,
+    nextUuid,
+    nextUuid,
+    nextUuid,
+    nextUuid,
+  ]);
+  const [scopeA, scopeB, otherTenantScope] = yield* Effect.all([
+    scopeFor(principalId, tenantId, sellerA),
+    scopeFor(principalId, tenantId, sellerB),
+    scopeFor(principalId, otherTenantId, sellerA),
+  ]);
+  yield* cleanup(admin, [tenantId, otherTenantId]);
+  yield* Effect.addFinalizer(() => cleanup(admin, [tenantId, otherTenantId]).pipe(Effect.orDie));
+  return { admin, adminClient, otherTenantScope, principalId, runtime, scopeA, scopeB, sellerA, tenantId };
 });
 
 /** Waits until some backend is blocked behind the given backend; the interleaving is then deterministic. */
@@ -233,18 +247,23 @@ const awaitRuleLockWaiter = (observer: Effect.Success<typeof testDatabaseClients
     return false;
   });
 
+// These tests wait on the live clock, so each stays a live registration and builds Node Crypto in its scope.
+// Tests that poll with `Effect.sleep` provide the built services directly so the sleep stays visibly live-owned.
+const nodeCryptoServices = Layer.build(NodeCrypto.layer);
+const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+
 it.live(
   '#929 #930 F8 #955 Tax Rule governance replays, rejects reused keys and stale bases, and keeps corrections addressable',
   () =>
     Effect.scoped(
       Effect.gen(function* taxRuleGovernanceAcceptance() {
-        const { runtime } = yield* acquireDatabases;
+        const { runtime, scopeA, tenantId } = yield* acquireDatabases;
         const rules = withRules(runtime, scopeA);
         const history = ruleHistory(runtime, scopeA);
 
         const createInput = {
           ...(yield* createRulePayload('cz.standard-goods', content({ effectiveTo: '2027-01-01T00:00:00.000Z' }))),
-          ...invocation(scopeA),
+          ...(yield* invocation(scopeA)),
         };
         const created = yield* rules((persistence) => persistence.createTaxRule(createInput)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
@@ -266,8 +285,9 @@ it.live(
         );
         expect(reused).toEqual({ conflict: 'IDEMPOTENCY_REUSED', kind: 'conflict' });
 
+        const duplicateInvocation = yield* invocation(scopeA);
         const duplicateCode = yield* rules((persistence) =>
-          persistence.createTaxRule({ ...createInput, ...invocation(scopeA) }),
+          persistence.createTaxRule({ ...createInput, ...duplicateInvocation }),
         );
         expect(duplicateCode).toEqual({ conflict: 'STABLE_CODE', kind: 'conflict' });
 
@@ -278,9 +298,9 @@ it.live(
             expectedBasisFingerprint: ruleBasis,
             provenanceRef: 'acceptance:planned-rate-change',
             reason: 'Planned future rate change',
-            taxRuleRef: ruleRef(created.taxRuleId),
+            taxRuleRef: ruleRef(tenantId, created.taxRuleId),
           })),
-          ...invocation(scopeA),
+          ...(yield* invocation(scopeA)),
         };
 
         // #949 F20 #955 a basis that is not the current governing revision set is stale.
@@ -299,17 +319,19 @@ it.live(
         expect(futureReplay).toEqual({ ...future, created: false });
 
         // The superseded basis is stale for any new invocation.
+        const staleInvocation = yield* invocation(scopeA);
         const staleAfterChange = yield* rules((persistence) =>
-          persistence.createTaxRuleRevision({ ...revisionInput, ...invocation(scopeA) }),
+          persistence.createTaxRuleRevision({ ...revisionInput, ...staleInvocation }),
         );
         expect(staleAfterChange).toEqual({ kind: 'stale_basis' });
 
         // #929 F1-F3 a revision cannot silently reinterpret the stable rule meaning.
         const currentBasis = (yield* history(created.taxRuleId)).basisFingerprint;
+        const meaningInvocation = yield* invocation(scopeA);
         const meaningChanged = yield* rules((persistence) =>
           persistence.createTaxRuleRevision({
             ...revisionInput,
-            ...invocation(scopeA),
+            ...meaningInvocation,
             content: { ...revisionInput.content, taxClassificationCode: 'cz-reduced-books' },
             expectedBasisFingerprint: currentBasis,
           }),
@@ -324,9 +346,9 @@ it.live(
             expectedBasisFingerprint: firstRevisionBasis,
             provenanceRef: 'acceptance:end',
             reason: 'Rate withdrawn early',
-            taxRuleRevisionRef: revisionRef(created.initialRevisionId),
+            taxRuleRevisionRef: revisionRef(tenantId, created.initialRevisionId),
           })),
-          ...invocation(scopeA),
+          ...(yield* invocation(scopeA)),
         };
         const ended = yield* rules((persistence) => persistence.endTaxRuleRevision(endInput)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
@@ -337,8 +359,13 @@ it.live(
         );
         expect(endReplay.ended).toBe(false);
         const endedBasis = (yield* history(created.taxRuleId)).basisFingerprint;
+        const endAgainInvocation = yield* invocation(scopeA);
         const endAgain = yield* rules((persistence) =>
-          persistence.endTaxRuleRevision({ ...endInput, ...invocation(scopeA), expectedBasisFingerprint: endedBasis }),
+          persistence.endTaxRuleRevision({
+            ...endInput,
+            ...endAgainInvocation,
+            expectedBasisFingerprint: endedBasis,
+          }),
         );
         expect(endAgain).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
 
@@ -351,9 +378,9 @@ it.live(
             expectedBasisFingerprint: wrongBasis,
             provenanceRef: 'acceptance:correction',
             reason: 'Planned rate was announced wrongly',
-            wrongRevisionRef: revisionRef(future.revisionId),
+            wrongRevisionRef: revisionRef(tenantId, future.revisionId),
           })),
-          ...invocation(scopeA),
+          ...(yield* invocation(scopeA)),
         };
         const corrected = yield* rules((persistence) => persistence.correctTaxRuleRevision(correctInput)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(CorrectedSchema)),
@@ -367,7 +394,9 @@ it.live(
         const evidence = yield* history(created.taxRuleId);
         expect(evidence.revisions.map(({ revisionNumber }) => revisionNumber)).toEqual([1, 2, 3]);
         expect(evidence.revisions[1]?.ratePercent).toBe('23');
-        expect(evidence.revisions[2]?.supersedesRevisionRef).toEqual(Option.some(revisionRef(future.revisionId)));
+        expect(evidence.revisions[2]?.supersedesRevisionRef).toEqual(
+          Option.some(revisionRef(tenantId, future.revisionId)),
+        );
         expect(evidence.revisions[0]?.endFact.pipe(Option.isSome)).toBe(true);
         // Only the rule-level expected-current basis is a governed token; no Action accepts a per-revision one.
         for (const revision of evidence.revisions) {
@@ -393,14 +422,14 @@ it.live(
         const repeated = yield* applicableAt('2027-06-01T00:00:00.000Z');
         expect(repeated.completeness.setFingerprint).toBe(corrected2027.completeness.setFingerprint);
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Legal Entity by forced RLS', () =>
   Effect.scoped(
     Effect.gen(function* taxGovernanceIsolation() {
-      const { runtime } = yield* acquireDatabases;
-      const createInput = { ...(yield* createRulePayload('cz.seller-a', content())), ...invocation(scopeA) };
+      const { otherTenantScope, runtime, scopeA, scopeB, tenantId } = yield* acquireDatabases;
+      const createInput = { ...(yield* createRulePayload('cz.seller-a', content())), ...(yield* invocation(scopeA)) };
       const created = yield* withRules(
         runtime,
         scopeA,
@@ -414,7 +443,7 @@ it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Le
       const sellerBSet = yield* sellerBReads((read) => read.applicableTaxRuleSet(request));
       expect(sellerBSet).toMatchObject({ completeness: { rowCount: 0 }, outcome: 'TAX_RULE_MISSING' });
       const sellerBHistory = yield* sellerBReads((read) =>
-        read.taxRuleHistory({ taxRuleRef: ruleRef(created.taxRuleId) }),
+        read.taxRuleHistory({ taxRuleRef: ruleRef(tenantId, created.taxRuleId) }),
       );
       expect(Option.isNone(sellerBHistory)).toBe(true);
       const revisionPayload = yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)({
@@ -422,12 +451,13 @@ it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Le
         expectedBasisFingerprint: '0'.repeat(64),
         provenanceRef: 'acceptance:seller-b',
         reason: 'Seller B cannot govern Seller A rules',
-        taxRuleRef: ruleRef(created.taxRuleId),
+        taxRuleRef: ruleRef(tenantId, created.taxRuleId),
       });
+      const sellerBInvocation = yield* invocation(scopeB);
       const sellerBRevision = yield* withRules(
         runtime,
         scopeB,
-      )((persistence) => persistence.createTaxRuleRevision({ ...revisionPayload, ...invocation(scopeB) }));
+      )((persistence) => persistence.createTaxRuleRevision({ ...revisionPayload, ...sellerBInvocation }));
       expect(sellerBRevision).toEqual({ kind: 'not_found' });
 
       // RLS itself, not the service filter, hides the rows from another Tenant or seller.
@@ -440,20 +470,24 @@ it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Le
       expect(yield* visibleRules(scopeA)).toEqual([{ taxRuleId: created.taxRuleId }]);
 
       // A payload cannot write into another seller's scope: the trusted scope decides.
+      const forgedInvocation = yield* invocation(scopeA);
       const forged = yield* withRules(
         runtime,
         scopeB,
-      )((persistence) => persistence.createTaxRule({ ...createInput, ...invocation(scopeA) })).pipe(Effect.exit);
+      )((persistence) => persistence.createTaxRule({ ...createInput, ...forgedInvocation })).pipe(Effect.exit);
       expect(Exit.isFailure(forged)).toBe(true);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live('#929 F2 #930 F8 Tax Rule revisions and facts are immutable for the runtime role', () =>
   Effect.scoped(
     Effect.gen(function* taxRuleImmutability() {
-      const { runtime } = yield* acquireDatabases;
-      const createInput = { ...(yield* createRulePayload('cz.immutable', content())), ...invocation(scopeA) };
+      const { runtime, scopeA, tenantId } = yield* acquireDatabases;
+      const createInput = {
+        ...(yield* createRulePayload('cz.immutable', content())),
+        ...(yield* invocation(scopeA)),
+      };
       const created = yield* withRules(
         runtime,
         scopeA,
@@ -484,77 +518,82 @@ it.live('#929 F2 #930 F8 Tax Rule revisions and facts are immutable for the runt
       );
       expect(stored).toEqual([{ ratePercent: '21' }]);
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
   '#930 F6-F7 #942 F15 F18 a correction committed during a governed read is wholly visible or wholly absent, never torn',
   () =>
     Effect.scoped(
-      Effect.gen(function* tornReadAcceptance() {
-        const { adminClient, runtime } = yield* acquireDatabases;
-        const createInput = { ...(yield* createRulePayload('cz.torn-read', content())), ...invocation(scopeA) };
-        const created = yield* withRules(
-          runtime,
-          scopeA,
-        )((persistence) => persistence.createTaxRule(createInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
-        );
+      Effect.gen(function* tornReadAcceptanceLive() {
+        const services = yield* nodeCryptoServices;
+        yield* Effect.gen(function* tornReadAcceptance() {
+          const { adminClient, principalId, runtime, scopeA, sellerA, tenantId } = yield* acquireDatabases;
+          const createInput = {
+            ...(yield* createRulePayload('cz.torn-read', content())),
+            ...(yield* invocation(scopeA)),
+          };
+          const created = yield* withRules(
+            runtime,
+            scopeA,
+          )((persistence) => persistence.createTaxRule(createInput)).pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
+          );
 
-        // A concurrent writer holds the correction table and commits a correcting revision plus its provenance.
-        const connections = yield* loadDatabaseConnectionPair();
-        const writer = yield* makeTestPgSession(connections.admin.connectionString);
-        yield* writer.unsafe('BEGIN');
-        yield* Effect.addFinalizer(() => writer.unsafe('ROLLBACK').pipe(Effect.orDie));
-        const [writerBackend] = yield* writer.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
-        const writerPid = yield* Schema.decodeUnknownEffect(Schema.Finite)(writerBackend?.pid);
-        yield* writer.unsafe('lock table tax.tax_rule_corrections in access exclusive mode');
-        const correctingRevisionId = randomUUID();
-        const correctionInvocation = randomUUID();
-        yield* writer.unsafe(
-          `insert into tax.tax_rule_revisions (tax_rule_revision_id, tenant_id, legal_entity_id, composition_kind,
-             effective_from, jurisdiction, rate_percent, revision_number, semantic_fingerprint, supersedes_revision_id,
-             tax_classification_code, tax_rule_id, treatment_category, action_invocation_id, actor_principal_id,
-             idempotency_key, provenance_ref, reason)
-           values ($1, $2, $3, 'EXCLUSIVE', '2026-01-01T00:00:00.000Z', 'CZ_DOMESTIC', '12', 2, $4, $5,
-             'cz-standard-goods', $6, 'TAXABLE', $7::uuid, $8, $7::text, 'acceptance:torn-read',
-             'Concurrent correction')`,
-          [
+          // A concurrent writer holds the correction table and commits a correcting revision plus its provenance.
+          const connections = yield* loadDatabaseConnectionPair();
+          const writer = yield* makeTestPgSession(connections.admin.connectionString);
+          yield* writer.unsafe('BEGIN');
+          yield* Effect.addFinalizer(() => writer.unsafe('ROLLBACK').pipe(Effect.orDie));
+          const [writerBackend] = yield* writer.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
+          const writerPid = yield* Schema.decodeUnknownEffect(Schema.Finite)(writerBackend?.pid);
+          yield* writer.unsafe('lock table tax.tax_rule_corrections in access exclusive mode');
+          const [correctingRevisionId, correctionInvocation] = yield* Effect.all([nextUuid, nextUuid]);
+          yield* writer.unsafe(
+            `insert into tax.tax_rule_revisions (tax_rule_revision_id, tenant_id, legal_entity_id, composition_kind,
+               effective_from, jurisdiction, rate_percent, revision_number, semantic_fingerprint, supersedes_revision_id,
+               tax_classification_code, tax_rule_id, treatment_category, action_invocation_id, actor_principal_id,
+               idempotency_key, provenance_ref, reason)
+             values ($1, $2, $3, 'EXCLUSIVE', '2026-01-01T00:00:00.000Z', 'CZ_DOMESTIC', '12', 2, $4, $5,
+               'cz-standard-goods', $6, 'TAXABLE', $7::uuid, $8, $7::text, 'acceptance:torn-read',
+               'Concurrent correction')`,
+            [
+              correctingRevisionId,
+              tenantId,
+              sellerA,
+              'e'.repeat(64),
+              created.initialRevisionId,
+              created.taxRuleId,
+              correctionInvocation,
+              principalId,
+            ],
+          );
+          yield* writer.unsafe(
+            `insert into tax.tax_rule_corrections (tenant_id, legal_entity_id, confirmed_at, correcting_revision_id,
+               wrong_revision_id, action_invocation_id, actor_principal_id, idempotency_key, provenance_ref, reason)
+             values ($1, $2, '2026-02-01T00:00:00.000Z', $3, $4, $5::uuid, $6, $5::text, 'acceptance:torn-read',
+               'Concurrent correction')`,
+            [tenantId, sellerA, correctingRevisionId, created.initialRevisionId, correctionInvocation, principalId],
+          );
+
+          const reader = yield* applicableRequest('2026-06-01T00:00:00.000Z').pipe(
+            Effect.flatMap((request) => withReads(runtime, scopeA)((read) => read.applicableTaxRuleSet(request))),
+            Effect.forkChild,
+          );
+          // The writer commits only while the read is waiting inside its observation of the predicate state.
+          expect(yield* awaitBlockedBehind(adminClient, writerPid)).toBe(true);
+          yield* writer.unsafe('COMMIT');
+          const observed = yield* Fiber.join(reader);
+
+          expect(observed.completeness.rowCount).toBe(2);
+          expect(observed.outcome).toBe('SELECTED');
+          expect(observed.applicable.map(({ taxRuleRevisionRef }) => taxRuleRevisionRef.resourceId)).toEqual([
             correctingRevisionId,
-            tenantId,
-            sellerA,
-            'e'.repeat(64),
+          ]);
+          expect(observed.excludedByCorrection.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
             created.initialRevisionId,
-            created.taxRuleId,
-            correctionInvocation,
-            principalId,
-          ],
-        );
-        yield* writer.unsafe(
-          `insert into tax.tax_rule_corrections (tenant_id, legal_entity_id, confirmed_at, correcting_revision_id,
-             wrong_revision_id, action_invocation_id, actor_principal_id, idempotency_key, provenance_ref, reason)
-           values ($1, $2, '2026-02-01T00:00:00.000Z', $3, $4, $5::uuid, $6, $5::text, 'acceptance:torn-read',
-             'Concurrent correction')`,
-          [tenantId, sellerA, correctingRevisionId, created.initialRevisionId, correctionInvocation, principalId],
-        );
-
-        const reader = yield* applicableRequest('2026-06-01T00:00:00.000Z').pipe(
-          Effect.flatMap((request) => withReads(runtime, scopeA)((read) => read.applicableTaxRuleSet(request))),
-          Effect.forkChild,
-        );
-        // The writer commits only while the read is waiting inside its observation of the predicate state.
-        expect(yield* awaitBlockedBehind(adminClient, writerPid)).toBe(true);
-        yield* writer.unsafe('COMMIT');
-        const observed = yield* Fiber.join(reader);
-
-        expect(observed.completeness.rowCount).toBe(2);
-        expect(observed.outcome).toBe('SELECTED');
-        expect(observed.applicable.map(({ taxRuleRevisionRef }) => taxRuleRevisionRef.resourceId)).toEqual([
-          correctingRevisionId,
-        ]);
-        expect(observed.excludedByCorrection.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
-          created.initialRevisionId,
-        ]);
+          ]);
+        }).pipe(Effect.provide(services));
       }),
     ),
 );
@@ -564,7 +603,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* taxRuleLifecycleAcceptance() {
-        const { runtime } = yield* acquireDatabases;
+        const { runtime, scopeA, tenantId } = yield* acquireDatabases;
         const rules = withRules(runtime, scopeA);
         const history = ruleHistory(runtime, scopeA);
         const applicableAt = applicableSet(runtime, scopeA);
@@ -572,7 +611,7 @@ it.live(
           Effect.gen(function* createLifecycleRule() {
             const input = {
               ...(yield* createRulePayload(stableCode, content({ taxClassificationCode: classification }))),
-              ...invocation(scopeA),
+              ...(yield* invocation(scopeA)),
             };
             return yield* rules((persistence) => persistence.createTaxRule(input)).pipe(
               Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
@@ -586,9 +625,9 @@ it.live(
                 expectedBasisFingerprint,
                 provenanceRef: 'acceptance:lifecycle-end',
                 reason: 'Lifecycle end',
-                taxRuleRevisionRef: revisionRef(revisionId),
+                taxRuleRevisionRef: revisionRef(tenantId, revisionId),
               })),
-              ...invocation(scopeA),
+              ...(yield* invocation(scopeA)),
             };
           });
         const revisionInput = (
@@ -603,15 +642,15 @@ it.live(
               expectedBasisFingerprint,
               provenanceRef: 'acceptance:lifecycle-revision',
               reason: 'Lifecycle revision',
-              taxRuleRef: ruleRef(taxRuleId),
+              taxRuleRef: ruleRef(tenantId, taxRuleId),
             };
             const withReplacement =
               replacesRevisionId === undefined
                 ? payload
-                : { ...payload, replacesRevisionRef: revisionRef(replacesRevisionId) };
+                : { ...payload, replacesRevisionRef: revisionRef(tenantId, replacesRevisionId) };
             return {
               ...(yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)(withReplacement)),
-              ...invocation(scopeA),
+              ...(yield* invocation(scopeA)),
             };
           });
 
@@ -676,7 +715,9 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)),
         );
         const afterReplacement = yield* history(rule.taxRuleId);
-        expect(afterReplacement.revisions[2]?.supersedesRevisionRef).toEqual(Option.some(revisionRef(rev2.revisionId)));
+        expect(afterReplacement.revisions[2]?.supersedesRevisionRef).toEqual(
+          Option.some(revisionRef(tenantId, rev2.revisionId)),
+        );
         expect(afterReplacement.meaningKind).toBe('VAT_RATE');
         expect(afterReplacement.revisions[2]?.jurisdiction).toBe('CZ_DOMESTIC');
 
@@ -706,9 +747,9 @@ it.live(
                 expectedBasisFingerprint,
                 provenanceRef: 'acceptance:lifecycle-correction',
                 reason: 'Announced rate was wrong',
-                wrongRevisionRef: revisionRef(wrongRevisionId),
+                wrongRevisionRef: revisionRef(tenantId, wrongRevisionId),
               })),
-              ...invocation(scopeA),
+              ...(yield* invocation(scopeA)),
             };
           });
         const basisBeforeCorrection = (yield* history(rule.taxRuleId)).basisFingerprint;
@@ -805,50 +846,60 @@ it.live(
         );
         expect(replayedEnd).toEqual({ ended: false, revisionId: rev1 });
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
   '#949 F20 #955 concurrent writers with the same expected-current basis: exactly one wins, the other is stale',
   () =>
     Effect.scoped(
-      Effect.gen(function* concurrentStaleBasis() {
-        const { adminClient, runtime } = yield* acquireDatabases;
-        const rules = withRules(runtime, scopeA);
-        const createInput = { ...(yield* createRulePayload('cz.concurrent', content())), ...invocation(scopeA) };
-        const rule = yield* rules((persistence) => persistence.createTaxRule(createInput)).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
-        );
-        const basis = Option.getOrThrow(
-          yield* withReads(runtime, scopeA)((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(rule.taxRuleId) })),
-        ).basisFingerprint;
-        const revisionPayload = yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)({
-          content: content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '23' }),
-          expectedBasisFingerprint: basis,
-          provenanceRef: 'acceptance:concurrent',
-          reason: 'Concurrent revision',
-          taxRuleRef: ruleRef(rule.taxRuleId),
-        });
+      Effect.gen(function* concurrentStaleBasisLive() {
+        const services = yield* nodeCryptoServices;
+        yield* Effect.gen(function* concurrentStaleBasis() {
+          const { adminClient, runtime, scopeA, tenantId } = yield* acquireDatabases;
+          const rules = withRules(runtime, scopeA);
+          const createInput = {
+            ...(yield* createRulePayload('cz.concurrent', content())),
+            ...(yield* invocation(scopeA)),
+          };
+          const rule = yield* rules((persistence) => persistence.createTaxRule(createInput)).pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
+          );
+          const basis = Option.getOrThrow(
+            yield* withReads(
+              runtime,
+              scopeA,
+            )((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(tenantId, rule.taxRuleId) })),
+          ).basisFingerprint;
+          const revisionPayload = yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)({
+            content: content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '23' }),
+            expectedBasisFingerprint: basis,
+            provenanceRef: 'acceptance:concurrent',
+            reason: 'Concurrent revision',
+            taxRuleRef: ruleRef(tenantId, rule.taxRuleId),
+          });
 
-        const firstWrote = yield* Deferred.make<boolean>();
-        const releaseFirst = yield* Deferred.make<boolean>();
-        const first = yield* rules((persistence) =>
-          persistence.createTaxRuleRevision({ ...revisionPayload, ...invocation(scopeA) }).pipe(
-            Effect.tap(() => Deferred.succeed(firstWrote, true)),
-            Effect.tap(() => Deferred.await(releaseFirst)),
-          ),
-        ).pipe(Effect.forkChild);
-        yield* Deferred.await(firstWrote);
-        const second = yield* rules((persistence) =>
-          persistence.createTaxRuleRevision({ ...revisionPayload, ...invocation(scopeA) }),
-        ).pipe(Effect.forkChild);
-        // The second writer is parked on the Tax Rule lock while the first is still uncommitted.
-        expect(yield* awaitRuleLockWaiter(adminClient)).toBe(true);
-        yield* Deferred.succeed(releaseFirst, true);
+          const firstWrote = yield* Deferred.make<boolean>();
+          const releaseFirst = yield* Deferred.make<boolean>();
+          const [firstInvocation, secondInvocation] = yield* Effect.all([invocation(scopeA), invocation(scopeA)]);
+          const first = yield* rules((persistence) =>
+            persistence.createTaxRuleRevision({ ...revisionPayload, ...firstInvocation }).pipe(
+              Effect.tap(() => Deferred.succeed(firstWrote, true)),
+              Effect.tap(() => Deferred.await(releaseFirst)),
+            ),
+          ).pipe(Effect.forkChild);
+          yield* Deferred.await(firstWrote);
+          const second = yield* rules((persistence) =>
+            persistence.createTaxRuleRevision({ ...revisionPayload, ...secondInvocation }),
+          ).pipe(Effect.forkChild);
+          // The second writer is parked on the Tax Rule lock while the first is still uncommitted.
+          expect(yield* awaitRuleLockWaiter(adminClient)).toBe(true);
+          yield* Deferred.succeed(releaseFirst, true);
 
-        const won = yield* Fiber.join(first).pipe(Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)));
-        expect(won).toMatchObject({ created: true, revisionNumber: 2 });
-        expect(yield* Fiber.join(second)).toEqual({ kind: 'stale_basis' });
+          const won = yield* Fiber.join(first).pipe(Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)));
+          expect(won).toMatchObject({ created: true, revisionNumber: 2 });
+          expect(yield* Fiber.join(second)).toEqual({ kind: 'stale_basis' });
+        }).pipe(Effect.provide(services));
       }),
     ),
 );

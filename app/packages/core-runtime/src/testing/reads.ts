@@ -1,9 +1,9 @@
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Deferred, Effect, Layer, Option, Schema, Stream } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { Connection } from 'effect/unstable/sql/SqlConnection';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { Connection } from 'effect/sql/SqlConnection';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { readVerifiedGatewayScopeAssertion } from '../auth/system-principal-context-provenance.ts';
 import {
@@ -218,7 +218,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ),
     tenants: ({ tenantIds }) => Effect.succeed(tenantIds.map((key) => ({ decision, key }))),
   };
-  const scopeResolver = makeOperationalScopeResolver(
+  const scopeResolver = yield* makeOperationalScopeResolver(
     {
       load: () =>
         Effect.succeed({

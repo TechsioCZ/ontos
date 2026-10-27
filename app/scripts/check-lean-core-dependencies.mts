@@ -207,6 +207,8 @@ const allowedCoreExternalSpecifiers = new Set([
   '@authzed/authzed-node/v1/schema',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@noble/hashes/sha2.js',
+  '@noble/hashes/utils.js',
   'drizzle-kit',
   'drizzle-orm',
   'drizzle-orm/effect-core',
@@ -214,12 +216,15 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
-  'node:crypto',
   'pg',
 ]);
 
+// Effect 4 platform modules (formerly `effect/*`) are published as top-level subpaths.
+const effectPlatformSubpath =
+  /^effect\/(?:ai|cli|cluster|devtools|encoding|eventlog|http|http-api|net|observability|persistence|process|reactivity|rpc|schema|socket|sql|workers|workflow)(?:\/|$)/u;
+
 const isAllowedCoreExternalSpecifier = (specifier: string): boolean =>
-  allowedCoreExternalSpecifiers.has(specifier) || specifier.startsWith('effect/unstable/');
+  allowedCoreExternalSpecifiers.has(specifier) || effectPlatformSubpath.test(specifier);
 
 const coreExternalDependencyReason = (specifier: string): string =>
   commerceVocabulary.test(specifier)
@@ -239,7 +244,7 @@ const isInsideCoreSource = (resolved: string): boolean =>
   resolved === coreSourceRoot || resolved.startsWith(`${coreSourceRoot}/`);
 
 // These native dependencies are admitted only behind a proven Node condition, never in the shared set.
-const nodeTransportSpecifiers = new Set(['node:stream', 'node:stream/web', '@effect/platform-node/Undici']);
+const nodeTransportSpecifiers = new Set(['@effect/platform-node/NodeStream', '@effect/platform-node/Undici']);
 
 const recordCoreSourceViolations = (
   record: (violation: LeanCoreDependencyViolation) => void,
@@ -495,6 +500,7 @@ const allowedCorePackageDependencies = new Set([
   '@authzed/authzed-node',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@noble/hashes',
   'drizzle-kit',
   'drizzle-orm',
   'effect',

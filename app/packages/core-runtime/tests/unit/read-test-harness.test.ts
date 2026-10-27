@@ -1,7 +1,8 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { DateTime, Effect, Schema } from 'effect';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { tenants } from '../../src/db/schema.ts';
@@ -68,81 +69,83 @@ const registration = defineRead(
 );
 const invocation = { input: {}, principal: scope, registration, transport: { correlationId: scope.correlationId } };
 
-it.effect('defaults permission to denied before owner SQL and persists denied evidence', () =>
-  Effect.gen(function* defaultDenied() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
-      operationTime,
-      scope,
-    });
-    const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
-    expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(harness.snapshot().ownerQueries).toEqual([]);
-    expect(harness.snapshot().evidenceWrites).toBe(1);
-    expect(harness.snapshot().stages).not.toContain('scope_installed');
-  }),
-);
+it.layer(NodeCrypto.layer)('read test harness', (suite) => {
+  suite.effect('defaults permission to denied before owner SQL and persists denied evidence', () =>
+    Effect.gen(function* defaultDenied() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
+        operationTime,
+        scope,
+      });
+      const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
+      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+      expect(harness.snapshot().stages).not.toContain('scope_installed');
+    }),
+  );
 
-it.effect('defaults owner authorization to denied after scope installation', () =>
-  Effect.gen(function* ownerDefaultDenied() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
-      operationTime,
-      permissionDecision: 'allowed',
-      scope,
-    });
-    const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
-    expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(harness.snapshot().ownerQueries).toEqual([]);
-    expect(harness.snapshot().stages).toContain('scope_installed');
-    expect(harness.snapshot().statements).toContain('ROLLBACK');
-  }),
-);
+  suite.effect('defaults owner authorization to denied after scope installation', () =>
+    Effect.gen(function* ownerDefaultDenied() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () => Effect.die('Owner SQL must not run'),
+        operationTime,
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
+      expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
+      expect(harness.snapshot().ownerQueries).toEqual([]);
+      expect(harness.snapshot().stages).toContain('scope_installed');
+      expect(harness.snapshot().statements).toContain('ROLLBACK');
+    }),
+  );
 
-it.effect('runs the original factory and handler with installed scope and commits allowed evidence', () =>
-  Effect.gen(function* realReadLifecycle() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: (query) => {
-        expect(query.sql).toContain('"core"."tenants"');
-        expect(query.scope).toEqual({ legalEntityId: '', tenantId: scope.tenantId });
-        return Effect.succeed([{ tenantId: scope.tenantId }]);
-      },
-      operationTime,
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope,
-    });
-    expect(yield* harness.runtime.runRead(invocation)).toEqual([scope.tenantId]);
-    expect(harness.snapshot().ownerQueries).toHaveLength(1);
-    expect(harness.snapshot().ownerQueries[0]?.sql).toContain('transaction_timestamp()');
-    expect(harness.snapshot().evidenceWrites).toBe(1);
-    expect(harness.snapshot().stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
-    // Allowed evidence runs in its own scoped transaction after the owner transaction commits, so no
-    // connection idles while the evidence transaction is opened.
-    const { statements } = harness.snapshot();
-    const ownerCommitIndex = statements.indexOf('COMMIT');
-    const evidenceIndex = statements.findIndex((statement) => statement.includes('data_access_events'));
-    expect(ownerCommitIndex).toBeGreaterThan(-1);
-    expect(evidenceIndex).toBeGreaterThan(ownerCommitIndex);
-    expect(statements.slice(ownerCommitIndex + 1, evidenceIndex)).toContain('BEGIN');
-    expect(statements.at(-2)).toContain('data_access_events');
-    expect(statements.at(-1)).toBe('COMMIT');
-  }),
-);
+  suite.effect('runs the original factory and handler with installed scope and commits allowed evidence', () =>
+    Effect.gen(function* realReadLifecycle() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: (query) => {
+          expect(query.sql).toContain('"core"."tenants"');
+          expect(query.scope).toEqual({ legalEntityId: '', tenantId: scope.tenantId });
+          return Effect.succeed([{ tenantId: scope.tenantId }]);
+        },
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      expect(yield* harness.runtime.runRead(invocation)).toEqual([scope.tenantId]);
+      expect(harness.snapshot().ownerQueries).toHaveLength(1);
+      expect(harness.snapshot().ownerQueries[0]?.sql).toContain('transaction_timestamp()');
+      expect(harness.snapshot().evidenceWrites).toBe(1);
+      expect(harness.snapshot().stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
+      // Allowed evidence runs in its own scoped transaction after the owner transaction commits, so no
+      // connection idles while the evidence transaction is opened.
+      const { statements } = harness.snapshot();
+      const ownerCommitIndex = statements.indexOf('COMMIT');
+      const evidenceIndex = statements.findIndex((statement) => statement.includes('data_access_events'));
+      expect(ownerCommitIndex).toBeGreaterThan(-1);
+      expect(evidenceIndex).toBeGreaterThan(ownerCommitIndex);
+      expect(statements.slice(ownerCommitIndex + 1, evidenceIndex)).toContain('BEGIN');
+      expect(statements.at(-2)).toContain('data_access_events');
+      expect(statements.at(-1)).toBe('COMMIT');
+    }),
+  );
 
-it.effect('keeps owner SQL outages typed and rolls back without allowed evidence', () =>
-  Effect.gen(function* typedOwnerOutage() {
-    const harness = yield* makeReadTestHarness({
-      executeOwnerQuery: () =>
-        Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled outage' }) })),
-      operationTime,
-      ownerAuthorizationDecision: 'allowed',
-      permissionDecision: 'allowed',
-      scope,
-    });
-    const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
-    expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-    expect(harness.snapshot().evidenceWrites).toBe(0);
-    expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
-  }),
-);
+  suite.effect('keeps owner SQL outages typed and rolls back without allowed evidence', () =>
+    Effect.gen(function* typedOwnerOutage() {
+      const harness = yield* makeReadTestHarness({
+        executeOwnerQuery: () =>
+          Effect.fail(new SqlError({ reason: new ConnectionError({ cause: 'controlled outage' }) })),
+        operationTime,
+        ownerAuthorizationDecision: 'allowed',
+        permissionDecision: 'allowed',
+        scope,
+      });
+      const failure = yield* harness.runtime.runRead(invocation).pipe(Effect.flip);
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      expect(harness.snapshot().evidenceWrites).toBe(0);
+      expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
+    }),
+  );
+});

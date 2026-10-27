@@ -11,8 +11,8 @@ import {
 } from '@app/party-registry/api/client';
 import type { PartyCommandOptions } from '@app/party-registry/api/client';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';
 import { convertOrderCustomer } from '../../verticals/merchandise/shared/order-customer-conversion.ts';

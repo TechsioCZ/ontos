@@ -120,7 +120,7 @@ import {
   commerceCustomerAuthorityUnavailableLive,
 } from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
   CommerceEnrollmentPreparedOwnerCapability,
@@ -603,7 +603,9 @@ const deploymentCustomerAuthorityLive = Layer.unwrap(
   coreIdentityTransportConfigured.pipe(
     Effect.map((configured) =>
       configured
-        ? commerceCustomerAuthorityLive.pipe(Layer.provide(commerceCoreIdentityRealmLive))
+        ? commerceCustomerAuthorityLive.pipe(
+            Layer.provide(Layer.mergeAll(commerceCoreIdentityRealmLive, commercePortalAuthPlatformCryptoLive)),
+          )
         : commerceCustomerAuthorityUnavailableLive,
     ),
   ),
@@ -777,7 +779,7 @@ const actionRuntimeAwaitingOwnerPreparation = enrollmentAwareActionRuntimeLive.p
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provideMerge(purchaseApprovalCurrentnessFactoryLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
   Layer.provide(databaseIdentitiesLive),
 );
 /** Deployment composition seam. External owner ports remain visible requirements here. */
@@ -789,7 +791,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionOwnerRuntimeServicesLive),
   Layer.provideMerge(productionOwnerAuthorizationOverlayLive),
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
-  Layer.provide(DatabaseConfigLive),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, commercePortalAuthPlatformCryptoLive)),
   Layer.provide(databaseIdentitiesLive),
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(

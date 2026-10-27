@@ -44,9 +44,9 @@ import {
   Redacted,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { legalEntities, principals, tenantModuleStates, tenants } from '../../packages/core-runtime/src/db/schema.ts';

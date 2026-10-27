@@ -11,12 +11,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import { PgAuth, PgProtocol } from '@effect/sql-pg';
 import type { PgClient } from '@effect/sql-pg';
-import { NodeSocket } from '@effect/platform-node';
+import { NodeCrypto, NodeSocket } from '@effect/platform-node';
 import { Array as EffectArray, Clock, Data, Effect, Match, Option, Order, Redacted, Schema } from 'effect';
 import type { Result } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import type { Writer } from 'effect/unstable/socket/Socket';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { Writer } from 'effect/socket/Socket';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { findPostgresFailure } from '../../packages/core-runtime/src/database/postgres-failure.ts';
 import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
@@ -488,206 +488,208 @@ const shiftGrant = (
 const expectedScope: Scope = { legal_entity_id: legalEntityId, tenant_id: tenantId };
 const emptyScope: Scope = { legal_entity_id: null, tenant_id: null };
 
-it.live('the dedicated Party identity admits session, OAuth and agent scope without raw identity audit access', () =>
-  Effect.gen(function* dedicatedIdentityAdmission() {
-    const { admin, issuer, party, partyPool, shared } = yield* fixture;
-    const agentId = randomUUID();
-    const siblingEntityId = randomUUID();
-    const invocationId = randomUUID();
-    const namespace = AuthenticationNamespaceIdSchema.make('trust-scope-admission');
-    const agentBinding = {
-      authMethod: 'api_key',
-      id: randomUUID(),
-      principalId: agentId,
-      subjectType: 'api_key',
-    } as const;
-    const bindings = [
-      { authMethod: 'session', id: randomUUID(), principalId, subjectType: 'user' },
-      { authMethod: 'oauth_connection', id: randomUUID(), principalId, subjectType: 'oauth_grant' },
-      agentBinding,
-    ] as const;
-    yield* Effect.addFinalizer(() =>
-      Effect.all(
-        [
-          admin.unsafe('delete from core.audit_events where action_invocation_id = $1::uuid', [invocationId]),
-          admin.unsafe('delete from core.principal_auth_bindings where authentication_namespace_id = $1', [namespace]),
-          admin.unsafe('delete from core.action_invocations where action_invocation_id = $1::uuid', [invocationId]),
-          admin.unsafe('delete from core.principals where principal_id = $1::uuid', [agentId]),
-          admin.unsafe('delete from core.legal_entities where legal_entity_id = $1::uuid', [siblingEntityId]),
-        ],
-        { concurrency: 1 },
-      ).pipe(Effect.orDie),
-    );
-    yield* admin.unsafe(
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
+const dedicatedIdentityAdmission = Effect.gen(function* dedicatedIdentityAdmission() {
+  const { admin, issuer, party, partyPool, shared } = yield* fixture;
+  const agentId = randomUUID();
+  const siblingEntityId = randomUUID();
+  const invocationId = randomUUID();
+  const namespace = AuthenticationNamespaceIdSchema.make('trust-scope-admission');
+  const agentBinding = {
+    authMethod: 'api_key',
+    id: randomUUID(),
+    principalId: agentId,
+    subjectType: 'api_key',
+  } as const;
+  const bindings = [
+    { authMethod: 'session', id: randomUUID(), principalId, subjectType: 'user' },
+    { authMethod: 'oauth_connection', id: randomUUID(), principalId, subjectType: 'oauth_grant' },
+    agentBinding,
+  ] as const;
+  yield* Effect.addFinalizer(() =>
+    Effect.all(
+      [
+        admin.unsafe('delete from core.audit_events where action_invocation_id = $1::uuid', [invocationId]),
+        admin.unsafe('delete from core.principal_auth_bindings where authentication_namespace_id = $1', [namespace]),
+        admin.unsafe('delete from core.action_invocations where action_invocation_id = $1::uuid', [invocationId]),
+        admin.unsafe('delete from core.principals where principal_id = $1::uuid', [agentId]),
+        admin.unsafe('delete from core.legal_entities where legal_entity_id = $1::uuid', [siblingEntityId]),
+      ],
+      { concurrency: 1 },
+    ).pipe(Effect.orDie),
+  );
+  yield* admin.unsafe(
+    `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
        values ($1::uuid, $2::uuid, 'agent', 'Company-issued agent', 'active')`,
-      [agentId, tenantId],
-    );
-    yield* admin.unsafe(
-      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+    [agentId, tenantId],
+  );
+  yield* admin.unsafe(
+    `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
        values ($1::uuid, $2::uuid, 'Sibling company', 'CZ', $1::text, 'active')`,
-      [siblingEntityId, tenantId],
-    );
-    yield* admin.unsafe(
-      `insert into core.action_invocations (action_invocation_id, tenant_id, legal_entity_id, principal_id,
+    [siblingEntityId, tenantId],
+  );
+  yield* admin.unsafe(
+    `insert into core.action_invocations (action_invocation_id, tenant_id, legal_entity_id, principal_id,
          auth_method, action_key, status, request_hash)
        values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'system',
          'core.identity.bind-managed-api-key', 'succeeded', 'identity-attestation-probe')`,
-      [invocationId, tenantId, legalEntityId, principalId],
-    );
-    yield* admin.unsafe(
-      `insert into core.audit_events (tenant_id, legal_entity_id, action_invocation_id, principal_id,
+    [invocationId, tenantId, legalEntityId, principalId],
+  );
+  yield* admin.unsafe(
+    `insert into core.audit_events (tenant_id, legal_entity_id, action_invocation_id, principal_id,
          auth_method, event_type, outcome, outcome_stage, outcome_code, audit_profile, evidence_json)
        values ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'system', 'action.executed',
          'succeeded', 'execution', 'ok', 'standard', '{"actionKey":"core.identity.bind-managed-api-key"}'::jsonb)`,
-      [tenantId, legalEntityId, invocationId, principalId],
-    );
-    for (const binding of bindings) {
-      yield* admin.unsafe(
-        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id,
+    [tenantId, legalEntityId, invocationId, principalId],
+  );
+  for (const binding of bindings) {
+    yield* admin.unsafe(
+      `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id,
            authentication_namespace_id, provider, subject_type, provider_subject_id, status, created_by_invocation_id)
          values ($1::uuid, $2::uuid, $3::uuid, $4, 'trust-scope-probe', $5, $1::text, 'active', $6::uuid)`,
-        [binding.id, tenantId, binding.principalId, namespace, binding.subjectType, invocationId],
-      );
-    }
-    const executor = yield* makeTestDatabaseFromClient(partyPool, coreRelations);
-    const repository = makeOperationalScopeRepository({ executor }, APP_DATABASE_IDENTITY_ENROLLMENT);
-    const resolver = makeOperationalScopeResolver(repository, {
-      legalEntities: ({ legalEntityIds }) =>
-        Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
-    });
-    const registry = makeAuthenticationNamespaceRegistry([
-      {
-        allowedAudiences: [partyAudience],
-        authenticationNamespaceId: namespace,
-        provider: 'trust-scope-probe',
-        requiresOperationAdmission: false,
-        reservationPrincipalKind: 'human',
-        subjectTypes: ['user', 'oauth_grant', 'api_key'],
-        trustedAttesterPrincipalIds: [],
-      },
-    ]);
-    const resolve = (principal: TrustedPrincipalContext) =>
-      resolver
-        .resolve({
-          audience: partyAudience,
-          correlationId: 'dedicated-role-admission',
-          legalEntityScope: 'required',
-          principal,
-        })
-        .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
-    const principalFor = (binding: (typeof bindings)[number], entityId: string): TrustedPrincipalContext => {
-      const principal: TrustedPrincipalContext = {
-        authBindingId: binding.id,
-        authContextRef: binding.authMethod === 'oauth_connection' ? `oauth-grant:${binding.id}` : `probe-${binding.id}`,
-        authenticationNamespaceId: namespace,
-        authMethod: binding.authMethod,
-        legalEntityId: entityId,
-        principalId: binding.principalId,
-        tenantId,
-      };
-      if (binding.authMethod !== 'oauth_connection') {
-        return principal;
-      }
-      return {
-        ...principal,
-        connection: {
-          clientId: 'scope-admission-client',
-          clientName: 'Scope admission client',
-          grantId: binding.id,
-          modules: [],
-          writePolicy: 'read_only',
-        },
-      };
-    };
-    const gatewayPrincipal = Effect.fn('gatewayPrincipal')(function* gatewayPrincipalEffect(
-      binding: (typeof bindings)[number],
-      entityId: string = legalEntityId,
-    ) {
-      const assertion = yield* registerGrant(issuer, {
-        principalId: binding.principalId,
-        scopeLegalEntityId: entityId,
-      });
-      return trustVerifiedGatewayPrincipalContext(principalFor(binding, entityId), 'a'.repeat(64), {
-        assertion: Redacted.make(assertion),
+      [binding.id, tenantId, binding.principalId, namespace, binding.subjectType, invocationId],
+    );
+  }
+  const executor = yield* makeTestDatabaseFromClient(partyPool, coreRelations);
+  const repository = makeOperationalScopeRepository({ executor }, APP_DATABASE_IDENTITY_ENROLLMENT);
+  const resolver = yield* makeOperationalScopeResolver(repository, {
+    legalEntities: ({ legalEntityIds }) =>
+      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  });
+  const registry = makeAuthenticationNamespaceRegistry([
+    {
+      allowedAudiences: [partyAudience],
+      authenticationNamespaceId: namespace,
+      provider: 'trust-scope-probe',
+      requiresOperationAdmission: false,
+      reservationPrincipalKind: 'human',
+      subjectTypes: ['user', 'oauth_grant', 'api_key'],
+      trustedAttesterPrincipalIds: [],
+    },
+  ]);
+  const resolve = (principal: TrustedPrincipalContext) =>
+    resolver
+      .resolve({
         audience: partyAudience,
-      });
-    });
-    for (const binding of bindings) {
-      const principal = yield* gatewayPrincipal(binding);
-      expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
-      expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe(partyAudience);
-      const resolved = yield* admissionProbe(`dedicated-${binding.authMethod}`, resolve(principal));
-      expect(resolved.principalId).toBe(binding.principalId);
-      expect(resolved.authMethod).toBe(binding.authMethod);
+        correlationId: 'dedicated-role-admission',
+        legalEntityScope: 'required',
+        principal,
+      })
+      .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+  const principalFor = (binding: (typeof bindings)[number], entityId: string): TrustedPrincipalContext => {
+    const principal: TrustedPrincipalContext = {
+      authBindingId: binding.id,
+      authContextRef: binding.authMethod === 'oauth_connection' ? `oauth-grant:${binding.id}` : `probe-${binding.id}`,
+      authenticationNamespaceId: namespace,
+      authMethod: binding.authMethod,
+      legalEntityId: entityId,
+      principalId: binding.principalId,
+      tenantId,
+    };
+    if (binding.authMethod !== 'oauth_connection') {
+      return principal;
     }
-    // Audiences without a gateway-grant identity retain their manifest's shared authority.
-    // They must not call the Party-only attestation routine merely because provenance is retained.
-    const sharedExecutor = yield* makeTestDatabaseFromClient(shared, coreRelations);
-    const sharedRepository = makeOperationalScopeRepository(
-      { executor: sharedExecutor },
-      APP_DATABASE_IDENTITY_ENROLLMENT,
-    );
-    for (const binding of bindings) {
-      const principal = trustVerifiedGatewayPrincipalContext(principalFor(binding, legalEntityId), 'a'.repeat(64), {
-        assertion: Redacted.make('verified-non-party-assertion'),
-        audience: 'catalog',
-      });
-      expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
-      expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe('catalog');
-      const persisted = yield* admissionProbe(`shared-${binding.authMethod}`, sharedRepository.load(principal));
-      expect(persisted.principalTenantId).toBe(tenantId);
-      expect(persisted.bindingPrincipalId).toBe(binding.principalId);
-      expect(persisted.bindingIssuingLegalEntityId).toBe(legalEntityId);
-    }
-    const wrongCompany = yield* gatewayPrincipal(agentBinding, siblingEntityId);
-    expect(Schema.is(OperationContextDenied)(yield* Effect.flip(resolve(wrongCompany)))).toBe(true);
-    const assertion = yield* registerGrant(issuer, { principalId: agentId });
-    const attest = (bindingId: string, actingPrincipalId: string) =>
-      party.unsafe<{ entity_id: string | null }>(
-        'select trust.auth_binding_issuing_legal_entity($1::uuid, $2::uuid) as entity_id',
-        [bindingId, actingPrincipalId],
-      );
-    expect(yield* attest(agentBinding.id, agentId)).toEqual([{ entity_id: null }]);
-    expect(
-      yield* inTransaction(
-        party,
-        establish(party, assertion).pipe(Effect.andThen(attest(agentBinding.id, principalId))),
-      ),
-    ).toEqual([{ entity_id: null }]);
-    const foreignAssertion = yield* registerGrant(issuer, {
-      principalId: otherTenantPrincipalId,
-      scopeLegalEntityId: otherTenantLegalEntityId,
-      scopeTenantId: otherTenantId,
+    return {
+      ...principal,
+      connection: {
+        clientId: 'scope-admission-client',
+        clientName: 'Scope admission client',
+        grantId: binding.id,
+        modules: [],
+        writePolicy: 'read_only',
+      },
+    };
+  };
+  const gatewayPrincipal = Effect.fn('gatewayPrincipal')(function* gatewayPrincipalEffect(
+    binding: (typeof bindings)[number],
+    entityId: string = legalEntityId,
+  ) {
+    const assertion = yield* registerGrant(issuer, {
+      principalId: binding.principalId,
+      scopeLegalEntityId: entityId,
     });
-    expect(
-      yield* inTransaction(
-        party,
-        establish(party, foreignAssertion).pipe(Effect.andThen(attest(agentBinding.id, agentId))),
-      ),
-    ).toEqual([{ entity_id: null }]);
-    yield* expectSqlState('42501')(party.unsafe('select evidence_json from core.audit_events'));
-    yield* expectSqlState('42501')(party.unsafe('select created_by_invocation_id from core.principal_auth_bindings'));
-    yield* expectSqlState('42501')(
-      shared.unsafe('select trust.auth_binding_issuing_legal_entity($1::uuid, $2::uuid)', [agentBinding.id, agentId]),
+    return trustVerifiedGatewayPrincipalContext(principalFor(binding, entityId), 'a'.repeat(64), {
+      assertion: Redacted.make(assertion),
+      audience: partyAudience,
+    });
+  });
+  for (const binding of bindings) {
+    const principal = yield* gatewayPrincipal(binding);
+    expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
+    expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe(partyAudience);
+    const resolved = yield* admissionProbe(`dedicated-${binding.authMethod}`, resolve(principal));
+    expect(resolved.principalId).toBe(binding.principalId);
+    expect(resolved.authMethod).toBe(binding.authMethod);
+  }
+  // Audiences without a gateway-grant identity retain their manifest's shared authority.
+  // They must not call the Party-only attestation routine merely because provenance is retained.
+  const sharedExecutor = yield* makeTestDatabaseFromClient(shared, coreRelations);
+  const sharedRepository = makeOperationalScopeRepository(
+    { executor: sharedExecutor },
+    APP_DATABASE_IDENTITY_ENROLLMENT,
+  );
+  for (const binding of bindings) {
+    const principal = trustVerifiedGatewayPrincipalContext(principalFor(binding, legalEntityId), 'a'.repeat(64), {
+      assertion: Redacted.make('verified-non-party-assertion'),
+      audience: 'catalog',
+    });
+    expect(Schema.is(TrustedPrincipalContextSchema)(principal)).toBe(true);
+    expect(readVerifiedGatewayScopeAssertion(principal)?.audience).toBe('catalog');
+    const persisted = yield* admissionProbe(`shared-${binding.authMethod}`, sharedRepository.load(principal));
+    expect(persisted.principalTenantId).toBe(tenantId);
+    expect(persisted.bindingPrincipalId).toBe(binding.principalId);
+    expect(persisted.bindingIssuingLegalEntityId).toBe(legalEntityId);
+  }
+  const wrongCompany = yield* gatewayPrincipal(agentBinding, siblingEntityId);
+  expect(Schema.is(OperationContextDenied)(yield* Effect.flip(resolve(wrongCompany)))).toBe(true);
+  const assertion = yield* registerGrant(issuer, { principalId: agentId });
+  const attest = (bindingId: string, actingPrincipalId: string) =>
+    party.unsafe<{ entity_id: string | null }>(
+      'select trust.auth_binding_issuing_legal_entity($1::uuid, $2::uuid) as entity_id',
+      [bindingId, actingPrincipalId],
     );
-    expect(
-      yield* inTransaction(
-        party,
-        establish(party, assertion).pipe(
-          Effect.andThen(
-            party.unsafe('select action_invocation_id from core.audit_events where action_invocation_id = $1::uuid', [
-              invocationId,
-            ]),
-          ),
+  expect(yield* attest(agentBinding.id, agentId)).toEqual([{ entity_id: null }]);
+  expect(
+    yield* inTransaction(party, establish(party, assertion).pipe(Effect.andThen(attest(agentBinding.id, principalId)))),
+  ).toEqual([{ entity_id: null }]);
+  const foreignAssertion = yield* registerGrant(issuer, {
+    principalId: otherTenantPrincipalId,
+    scopeLegalEntityId: otherTenantLegalEntityId,
+    scopeTenantId: otherTenantId,
+  });
+  expect(
+    yield* inTransaction(
+      party,
+      establish(party, foreignAssertion).pipe(Effect.andThen(attest(agentBinding.id, agentId))),
+    ),
+  ).toEqual([{ entity_id: null }]);
+  yield* expectSqlState('42501')(party.unsafe('select evidence_json from core.audit_events'));
+  yield* expectSqlState('42501')(party.unsafe('select created_by_invocation_id from core.principal_auth_bindings'));
+  yield* expectSqlState('42501')(
+    shared.unsafe('select trust.auth_binding_issuing_legal_entity($1::uuid, $2::uuid)', [agentBinding.id, agentId]),
+  );
+  expect(
+    yield* inTransaction(
+      party,
+      establish(party, assertion).pipe(
+        Effect.andThen(
+          party.unsafe('select action_invocation_id from core.audit_events where action_invocation_id = $1::uuid', [
+            invocationId,
+          ]),
         ),
       ),
-    ).toEqual([]);
-    yield* admin.unsafe('delete from core.audit_events where action_invocation_id = $1::uuid', [invocationId]);
-    const unattested = yield* gatewayPrincipal(agentBinding);
-    expect(Schema.is(OperationContextDenied)(yield* Effect.flip(resolve(unattested)))).toBe(true);
-  }).pipe(Effect.scoped),
-);
+    ),
+  ).toEqual([]);
+  yield* admin.unsafe('delete from core.audit_events where action_invocation_id = $1::uuid', [invocationId]);
+  const unattested = yield* gatewayPrincipal(agentBinding);
+  expect(Schema.is(OperationContextDenied)(yield* Effect.flip(resolve(unattested)))).toBe(true);
+});
+
+it.layer(NodeCrypto.layer, { excludeTestServices: true })('dedicated identity admission', (suite) => {
+  suite.effect(
+    'the dedicated Party identity admits session, OAuth and agent scope without raw identity audit access',
+    () => dedicatedIdentityAdmission.pipe(Effect.scoped),
+  );
+});
 
 it.live('only the issuer registers well-formed, bounded, unique gateway scope grants', () =>
   Effect.gen(function* registration() {

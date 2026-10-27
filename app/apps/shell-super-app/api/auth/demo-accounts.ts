@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 
 import {
   ContextAccess,
@@ -230,7 +232,7 @@ export const demoAccountCapability = Effect.fn('DemoAccounts.capability')(functi
 
 /** Deterministic IDs per idempotency key, so a retried create replays the same Core Action. */
 export const derivedUuid = (seed: string) => {
-  const hex = createHash('sha256').update(seed).digest('hex');
+  const hex = Hex.encode(sha256(utf8ToBytes(seed)));
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 

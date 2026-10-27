@@ -11,7 +11,7 @@ import {
 import type { ActionAuthorizationPreflightDatabaseService } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Cause, Config, Console, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { CoreDatabase } from '../../../packages/core-runtime/src/db/client.ts';
 import type { CoreTransaction } from '../../../packages/core-runtime/src/db/types.ts';

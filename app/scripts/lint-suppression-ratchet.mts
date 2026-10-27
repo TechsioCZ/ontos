@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Array as EffectArray, Console, Data, Effect, FileSystem, Order, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { parseSync } from 'oxc-parser';
 
 import { runQualityCli } from './quality-cli-lifecycle.mts';

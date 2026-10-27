@@ -2,7 +2,7 @@ import { StageAccountsFileSchema } from '@app/core-runtime/install/stage-account
 import { ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { Config, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { verificationAccount, verificationContext, verificationTaskWriterRoleKey } from './verification-context.mts';
 

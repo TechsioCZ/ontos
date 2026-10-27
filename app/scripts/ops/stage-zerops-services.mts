@@ -15,7 +15,7 @@ import {
   Schema,
 } from 'effect';
 import type { Redacted } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 import { parse as parseYaml } from 'yaml';
 
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
@@ -83,6 +83,20 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'availability', setup: 'availability' },
   { hostname: 'tax', setup: 'tax' },
   { hostname: 'privacy', setup: 'privacy' },
+  { hostname: 'propertyportfolio', setup: 'property-portfolio' },
+  { hostname: 'propertyleasing', setup: 'property-leasing' },
+  { hostname: 'legalagreements', setup: 'legal-agreements' },
+  { hostname: 'worktasks', setup: 'work-tasks' },
+  { hostname: 'workforce', setup: 'workforce' },
+  { hostname: 'tagging', setup: 'tagging' },
+  { hostname: 'crm', setup: 'crm' },
+  { hostname: 'salespipeline', setup: 'sales-pipeline' },
+  { hostname: 'merchandise', setup: 'merchandise' },
+  { hostname: 'facilityoperations', setup: 'facility-operations' },
+  { hostname: 'salesinsights', setup: 'sales-insights' },
+  { hostname: 'financebilling', setup: 'finance-billing' },
+  { hostname: 'crmactivities', setup: 'crm-activities' },
+  { hostname: 'projects', setup: 'projects' },
 ] as const;
 
 const EnvironmentKeySchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvironmentKey'));

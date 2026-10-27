@@ -1,7 +1,7 @@
 // expect-count: 2
 // A9: a route module builds its own client and a component calls that factory per interaction.
 import { Effect } from 'effect';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 const loadCustomers = (page: number) =>

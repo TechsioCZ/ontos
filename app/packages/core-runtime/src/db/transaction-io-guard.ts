@@ -1,6 +1,6 @@
 import type { PgClient } from '@effect/sql-pg';
 import { Context, Data, Effect, Option, Schema, flow } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 /**
  * What must never run between BEGIN and COMMIT of a governed operation: every one of them would hold the

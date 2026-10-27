@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -136,7 +137,7 @@ describe('Variant use change persistence (#441)', () => {
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeConflict)(failure)).toBe(true);
       expect(failure).toMatchObject({ conflict: 'DUPLICATE_COMBINATION' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('proves a collision-free reactivation against a complete Cart population and Catalog evidence', () =>
@@ -147,7 +148,7 @@ describe('Variant use change persistence (#441)', () => {
         combinationKey: reactivationKey,
         decision: { changeKind: 'CORRECTED', revalidation: 'NOT_REQUIRED' },
       });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a value retired from the Current Product-specific allowed set', () =>
@@ -163,7 +164,7 @@ describe('Variant use change persistence (#441)', () => {
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeConflict)(failure)).toBe(true);
       expect(failure).toMatchObject({ conflict: 'INVALID_VALUE' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the Current Product-specific allowed set cannot be verified', () =>
@@ -177,7 +178,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed without the Cart open-selection owner contract', () =>
@@ -196,7 +197,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('blocks reactivation while an open Cart selection still references the Variant', () =>
@@ -206,7 +207,7 @@ describe('Variant use change persistence (#441)', () => {
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeConflict)(failure)).toBe(true);
       expect(failure).toMatchObject({ conflict: 'OPEN_SELECTION_REVALIDATION_REQUIRED' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the injected Cart population read is unavailable', () =>
@@ -230,7 +231,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('blocks a retired parent Product before looking for a Current collision', () =>
@@ -240,7 +241,7 @@ describe('Variant use change persistence (#441)', () => {
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeConflict)(failure)).toBe(true);
       expect(failure).toMatchObject({ conflict: 'RETIRED_PARENT_PRODUCT' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('blocks reactivation while a required Package Option is retired or inactive', () =>
@@ -250,7 +251,7 @@ describe('Variant use change persistence (#441)', () => {
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeConflict)(failure)).toBe(true);
       expect(failure).toMatchObject({ conflict: 'RETIRED_PACKAGE_OPTION' });
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the owner-issued reactivation lifecycle basis is unavailable', () =>
@@ -277,7 +278,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the retired Variant no longer carries a documented value', () =>
@@ -289,7 +290,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('maps an unavailable Current axis basis to a typed basis failure', () =>
@@ -306,7 +307,7 @@ describe('Variant use change persistence (#441)', () => {
         .assessReactivation({ productRef, variantRef })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects a foreign tenant before reading private data', () =>
@@ -320,6 +321,6 @@ describe('Variant use change persistence (#441)', () => {
         })
         .pipe(Effect.flip);
       expect(Schema.is(VariantUseChangeBasisUnavailable)(failure)).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

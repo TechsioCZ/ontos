@@ -10,7 +10,7 @@ import type {
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
 import { ConfigProvider, DateTime, Effect, Predicate, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';

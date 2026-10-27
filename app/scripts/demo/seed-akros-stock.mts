@@ -2,8 +2,8 @@
 import { NodeServices } from '@effect/platform-node';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { akrosMinimumStock } from '../../verticals/merchandise/scripts/akros-baseline.ts';
 import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';

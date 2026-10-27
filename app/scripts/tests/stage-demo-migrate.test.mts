@@ -15,11 +15,11 @@ import {
 } from 'effect';
 import { systemError } from 'effect/PlatformError';
 import { TestClock } from 'effect/testing';
-import { Command } from 'effect/unstable/cli';
-import { HttpClient } from 'effect/unstable/http';
-import { ChildProcessSpawner } from 'effect/unstable/process';
-import type { ChildProcess } from 'effect/unstable/process';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Command } from 'effect/cli';
+import { HttpClient } from 'effect/http';
+import { ChildProcessSpawner } from 'effect/process';
+import type { ChildProcess } from 'effect/process';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';

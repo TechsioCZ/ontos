@@ -1,5 +1,5 @@
 import { Array as Arr, Context, DateTime, Duration, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { CloudflareApiError } from './cloudflare-api-error.mts';
 

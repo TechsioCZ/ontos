@@ -44,6 +44,7 @@ const ownerMigrations = [
   'sales-insights',
   'finance-billing',
   'crm-activities',
+  'projects',
 ];
 
 it('keeps the internal owner command sequential and free of general or portal-auth bootstraps', () => {
@@ -438,5 +439,6 @@ it('preserves the DEMO shared-runtime owners while excluding Party and Contacts'
     'demo_sales_insights',
     'finance_billing',
     'crm_activities',
+    'projects',
   ]);
 });

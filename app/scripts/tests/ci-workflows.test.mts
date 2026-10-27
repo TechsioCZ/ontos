@@ -1,12 +1,15 @@
-import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
+
+import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
 const WorkflowSchema = Schema.Struct({
@@ -41,7 +44,6 @@ const DemoDeploymentSchema = Schema.Struct({
 
 const LOAD_IDENTITIES = 'Load the dedicated database identity credentials';
 const BOOTSTRAP_BEFORE = 'Bootstrap every database identity before migrations';
-const BOOTSTRAP_AFTER = 'Bootstrap every database identity after migrations';
 const EDGE_PUBLICATION_LOCK = 'zerops-stage';
 
 const demoDeployment = () =>
@@ -62,7 +64,6 @@ it('holds one stage lock across dedicated identity bootstrap, every demo migrati
     LOAD_IDENTITIES,
     BOOTSTRAP_BEFORE,
     'Migrate every owner schema',
-    BOOTSTRAP_AFTER,
     'Upload every immutable release Worker',
     'Publish the Application Composition',
     'Activate the Shell ingress',
@@ -72,9 +73,19 @@ it('holds one stage lock across dedicated identity bootstrap, every demo migrati
   const positions = ordered.map((name) => steps.findIndex((step) => step.name === name));
   expect(positions.every((position) => position >= 0)).toBe(true);
   expect(positions).toEqual(EffectArray.sort(positions, Order.Number));
-  for (const name of [BOOTSTRAP_BEFORE, BOOTSTRAP_AFTER]) {
-    expect(steps.find((step) => step.name === name)?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
-  }
+  expect(steps.find((step) => step.name === BOOTSTRAP_BEFORE)?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
+  expect(steps.find((step) => step.name === 'Migrate every owner schema')?.run).toBe(
+    'mise exec -- pnpm exec node scripts/stage-demo-migrate.mts',
+  );
+  const packageScripts = Schema.decodeUnknownSync(
+    Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
+  )(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
+  expect(packageScripts.scripts['db:migrate:prepared:internal']).toBe(
+    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+  );
+  expect(readFileSync(new URL('../stage-demo-migrate.mts', import.meta.url), 'utf-8')).toContain(
+    "ChildProcess.make('pnpm', ['db:migrate:prepared:internal']",
+  );
 });
 
 it('loads dedicated credentials from existing sensitive stage secrets, never from shared fallback or build jobs', () => {
@@ -311,6 +322,8 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
   ).toEqual([
     'ULTRAMODERN_MF_DEV_ORIGIN',
     'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
     'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
     'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
     'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
@@ -320,7 +333,9 @@ it('deploys to Cloudflare only when the account, retained artifact origin, backe
     missingBuildVariables({
       buildEnvironment: {
         ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
+        ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 'gateway-issuer-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'party-registry-hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test',
         ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.example.test',
@@ -341,7 +356,9 @@ it('fails edge readiness before migrations when either private-network credentia
       JSON.stringify({
         buildEnvironment: {
           ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'test-kv',
+          ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID: 'test-gateway-issuer-hyperdrive',
           ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'test-hyperdrive',
+          ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID: 'test-party-registry-hyperdrive',
           ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'test-vpc',
           ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.test',
         },
@@ -640,6 +657,21 @@ const VPN_TEST_BASH = os.platform() === 'darwin' ? '/opt/homebrew/bin/bash' : '/
 const FAKE_BASH_SHEBANG = '#!/bin/bash';
 const VPN_INTERFACE_CALL = 'sudo=ip link show dev zerops';
 const VPN_OWNED_CLEANUP_CALL = 'sudo=rm --recursive --force -- <runner>/ontos-zerops-vpn.test';
+const VPN_NATIVE_UP_CALL = 'native=vpn up --project-id test-project --mtu 1350';
+const VPN_NATIVE_DOWN_CALL = 'native=vpn down';
+const VPN_NATIVE_CLEAR_CALL = 'native=vpn clear --project-id test-project';
+const VPN_RUNTIME_HOST = 'runtime-private';
+const VPN_ADMIN_HOST = 'admin-private';
+const VPN_RUNTIME_TCP_CALL = 'tcp=runtime-private:5432,family=ipv4,timeout=2';
+const VPN_ADMIN_TCP_CALL = 'tcp=admin-private:5433,family=ipv4,timeout=2';
+const VPN_REGISTRY_MISSING_KEY = 'missing-key';
+const VPN_REGISTRY_CORRUPT = 'corrupt';
+const VPN_REGISTRY_MISSING_FILE = 'missing-file';
+const VPN_REGISTRY_SYMLINK = 'symlink';
+const VPN_TEST_KEY = Buffer.alloc(32, 7).toString('base64');
+const VPN_NATIVE_NOISE = 'postgres://secret-user:secret-password@secret-host/secret-db private-key-canary token-canary';
+const VPN_VERIFY_PRESERVE_CALL =
+  'preserve=--preserve-env=DATABASE_URL,DATABASE_ADMIN_URL,VPN_PROJECT_ID,VPN_STATE_DIRECTORY,VPN_CLI_PATH,RUNNER_TEMP,ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH';
 const nativeVpnScript = (name: string) =>
   readNativeVpnAction().runs.steps.find((step) => step.name === name)?.run ?? 'exit 1';
 
@@ -666,46 +698,117 @@ const FAKE_VPN_CLI = [
   '[[ "$ZEROPS_CLI_YAML_FILE_PATH" == "$VPN_STATE_DIRECTORY/.zcli.yml" ]] || exit 70',
   '[[ "$ZEROPS_CLI_LOG_FILE_PATH" == /dev/null ]] || exit 71',
   '[[ "$2" != "$VPN_NATIVE_FAILURE" ]] || exit 72',
-  'if [[ "$2" == down ]]; then : >"$VPN_INTERFACE_FILE"; fi',
+  String.raw`printf "%s\n" "$VPN_NATIVE_NOISE"`,
+  'if [[ "$2" == down && "$VPN_DOWN_KEEPS_INTERFACE" != 1 ]]; then : >"$VPN_INTERFACE_FILE"; fi',
+  'if [[ "$2" == up ]]; then : >"$VPN_RECONNECTED_FILE"; rm -f -- "$VPN_INTERFACE_FILE"; fi',
+  'if [[ "$2" == "$VPN_MUTATE_KEY_AT" ]]; then printf \'{"ProjectVpnKeyRegistry":{}}\' >"$ZEROPS_CLI_DATA_FILE_PATH"; fi',
+].join('\n');
+const FAKE_VPN_WG = [
+  FAKE_BASH_SHEBANG,
+  String.raw`printf "wg=%s\n" "$*" >>"$VPN_CALLS"`,
+  'case "$*" in',
+  '  pubkey) read -r key; [[ "$key" == "$VPN_TEST_KEY" ]] || exit 73; echo test-public-key ;;',
+  '  "show zerops public-key")',
+  '    [[ ! -f "$VPN_INTERFACE_FILE" ]] || exit 1',
+  '    if [[ "$VPN_FOREIGN_INTERFACE" == 1 ]]; then echo foreign-key; else echo test-public-key; fi ;;',
+  String.raw`  "show zerops latest-handshakes") printf "peer-key-canary\t%s\n" "$VPN_HANDSHAKE_TIME" ;;`,
+  '  *) exit 74 ;;',
+  'esac',
 ].join('\n');
 const FAKE_VPN_PYTHON = [
   '#!/usr/bin/python3',
-  'import os, socket, sys, time',
+  'import errno, os, pathlib, socket, subprocess, sys',
+  'native_run = subprocess.run',
+  'def run(arguments, **options):',
+  '    if arguments[1:3] == ["vpn", os.environ.get("VPN_NATIVE_TIMEOUT")]: raise subprocess.TimeoutExpired(arguments, options["timeout"])',
+  '    return native_run(arguments, **options)',
+  'subprocess.run = run',
+  'def failing(host, family="both"):',
+  '    recovered = pathlib.Path(os.environ["VPN_RECONNECTED_FILE"]).exists() and os.environ.get("VPN_RECOVER_AFTER_UP") == "1"',
+  '    return not recovered and host == os.environ.get("VPN_UNREACHABLE_HOST") and os.environ.get("VPN_FAIL_FAMILY", family) in (family, "both")',
+  'def resolve(host, port, type):',
+  '    with open(os.environ["VPN_CALLS"], "a") as output:',
+  String.raw`        output.write(f"dns={host}:{port}\n")`,
+  '    if failing(host) and os.environ.get("VPN_FAILURE_KIND") == "dns": raise socket.gaierror(socket.EAI_AGAIN, os.environ["VPN_NATIVE_NOISE"])',
+  '    if failing(host) and os.environ.get("VPN_FAILURE_KIND") == "dns_timeout": raise TimeoutError(os.environ["VPN_NATIVE_NOISE"])',
+  '    families = {"ipv4": socket.AF_INET, "ipv6": socket.AF_INET6}',
+  '    return [(families[name], socket.SOCK_STREAM, 6, "", (host, port)) for name in os.environ.get("VPN_FAMILIES", "ipv4").split(",")]',
   'class Connection:',
+  '    def __init__(self, family, *_): self.family = "ipv4" if family == socket.AF_INET else "ipv6"',
+  '    def settimeout(self, timeout): self.timeout = timeout',
   '    def __enter__(self): return self',
   '    def __exit__(self, *_): return False',
-  'def connect(address, timeout):',
-  '    with open(os.environ["VPN_CALLS"], "a") as output:',
-  String.raw`        output.write(f"tcp={address[0]}:{address[1]},timeout={timeout}\n")`,
-  '    if address[0] == os.environ.get("VPN_UNREACHABLE_HOST"): raise OSError("fake DNS or TCP failure")',
-  '    return Connection()',
-  'socket.create_connection = connect',
-  'ticks = iter(range(0, 10000, 31))',
-  'time.monotonic = lambda: next(ticks)',
-  'time.sleep = lambda _: None',
+  '    def connect(self, address):',
+  '        with open(os.environ["VPN_CALLS"], "a") as output:',
+  String.raw`            output.write(f"tcp={address[0]}:{address[1]},family={self.family},timeout={self.timeout}\n")`,
+  '        if failing(address[0], self.family):',
+  '            kind = os.environ.get("VPN_FAILURE_KIND", "tcp_timeout")',
+  '            if kind == "tcp_timeout": raise TimeoutError(os.environ["VPN_NATIVE_NOISE"])',
+  '            raise OSError(errno.ECONNREFUSED if kind == "tcp_refused" else errno.ENETUNREACH, os.environ["VPN_NATIVE_NOISE"])',
+  'socket.getaddrinfo = resolve',
+  'socket.socket = Connection',
   'exec(compile(sys.stdin.read(), "<native-vpn-endpoints>", "exec"))',
 ].join('\n');
 
 /** Executes the real action script with local native-command and socket substitutes. */
-const runNativeVpnScript = (script: string, environment: Readonly<Record<string, string | undefined>> = {}) => {
+const runNativeVpnScriptDetails = (
+  script: string,
+  environment: Readonly<Record<string, string | undefined>> = {},
+  cleanupScript?: string,
+) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-native-vpn-test-'));
   const stateDirectory = path.join(directory, 'ontos-zerops-vpn.test');
   const callsPath = path.join(directory, 'calls');
   try {
     mkdirSync(stateDirectory);
+    chmodSync(stateDirectory, 0o700);
     writeFileSync(callsPath, '');
+    const registryState = Schema.decodeUnknownSync(
+      Schema.OptionFromUndefinedOr(
+        Schema.Literals([
+          VPN_REGISTRY_MISSING_KEY,
+          VPN_REGISTRY_CORRUPT,
+          VPN_REGISTRY_MISSING_FILE,
+          VPN_REGISTRY_SYMLINK,
+        ]),
+      ),
+    )(environment.VPN_REGISTRY_STATE).pipe(Option.getOrElse(() => 'valid'));
+    const projectId = environment.VPN_REGISTRY_PROJECT ?? 'test-project';
+    const registry = { [projectId]: { Key: environment.VPN_REGISTRY_KEY ?? VPN_TEST_KEY, ProjectId: projectId } };
+    const dataPath = path.join(stateDirectory, 'cli.data');
+    writeFileSync(
+      dataPath,
+      JSON.stringify({ ProjectVpnKeyRegistry: registryState === VPN_REGISTRY_MISSING_KEY ? {} : registry }),
+    );
+    writeFileSync(
+      path.join(stateDirectory, 'zerops.conf'),
+      `[Interface]\nPrivateKey = ${environment.VPN_CONFIG_KEY ?? VPN_TEST_KEY}\n`,
+    );
+    if (registryState === VPN_REGISTRY_CORRUPT) {
+      writeFileSync(dataPath, 'invalid-json-secret-canary');
+    }
+    if (registryState === VPN_REGISTRY_MISSING_FILE) {
+      rmSync(dataPath);
+    }
+    if (registryState === VPN_REGISTRY_SYMLINK) {
+      const linkedData = path.join(directory, 'other-cli.data');
+      writeFileSync(linkedData, JSON.stringify({ ProjectVpnKeyRegistry: registry }));
+      rmSync(dataPath);
+      symlinkSync(linkedData, dataPath);
+    }
     for (const [name, source] of [
       ['sudo', FAKE_VPN_SUDO],
       ['zcli', FAKE_VPN_CLI],
       ['python3', FAKE_VPN_PYTHON],
+      ['wg', FAKE_VPN_WG],
     ]) {
       const executable = path.join(directory, name);
       writeFileSync(executable, source);
       chmodSync(executable, 0o755);
     }
-    let passed = true;
-    try {
-      execFileSync(VPN_TEST_BASH, ['-eo', 'pipefail', '-c', script], {
+    const execute = (source: string) =>
+      spawnSync(VPN_TEST_BASH, ['-eo', 'pipefail', '-c', source], {
+        encoding: 'utf-8',
         env: {
           DATABASE_ADMIN_URL: 'postgres://admin@admin-private:5433/ontos',
           DATABASE_URL: 'postgresql://runtime@runtime-private/ontos',
@@ -714,26 +817,41 @@ const runNativeVpnScript = (script: string, environment: Readonly<Record<string,
           RUNNER_TEMP: directory,
           VPN_CALLS: callsPath,
           VPN_CLI_PATH: path.join(directory, 'zcli'),
+          VPN_HANDSHAKE_TIME: '0',
           VPN_INTERFACE_FILE: path.join(directory, 'interface-down'),
+          VPN_NATIVE_NOISE,
           VPN_OPERATION: 'connect',
           VPN_PROJECT_ID: 'test-project',
+          VPN_RECONNECTED_FILE: path.join(directory, 'reconnected'),
           VPN_STATE_DIRECTORY: stateDirectory,
+          VPN_TEST_KEY,
           ZEROPS_TOKEN: 'test-token',
           ...environment,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 10_000,
       });
-    } catch {
-      passed = false;
+    const result = execute(script);
+    let output = result.stdout + result.stderr;
+    let cleanupPassed = true;
+    if (cleanupScript !== undefined) {
+      const cleanup = execute(cleanupScript);
+      cleanupPassed = cleanup.status === 0;
+      output += cleanup.stdout + cleanup.stderr;
     }
     return {
       calls: readFileSync(callsPath, 'utf-8').replaceAll(directory, '<runner>').split('\n').filter(Boolean),
-      passed,
+      cleanupPassed,
+      output,
+      passed: result.status === 0,
     };
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
+};
+const runNativeVpnScript = (script: string, environment: Readonly<Record<string, string | undefined>> = {}) => {
+  const { calls, passed } = runNativeVpnScriptDetails(script, environment);
+  return { calls, passed };
 };
 
 it('rejects parallel private operations rather than inventing an order while reading them', () => {
@@ -831,12 +949,12 @@ it('runs native VPN up and clear with the exact project and isolated credential 
   expect(connected.calls[0]).toBe(
     'preserve=--preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH',
   );
-  expect(connected.calls[1]).toBe('native=vpn up --project-id test-project --mtu 1350');
+  expect(connected.calls[1]).toBe(VPN_NATIVE_UP_CALL);
   expect(connected.calls).toHaveLength(2);
   const cleared = runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP));
   expect(cleared.passed).toBe(true);
   expect(cleared.calls.slice(1)).toEqual([
-    'native=vpn clear --project-id test-project',
+    VPN_NATIVE_CLEAR_CALL,
     VPN_INTERFACE_CALL,
     VPN_INTERFACE_CALL,
     VPN_OWNED_CLEANUP_CALL,
@@ -863,9 +981,9 @@ it('uses native VPN down when the interface survives clearing and verifies its r
   const result = runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP), { VPN_INTERFACE_STATUS: '0' });
   expect(result.passed).toBe(true);
   expect(result.calls.slice(1).filter((call) => !call.startsWith('preserve='))).toEqual([
-    'native=vpn clear --project-id test-project',
+    VPN_NATIVE_CLEAR_CALL,
     VPN_INTERFACE_CALL,
-    'native=vpn down',
+    VPN_NATIVE_DOWN_CALL,
     VPN_INTERFACE_CALL,
     VPN_OWNED_CLEANUP_CALL,
   ]);
@@ -941,13 +1059,23 @@ it('preserves this workflow revision of the native VPN action before checkout an
 
 it('checks DNS and TCP for both private PostgreSQL endpoints before admitting database operations', () => {
   expect(runNativeVpnScript(nativeVpnScript(VPN_DATABASE_STEP))).toEqual({
-    calls: ['tcp=runtime-private:5432,timeout=3', 'tcp=admin-private:5433,timeout=3'],
+    calls: [
+      VPN_VERIFY_PRESERVE_CALL,
+      'dns=runtime-private:5432',
+      VPN_RUNTIME_TCP_CALL,
+      'dns=admin-private:5433',
+      VPN_ADMIN_TCP_CALL,
+    ],
     passed: true,
   });
-  for (const host of ['runtime-private', 'admin-private']) {
+  for (const host of [VPN_RUNTIME_HOST, VPN_ADMIN_HOST]) {
     const result = runNativeVpnScript(nativeVpnScript(VPN_DATABASE_STEP), { VPN_UNREACHABLE_HOST: host });
     expect(result.passed).toBe(false);
-    expect(result.calls.filter((call) => call.includes(host))).toHaveLength(2);
+    expect(result.calls.filter((call) => call.startsWith(`tcp=${host}:`))).toHaveLength(2);
+    expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([
+      VPN_NATIVE_DOWN_CALL,
+      VPN_NATIVE_UP_CALL,
+    ]);
   }
 });
 
@@ -957,11 +1085,157 @@ it('rejects malformed runtime or administrative database URIs before a private s
     { DATABASE_URL: '' },
     { DATABASE_URL: 'https://runtime-private/ontos' },
     { DATABASE_URL: 'postgres://runtime-private:not-a-port/ontos' },
+    { DATABASE_URL: 'postgres://runtime-private:0/ontos' },
   ]) {
-    expect(runNativeVpnScript(verify, environment)).toEqual({ calls: [], passed: false });
+    expect(runNativeVpnScript(verify, environment)).toEqual({ calls: [VPN_VERIFY_PRESERVE_CALL], passed: false });
   }
   const missingAdmin = runNativeVpnScript(verify, { DATABASE_ADMIN_URL: '' });
-  expect(missingAdmin).toEqual({ calls: ['tcp=runtime-private:5432,timeout=3'], passed: false });
+  expect(missingAdmin).toEqual({ calls: [VPN_VERIFY_PRESERVE_CALL], passed: false });
+});
+
+it('rechecks both endpoints after exactly one native reconnect using the same project and registry', () => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_RECOVER_AFTER_UP: '1',
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(true);
+  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([VPN_NATIVE_DOWN_CALL, VPN_NATIVE_UP_CALL]);
+  expect(result.calls.filter((call) => call.startsWith('tcp='))).toEqual([
+    VPN_RUNTIME_TCP_CALL,
+    VPN_ADMIN_TCP_CALL,
+    VPN_RUNTIME_TCP_CALL,
+    VPN_ADMIN_TCP_CALL,
+  ]);
+  expect(result.output).toContain('native_handshake=absent');
+  expect(result.output).not.toContain(VPN_NATIVE_NOISE);
+  const verify = readNativeVpnAction().runs.steps.find((step) => step.name === VPN_DATABASE_STEP);
+  expect(verify?.env?.VPN_STATE_DIRECTORY).toBe(expression('steps.prepare.outputs.state-directory'));
+  expect(verify?.env?.VPN_CLI_PATH).toBe(expression('steps.prepare.outputs.cli-path'));
+  expect(verify?.env?.VPN_PROJECT_ID).toBe(expression('inputs.project-id'));
+});
+
+it.each([
+  ['dns', 'dns=resolution_failed'],
+  ['dns_timeout', 'dns=timeout'],
+  ['tcp_timeout', 'ipv4=tcp_timeout'],
+  ['tcp_refused', 'ipv4=tcp_refused'],
+  ['tcp_unreachable', 'ipv4=tcp_unreachable'],
+])('classifies %s without printing URLs, hosts, credentials, peer keys or native configuration', (kind, diagnosis) => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_FAILURE_KIND: kind,
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(false);
+  const expectedDiagnosis = kind.startsWith('dns') ? diagnosis : `dns=resolved ${diagnosis}`;
+  expect(result.output).toContain(`DATABASE_URL: ${expectedDiagnosis}`);
+  expect(result.output).toContain('DATABASE_ADMIN_URL: dns=resolved ipv4=tcp_connected');
+  expect(result.calls.filter((call) => call.startsWith('dns=admin-private:'))).toHaveLength(2);
+  expect(result.calls.filter((call) => call.startsWith('native='))).toHaveLength(2);
+  for (const secret of [VPN_NATIVE_NOISE, VPN_RUNTIME_HOST, VPN_ADMIN_HOST, VPN_TEST_KEY, 'peer-key-canary']) {
+    expect(result.output).not.toContain(secret);
+  }
+});
+
+it('reports both address families and accepts an endpoint only when one family actually connects', () => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_FAIL_FAMILY: 'ipv6',
+    VPN_FAILURE_KIND: 'tcp_refused',
+    VPN_FAMILIES: 'ipv4,ipv6',
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(true);
+  expect(result.output).toContain('DATABASE_URL: dns=resolved ipv4=tcp_connected ipv6=tcp_refused');
+  expect(result.output).toContain('DATABASE_ADMIN_URL: dns=resolved ipv4=tcp_connected ipv6=tcp_connected');
+  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([]);
+});
+
+it.each([
+  { VPN_REGISTRY_STATE: VPN_REGISTRY_MISSING_KEY },
+  { VPN_REGISTRY_STATE: VPN_REGISTRY_MISSING_FILE },
+  { VPN_REGISTRY_STATE: VPN_REGISTRY_CORRUPT },
+  { VPN_REGISTRY_STATE: VPN_REGISTRY_SYMLINK },
+  { VPN_REGISTRY_KEY: 'invalid-base64' },
+  { VPN_REGISTRY_PROJECT: 'foreign-project' },
+  { VPN_CONFIG_KEY: 'invalid-key' },
+  { VPN_STATE_DIRECTORY: '/foreign/ontos-zerops-vpn.test' },
+  { VPN_FOREIGN_INTERFACE: '1' },
+])('refuses native recovery for missing, corrupt or foreign runner credentials %j', (environment) => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+    ...environment,
+  });
+  expect(result.passed).toBe(false);
+  expect(result.output).toContain('Native Zerops VPN recovery refused:');
+  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([]);
+});
+
+it('reports native handshake age without printing the peer key', () => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_HANDSHAKE_TIME: '1',
+    VPN_RECOVER_AFTER_UP: '1',
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(true);
+  expect(result.output).toMatch(/native_handshake=present age_seconds=\d+/u);
+  expect(result.output).not.toContain('peer-key-canary');
+});
+
+it.each(['down', 'up'])('fails closed when native %s changes the credential registry', (operation) => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_MUTATE_KEY_AT: operation,
+    VPN_RECOVER_AFTER_UP: '1',
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(false);
+  expect(result.calls.filter((call) => call.startsWith('native='))).toHaveLength(operation === 'down' ? 1 : 2);
+  expect(result.calls.filter((call) => call.startsWith('dns=runtime-private:'))).toHaveLength(1);
+});
+
+it('never invokes native up when down has not removed the runner-owned interface', () => {
+  const result = runNativeVpnScriptDetails(nativeVpnScript(VPN_DATABASE_STEP), {
+    VPN_DOWN_KEEPS_INTERFACE: '1',
+    VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST,
+  });
+  expect(result.passed).toBe(false);
+  expect(result.output).toContain('interface removal was not confirmed');
+  expect(result.calls.filter((call) => call.startsWith('native='))).toEqual([VPN_NATIVE_DOWN_CALL]);
+});
+
+it.each(['down', 'up'])(
+  'fails closed on native %s failure or timeout and still permits caller cleanup',
+  (operation) => {
+    for (const failure of [{ VPN_NATIVE_FAILURE: operation }, { VPN_NATIVE_TIMEOUT: operation }]) {
+      const result = runNativeVpnScriptDetails(
+        nativeVpnScript(VPN_DATABASE_STEP),
+        { VPN_UNREACHABLE_HOST: VPN_RUNTIME_HOST, ...failure },
+        nativeVpnScript(VPN_CLEAR_STEP),
+      );
+      expect(result.passed).toBe(false);
+      expect(result.cleanupPassed).toBe(true);
+      expect(result.calls).toContain(VPN_NATIVE_CLEAR_CALL);
+      expect(result.calls.at(-1)).toBe(VPN_OWNED_CLEANUP_CALL);
+      expect(result.output).not.toContain(VPN_NATIVE_NOISE);
+    }
+  },
+);
+
+it('preserves caller cleanup on initial connection failure, exhausted recovery and recovered success', () => {
+  const scenarios = [
+    { environment: { VPN_NATIVE_FAILURE: 'up' }, script: VPN_CONNECT_STEP, success: false },
+    { environment: { VPN_UNREACHABLE_HOST: VPN_ADMIN_HOST }, script: VPN_DATABASE_STEP, success: false },
+    {
+      environment: { VPN_RECOVER_AFTER_UP: '1', VPN_UNREACHABLE_HOST: VPN_ADMIN_HOST },
+      script: VPN_DATABASE_STEP,
+      success: true,
+    },
+  ];
+  for (const { environment, script, success } of scenarios) {
+    const result = runNativeVpnScriptDetails(nativeVpnScript(script), environment, nativeVpnScript(VPN_CLEAR_STEP));
+    expect(result.passed).toBe(success);
+    expect(result.cleanupPassed).toBe(true);
+    expect(result.calls.at(-1)).toBe(VPN_OWNED_CLEANUP_CALL);
+    expect(result.output).not.toContain(VPN_NATIVE_NOISE);
+  }
 });
 
 /** Runs a workflow step's script as Actions would and returns its GitHub outputs, or its failure. */
@@ -1930,15 +2204,17 @@ it('runs the root unit and component tests of every workspace package in exactly
     JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
   );
   // The shards run exactly what the root script runs, split by package.
-  expect(scripts['test:unit']).toBe('pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component');
+  expect(scripts['test:unit']).toBe(
+    'pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:unit --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:component --pool.maxWorkers 1',
+  );
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
     if (unit === undefined || !unit.endsWith(' run test:unit')) {
       return [];
     }
-    const filters = unit.replace(/^pnpm -r --if-present /u, '').replace(/ run test:unit$/u, '');
+    const filters = unit.replace(/^pnpm -r --no-sort --if-present /u, '').replace(/ run test:unit$/u, '');
     // Each shard runs test:component over the same packages, after test:unit, and nothing else.
-    expect(component).toBe(`pnpm -r --if-present ${filters} run test:component`);
+    expect(component).toBe(`pnpm -r --no-sort --if-present ${filters} run test:component`);
     expect(rest).toEqual([]);
     return [
       [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter?.replaceAll("'", '') ?? ''),
@@ -1978,7 +2254,11 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
       });
       return readFileSync(path.join(directory, 'shard-files'), 'utf-8').split('\0').filter(Boolean);
     });
-    const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+    const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], {
+      cwd: repository,
+      encoding: 'utf-8',
+      maxBuffer: 16 * 1024 * 1024,
+    })
       .split('\0')
       .filter(Boolean);
     expect(sorted(selected.flat())).toEqual(sorted(tracked));
@@ -1987,5 +2267,124 @@ it('formats and lints every tracked file in exactly one pre-commit hook shard', 
     }
   } finally {
     rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+const RUNTIME_IDENTITY_URLS = Object.fromEntries(
+  DATABASE_IDENTITIES.filter(({ urlKey }) => urlKey !== 'DATABASE_URL').map(({ role, urlKey }) => [urlKey, role]),
+);
+const IDENTITY_STEP_ENV_FILTER = /printenv \| grep -E '(?<pattern>[^']+)'/gu;
+const AUDIT_STEP = 'Audit runtime database identities against the checked-in grant manifest';
+const IdentityGateJobSchema = Schema.Struct({
+  // Unquoted placeholder IDs parse as numbers.
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+  steps: Schema.Array(WorkflowStepSchema),
+});
+const IdentityGateJobsSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'cloudflare-artifact-build': IdentityGateJobSchema,
+    'node-artifact-build': Schema.Struct({
+      ...IdentityGateJobSchema.fields,
+      services: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          env: Schema.Record(Schema.String, Schema.String),
+          image: Schema.String,
+          options: Schema.String,
+          ports: Schema.Array(Schema.String),
+        }),
+      ),
+    }),
+    'service-integration': IdentityGateJobSchema,
+  }),
+});
+
+it('runs migration equivalence proofs only against the owned CI maintenance database', () => {
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const integration = jobs['service-integration'].steps.find(({ run }) => run === 'mise exec -- pnpm test:integration');
+  expect(integration?.if).toBe("matrix.suite == 'integration'");
+  expect(integration?.env).toEqual({
+    MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: 'postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres',
+    MIGRATION_EQUIVALENCE_TEST_SANDBOX: 'owned-postgres18',
+  });
+});
+
+it('gives every CI database tool a separate login per runtime identity and audits their grants', () => {
+  const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(source));
+  const integration = jobs['service-integration'];
+  const proofValues = jobs['cloudflare-artifact-build'].steps.find(
+    ({ name }) => name === 'Set the development-only service values of the Worker proofs',
+  );
+  for (const environment of [integration.env, proofValues?.env]) {
+    for (const [key, role] of Object.entries(RUNTIME_IDENTITY_URLS)) {
+      expect(environment?.[key]).toBe(`postgresql://${role}:${role}@localhost:5433/ontos_ci`);
+    }
+  }
+  // Both dotenv writers pass exactly the identity URLs through, and nothing that merely shares a prefix.
+  const filters = Array.from(source.matchAll(IDENTITY_STEP_ENV_FILTER), (match) => match.groups?.pattern ?? '');
+  expect(filters).toHaveLength(2);
+  for (const filter of filters) {
+    const pattern = new RegExp(filter, 'u');
+    for (const key of Object.keys(RUNTIME_IDENTITY_URLS)) {
+      expect(pattern.test(`${key}=postgresql://identity`)).toBe(true);
+      expect(pattern.test(`${key}_EXTRA=value`)).toBe(false);
+    }
+  }
+  const { steps } = integration;
+  const migrations = steps.findIndex(({ name }) => name.startsWith('Apply and verify Core, Auth, and Contacts'));
+  const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
+  expect(migrations).toBeGreaterThanOrEqual(0);
+  expect(audit).toBe(migrations + 1);
+  expect(steps[audit]?.if).toBe("matrix.suite == 'integration'");
+  expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
+});
+
+it.effect('proves Node artifacts against a migrated PostgreSQL database with every declared login identity', () =>
+  Effect.gen(function* proveNodeDatabaseIdentities() {
+    const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+    const node = jobs['node-artifact-build'];
+    const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(node.env);
+    const service = node.services['proof-postgres'];
+    expect(service?.image).toBe(expression("matrix.proof == 'node' && 'postgres:18.6-alpine' || ''"));
+    expect(service?.ports).toContain('5433:5432');
+    const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
+    expect(admin.username).toBe(service?.env.POSTGRES_USER);
+    expect(admin.password).toBe(service?.env.POSTGRES_PASSWORD);
+    expect(admin.pathname).toBe(`/${service?.env.POSTGRES_DB ?? ''}`);
+    expect(service?.options).toContain(`pg_isready -U ${admin.username} -d ${service?.env.POSTGRES_DB ?? ''}`);
+    const provision = node.steps.findIndex(
+      ({ name }) => name === 'Migrate the Node proof database and provision its runtime identities',
+    );
+    const proof = node.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
+    expect(provision).toBeGreaterThanOrEqual(0);
+    expect(provision).toBeLessThan(proof);
+    expect(node.steps[provision]?.if).toBe("matrix.proof == 'node'");
+    expect(node.steps[provision]?.run).toBe('mise exec -- pnpm db:migrate');
+    expect(node.steps[proof]?.env).toBeUndefined();
+    for (const identity of DATABASE_IDENTITIES) {
+      const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
+      expect(connection.expectedRole).toBe(identity.role);
+      const runtime = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(connection.connectionString);
+      expect(runtime.username).toBe(identity.role);
+      expect(runtime.pathname).toBe(`/${service?.env.POSTGRES_DB ?? ''}`);
+      expect(runtime.hostname).toBe(admin.hostname);
+      expect(Number(runtime.port)).toBe(Number(admin.port));
+    }
+  }),
+);
+
+it('gives the workerd SSR proof every dedicated Hyperdrive connection from the canonical identity URL', () => {
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const outputs = jobs['cloudflare-artifact-build'].steps.find(
+    ({ run }) => run?.includes('pnpm cloudflare:ssr-proof') === true,
+  );
+  expect(outputs).toBeDefined();
+  for (const identity of DATABASE_IDENTITIES.filter(({ id }) => id !== 'shared_runtime')) {
+    if (identity.cloudflareHyperdrive !== null) {
+      expect(outputs?.run).toContain(
+        `export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_${identity.cloudflareHyperdrive.binding}="$${identity.urlKey}"`,
+      );
+    }
   }
 });

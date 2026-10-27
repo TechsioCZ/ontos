@@ -190,6 +190,9 @@ export default defineConfig({
     '**/routeTree.gen.*',
     // Framework output of `ultramodern-create ultramodern routes-generate`; route.meta.ts files are the linted source.
     '**/src/routes/ultramodern-route-metadata.ts',
+    // Framework output of `ultramodern-create ultramodern sync-delivery-unit`; shared/ultramodern-build.json is the
+    // source. Remove once the generator emits lint-clean modules again (it now uses `import = require` and `new Error`).
+    '**/shared/ultramodern-build.ts',
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/effect-native/tests/fixtures/**',
   ],
@@ -714,14 +717,9 @@ export default defineConfig({
       },
     },
     {
-      // Route/build metadata is declarative data: extracting repeated values into code constants
+      // Route metadata is declarative data: extracting repeated values into code constants
       // would obscure the independently consumable records without reducing executable duplication.
-      files: [
-        '**/route.meta.ts',
-        'apps/shell-super-app/shared/ultramodern-build.ts',
-        'verticals/party-registry/shared/ultramodern-build.ts',
-        'verticals/party-registry/vertical.manifest.ts',
-      ],
+      files: ['**/route.meta.ts', 'verticals/party-registry/vertical.manifest.ts'],
       rules: {
         'sonarjs/no-duplicate-string': 'off',
       },

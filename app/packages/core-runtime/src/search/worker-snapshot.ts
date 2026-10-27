@@ -1,7 +1,7 @@
 /* oxlint-disable sonarjs/no-built-in-override -- Existing compatibility boundary; expires: 2026-12-31. */
 import { and, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Exit, Layer, Option, Schema } from 'effect';
-import { SqlError, isSqlError } from 'effect/unstable/sql/SqlError';
+import { SqlError, isSqlError } from 'effect/sql/SqlError';
 
 import type { DatabaseDriverFailure } from '../database/driver-failure.ts';
 import { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../database/driver-failure.ts';

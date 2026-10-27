@@ -1,35 +1,37 @@
-// @effect-diagnostics *:off
 // Scoped idempotent fixture repair, not a reseed. Run from app with node --env-file=.env.
 import { PgClient } from '@effect/sql-pg';
 import { NodeRuntime } from '@effect/platform-node';
-import { Config, DateTime, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Config, Console, DateTime, Effect, Layer, Schema } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 import { repairRentalInvoices, rentalInvoiceCorrections, rentalRepairScope } from './repair-rental-invoices.ts';
+
 const admin = Layer.effect(
   PgClient.PgClient,
-  Effect.gen(function* () {
+  Effect.gen(function* admin() {
     return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_ADMIN_URL') });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
-const program = Effect.gen(function* () {
+const program = Effect.gen(function* repair() {
   const sql = yield* PgClient.PgClient;
-  const { tenantId, legalEntityId } = rentalRepairScope;
+  const { legalEntityId, tenantId } = rentalRepairScope;
   yield* sql.withTransaction(
-    Effect.gen(function* () {
+    Effect.gen(function* transaction() {
       const [row] = yield* sql<{ revision: number; state: unknown }>`
       select revision,state from finance_billing.finance_states
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} for update`;
-      if (row === undefined) return yield* Effect.die('Missing scoped finance state');
+      if (row === undefined) {
+        return yield* Effect.die('Missing scoped finance state');
+      }
       const original = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
       // Read-only verification of the rental owner's authoritative occupancy, in the same company only.
       const leases = yield* sql<{
-        id: string;
         counterparty: string;
-        unit: string;
-        start_date: string;
         end_date: string;
+        id: string;
+        start_date: string;
         state: string;
+        unit: string;
       }>`
       select o->'occupancyRef'->>'resourceId' as id,
         o->'customerCounterpartyRef'->>'resourceId' as counterparty,
@@ -53,20 +55,22 @@ const program = Effect.gen(function* () {
         }
       }
       const state = yield* repairRentalInvoices(original, yield* DateTime.now);
-      const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(state);
-      const before = yield* Schema.encodeEffect(FinanceStateSchema)(original);
-      if (JSON.stringify(encoded) === JSON.stringify(before)) {
-        console.log(`Rental corrections already applied at revision ${row.revision}; no write.`);
-        return;
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(FinanceStateSchema))(state);
+      if (Schema.toEquivalence(FinanceStateSchema)(state, original)) {
+        yield* Console.log(`Rental corrections already applied at revision ${row.revision}; no write.`);
+        return yield* Effect.void;
       }
       const updated = yield* sql`update finance_billing.finance_states
-      set state=${JSON.stringify(encoded)}::jsonb,revision=revision+1,updated_at=now()
+      set state=${encoded}::jsonb,revision=revision+1,updated_at=now()
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and revision=${row.revision} returning revision`;
-      if (updated.length !== 1) return yield* Effect.die('Concurrent finance change; retry scoped repair');
-      console.log(
+      if (updated.length !== 1) {
+        return yield* Effect.die('Concurrent finance change; retry scoped repair');
+      }
+      return yield* Console.log(
         `Siampark rental repair revision ${row.revision} -> ${row.revision + 1}: two linked replacements; original issued customer/amount snapshots and exports preserved; duplicate draft voided.`,
       );
     }),
   );
 });
-NodeRuntime.runMain(program.pipe(Effect.provide(admin)));
+const runtimeLive = Layer.effectDiscard(program).pipe(Layer.provide(admin));
+NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));

@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto';
-
 import {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
@@ -8,8 +6,8 @@ import {
   PersonInvitationIdentityProvider,
 } from '@app/core-runtime';
 import type { PersonInvitationIdentityInput, ScopedTransactionExecutor } from '@app/core-runtime';
-import { Effect, Layer, Schema } from 'effect';
-import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import { user, verification } from './schema.ts';
 
@@ -21,7 +19,7 @@ const LoginEmailSchema = Schema.String.check(
   ),
 );
 const emailConstraints = new Set(['user_email_unique']);
-const providerFailure = (cause: EffectDrizzleQueryError) => {
+const providerFailure = (cause: unknown) => {
   if (isPostgresUniqueViolation(cause, emailConstraints)) {
     return new IdentityLifecycleConflictError({
       code: 'identity_lifecycle_conflict',
@@ -39,7 +37,10 @@ const providerFailure = (cause: EffectDrizzleQueryError) => {
 };
 
 /** Only the owning Action factory receives this capability; no pool, HTTP or mail is involved. */
-export const personInvitationIdentityFromTransaction = (transaction: ScopedTransactionExecutor) => ({
+export const personInvitationIdentityFromTransaction = (
+  transaction: ScopedTransactionExecutor,
+  crypto: Crypto.Crypto,
+) => ({
   provision: Effect.fn('PersonInvitationIdentity.provision')(function* provision(input: PersonInvitationIdentityInput) {
     yield* Schema.decodeEffect(LoginEmailSchema)(input.email).pipe(
       Effect.mapError((cause) =>
@@ -53,7 +54,7 @@ export const personInvitationIdentityFromTransaction = (transaction: ScopedTrans
         ),
       ),
     );
-    const token = yield* Effect.sync(() => randomBytes(32).toString('base64url'));
+    const token = yield* crypto.randomBytes(32).pipe(Effect.map(Base64Url.encode), Effect.mapError(providerFailure));
     yield* transaction
       .insert(user)
       .values({
@@ -77,6 +78,13 @@ export const personInvitationIdentityFromTransaction = (transaction: ScopedTrans
   }),
 });
 
-export const BetterAuthPersonInvitationIdentityProviderLive = Layer.succeed(PersonInvitationIdentityProvider, {
-  fromTransaction: personInvitationIdentityFromTransaction,
-});
+export const BetterAuthPersonInvitationIdentityProviderLive = Layer.effect(
+  PersonInvitationIdentityProvider,
+  Effect.gen(function* invitationIdentityProvider() {
+    const crypto = yield* Crypto.Crypto;
+    return {
+      fromTransaction: (transaction: ScopedTransactionExecutor) =>
+        personInvitationIdentityFromTransaction(transaction, crypto),
+    };
+  }),
+);

@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { ApplicationCompositionSchema } from '@app/core-runtime';
 import {
@@ -8,6 +9,7 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import {
   EnrollmentAttemptIdSchema,
@@ -44,7 +46,7 @@ export const EnrollmentCompositionRevisionSchema = ApplicationCompositionSchema.
  * an already canonical encoding.  Callers own the canonicalization; nothing here inspects it, so
  * two encodings that differ only in key order must be made identical before they reach this.
  */
-export const enrollmentDigest = (canonical: string): string => createHash('sha256').update(canonical).digest('hex');
+export const enrollmentDigest = (canonical: string): string => Hex.encode(sha256(utf8ToBytes(canonical)));
 export const EnrollmentBoundedTextSchema = Schema.String.check(
   Schema.isTrimmed(),
   Schema.isMinLength(1),

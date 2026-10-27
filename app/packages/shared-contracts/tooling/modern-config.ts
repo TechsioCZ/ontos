@@ -1,9 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Build-time Modern config: Node's connect dev middleware, Rspack resolution and file URLs run outside any Effect runtime, and the effect barrel cannot load under jiti; expires: 2027-03-31.
 import { readFileSync } from 'node:fs';
-import { builtinModules, createRequire } from 'node:module';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
@@ -14,221 +13,43 @@ import type { Option } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Array as ArraySchema,
-  Boolean as BooleanSchema,
-  Literal,
   Literals,
-  NumberFromString,
   OptionFromNullOr,
   OptionFromUndefinedOr,
   String as StringSchema,
   Struct,
   Trim,
   check,
-  decodeResult,
-  decodeTo,
   decodeUnknownResult,
-  isBetween,
-  isInt,
   isMinLength,
   makeFilter,
 } from 'effect/Schema';
-import { transform } from 'effect/SchemaTransformation';
 
 import type {
   CloudflareHyperdriveBinding,
   DatabaseIdentity,
 } from '../../core-runtime/src/db/database-identity-manifest.ts';
 
-/** Each Worker declares exactly the database identities it serves. A non-Worker identity fails the build. */
+type BuildEnvironmentReader = (name: string) => string | undefined;
+
+/**
+ * The Hyperdrive bindings a Worker build declares: the `cloudflareHyperdrive` of each database
+ * identity the Worker serves. `null` marks an identity without a Worker binding and fails the build.
+ */
 type CloudflareHyperdriveBuildBindings = readonly DatabaseIdentity['cloudflareHyperdrive'][];
 
-const nodeBuiltinRequests = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
+const NonEmptyBuildStringSchema = OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1))));
 
-interface ExternalRequest {
-  dependencyType?: string;
-  request?: string;
-}
-type ExternalResult = [error?: Error | undefined, result?: string | string[], type?: 'module-import'];
-
-export const resolveCloudflareExternal = (
-  { dependencyType, request }: ExternalRequest,
-  includeNodeBuiltins = true,
-): ExternalResult => {
-  if (request === undefined) {
-    return [];
-  }
-  const isNodeBuiltin = includeNodeBuiltins && nodeBuiltinRequests.has(request);
-  if (request !== 'cloudflare:sockets' && !isNodeBuiltin) {
-    return [];
-  }
-  const specifier = isNodeBuiltin && !request.startsWith('node:') ? `node:${request}` : request;
-  const nativeImport = dependencyType?.startsWith('commonjs') === true ? [specifier, 'default'] : specifier;
-  return [undefined, nativeImport, 'module-import'];
-};
-
-/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
-const createCloudflareRuntimeExternal =
-  (includeNodeBuiltins: boolean) =>
-  (request: ExternalRequest, callback: (error?: Error, result?: string | string[], type?: 'module-import') => void) => {
-    callback(...resolveCloudflareExternal(request, includeNodeBuiltins));
-  };
-/* oxlint-enable promise/prefer-await-to-callbacks */
-
-const nonEmptyBuildStringSchema = Trim.pipe(check(isMinLength(1)));
-const buildBooleanSchema = Literals(['true', 'yes', 'on', '1', 'y', 'false', 'no', 'off', '0', 'n']).pipe(
-  decodeTo(
-    BooleanSchema,
-    transform({
-      decode: (value) => value === 'true' || value === 'yes' || value === 'on' || value === '1' || value === 'y',
-      encode: (value) => (value ? 'true' : 'false'),
-    }),
-  ),
-);
-
-interface ModernBuildContext {
-  assetPrefix: string;
-  buildCacheDirectory: string;
-  buildOutputRoot: string;
-  buildTarget: 'cloudflare' | 'web';
-  buildTempDirectory: string;
-  cloudflareDeployEnabled: boolean;
-  cloudflarePublicUrlEnvironmentVariable: string;
-  envValue: (name: string) => string | undefined;
-  getBuildBoolean: (name: string) => boolean;
-  moduleFederationDevServerOrigin: string;
-  port: number;
-  siteUrl: string;
-}
-
-// oxlint-disable-next-line anti-slop/no-unknown-returns -- The framework build-environment callback is an untyped configuration boundary whose values are decoded by the local readers before use.
-type BuildConfigEnvironment = (name: string) => unknown;
-
-const createBuildConfigReaders = (getBuildConfigEnvironment: BuildConfigEnvironment) => {
-  const envValue = (name: string): string | undefined => {
-    const decoded = decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
-      getBuildConfigEnvironment(name),
-    );
-    return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
-  };
-  const getBuildBoolean = (name: string): boolean =>
-    getOptionOrElse(
-      getResultOrThrow(decodeUnknownResult(OptionFromUndefinedOr(buildBooleanSchema))(getBuildConfigEnvironment(name))),
-      () => false,
-    );
-  return { envValue, getBuildBoolean };
-};
-
-const getBuildPort = (
-  getBuildConfigEnvironment: BuildConfigEnvironment,
-  portEnvironmentVariable: string,
-  defaultPort: number,
-): number =>
-  getOptionOrElse(
-    getResultOrThrow(
-      decodeUnknownResult(
-        OptionFromUndefinedOr(NumberFromString.pipe(check(isInt(), isBetween({ maximum: 65_535, minimum: 1 })))),
-      )(getBuildConfigEnvironment(portEnvironmentVariable)),
-    ),
-    () => defaultPort,
-  );
-
-const inferCloudflareUrl = (
-  cloudflareDeployEnabled: boolean,
-  cloudflareWorkerName: string,
-  cloudflareWorkersDevSubdomain: string | undefined,
-): string | undefined =>
-  cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
-    ? `https://${cloudflareWorkerName}.${cloudflareWorkersDevSubdomain}.workers.dev`
-    : undefined;
-
-const getDefaultRemoteAssetPrefix = (
-  configuredCloudflareUrl: string | undefined,
-  inferredCloudflareUrl: string | undefined,
-  cloudflareDeployEnabled: boolean,
-  port: number,
-): string => {
-  const remoteAssetOrigin =
-    configuredCloudflareUrl ?? inferredCloudflareUrl ?? (cloudflareDeployEnabled ? '' : `http://localhost:${port}`);
-  return remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
-};
-
-export const createModernBuildContext = ({
-  appId,
-  cloudflarePublicUrlEnvironmentVariable,
-  cloudflareWorkerName,
-  defaultPort,
-  deployTarget,
-  getBuildConfigEnvironment,
-  portEnvironmentVariable,
-}: {
-  appId: string;
-  cloudflarePublicUrlEnvironmentVariable: string;
-  cloudflareWorkerName: string;
-  defaultPort: number;
-  /** `resolveDeployTarget().target` from `@modern-js/app-tools-extensions/config`. */
-  deployTarget: string;
-  getBuildConfigEnvironment: BuildConfigEnvironment;
-  portEnvironmentVariable: string;
-}): ModernBuildContext => {
-  const { envValue, getBuildBoolean } = createBuildConfigReaders(getBuildConfigEnvironment);
-  const cloudflareDeployEnabled = deployTarget === 'cloudflare';
-  const port = getBuildPort(getBuildConfigEnvironment, portEnvironmentVariable, defaultPort);
-  const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
-  const configuredCloudflareUrl = envValue(cloudflarePublicUrlEnvironmentVariable);
-  const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
-  const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
-  const moduleFederationDevServerOrigin = envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
-  const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
-  const inferredCloudflareUrl = inferCloudflareUrl(
-    cloudflareDeployEnabled,
-    cloudflareWorkerName,
-    cloudflareWorkersDevSubdomain,
-  );
-  // Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
-  // the per-app deployment URL only fills in when no site origin is configured.
-  const siteUrl = configuredSiteUrl ?? configuredCloudflareUrl ?? inferredCloudflareUrl ?? `http://localhost:${port}`;
-  // When deploying to Cloudflare without a configured public URL, publish an
-  // 'auto' publicPath so the remote resolves its chunks from the origin its
-  // remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
-  // origin — otherwise cross-origin chunk loading 404s and MF reports an empty
-  // moduleId. A configured/inferred URL still wins as an absolute prefix.
-  const defaultRemoteAssetPrefix = getDefaultRemoteAssetPrefix(
-    configuredCloudflareUrl,
-    inferredCloudflareUrl,
-    cloudflareDeployEnabled,
-    port,
-  );
-  const assetPrefix = configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultRemoteAssetPrefix;
-  const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
-  const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
-  const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
-  // oxlint-disable-next-line github/js-class-name -- This interpolated value is a filesystem directory name required by Modern.js, not a CSS class name.
-  const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-
-  return {
-    assetPrefix,
-    buildCacheDirectory,
-    buildOutputRoot,
-    buildTarget,
-    buildTempDirectory,
-    cloudflareDeployEnabled,
-    cloudflarePublicUrlEnvironmentVariable,
-    envValue,
-    getBuildBoolean,
-    moduleFederationDevServerOrigin,
-    port,
-    siteUrl,
-  };
-};
-
-export const installGlobalRequire = (moduleUrl: string) => {
-  Object.assign(globalThis, { require: createRequire(moduleUrl) });
+/** Reads a build input from the framework build environment; blank values count as unset. */
+const readBuildEnvironmentValue: BuildEnvironmentReader = (name) => {
+  const decoded = decodeUnknownResult(NonEmptyBuildStringSchema)(getBuildConfigEnvironment(name));
+  return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 
 interface DevelopmentMiddlewareSetup {
   unshift: (
     middleware: (
-      request: { url?: string },
+      request: { url?: string | undefined },
       response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
       next: () => void,
     ) => void,
@@ -291,11 +112,11 @@ export const createCloudflareWorkerSecurity = () => ({
   },
 });
 
-const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], name: string): string =>
+const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: string): string =>
   getResultOrThrow(
-    decodeResult(Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))))(
-      envValue(name) ?? '',
-    ),
+    decodeUnknownResult(
+      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
+    )(envValue(name) ?? ''),
   );
 
 const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
@@ -319,24 +140,22 @@ const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
 const declaredCloudflareHyperdrives = (declared: CloudflareHyperdriveBuildBindings) =>
   getResultOrThrow(decodeUnknownResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
 
-const cloudflareHyperdriveBindings = (
-  envValue: ModernBuildContext['envValue'],
-  declared: CloudflareHyperdriveBuildBindings,
-) =>
+const cloudflareHyperdriveBindings = (envValue: BuildEnvironmentReader, declared: CloudflareHyperdriveBuildBindings) =>
   declaredCloudflareHyperdrives(declared).map(({ binding, idVariable }) => ({
     binding,
     id: requiredCloudflareBuildValue(envValue, idVariable),
   }));
 
 /**
- * Every OntOS Worker reaches PostgreSQL through its declared database identity Hyperdrive bindings
- * (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
- * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). It reads the published active
- * Application Composition from the `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through
- * Core's conditional public source module. Their IDs are reviewed build inputs.
+ * Every OntOS Worker reaches the private data plane through account objects: PostgreSQL through one
+ * Hyperdrive binding per database identity it serves (`HYPERDRIVE` for the shared runtime role, read
+ * by Core's `#database-runtime`), and SpiceDB's HTTP gateway through the `SPICEDB` Workers VPC binding
+ * (Core's `#spicedb-transport`). It reads the published active Application Composition from the
+ * `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding through Core's conditional public source
+ * module. Their IDs are reviewed build inputs.
  */
 export const createCloudflareDataPlaneBindings = (
-  envValue: ModernBuildContext['envValue'],
+  envValue: BuildEnvironmentReader,
   hyperdrives: CloudflareHyperdriveBuildBindings,
 ) => ({
   vpcServices: [
@@ -372,7 +191,7 @@ interface CloudflareEmailBindings {
 }
 
 /** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
-export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envValue']): CloudflareEmailBindings => {
+export const createCloudflareEmailBindings = (envValue: BuildEnvironmentReader): CloudflareEmailBindings => {
   const sender = getOptionOrUndefined(
     getResultOrThrow(
       decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(envValue('ULTRAMODERN_EMAIL_SENDER')),
@@ -420,7 +239,7 @@ export const CLOUDFLARE_WORKER_OBSERVABILITY = {
 const CloudflareDeploymentEnvironmentSchema = OptionFromUndefinedOr(Literals(['stage', 'production']));
 
 /** The Workers Logs setting for the deployment environment this Worker build is for. */
-const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envValue']) =>
+const resolveCloudflareWorkerObservability = (envValue: BuildEnvironmentReader) =>
   CLOUDFLARE_WORKER_OBSERVABILITY[
     getOptionOrElse(
       getResultOrThrow(
@@ -438,7 +257,7 @@ const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envV
  * the deployment environment (`CLOUDFLARE_WORKER_OBSERVABILITY`).
  */
 export const createCloudflareWorkerConfig = (
-  envValue: ModernBuildContext['envValue'],
+  envValue: BuildEnvironmentReader,
   {
     hyperdrives,
     publicUrlVariable,
@@ -452,7 +271,7 @@ export const createCloudflareWorkerConfig = (
   // Placement probes a public single-homed endpoint, not a private VPC hostname.
   const placementHost = getOptionOrUndefined(
     getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
+      decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
         envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
       ),
     ),
@@ -475,316 +294,63 @@ export const createCloudflareWorkerConfig = (
   };
 };
 
-const createCloudflareDeployment = (
-  build: ModernBuildContext,
-  worker: {
-    /** The unit sends its own transactional mail through the Cloudflare Email Service binding. */
-    readonly email: boolean;
-    readonly hyperdrives: CloudflareHyperdriveBuildBindings;
-    readonly name: string;
-  },
-) => {
-  if (!build.cloudflareDeployEnabled) {
-    return {};
-  }
-  const workerConfig = createCloudflareWorkerConfig(build.envValue, {
-    hyperdrives: worker.hyperdrives,
-    publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
-  });
-  return {
-    deploy: {
-      worker: {
-        ...workerConfig,
-        compatibilityDate: '2026-06-02',
-        name: worker.name,
-        security: createCloudflareWorkerSecurity(),
-        ssr: true,
-        wrangler: worker.email
-          ? { ...workerConfig.wrangler, ...createCloudflareEmailBindings(build.envValue) }
-          : workerConfig.wrangler,
-      },
-    },
-  };
-};
-
-interface RspackConfiguration {
-  externals?: unknown;
-  node?: false | object;
-  plugins: unknown[];
-}
-
-/* oxlint-disable anti-slop/no-unknown-returns -- Rspack supplies opaque plugin constructors; their instances are forwarded unchanged to its generic plugin collection and are never inspected here. */
-interface RspackContext {
-  environment: { name: string };
-  isServer: boolean;
-  rspack: {
-    DefinePlugin: new (definitions: Record<string, string>) => unknown;
-    NormalModuleReplacementPlugin: new (
-      pattern: RegExp,
-      replace: (resource: { context: string; request: string }) => void,
-    ) => unknown;
-  };
-}
-/* oxlint-enable anti-slop/no-unknown-returns */
-
-/** Worker build wiring every OntOS app needs (runtime externals, Worker SSR module replacements). */
-export const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirectory: string) => {
-  const cloudflareRuntimeExternal = createCloudflareRuntimeExternal(cloudflareDeployEnabled);
-  return (config: RspackConfiguration, { environment, isServer, rspack }: RspackContext) => {
-    if (!isServer && environment.name !== 'workerSSR') {
-      config.plugins.push(createServerOnlyBrowserReplacement(rspack)); // oxlint-disable-line eslint/no-use-before-define -- The replacement factory remains beside the other module replacements.
-    }
-    if (!cloudflareDeployEnabled) {
-      return;
-    }
-    const configuredExternals = config.externals;
-    const nextExternals = [cloudflareRuntimeExternal];
-    if (configuredExternals !== undefined) {
-      // oxlint-disable-next-line typescript/no-unsafe-argument -- Rspack's external configuration is intentionally opaque and is forwarded unchanged into its generic externals collection.
-      nextExternals.push(...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]));
-    }
-    config.externals = nextExternals;
-    if (environment.name !== 'workerSSR') {
-      return;
-    }
-    const configuredNode = config.node;
-    const nextNode = configuredNode === false || configuredNode === undefined ? {} : configuredNode;
-    config.node = nextNode;
-    Object.assign(nextNode, {
-      __dirname: false,
-      __filename: false,
-    });
-    config.plugins.push(...createWorkerSsrPlugins(rspack, sourceDirectory)); // oxlint-disable-line eslint/no-use-before-define -- The plugin factory remains beside the replacement helpers it closes over.
-  };
-};
-
-/* oxlint-disable anti-slop/no-unknown-returns -- The framework-owned fluent chain return is intentionally opaque and ignored after configuring the chunk-loading global. */
-interface BundlerChain {
-  output: {
-    uniqueName: (name: string) => { chunkLoadingGlobal: (name: string) => unknown };
-  };
-}
-/* oxlint-enable anti-slop/no-unknown-returns */
-
-export const createModernConfig = <Plugin, BuilderPlugin>({
-  apiOnly = false,
+/** OntOS data-plane policy and module discovery, composed with the published workspace preset. */
+export const createWorkspaceModernConfig = ({
   appId,
-  bffPrefix,
-  build,
-  builderPlugins,
-  chunkLoadingGlobal,
   cloudflareEmail = false,
   cloudflareHyperdrives,
-  cloudflareWorkerName,
+  headless = false,
   moduleUrl,
-  plugins,
-  rsdoctorEnabled,
-  uniqueName,
 }: {
-  apiOnly?: boolean;
   appId: string;
-  bffPrefix: string;
-  build: ModernBuildContext;
-  builderPlugins?: BuilderPlugin[];
-  chunkLoadingGlobal: string;
+  /** This unit sends transactional mail through the Cloudflare Email Service binding. */
   cloudflareEmail?: boolean;
+  /** The Hyperdrive bindings of the database identities this unit's Worker serves. */
   cloudflareHyperdrives: CloudflareHyperdriveBuildBindings;
-  cloudflareWorkerName: string;
+  /**
+   * An `api-only` topology unit keeps domain code in `src/`, so it points Modern's web entries at an
+   * absent directory and builds only its BFF.
+   */
+  headless?: boolean;
   moduleUrl: string;
-  plugins: Plugin[];
-  rsdoctorEnabled?: boolean;
-  uniqueName: string;
 }) => {
-  const appDevServerHeaders = {
-    'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
-    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-    'Access-Control-Allow-Origin': build.moduleFederationDevServerOrigin,
-  };
-
-  return {
-    bff: {
-      effect: {
-        entry: './api/index',
-        openapi: {
-          path: '/openapi.json',
-        },
-
-        strictEffectApproach: true as const,
-      },
-      prefix: bffPrefix,
-      runtimeFramework: 'effect' as const,
-    },
-    // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
-    ...(builderPlugins === undefined ? {} : { builderPlugins }),
-    ...createCloudflareDeployment(build, {
-      email: cloudflareEmail,
+  const cloudflareWorkerConfig = () => {
+    const worker = createCloudflareWorkerConfig(readBuildEnvironmentValue, {
       hyperdrives: cloudflareHyperdrives,
-      name: cloudflareWorkerName,
-    }),
+      publicUrlVariable: `ULTRAMODERN_PUBLIC_URL_${appId.replaceAll('-', '_').toUpperCase()}`,
+    });
+    return {
+      ...worker,
+      wrangler: cloudflareEmail
+        ? { ...worker.wrangler, ...createCloudflareEmailBindings(readBuildEnvironmentValue) }
+        : worker.wrangler,
+    };
+  };
+  return {
+    ...(resolveDeployTarget().target === 'cloudflare'
+      ? {
+          deploy: {
+            worker: cloudflareWorkerConfig(),
+          },
+        }
+      : undefined),
     dev: {
-      // Remote dev manifests must publish an absolute publicPath so host
-      // shells load remoteEntry.js and exposed chunks from this dev server.
-      assetPrefix: build.assetPrefix,
-      server: {
-        headers: appDevServerHeaders,
-      },
-      setupMiddlewares: [createDevelopmentContractMiddleware(moduleUrl)],
-    },
-    html: {
-      outputStructure: 'flat' as const,
+      setupMiddlewares: appId === 'shell-super-app' ? [] : [createDevelopmentContractMiddleware(moduleUrl)],
     },
     output: {
-      assetPrefix: build.assetPrefix,
-      // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
-      disableTsChecker: true,
-      distPath: {
-        html: './',
-        root: build.buildOutputRoot,
-      },
-      polyfill: 'off' as const,
-      splitRouteChunks: true,
-      tempDir: build.buildTempDirectory,
+      // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
+      // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
+      // `pnpm typecheck` owns type diagnostics.
+      disableTsChecker: readBuildEnvironmentValue('NODE_ENV') === 'development',
     },
-    performance: {
-      buildCache: {
-        cacheDigest: [appId, build.buildTarget],
-        cacheDirectory: build.buildCacheDirectory,
-      },
-      // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This optional nested field retains the public factory's inferred return shape and its position in the emitted configuration.
-      ...(rsdoctorEnabled === undefined
-        ? {}
-        : {
-            rsdoctor: {
-              disableClientServer: true,
-              enabled: rsdoctorEnabled,
-            },
-          }),
-    },
-    plugins,
     server: {
-      port: build.port,
-      publicDir: ['./locales', './assets', './.dev-public'],
+      publicDir: ['./.dev-public'],
     },
     source: {
-      alias: {
-        '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
-      },
-      // Modern.js detects API-only apps from a missing entries directory. Keep
-      // owner source under `src/`, while directing its web-entry scan to a path
-      // that does not exist for API-only MicroVerticals.
-      entriesDir: apiOnly ? '.api-only-no-web-entry' : undefined,
+      ...(headless ? { entriesDir: '.api-only-no-web-entry' } : undefined),
       globalVars: {
-        ULTRAMODERN_SHELL_ORIGIN: build.moduleFederationDevServerOrigin,
-        ULTRAMODERN_SITE_URL: build.siteUrl,
+        ULTRAMODERN_SHELL_ORIGIN: readBuildEnvironmentValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
       },
-      mainEntryName: 'index',
-    },
-    tools: {
-      autoprefixer: {
-        overrideBrowserslist: ['defaults'],
-      },
-      bundlerChain: (chain: BundlerChain) => {
-        chain.output.uniqueName(uniqueName).chunkLoadingGlobal(chunkLoadingGlobal);
-      },
-      rspack: createCloudflareRspack(build.cloudflareDeployEnabled, fileURLToPath(new URL('api/', moduleUrl))),
     },
   };
 };
-
-// Zephyr uploads only for a deploy that provides ZE_CI_TOKEN; the deploy environment then sets
-// ZE_FAIL_BUILD=true so a failed upload fails the build instead of shipping without it.
-const zephyrFailBuildSchema = Literal('true').annotate({
-  message:
-    'ZE_CI_TOKEN is set but ZE_FAIL_BUILD is not "true", so a failed Zephyr upload would not fail the deploy. Set ZE_FAIL_BUILD=true in the deploy environment next to ZE_CI_TOKEN.',
-});
-
-export const createZephyrRspackPlugin = <Configuration>(options: {
-  configure: () => Configuration;
-  readEnvironment: (name: 'ZE_CI_TOKEN' | 'ZE_FAIL_BUILD') => string | undefined;
-}) => ({
-  name: 'ultramodern-zephyr-rspack-plugin',
-  pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api: { modifyRspackConfig: (configuration: Configuration) => void }) {
-    // Ordinary builds need no Zephyr account or network access.
-    if (options.readEnvironment('ZE_CI_TOKEN') === undefined) {
-      return;
-    }
-    getResultOrThrow(decodeUnknownResult(zephyrFailBuildSchema)(options.readEnvironment('ZE_FAIL_BUILD')));
-    api.modifyRspackConfig(options.configure());
-  },
-});
-
-interface ReplacementResource {
-  context: string;
-  request: string;
-}
-
-const retainWorkerLoader = (resource: ReplacementResource) => {
-  resource.request = resource.request.replace(/(?<separator>[?&])retain=[^&]*/u, '$<separator>retain=true');
-};
-
-const markWorkerApiSource = (resource: ReplacementResource, sourceDirectory: string) => {
-  const [requestPath] = resource.request.split('?', 1);
-  if (
-    requestPath !== undefined &&
-    path.resolve(resource.context, requestPath).startsWith(sourceDirectory) &&
-    !resource.request.includes('modern-bff-runtime-source')
-  ) {
-    resource.request = `${resource.request}?modern-bff-runtime-source`;
-  }
-};
-
-const BROWSER_ONLY_SSR_MODULE = fileURLToPath(new URL('browser-only-ssr-module.mjs', import.meta.url));
-
-/**
- * Browser-only libraries load from effects that never run during SSR. PDF.js imports its own modules
- * by computed URL, which a Worker bundle must not contain, so the Worker SSR build gets an empty module.
- */
-export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
-  NormalModuleReplacementPlugin: new (
-    pattern: RegExp,
-    replace: (resource: ReplacementResource) => void,
-  ) => ReplacementPlugin;
-}) =>
-  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
-    resource.request = BROWSER_ONLY_SSR_MODULE;
-  });
-
-export const createWorkerSsrPlugins = <DefinitionPlugin, ReplacementPlugin>(
-  rspack: {
-    DefinePlugin: new (definitions: Record<string, string>) => DefinitionPlugin;
-    NormalModuleReplacementPlugin: new (
-      pattern: RegExp,
-      replace: (resource: ReplacementResource) => void,
-    ) => ReplacementPlugin;
-  },
-  sourceDirectory: string,
-) => [
-  new rspack.DefinePlugin({ 'globalThis.FinalizationRegistry': 'undefined' }),
-  new rspack.NormalModuleReplacementPlugin(/[?&]loaderId=/u, retainWorkerLoader),
-  new rspack.NormalModuleReplacementPlugin(/^\.\.?[/\\]/u, (resource) => {
-    markWorkerApiSource(resource, sourceDirectory);
-  }),
-  createBrowserOnlySsrReplacement(rspack),
-];
-
-const EFFECT_API_DOCS_BROWSER_MODULE = fileURLToPath(new URL('effect-api-docs-browser-module.mjs', import.meta.url));
-const EFFECT_HTTPAPI_DIRECTORY = /[/\\]effect[/\\]dist[/\\]unstable[/\\]httpapi$/u;
-
-/**
- * Module Federation shares every `effect/*` request without tree shaking, so the browser gets the whole
- * `effect/unstable/httpapi` barrel, including the Scalar (3.2 MB) and Swagger UI (1.9 MB) bundles that
- * HttpApiScalar and HttpApiSwagger embed as strings (1.4 MB compressed, fetched before hydration). Only
- * server routes serve those docs pages, so browser builds get empty bundle strings instead.
- */
-export const createServerOnlyBrowserReplacement = <ReplacementPlugin>(rspack: {
-  NormalModuleReplacementPlugin: new (
-    pattern: RegExp,
-    replace: (resource: ReplacementResource) => void,
-  ) => ReplacementPlugin;
-}) =>
-  new rspack.NormalModuleReplacementPlugin(/^\.\/internal\/httpApi(?:Scalar|Swagger)\.js$/u, (resource) => {
-    if (EFFECT_HTTPAPI_DIRECTORY.test(resource.context)) {
-      resource.request = EFFECT_API_DOCS_BROWSER_MODULE;
-    }
-  });

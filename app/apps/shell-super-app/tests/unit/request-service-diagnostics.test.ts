@@ -1,7 +1,7 @@
 // @rstest-environment node
 import { createHttpApiHandler, dispatchEffectBffRequest, HttpApi } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Context, Effect, Exit, Layer, Logger, Option } from 'effect';
-import { HttpRouter } from 'effect/unstable/http';
+import { HttpRouter } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { logRequestServicesFailure } from '../../api/request-service-diagnostics.ts';

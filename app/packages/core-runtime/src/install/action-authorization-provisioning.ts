@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
-
 import { v1 } from '@authzed/authzed-node';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Array as EffectArray, Effect, Option, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { ActionProvisioningIntentSchema } from '../authorization/entrypoint-classification.ts';
 import type { ActionProvisioningIntent } from '../authorization/entrypoint-classification.ts';
@@ -718,15 +719,17 @@ export const buildActionAuthorizationProvisioningPlan = (
       update.operation !== v1.RelationshipUpdate_Operation.TOUCH ||
       (update.relationship !== undefined && !current.has(relationshipKey(update.relationship))),
   );
-  const fingerprint = createHash('sha256')
-    .update(
-      tupleKey([
-        encodePlanInput(input),
-        tupleKey(existing.map((item) => v1.Relationship.toJsonString(item)).toSorted()),
-        observed.schema.trim(),
-      ]),
-    )
-    .digest('hex');
+  const fingerprint = Hex.encode(
+    sha256(
+      utf8ToBytes(
+        tupleKey([
+          encodePlanInput(input),
+          tupleKey(existing.map((item) => v1.Relationship.toJsonString(item)).toSorted()),
+          observed.schema.trim(),
+        ]),
+      ),
+    ),
+  );
   return {
     actionCount: scopedActions.length,
     fingerprint,

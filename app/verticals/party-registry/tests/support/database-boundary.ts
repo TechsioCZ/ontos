@@ -99,7 +99,7 @@ export const registerPartyGatewayScope = Effect.fn('PartyBoundary.registerGatewa
     scope: PartyGatewayScope,
   ) {
     const { admin, issuer } = clients;
-    const principalId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4);
+    const principalId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const createdTenants = yield* admin<{ readonly tenant_id: string }>`
       insert into core.tenants (tenant_id, slug, name, status, default_locale)
       values (${scope.tenantId}::uuid, ${`party-boundary-${scope.tenantId}`}, 'Party boundary', 'active', 'en')

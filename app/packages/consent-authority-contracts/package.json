@@ -10,6 +10,6 @@
   },
   "dependencies": {
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.5"
   }
 }

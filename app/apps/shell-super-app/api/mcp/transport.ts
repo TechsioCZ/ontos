@@ -4,7 +4,7 @@
  */
 import { ActionTransportMetadataSchema } from '@app/core-runtime';
 import { Context, Crypto, Effect, Option, Predicate, Schema } from 'effect';
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { MCP_BFF_ROUTE, MCP_METADATA_BFF_ROUTE, mcpMetadataUrlOf } from '../../shared/mcp-resource.ts';
 import type { AgentPlatformCaller } from '../agent-platform/caller.ts';

@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import {
   PriceSourceEvidenceSchema,
@@ -17,6 +18,7 @@ import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-co
 import type { PriceDefinition, PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import { DateTime, Result, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 type InvalidAssessment = typeof PriceSourceAssertionInvalidSchema.Type;
 type HeldAssessment = typeof PriceSourceAssertionHeldSchema.Type;
@@ -47,9 +49,11 @@ const priceRefEquivalence = Schema.toEquivalence(PriceRefSchema);
 export const priceSourceFactFingerprint = (sourceAssertion: PriceSourceAssertionInput) =>
   Result.getOrThrow(
     decodeFingerprint(
-      createHash('sha256')
-        .update(Result.getOrThrow(encodeFingerprintBasis(priceSourceFactFingerprintBasisFrom(sourceAssertion))))
-        .digest('hex'),
+      Hex.encode(
+        sha256(
+          utf8ToBytes(Result.getOrThrow(encodeFingerprintBasis(priceSourceFactFingerprintBasisFrom(sourceAssertion)))),
+        ),
+      ),
     ),
   );
 

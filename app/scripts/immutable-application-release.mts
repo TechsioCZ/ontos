@@ -30,8 +30,8 @@ import {
   Schema,
   Stream,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import type { PlatformError } from 'effect/PlatformError';
 
 import {
@@ -98,7 +98,7 @@ const PUBLIC_ASSET_INVENTORY_MISMATCH =
   'the deployed immutable public release does not serve the exact compiled asset inventory';
 
 const sourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u));
-const buildMarker = Schema.String.check(Schema.isPattern(/^[a-f\d]{16}$/u));
+const buildMarker = Schema.String.check(Schema.isPattern(/^[a-f\d]{64}$/u));
 const appId = OntosDeploymentAppIdSchema;
 const workerVersionIdSchema = Schema.NonEmptyString.pipe(
   Schema.brand('WorkerVersionId'),

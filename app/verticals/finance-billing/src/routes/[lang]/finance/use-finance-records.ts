@@ -7,7 +7,8 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { defaultParseSearch } from '@tanstack/react-router';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Effect, flow, Match, Option, Schema } from 'effect';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { FinanceCommand } from '../../../../shared/actions/apply-command.ts';
 import { FinancePartyIdSchema, RecordsRequestSchema } from '../../../../shared/apis/records.ts';
@@ -107,7 +108,7 @@ type UiFailure = Effect.Error<
   | ReturnType<typeof executeApplyCommand>
   | ReturnType<typeof executeRecords>
   | ReturnType<typeof makeReferenceGatewayCredentials>
-  | typeof browserCrypto.randomUUIDv4
+  | ReturnType<typeof browserCrypto.randomUUIDv4>
 >;
 const forbidden = Schema.is(Schema.Struct({ status: Schema.Literal(403) }));
 const conflicting = Schema.is(Schema.Struct({ status: Schema.Literal(409) }));
@@ -127,7 +128,7 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
   const referenceCredentials = yield* makeReferenceGatewayCredentials(
     commandReferenceAudiences(command, snapshot.state.invoices, snapshot.state.recurringTemplates ?? []),
   );
-  const idempotencyKey = yield* browserCrypto.randomUUIDv4;
+  const idempotencyKey = yield* browserCrypto.randomUUIDv4();
   return yield* executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'finance-billing.command', {
     idempotencyKey,
     referenceCredentials,
@@ -188,53 +189,65 @@ export type CommandOutcome =
   | { readonly invoice: Invoice | undefined; readonly ok: true };
 
 /** Problem `detail`/`reason` of a failed command, so the UI can explain known domain refusals. */
-const failureReason = (error: unknown): string | undefined => {
-  if (typeof error !== 'object' || error === null) {
-    return undefined;
+const failureReason = (error: UiFailure): string | undefined => {
+  const reason = Schema.decodeUnknownOption(Schema.Struct({ reason: Schema.String }))(error);
+  if (Option.isSome(reason)) {
+    return reason.value.reason;
   }
-  const record = error as Record<string, unknown>;
-  for (const key of ['reason', 'detail', 'title']) {
-    const value = record[key];
-    if (typeof value === 'string') {
-      return value;
-    }
+  const detail = Schema.decodeUnknownOption(Schema.Struct({ detail: Schema.String }))(error);
+  if (Option.isSome(detail)) {
+    return detail.value.detail;
   }
-  return undefined;
+  return Schema.decodeUnknownOption(Schema.Struct({ title: Schema.String }))(error).pipe(
+    Option.map((problem) => problem.title),
+    Option.getOrUndefined,
+  );
 };
 
+const ActorSessionSchema = Schema.Struct({
+  identity: Schema.optional(
+    Schema.Struct({
+      displayName: Schema.optional(Schema.String),
+      email: Schema.optional(Schema.String),
+    }),
+  ),
+});
 /** Signed-in user's display name from the shell session; used as a readable author label next to the principal. */
-// @effect-diagnostics-next-line globalFetch:off
-const fetchSession = () => fetch('/shell-super-app-api/auth/session', { credentials: 'include' });
+const loadActorLabel = Effect.fn('Finance.loadActorLabel')(function* loadActorLabel() {
+  const response = yield* HttpClient.get(new URL('/shell-super-app-api/auth/session', window.location.href).href);
+  yield* HttpClientResponse.filterStatusOk(response);
+  const body = yield* HttpClientResponse.schemaBodyJson(ActorSessionSchema)(response);
+  const rawName = body.identity?.displayName;
+  const email = body.identity?.email;
+  let name = email;
+  if (rawName !== undefined && rawName.trim() !== '') {
+    name = email === undefined ? rawName : `${rawName} (${email})`;
+  }
+  return name?.slice(0, 200);
+}, Effect.timeout('10 seconds'));
+const actorLabels = definePageData({
+  key: (key: string) => key,
+  load: loadActorLabel,
+  runtime: financeBrowserRuntime,
+});
+const pendingActorLabel = (): PageDataSnapshot<string | undefined, Effect.Error<ReturnType<typeof loadActorLabel>>> =>
+  pageDataPending;
 const useActorLabel = () => {
-  const [label, setLabel] = useState<string>();
-  useEffect(() => {
-    let active = true;
-    void fetchSession()
-      .then((response) => (response.ok ? response.json() : undefined))
-      .then((body: unknown) => {
-        const identity =
-          typeof body === 'object' && body !== null
-            ? (body as { readonly identity?: Record<string, unknown> }).identity
-            : undefined;
-        const rawName = identity?.['displayName'];
-        const email = identity?.['email'];
-        const name =
-          typeof rawName === 'string' && rawName.trim() !== ''
-            ? typeof email === 'string'
-              ? `${rawName} (${email})`
-              : rawName
-            : email;
-        if (active && typeof name === 'string') {
-          setLabel(name.slice(0, 200));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
-  return label;
+  const snapshot = useSyncExternalStore(
+    actorLabels.subscribe,
+    () => actorLabels.snapshot('session'),
+    pendingActorLabel,
+  );
+  useEffect(() => actorLabels.ensure('session'), []);
+  return snapshot.state === 'ready' ? snapshot.value : undefined;
 };
+
+/** Loads the stored bytes of one uploaded document; absent when the read fails. */
+const fetchDocument = (documentId: string) =>
+  executeRecords({ documentId }, 'finance-billing.document').pipe(
+    Effect.map((response) => response.document),
+    Effect.orElseSucceed(() => Option.getOrUndefined(Option.none<NonNullable<RecordsResponse['document']>>())),
+  );
 
 /**
  * Invoice list and detail state. The ledger comes from the page-data store (ready on first paint when the Shell
@@ -280,7 +293,8 @@ export const useFinanceRecords = () => {
   const objects = useRentalObjects();
 
   /** Never fails: a failed reload keeps the rows on screen. */
-  const load = (): Effect.Effect<void> => (Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void);
+  const load = (): Effect.Effect<void> =>
+    Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void;
 
   /**
    * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
@@ -300,10 +314,13 @@ export const useFinanceRecords = () => {
       issueDate: input.issueDate,
       lines: [...input.lines],
       partyId: input.customer.partyId,
-      ...(input.documentKind === undefined || input.documentKind === 'STANDARD' ? {} : { documentKind: input.documentKind }),
       ...input.anchors,
     };
-    return submitFinanceCommand(snapshot, command).pipe(
+    const draftCommand =
+      input.documentKind === undefined || input.documentKind === 'STANDARD'
+        ? command
+        : { ...command, documentKind: input.documentKind };
+    return submitFinanceCommand(snapshot, draftCommand).pipe(
       Effect.tap(load),
       // A 409 means the snapshot revision is stale (another write landed first); reload it so the next try can succeed.
       Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
@@ -347,11 +364,14 @@ export const useFinanceRecords = () => {
             // A known domain refusal (e.g. approving a draft that was not prepared) is explained in Czech.
             const reason = failureReason(error);
             const known = Object.entries(reasonText).find(([key]) => reason?.includes(key) === true)?.[1];
-            toaster.create({
-              ...(known === undefined ? {} : { description: known }),
+            const toast: Parameters<typeof toaster.create>[0] = {
               title: t(`finance-billing.demo.feedback.${known === undefined ? failure : 'refused'}`),
               type: 'error',
-            });
+            };
+            if (known !== undefined) {
+              toast.description = known;
+            }
+            toaster.create(toast);
           },
           onSuccess: (result) => {
             setActionFeedback('ready');
@@ -367,46 +387,40 @@ export const useFinanceRecords = () => {
   };
 
   /** Runs any command, reloads the ledger on success and reports the outcome (toasts on success when titled). */
-  const execute = (command: FinanceCommand, successTitle?: string): Promise<CommandOutcome> => {
-    const current = latestSnapshot() ?? snapshot;
-    if (current === undefined || !canWrite) {
-      return Promise.resolve({ feedback: 'unavailable', ok: false, reason: undefined });
-    }
-    setActionFeedback('saving');
-    return financeBrowserRuntime.runPromise(
-      submitFinanceCommand(current, command).pipe(
-        Effect.tap(load),
-        Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
-        Effect.match({
-          onFailure: (error): CommandOutcome => {
-            setActionFeedback('ready');
-            return { feedback: financeFailureFeedback(error), ok: false, reason: failureReason(error) };
-          },
-          onSuccess: (result): CommandOutcome => {
-            setActionFeedback('ready');
-            if (successTitle !== undefined) {
-              toaster.create({ title: successTitle, type: 'success' });
-            }
-            return { invoice: result.invoice, ok: true };
-          },
-        }),
-      ),
-    );
-  };
-
-  /** Loads the stored bytes of one uploaded document. */
-  const fetchDocument = (documentId: string) =>
-    financeBrowserRuntime.runPromise(
-      executeRecords({ documentId }, 'finance-billing.document').pipe(
-        Effect.map((response) => response.document),
-        Effect.orElseSucceed(() => undefined),
-      ),
-    );
+  const executeCommand = Effect.fn('Finance.executeCommand')(
+    (command: FinanceCommand, successTitle?: string): Effect.Effect<CommandOutcome> =>
+      Effect.suspend(() => {
+        const current = latestSnapshot() ?? snapshot;
+        if (current === undefined || !canWrite) {
+          return Effect.succeed({
+            feedback: 'unavailable',
+            ok: false,
+            reason: Option.getOrUndefined(Option.none<string>()),
+          });
+        }
+        setActionFeedback('saving');
+        return submitFinanceCommand(current, command).pipe(
+          Effect.tap(load),
+          Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
+          Effect.match({
+            onFailure: (error): CommandOutcome => {
+              setActionFeedback('ready');
+              return { feedback: financeFailureFeedback(error), ok: false, reason: failureReason(error) };
+            },
+            onSuccess: (result): CommandOutcome => {
+              setActionFeedback('ready');
+              if (successTitle !== undefined) {
+                toaster.create({ title: successTitle, type: 'success' });
+              }
+              return { invoice: result.invoice, ok: true };
+            },
+          }),
+        );
+      }),
+  );
 
   return {
     actorLabel,
-    execute,
-    fetchDocument,
     busy,
     cancelConfirm: () => setConfirmTarget(undefined),
     cancelVoid: () => setVoidTarget(undefined),
@@ -421,18 +435,18 @@ export const useFinanceRecords = () => {
       }
       window.history.replaceState(window.history.state, '', detailUrl());
     },
+    // The route hook is the framework edge; command work and failure mapping stay in the Effects above.
+    execute: flow(executeCommand, financeBrowserRuntime.runPromise),
+    fetchDocument: flow(fetchDocument, financeBrowserRuntime.runPromise),
     /** Asks before confirming; `confirmPending` runs the command once the user agrees. */
     confirmInvoice: (invoice: Invoice) => setConfirmTarget(invoice),
     confirmPending: () => {
       if (confirmTarget !== undefined) {
-        runCommand(
-          {
-            _tag: 'ConfirmInvoice',
-            ...(actorLabel === undefined ? {} : { actorLabel }),
-            invoiceRef: confirmTarget.ref,
-          },
-          t('finance-billing.faktury.confirmed'),
-        );
+        const command =
+          actorLabel === undefined
+            ? { _tag: 'ConfirmInvoice' as const, invoiceRef: confirmTarget.ref }
+            : { _tag: 'ConfirmInvoice' as const, actorLabel, invoiceRef: confirmTarget.ref };
+        runCommand(command, t('finance-billing.faktury.confirmed'));
       }
       setConfirmTarget(undefined);
     },

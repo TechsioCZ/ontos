@@ -2,7 +2,7 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 import { CalendarDateWireSchema } from '@app/shared-contracts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { PropertyRefSchema } from '../resources/property.ts';

@@ -7,7 +7,7 @@ import { NodeServices } from '@effect/platform-node';
 import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { normalizeEmail, normalizePhone } from '../shared/domain/contact-point.ts';
 import { partySubjectKeyFromString } from '../shared/domain/identity-contracts.ts';

@@ -4,7 +4,7 @@ import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Layer, Order, Redacted, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { comparePriceGroupCatalog } from '../src/database/catalog.ts';
 import { PriceGroupCatalogDatabase, PriceGroupCatalogDatabaseLive } from '../src/database/client.ts';

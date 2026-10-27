@@ -3,7 +3,7 @@ import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Effect, DateTime, Match, Predicate, Schema } from 'effect';
+import { Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -15,22 +15,22 @@ import {
   MerchandiseScopeMismatch,
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
-import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
+import type { MerchandiseCommand, StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
 import {
+  ClientRequestIdSchema,
   EntityIdSchema,
   OrderIdSchema,
   PartyIdSchema,
+  ProductIdReferenceSchema,
   ProductIdSchema,
   StockMovementIdSchema,
   VariantIdSchema,
   grossUnitPriceMinor,
-  isRealVariant,
   sameSku,
   shippingMethodFor,
   shippingMethods,
-  type ShippingMethod,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Availability,
@@ -40,12 +40,9 @@ import type {
   OrderLine,
   OrderStatus,
   Product,
-  ProductRecord,
   ProductVariant,
   StockMovement,
-  VariantRecord,
 } from '../../shared/domain/merchandise-model.ts';
-import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { resetToAkrosBaseline } from './akros-demo-reset.ts';
@@ -72,6 +69,8 @@ import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-st
 import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 import { orderCustomerReferenceEligible } from '../../shared/order-customer-reference.ts';
+
+const MERCHANDISE_MODULE_ID = 'demo.merchandise';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -124,6 +123,43 @@ type CommandOf<Tag extends MerchandiseCommand['_tag']> = Extract<MerchandiseComm
 type OrderLineRequest = CommandOf<'CreateOrder'>['lines'][number];
 type BulkPatch = CommandOf<'BulkUpdateProducts'>['patch'];
 
+type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
+type VariantFields = Pick<OrderLine, 'variantId' | 'variantName'>;
+const variantFields = (id: OrderLine['variantId'], name?: OrderLine['variantName']): VariantFields => {
+  const fields: Mutable<VariantFields> = {};
+  if (id !== undefined) {
+    fields.variantId = id;
+  }
+  if (name !== undefined) {
+    fields.variantName = name;
+  }
+  return fields;
+};
+const stockVariantFields = (variantId: StockMovement['variantId']): Pick<StockMovement, 'variantId'> => {
+  if (variantId === undefined) {
+    return {};
+  }
+  return { variantId };
+};
+const historyReason = (reason: OrderHistoryEntry['reason']): Pick<OrderHistoryEntry, 'reason'> => {
+  if (reason === undefined) {
+    return {};
+  }
+  return { reason };
+};
+const ORDER_NOT_FOUND_REASON = 'Order does not exist';
+const IDENTITY_MANAGEMENT_PERMISSION = 'manage_identity';
+
+type CatalogReadMetadata = Pick<
+  RecordsResponse,
+  'categories' | 'hasCategoryTree' | 'productCategories' | 'categoryMatches' | 'categoryMatchTotal' | 'categoryTrails'
+>;
+type HeadReadOptions = NonNullable<Parameters<typeof loadHead>[2]>;
+interface OrderReadPage {
+  readonly orders: RecordsResponse['orders'];
+  readonly total?: number;
+}
+
 const notFound = (reason: string) => new MerchandiseNotFound({ code: 'merchandise_not_found', reason });
 
 const historyEntry = (
@@ -134,14 +170,14 @@ const historyEntry = (
 const czk = (minor: number) =>
   `${(minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} Kč`;
 
-export const orderStatusLabels: Readonly<Record<OrderStatus, string>> = {
+export const orderStatusLabels = {
   CANCELLED: 'Stornovaná',
   CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
   PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci',
-};
+} satisfies Readonly<Record<OrderStatus, string>>;
 
 const conflict = (reason: string) =>
   new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason });
@@ -186,38 +222,47 @@ const repriceTiers = (
   newNet: number | undefined,
   vat: number,
 ) => {
-  if (tiers.length === 0 || oldNet === newNet || newNet === undefined) return tiers;
-  const baseGross = tiers[0]!.priceMinor;
+  if (tiers.length === 0 || oldNet === newNet || newNet === undefined) {
+    return tiers;
+  }
+  const [firstTier] = tiers;
+  if (firstTier === undefined) {
+    return tiers;
+  }
+  const baseGross = firstTier.priceMinor;
   const nextGross = grossUnitPriceMinor(newNet, vat);
   return tiers.map((tier) => ({
     ...tier,
-    priceMinor: baseGross === 0 ? nextGross : Math.round((tier.priceMinor * nextGross) / baseGross),
     priceExcludingVatMinor:
       oldNet === undefined || oldNet === 0 ? newNet : Math.round((tier.priceExcludingVatMinor * newNet) / oldNet),
+    priceMinor: baseGross === 0 ? nextGross : Math.round((tier.priceMinor * nextGross) / baseGross),
   }));
 };
 
 /** Appends an effective-dated price entry. A price equal to the current one is not a change and adds no entry. */
-const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product =>
-  product.currentPriceMinor === priceMinor
-    ? product
-    : {
-        ...product,
-        currentPriceMinor: priceMinor,
-        ...(product.priceTiers === undefined
-          ? {}
-          : { priceTiers: repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate) }),
-        priceHistory: [
-          ...product.priceHistory,
-          {
-            previousPriceMinor: product.currentPriceMinor,
-            changedBy: input.actor,
-            effectiveFrom: input.now,
-            priceMinor,
-          },
-        ],
-        updatedAt: input.now,
-      };
+const repriced = (product: Product, priceMinor: number, input: MerchandiseCommandInput): Product => {
+  if (product.currentPriceMinor === priceMinor) {
+    return product;
+  }
+  const updated: Mutable<Product> = {
+    ...product,
+    currentPriceMinor: priceMinor,
+    priceHistory: [
+      ...product.priceHistory,
+      {
+        changedBy: input.actor,
+        effectiveFrom: input.now,
+        previousPriceMinor: product.currentPriceMinor,
+        priceMinor,
+      },
+    ],
+    updatedAt: input.now,
+  };
+  if (product.priceTiers !== undefined) {
+    updated.priceTiers = repriceTiers(product.priceTiers, product.currentPriceMinor, priceMinor, product.vatRate);
+  }
+  return updated;
+};
 
 /** The storefront finds a product by slug, so two products with one slug would hide one of them. */
 const slugTaken = (products: readonly Product[], slug: string, exceptId: string) => {
@@ -227,13 +272,12 @@ const slugTaken = (products: readonly Product[], slug: string, exceptId: string)
 
 /** Mint the public URL on creation, not as an undisclosed extra publication step. Never change it on rename. */
 /** URL base of a new product's slug; the working set loads every product whose slug starts with it. */
-export const productSlugBase = (name: string, sku: string) => {
-  const fold = (value: string) =>
-    normalizeSearchText(value)
-      .replaceAll(/[^a-z0-9]+/gu, '-')
-      .replaceAll(/^-|-$/gu, '');
-  return (fold(name) || fold(sku) || 'produkt').slice(0, 110).replace(/-$/u, '');
-};
+const slugText = (value: string) =>
+  normalizeSearchText(value)
+    .replaceAll(/[^a-z0-9]+/gu, '-')
+    .replaceAll(/^-|-$/gu, '');
+export const productSlugBase = (name: string, sku: string) =>
+  (slugText(name) || slugText(sku) || 'produkt').slice(0, 110).replace(/-$/u, '');
 
 const newProductSlug = (products: readonly Product[], name: string, sku: string) => {
   const base = productSlugBase(name, sku);
@@ -242,7 +286,10 @@ const newProductSlug = (products: readonly Product[], name: string, sku: string)
   );
   let slug = base;
   let suffix = 2;
-  while (taken.has(slug)) slug = `${base}-${suffix++}`;
+  while (taken.has(slug)) {
+    slug = `${base}-${suffix}`;
+    suffix += 1;
+  }
   return slug;
 };
 
@@ -265,15 +312,97 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   void _tag;
   const product: Product = {
     ...fields,
-    slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     createdAt: input.now,
     currentPriceMinor: priceMinor,
     id,
     priceHistory: [{ changedBy: input.actor, effectiveFrom: input.now, priceMinor }],
+    slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     updatedAt: input.now,
   };
   const entity = yield* entityIdOf(id);
   return { entityIds: [entity], state: { ...state, products: [...state.products, product] } };
+});
+
+/**
+ * Gives every priced variant a stable identity and keeps per-variant price history: an existing variant keeps
+ * its history and appends an entry when the price changes; a new one starts its history now.
+ */
+type VariantPriceEntry = NonNullable<ProductVariant['priceHistory']>[number];
+const nextVariantPriceHistory = (
+  previous: ProductVariant | undefined,
+  variant: ProductVariant,
+  input: MerchandiseCommandInput,
+) => {
+  if (variant.priceMinor === undefined) {
+    return Option.none<NonNullable<ProductVariant['priceHistory']>>();
+  }
+  if (previous?.priceMinor === variant.priceMinor) {
+    return Option.some(previous.priceHistory ?? variant.priceHistory ?? []);
+  }
+  const entry: Mutable<VariantPriceEntry> = {
+    changedBy: input.actor,
+    effectiveFrom: input.now,
+    priceMinor: variant.priceMinor,
+  };
+  if (previous?.priceMinor !== undefined) {
+    entry.previousPriceMinor = previous.priceMinor;
+  }
+  return Option.some([...(previous?.priceHistory ?? variant.priceHistory ?? []), entry]);
+};
+const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
+  product: Product,
+  incoming: readonly ProductVariant[],
+  input: MerchandiseCommandInput,
+) {
+  const existing = new Map(
+    (product.variants ?? []).flatMap((variant) => (variant.id === undefined ? [] : [[variant.id, variant] as const])),
+  );
+  const skus = new Set<string>();
+  const ids = new Set<string>();
+  return yield* Effect.forEach(
+    incoming,
+    Effect.fn('Merchandise.normalizeVariant')(function* normalizeVariant(variant: ProductVariant, index: number) {
+      let { id } = variant;
+      if (id === undefined && variant.priceMinor !== undefined) {
+        id = yield* mintId(VariantIdSchema, `${input.resourceId}-v${index + 1}`);
+      }
+      if (id !== undefined) {
+        if (ids.has(id)) {
+          return yield* conflict('Variant ids must be unique');
+        }
+        ids.add(id);
+      }
+      if (variant.sku !== undefined) {
+        const key = variant.sku.trim().toLowerCase();
+        if (skus.has(key)) {
+          return yield* conflict('Variant SKUs must be unique within the product');
+        }
+        skus.add(key);
+      }
+      const previous = id === undefined ? undefined : existing.get(id);
+      const history = nextVariantPriceHistory(previous, variant, input);
+      const { id: _id, priceHistory: _ignored, ...rest } = variant;
+      void _ignored;
+      void _id;
+      const updated: Mutable<ProductVariant> = { ...rest };
+      if (previous?.priceTiers !== undefined) {
+        updated.priceTiers = repriceTiers(
+          previous.priceTiers,
+          previous.priceMinor,
+          variant.priceMinor,
+          product.vatRate,
+        );
+      }
+      if (id !== undefined) {
+        updated.id = id;
+      }
+      if (Option.isSome(history)) {
+        updated.priceHistory = history.value;
+      }
+      return updated;
+    }),
+    { concurrency: 1 },
+  );
 });
 
 const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updateProduct(
@@ -286,16 +415,18 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
     return yield* conflict('Another product already uses this storefront slug');
   }
   // categoryPathIds is server-derived; categoryId moves the product inside the storefront category tree.
-  const { variants: patchVariants, categoryId: patchCategoryId, categoryPathIds: _clientPath, ...patch } = value.patch;
+  const { categoryId: patchCategoryId, categoryPathIds: _clientPath, variants: patchVariants, ...patch } = value.patch;
   void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
-  const merged: Product = {
+  const merged: Mutable<Product> = {
     ...product,
     ...patch,
-    ...(patch.images === undefined ? {} : { imageSrc: patch.images[0] ?? '' }),
     updatedAt: input.now,
   };
+  if (patch.images !== undefined) {
+    merged.imageSrc = patch.images[0] ?? '';
+  }
   const categorized =
     patchCategoryId === undefined || patchCategoryId === product.categoryId
       ? merged
@@ -304,70 +435,6 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   const updated = withContentHistory(product, withVariants, input);
   const entity = yield* entityIdOf(product.id);
   return { entityIds: [entity], state: withProduct(state, updated) };
-});
-
-/**
- * Gives every priced variant a stable identity and keeps per-variant price history: an existing variant keeps
- * its history and appends an entry when the price changes; a new one starts its history now.
- */
-const normalizeVariants = Effect.fn('Merchandise.normalizeVariants')(function* normalizeVariants(
-  product: Product,
-  incoming: readonly ProductVariant[],
-  input: MerchandiseCommandInput,
-) {
-  const existing = new Map(
-    (product.variants ?? []).flatMap((variant) => (variant.id === undefined ? [] : [[variant.id, variant] as const])),
-  );
-  const skus = new Set<string>();
-  const ids = new Set<string>();
-  const result: ProductVariant[] = [];
-  for (const [index, variant] of incoming.entries()) {
-    const id =
-      variant.id ??
-      (variant.priceMinor === undefined
-        ? undefined
-        : yield* mintId(VariantIdSchema, `${input.resourceId}-v${index + 1}`));
-    if (id !== undefined) {
-      if (ids.has(id)) {
-        return yield* conflict('Variant ids must be unique');
-      }
-      ids.add(id);
-    }
-    if (variant.sku !== undefined) {
-      const key = variant.sku.trim().toLowerCase();
-      if (skus.has(key)) {
-        return yield* conflict('Variant SKUs must be unique within the product');
-      }
-      skus.add(key);
-    }
-    const previous = id === undefined ? undefined : existing.get(id);
-    const history =
-      variant.priceMinor === undefined
-        ? undefined
-        : previous?.priceMinor === variant.priceMinor
-          ? (previous.priceHistory ?? variant.priceHistory ?? [])
-          : [
-              ...(previous?.priceHistory ?? variant.priceHistory ?? []),
-              {
-                ...(previous?.priceMinor === undefined ? {} : { previousPriceMinor: previous.priceMinor }),
-                changedBy: input.actor,
-                effectiveFrom: input.now,
-                priceMinor: variant.priceMinor,
-              },
-            ];
-    const { priceHistory: _ignored, id: _id, ...rest } = variant;
-    void _ignored;
-    void _id;
-    result.push({
-      ...rest,
-      ...(previous?.priceTiers === undefined
-        ? {}
-        : { priceTiers: repriceTiers(previous.priceTiers, previous.priceMinor, variant.priceMinor, product.vatRate) }),
-      ...(id === undefined ? {} : { id }),
-      ...(history === undefined ? {} : { priceHistory: history }),
-    });
-  }
-  return result;
 });
 
 const findVariant = Effect.fn('Merchandise.findVariant')(function* findVariant(product: Product, variantId: string) {
@@ -392,26 +459,28 @@ const changePrice = Effect.fn('Merchandise.changePrice')(function* changePrice(
   if (variant.priceMinor === value.priceMinor) {
     return { entityIds: [entity], state };
   }
-  const variants = (product.variants ?? []).map((entry) =>
-    entry.id === variant.id
-      ? {
-          ...entry,
-          priceHistory: [
-            ...(entry.priceHistory ?? []),
-            {
-              previousPriceMinor: variant.priceMinor,
-              changedBy: input.actor,
-              effectiveFrom: input.now,
-              priceMinor: value.priceMinor,
-            },
-          ],
+  const variants = (product.variants ?? []).map((entry) => {
+    if (entry.id !== variant.id) {
+      return entry;
+    }
+    const updated: Mutable<ProductVariant> = {
+      ...entry,
+      priceHistory: [
+        ...(entry.priceHistory ?? []),
+        {
+          changedBy: input.actor,
+          effectiveFrom: input.now,
+          previousPriceMinor: variant.priceMinor,
           priceMinor: value.priceMinor,
-          ...(entry.priceTiers === undefined
-            ? {}
-            : { priceTiers: repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate) }),
-        }
-      : entry,
-  );
+        },
+      ],
+      priceMinor: value.priceMinor,
+    };
+    if (entry.priceTiers !== undefined) {
+      updated.priceTiers = repriceTiers(entry.priceTiers, entry.priceMinor, value.priceMinor, product.vatRate);
+    }
+    return updated;
+  });
   return { entityIds: [entity], state: withProduct(state, { ...product, updatedAt: input.now, variants }) };
 });
 
@@ -481,7 +550,7 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
     id: yield* movementIdOf(input.resourceId),
     productId: product.id,
     reason: value.reason,
-    ...(value.variantId === undefined ? {} : { variantId: value.variantId }),
+    ...stockVariantFields(value.variantId),
   };
   const movement = value.note === undefined ? base : { ...base, note: value.note };
   const entity = yield* entityIdOf(movement.id);
@@ -524,7 +593,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     quantity: request.quantity,
     sku: variant?.sku ?? product.sku,
     unitPriceMinor: variant?.priceMinor ?? product.currentPriceMinor,
-    ...(variant === undefined ? {} : { variantId: variant.id, variantName: variant.name }),
+    ...variantFields(variant?.id, variant?.name),
     vatRate: product.vatRate,
   };
   const movement: StockMovement = {
@@ -534,7 +603,7 @@ const addOrderLine = Effect.fn('Merchandise.addOrderLine')(function* addOrderLin
     productId: product.id,
     reason: 'ORDER',
     reference: context.number,
-    ...(variant === undefined ? {} : { variantId: variant.id }),
+    ...stockVariantFields(variant?.id),
   };
   return { lines: [...build.lines, line], movements: [...build.movements, movement] };
 });
@@ -588,19 +657,28 @@ export const orderTransitions = {
 const orderMovesStock = (state: MerchandiseState, order: Order) =>
   state.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number);
 
+const StockBalanceKeySchema = Schema.fromJsonString(
+  Schema.Tuple([ProductIdSchema, Schema.OptionFromNullOr(VariantIdSchema)]),
+);
+const encodeStockBalanceKey = Schema.encodeResult(StockBalanceKeySchema);
+
 /** Return only the outstanding ORDER debit per product/variant; cancel + remove never double-credits. */
 const returnOrderStock = (state: MerchandiseState, order: Order, input: MerchandiseCommandInput, note: string) => {
   const balances = new Map<
     string,
-    { productId: StockMovement['productId']; variantId?: NonNullable<StockMovement['variantId']>; delta: number }
+    { delta: number; productId: StockMovement['productId']; variantId?: NonNullable<StockMovement['variantId']> }
   >();
   for (const movement of state.movements) {
-    if (movement.reason !== 'ORDER' || movement.reference !== order.number) continue;
-    const key = JSON.stringify([movement.productId, movement.variantId]);
+    if (movement.reason !== 'ORDER' || movement.reference !== order.number) {
+      continue;
+    }
+    const key = Result.getOrThrow(
+      encodeStockBalanceKey([movement.productId, Option.fromUndefinedOr(movement.variantId)]),
+    );
     const previous = balances.get(key);
     balances.set(key, {
       productId: movement.productId,
-      ...(movement.variantId === undefined ? {} : { variantId: movement.variantId }),
+      ...stockVariantFields(movement.variantId),
       delta: (previous?.delta ?? 0) + movement.delta,
     });
   }
@@ -610,9 +688,9 @@ const returnOrderStock = (state: MerchandiseState, order: Order, input: Merchand
       movementIdOf(input.resourceId, index).pipe(
         Effect.map((id): StockMovement => ({
           ...balance,
-          id,
           at: input.now,
           delta: -balance.delta,
+          id,
           note,
           reason: 'ORDER',
           reference: order.number,
@@ -630,9 +708,11 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
 ) {
   const existing = state.orders.find((entry) => entry.id === value.id);
   if (existing === undefined) {
-    return yield* notFound('Order does not exist');
+    return yield* notFound(ORDER_NOT_FOUND_REASON);
   }
-  if (existing.demoCleanup !== undefined) return yield* conflict('Odstraněnou DEMO objednávku nelze dále zpracovávat');
+  if (existing.demoCleanup !== undefined) {
+    return yield* conflict('Odstraněnou DEMO objednávku nelze dále zpracovávat');
+  }
   const allowed: readonly OrderStatus[] = orderTransitions[existing.status];
   const terminalDemoCancel =
     existing.demo === true &&
@@ -650,7 +730,7 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
         after: orderStatusLabels[value.status],
         before: orderStatusLabels[existing.status],
         kind: 'STATUS',
-        ...(value.reason === undefined ? {} : { reason: value.reason }),
+        ...historyReason(value.reason),
       }),
     ],
     status: value.status,
@@ -665,44 +745,50 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   return { entityIds: [entity], state: { ...state, movements: [...state.movements, ...restored], orders } };
 });
 
-const availabilityMessage: Readonly<Record<Availability, string>> = {
+const availabilityMessage = {
   IN_STOCK: 'Skladem',
   LOW_STOCK: 'Poslední kusy',
   OUT_OF_STOCK: 'Momentálně není skladem',
   UNKNOWN: 'Dostupnost nyní nelze ověřit',
-};
+} satisfies Readonly<Record<Availability, string>>;
 
-const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): StorefrontOrderResult => ({
-  issues: [],
-  lines: order.lines.map((line) => ({
+const storefrontLines = (order: Pick<Order, 'lines' | 'pricesIncludeVat'>): StorefrontOrderResult['lines'] =>
+  order.lines.map((line) => ({
     lineTotalMinor: lineGrossMinor(line, order.pricesIncludeVat),
     name: line.productName,
     productId: line.productId,
     quantity: line.quantity,
     sku: line.sku,
     unitPriceMinor: line.unitPriceMinor,
-    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-    ...(line.variantName === undefined ? {} : { variantName: line.variantName }),
-  })),
-  orderId: order.id,
-  orderNumber: order.number,
-  outcome,
-  ...(order.shipping === undefined ? {} : { shippingPriceMinor: order.shipping.priceMinor }),
-  status: order.status,
-  totalMinor: order.totalMinor,
-  totalVatMinor: order.totalVatMinor,
-});
+    ...variantFields(line.variantId, line.variantName),
+  }));
+const storefrontResultOf = (order: Order, outcome: 'PLACED' | 'REPLAYED'): StorefrontOrderResult => {
+  const result: Mutable<StorefrontOrderResult> = {
+    issues: [],
+    lines: storefrontLines(order),
+    orderId: order.id,
+    orderNumber: order.number,
+    outcome,
+    status: order.status,
+    totalMinor: order.totalMinor,
+    totalVatMinor: order.totalVatMinor,
+  };
+  if (order.shipping !== undefined) {
+    result.shippingPriceMinor = order.shipping.priceMinor;
+  }
+  return result;
+};
 
 interface PricedUnit {
   readonly availability: Availability;
   readonly grossPriceMinor: number;
   readonly minimumQuantity?: number;
-  readonly packageQuantity?: number | undefined;
   readonly name: string;
-  readonly stock: number;
+  readonly packageQuantity?: number | undefined;
   readonly sku: string;
+  readonly stock: number;
   readonly unitLabel: string;
-  readonly variantId?: string;
+  readonly variantId?: OrderLine['variantId'];
   readonly variantName?: string;
 }
 
@@ -715,9 +801,9 @@ const sellableUnitOf = (
   products: readonly Product[],
   movements: readonly StockMovement[],
   line: CommandOf<'PlaceStorefrontOrder'>['lines'][number],
-): { readonly issue: StorefrontIssue } | { readonly unit: PricedUnit; readonly product: Product } => {
+): { readonly issue: StorefrontIssue } | { readonly product: Product; readonly unit: PricedUnit } => {
   const product = products.find((entry) => entry.id === line.productId);
-  const ids = { productId: line.productId, ...(line.variantId === undefined ? {} : { variantId: line.variantId }) };
+  const ids = { productId: line.productId, ...stockVariantFields(line.variantId) };
   if (product === undefined || !product.active || product.published === false) {
     return { issue: { ...ids, code: 'NOT_AVAILABLE', message: 'Produkt už není v nabídce.' } };
   }
@@ -739,10 +825,10 @@ const sellableUnitOf = (
       product,
       unit: {
         availability: variant.availability,
-        minimumQuantity: variant.minimumQuantity ?? 1,
-        packageQuantity: variant.packageQuantity,
         grossPriceMinor: tierPriceForQuantity(variant.priceTiers, line.quantity) ?? variant.grossPriceMinor,
+        minimumQuantity: variant.minimumQuantity ?? 1,
         name: product.name,
+        packageQuantity: variant.packageQuantity,
         sku: variant.sku,
         stock: variant.stockOnHand,
         unitLabel: variant.unit ?? product.unit,
@@ -754,19 +840,113 @@ const sellableUnitOf = (
   return {
     product,
     unit: {
-      minimumQuantity: product.minimumQuantity ?? 1,
-      packageQuantity: product.packageQuantity,
       availability: record.availability ?? 'UNKNOWN',
       grossPriceMinor:
         tierPriceForQuantity(product.priceTiers, line.quantity) ??
         record.grossPriceMinor ??
         grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
+      minimumQuantity: product.minimumQuantity ?? 1,
       name: product.name,
+      packageQuantity: product.packageQuantity,
       sku: product.sku,
       stock: record.stockOnHand,
       unitLabel: product.unit,
     },
   };
+};
+
+type StorefrontLineRequest = CommandOf<'PlaceStorefrontOrder'>['lines'][number];
+const checkedStorefrontUnit = (
+  state: MerchandiseState,
+  line: StorefrontLineRequest,
+  requested: Map<string, number>,
+): ReturnType<typeof sellableUnitOf> => {
+  const resolved = sellableUnitOf(state.products, state.movements, line);
+  if ('issue' in resolved) {
+    return resolved;
+  }
+  const { product, unit } = resolved;
+  const ids = { productId: product.id, ...stockVariantFields(unit.variantId) };
+  const key = `${product.id}|${unit.variantId ?? ''}`;
+  const quantity = (requested.get(key) ?? 0) + line.quantity;
+  requested.set(key, quantity);
+  const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
+  // A zero or missing owner price is never sellable, whatever price the storefront claims it saw.
+  if (!Number.isSafeInteger(unit.grossPriceMinor) || unit.grossPriceMinor <= 0) {
+    return {
+      issue: {
+        ...ids,
+        code: 'PRICE_UNAVAILABLE',
+        message: `${label}: cena není dostupná, položku proto nelze objednat.`,
+      },
+    };
+  }
+  if (line.quantity < (unit.minimumQuantity ?? 1)) {
+    return {
+      issue: {
+        ...ids,
+        code: 'MINIMUM_QUANTITY',
+        message: `${label}: minimální množství je ${unit.minimumQuantity}.`,
+      },
+    };
+  }
+  if (
+    unit.packageQuantity !== undefined &&
+    unit.packageQuantity > 0 &&
+    Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001
+  ) {
+    return {
+      issue: {
+        ...ids,
+        code: 'PACKAGE_QUANTITY',
+        message: `${label}: objednávejte v násobcích balení ${unit.packageQuantity}.`,
+      },
+    };
+  }
+  if (unit.availability === 'UNKNOWN') {
+    return {
+      issue: {
+        ...ids,
+        availability: unit.availability,
+        code: 'AVAILABILITY_UNKNOWN',
+        message: `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.`,
+      },
+    };
+  }
+  if (unit.availability === 'OUT_OF_STOCK') {
+    return {
+      issue: {
+        ...ids,
+        availability: unit.availability,
+        availableQuantity: 0,
+        code: 'OUT_OF_STOCK',
+        message: `${label}: ${availabilityMessage.OUT_OF_STOCK.toLowerCase()}.`,
+      },
+    };
+  }
+  if (unit.stock < quantity) {
+    return {
+      issue: {
+        ...ids,
+        availability: unit.availability,
+        availableQuantity: unit.stock,
+        code: 'INSUFFICIENT_STOCK',
+        message: `${label}: k dispozici je jen ${unit.stock} ${unit.unitLabel}.`,
+      },
+    };
+  }
+  if (unit.grossPriceMinor !== line.expectedUnitPriceMinor) {
+    return {
+      issue: {
+        ...ids,
+        code: 'PRICE_CHANGED',
+        currentUnitPriceMinor: unit.grossPriceMinor,
+        expectedUnitPriceMinor: line.expectedUnitPriceMinor,
+        message: `${label}: cena se změnila z ${czk(line.expectedUnitPriceMinor)} na ${czk(unit.grossPriceMinor)}. Potvrďte prosím novou cenu.`,
+      },
+    };
+  }
+  return resolved;
 };
 
 const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(function* placeStorefrontOrder(
@@ -776,105 +956,42 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
 ) {
   const replay = state.orders.find((entry) => entry.clientRequestId === value.clientRequestId);
   if (replay !== undefined) {
-    if (replay.customerAccountId !== value.customerAccountId)
+    if (replay.customerAccountId !== value.customerAccountId) {
       return yield* conflict('Submission belongs to another customer');
+    }
     const entity = yield* entityIdOf(replay.id);
     return { entityIds: [entity], state, storefrontOrder: storefrontResultOf(replay, 'REPLAYED') };
   }
   const issues: StorefrontIssue[] = [];
   const lines: OrderLine[] = [];
   const requested = new Map<string, number>();
-  for (const line of value.lines) {
-    const resolved = sellableUnitOf(state.products, state.movements, line);
-    if ('issue' in resolved) {
-      issues.push(resolved.issue);
-      continue;
-    }
-    const { product, unit } = resolved;
-    const ids = { productId: product.id, ...(unit.variantId === undefined ? {} : { variantId: unit.variantId }) };
-    const key = `${product.id}|${unit.variantId ?? ''}`;
-    const quantity = (requested.get(key) ?? 0) + line.quantity;
-    requested.set(key, quantity);
-    const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
-    // A zero or missing owner price is never sellable, whatever price the storefront claims it saw.
-    if (!Number.isSafeInteger(unit.grossPriceMinor) || unit.grossPriceMinor <= 0) {
-      issues.push({
-        ...ids,
-        code: 'PRICE_UNAVAILABLE',
-        message: `${label}: cena není dostupná, položku proto nelze objednat.`,
-      });
-      continue;
-    }
-    if (line.quantity < (unit.minimumQuantity ?? 1)) {
-      issues.push({
-        ...ids,
-        code: 'MINIMUM_QUANTITY',
-        message: `${label}: minimální množství je ${unit.minimumQuantity}.`,
-      });
-      continue;
-    }
-    if (
-      unit.packageQuantity !== undefined &&
-      unit.packageQuantity > 0 &&
-      Math.abs(line.quantity / unit.packageQuantity - Math.round(line.quantity / unit.packageQuantity)) > 0.000001
-    ) {
-      issues.push({
-        ...ids,
-        code: 'PACKAGE_QUANTITY',
-        message: `${label}: objednávejte v násobcích balení ${unit.packageQuantity}.`,
-      });
-      continue;
-    }
-    if (unit.availability === 'UNKNOWN') {
-      issues.push({
-        ...ids,
-        availability: unit.availability,
-        code: 'AVAILABILITY_UNKNOWN',
-        message: `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.`,
-      });
-      continue;
-    }
-    if (unit.availability === 'OUT_OF_STOCK') {
-      issues.push({
-        ...ids,
-        availability: unit.availability,
-        availableQuantity: 0,
-        code: 'OUT_OF_STOCK',
-        message: `${label}: ${availabilityMessage.OUT_OF_STOCK.toLowerCase()}.`,
-      });
-      continue;
-    }
-    if (unit.stock < quantity) {
-      issues.push({
-        ...ids,
-        availability: unit.availability,
-        availableQuantity: unit.stock,
-        code: 'INSUFFICIENT_STOCK',
-        message: `${label}: k dispozici je jen ${unit.stock} ${unit.unitLabel}.`,
-      });
-      continue;
-    }
-    if (unit.grossPriceMinor !== line.expectedUnitPriceMinor) {
-      issues.push({
-        ...ids,
-        code: 'PRICE_CHANGED',
-        currentUnitPriceMinor: unit.grossPriceMinor,
-        expectedUnitPriceMinor: line.expectedUnitPriceMinor,
-        message: `${label}: cena se změnila z ${czk(line.expectedUnitPriceMinor)} na ${czk(unit.grossPriceMinor)}. Potvrďte prosím novou cenu.`,
-      });
-      continue;
-    }
-    lines.push({
-      productId: product.id,
-      productName: product.name,
-      quantity: line.quantity,
-      sku: unit.sku,
-      unitPriceMinor: unit.grossPriceMinor,
-      ...(unit.variantId === undefined ? {} : { variantId: yield* mintId(VariantIdSchema, unit.variantId) }),
-      ...(unit.variantName === undefined ? {} : { variantName: unit.variantName }),
-      vatRate: product.vatRate,
-    });
-  }
+  yield* Effect.forEach(
+    value.lines,
+    Effect.fn('Merchandise.storefrontLine')(function* storefrontLine(line: StorefrontLineRequest) {
+      const resolved = checkedStorefrontUnit(state, line, requested);
+      if ('issue' in resolved) {
+        issues.push(resolved.issue);
+        return;
+      }
+      const { product, unit } = resolved;
+      const snapshot: Mutable<OrderLine> = {
+        productId: product.id,
+        productName: product.name,
+        quantity: line.quantity,
+        sku: unit.sku,
+        unitPriceMinor: unit.grossPriceMinor,
+        vatRate: product.vatRate,
+      };
+      if (unit.variantId !== undefined) {
+        snapshot.variantId = yield* mintId(VariantIdSchema, unit.variantId);
+      }
+      if (unit.variantName !== undefined) {
+        snapshot.variantName = unit.variantName;
+      }
+      lines.push(snapshot);
+    }),
+    { concurrency: 1, discard: true },
+  );
   const method = shippingMethodFor(value.shippingMethod, isSourceCatalog(state));
   if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
     issues.push({
@@ -891,16 +1008,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     vatRate: 21,
   } as const;
   const draftTotals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
-  const draftLines = lines.map((line) => ({
-    lineTotalMinor: lineGrossMinor(line, true),
-    name: line.productName,
-    productId: line.productId,
-    quantity: line.quantity,
-    sku: line.sku,
-    unitPriceMinor: line.unitPriceMinor,
-    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-    ...(line.variantName === undefined ? {} : { variantName: line.variantName }),
-  }));
+  const draftLines = storefrontLines({ lines, pricesIncludeVat: true });
   if (issues.length > 0 || value.dryRun === true) {
     const storefrontOrder: StorefrontOrderResult = {
       issues,
@@ -911,22 +1019,20 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     };
     return { entityIds: [], state, storefrontOrder };
   }
-  if (value.contact === undefined || value.deliveryAddress === undefined || value.partyId === undefined)
+  if (value.contact === undefined || value.deliveryAddress === undefined || value.partyId === undefined) {
     return yield* conflict('Order contact, delivery address and customer party are required');
+  }
   const id = yield* mintId(OrderIdSchema, input.resourceId);
   if (state.orders.some((entry) => entry.id === id)) {
     return yield* conflict('Order id already exists');
   }
   const number = nextOrderNumberOf(state);
-  const order: Order = {
-    ...(value.billingAddress === undefined ? {} : { billingAddress: value.billingAddress }),
+  const order: Mutable<Order> = {
     channel: 'STOREFRONT',
-    ...(value.customerAccountId === undefined ? {} : { customerAccountId: value.customerAccountId }),
-    clientRequestId: value.clientRequestId,
+    clientRequestId: ClientRequestIdSchema.make(value.clientRequestId),
     contact: value.contact,
     createdAt: input.now,
     deliveryAddress: value.deliveryAddress,
-    ...(value.deliveryRecipient === undefined ? {} : { deliveryRecipient: value.deliveryRecipient }),
     history: [
       {
         actorLabel: 'Zákazník – e-shop',
@@ -937,7 +1043,6 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     ],
     id,
     lines,
-    ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
     number,
     partyId: value.partyId,
     pricesIncludeVat: true,
@@ -946,6 +1051,18 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     ...draftTotals,
     updatedAt: input.now,
   };
+  if (value.billingAddress !== undefined) {
+    order.billingAddress = value.billingAddress;
+  }
+  if (value.customerAccountId !== undefined) {
+    order.customerAccountId = value.customerAccountId;
+  }
+  if (value.deliveryRecipient !== undefined) {
+    order.deliveryRecipient = value.deliveryRecipient;
+  }
+  if (value.note !== undefined && value.note !== '') {
+    order.note = value.note;
+  }
   const entity = yield* entityIdOf(order.id);
   // Atomic with the order: the same save writes one ORDER movement per line; cancelling returns it.
   const placedMovements = yield* Effect.forEach(
@@ -960,7 +1077,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
           productId: line.productId,
           reason: 'ORDER',
           reference: number,
-          ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
+          ...stockVariantFields(line.variantId),
         })),
       ),
     { concurrency: 1 },
@@ -972,21 +1089,22 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   };
 });
 
+const describeLine = (line: OrderLine, pricesIncludeVat = false) => {
+  const variant = line.variantName === undefined ? '' : ` (${line.variantName})`;
+  const net = pricesIncludeVat ? '' : ' bez DPH';
+  return `${line.quantity}× ${line.productName}${variant} á ${czk(line.unitPriceMinor)}${net}`;
+};
 export const describeLines = (order: {
   readonly lines: readonly OrderLine[];
   readonly pricesIncludeVat?: boolean | undefined;
-}) =>
-  order.lines
-    .map(
-      (line) =>
-        `${line.quantity}× ${line.productName}${line.variantName === undefined ? '' : ` (${line.variantName})`} á ${czk(line.unitPriceMinor)}${order.pricesIncludeVat === true ? '' : ' bez DPH'}`,
-    )
-    .join('; ');
-
-export const describeAddress = (address: Order['deliveryAddress']) =>
-  address === undefined
-    ? 'bez adresy'
-    : `${address.street}, ${address.postalCode} ${address.city}${address.country === undefined || address.country === '' ? '' : `, ${address.country}`}`;
+}) => order.lines.map((line) => describeLine(line, order.pricesIncludeVat)).join('; ');
+export const describeAddress = (address: Order['deliveryAddress']) => {
+  if (address === undefined) {
+    return 'bez adresy';
+  }
+  const country = address.country === undefined || address.country === '' ? '' : `, ${address.country}`;
+  return `${address.street}, ${address.postalCode} ${address.city}${country}`;
+};
 
 export const describeContact = (contact: Order['contact']) =>
   contact === undefined
@@ -1000,60 +1118,56 @@ const lineKey = (line: { readonly productId: string; readonly variantId?: string
   `${line.productId}|${line.variantId ?? ''}`;
 
 /** Edits an open order; stock-moving (staff) orders reconcile their ORDER movements for quantity changes. */
-const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
-  state: MerchandiseState,
-  value: CommandOf<'EditOrder'>,
-  input: MerchandiseCommandInput,
-) {
-  const existing = state.orders.find((entry) => entry.id === value.id);
-  if (existing === undefined) {
-    return yield* notFound('Order does not exist');
-  }
-  if (
-    existing.demoCleanup !== undefined ||
-    existing.status === 'DELIVERED' ||
-    existing.status === 'CANCELLED' ||
-    existing.status === 'SHIPPED'
+type EditLineRequest = NonNullable<CommandOf<'EditOrder'>['lines']>[number];
+const validateEditedStorefrontQuantity = Effect.fn('Merchandise.validateEditedStorefrontQuantity')(
+  function* validateEditedStorefrontQuantity(
+    state: MerchandiseState,
+    existing: Order,
+    request: EditLineRequest,
+    kept: OrderLine | undefined,
   ) {
-    return yield* conflict('Only open orders before the carrier hand-over can be edited');
-  }
-  const history: OrderHistoryEntry[] = [];
-  const reason = value.reason === undefined || value.reason === '' ? {} : { reason: value.reason };
-  let order: Order = existing;
-  let movements = state.movements;
-  if (value.lines !== undefined) {
-    const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
-    const nextLines: OrderLine[] = [];
-    const seen = new Set<string>();
-    for (const request of value.lines) {
+    if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
+      const product = yield* findProduct(state.products, request.productId);
+      const record = toProductRecord(product, stockLevelsOf(state.movements, product.id));
+      const unit =
+        request.variantId === undefined
+          ? record
+          : record.variantRecords?.find((variant) => variant.id === request.variantId);
+      const alreadyDebitedQuantity = orderMovesStock(state, existing) ? (kept?.quantity ?? 0) : 0;
+      if (
+        unit === undefined ||
+        !isOrderQuantityValid(request.quantity, orderQuantityRules(unit, alreadyDebitedQuantity))
+      ) {
+        return yield* conflict('Množství musí odpovídat dostupné zásobě, minimu a velikosti balení varianty');
+      }
+    }
+    return yield* Effect.void;
+  },
+);
+
+const editedOrderLines = Effect.fn('Merchandise.editedOrderLines')(function* editedOrderLines(
+  state: MerchandiseState,
+  existing: Order,
+  incoming: readonly EditLineRequest[],
+) {
+  const previous = new Map(existing.lines.map((line) => [lineKey(line), line] as const));
+  const seen = new Set<string>();
+  return yield* Effect.forEach(
+    incoming,
+    Effect.fn('Merchandise.editedOrderLine')(function* editedOrderLine(request: EditLineRequest) {
       const key = lineKey(request);
       if (seen.has(key)) {
         return yield* conflict('Each product variant may appear only once in an order');
       }
       seen.add(key);
       const kept = previous.get(key);
-      if (existing.channel === 'STOREFRONT' && kept?.quantity !== request.quantity) {
-        const product = yield* findProduct(state.products, request.productId);
-        const record = toProductRecord(product, stockLevelsOf(state.movements, product.id));
-        const unit =
-          request.variantId === undefined
-            ? record
-            : record.variantRecords?.find((variant) => variant.id === request.variantId);
-        const alreadyDebitedQuantity = orderMovesStock(state, existing) ? (kept?.quantity ?? 0) : 0;
-        if (
-          unit === undefined ||
-          !isOrderQuantityValid(request.quantity, orderQuantityRules(unit, alreadyDebitedQuantity))
-        ) {
-          return yield* conflict('Množství musí odpovídat dostupné zásobě, minimu a velikosti balení varianty');
-        }
-      }
+      yield* validateEditedStorefrontQuantity(state, existing, request, kept);
       if (kept !== undefined) {
-        nextLines.push({
+        return {
           ...kept,
           quantity: request.quantity,
           unitPriceMinor: request.unitPriceMinor ?? kept.unitPriceMinor,
-        });
-        continue;
+        };
       }
       const product = yield* findProduct(state.products, request.productId);
       const variant = request.variantId === undefined ? undefined : yield* findVariant(product, request.variantId);
@@ -1063,60 +1177,75 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       const netPrice = variant?.priceMinor ?? product.currentPriceMinor;
       const currentPrice =
         existing.pricesIncludeVat === true ? grossUnitPriceMinor(netPrice, product.vatRate) : netPrice;
-      nextLines.push({
+      return {
         productId: product.id,
         productName: product.name,
         quantity: request.quantity,
         sku: variant?.sku ?? product.sku,
         unitPriceMinor: request.unitPriceMinor ?? currentPrice,
-        ...(variant === undefined ? {} : { variantId: variant.id, variantName: variant.name }),
+        ...variantFields(variant?.id, variant?.name),
         vatRate: product.vatRate,
-      });
-    }
-    const before = describeLines(existing);
-    const after = describeLines({ lines: nextLines, pricesIncludeVat: existing.pricesIncludeVat });
-    if (before !== after) {
-      if (orderMovesStock(state, existing)) {
-        const quantities = new Map<string, { delta: number; line: OrderLine }>();
-        for (const line of existing.lines) {
-          const key = lineKey(line);
-          const entry = quantities.get(key);
-          quantities.set(key, { delta: (entry?.delta ?? 0) + line.quantity, line });
-        }
-        for (const line of nextLines) {
-          const entry = quantities.get(lineKey(line));
-          quantities.set(lineKey(line), { delta: (entry?.delta ?? 0) - line.quantity, line });
-        }
-        let index = 0;
-        const added: StockMovement[] = [];
-        for (const { delta, line } of quantities.values()) {
-          if (delta === 0) {
-            continue;
-          }
-          const stock =
-            line.variantId === undefined
-              ? stockOnHandOf(movements, line.productId)
-              : variantStockOf(movements, line.productId, line.variantId);
-          if (stock + delta < 0) {
-            return yield* conflict(`Insufficient stock for ${line.sku}`);
-          }
-          added.push({
-            at: input.now,
-            delta,
-            id: yield* movementIdOf(input.resourceId, index),
-            productId: line.productId,
-            reason: 'ORDER',
-            reference: existing.number,
-            ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-          });
-          index += 1;
-        }
-        movements = [...movements, ...added];
-      }
-      order = { ...order, lines: nextLines };
-      history.push(historyEntry(input, { after, before, kind: 'LINES', ...reason }));
-    }
+      };
+    }),
+    { concurrency: 1 },
+  );
+});
+
+const reconciledOrderMovements = Effect.fn('Merchandise.reconcileOrderMovements')(function* reconciledOrderMovements(
+  state: MerchandiseState,
+  existing: Order,
+  nextLines: readonly OrderLine[],
+  input: MerchandiseCommandInput,
+) {
+  const quantities = new Map<string, { delta: number; line: OrderLine }>();
+  for (const line of existing.lines) {
+    const key = lineKey(line);
+    const entry = quantities.get(key);
+    quantities.set(key, { delta: (entry?.delta ?? 0) + line.quantity, line });
   }
+  for (const line of nextLines) {
+    const entry = quantities.get(lineKey(line));
+    quantities.set(lineKey(line), { delta: (entry?.delta ?? 0) - line.quantity, line });
+  }
+  const changed = [...quantities.values()].filter(({ delta }) => delta !== 0);
+  const added = yield* Effect.forEach(
+    changed,
+    Effect.fn('Merchandise.reconcileOrderLine')(function* reconcileOrderLine(
+      { delta, line }: { readonly delta: number; readonly line: OrderLine },
+      index: number,
+    ) {
+      const stock =
+        line.variantId === undefined
+          ? stockOnHandOf(state.movements, line.productId)
+          : variantStockOf(state.movements, line.productId, line.variantId);
+      if (stock + delta < 0) {
+        return yield* conflict(`Insufficient stock for ${line.sku}`);
+      }
+      return {
+        at: input.now,
+        delta,
+        id: yield* movementIdOf(input.resourceId, index),
+        productId: line.productId,
+        reason: 'ORDER' as const,
+        reference: existing.number,
+        ...stockVariantFields(line.variantId),
+      };
+    }),
+    { concurrency: 1 },
+  );
+  return [...state.movements, ...added];
+});
+
+const editedOrderDetails = (
+  state: MerchandiseState,
+  existing: Order,
+  initial: Order,
+  value: CommandOf<'EditOrder'>,
+  input: MerchandiseCommandInput,
+) => {
+  let order = initial;
+  const history: OrderHistoryEntry[] = [];
+  const reason = value.reason === undefined || value.reason === '' ? {} : { reason: value.reason };
   if (value.shipping !== undefined) {
     const method = shippingMethodFor(value.shipping.method, isSourceCatalog(state));
     const shipping = {
@@ -1159,13 +1288,51 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
       }),
     );
   }
+  return { history, order };
+};
+
+const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
+  state: MerchandiseState,
+  value: CommandOf<'EditOrder'>,
+  input: MerchandiseCommandInput,
+) {
+  const existing = state.orders.find((entry) => entry.id === value.id);
+  if (existing === undefined) {
+    return yield* notFound(ORDER_NOT_FOUND_REASON);
+  }
+  if (
+    existing.demoCleanup !== undefined ||
+    existing.status === 'DELIVERED' ||
+    existing.status === 'CANCELLED' ||
+    existing.status === 'SHIPPED'
+  ) {
+    return yield* conflict('Only open orders before the carrier hand-over can be edited');
+  }
+  const history: OrderHistoryEntry[] = [];
+  const reason = value.reason === undefined || value.reason === '' ? {} : { reason: value.reason };
+  let order = existing;
+  let { movements } = state;
+  if (value.lines !== undefined) {
+    const nextLines = yield* editedOrderLines(state, existing, value.lines);
+    const before = describeLines(existing);
+    const after = describeLines({ lines: nextLines, pricesIncludeVat: existing.pricesIncludeVat });
+    if (before !== after) {
+      if (orderMovesStock(state, existing)) {
+        movements = yield* reconciledOrderMovements(state, existing, nextLines, input);
+      }
+      order = { ...order, lines: nextLines };
+      history.push(historyEntry(input, { after, before, kind: 'LINES', ...reason }));
+    }
+  }
+  const details = editedOrderDetails(state, existing, order, value, input);
+  history.push(...details.history);
   const entity = yield* entityIdOf(existing.id);
   if (history.length === 0) {
     return { entityIds: [entity], state };
   }
   const updated: Order = {
-    ...order,
-    ...fullOrderTotals(order),
+    ...details.order,
+    ...fullOrderTotals(details.order),
     history: [...(existing.history ?? []), ...history],
     updatedAt: input.now,
   };
@@ -1176,11 +1343,14 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
 });
 
 /** An order edit that names the order version it was made against; see `EditOrder.expectedUpdatedAt`. */
+const OrderScopedEditSchema = Schema.TaggedStruct('EditOrder', {
+  expectedUpdatedAt: Schema.DateTimeUtcFromString,
+});
 export const isOrderScopedEdit = (
   command: MerchandiseCommand,
 ): command is Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }> & {
   readonly expectedUpdatedAt: DateTime.Utc;
-} => Predicate.isTagged(command, 'EditOrder') && command.expectedUpdatedAt !== undefined;
+} => Schema.is(OrderScopedEditSchema)(command);
 
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
@@ -1243,55 +1413,66 @@ export const evolveMerchandiseState = (
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
     // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
-    Match.tag('ArchiveDemoProduct', (value) =>
-      Effect.gen(function* () {
+    Match.tag(
+      'ArchiveDemoProduct',
+      Effect.fn('Merchandise.archiveDemoProduct')(function* archiveDemoProduct(value: CommandOf<'ArchiveDemoProduct'>) {
         const product = yield* findProduct(state.products, value.id);
         const entity = yield* entityIdOf(product.id);
-        if (product.active || product.published !== false)
+        if (product.active || product.published !== false) {
           return yield* conflict('Před archivací produkt deaktivujte a skryjte v e-shopu');
-        if (product.demoArchive !== undefined) return { entityIds: [entity], state };
+        }
+        if (product.demoArchive !== undefined) {
+          return { entityIds: [entity], state };
+        }
         const archived = withContentHistory(
           product,
           {
             ...product,
             active: false,
+            demoArchive: { actor: input.actor, at: input.now, reason: value.reason },
             published: false,
             updatedAt: input.now,
-            demoArchive: { at: input.now, actor: input.actor, reason: value.reason },
           },
           input,
         );
         return { entityIds: [entity], state: withProduct(state, archived) };
       }),
     ),
-    Match.tag('RemoveDemoOrder', (value) =>
-      Effect.gen(function* removeDemoOrder() {
+    Match.tag(
+      'RemoveDemoOrder',
+      Effect.fn('Merchandise.removeDemoOrder')(function* removeDemoOrder(value: CommandOf<'RemoveDemoOrder'>) {
         const order = state.orders.find((entry) => entry.id === value.id);
-        if (order === undefined) return yield* notFound('Order does not exist');
+        if (order === undefined) {
+          return yield* notFound(ORDER_NOT_FOUND_REASON);
+        }
         if (order.demo !== true || order.channel !== 'STOREFRONT') {
           return yield* conflict('Odstranit lze pouze DEMO objednávku z e-shopu');
         }
         const entity = yield* entityIdOf(order.id);
         if (order.demoCleanup !== undefined) {
-          if (value.repairStock !== true) return { entityIds: [entity], state };
+          if (value.repairStock !== true) {
+            return { entityIds: [entity], state };
+          }
           const returned = yield* returnOrderStock(
             state,
             order,
             input,
             `Dorovnání skladu odstraněné DEMO objednávky ${order.number}`,
           );
-          if (returned.length === 0) return { entityIds: [entity], state };
+          if (returned.length === 0) {
+            return { entityIds: [entity], state };
+          }
           const repaired: Order = {
             ...order,
-            updatedAt: input.now,
             history: [
               ...(order.history ?? []),
               historyEntry(input, {
-                kind: 'NOTE',
                 after: 'Dorovnán sklad odstraněné DEMO objednávky',
+                kind: 'NOTE',
                 reason: value.reason,
               }),
             ],
+            updatedAt: input.now,
           };
           return {
             entityIds: [entity],
@@ -1304,17 +1485,17 @@ export const evolveMerchandiseState = (
         }
         const removed: Order = {
           ...order,
-          updatedAt: input.now,
-          demoCleanup: { at: input.now, actor: input.actor, reason: value.reason },
+          demoCleanup: { actor: input.actor, at: input.now, reason: value.reason },
           history: [
             ...(order.history ?? []),
             historyEntry(input, {
-              kind: 'NOTE',
-              before: 'Viditelná DEMO objednávka',
               after: 'Odstraněna z prezentačního seznamu; audit zachován',
+              before: 'Viditelná DEMO objednávka',
+              kind: 'NOTE',
               reason: value.reason,
             }),
           ],
+          updatedAt: input.now,
         };
         // All DEMO statuses, including shipped/delivered; the ledger prevents duplicate returns.
         const returned = yield* returnOrderStock(
@@ -1359,6 +1540,9 @@ const operationNeeds = (operations: readonly AiOperation[]) => ({
   ),
 });
 
+const SnapshotProductSchema = Schema.Struct({ productId: ProductIdReferenceSchema });
+const snapshotProduct = Schema.decodeUnknownResult(SnapshotProductSchema);
+
 /** Rows an AI approval command touches: the proposed orders, their products and the movements a change wrote. */
 const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChanges']): WorkingSetRequest => {
   const changes = slice?.changes ?? [];
@@ -1376,8 +1560,13 @@ const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChan
   );
   const snapshotProducts = chosen.flatMap((change) =>
     [...(change.snapshots ?? []), ...(change.proposedSnapshots ?? [])].flatMap((snapshot) => {
-      const value = (snapshot.after ?? snapshot.before) as { readonly productId?: unknown } | undefined;
-      return snapshot.kind === 'movement' && typeof value?.productId === 'string' ? [value.productId] : [];
+      if (snapshot.kind !== 'movement') {
+        return [];
+      }
+      return Result.match(snapshotProduct(snapshot.after ?? snapshot.before), {
+        onFailure: () => [],
+        onSuccess: ({ productId }) => [productId],
+      });
     }),
   );
   const needs = operationNeeds(operations);
@@ -1435,11 +1624,16 @@ export const workingSetRequestOf = (
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
       UpdateCategory: (value): WorkingSetRequest => ({ categoryIds: [value.id] }),
-      UpdateProduct: (value): WorkingSetRequest => ({
-        productIds: [value.id],
-        ...(value.patch.slug === undefined ? {} : { productKeys: { slug: value.patch.slug } }),
-        ...(value.patch.categoryId === undefined ? {} : { categoryIds: [value.patch.categoryId] }),
-      }),
+      UpdateProduct: (value): WorkingSetRequest => {
+        const request: Mutable<WorkingSetRequest> = { productIds: [value.id] };
+        if (value.patch.slug !== undefined) {
+          request.productKeys = { slug: value.patch.slug };
+        }
+        if (value.patch.categoryId !== undefined) {
+          request.categoryIds = [value.patch.categoryId];
+        }
+        return request;
+      },
     }),
   );
 
@@ -1452,6 +1646,23 @@ export interface MerchandiseRecordsGrants {
   readonly readAll: boolean;
   readonly writeAll: boolean;
 }
+
+const recordCapabilities = (
+  legalEntityId: string,
+  storefront: boolean,
+  grants: MerchandiseRecordsGrants,
+  canWrite: boolean,
+): Pick<RecordsResponse, 'canCleanupDemo' | 'canEditOrders' | 'canManageCatalog' | 'canResetDemo'> => {
+  const staff = !storefront;
+  const isAdministrator = storefront ? false : grants.administrator;
+  const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
+  return {
+    canCleanupDemo: staff && canWrite && isAdministrator,
+    canEditOrders: staff && canManageCatalog,
+    canManageCatalog: staff && canManageCatalog,
+    canResetDemo: staff && canWrite && isAdministrator && legalEntityId === AKROS_LEGAL_ENTITY_ID,
+  };
+};
 
 const storefrontCatalogView = (request: RecordsRequest) =>
   request.view?.storefront === true &&
@@ -1482,7 +1693,7 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
         legalEntityId: scope.legalEntityId,
         principalId: scope.principalId,
         targets: permissions.map((permission) => ({
-          moduleId: 'demo.merchandise',
+          moduleId: MERCHANDISE_MODULE_ID,
           permission: `demo.merchandise.${permission}`,
         })),
         tenantId: scope.tenantId,
@@ -1490,12 +1701,12 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
       request.view?.storefront === true
         ? Effect.succeed([])
         : access.tenants({
-            permission: 'manage_identity',
+            permission: IDENTITY_MANAGEMENT_PERMISSION,
             principalId: scope.principalId,
             tenantIds: [scope.tenantId],
           }),
     ],
-    { concurrency: 'unbounded' },
+    { concurrency: 2 },
   );
   if (
     decisions.length !== permissions.length ||
@@ -1542,7 +1753,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const decisions = yield* access.contextPermissions({
         legalEntityId,
         principalId: scope.principalId,
-        targets: [{ moduleId: 'demo.merchandise', permission: `demo.merchandise.${permission}` }],
+        targets: [{ moduleId: MERCHANDISE_MODULE_ID, permission: `demo.merchandise.${permission}` }],
         tenantId: scope.tenantId,
       });
       if (
@@ -1557,7 +1768,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
     const administrator = Effect.fn('Merchandise.administrator')(function* administrator() {
       const decisions = yield* access.tenants({
-        permission: 'manage_identity',
+        permission: IDENTITY_MANAGEMENT_PERMISSION,
         principalId: scope.principalId,
         tenantIds: [scope.tenantId],
       });
@@ -1572,7 +1783,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       next: MerchandiseState,
       now: DateTime.Utc,
     ) {
-      if (next === working.state) return working.revision;
+      if (next === working.state) {
+        return working.revision;
+      }
       const revision = yield* persistChange(transaction, store, working, next, now).pipe(Effect.mapError(unavailable));
       return revision ?? (yield* revisionConflict());
     });
@@ -1676,17 +1889,29 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         aiWorkingSetRequest(command, head.aiChanges),
       ).pipe(Effect.mapError(unavailable));
       const now = yield* DateTime.now;
-      const outcome = yield* applyMerchandiseAiCommand(working.state, command, {
-        actor: { principalId: scope.principalId, tenantId: scope.tenantId },
-        invocationId: resourceId,
-        now,
-      }).pipe(
+      const outcome = yield* applyMerchandiseAiCommand(
+        working.state,
+        command,
+        {
+          actor: { principalId: scope.principalId, tenantId: scope.tenantId },
+          invocationId: resourceId,
+          now,
+        },
+        {
+          describeAddress,
+          describeContact,
+          describeLines,
+          describeShipping,
+          evolveMerchandiseState,
+          orderStatusLabels,
+        },
+      ).pipe(
         Effect.mapError((failure) =>
           failure.kind === 'not_found' ? notFound(failure.message) : conflict(failure.message),
         ),
       );
       const revision = yield* persist(working, outcome.state, now);
-      const entityIds = yield* Effect.forEach(outcome.entityIds, entityIdOf);
+      const entityIds = yield* Effect.forEach(outcome.entityIds, entityIdOf, { concurrency: 1 });
       return { entityIds, revision };
     });
     const apply = Effect.fn('Merchandise.apply')(function* apply(
@@ -1705,16 +1930,15 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       // People (also through an MCP connection, and agents acting through one) follow the AKROS staff split.
       if (
-        scope.authMethod === 'session' ||
-        scope.authMethod === 'support_impersonation' ||
-        scope.authMethod === 'oauth_connection'
+        (scope.authMethod === 'session' ||
+          scope.authMethod === 'support_impersonation' ||
+          scope.authMethod === 'oauth_connection') &&
+        !staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)
       ) {
-        if (!staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)) {
-          return yield* new MerchandisePermissionDenied({
-            code: 'merchandise_permission_denied',
-            reason: 'Tato změna vyžaduje oprávnění správce; expedice může zpracovávat objednávky a skladové pohyby',
-          });
-        }
+        return yield* new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: 'Tato změna vyžaduje oprávnění správce; expedice může zpracovávat objednávky a skladové pohyby',
+        });
       }
       return yield* applyOnce(command, expectedRevision, resourceId);
     });
@@ -1728,8 +1952,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           : yield* storefrontProducts(transaction, store, { query: catalogQuery });
       // Product pages carry their head in the same statement; category/order-only reads still need their revision.
       const head = page?.head ?? (yield* loadHead(transaction, store));
-      if (head === undefined) return yield* unavailable();
-      const { revision, homepageFeaturedProductIds: featuredIds } = head;
+      if (head === undefined) {
+        return yield* unavailable();
+      }
+      const { homepageFeaturedProductIds: featuredIds, revision } = head;
       const tree =
         catalogQuery === undefined ||
         (catalogQuery.includeCategories === false && catalogQuery.includeCategoryContent !== true)
@@ -1748,12 +1974,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? undefined
           : yield* storefrontCustomerOrders(transaction, store, view.storefrontCustomerOrders);
       const pageProducts = page?.products ?? [];
-      const response: RecordsResponse = {
+      const response: Mutable<RecordsResponse> = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canCleanupDemo: false,
         canEditOrders: false,
         canManageCatalog: false,
-        // The public storefront view never writes: no per-read permission check (a SpiceDB round trip) for it.
         canWrite: false,
         indicators: {
           lowStockCount: pageProducts.filter((record) => record.lowStock).length,
@@ -1764,36 +1989,99 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         },
         movements: [],
         orders: customerOrders?.orders ?? [],
-        ...(customerOrders === undefined ? {} : { totalOrders: customerOrders.total }),
-        ...(view.storefrontCheckout !== true
-          ? {}
-          : {
-              checkout: {
-                // No pickup-point registry exists. Do not offer a pickup method without real locations.
-                shippingMethods: (['PPL', 'CESKA_POSTA'] as const).map((id: ShippingMethod) => ({
-                  id,
-                  title: shippingMethods[id].label,
-                  priceMinor: shippingMethods[id].grossPriceMinor,
-                })),
-                paymentAvailable: false,
-                carrierTrackingAvailable: false,
-              },
-            }),
         products: [...pageProducts],
         revision,
-        ...(page === undefined
-          ? {}
-          : {
-              homepageFeaturedProductIds: [...featuredIds],
-              page: page.page,
-              pageSize: page.pageSize,
-              total: page.total,
-              totalProducts: page.total,
-            }),
-        ...(tree === undefined ? {} : { categories: [...tree] }),
-        ...(status === undefined ? {} : { orderStatus: status }),
       };
+      if (customerOrders !== undefined) {
+        response.totalOrders = customerOrders.total;
+      }
+      if (view.storefrontCheckout === true) {
+        response.checkout = {
+          carrierTrackingAvailable: false,
+          paymentAvailable: false,
+          // No pickup-point registry exists. Do not offer a pickup method without real locations.
+          shippingMethods: (['PPL', 'CESKA_POSTA'] as const).map((id) => ({
+            id,
+            priceMinor: shippingMethods[id].grossPriceMinor,
+            title: shippingMethods[id].label,
+          })),
+        };
+      }
+      if (page !== undefined) {
+        response.homepageFeaturedProductIds = featuredIds.map((id) => ProductIdReferenceSchema.make(id));
+        response.page = page.page;
+        response.pageSize = page.pageSize;
+        response.total = page.total;
+        response.totalProducts = page.total;
+      }
+      if (tree !== undefined) {
+        response.categories = [...tree];
+      }
+      if (status !== undefined) {
+        response.orderStatus = Option.fromNullishOr(status);
+      }
       return response;
+    });
+    const readOrderPage = Effect.fn('Merchandise.readOrderPage')(function* readOrderPage(
+      view: RecordsView,
+      storefront: boolean,
+    ): Effect.fn.Return<OrderReadPage, MerchandisePersistenceUnavailable> {
+      if (!storefront) {
+        return yield* orderPage(transaction, store, view).pipe(Effect.mapError(unavailable));
+      }
+      if (view.orderClientRequestId === undefined) {
+        return { orders: [] };
+      }
+      return {
+        orders: yield* ordersByClientRequest(transaction, store, view.orderClientRequestId).pipe(
+          Effect.mapError(unavailable),
+        ),
+      };
+    });
+    const readCatalogMetadata = Effect.fn('Merchandise.readCatalogMetadata')(function* readCatalogMetadata(
+      view: RecordsView,
+      staff: boolean,
+      pageProducts: RecordsResponse['products'],
+    ) {
+      const metadata: Mutable<CatalogReadMetadata> = {};
+      let tree: RecordsResponse['categories'];
+      if (staff && view.includeCategories === true) {
+        tree = yield* categoryTree(transaction, store, { activeId: view.categoryId, storefront: false }).pipe(
+          Effect.mapError(unavailable),
+        );
+        metadata.categories = [...tree];
+      }
+      let hasTree: boolean | undefined;
+      if (staff && (view.includeProductCategories === true || view.categoryTrails === true)) {
+        hasTree =
+          tree === undefined
+            ? yield* hasCategoryTree(transaction, store).pipe(Effect.mapError(unavailable))
+            : tree.length > 0;
+        metadata.hasCategoryTree = hasTree;
+      }
+      // Product category labels stand in for the storefront tree only when the company has no tree.
+      if (staff && view.includeProductCategories === true && hasTree === false) {
+        metadata.productCategories = [
+          ...(yield* productCategoryCounts(transaction, store).pipe(Effect.mapError(unavailable))),
+        ];
+      }
+      if (staff && view.categorySearch !== undefined) {
+        const categorySearch = yield* searchCategoryTrails(transaction, store, view.categorySearch).pipe(
+          Effect.mapError(unavailable),
+        );
+        metadata.categoryMatches = [...categorySearch.matches];
+        metadata.categoryMatchTotal = categorySearch.total;
+      }
+      if (staff && view.categoryTrails === true) {
+        const ids = pageProducts.flatMap((product) => (product.categoryId === undefined ? [] : [product.categoryId]));
+        if (view.categoryId !== undefined) {
+          ids.push(view.categoryId);
+        }
+        metadata.categoryTrails = [
+          ...(yield* categoryTrailsOf(transaction, store, ids).pipe(Effect.mapError(unavailable))),
+        ];
+      }
+      return metadata;
     });
     /** `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review). */
     /** The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}. */
@@ -1809,24 +2097,30 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return yield* storefrontRecords(view).pipe(Effect.mapError(unavailable));
       }
       // A read-only or approval-only MCP connection cannot change the catalog directly.
-      const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.merchandise');
+      const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, MERCHANDISE_MODULE_ID);
       const canRead = staff && (canWrite || grants.readAll);
-      const head = yield* loadHead(transaction, store, {
-        aiChanges: canRead,
-        ...(request.agentHistory === undefined ? {} : { history: request.agentHistory }),
-      }).pipe(Effect.mapError(unavailable));
-      if (head === undefined) return yield* unavailable();
+      const headOptions: Mutable<HeadReadOptions> = { aiChanges: canRead };
       if (request.agentHistory !== undefined) {
-        return {
+        headOptions.history = request.agentHistory;
+      }
+      const head = yield* loadHead(transaction, store, headOptions).pipe(Effect.mapError(unavailable));
+      if (head === undefined) {
+        return yield* unavailable();
+      }
+      if (request.agentHistory !== undefined) {
+        const response: Mutable<RecordsResponse> = {
           actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-          ...(canRead && head.aiChanges !== undefined ? { aiChanges: head.aiChanges } : {}),
           canWrite,
           indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
           movements: [],
           orders: [],
           products: [],
           revision: head.revision,
-        } satisfies RecordsResponse;
+        };
+        if (canRead && head.aiChanges !== undefined) {
+          response.aiChanges = head.aiChanges;
+        }
+        return response;
       }
       const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
         Effect.mapError(unavailable),
@@ -1835,46 +2129,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
           : [];
-      const orderList = storefront
-        ? {
-            orders:
-              view.orderClientRequestId === undefined
-                ? []
-                : yield* ordersByClientRequest(transaction, store, view.orderClientRequestId).pipe(
-                    Effect.mapError(unavailable),
-                  ),
-            total: undefined,
-          }
-        : yield* orderPage(transaction, store, view).pipe(Effect.mapError(unavailable));
-      const tree =
-        staff && view.includeCategories === true
-          ? yield* categoryTree(transaction, store, { activeId: view.categoryId, storefront: false }).pipe(
-              Effect.mapError(unavailable),
-            )
-          : undefined;
-      const hasTree =
-        staff && (view.includeProductCategories === true || view.categoryTrails === true)
-          ? tree === undefined
-            ? yield* hasCategoryTree(transaction, store).pipe(Effect.mapError(unavailable))
-            : tree.length > 0
-          : undefined;
-      // Product category labels stand in for the storefront tree; a company with a tree filters by the tree.
-      const productCategories =
-        staff && view.includeProductCategories === true && hasTree === false
-          ? yield* productCategoryCounts(transaction, store).pipe(Effect.mapError(unavailable))
-          : undefined;
-      // Pickers search the tree in PostgreSQL and lists label only their own categories: no whole tree on the wire.
-      const categorySearch =
-        staff && view.categorySearch !== undefined
-          ? yield* searchCategoryTrails(transaction, store, view.categorySearch).pipe(Effect.mapError(unavailable))
-          : undefined;
-      const categoryTrails =
-        staff && view.categoryTrails === true
-          ? yield* categoryTrailsOf(transaction, store, [
-              ...page.products.flatMap((product) => (product.categoryId === undefined ? [] : [product.categoryId])),
-              ...(view.categoryId === undefined ? [] : [view.categoryId]),
-            ]).pipe(Effect.mapError(unavailable))
-          : undefined;
+      const [orderList, catalogMetadata] = yield* Effect.all(
+        [readOrderPage(view, storefront), readCatalogMetadata(view, staff, page.products)],
+        { concurrency: 1 },
+      );
       // The storefront view never reveals staff totals: its indicators cover only what the view returns.
       const totals = staff
         ? yield* indicators(transaction, store).pipe(Effect.mapError(unavailable))
@@ -1885,32 +2143,25 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const isAdministrator = storefront ? false : grants.administrator;
-      const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
       const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
-      const response: RecordsResponse = {
-        ...(canRead && head.aiChanges !== undefined ? { aiChanges: head.aiChanges } : {}),
-        totalProducts: page.total,
-        ...(orderList.total === undefined ? {} : { totalOrders: orderList.total }),
+      const response: Mutable<RecordsResponse> = {
+        ...catalogMetadata,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+        ...recordCapabilities(legalEntityId, storefront, grants, canWrite),
         canWrite,
-        canManageCatalog: staff && canManageCatalog,
-        canEditOrders: staff && canManageCatalog,
-        canCleanupDemo: staff && canWrite && isAdministrator,
-        canResetDemo: staff && canWrite && isAdministrator && legalEntityId === AKROS_LEGAL_ENTITY_ID,
         indicators: totals,
         movements: [...movements],
         orders: [...orderList.orders],
         products: [...page.products],
         revision: head.revision,
-        ...(tree === undefined ? {} : { categories: [...tree] }),
-        ...(productCategories === undefined ? {} : { productCategories: [...productCategories] }),
-        ...(hasTree === undefined ? {} : { hasCategoryTree: hasTree }),
-        ...(categorySearch === undefined
-          ? {}
-          : { categoryMatches: [...categorySearch.matches], categoryMatchTotal: categorySearch.total }),
-        ...(categoryTrails === undefined ? {} : { categoryTrails: [...categoryTrails] }),
+        totalProducts: page.total,
       };
+      if (canRead && head.aiChanges !== undefined) {
+        response.aiChanges = head.aiChanges;
+      }
+      if (orderList.total !== undefined) {
+        response.totalOrders = orderList.total;
+      }
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });
     return { apply, records };

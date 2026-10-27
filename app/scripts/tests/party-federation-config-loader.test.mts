@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 

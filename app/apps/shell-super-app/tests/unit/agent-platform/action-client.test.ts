@@ -1,5 +1,5 @@
 import { Deferred, Effect, Fiber, Random } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { afterAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 

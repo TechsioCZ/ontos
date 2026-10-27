@@ -4,7 +4,7 @@ import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, DateTime, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';

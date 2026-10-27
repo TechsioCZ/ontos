@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';

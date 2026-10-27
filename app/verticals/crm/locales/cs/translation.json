@@ -1,5 +1,10 @@
 {
   "crm": {
+    "registrySync": {
+      "partial": "Propojeno {{linked}} klientů; {{remaining}} stále čeká na ověřenou identitu. Některé zápisy selhaly nebo vyžadují kontrolu v evidenci zákazníků. Obnovte seznam a vyřešte zbývající záznamy.",
+      "unchanged": "Nebylo vytvořeno žádné nové propojení. Seznam byl znovu načten; zkontrolujte aktuální stav klientů.",
+      "unavailable": "Dokončení propojení se nepodařilo ověřit. Zkontrolujte dostupnost evidence zákazníků a nastavení služby CRM. Původní příkaz CRM zůstal uložený; nepropojené klienty ověřte v obnoveném seznamu."
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

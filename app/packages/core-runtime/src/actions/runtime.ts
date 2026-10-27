@@ -1,6 +1,6 @@
 import { Cause, Context, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
-import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
+import { ConnectionError, UnknownError, isSqlError } from 'effect/sql/SqlError';
 
 import {
   decodeTrustedPrincipalContext,

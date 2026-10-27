@@ -3,7 +3,7 @@
 // @ontos-action-http-slug revise-set-composition
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { catalogApi } from '../shared/api.ts';
 import { reviseSetCompositionAction } from '../src/actions/revise-set-composition.action.ts';

@@ -1,8 +1,8 @@
 import { stripVTControlCharacters } from 'node:util';
 
 import { Context, Effect, Layer, Redacted, Stream } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import type { ChildProcess as ChildProcessModel } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import type { ChildProcess as ChildProcessModel } from 'effect/process';
 
 import { OpsCommandError } from './ops-command-error.mts';
 

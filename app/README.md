@@ -86,7 +86,9 @@ mise exec -- pnpm db:migrate
 mise exec -- pnpm db:verify
 ```
 
-Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md).
+Party Registry and the Shell gateway issuer connect with their own PostgreSQL roles. Three more keys sit next to `DATABASE_URL`: `SHELL_GATEWAY_ISSUER_DATABASE_URL`, `PARTY_REGISTRY_DATABASE_URL` and `PARTY_REGISTRY_WORKER_DATABASE_URL`. `mise exec -- pnpm env:local:ensure` adds any missing ones from a loopback `DATABASE_URL`, with user and password equal to the role name, and never overwrites a value. `db:migrate` creates the roles. To check every identity against the checked-in grant manifest, run `mise exec -- pnpm database-trust:audit`.
+
+Each owner keeps its own schema, migration journal, and verifier. See [Database Architecture](docs/architecture/DATABASE.md) and [Database Trust Boundaries](docs/architecture/DATABASE_TRUST_BOUNDARIES.md).
 
 ## Public URLs and Cloudflare proof
 
@@ -117,7 +119,9 @@ Generated HTTP APIs use one direct topology:
 - browser clients: `src/api/*-client.ts`;
 - Modern configuration: Effect runtime with `strictEffectApproach: true`.
 
-Codesmith-generated module API, search-provider, and report clients construct their typed clients through `makeEffectBffClient` from `@app/shared-contracts/client-runtime`. The generated owner wrapper still imports its owner-local API contract, acquires a fresh audience-scoped assertion from its owner-local operation gateway for every attempt, and supplies the bearer authorization and correlation headers explicitly. If validation reports a governed client-runtime failure, restore that shared factory import and rerun the governing scaffold instead of recreating low-level framework client or HTTP request transforms.
+Codesmith-generated module API, search-provider, and report clients construct their typed clients through `makeGovernedEffectBffClient` from `@app/shared-contracts/client-runtime`. The generated owner wrapper still imports its owner-local API contract, acquires a fresh audience-scoped assertion from its owner-local operation gateway for every attempt, and supplies the bearer authorization and correlation headers explicitly. If validation reports a governed client-runtime failure, restore that shared factory import and rerun the governing scaffold instead of recreating low-level framework client or HTTP request transforms.
+
+A MicroVertical's own API client (`src/api/*-client.ts`) calls the native `makeEffectHttpApiClient(<owner contract>Api, options)` directly, because `api:check` proves only native factory calls on the owner's own contract. Build its options with `makeEffectBffClientOptions` from `@app/shared-contracts/client-runtime`, which carries the owner prefix, operation context, locale, traceparent, and transport headers; do not wrap the native factory.
 
 Generated report descriptor `label` and `dimensions` are owner-adaptable presentation and report shape metadata. Search/report `accessFiltering` may also be adapted; `tenant_scope` requires an explicit `tenantPermission`. Reruns preserve these adaptations but keep the generated descriptor identity, owning module, and resource types fixed.
 

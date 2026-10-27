@@ -30,10 +30,11 @@ import type {
   BulkSkipReason,
   BulkTaskResult,
   BulkWorkCommand,
+  PlanningCommand,
   SingleWorkCommand,
   WorkCommand,
 } from '../../shared/actions/apply-command.ts';
-import { WorkStateSchema } from '../../shared/apis/records.ts';
+import { ProjectIdSchema, WorkStateSchema } from '../../shared/apis/records.ts';
 import type {
   ContextRef,
   HistoryEntry,
@@ -54,6 +55,7 @@ import { withHistory } from './work-history.ts';
 
 const workModuleId = 'work.tasks' as const;
 const workChangedReason = 'Work changed; refresh before another operation' as const;
+const referenceDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' });
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -156,7 +158,7 @@ export const makeWorkReferenceVerifier = (
               reason: 'Contract is absent or forbidden',
             });
           }
-          return;
+          return yield* Effect.void;
         }
         const credential = yield* source.issue('property-portfolio').pipe(Effect.mapError(referenceUnavailable));
         const result = yield* executePropertyRecords(
@@ -593,11 +595,14 @@ const withActorNames = (
         const name = comment.authorDisplayName ?? names.get(comment.authorPrincipalRef.principalId);
         return name === undefined ? comment : { ...comment, authorDisplayName: name };
       });
-      return {
-        ...task,
-        ...(task.history === undefined ? {} : { history: named(task.history) ?? [] }),
-        ...(comments === undefined ? {} : { comments }),
-      };
+      let updated = { ...task };
+      if (task.history !== undefined) {
+        updated = { ...updated, history: named(task.history) ?? [] };
+      }
+      if (comments !== undefined) {
+        updated = { ...updated, comments };
+      }
+      return updated;
     }),
   };
 };
@@ -688,17 +693,10 @@ export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finis
       ...(project.history ?? []).map(({ actorPrincipalRef }) => actorPrincipalRef.principalId),
     ]),
   ]);
-  const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(
-    DateTime.toDateUtc(yield* DateTime.now),
-  );
+  const referenceDate = referenceDateFormatter.format(DateTime.toDateUtc(yield* DateTime.now));
   return {
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
     assignablePrincipals,
-    principalNames: [...loaded.names].flatMap(([principalId, displayName]) =>
-      visiblePrincipalIds.has(principalId)
-        ? [{ displayName, principalRef: { principalId, tenantId: scope.tenantId } }]
-        : [],
-    ),
     canWrite: grants.writeAll && isConnectionWriteAllowed(scope, workModuleId),
     collection: state.collection,
     indicators: {
@@ -708,6 +706,11 @@ export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finis
     },
     items: named.tasks,
     lookupAccess: grants.lookupAccess,
+    principalNames: [...loaded.names].flatMap(([principalId, displayName]) =>
+      visiblePrincipalIds.has(principalId)
+        ? [{ displayName, principalRef: { principalId, tenantId: scope.tenantId } }]
+        : [],
+    ),
     projects: named.projects,
     referenceDate,
     revision: loaded.revision,
@@ -771,7 +774,11 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         .select({ displayName: corePrincipals.displayName, principalId: corePrincipals.principalId })
         .from(corePrincipals)
         .where(and(eq(corePrincipals.tenantId, scope.tenantId), inArray(corePrincipals.principalId, [...ids])))
-        .pipe(Effect.catchCause(() => Effect.succeed([])));
+        .pipe(
+          Effect.catchTag('EffectDrizzleQueryError', (failure) =>
+            Effect.logWarning('Work principal display names unavailable', failure).pipe(Effect.as([])),
+          ),
+        );
       return new Map(rows.map((row) => [row.principalId, row.displayName] as const));
     });
     /** The acting account's Core display name, snapshotted into every history entry and comment it writes. */
@@ -792,12 +799,18 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
      * mentions. Decoding and visibility filtering run after commit in {@link finishWorkRecords}.
      */
     const loadRecords = Effect.fn('Work.loadRecords')(function* loadRecords() {
-      const assignmentDirectory = yield* loadAssignablePrincipalDirectory(transaction, scope);
-      const [row] = yield* transaction
-        .select({ revision: workStates.revision, state: workStates.state })
-        .from(workStates)
-        .where(whereScope)
-        .limit(1);
+      // Both reads use this transaction. Preserve directory-first failure order and avoid parallel SQL.
+      const [assignmentDirectory, [row]] = yield* Effect.all(
+        [
+          loadAssignablePrincipalDirectory(transaction, scope),
+          transaction
+            .select({ revision: workStates.revision, state: workStates.state })
+            .from(workStates)
+            .where(whereScope)
+            .limit(1),
+        ],
+        { concurrency: 1 },
+      );
       if (row === undefined) {
         return {
           assignmentDirectory,
@@ -817,7 +830,11 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           ),
         )
         // Best-effort: an unreadable principal table leaves the names out and history shows a generic label.
-        .pipe(Effect.catchCause(() => Effect.succeed([])));
+        .pipe(
+          Effect.catchTag('EffectDrizzleQueryError', (failure) =>
+            Effect.logWarning('Work principal display names unavailable', failure).pipe(Effect.as([])),
+          ),
+        );
       return {
         assignmentDirectory,
         names: new Map([
@@ -927,108 +944,125 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       );
       return { results: change.results, revision };
     });
-    const apply = Effect.fn('Work.apply')(function* apply(
-      command: WorkCommand,
+    type WorkSnapshot = Effect.Success<ReturnType<typeof load>>;
+    type ProjectCommand = Exclude<PlanningCommand, { readonly _tag: 'AddTaskComment' }>;
+    const addComment = Effect.fn('Work.addComment')(function* addComment(
+      command: Extract<PlanningCommand, { readonly _tag: 'AddTaskComment' }>,
+      snapshot: WorkSnapshot,
+      expectedRevision: number,
+      resourceId: string,
+      now: DateTime.Utc,
+    ) {
+      const task = snapshot.state.tasks.find((item) => item.ref.resourceId === command.taskRef.resourceId);
+      if (task === undefined || command.taskRef.tenantId !== scope.tenantId) {
+        return yield* new WorkNotFound({
+          code: 'work_not_found',
+          reason: 'Task does not exist in the authorized company',
+        });
+      }
+      const authorDisplayName = yield* actorDisplayName();
+      const commentBase = {
+        authorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+        createdAt: now,
+        id: resourceId,
+        text: command.text,
+      };
+      const comment: NonNullable<Task['comments']>[number] =
+        authorDisplayName === undefined ? commentBase : { ...commentBase, authorDisplayName };
+      const updated = {
+        ...task,
+        comments: [...(task.comments ?? []), comment],
+        updatedAt: now,
+      };
+      const revision = yield* save(expectedRevision, {
+        ...snapshot.state,
+        tasks: snapshot.state.tasks.map((item) => (item.ref.resourceId === task.ref.resourceId ? updated : item)),
+      });
+      return { revision, task: updated };
+    });
+    const applyProject = Effect.fn('Work.applyProject')(function* applyProject(
+      command: ProjectCommand,
+      snapshot: WorkSnapshot,
+      expectedRevision: number,
+      resourceId: string,
+      now: DateTime.Utc,
+    ) {
+      if (command.responsiblePrincipalRef.tenantId !== scope.tenantId) {
+        return yield* new WorkScopeMismatch({
+          code: 'work_scope_mismatch',
+          reason: 'Project responsibility must belong to the trusted tenant',
+        });
+      }
+      if (
+        command.plannedStart > command.plannedEnd ||
+        command.milestones.some((item) => item.dueDate < command.plannedStart || item.dueDate > command.plannedEnd)
+      ) {
+        return yield* new WorkLifecycleConflict({
+          code: 'work_lifecycle_conflict',
+          reason: 'Project dates or milestone dates are outside the planned period',
+        });
+      }
+      const projects = snapshot.state.projects ?? [];
+      const existing = Predicate.isTagged('UpdateProject')(command)
+        ? projects.find((item) => item.id === command.id)
+        : undefined;
+      if (Predicate.isTagged('UpdateProject')(command) && existing === undefined) {
+        return yield* new WorkNotFound({
+          code: 'work_not_found',
+          reason: 'Project does not exist in the authorized company',
+        });
+      }
+      const responsibilityChanged =
+        existing?.responsiblePrincipalRef?.tenantId !== command.responsiblePrincipalRef.tenantId ||
+        existing.responsiblePrincipalRef.principalId !== command.responsiblePrincipalRef.principalId;
+      if (responsibilityChanged) {
+        yield* resolveAssignee(command.responsiblePrincipalRef);
+      }
+      const project: WorkProject = {
+        ...(responsibilityChanged ? undefined : existing),
+        createdAt: existing?.createdAt ?? now,
+        id: Predicate.isTagged('UpdateProject')(command)
+          ? command.id
+          : yield* Schema.decodeEffect(ProjectIdSchema)(resourceId).pipe(Effect.mapError(unavailable)),
+        milestones: command.milestones,
+        plannedEnd: command.plannedEnd,
+        plannedStart: command.plannedStart,
+        responsiblePrincipalRef: command.responsiblePrincipalRef,
+        state: command.state,
+        title: command.title,
+        updatedAt: now,
+      };
+      const recorded = withHistory(
+        snapshot.state,
+        { ...snapshot.state, projects: [...projects.filter((item) => item.id !== project.id), project] },
+        actor,
+        now,
+        yield* actorDisplayName(),
+      );
+      const revision = yield* save(expectedRevision, recorded);
+      return { project: recorded.projects?.find((item) => item.id === project.id) ?? project, revision };
+    });
+    const applyPlanning = Effect.fn('Work.applyPlanning')(function* applyPlanning(
+      command: PlanningCommand,
       expectedRevision: number,
       resourceId: string,
     ) {
-      if (Schema.is(BulkWorkCommandSchema)(command)) {
-        return yield* applyBulk(command, expectedRevision);
+      if (!(yield* contextGrant(scope, 'write_all'))) {
+        return yield* new WorkPermissionDenied({
+          code: 'work_permission_denied',
+          reason: 'Planning changes require Work write permission',
+        });
       }
-      if (Schema.is(PlanningCommandSchema)(command)) {
-        if (!(yield* contextGrant(scope, 'write_all'))) {
-          return yield* new WorkPermissionDenied({
-            code: 'work_permission_denied',
-            reason: 'Planning changes require Work write permission',
-          });
-        }
-        const snapshot = yield* load();
-        if (snapshot.revision !== expectedRevision) {
-          return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
-        }
-        const now = yield* DateTime.now;
-        if (Predicate.isTagged('AddTaskComment')(command)) {
-          const task = snapshot.state.tasks.find((item) => item.ref.resourceId === command.taskRef.resourceId);
-          if (task === undefined || command.taskRef.tenantId !== scope.tenantId) {
-            return yield* new WorkNotFound({
-              code: 'work_not_found',
-              reason: 'Task does not exist in the authorized company',
-            });
-          }
-          const authorDisplayName = yield* actorDisplayName();
-          const updated = {
-            ...task,
-            comments: [
-              ...(task.comments ?? []),
-              {
-                id: resourceId,
-                ...(authorDisplayName === undefined ? {} : { authorDisplayName }),
-                authorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-                createdAt: now,
-                text: command.text,
-              },
-            ],
-            updatedAt: now,
-          };
-          const revision = yield* save(expectedRevision, {
-            ...snapshot.state,
-            tasks: snapshot.state.tasks.map((item) => (item.ref.resourceId === task.ref.resourceId ? updated : item)),
-          });
-          return { revision, task: updated };
-        }
-        if (command.responsiblePrincipalRef.tenantId !== scope.tenantId) {
-          return yield* new WorkScopeMismatch({
-            code: 'work_scope_mismatch',
-            reason: 'Project responsibility must belong to the trusted tenant',
-          });
-        }
-        if (
-          command.plannedStart > command.plannedEnd ||
-          command.milestones.some((item) => item.dueDate < command.plannedStart || item.dueDate > command.plannedEnd)
-        ) {
-          return yield* new WorkLifecycleConflict({
-            code: 'work_lifecycle_conflict',
-            reason: 'Project dates or milestone dates are outside the planned period',
-          });
-        }
-        const projects = snapshot.state.projects ?? [];
-        const existing = Predicate.isTagged('UpdateProject')(command)
-          ? projects.find((item) => item.id === command.id)
-          : undefined;
-        if (Predicate.isTagged('UpdateProject')(command) && existing === undefined) {
-          return yield* new WorkNotFound({
-            code: 'work_not_found',
-            reason: 'Project does not exist in the authorized company',
-          });
-        }
-        const responsibilityChanged =
-          existing?.responsiblePrincipalRef?.tenantId !== command.responsiblePrincipalRef.tenantId ||
-          existing.responsiblePrincipalRef.principalId !== command.responsiblePrincipalRef.principalId;
-        if (responsibilityChanged) {
-          yield* resolveAssignee(command.responsiblePrincipalRef);
-        }
-        const project: WorkProject = {
-          ...(responsibilityChanged ? undefined : existing),
-          createdAt: existing?.createdAt ?? now,
-          id: Predicate.isTagged('UpdateProject')(command) ? command.id : resourceId,
-          milestones: command.milestones,
-          plannedEnd: command.plannedEnd,
-          plannedStart: command.plannedStart,
-          responsiblePrincipalRef: command.responsiblePrincipalRef,
-          state: command.state,
-          title: command.title,
-          updatedAt: now,
-        };
-        const recorded = withHistory(
-          snapshot.state,
-          { ...snapshot.state, projects: [...projects.filter((item) => item.id !== project.id), project] },
-          actor,
-          now,
-          yield* actorDisplayName(),
-        );
-        const revision = yield* save(expectedRevision, recorded);
-        return { project: recorded.projects?.find((item) => item.id === project.id) ?? project, revision };
+      const snapshot = yield* load();
+      if (snapshot.revision !== expectedRevision) {
+        return yield* new WorkRevisionConflict({ code: 'work_revision_conflict', reason: workChangedReason });
       }
+      const now = yield* DateTime.now;
+      return yield* Predicate.isTagged('AddTaskComment')(command)
+        ? addComment(command, snapshot, expectedRevision, resourceId, now)
+        : applyProject(command, snapshot, expectedRevision, resourceId, now);
+    });
+    const authorizeSingle = Effect.fn('Work.authorizeSingle')(function* authorizeSingle(command: SingleWorkCommand) {
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (Predicate.isTagged('CreateTask')(command)) {
           return yield* new WorkPermissionDenied({
@@ -1053,6 +1087,14 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           });
         }
       }
+      return yield* Effect.void;
+    });
+    const applySingle = Effect.fn('Work.applySingle')(function* applySingle(
+      command: SingleWorkCommand,
+      expectedRevision: number,
+      resourceId: string,
+    ) {
+      yield* authorizeSingle(command);
       const snapshot = yield* load();
       if (Predicate.isTagged('CreateTask')(command) && command.storefrontInquiry !== undefined) {
         const inquiry = command.storefrontInquiry;
@@ -1115,6 +1157,18 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         revision,
         task: recorded.tasks.find((item) => item.ref.resourceId === change.task.ref.resourceId) ?? change.task,
       };
+    });
+    const apply = Effect.fn('Work.apply')(function* apply(
+      command: WorkCommand,
+      expectedRevision: number,
+      resourceId: string,
+    ) {
+      if (Schema.is(BulkWorkCommandSchema)(command)) {
+        return yield* applyBulk(command, expectedRevision);
+      }
+      return yield* Schema.is(PlanningCommandSchema)(command)
+        ? applyPlanning(command, expectedRevision, resourceId)
+        : applySingle(command, expectedRevision, resourceId);
     });
     return { apply, loadRecords };
   },

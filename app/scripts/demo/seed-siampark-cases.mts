@@ -23,7 +23,7 @@ import path from 'node:path';
 import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import {

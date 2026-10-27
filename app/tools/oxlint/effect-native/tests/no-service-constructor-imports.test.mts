@@ -4,7 +4,7 @@ import nodePath from 'node:path';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { appRoot, runOxlint } from './oxlint.mts';
+import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 import type { LintRun } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
@@ -976,6 +976,34 @@ it('requires concrete data calls for opaque generic payloads', () => {
     );
     expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
   });
+});
+
+it('proves pure byte hashing in generic data calls and rejects executable or unmodeled hashing', () => {
+  withTemporaryWorkspace((directory) => {
+    const factory = nodePath.join(directory, factoryFilename);
+    const consumer = nodePath.join(directory, consumerFilename);
+    writeFileSync(
+      factory,
+      'export const makePayload = <Value extends object>({ id, entries }: { readonly id: string; readonly entries: readonly Value[] }) => ({ id, entries });',
+    );
+    const shaImport = "import { sha256 } from '@noble/hashes/sha2.js';";
+    const declaration = [
+      shaImport,
+      "import { utf8ToBytes } from '@noble/hashes/utils.js';",
+      "import { Hex } from 'effect/encoding';",
+      "import { makePayload } from './factory.ts';",
+      'export const makeEnvelope = (id: string) => makePayload({ id: Hex.encode(sha256(utf8ToBytes(id))), entries: [{ label: id }] });',
+    ].join('\n');
+    writeFileSync(consumer, declaration);
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(true);
+    writeFileSync(consumer, declaration.replace('utf8ToBytes(id)', 'utf8ToBytes(fetch(id))'));
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
+    writeFileSync(
+      consumer,
+      declaration.replace(shaImport, "import { sha512 as sha256 } from '@noble/hashes/sha2.js';"),
+    );
+    expect(provesDataFactoryImport(consumer, factorySource, 'makePayload')).toBe(false);
+  }, testsDirectory);
 });
 
 it('rejects typed effectful schema helpers and shadowed native assignments', () => {

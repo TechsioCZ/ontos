@@ -28,7 +28,7 @@ import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/
 import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
 import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { demoId } from '../demo/fixture-ids.mts';

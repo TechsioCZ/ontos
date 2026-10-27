@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'effect-rstest';
-import { ConfigProvider, DateTime, Effect, Exit } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Option, Schema } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
+import {
+  AccountingExportSchema,
+  AccountingSetupSchema,
+  CalendarMonthSchema,
+  FinanceDocumentSchema,
+  FinanceStateSchema,
+  InvoiceLineSchema,
+  InvoiceSchema,
+  ManualPaymentSchema,
+  PaymentTermsSchema,
+  PriorSettlementEntrySchema,
+  PriorSettlementSchema,
+  RecordsRequestSchema,
+} from '../../shared/apis/records.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
   budgetVariance,
@@ -77,12 +91,13 @@ describe('S07 invoices', () => {
 
   it.effect('S07-02 a confirmed payment of 400 Kč of 1 000 Kč leaves 600 Kč and is partial', () =>
     Effect.gen(function* partialPayment() {
-      const state = { ...empty, invoices: [invoice('out-1')] };
+      const unpaid = invoice('out-1');
+      const state = { ...empty, invoices: [unpaid] };
       const result = yield* run(state, {
         _tag: 'RecordManualPayment',
         actorLabel: 'Finance',
         amountMinor: 40_000,
-        invoiceRef: state.invoices[0]!.ref,
+        invoiceRef: unpaid.ref,
         paidOn: '2026-10-20',
       });
       expect(result.invoice?.paymentState).toBe('PARTIALLY_PAID');
@@ -92,7 +107,7 @@ describe('S07 invoices', () => {
         run(result.state, {
           _tag: 'RecordManualPayment',
           amountMinor: 70_000,
-          invoiceRef: state.invoices[0]!.ref,
+          invoiceRef: unpaid.ref,
           paidOn: '2026-10-20',
         }),
       );
@@ -104,18 +119,18 @@ describe('S07 invoices', () => {
     Effect.gen(function* recurring() {
       const created = yield* run(empty, {
         _tag: 'CreateRecurringTemplate',
-        counterpartyRef,
         counterpartyName: 'Kavárna U Parku s.r.o.',
-        occupancyRef: {
-          moduleId: 'property.leasing',
-          resourceType: 'property.leasing.occupancy',
-          resourceId: 'lease-1',
-          tenantId,
-        },
+        counterpartyRef,
         dueDays: 14,
         issueDay: 1,
         lines: [{ description: 'Nájem jednotky A1', quantity: 1, unitPriceMinor: 2_500_000, vatRate: 21 }],
         name: 'Nájem A1',
+        occupancyRef: {
+          moduleId: 'property.leasing',
+          resourceId: 'lease-1',
+          resourceType: 'property.leasing.occupancy',
+          tenantId,
+        },
       });
       const templateId = created.state.recurringTemplates?.[0]?.id ?? '';
       const first = yield* run(created.state, {
@@ -160,6 +175,9 @@ describe('S07 invoices', () => {
       });
       expect(result.invoice?.businessState).toBe('CONFIRMED');
       expect(result.state.documents?.[0]?.sizeBytes).toBe(13);
+      expect(result.state.documents?.[0]?.sha256).toBe(
+        '71077e8389695f09b1e50bcfc288fb4998894a86ae7cd9657b31ac618a094eab',
+      );
       expect(result.documentWrites?.length).toBe(1);
       const twice = yield* Effect.exit(
         run(result.state, {
@@ -241,7 +259,7 @@ describe('S09 planning', () => {
   });
 
   it('S09-03 a zero budget has no percentage deviation', () => {
-    expect(budgetVariance(0, 5_000).percent).toBeUndefined();
+    expect(budgetVariance(0, 5000).percent).toBeUndefined();
     expect(budgetVariance(10_000, 12_000).percent).toBeCloseTo(0.2);
   });
 });
@@ -249,18 +267,18 @@ describe('S09 planning', () => {
 describe('Rental demo consistency', () => {
   it('uses the linked rental terms for templates and unissued drafts without rewriting issued history', () => {
     const source = invoice('source', {
-      documentNumber: 'NAJ-R101-2026-11',
       counterpartyName: 'Kavárna U Parku s.r.o.',
-      occupancyRef: {
-        moduleId: 'property.leasing',
-        resourceType: 'property.leasing.occupancy',
-        resourceId: 'lease',
-        tenantId,
-      },
+      documentNumber: 'NAJ-R101-2026-11',
       lines: [
         { description: 'Nájemné R101 – listopad 2026', quantity: 1, unitPriceMinor: 4_800_000, vatRate: 21 },
         { description: 'Zálohy na služby R101 – listopad 2026', quantity: 1, unitPriceMinor: 650_000, vatRate: 21 },
       ],
+      occupancyRef: {
+        moduleId: 'property.leasing',
+        resourceId: 'lease',
+        resourceType: 'property.leasing.occupancy',
+        tenantId,
+      },
     });
     const legacy = invoice('legacy', { recurringTemplateId: 'template' });
     const draft = invoice('draft', { businessState: 'DRAFT', recurringTemplateId: 'template' });
@@ -270,8 +288,8 @@ describe('Rental demo consistency', () => {
       recurringTemplates: [
         {
           active: true,
-          counterpartyRef,
           counterpartyName: 'Technoservis',
+          counterpartyRef,
           createdAt: now,
           dueDays: 14,
           id: 'template',
@@ -287,4 +305,51 @@ describe('Rental demo consistency', () => {
     expect(result.invoices[2]?.occupancyRef).toEqual(source.occupancyRef);
     expect(result.invoices[1]).toEqual(legacy);
   });
+});
+
+describe('Finance wire compatibility', () => {
+  it('keeps identifier trimming and bounds at the existing string wire boundary', () => {
+    const identifiers = [
+      InvoiceLineSchema.fields.priceListItemId,
+      PriorSettlementEntrySchema.fields.invoiceResourceId,
+      PriorSettlementSchema.fields.confirmedByPrincipalId,
+      PaymentTermsSchema.fields.updatedByPrincipalId,
+      InvoiceSchema.fields.counterpartyCompanyId,
+      InvoiceSchema.fields.recurringTemplateId,
+      FinanceDocumentSchema.fields.actorPrincipalId,
+      FinanceDocumentSchema.fields.invoiceResourceId,
+      ManualPaymentSchema.fields.invoiceResourceId,
+      RecordsRequestSchema.fields.documentId,
+    ];
+    for (const identifier of identifiers) {
+      expect(Schema.decodeUnknownSync(identifier)('  original-id  ')).toBe('original-id');
+      expect(Option.isNone(Schema.decodeUnknownOption(identifier)('   '))).toBe(true);
+      expect(Option.isNone(Schema.decodeUnknownOption(identifier)('x'.repeat(501)))).toBe(true);
+    }
+    expect(
+      Schema.decodeUnknownSync(AccountingSetupSchema)({ issuerIco: '12345678', issuerVatId: 'CZ12345678' }),
+    ).toEqual({ issuerIco: '12345678', issuerVatId: 'CZ12345678' });
+    expect(Option.isNone(Schema.decodeUnknownOption(AccountingSetupSchema)({ issuerIco: '1234567' }))).toBe(true);
+    expect(Option.isNone(Schema.decodeUnknownOption(AccountingSetupSchema)({ issuerVatId: 'CZ1234567' }))).toBe(true);
+    expect(Schema.decodeUnknownSync(AccountingExportSchema.fields.invoiceResourceIds)([' original-id '])).toEqual([
+      'original-id',
+    ]);
+    expect(Schema.decodeUnknownSync(CalendarMonthSchema)('2026-10')).toBe('2026-10');
+    expect(Option.isNone(Schema.decodeUnknownOption(CalendarMonthSchema)('2026-13'))).toBe(true);
+  });
+
+  it.effect('keeps state JSON, UTC timestamps, calendar dates and money snapshots unchanged', () =>
+    Effect.gen(function* wireCompatibility() {
+      const state: FinanceState = { ...empty, invoices: [invoice('wire-invoice')] };
+      const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(state);
+      const json = yield* Schema.encodeEffect(Schema.fromJsonString(FinanceStateSchema))(state);
+      const wire = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.toEncoded(FinanceStateSchema)))(json);
+      expect(wire).toEqual(encoded);
+      expect(wire.invoices[0]?.createdAt).toBe('2026-10-20T08:00:00.000Z');
+      expect(wire.invoices[0]?.issueDate).toBe('2026-10-01');
+      expect(wire.invoices[0]?.totalMinor).toBe(100_000);
+      const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(FinanceStateSchema))(json);
+      expect(Schema.toEquivalence(FinanceStateSchema)(decoded, state)).toBe(true);
+    }),
+  );
 });

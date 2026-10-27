@@ -4,6 +4,7 @@ import {
   ActionRuntime,
   ContextAccess,
   PrincipalResolver,
+  SHARED_RUNTIME_IDENTITY,
   SupportRecoveryPrincipalContextResolver,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
@@ -11,7 +12,8 @@ import {
   makeSupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { NodeCrypto } from '@effect/platform-node';
+import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -106,7 +108,10 @@ it.live.each([
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
-    const authPersistence = yield* makeAuthDatabase(baseConfiguration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: baseConfiguration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(
@@ -155,13 +160,13 @@ it.live.each([
       effect: Effect.Effect<Success, Failure, Requirements>,
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
-    const operationalScope = makeOperationalScopeResolver(
+    const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
       allowedContextAccess,
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       {
@@ -670,5 +675,5 @@ it.live.each([
     ).toBe(true);
     const recovery = yield* authDatabase.select().from(supportImpersonationRecovery);
     expect(recovery.length).toBe(0);
-  }),
+  }, Effect.provide(NodeCrypto.layer)),
 );

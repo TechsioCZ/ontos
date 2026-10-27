@@ -3,7 +3,7 @@
 // @ontos-action-http-slug apply-command
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { financeBillingApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
@@ -47,8 +47,6 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   });
 });
 
-export const applyCommandActionApiLive = HttpApiBuilder.group(
-  financeBillingApi,
-  'applyCommandAction',
-  (handlers) => handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
+export const applyCommandActionApiLive = HttpApiBuilder.group(financeBillingApi, 'applyCommandAction', (handlers) =>
+  handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
 ).pipe(Layer.provide(applyCommandActionSchemaErrorLive));

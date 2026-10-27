@@ -5,8 +5,8 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Clock, Effect, Exit, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';

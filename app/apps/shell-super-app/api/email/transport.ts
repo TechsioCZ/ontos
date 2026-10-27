@@ -1,44 +1,54 @@
-// @effect-diagnostics *:off
-import { DatabaseConfig, DatabaseConfigLive } from '@app/core-runtime';
+import { DatabaseConfig } from '@app/core-runtime';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import type { DispatchResult } from '@app/email-delivery/dispatcher';
 import { emailDeliverySources } from '@app/email-delivery/contract';
-import type { EmailDeliverySource } from '@app/email-delivery/contract';
+import type { EmailDeliveriesResponse, EmailProviderView } from '@app/email-delivery/contract';
 import { listDeliveries } from '@app/email-delivery/deliveries';
 import type { DeliveryReadScope } from '@app/email-delivery/deliveries';
 import { emailEnvironment, emailTransport } from '@app/email-delivery/transport';
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Layer, Redacted } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { Cookies, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { AuthenticationService } from '../auth/service.ts';
 
-// Only email routes acquire this request-owned pool. Workers resolve DATABASE_URL through HYPERDRIVE.
-const EmailDatabaseLive = Layer.effect(
+// The composition root owns the request scope, DatabaseConfig and Reactivity dependencies.
+export const EmailDatabaseLive = Layer.effect(
   PgClient.PgClient,
-  Effect.gen(function* () {
+  Effect.gen(function* makeEmailDatabase() {
     const config = yield* DatabaseConfig;
     return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
   }),
-).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
+);
 
-const json = (body: unknown, status = 200, cookies: readonly string[] = []): Response => {
-  const headers = new Headers({ 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' });
-  for (const cookie of cookies) headers.append('set-cookie', cookie);
-  return new Response(JSON.stringify(body), { headers, status });
-};
+type EmailResponseBody =
+  | EmailProviderView
+  | EmailDeliveriesResponse
+  | DispatchResult
+  | {
+      readonly error: 'invalid_query' | 'authentication_required' | 'forbidden' | 'unauthorized' | 'email_unavailable';
+    };
+
+const json = (body: EmailResponseBody, status = 200, cookies: readonly string[] = []) =>
+  HttpServerResponse.json(body, {
+    cookies: Cookies.fromSetCookie(cookies),
+    headers: { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' },
+    status,
+  });
 
 export const parseDeliveryQuery = (url: URL) => {
-  const source = url.searchParams.get('source') ?? '';
+  const sourceValue = url.searchParams.get('source');
+  const source = emailDeliverySources.find((candidate) => candidate === sourceValue);
   const subjectIds = url.searchParams.getAll('subjectId');
   const subjectNumbers = url.searchParams.getAll('subjectNumber');
   const all = [...subjectIds, ...subjectNumbers];
   if (
-    !emailDeliverySources.includes(source as EmailDeliverySource) ||
+    source === undefined ||
     all.length === 0 ||
     all.length > 200 ||
     all.some((value) => value.length === 0 || value.length > 120)
-  )
+  ) {
     return null;
+  }
   const recipient = url.searchParams.get('recipient');
   if (
     recipient !== null &&
@@ -47,71 +57,85 @@ export const parseDeliveryQuery = (url: URL) => {
       subjectNumbers.length !== 1 ||
       recipient.length > 254 ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(recipient.trim()))
-  )
+  ) {
     return null;
-  return { source: source as EmailDeliverySource, subjectIds, subjectNumbers, recipient };
+  }
+  return { recipient, source, subjectIds, subjectNumbers };
 };
 
 /** No query/body token, no disabled-auth mode. Unconfigured dispatch fails closed. */
-export const isDispatchAuthorized = (headers: Headers, secret: string | undefined): boolean =>
-  secret !== undefined && secret.trim() !== '' && headers.get('authorization') === `Bearer ${secret}`;
+export const isDispatchAuthorized = (headers: Headers, secret: Redacted.Redacted | undefined): boolean =>
+  secret !== undefined &&
+  Redacted.value(secret).trim() !== '' &&
+  headers.get('authorization') === `Bearer ${Redacted.value(secret)}`;
 
-const receipts = (request: Request) =>
-  Effect.gen(function* () {
-    const query = parseDeliveryQuery(new URL(request.url));
-    if (query === null) return json({ error: 'invalid_query' }, 400);
-    let scope: DeliveryReadScope;
-    let cookies: readonly string[] = [];
-    if (query.recipient !== null) {
-      scope = { kind: 'buyer', recipient: query.recipient };
-    } else {
-      const auth = yield* AuthenticationService;
-      const session = yield* auth.resolveShellContext(request.headers);
-      cookies = session.setCookieHeaders;
-      if (session.state !== 'authenticated') return json({ error: 'authentication_required' }, 401, cookies);
-      scope = {
-        kind: 'company',
-        legalEntityId: session.identity.legalEntityId,
-        principalId: session.identity.principalId,
-        tenantId: session.identity.tenantId,
-      };
+const receipts = Effect.fn('EmailTransport.receipts')(function* readReceipts(request: Request) {
+  const query = parseDeliveryQuery(new URL(request.url));
+  if (query === null) {
+    return yield* json({ error: 'invalid_query' }, 400);
+  }
+  let scope: DeliveryReadScope;
+  let cookies: readonly string[] = [];
+  if (query.recipient === null) {
+    const auth = yield* AuthenticationService;
+    const session = yield* auth.resolveShellContext(request.headers);
+    cookies = session.setCookieHeaders;
+    if (session.state !== 'authenticated') {
+      return yield* json({ error: 'authentication_required' }, 401, cookies);
     }
-    if (
-      query.source === 'facility-agenda' &&
-      (scope.kind !== 'company' ||
-        query.subjectNumbers.length > 0 ||
-        query.subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))
-    ) {
-      return json({ error: 'forbidden' }, 403, cookies);
-    }
-    const deliveries = yield* listDeliveries({ ...query, scope }).pipe(Effect.provide(EmailDatabaseLive));
-    return json({ deliveries }, 200, cookies);
-  });
+    scope = {
+      kind: 'company',
+      legalEntityId: session.identity.legalEntityId,
+      principalId: session.identity.principalId,
+      tenantId: session.identity.tenantId,
+    };
+  } else {
+    scope = { kind: 'buyer', recipient: query.recipient };
+  }
+  if (
+    query.source === 'facility-agenda' &&
+    (scope.kind !== 'company' ||
+      query.subjectNumbers.length > 0 ||
+      query.subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))
+  ) {
+    return yield* json({ error: 'forbidden' }, 403, cookies);
+  }
+  const deliveries = yield* listDeliveries({ ...query, scope });
+  return yield* json({ deliveries }, 200, cookies);
+});
 const dispatch = (request: Request) => {
-  if (!isDispatchAuthorized(request.headers, emailEnvironment['ONTOS_EMAIL_DISPATCH_SECRET']))
-    return Effect.succeed(json({ error: 'unauthorized' }, 401));
-  return dispatchEmailBatch.pipe(
-    Effect.provide(EmailDatabaseLive),
-    Effect.map((result) => json(result, result.configured ? 200 : 503)),
-  );
+  const configuredSecret = emailEnvironment['ONTOS_EMAIL_DISPATCH_SECRET'];
+  const secret = configuredSecret === undefined ? undefined : Redacted.make(configuredSecret);
+  if (!isDispatchAuthorized(request.headers, secret)) {
+    return json({ error: 'unauthorized' }, 401);
+  }
+  return dispatchEmailBatch.pipe(Effect.flatMap((result) => json(result, result.configured ? 200 : 503)));
 };
-const route = <R>(
+const route = <E, R>(
   method: 'GET' | 'POST',
   path: `/${string}`,
-  handler: (request: Request) => Effect.Effect<Response, unknown, R>,
+  handler: (request: Request) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
 ) =>
   HttpRouter.add(method, path, (request) =>
     HttpServerRequest.toWeb(request).pipe(
       Effect.flatMap(handler),
-      Effect.catchCause(() => Effect.succeed(json({ error: 'email_unavailable' }, 503))),
-      Effect.map((response) =>
-        HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
-      ),
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.logError('Email request failed', error).pipe(
+            Effect.andThen(json({ error: 'email_unavailable' }, 503)),
+          ),
+        onSuccess: Effect.succeed,
+      }),
     ),
   );
 
-export const EmailTransportLive = Layer.mergeAll(
-  route('GET', '/email/provider', () => Effect.succeed(json(emailTransport.provider))),
+// Keep provider discovery independent of the database-backed routes at the composition root.
+export const EmailProviderTransportLive = route('GET', '/email/provider', () => json(emailTransport.provider));
+
+// Expected failures keep the established 503 body. Defects belong to the outer HTTP error seam.
+export const EmailDeliveryTransportLive = Layer.mergeAll(
   route('GET', '/email/deliveries', receipts),
   route('POST', '/email/dispatch', dispatch),
 );
+
+export const EmailTransportLive = Layer.mergeAll(EmailProviderTransportLive, EmailDeliveryTransportLive);

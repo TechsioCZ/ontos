@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit, Option, Schema } from 'effect';
+import { Array as EffectArray, Cause, Effect, Exit, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -56,6 +56,7 @@ interface FixtureOptions {
   readonly omitVerticalWorkerName?: boolean;
   readonly setupIds?: readonly string[];
   readonly shellVerticalRefs?: readonly string[];
+  readonly standaloneWorkspaces?: readonly FixtureOwner[];
   readonly verticalId?: string;
 }
 
@@ -79,6 +80,7 @@ interface FixtureTopology {
     readonly package: string;
     readonly verticalRefs: readonly string[];
   };
+  readonly standaloneWorkspaces?: readonly FixtureOwner[];
   readonly verticals: readonly {
     readonly cloudflare?: { readonly workerName: string };
     readonly id: string;
@@ -124,8 +126,17 @@ const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
 const OWNERSHIP_PATH = 'topology/ownership.json';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
+const PACKAGE_MANIFEST_PATH = 'package.json';
 const DOCUMENTATION_PATH = 'docs/README.md';
 const SHARED_CONTRACT_PATH = 'packages/shared-contracts/src/gateway-context.ts';
+const NATIVE_WORKSPACE_PATTERNS = ['apps/*', 'verticals/*', 'packages/*'];
+const AKROS_ID = 'akros-storefront';
+const PARTY_ID = 'party-registry';
+const AKROS_WORKSPACE = {
+  id: AKROS_ID,
+  package: AKROS_ID,
+  path: AKROS_ID,
+} as const satisfies FixtureOwner;
 
 const planDeploymentImpact = (options: PlanDeploymentImpactOptions) =>
   planDeploymentImpactEffect(options).pipe(Effect.provide(NodeServices.layer));
@@ -142,8 +153,30 @@ const writeWorkspaceProject = (root: string, owner: FixtureOwner) =>
     const projectRoot = path.join(root, owner.path);
     yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
     yield* Effect.tryPromise(() =>
-      writeFile(path.join(projectRoot, 'package.json'), `${JSON.stringify({ name: owner.package })}\n`, 'utf-8'),
+      writeFile(path.join(projectRoot, PACKAGE_MANIFEST_PATH), `${JSON.stringify({ name: owner.package })}\n`, 'utf-8'),
     );
+  });
+
+const writeWorkspacePatterns = (root: string, patterns: readonly string[]) => {
+  const declarations = patterns.map((pattern) => `  - ${JSON.stringify(pattern)}`).join('\n');
+  return Effect.tryPromise(() =>
+    writeFile(
+      path.join(root, WORKSPACE_MANIFEST_PATH),
+      `packages:\n${declarations}\nminimumReleaseAge: 1440\n`,
+      'utf-8',
+    ),
+  );
+};
+
+const writeStandaloneFixtureWorkspaces = (root: string, standaloneWorkspaces: readonly FixtureOwner[] = []) =>
+  Effect.gen(function* writeStandaloneFixtureWorkspacesEffect() {
+    yield* writeWorkspacePatterns(root, [
+      ...NATIVE_WORKSPACE_PATTERNS,
+      ...standaloneWorkspaces.map((workspace) => workspace.path),
+    ]);
+    for (const workspace of standaloneWorkspaces) {
+      yield* writeWorkspaceProject(root, workspace);
+    }
   });
 
 const makeFixture = (options: FixtureOptions = {}) =>
@@ -170,6 +203,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
         package: SHELL_PACKAGE,
         verticalRefs: options.shellVerticalRefs ?? [verticalId],
       },
+      standaloneWorkspaces: options.standaloneWorkspaces,
       verticals: [
         options.omitVerticalWorkerName === true
           ? vertical
@@ -223,13 +257,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       ],
       schemaVersion: 1,
     });
-    yield* Effect.tryPromise(() =>
-      writeFile(
-        path.join(root, WORKSPACE_MANIFEST_PATH),
-        'packages:\n  - \'apps/*\'\n  - verticals/*\n  - "packages/*"\nminimumReleaseAge: 1440\n',
-        'utf-8',
-      ),
-    );
+    yield* writeStandaloneFixtureWorkspaces(root, options.standaloneWorkspaces);
     for (const owner of [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER, SHELL_OWNER]) {
       yield* writeWorkspaceProject(root, owner);
     }
@@ -242,7 +270,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       yield* Effect.tryPromise(() => mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }));
       yield* Effect.tryPromise(() =>
         writeFile(
-          path.join(workerRoot, 'package.json'),
+          path.join(workerRoot, PACKAGE_MANIFEST_PATH),
           `${JSON.stringify({ exports: { './outbox-worker-host': './src/worker-host/entry.ts' }, name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`,
         ),
       );
@@ -572,6 +600,7 @@ for (const changedPath of [
   'scripts/verify-application-db-schema.mts',
   'scripts/postgres/bootstrap-runtime-role.mts',
   'scripts/postgres/runtime-role-bootstrap.mts',
+  'app/scripts/postgres/runtime-role-bootstrap.mts',
   'scripts/postgres/database-login-roles.mts',
   'scripts/postgres/database-role-manifest.mts',
 ]) {
@@ -615,12 +644,37 @@ for (const changedPath of [
       (root) =>
         Effect.gen(function* plansPartyDatabaseBoundaryChange() {
           const plan = yield* planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
-          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'party-registry']);
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', PARTY_ID]);
         }),
-      { verticalId: 'party-registry' },
+      { verticalId: PARTY_ID },
     ),
   );
 }
+it.live('includes the migrator first for the Core database identity manifest, keeping the Shell last', () =>
+  Effect.gen(function* coreDatabaseIdentityManifest() {
+    yield* withFixture((root) =>
+      Effect.gen(function* coreDatabaseIdentityManifestPlan() {
+        const plan = yield* planDeploymentImpact({
+          changedPaths: ['packages/core-runtime/src/db/database-identities.ts'],
+          rootDirectory: root,
+        });
+        const phases = plan.phases.map((phase) => phase.id);
+        expect(phases[0]).toBe('migrator');
+        expect(phases.at(-1)).toBe(SHELL_ID);
+      }),
+    );
+  }),
+);
+
+it.live('includes the migrator first for the Party Registry grant manifest', () =>
+  Effect.gen(function* partyGrantManifest() {
+    const plan = yield* planDeploymentImpact({
+      changedPaths: ['verticals/party-registry/src/db/database-grants.ts'],
+      rootDirectory: path.resolve(import.meta.dirname, '../..'),
+    });
+    expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', PARTY_ID, 'party-registry-worker']);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.live('expands shared-package changes to every consumer in dependency order', () =>
   Effect.gen(function* testEffect18() {
@@ -1054,8 +1108,7 @@ for (const changedPath of [
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-environment.mts',
-  'scripts/materialize-zerops-runtime.mjs',
-  'scripts/locked-registry-overrides.mjs',
+  'scripts/materialize-ontos-zerops-runtime.mjs',
   'scripts/outbox-worker-delivery.mjs',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
@@ -1239,7 +1292,7 @@ it.live('fails a full deployment for a workspace package missing from the topolo
         yield* writeWorkspaceProject(root, UNDECLARED_PACKAGE);
         const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
         expect(failure).toContain(
-          'workspace project "packages/foo" is not declared in topology; add it to reference-topology.json sharedPackages and topology/ownership.json owners',
+          'workspace project "packages/foo" is not declared in topology; classify it as a native delivery unit, shared package with ownership, or explicit standaloneWorkspaces entry',
         );
       }),
     );
@@ -1318,6 +1371,184 @@ it.live('rejects workspace globs the planner cannot enumerate', () =>
       }),
     );
   }),
+);
+
+it.live('plans the real repository without claiming native delivery for AKROS changes', () =>
+  Effect.gen(function* standaloneAkrosChanges() {
+    const changedPaths = [
+      'akros-storefront/package.json',
+      'akros-storefront/src/app/page.tsx',
+      'akros-storefront/src/schema.ts',
+      'akros-storefront/drizzle/migration.sql',
+    ];
+    const plan = yield* planDeploymentImpact({
+      changedPaths,
+      rootDirectory: path.resolve(import.meta.dirname, '../..'),
+    });
+    expect(plan.changedPaths).toEqual(EffectArray.sort(changedPaths, Order.String));
+    expect(plan.any).toBe(false);
+    expect(plan.phases).toEqual([]);
+    expect(plan.units).toMatchObject({
+      cloudflare: [],
+      migrator: false,
+      providers: [],
+      shell: false,
+      spicedb: false,
+      workers: [],
+    });
+  }),
+);
+
+it.live('supports explicit native workspace paths and deduplicates overlapping workspace declarations', () =>
+  withFixture((root) =>
+    Effect.gen(function* literalNativeWorkspaces() {
+      yield* writeWorkspacePatterns(root, [...NATIVE_WORKSPACE_PATTERNS, SHELL_OWNER.path, SHELL_OWNER.path]);
+      const plan = yield* planDeploymentImpact({ rootDirectory: root });
+      expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+    }),
+  ),
+);
+
+it.live('keeps standalone workspaces out of full native deployment without losing native changes in a mixed diff', () =>
+  withFixture(
+    (root) =>
+      Effect.gen(function* mixedStandaloneChanges() {
+        const full = yield* planDeploymentImpact({ rootDirectory: root });
+        expect(full.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+        const mixed = yield* planDeploymentImpact({
+          changedPaths: [`${AKROS_WORKSPACE.path}/src/schema.ts`, SHELL_FRAME_SOURCE],
+          rootDirectory: root,
+        });
+        expect(mixed.phases.map((phase) => phase.id)).toEqual([SHELL_ID]);
+        expect(mixed.units.migrator).toBe(false);
+      }),
+    { standaloneWorkspaces: [AKROS_WORKSPACE] },
+  ),
+);
+
+it.live('rejects an unclassified literal workspace even without Modern metadata', () =>
+  withFixture((root) =>
+    Effect.gen(function* unknownLiteralWorkspace() {
+      const unknown = { id: 'unknown', package: 'unknown-app', path: 'unknown-app' };
+      yield* writeWorkspaceProject(root, unknown);
+      yield* writeWorkspacePatterns(root, [...NATIVE_WORKSPACE_PATTERNS, unknown.path]);
+      const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+      expect(failure).toContain('workspace project "unknown-app" is not declared in topology');
+    }),
+  ),
+);
+
+it.live('rejects a literal workspace without a package manifest', () =>
+  withFixture((root) =>
+    Effect.gen(function* missingLiteralWorkspace() {
+      yield* writeWorkspacePatterns(root, [...NATIVE_WORKSPACE_PATTERNS, 'missing-app']);
+      const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+      expect(failure).toContain('literal workspace project "missing-app" has no package.json');
+    }),
+  ),
+);
+
+it.live('checks standalone package identity against the manifest at its exact declared path', () =>
+  withFixture(
+    (root) =>
+      Effect.gen(function* mismatchedStandaloneIdentity() {
+        yield* writeWorkspaceProject(root, { ...AKROS_WORKSPACE, package: 'different-app' });
+        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+        expect(failure).toContain(
+          'workspace project "akros-storefront" package identity "different-app" disagrees with topology package "akros-storefront"',
+        );
+      }),
+    { standaloneWorkspaces: [AKROS_WORKSPACE] },
+  ),
+);
+
+it.live('rejects standalone declarations that are absent from workspace membership', () =>
+  withFixture(
+    (root) =>
+      Effect.gen(function* staleStandaloneMembership() {
+        yield* writeWorkspacePatterns(root, NATIVE_WORKSPACE_PATTERNS);
+        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+        expect(failure).toContain('standalone workspace "akros-storefront" at "akros-storefront" is not included');
+      }),
+    { standaloneWorkspaces: [AKROS_WORKSPACE] },
+  ),
+);
+
+for (const standalone of [
+  { ...AKROS_WORKSPACE, id: SHELL_ID },
+  { ...AKROS_WORKSPACE, package: SHELL_PACKAGE },
+  { ...AKROS_WORKSPACE, path: 'apps' },
+  { ...AKROS_WORKSPACE, path: `${SHELL_OWNER.path}/nested` },
+]) {
+  it.live(`rejects overlapping standalone classification ${JSON.stringify(standalone)}`, () =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* overlappingStandalone() {
+          const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+          expect(failure).toContain('overlaps another classified workspace identity or path');
+        }),
+      { standaloneWorkspaces: [standalone] },
+    ),
+  );
+}
+
+for (const modernSource of ['manifest', 'config']) {
+  it.live(`rejects a native application disguised as standalone through its ${modernSource}`, () =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* disguisedNativeWorkspace() {
+          const target =
+            modernSource === 'manifest'
+              ? `${AKROS_WORKSPACE.path}/package.json`
+              : `${AKROS_WORKSPACE.path}/modern.config.ts`;
+          const source =
+            modernSource === 'manifest'
+              ? JSON.stringify({ modernjs: { appId: AKROS_WORKSPACE.id }, name: AKROS_WORKSPACE.package })
+              : 'export default {};\n';
+          yield* Effect.tryPromise(() => writeFile(path.join(root, target), source));
+          const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+          expect(failure).toContain('declares Modern configuration and cannot bypass native planning');
+        }),
+      { standaloneWorkspaces: [AKROS_WORKSPACE] },
+    ),
+  );
+}
+
+for (const pattern of [
+  '../akros-storefront',
+  'packages/../akros-storefront',
+  'packages/./foo',
+  '/outside-workspace',
+  'packages/*/deep',
+  'packages/{foo,bar}',
+]) {
+  it.live(`rejects unsafe workspace declaration ${pattern}`, () =>
+    withFixture((root) =>
+      Effect.gen(function* unsafeWorkspaceDeclaration() {
+        yield* writeWorkspacePatterns(root, [...NATIVE_WORKSPACE_PATTERNS, pattern]);
+        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+        expect(failure).toContain(`pnpm-workspace.yaml glob "${pattern}" is unsupported`);
+      }),
+    ),
+  );
+}
+
+it.live('rejects a standalone workspace whose manifest symlink leaves the workspace', () =>
+  withFixture((outerRoot) =>
+    withFixture(
+      (root) =>
+        Effect.gen(function* escapedWorkspaceManifest() {
+          const manifestPath = path.join(root, AKROS_WORKSPACE.path, PACKAGE_MANIFEST_PATH);
+          yield* Effect.tryPromise(() => rm(manifestPath));
+          yield* Effect.tryPromise(() =>
+            symlink(path.join(outerRoot, SHELL_OWNER.path, PACKAGE_MANIFEST_PATH), manifestPath),
+          );
+          const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+          expect(failure).toContain('workspace path "akros-storefront/package.json" leaves the workspace');
+        }),
+      { standaloneWorkspaces: [AKROS_WORKSPACE] },
+    ),
+  ),
 );
 
 it.live('rejects an unavailable comparison base', () =>

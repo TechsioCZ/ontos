@@ -359,7 +359,7 @@ const makeCreateHarness = Effect.gen(function* makeCreateHarness() {
     lockBindingScopes: () => Effect.void,
     makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
       StockAllocationIdSchema.make(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
-    makeMutationId: () => mutationId,
+    makeMutationId: Effect.succeed(mutationId),
     resolver: { resolve: (demand) => Effect.succeed(resolved(demand.purchaseDemandOccurrenceId, demand.quantity)) },
   });
   const execution = makeInventoryReservationCreateExecutionService({ backend, effects: effects.persistence, ledger });
@@ -529,7 +529,7 @@ const makeReleaseHarness = (reservation: ProvisionalInventoryReservation) => {
   const service = makeInventoryReservationReleaseService({
     effects: effects.persistence,
     ledger,
-    makeMutationId: () => releaseMutationId,
+    makeMutationId: Effect.succeed(releaseMutationId),
     obligations: { read: () => Effect.succeed(Option.some(reservation)) },
   });
   const execution = makeInventoryReservationReleaseExecutionService({

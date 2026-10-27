@@ -4,8 +4,8 @@ import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Effect, Layer, Redacted, Scope } from 'effect';
 import type { Context } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';

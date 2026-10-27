@@ -5,6 +5,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import type { Crypto } from 'effect';
 
 import {
   RemoveProductAttributeValuesPayloadSchema,
@@ -38,7 +39,7 @@ const domainEvents = { [SELECTION_SOURCE_CHANGED_EVENT_TYPE]: SelectionSourceCha
 type ProductAttributeServices = AttributeValuesPersistence & {
   readonly assessOpenSelectionImpact: (
     productRef: RemoveProductAttributeValuesPayload['productRef'],
-  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable>;
+  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, Crypto.Crypto>;
 };
 export const handleRemoveProductAttributeValues = Effect.fn('RemoveProductAttributeValuesAction.handle')(
   function* handleRemoveProductAttributeValues(

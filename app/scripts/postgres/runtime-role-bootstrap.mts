@@ -3,7 +3,7 @@ import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Effect, Order, Predicate, Redacted, Schema } from 'effect';
-import type { Reactivity } from 'effect/unstable/reactivity';
+import type { Reactivity } from 'effect/reactivity';
 
 import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 
@@ -56,6 +56,7 @@ const SHARED_RUNTIME_SCHEMAS = [
   'demo_sales_insights',
   'finance_billing',
   'crm_activities',
+  'projects',
 ] as const;
 
 export interface ExplicitManifestEntry {

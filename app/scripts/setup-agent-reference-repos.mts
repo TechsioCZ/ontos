@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Context, DateTime, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess } from 'effect/process';
 
 const LOG_PREFIX = '[agent-reference-repos]';
 const REPOSITORY_STRATEGY = 'git-subtree-squash' as const;

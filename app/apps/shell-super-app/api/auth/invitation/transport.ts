@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import type { OAuthServerEndpoint } from '../oauth-server/policy.ts';
 import { AuthenticationService } from '../service.ts';
@@ -42,13 +42,15 @@ export const setInvitationPassword = Effect.fn('Invitation.setPassword')(functio
     headers.set('origin', origin);
   }
   // Native reset owns its transaction and one-use consumption. Never retry a password mutation.
-  return yield* authentication.handler(
-    new Request(`${authentication.issuer}/reset-password`, {
-      body: nativeBody,
-      headers,
-      method: 'POST',
-    }),
-  ).pipe(Effect.timeout('15 seconds'), Effect.orElseSucceed(unavailable));
+  return yield* authentication
+    .handler(
+      new Request(`${authentication.issuer}/reset-password`, {
+        body: nativeBody,
+        headers,
+        method: 'POST',
+      }),
+    )
+    .pipe(Effect.timeout('15 seconds'), Effect.orElseSucceed(unavailable));
 }, Effect.orElseSucceed(invalidRequest));
 
 const invitationTransport = Effect.fn('InvitationTransport.handle')(function* invitationTransport(

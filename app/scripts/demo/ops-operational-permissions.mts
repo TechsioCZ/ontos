@@ -10,7 +10,7 @@ import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { toContextPermissionAccessObjectId } from '@app/core-runtime';
 import { Config, ConfigProvider, Console, Effect, Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,

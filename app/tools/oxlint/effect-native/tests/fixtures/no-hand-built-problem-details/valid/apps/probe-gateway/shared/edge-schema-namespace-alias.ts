@@ -1,5 +1,5 @@
 // Contract-owned declarations reached through aliased and namespace imports of `effect` modules.
-import * as ApiSchema from 'effect/unstable/httpapi/HttpApiSchema';
+import * as ApiSchema from 'effect/http-api/HttpApiSchema';
 import { Schema as Codec } from 'effect';
 
 export const AProblem = Codec.TaggedStruct('AProblem', { detail: Codec.String }).pipe(

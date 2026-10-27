@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { rentalSeed, seedRentalDemo } from './rental-seed.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';

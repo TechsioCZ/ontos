@@ -2,7 +2,7 @@
 // The platform approval layer asks Pronájmy about stored agent proposals (wire contract `@app/shared-contracts/agent-review`).
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '@app/shared-contracts/agent-review';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { AgentReviewRequestSchema, AgentReviewResponseSchema } from '@app/shared-contracts/agent-review';
 export type { AgentReviewRequest } from '@app/shared-contracts/agent-review';

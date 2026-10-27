@@ -2,8 +2,9 @@
 // @ontos-outbox-worker-host-owner pricing.price-group-catalog
 import { makeDatabaseIdentityEnrollmentLive } from '@app/core-runtime';
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
+import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
@@ -43,6 +44,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),

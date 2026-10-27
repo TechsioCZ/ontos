@@ -5,7 +5,7 @@ import {
   ConsentAuthorityInvalidProblemSchema,
   ConsentAuthorityUnavailableProblemSchema,
 } from '@app/consent-authority-contracts/api';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from 'effect/http-api';
 import { Schema } from 'effect';
 
 export const CUSTOMER_CONSENT_STATUS = {

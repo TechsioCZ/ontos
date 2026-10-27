@@ -19,7 +19,7 @@ import type {
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Effect, Match, Result, Schema } from 'effect';
-import type { HttpClient } from 'effect/unstable/http';
+import type { HttpClient } from 'effect/http';
 import type { ComponentProps } from 'react';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';

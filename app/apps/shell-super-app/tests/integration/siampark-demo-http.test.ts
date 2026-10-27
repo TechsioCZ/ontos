@@ -20,7 +20,6 @@ import type { FinanceCommand } from '@app/finance-billing/contracts/apply-comman
 import { RecordsForbiddenProblemSchema as InvoiceForbiddenSchema } from '@app/finance-billing/contracts/records';
 import { executeApplyCommandWithAuthorization as executeOccupancyCommand } from '@app/property-leasing/api/client';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
-import { ApplyCommandPayloadSchema as OccupancyPayloadSchema } from '@app/property-leasing/contracts/apply-command';
 import type { OccupancyCommand } from '@app/property-leasing/contracts/apply-command';
 import { OccupancySchema } from '@app/property-leasing/contracts/records';
 import { executeRecordsWithAuthorization as readProperties } from '@app/property-portfolio/clients/records';
@@ -34,8 +33,8 @@ import { RecordsForbiddenProblemSchema as TaskForbiddenSchema } from '@app/work-
 import { NodeHttpClient } from '@effect/platform-node';
 import { Effect, Predicate, Redacted, Result, Schema } from 'effect';
 import { expect, layer } from 'effect-rstest';
-import { Cookies, HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { Cookies, HttpClient, HttpClientRequest } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 
 // The live development fixture is reset by the operator, never by this test.
 // These stable resource IDs belong to scripts/siampark/fixtures.mts.
@@ -118,6 +117,7 @@ type LiveHttpFailure = Effect.Error<
     | typeof readProperties
     | typeof readCounterparty
     | typeof searchCounterparties
+    | typeof executeGoldenInvoice
   >
 >;
 // Native transport errors carry request headers; failure output must never expose assertions or cookies.
@@ -187,7 +187,7 @@ const applyOccupancyCommand = Effect.fn('SiamparkLiveHttp.applyOccupancyCommand'
   expectedRevision: number,
   command: OccupancyCommand,
 ) {
-  const payload = yield* Schema.decodeEffect(OccupancyPayloadSchema)({ command, expectedRevision });
+  const payload = { command, expectedRevision };
   const providers = yield* referenceCredentials(session, [
     'property-portfolio',
     'property-portfolio',

@@ -1,6 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, Layer } from 'effect';
-import { Cookies, FetchHttpClient } from 'effect/unstable/http';
+import { Cookies, FetchHttpClient } from 'effect/http';
 
 import {
   ContextAccessLive,
@@ -50,6 +50,7 @@ import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/
 import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
+import { BetterAuthNativeAdapterLive } from '../../apps/shell-super-app/api/auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../apps/shell-super-app/api/auth/authentication-namespace-registry.ts';
 import { ShellInstalledModuleCatalogLive } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
@@ -60,6 +61,7 @@ const databaseIdentitiesLive = makeDatabaseIdentityEnrollmentLive(defineDatabase
 const access = ContextAccessLive;
 const authConfig = AuthConfigLive;
 const authDatabase = AuthDatabaseLive.pipe(Layer.provide(authConfig));
+const betterAuthNativeAdapter = BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabase));
 const resolver = PrincipalResolverLive({ authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID }).pipe(
   Layer.provide(persistence),
 );
@@ -70,6 +72,7 @@ const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence))
 const authenticationDependencies = Layer.mergeAll(
   authConfig,
   authDatabase,
+  betterAuthNativeAdapter,
   resolver,
   StaffAuthenticationNamespaceRegistryLive,
   BetterAuthRuntimeLive,

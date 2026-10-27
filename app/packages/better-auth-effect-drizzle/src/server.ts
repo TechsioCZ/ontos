@@ -34,7 +34,7 @@ import type { AnyRelations, SQL, SQLWrapper } from 'drizzle-orm';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
 import { Effect, flow, Option, Predicate, Schema } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 
 import { ConsumedRowSchema, EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
 import type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';

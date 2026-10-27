@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
-import { Effect, Option, Result, Schema } from 'effect';
+import { Crypto, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   makeTestDatabaseFromClient,
@@ -41,6 +40,9 @@ import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment
 import type { EnrollmentAttemptSnapshot, CommercePortalAccountSubject } from '../../shared/enrollment-contracts.ts';
 import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
 import { installEnrollmentTestAuthority } from '../support/enrollment-composition-authority.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+
+const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
 const failedStepFor = (mask: number) => {
   switch (mask) {
@@ -158,7 +160,7 @@ const assertRestartAdmission = (input: {
       sql`insert into commerce_customer_context.retail_customer_profiles (retail_customer_profile_id, tenant_id, legal_entity_id, party_resource_id) values (${profileId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${partyId})`,
     );
     yield* execute(
-      sql`insert into commerce_customer_context.retail_portal_profile_bindings (retail_portal_profile_binding_id, tenant_id, legal_entity_id, auth_binding_id, principal_id, retail_customer_profile_id, enrollment_evidence_ref, action_invocation_id, actor_principal_id) values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${customerPrincipalId}::uuid, ${profileId}::uuid, 'native-restart-acceptance', ${randomUUID()}::uuid, ${creatorId}::uuid)`,
+      sql`insert into commerce_customer_context.retail_portal_profile_bindings (retail_portal_profile_binding_id, tenant_id, legal_entity_id, auth_binding_id, principal_id, retail_customer_profile_id, enrollment_evidence_ref, action_invocation_id, actor_principal_id) values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${customerPrincipalId}::uuid, ${profileId}::uuid, 'native-restart-acceptance', ${yield* randomId}::uuid, ${creatorId}::uuid)`,
     );
     const account = (subject = providerSubjectId, principal = customerPrincipalId, binding = authBindingId) =>
       execute(
@@ -167,8 +169,8 @@ const assertRestartAdmission = (input: {
     yield* execute(sql`set local role ontos_runtime`);
     expect(yield* account()).toEqual([{ party_id: partyId, profile_id: profileId }]);
     expect(yield* account('foreign-provider-subject')).toEqual([]);
-    expect(yield* account(providerSubjectId, randomUUID())).toEqual([]);
-    expect(yield* account(providerSubjectId, customerPrincipalId, randomUUID())).toEqual([]);
+    expect(yield* account(providerSubjectId, yield* randomId)).toEqual([]);
+    expect(yield* account(providerSubjectId, customerPrincipalId, yield* randomId)).toEqual([]);
     yield* execute(sql`reset role`);
     yield* execute(
       sql`update commerce_customer_context.retail_portal_profile_bindings set authorization_state = 'REVOKED' where retail_portal_profile_binding_id = ${bindingId}::uuid`,
@@ -206,7 +208,7 @@ const assertRepeatedFailedRestart = (input: {
       actorPrincipalId: attempt.createdByPrincipalId,
       expectedRevision: attempt.revision,
       leaseDurationMs: 60_000,
-      ownerInvocationId: randomUUID(),
+      ownerInvocationId: yield* randomId,
       ownerModuleKey: 'commerce.portal-auth',
       portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
       requestDigest: 'd'.repeat(64),
@@ -219,7 +221,7 @@ const assertRepeatedFailedRestart = (input: {
     const run: CommerceEnrollmentOwnerTransactionRun = (ownerScope, operation) =>
       operation(scopedRoutineInvokerFromTransaction(execute, ownerScope));
     yield* verifyInterruptedAccount(execute, run, claim, claimed.attempt, subject, false);
-    const failedInvocation = randomUUID();
+    const failedInvocation = yield* randomId;
     yield* execute(sql`reset role`);
     yield* execute(
       sql`insert into commerce_customer_context.portal_enrollment_owner_operations (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, request_digest, actor_principal_id, required, status, failure_code, outcome_code, failure_reason, completed_at) values (${attempt.tenantId}::uuid, ${attempt.portalEnrollmentAttemptId}::uuid, 'party.registry', 'party.customer.enroll', ${failedInvocation}::uuid, ${'c'.repeat(64)}, ${attempt.createdByPrincipalId}::uuid, true, 'FAILED', 'owner_rejected', 'owner_rejected', 'Isolated repeated directory rejection', now())`,
@@ -242,7 +244,7 @@ const assertRepeatedFailedRestart = (input: {
     const intent = yield* retailEnrollmentRestartIntent(failed, proof);
     const start = yield* Schema.decodeUnknownEffect(StartEnrollmentAttemptInputSchema)({
       ...intent,
-      actionInvocationId: randomUUID(),
+      actionInvocationId: yield* randomId,
       actorPrincipalId: attempt.createdByPrincipalId,
       compositionRevision: attempt.compositionRevision,
       tenantId: attempt.tenantId,
@@ -281,7 +283,7 @@ const assertRestartHttpRecovery = (
       providerSubjectId: 'another-customer',
     });
     for (const mismatch of [
-      readRestartEnrollmentForIntent(run, scope, randomUUID(), subject, intent),
+      readRestartEnrollmentForIntent(run, scope, yield* randomId, subject, intent),
       readRestartEnrollmentForIntent(run, scope, creatorId, subject, {
         ...intent,
         intentDigest: original.intentDigest,
@@ -306,17 +308,17 @@ const restartCase = (input: {
     const invoker = () => scopedRoutineInvokerFromTransaction(execute, scope);
     const persistence = () => commerceEnrollmentAttemptPersistenceForTransaction(invoker(), scope);
     yield* execute(sql`reset role`);
-    const sourceId = randomUUID();
-    const partyId = randomUUID();
-    const profileId = randomUUID();
-    const authBindingId = randomUUID();
-    const bindingId = randomUUID();
-    const customerPrincipalId = randomUUID();
-    const providerInvocation = randomUUID();
-    const rejectedInvocation = randomUUID();
+    const sourceId = yield* randomId;
+    const partyId = yield* randomId;
+    const profileId = yield* randomId;
+    const authBindingId = yield* randomId;
+    const bindingId = yield* randomId;
+    const customerPrincipalId = yield* randomId;
+    const providerInvocation = yield* randomId;
+    const rejectedInvocation = yield* randomId;
     const subject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
       authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
-      providerSubjectId: `verified-${randomUUID()}`,
+      providerSubjectId: `verified-${yield* randomId}`,
       subjectType: 'user',
     });
     const registration = {
@@ -327,10 +329,13 @@ const restartCase = (input: {
     yield* execute(sql`insert into commerce_customer_context.portal_enrollment_attempts
         (portal_enrollment_attempt_id, tenant_id, journey, intent_key, intent_digest, composition_revision, created_by_principal_id, target_legal_entity_id, authentication_namespace_id, subject_type, provider_subject_id, retail_registration)
         values (${sourceId}::uuid, ${tenantId}::uuid, 'RETAIL_SELF_ENROLLMENT', ${sourceId}, ${'a'.repeat(64)}, ${compositionRevision}, ${creatorId}::uuid, ${legalEntityId}::uuid, ${subject.authenticationNamespaceId}, 'user', ${subject.providerSubjectId}, ${JSON.stringify(registration)}::jsonb)`);
-    const success = (owner: string, transition: string, reference: string, invocation = randomUUID()) =>
-      execute(sql`insert into commerce_customer_context.portal_enrollment_owner_operations
+    const success = (owner: string, transition: string, reference: string, invocation?: string) =>
+      Effect.gen(function* recordSuccessfulOperation() {
+        const invocationId = invocation ?? (yield* randomId);
+        return yield* execute(sql`insert into commerce_customer_context.portal_enrollment_owner_operations
         (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, request_digest, actor_principal_id, required, status, result_reference, completed_at)
-        values (${tenantId}::uuid, ${sourceId}::uuid, ${owner}, ${transition}, ${invocation}::uuid, ${'b'.repeat(64)}, ${creatorId}::uuid, true, 'SUCCEEDED', ${reference}, now())`);
+        values (${tenantId}::uuid, ${sourceId}::uuid, ${owner}, ${transition}, ${invocationId}::uuid, ${'b'.repeat(64)}, ${creatorId}::uuid, true, 'SUCCEEDED', ${reference}, now())`);
+      });
     yield* success('commerce.portal-auth', 'provider.account.create', sourceId, providerInvocation);
     if (mask >= 1) {
       yield* success('party.registry', 'party.candidate.submit', partyId);
@@ -373,14 +378,18 @@ const restartCase = (input: {
       expect(proof.directoryOwnerInvocationIds).toEqual([rejectedInvocation]);
     }
     const intent = yield* retailEnrollmentRestartIntent(original, proof);
-    const start = (actionInvocationId = randomUUID()) =>
-      Schema.decodeUnknownEffect(StartEnrollmentAttemptInputSchema)({
-        ...intent,
-        actionInvocationId,
-        actorPrincipalId: creatorId,
-        compositionRevision,
-        tenantId,
-      }).pipe(Effect.flatMap((startInput) => persistence().create(startInput)));
+    const start = (actionInvocationId?: string) =>
+      Effect.gen(function* startExistingAccountAttempt() {
+        const invocationId = actionInvocationId ?? (yield* randomId);
+        const startInput = yield* Schema.decodeUnknownEffect(StartEnrollmentAttemptInputSchema)({
+          ...intent,
+          actionInvocationId: invocationId,
+          actorPrincipalId: creatorId,
+          compositionRevision,
+          tenantId,
+        });
+        return yield* persistence().create(startInput);
+      });
     const created = yield* start();
     expect(created.outcome).toBe('CREATED');
     expect(created.attempt.journey).toBe('EXISTING_ACCOUNT');
@@ -432,7 +441,7 @@ const restartCase = (input: {
         actorPrincipalId: creatorId,
         expectedRevision: advancing.revision,
         leaseDurationMs: 60_000,
-        ownerInvocationId: randomUUID(),
+        ownerInvocationId: yield* randomId,
         ownerModuleKey: step.ownerModuleKey,
         requestDigest: 'd'.repeat(64),
         required: true,
@@ -520,7 +529,7 @@ const restartCase = (input: {
     ).toBe(true);
     expect(yield* persistence().read(sourceIdentity)).toEqual(original);
     expect(yield* persistence().readOperations(sourceIdentity)).toEqual(originalOperations);
-    expect(Option.isNone(yield* readCurrentRetailEnrollment(invoker(), randomUUID(), subject))).toBe(true);
+    expect(Option.isNone(yield* readCurrentRetailEnrollment(invoker(), yield* randomId, subject))).toBe(true);
     const otherSubject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
       ...subject,
       providerSubjectId: 'another-customer',
@@ -528,7 +537,7 @@ const restartCase = (input: {
     expect(Option.isNone(yield* readCurrentRetailEnrollment(invoker(), creatorId, otherSubject))).toBe(true);
     yield* execute(sql`savepoint forged_scope`);
     const forged = yield* execute(
-      sql`select * from commerce_customer_context.read_retail_enrollment_restart_context(${randomUUID()}::uuid, ${legalEntityId}::uuid, ${sourceId}::uuid, true)`,
+      sql`select * from commerce_customer_context.read_retail_enrollment_restart_context(${yield* randomId}::uuid, ${legalEntityId}::uuid, ${sourceId}::uuid, true)`,
     ).pipe(Effect.result);
     yield* execute(sql`rollback to savepoint forged_scope`);
     expect(Result.isFailure(forged)).toBe(true);
@@ -598,9 +607,9 @@ const restartAcceptance = () =>
       const connections = yield* loadDatabaseConnectionPair();
       const client = yield* makeTestPgClient(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromClient(client, commerceCustomerContextRelations);
-      const tenantId = randomUUID();
-      const legalEntityId = randomUUID();
-      const creatorId = randomUUID();
+      const tenantId = yield* randomId;
+      const legalEntityId = yield* randomId;
+      const creatorId = yield* randomId;
       const rollback = new Error('restart acceptance rollback');
       yield* admin
         .transaction(restartTransaction({ compositionRevision, creatorId, legalEntityId, rollback, tenantId }))
@@ -610,5 +619,5 @@ const restartAcceptance = () =>
 
 it.live(
   'starts new native existing-account Attempts, retains only real predecessor successes, converges and never mutates FAILED history',
-  restartAcceptance,
+  () => restartAcceptance().pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

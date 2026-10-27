@@ -5,8 +5,8 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SidePanel, formatDateTime } from '@app/admin-ui';
-import { DateTime } from 'effect';
-import { useMemo, useState } from 'react';
+import { DateTime, Option } from 'effect';
+import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
@@ -21,12 +21,12 @@ type Selected =
   | { readonly category: CategoryNode; readonly id: string; readonly revision: number; readonly status: 'ready' };
 
 interface CategoryDraft {
-  readonly published: boolean;
-  readonly name: string;
-  readonly heading: string;
   readonly description: string;
+  readonly heading: string;
   readonly longDescription: string;
+  readonly name: string;
   readonly positionText: string;
+  readonly published: boolean;
 }
 
 const NO_CATEGORIES: readonly CategoryNode[] = [];
@@ -53,9 +53,171 @@ const loadCategories = (onLoaded: (next: Loaded) => void): void =>
     ),
   );
 
+const categoryListFor = (categories: readonly CategoryNode[], search: string) => {
+  const needle = search.trim().toLocaleLowerCase('cs');
+  const matches =
+    needle === ''
+      ? categories.filter((c) => Option.isNone(c.parentId)).toSorted(byStorefrontOrder)
+      : categories
+          .filter((c) => c.name.toLocaleLowerCase('cs').includes(needle) || c.slug.includes(needle))
+          .toSorted(byStorefrontOrder);
+  return matches.slice(0, 40);
+};
+
+const validateCategoryDraft = (draft: CategoryDraft | null) => {
+  const position = Number(draft?.positionText ?? '');
+  return {
+    nameInvalid: draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200),
+    position,
+    positionInvalid:
+      draft !== null && (draft.positionText.trim() === '' || !Number.isInteger(position) || position < 0),
+  };
+};
+const categoryParentId = (selected: CategoryNode | undefined) => Option.getOrNull(selected?.parentId ?? Option.none());
+const categoryParentName = (categories: readonly CategoryNode[], parentId: string | null) =>
+  parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
+
 interface CategoryAdminButtonProps {
   readonly onCommitted: (message: string) => void;
 }
+
+interface CategoryEditorProps {
+  readonly draft: CategoryDraft | null;
+  readonly nameInvalid: boolean;
+  readonly parentName: string | undefined;
+  readonly patchDraft: (patch: Partial<CategoryDraft>) => void;
+  readonly positionInvalid: boolean;
+  readonly selected: CategoryNode | undefined;
+  readonly serverError: string | null;
+  readonly siblings: readonly CategoryNode[];
+}
+
+const CategoryHistory = ({ selected }: { readonly selected: CategoryNode }) => (
+  <>
+    <h3 className="font-semibold text-sm">Historie změn</h3>
+    {(selected.history ?? []).length === 0 ? (
+      <p className="text-fg-secondary text-sm">Zatím žádné změny kategorie.</p>
+    ) : (
+      <ul className="flex flex-col gap-100 text-sm">
+        {[...(selected.history ?? [])]
+          .toSorted((a, b) => DateTime.toEpochMillis(b.at) - DateTime.toEpochMillis(a.at))
+          .map((entry) => (
+            <li key={`${DateTime.formatIso(entry.at)}-${entry.fields.join(',')}`}>
+              {`${formatDateTime(DateTime.formatIso(entry.at))} — ${entry.fields.join(', ')}: ${entry.before} → ${entry.after}`}
+            </li>
+          ))}
+      </ul>
+    )}
+  </>
+);
+
+const CategoryEditor = ({
+  draft,
+  nameInvalid,
+  parentName,
+  patchDraft,
+  positionInvalid,
+  selected,
+  serverError,
+  siblings,
+}: CategoryEditorProps) => {
+  if (selected === undefined || draft === null) {
+    return null;
+  }
+  const siblingNames = siblings
+    .slice(0, 6)
+    .map((c) => `${c.name} (${c.position})`)
+    .join(', ');
+  const parentDescription = parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`;
+  return (
+    <>
+      <p className="text-fg-secondary text-sm">{`Adresa v e-shopu: /${selected.slug}${parentDescription}`}</p>
+      <Switch
+        checked={draft.published}
+        name="categoryPublished"
+        onCheckedChange={(published) => patchDraft({ published })}
+      >
+        Zobrazit v navigaci e-shopu
+      </Switch>
+      <FormInput
+        id="category-name"
+        label="Název"
+        maxLength={200}
+        name="name"
+        onChange={(event) => patchDraft({ name: event.target.value })}
+        required
+        value={draft.name}
+        {...(nameInvalid ? { helpText: 'Zadejte název (nejvýše 200 znaků)', validateStatus: 'error' as const } : {})}
+      />
+      <FormInput
+        id="category-heading"
+        label="Nadpis na stránce kategorie"
+        maxLength={300}
+        name="heading"
+        onChange={(event) => patchDraft({ heading: event.target.value })}
+        value={draft.heading}
+      />
+      <FormTextarea
+        id="category-description"
+        label="Krátký popis"
+        maxLength={5000}
+        name="description"
+        onChange={(event) => patchDraft({ description: event.target.value })}
+        value={draft.description}
+      />
+      <FormTextarea
+        id="category-long-description"
+        label="Popis kategorie"
+        maxLength={50_000}
+        name="longDescription"
+        onChange={(event) => patchDraft({ longDescription: event.target.value })}
+        value={draft.longDescription}
+      />
+      <FormInput
+        id="category-position"
+        inputMode="numeric"
+        label="Pořadí mezi sourozenci (menší číslo = výš)"
+        name="position"
+        onChange={(event) => patchDraft({ positionText: event.target.value })}
+        value={draft.positionText}
+        {...(positionInvalid ? { helpText: 'Zadejte celé číslo 0 nebo větší', validateStatus: 'error' as const } : {})}
+      />
+      {siblings.length > 0 && (
+        <div className="flex flex-col gap-100">
+          <p className="text-fg-secondary text-sm">
+            {`Stejné pořadí řadí podle názvu. Mezi dvě kategorie ji dáte číslem mezi jejich pořadím. Sourozenci: ${siblingNames}${siblings.length > 6 ? ', …' : ''}`}
+          </p>
+          <div className="flex flex-wrap gap-100">
+            <Button
+              onClick={() => patchDraft({ positionText: String(Math.max(0, (siblings[0]?.position ?? 0) - 10)) })}
+              size="sm"
+              theme="outlined"
+              type="button"
+              variant="secondary"
+            >
+              Na začátek
+            </Button>
+            <Button
+              onClick={() => patchDraft({ positionText: String((siblings.at(-1)?.position ?? 0) + 10) })}
+              size="sm"
+              theme="outlined"
+              type="button"
+              variant="secondary"
+            >
+              Na konec
+            </Button>
+          </div>
+        </div>
+      )}
+      {serverError !== null && (
+        <StatusText showIcon status="error">
+          {serverError}
+        </StatusText>
+      )}
+      <CategoryHistory selected={selected} />
+    </>
+  );
+};
 
 /** Side panel for the storefront category tree: rename, heading, descriptions and sibling order. */
 export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) => {
@@ -71,16 +233,15 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
 
   const categories = loaded.status === 'ready' ? loaded.categories : NO_CATEGORIES;
   const selected = selection?.status === 'ready' ? selection.category : undefined;
-  const parentId = selected?.parentId ?? null;
-  const parentName = parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
+  const parentId = categoryParentId(selected);
+  const parentName = categoryParentName(categories, parentId);
   // Siblings in storefront order, so the editor can see where a position puts the category.
-  const siblings = useMemo(
-    () =>
-      selected === undefined
-        ? NO_CATEGORIES
-        : categories.filter((c) => c.parentId === parentId && c.id !== selected.id).toSorted(byStorefrontOrder),
-    [categories, parentId, selected],
-  );
+  const siblings =
+    selected === undefined
+      ? NO_CATEGORIES
+      : categories
+          .filter((c) => Option.getOrNull(c.parentId) === parentId && c.id !== selected.id)
+          .toSorted(byStorefrontOrder);
 
   const reload = () => {
     setLoaded({ status: 'loading' });
@@ -110,24 +271,12 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     reload();
   };
 
-  const list = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase('cs');
-    const matches =
-      needle === ''
-        ? categories.filter((c) => c.parentId === null).toSorted(byStorefrontOrder)
-        : categories
-            .filter((c) => c.name.toLocaleLowerCase('cs').includes(needle) || c.slug.includes(needle))
-            .toSorted(byStorefrontOrder);
-    return matches.slice(0, 40);
-  }, [categories, search]);
+  const list = categoryListFor(categories, search);
 
   const patchDraft = (patch: Partial<CategoryDraft>) =>
     setDraft((current) => (current === null ? current : { ...current, ...patch }));
 
-  const position = Number(draft?.positionText ?? '');
-  const positionInvalid =
-    draft !== null && (draft.positionText.trim() === '' || !Number.isInteger(position) || position < 0);
-  const nameInvalid = draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200);
+  const { nameInvalid, position, positionInvalid } = validateCategoryDraft(draft);
 
   const save = () => {
     if (selection?.status !== 'ready' || draft === null || busy || positionInvalid || nameInvalid) {
@@ -141,10 +290,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         _tag: 'UpdateCategory',
         id: category.id,
         patch: {
-          name: draft.name.trim(),
-          heading: draft.heading.trim(),
           description: draft.description.trim(),
+          heading: draft.heading.trim(),
           longDescription: draft.longDescription.trim(),
+          name: draft.name.trim(),
           position,
           published: draft.published,
         },
@@ -232,8 +381,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                 {list.map((c) => (
                   <li key={c.id}>
                     <Button
-                      onClick={() => select(c.id)}
                       className="h-auto w-full justify-start whitespace-normal text-left"
+                      onClick={() => select(c.id)}
                       size="sm"
                       theme="borderless"
                       type="button"
@@ -260,118 +409,16 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               </Button>
             </>
           )}
-          {selected !== undefined && draft !== null && (
-            <>
-              <p className="text-fg-secondary text-sm">
-                {`Adresa v e-shopu: /${selected.slug}${parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`}`}
-              </p>
-              <Switch
-                name="categoryPublished"
-                checked={draft.published}
-                onCheckedChange={(published) => patchDraft({ published })}
-              >
-                Zobrazit v navigaci e-shopu
-              </Switch>
-              <FormInput
-                id="category-name"
-                label="Název"
-                maxLength={200}
-                name="name"
-                onChange={(event) => patchDraft({ name: event.target.value })}
-                required
-                value={draft.name}
-                {...(nameInvalid
-                  ? { helpText: 'Zadejte název (nejvýše 200 znaků)', validateStatus: 'error' as const }
-                  : {})}
-              />
-              <FormInput
-                id="category-heading"
-                label="Nadpis na stránce kategorie"
-                maxLength={300}
-                name="heading"
-                onChange={(event) => patchDraft({ heading: event.target.value })}
-                value={draft.heading}
-              />
-              <FormTextarea
-                id="category-description"
-                label="Krátký popis"
-                maxLength={5000}
-                name="description"
-                onChange={(event) => patchDraft({ description: event.target.value })}
-                value={draft.description}
-              />
-              <FormTextarea
-                id="category-long-description"
-                label="Popis kategorie"
-                maxLength={50_000}
-                name="longDescription"
-                onChange={(event) => patchDraft({ longDescription: event.target.value })}
-                value={draft.longDescription}
-              />
-              <FormInput
-                id="category-position"
-                inputMode="numeric"
-                label="Pořadí mezi sourozenci (menší číslo = výš)"
-                name="position"
-                onChange={(event) => patchDraft({ positionText: event.target.value })}
-                value={draft.positionText}
-                {...(positionInvalid
-                  ? { helpText: 'Zadejte celé číslo 0 nebo větší', validateStatus: 'error' as const }
-                  : {})}
-              />
-              {siblings.length > 0 && (
-                <div className="flex flex-col gap-100">
-                  <p className="text-fg-secondary text-sm">
-                    {`Stejné pořadí řadí podle názvu. Mezi dvě kategorie ji dáte číslem mezi jejich pořadím. Sourozenci: ${siblings
-                      .slice(0, 6)
-                      .map((c) => `${c.name} (${c.position})`)
-                      .join(', ')}${siblings.length > 6 ? ', …' : ''}`}
-                  </p>
-                  <div className="flex flex-wrap gap-100">
-                    <Button
-                      onClick={() =>
-                        patchDraft({ positionText: String(Math.max(0, (siblings[0]?.position ?? 0) - 10)) })
-                      }
-                      size="sm"
-                      theme="outlined"
-                      type="button"
-                      variant="secondary"
-                    >
-                      Na začátek
-                    </Button>
-                    <Button
-                      onClick={() => patchDraft({ positionText: String((siblings.at(-1)?.position ?? 0) + 10) })}
-                      size="sm"
-                      theme="outlined"
-                      type="button"
-                      variant="secondary"
-                    >
-                      Na konec
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {serverError !== null && (
-                <StatusText showIcon status="error">
-                  {serverError}
-                </StatusText>
-              )}
-              <h3 className="font-semibold text-sm">Historie změn</h3>
-              {(selected.history ?? []).length === 0 ? (
-                <p className="text-fg-secondary text-sm">Zatím žádné změny kategorie.</p>
-              ) : (
-                <ul className="flex flex-col gap-100 text-sm">
-                  {[...(selected.history ?? [])]
-                    .toSorted((a, b) => DateTime.toEpochMillis(b.at) - DateTime.toEpochMillis(a.at))
-                    .map((entry) => (
-                      <li key={`${DateTime.formatIso(entry.at)}-${entry.fields.join(',')}`}>
-                        {`${formatDateTime(DateTime.formatIso(entry.at))} — ${entry.fields.join(', ')}: ${entry.before} → ${entry.after}`}
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </>
-          )}
+          <CategoryEditor
+            draft={draft}
+            nameInvalid={nameInvalid}
+            parentName={parentName}
+            patchDraft={patchDraft}
+            positionInvalid={positionInvalid}
+            selected={selected}
+            serverError={serverError}
+            siblings={siblings}
+          />
         </div>
       </SidePanel>
     </>

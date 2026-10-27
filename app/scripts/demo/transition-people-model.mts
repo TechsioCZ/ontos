@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { inArray, sql } from 'drizzle-orm';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import {
   Array as EffectArray,
   Config,
@@ -20,8 +20,8 @@ import {
   Result,
   Schema,
 } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import type { CoreTransaction } from '../../packages/core-runtime/src/db/types.ts';
 import { PrincipalRefSchema } from '../../packages/core-runtime/src/permissions/principal-ref.ts';

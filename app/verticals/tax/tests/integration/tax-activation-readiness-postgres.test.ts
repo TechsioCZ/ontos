@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
+import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -24,18 +23,27 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 
 const FIXTURE_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment([]);
 
-const tenantId = randomUUID();
-const principalId = randomUUID();
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
 const ACTIVATION_AT = DateTime.makeUnsafe('2026-06-01T00:00:00.000Z');
 
-const scopeFor = (legalEntityId: string): OperationalScope => ({
-  authContextRef: `better-auth-session:${randomUUID()}`,
-  authMethod: 'session',
-  correlationId: randomUUID(),
-  legalEntityId,
-  principalId,
-  tenantId,
-});
+interface FixtureIdentity {
+  readonly principalId: string;
+  readonly tenantId: string;
+}
+
+const scopeFor = (identity: FixtureIdentity, legalEntityId: string) =>
+  Effect.gen(function* makeActivationScope() {
+    const [authContextId, correlationId] = yield* Effect.all([nextUuid, nextUuid]);
+    const scope: OperationalScope = {
+      authContextRef: `better-auth-session:${authContextId}`,
+      authMethod: 'session',
+      correlationId,
+      legalEntityId,
+      principalId: identity.principalId,
+      tenantId: identity.tenantId,
+    };
+    return scope;
+  });
 
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
@@ -56,15 +64,18 @@ const runScoped = <Value, Failure>(
   );
 
 const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
-const invocation = (scope: OperationalScope) => ({
-  actionInvocationId: randomUUID(),
-  actorPrincipalId: principalId,
-  legalEntityId: scope.legalEntityId ?? '',
-  operationTime,
-  tenantId: scope.tenantId,
-});
+const invocation = (scope: OperationalScope) =>
+  nextUuid.pipe(
+    Effect.map((actionInvocationId) => ({
+      actionInvocationId,
+      actorPrincipalId: scope.principalId,
+      legalEntityId: scope.legalEntityId ?? '',
+      operationTime,
+      tenantId: scope.tenantId,
+    })),
+  );
 
-const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>) =>
+const cleanup = (admin: TestDatabaseFromClient<typeof taxRelations>, tenantId: string) =>
   admin.transaction((transaction) =>
     Effect.gen(function* cleanupActivationDeclarationRows() {
       // Append-only triggers reject deletes; replica mode is the test-only escape for owned fixture rows.
@@ -80,40 +91,41 @@ const acquireDatabases = Effect.gen(function* acquireActivationTestDatabases() {
   const admin = yield* makeTestDatabaseFromClient(adminClient, taxRelations);
   // Owner services run as the least-privilege runtime role so forced RLS is part of every assertion.
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
-  yield* cleanup(admin);
-  yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { runtime };
+  const [tenantId, principalId] = yield* Effect.all([nextUuid, nextUuid]);
+  yield* cleanup(admin, tenantId);
+  yield* Effect.addFinalizer(() => cleanup(admin, tenantId).pipe(Effect.orDie));
+  return { identity: { principalId, tenantId }, runtime };
 });
 
 /** One seller whose declarations go through the same owner service the declare Action uses. */
-const seller = (runtime: CoreTestDatabase) => {
-  const legalEntityId = randomUUID();
-  const scope = scopeFor(legalEntityId);
-  const declare = (regime: 'NON_PAYER' | 'VAT_PAYER', effectiveFrom: string) =>
-    Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
+const seller = Effect.fnUntraced(function* makeSeller(runtime: CoreTestDatabase, identity: FixtureIdentity) {
+  const legalEntityId = yield* nextUuid;
+  const scope = yield* scopeFor(identity, legalEntityId);
+  const declare = Effect.fnUntraced(function* declareAction(regime: 'NON_PAYER' | 'VAT_PAYER', effectiveFrom: string) {
+    const payload = yield* Schema.decodeEffect(DeclareSellerVatRegimePayloadSchema)({
       effectiveFrom,
       expectedCurrentRevision: 0,
       reason: 'Merchant-declared regime for the activation fixture',
       regime,
-    }).pipe(
-      Effect.flatMap((payload) =>
-        runScoped(runtime, scope, (transaction) =>
-          sellerVatRegimeDeclarationsForScope(transaction, scope).declare({ ...payload, ...invocation(scope) }),
-        ),
-      ),
+    });
+    const actionInvocation = yield* invocation(scope);
+    return yield* runScoped(runtime, scope, (transaction) =>
+      sellerVatRegimeDeclarationsForScope(transaction, scope).declare({ ...payload, ...actionInvocation }),
     );
+  });
   /** The seller's existing source declaration, imported once with no merchant confirmation (907-Q08). */
-  const importDeclarations = (input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded) =>
-    Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input).pipe(
-      Effect.flatMap((payload) =>
-        runScoped(runtime, scope, (transaction) =>
-          sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
-            ...payload,
-            ...invocation(scope),
-          }),
-        ),
-      ),
+  const importDeclarations = Effect.fnUntraced(function* importDeclarationsAction(
+    input: typeof ImportSellerVatRegimeDeclarationsPayloadSchema.Encoded,
+  ) {
+    const payload = yield* Schema.decodeEffect(ImportSellerVatRegimeDeclarationsPayloadSchema)(input);
+    const actionInvocation = yield* invocation(scope);
+    return yield* runScoped(runtime, scope, (transaction) =>
+      sellerVatRegimeDeclarationsForScope(transaction, scope).importDeclarations({
+        ...payload,
+        ...actionInvocation,
+      }),
     );
+  });
   /** The public Seller VAT Regime history read, in this seller's own scope. */
   const history = runScoped(runtime, scope, (transaction) =>
     sellerVatRegimeDeclarationsForScope(transaction, scope).history.pipe(
@@ -121,15 +133,18 @@ const seller = (runtime: CoreTestDatabase) => {
     ),
   );
   return { declare, history, importDeclarations, legalEntityId };
-};
+});
+
+// Each test stays a live registration against real PostgreSQL and builds Node Crypto in its scope.
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
 
 it.live('#964 patched F25 the activation gate reads each seller’s persisted declaration timeline', () =>
   Effect.scoped(
     Effect.gen(function* activationGateAcceptance() {
-      const { runtime } = yield* acquireDatabases;
-      const payer = seller(runtime);
-      const laterNonPayer = seller(runtime);
-      const undeclared = seller(runtime);
+      const { identity, runtime } = yield* acquireDatabases;
+      const payer = yield* seller(runtime, identity);
+      const laterNonPayer = yield* seller(runtime, identity);
+      const undeclared = yield* seller(runtime, identity);
       yield* payer.declare('VAT_PAYER', '2026-01-01T00:00:00.000Z');
       yield* laterNonPayer.declare('NON_PAYER', '2026-09-01T00:00:00.000Z');
 
@@ -147,7 +162,7 @@ it.live('#964 patched F25 the activation gate reads each seller’s persisted de
           scope: {
             activationAt: ACTIVATION_AT,
             sellingLegalEntityRefs: [payer.legalEntityId, laterNonPayer.legalEntityId, undeclared.legalEntityId],
-            tenantRef: tenantId,
+            tenantRef: identity.tenantId,
           },
           sellerDeclarations,
         }),
@@ -168,13 +183,17 @@ it.live('#964 patched F25 the activation gate reads each seller’s persisted de
       expect(
         readiness.sellers.find(({ sellingLegalEntityRef }) => sellingLegalEntityRef === payer.legalEntityId),
       ).toMatchObject({
-        atActivation: { declarationRevisionRef: { revision: 1 }, provenance: 'MERCHANT_DECLARED', regime: 'VAT_PAYER' },
+        atActivation: {
+          declarationRevisionRef: { revision: 1 },
+          provenance: 'MERCHANT_DECLARED',
+          regime: 'VAT_PAYER',
+        },
         payerDicRequired: true,
       });
       expect(readiness.activationClaim).toBe('NONE');
       expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
     }),
-  ),
+  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );
 
 it.live(
@@ -182,9 +201,9 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* migratedActivationAcceptance() {
-        const { runtime } = yield* acquireDatabases;
-        const migratedNonPayer = seller(runtime);
-        const migratedPayer = seller(runtime);
+        const { identity, runtime } = yield* acquireDatabases;
+        const migratedNonPayer = yield* seller(runtime, identity);
+        const migratedPayer = yield* seller(runtime, identity);
         // Current-only source state: covered from the migration start, which is before activation.
         yield* migratedNonPayer.importDeclarations({
           declarations: [{ regime: 'NON_PAYER', sourceRecordRef: 'legacy:non-payer' }],
@@ -211,7 +230,7 @@ it.live(
             scope: {
               activationAt: ACTIVATION_AT,
               sellingLegalEntityRefs: [migratedNonPayer.legalEntityId, migratedPayer.legalEntityId],
-              tenantRef: tenantId,
+              tenantRef: identity.tenantId,
             },
             sellerDeclarations,
           }),
@@ -246,5 +265,5 @@ it.live(
         expect(readiness.activationClaim).toBe('NONE');
         expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
       }),
-    ),
+    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
 );

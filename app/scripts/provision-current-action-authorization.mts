@@ -6,7 +6,7 @@ import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node
 import { eq, inArray, sql } from 'drizzle-orm';
 import type { FileSystem } from 'effect';
 import { Array as EffectArray, Cause, Config, Console, Duration, Effect, Layer, Option, Order, Schema } from 'effect';
-import { Command } from 'effect/unstable/cli';
+import { Command } from 'effect/cli';
 
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
 import {

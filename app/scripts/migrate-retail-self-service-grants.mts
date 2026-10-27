@@ -2,7 +2,7 @@
 import type { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Exit, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { RETAIL_PORTAL_SELF_SERVICE_BASELINE } from '../verticals/commerce-customer-context/shared/domain/profile-contracts.ts';
 import { BusinessPermissionCodeSchema } from '../packages/core-runtime/src/permissions/business-permission.ts';

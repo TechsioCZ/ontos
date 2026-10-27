@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import {

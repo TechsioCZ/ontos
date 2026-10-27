@@ -7,8 +7,8 @@ import {
   toResourceAccessObjectId,
 } from '@app/core-runtime';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { Command, Flag } from 'effect/unstable/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { Command, Flag } from 'effect/cli';
 
 import {
   demoAccounts,
@@ -225,7 +225,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
   return ports;
 });
 export const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
-  Effect.gen(function* resetSiamparkDemo() {
+  Effect.gen(function* resetDemoPorts() {
     yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
       Config.withDefault('development'),
     );

@@ -1,6 +1,8 @@
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { defineScopedRoutine } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
 
@@ -68,7 +70,7 @@ export const decisionSetProofResourceId = Effect.fn('DecisionSetProof.decisionSe
       .map(({ row }) => row);
     const payload: DecisionSetProofPayload = { fenceToken: input.fenceToken, query: input.query, rows: orderedRows };
     const encodedPayload = yield* encodeCanonical(payload);
-    const digest = createHash('sha256').update(encodedPayload, 'utf-8').digest('hex');
+    const digest = Hex.encode(sha256(utf8ToBytes(encodedPayload)));
     return `v1-${digest}`;
   },
 );

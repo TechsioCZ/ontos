@@ -1,0 +1,876 @@
+diff --git a/dist/cjs/cloudflare/worker-manifest.js b/dist/cjs/cloudflare/worker-manifest.js
+--- a/dist/cjs/cloudflare/worker-manifest.js
++++ b/dist/cjs/cloudflare/worker-manifest.js
+@@ -187,6 +187,9 @@
+             routeManifest: external_constants_js_namespaceObject.ROUTE_MANIFEST_FILE
+         },
+         security: (0, external_security_policies_js_namespaceObject.createCloudflareWorkerSecurityPolicy)(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
+--- a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
++++ b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
+@@ -1,3 +1,86 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
++const OAUTH_METADATA_CORS_HEADERS = {
++  'access-control-allow-origin': '*',
++  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
++  'access-control-allow-headers': '*',
++  'access-control-max-age': '86400',
++};
++
++function withOAuthMetadataCors(response) {
++  const headers = new Headers(response.headers);
++  for (const [name, value] of Object.entries(OAUTH_METADATA_CORS_HEADERS)) {
++    headers.set(name, value);
++  }
++  headers.delete('vary');
++  return new Response(response.body, {
++    headers,
++    status: response.status,
++    statusText: response.statusText,
++  });
++}
++
++async function dispatchOAuthMetadataRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  const url = new URL(request.url);
++  if (!bff?.worker || !url.pathname.startsWith('/.well-known/')) {
++    return null;
++  }
++  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
++    return null;
++  }
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  if (request.method === 'OPTIONS') {
++    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
++  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  const response = await dispatchBffRequest(
++    new Request(canonical, request),
++    env,
++    ctx,
++  );
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
++}
++
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
++async function dispatchRootRouteRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  if (!bff?.worker) {
++    return null;
++  }
++  const url = new URL(request.url);
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  return dispatchBffRequest(new Request(canonical, request), env, ctx);
++}
++
+ export default {
+   async fetch(request, env, ctx) {
+     const rendererRejection = createWorkerRendererGuardResponse(request);
+@@ -7,6 +90,22 @@
+         request,
+       );
+     }
++    const oauthMetadataResponse = await dispatchOAuthMetadataRequest(
++      request,
++      env,
++      ctx,
++    );
++
++    if (oauthMetadataResponse) {
++      return finalizeResponseForRequest(oauthMetadataResponse, request);
++    }
++
++    const rootRouteResponse = await dispatchRootRouteRequest(request, env, ctx);
++
++    if (rootRouteResponse) {
++      return finalizeResponseForRequest(rootRouteResponse, request);
++    }
++
+     const corsPreflightResponse = await createCorsPreflightResponse(
+       request,
+       env,
+diff --git a/dist/esm/cloudflare/worker-manifest.mjs b/dist/esm/cloudflare/worker-manifest.mjs
+--- a/dist/esm/cloudflare/worker-manifest.mjs
++++ b/dist/esm/cloudflare/worker-manifest.mjs
+@@ -141,6 +141,9 @@
+             routeManifest: ROUTE_MANIFEST_FILE
+         },
+         security: createCloudflareWorkerSecurityPolicy(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
+--- a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
++++ b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
+@@ -1,3 +1,86 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
++const OAUTH_METADATA_CORS_HEADERS = {
++  'access-control-allow-origin': '*',
++  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
++  'access-control-allow-headers': '*',
++  'access-control-max-age': '86400',
++};
++
++function withOAuthMetadataCors(response) {
++  const headers = new Headers(response.headers);
++  for (const [name, value] of Object.entries(OAUTH_METADATA_CORS_HEADERS)) {
++    headers.set(name, value);
++  }
++  headers.delete('vary');
++  return new Response(response.body, {
++    headers,
++    status: response.status,
++    statusText: response.statusText,
++  });
++}
++
++async function dispatchOAuthMetadataRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  const url = new URL(request.url);
++  if (!bff?.worker || !url.pathname.startsWith('/.well-known/')) {
++    return null;
++  }
++  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
++    return null;
++  }
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  if (request.method === 'OPTIONS') {
++    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
++  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  const response = await dispatchBffRequest(
++    new Request(canonical, request),
++    env,
++    ctx,
++  );
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
++}
++
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
++async function dispatchRootRouteRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  if (!bff?.worker) {
++    return null;
++  }
++  const url = new URL(request.url);
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  return dispatchBffRequest(new Request(canonical, request), env, ctx);
++}
++
+ export default {
+   async fetch(request, env, ctx) {
+     const rendererRejection = createWorkerRendererGuardResponse(request);
+@@ -7,6 +90,22 @@
+         request,
+       );
+     }
++    const oauthMetadataResponse = await dispatchOAuthMetadataRequest(
++      request,
++      env,
++      ctx,
++    );
++
++    if (oauthMetadataResponse) {
++      return finalizeResponseForRequest(oauthMetadataResponse, request);
++    }
++
++    const rootRouteResponse = await dispatchRootRouteRequest(request, env, ctx);
++
++    if (rootRouteResponse) {
++      return finalizeResponseForRequest(rootRouteResponse, request);
++    }
++
+     const corsPreflightResponse = await createCorsPreflightResponse(
+       request,
+       env,
+diff --git a/dist/esm-node/cloudflare/worker-manifest.mjs b/dist/esm-node/cloudflare/worker-manifest.mjs
+--- a/dist/esm-node/cloudflare/worker-manifest.mjs
++++ b/dist/esm-node/cloudflare/worker-manifest.mjs
+@@ -142,6 +142,9 @@
+             routeManifest: ROUTE_MANIFEST_FILE
+         },
+         security: createCloudflareWorkerSecurityPolicy(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
+--- a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
++++ b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
+@@ -1,3 +1,86 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
++const OAUTH_METADATA_CORS_HEADERS = {
++  'access-control-allow-origin': '*',
++  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
++  'access-control-allow-headers': '*',
++  'access-control-max-age': '86400',
++};
++
++function withOAuthMetadataCors(response) {
++  const headers = new Headers(response.headers);
++  for (const [name, value] of Object.entries(OAUTH_METADATA_CORS_HEADERS)) {
++    headers.set(name, value);
++  }
++  headers.delete('vary');
++  return new Response(response.body, {
++    headers,
++    status: response.status,
++    statusText: response.statusText,
++  });
++}
++
++async function dispatchOAuthMetadataRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  const url = new URL(request.url);
++  if (!bff?.worker || !url.pathname.startsWith('/.well-known/')) {
++    return null;
++  }
++  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
++    return null;
++  }
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  if (request.method === 'OPTIONS') {
++    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
++  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  const response = await dispatchBffRequest(
++    new Request(canonical, request),
++    env,
++    ctx,
++  );
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
++}
++
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
++async function dispatchRootRouteRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  if (!bff?.worker) {
++    return null;
++  }
++  const url = new URL(request.url);
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  return dispatchBffRequest(new Request(canonical, request), env, ctx);
++}
++
+ export default {
+   async fetch(request, env, ctx) {
+     const rendererRejection = createWorkerRendererGuardResponse(request);
+@@ -7,6 +90,22 @@
+         request,
+       );
+     }
++    const oauthMetadataResponse = await dispatchOAuthMetadataRequest(
++      request,
++      env,
++      ctx,
++    );
++
++    if (oauthMetadataResponse) {
++      return finalizeResponseForRequest(oauthMetadataResponse, request);
++    }
++
++    const rootRouteResponse = await dispatchRootRouteRequest(request, env, ctx);
++
++    if (rootRouteResponse) {
++      return finalizeResponseForRequest(rootRouteResponse, request);
++    }
++
+     const corsPreflightResponse = await createCorsPreflightResponse(
+       request,
+       env,
+diff --git a/dist/types/config.d.ts b/dist/types/config.d.ts
+--- a/dist/types/config.d.ts
++++ b/dist/types/config.d.ts
+@@ -245,6 +245,13 @@
+      * contain server-only implementation code.
+      */
+     publicAssetExcludes?: string[];
++    /** Origin-root paths forwarded in-process to BFF routes outside their prefix. */
++    rootRoutes?: {
++      /** Public OAuth discovery routes served with anonymous CORS for GET, HEAD and OPTIONS. */
++      metadata?: Record<string, string>;
++      /** BFF-owned root routes forwarded for any method with their request body. */
++      routes?: Record<string, string>;
++    };
+ }
+ export interface CloudflareDeployConfig {
+     /** Release surface owned by this application, independent of federation production. */
+diff --git a/src/cloudflare/worker-manifest.ts b/src/cloudflare/worker-manifest.ts
+--- a/src/cloudflare/worker-manifest.ts
++++ b/src/cloudflare/worker-manifest.ts
+@@ -286,6 +286,7 @@
+       routeManifest: ROUTE_MANIFEST_FILE,
+     },
+     security: createCloudflareWorkerSecurityPolicy(modernConfig),
++    ...(modernConfig.deploy?.worker?.rootRoutes ? { rootRoutes: modernConfig.deploy.worker.rootRoutes } : {}),
+     ...(moduleFederation === undefined ? {} : { moduleFederation }),
+     ...(deliveryUnitStamp ? { deliveryUnit: deliveryUnitStamp } : {}),
+     ...(rendererBuild
+diff --git a/src/config.ts b/src/config.ts
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -266,6 +266,13 @@
+    * contain server-only implementation code.
+    */
+   publicAssetExcludes?: string[];
++  /** Origin-root paths forwarded in-process to BFF routes outside their prefix. */
++  rootRoutes?: {
++    /** Public OAuth discovery routes served with anonymous CORS for GET, HEAD and OPTIONS. */
++    metadata?: Record<string, string>;
++    /** BFF-owned root routes forwarded for any method with their request body. */
++    routes?: Record<string, string>;
++  };
+ }
+ 
+ export interface CloudflareDeployConfig {
+diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/templates/cloudflare-entry.006-fetch-handler.mjs
+--- a/src/templates/cloudflare-entry.006-fetch-handler.mjs
++++ b/src/templates/cloudflare-entry.006-fetch-handler.mjs
+@@ -1,3 +1,86 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
++const OAUTH_METADATA_CORS_HEADERS = {
++  'access-control-allow-origin': '*',
++  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
++  'access-control-allow-headers': '*',
++  'access-control-max-age': '86400',
++};
++
++function withOAuthMetadataCors(response) {
++  const headers = new Headers(response.headers);
++  for (const [name, value] of Object.entries(OAUTH_METADATA_CORS_HEADERS)) {
++    headers.set(name, value);
++  }
++  headers.delete('vary');
++  return new Response(response.body, {
++    headers,
++    status: response.status,
++    statusText: response.statusText,
++  });
++}
++
++async function dispatchOAuthMetadataRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  const url = new URL(request.url);
++  if (!bff?.worker || !url.pathname.startsWith('/.well-known/')) {
++    return null;
++  }
++  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
++    return null;
++  }
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  if (request.method === 'OPTIONS') {
++    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
++  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  const response = await dispatchBffRequest(
++    new Request(canonical, request),
++    env,
++    ctx,
++  );
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
++}
++
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
++async function dispatchRootRouteRequest(request, env, ctx) {
++  const bff = MODERN_WORKER_MANIFEST.bff;
++  if (!bff?.worker) {
++    return null;
++  }
++  const url = new URL(request.url);
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
++  if (typeof target !== 'string' || target.length === 0) {
++    return null;
++  }
++  const canonical = new URL(target, url);
++  canonical.search = url.search;
++  return dispatchBffRequest(new Request(canonical, request), env, ctx);
++}
++
+ export default {
+   async fetch(request, env, ctx) {
+     const rendererRejection = createWorkerRendererGuardResponse(request);
+@@ -7,6 +90,22 @@
+         request,
+       );
+     }
++    const oauthMetadataResponse = await dispatchOAuthMetadataRequest(
++      request,
++      env,
++      ctx,
++    );
++
++    if (oauthMetadataResponse) {
++      return finalizeResponseForRequest(oauthMetadataResponse, request);
++    }
++
++    const rootRouteResponse = await dispatchRootRouteRequest(request, env, ctx);
++
++    if (rootRouteResponse) {
++      return finalizeResponseForRequest(rootRouteResponse, request);
++    }
++
+     const corsPreflightResponse = await createCorsPreflightResponse(
+       request,
+       env,
+diff --git a/src/templates/cloudflare-entry.005-worker-dispatch.mjs b/src/templates/cloudflare-entry.005-worker-dispatch.mjs
+--- a/src/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/src/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -577,11 +577,12 @@
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -665,21 +666,19 @@
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
+-  }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
++  }
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -729,23 +728,15 @@
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
+--- a/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -577,11 +577,12 @@
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -665,21 +666,19 @@
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
+-  }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
++  }
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -729,23 +728,15 @@
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
+--- a/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -577,11 +577,12 @@
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -665,21 +666,19 @@
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
+-  }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
++  }
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -729,23 +728,15 @@
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
+--- a/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -577,11 +577,12 @@
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -665,21 +666,19 @@
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
+-  }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
++  }
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -729,23 +728,15 @@
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =

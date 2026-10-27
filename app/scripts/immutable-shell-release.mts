@@ -5,8 +5,8 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { SHELL_RELEASE_ENVELOPE_KIND } from '@modern-js/app-tools-extensions/release-envelope';
 import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
 import { Config, Duration, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 import { moduleReleaseServiceBinding } from '../packages/core-runtime/src/http/module-release-identity.ts';
 import { OntosShellRuntimeContractSchema } from '../packages/core-runtime/src/modules/application-composition.ts';

@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import {
   Config,
   Context,
+  Crypto,
   Data,
   Duration,
   Effect,
@@ -358,8 +359,8 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
   },
 );
 
-const makeFaultActionRepository = (state: FixtureFaultState): ActionRepositoryService => {
-  const repository = makeActionRepository();
+const makeFaultActionRepository = (state: FixtureFaultState, crypto: Crypto.Crypto): ActionRepositoryService => {
+  const repository = makeActionRepository(crypto);
   const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn('LiveOperations.flushSuccess')(
     function* flushSuccessEffect(transaction, input) {
       state.invocationId = input.actionInvocationId;
@@ -377,7 +378,7 @@ const makeFaultActionRepository = (state: FixtureFaultState): ActionRepositorySe
 
 /**
  * Reads Core evidence rows for the fixture tenant through the caller's executor. Callers pass the
- * admin client: dedicated request roles cannot read events.
+ * admin client: dedicated request roles (for example the Party request role) cannot read events.
  */
 const loadFixtureEvidence = Effect.fn('LiveOperations.loadFixtureEvidence')(
   (executor: FixtureExecutor, tenantId: string) =>
@@ -467,6 +468,7 @@ const parseFixtureDatabaseConfig = (connectionString: Redacted.Redacted) =>
 const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperationFixture')(
   function* makeLiveOperationFixtureEffect(input: LiveOperationFixtureConfiguration) {
     const databaseIdentities = input.databaseIdentities ?? defineDatabaseIdentityEnrollment([]);
+    const crypto = yield* Crypto.Crypto;
     const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
@@ -578,19 +580,19 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
         );
         const actionModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(actionDatabase));
         const actionModuleEntrypointGateway = makeModuleEntrypointGateway(actionModuleStateGate);
-        const actionScopeResolver = makeOperationalScopeResolver(
+        const actionScopeResolver = yield* makeOperationalScopeResolver(
           makeOperationalScopeRepository(actionDatabase, databaseIdentities),
           contextAccess,
         );
         const readModuleStateGate = makeModuleStateGate(makeTenantModuleStateService(readDatabase));
         const readModuleEntrypointGateway = makeModuleEntrypointGateway(readModuleStateGate);
-        const readScopeResolver = makeOperationalScopeResolver(
+        const readScopeResolver = yield* makeOperationalScopeResolver(
           makeOperationalScopeRepository(readDatabase, databaseIdentities),
           contextAccess,
         );
         const baseActionRuntime = makeActionRuntime(
           actionDatabase,
-          makeFaultActionRepository(faultState),
+          makeFaultActionRepository(faultState, crypto),
           actionPermission,
           actionScopeResolver,
           {

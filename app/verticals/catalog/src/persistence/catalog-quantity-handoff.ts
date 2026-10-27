@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect } from 'effect';
+import type { Crypto } from 'effect';
 
 import type {
   CatalogQuantityHandoff,
@@ -46,7 +47,7 @@ export interface CatalogQuantityHandoffReaders {
   readonly readCurrent: (input: {
     readonly purpose: string;
     readonly selection: CatalogSelection;
-  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable>;
+  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable, Crypto.Crypto>;
   readonly readPackageUnitBasis: (
     selection: CatalogSelection,
     at: Date,
@@ -88,7 +89,7 @@ const normalizeForHandoff = (preparation: CatalogQuantityPreparation): QuantityN
 export const catalogQuantityHandoffWith = (readers: CatalogQuantityHandoffReaders) => ({
   prepare: Effect.fn('CatalogQuantityHandoff.prepare')(function* prepare(
     input: CatalogQuantityHandoffRequest,
-  ): Effect.fn.Return<CatalogQuantityHandoff, CatalogPersistenceUnavailable> {
+  ): Effect.fn.Return<CatalogQuantityHandoff, CatalogPersistenceUnavailable, Crypto.Crypto> {
     const current = yield* readers.readCurrent({ purpose: input.purpose, selection: input.selection });
     const evidence = assessCatalogSelection({
       assessedAt: current.assessedAt,

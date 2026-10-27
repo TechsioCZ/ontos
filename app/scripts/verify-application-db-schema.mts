@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Option, Order, Redacted, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
+import { Reactivity } from 'effect/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
@@ -45,6 +45,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'storefront_registry',
   'tax',
   'trust',
+  'projects',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_assortment',
@@ -75,6 +76,7 @@ const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_demo_sales_insights',
   '__drizzle_migrations_storefront_registry',
   '__drizzle_migrations_tax',
+  '__drizzle_migrations_projects',
 ] as const;
 const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth' as const;
 const COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL = '__drizzle_migrations_commerce_portal_auth' as const;

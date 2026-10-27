@@ -1,5 +1,10 @@
 {
   "crm": {
+    "registrySync": {
+      "partial": "{{linked}} clients linked; {{remaining}} still need a verified identity. Some writes failed or require review in the customer registry. Refresh the list and resolve the remaining records.",
+      "unchanged": "No new links were created. The list was refreshed; check the clients' current state.",
+      "unavailable": "Link completion could not be verified. Check the customer registry's availability and CRM service configuration. The original CRM command remains committed; check unlinked clients in the refreshed list."
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

@@ -120,7 +120,7 @@ it('accepts a required parameter after a default only when its position is suppl
   expect(accepts(source.replace(`${makerName}(loadOwner)`, `${makerName}(loadOwner, ownerFence)`))).toBe(true);
 });
 
-it('accepts the real Pricing factory result after its native return annotation is installed', () => {
+it('does not invent a retired Pricing factory in its explicit prepared Read', () => {
   const pricingOwner = 'verticals/pricing';
   const pricingRead = `${pricingOwner}/src/api/current-pricing-decision.read.ts`;
   const sources = new Map(
@@ -133,6 +133,8 @@ it('accepts the real Pricing factory result after its native return annotation i
       readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
     ]),
   );
+  expect(sources.get(pricingRead)).toContain('finish: makeFinishCurrentPricingDecision()');
+  expect(sources.get(pricingRead)).not.toContain('export const currentPricingDecisionReadServiceFactory');
   expect(
     hasOwnerLocalReadServiceFactoryResult(
       sources,
@@ -140,7 +142,7 @@ it('accepts the real Pricing factory result after its native return annotation i
       pricingOwner,
       'currentPricingDecisionReadServiceFactory',
     ),
-  ).toBe(true);
+  ).toBe(false);
 });
 
 it('rejects owner imports whose actual source is absent', () => {

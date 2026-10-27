@@ -1,3 +1,5 @@
+import { NodeCrypto, NodeFileSystem, NodePath } from '@effect/platform-node';
+import { PartyIntakeLive } from '../src/services/party-intake.ts';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -19,7 +21,7 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/http';
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
@@ -89,7 +91,14 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
 );
 
 /** What the handlers resolve when they run: built for each request on Workers, once on Node. */
-const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+const governedRequestServicesLive = GovernedReadLayer.mergeAll(
+  governedReadRuntimeLive,
+  governedActionRuntimeLive,
+  PartyIntakeLive,
+  GovernedFetchHttpClient.layer,
+  NodeFileSystem.layer,
+  NodePath.layer,
+).pipe(
   // <generated-governed-http-handler-support-layers>
   GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
@@ -139,6 +148,7 @@ const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
   GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
   GovernedReadLayer.provideMerge(databaseIdentitiesLive),
+  GovernedReadLayer.provideMerge(NodeCrypto.layer),
   GovernedReadLayer.provideMerge(runtimeObservabilityLive),
   GovernedReadLayer.orDie,
 );

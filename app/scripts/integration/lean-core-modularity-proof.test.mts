@@ -9,9 +9,21 @@ import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, inArray } from 'drizzle-orm';
-import { Config, ConfigProvider, Context, DateTime, Duration, Effect, FileSystem, Layer, Ref, Schema } from 'effect';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import {
+  Config,
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Ref,
+  Schema,
+} from 'effect';
+import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
 
@@ -70,6 +82,10 @@ import {
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from '../../packages/core-runtime/src/operations/context.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import { openActionRuntimeOptions } from '../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../packages/core-runtime/tests/support/fixture-cleanup.ts';
@@ -85,7 +101,11 @@ import {
   GatewayContextV2ClaimsSchema,
 } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
 import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
@@ -111,6 +131,10 @@ import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/bette
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 
 const gatewayAudience = 'party-registry';
+const leanCoreServices = Layer.merge(
+  NodeServices.layer,
+  Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
+);
 
 class LeanCoreCompositionFixtureError extends Schema.TaggedError<LeanCoreCompositionFixtureError>()(
   'LeanCoreCompositionFixtureError',
@@ -482,7 +506,10 @@ it.live(
     const configuration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
@@ -491,6 +518,7 @@ it.live(
     const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
     const oauthAuthenticationLayer = Layer.mergeAll(
       betterAuthRuntime,
+      BetterAuthNativeAdapterLive,
       OAuthAuthenticationAuditLive,
       OAuthEndpointGuardDataLive,
       OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
@@ -802,13 +830,13 @@ it.live(
       effect: Effect.Effect<Success, Failure, Requirements>,
     ) =>
       provideAuthenticationNamespaceRegistry(effect.pipe(Effect.provideService(ContextAccess, allowedContextAccess)));
-    const operationalScope = makeOperationalScopeResolver(
+    const operationalScope = yield* makeOperationalScopeResolver(
       makeOperationalScopeRepository({ executor: coreDatabase }, APP_DATABASE_IDENTITY_ENROLLMENT),
       allowedContextAccess,
     );
     const supportActionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(),
+      makeActionRepository(yield* Crypto.Crypto),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       {
@@ -878,5 +906,5 @@ it.live(
     expect(stopped.checkpointPending).toBe(false);
 
     return yield* Effect.void;
-  }, Effect.provide(NodeServices.layer)),
+  }, Effect.provide(leanCoreServices)),
 );

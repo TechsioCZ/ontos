@@ -5,8 +5,8 @@ import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Console, Effect, Layer, Match, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 import { WorkStateSchema } from '../shared/apis/records.ts';
 import { workRelations, workStates } from '../src/database/schema.ts';
 

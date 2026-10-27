@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Crypto, Effect, Encoding, Redacted, Schema } from 'effect';
+import { Clock, Crypto, Effect, Redacted, Schema } from 'effect';
 import type { PlatformError } from 'effect';
+import { Base64Url } from 'effect/encoding';
 
 import { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
 import type { GatewayScopeGrantUnavailableError } from '../auth/gateway-scope-grant.ts';
@@ -41,8 +42,8 @@ export const makeSyntheticGatewayAssertion = Effect.fn('GatewayScopeGrantTesting
   function* makeSyntheticGatewayAssertionEffect(
     input: SyntheticGatewayAssertionInput,
   ): Effect.fn.Return<Redacted.Redacted, Schema.SchemaError> {
-    const header = Encoding.encodeBase64Url(yield* encodeJson({ alg: 'none', typ: 'ontos-test-gateway' }));
-    const payload = Encoding.encodeBase64Url(
+    const header = Base64Url.encode(yield* encodeJson({ alg: 'none', typ: 'ontos-test-gateway' }));
+    const payload = Base64Url.encode(
       yield* encodeJson({
         aud: input.audience,
         exp: input.expiresAtEpochSeconds,
@@ -54,7 +55,7 @@ export const makeSyntheticGatewayAssertion = Effect.fn('GatewayScopeGrantTesting
         sub: input.principalId,
       }),
     );
-    const signature = Encoding.encodeBase64Url(`synthetic:${input.jti}`);
+    const signature = Base64Url.encode(`synthetic:${input.jti}`);
     return Redacted.make(`${header}.${payload}.${signature}`);
   },
 );
@@ -74,8 +75,7 @@ export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting
     GatewayScopeGrantUnavailableError | PlatformError.PlatformError | Schema.SchemaError,
     Crypto.Crypto
   > {
-    const crypto = yield* Crypto.Crypto;
-    const jti = yield* crypto.randomUUIDv4;
+    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const expiresAtEpochSeconds = nowSeconds + (input.ttlSeconds ?? DEFAULT_TTL_SECONDS);
     const tenantScopedInput: SyntheticGatewayAssertionInput = {

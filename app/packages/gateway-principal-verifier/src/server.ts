@@ -38,7 +38,7 @@ import {
 } from 'effect';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import type { LocalJWKSet } from 'jose';
-import { HttpServerRequest } from 'effect/unstable/http';
+import { HttpServerRequest } from 'effect/http';
 
 export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 

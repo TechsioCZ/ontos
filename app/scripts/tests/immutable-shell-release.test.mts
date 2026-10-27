@@ -23,7 +23,7 @@ import {
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
@@ -54,8 +54,9 @@ import {
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsShell } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
-const BUILD_MARKER = '0123456789abcdef';
+const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const APP_ID = 'shell-super-app';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
@@ -439,6 +440,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
             Order.String,
           ),
         },
+        ui: releaseUiFor(APP_ID, plan.buildMarker),
       };
       return moduleEnvelope
         ? createMicroVerticalReleaseEnvelope({

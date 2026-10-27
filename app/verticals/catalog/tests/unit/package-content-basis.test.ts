@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -135,7 +136,7 @@ describe('Package Content Current basis', () => {
       // @ts-expect-error Mock implements only the exercised Drizzle read chain.
       const basis = packageContentBasisForTransaction(transaction(), scope);
       expect(yield* basis.verify({ content, definitionId: packageId, tenantId })).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('uses the pinned owner-effective lower revision without leaking a pending successor', () =>
@@ -159,7 +160,7 @@ describe('Package Content Current basis', () => {
         lower: { count: '2', revision: { resourceRef: ref('package-definition', lowerId), revision: 2 } },
       });
       expect(yield* basis.verify({ content: futureUpper, definitionId: packageId, tenantId })).toBe(true);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects gaps and non-monotonic effective times in the lower owner chain', () =>
@@ -176,7 +177,7 @@ describe('Package Content Current basis', () => {
         );
         expect(yield* basis.verify({ content, definitionId: packageId, tenantId })).toBe(false);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects absent or retired Unit, mismatched conversion, and unverified Set', () =>
@@ -194,7 +195,7 @@ describe('Package Content Current basis', () => {
       // @ts-expect-error Mock implements only the exercised Drizzle read chain.
       const basis = packageContentBasisForTransaction(transaction({ composition: null }), scope);
       expect(yield* basis.verify({ content: setContent, definitionId: packageId, tenantId })).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('requires an exact Set revision when the target has a Set composition', () =>
@@ -205,7 +206,7 @@ describe('Package Content Current basis', () => {
         scope,
       );
       expect(yield* basis.verify({ content, definitionId: packageId, tenantId })).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('rejects stale, inactive, future, or missing Set composition before component proof', () =>
@@ -232,6 +233,6 @@ describe('Package Content Current basis', () => {
         );
         expect(yield* basis.verify({ content: setContent, definitionId: packageId, tenantId })).toBe(false);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

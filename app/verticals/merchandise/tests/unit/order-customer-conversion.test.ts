@@ -256,7 +256,7 @@ it.effect('stops if original Create recovery has no authoritative result', () =>
             _tag: 'PartyCommandCommitResolution',
             invocationId: decisionId,
             retryCommand: false,
-            state: 'OPEN',
+            state: 'RUNNING',
           }),
         ),
     });

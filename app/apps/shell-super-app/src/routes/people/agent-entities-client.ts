@@ -5,7 +5,7 @@
  * Action authorizes and audits every change. Failures carry the shell's Czech problem detail (403/404/409/422).
  */
 import { Effect, Option, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest } from 'effect/http';
 import {
   AGENT_ACCESS_PATHS,
   AgentEntityOverviewSchema,

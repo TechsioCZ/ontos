@@ -3,7 +3,7 @@
 import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import type { AnyRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Option, Predicate, Schema } from 'effect';
-import { Url, UrlParams } from 'effect/unstable/http';
+import { Url, UrlParams } from 'effect/http';
 
 const SignInRouteSearch = Schema.Struct({
   returnTo: Schema.optionalKey(Schema.String),

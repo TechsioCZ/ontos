@@ -1,6 +1,6 @@
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from './manifest-constants.ts';
 import { Predicate, Result, Schema } from 'effect';
-import { HttpApi } from 'effect/unstable/httpapi';
+import { HttpApi } from 'effect/http-api';
 
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';

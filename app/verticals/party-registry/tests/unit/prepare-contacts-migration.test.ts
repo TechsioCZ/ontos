@@ -2,8 +2,8 @@
 import { PgClient } from '@effect/sql-pg';
 import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';

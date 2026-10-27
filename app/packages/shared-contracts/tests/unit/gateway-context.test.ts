@@ -1,6 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Redacted, Result, Schema, SchemaAST, Struct } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
   ApiKeyGatewayHeadersSchema,

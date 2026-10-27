@@ -7,7 +7,7 @@ import {
   ScheduledPriceRevisionSchema,
 } from '@app/pricing-contracts/domain/price-schedule';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const PriceActionInvocationIdStringSchema = Schema.String.check(Schema.isUUID());
 const PriceActionInvocationIdSchema = PriceActionInvocationIdStringSchema.pipe(

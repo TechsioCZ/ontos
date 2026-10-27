@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { parse } from 'yaml';
+import { isMap, isScalar, isSeq, parse, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
+
+import { readZeropsDeployment } from '../generate-zerops-provider-deployment.mts';
 
 import {
   DEPLOYMENT_ENVIRONMENT_VARIABLE,
@@ -14,6 +16,9 @@ import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
 const priceGroupCatalogSetup = 'price-group-catalog';
+const PARTY_REGISTRY_WORKER_SETUP = 'party-registry-worker';
+const priceGroupWorkerSetup = 'price-group-catalog-worker';
+const partyRegistrySetup = 'party-registry';
 const zeropsYamlPath = new URL('../../zerops.yaml', import.meta.url);
 const workflowPath = new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url);
 
@@ -46,12 +51,68 @@ const DeployWorkflowSchema = Schema.Struct({
   }),
 });
 
-const serviceBlock = (zeropsYaml: string, setup: string): string => {
-  const start = zeropsYaml.indexOf(`  - setup: '${setup}'`);
-  const end = zeropsYaml.indexOf('\n  - setup:', start + 1);
+const zeropsImportPath = new URL('../../zerops-import.yaml', import.meta.url);
+const ServiceEnvironmentSchema = Schema.Struct({
+  zerops: Schema.Array(
+    Schema.Struct({
+      run: Schema.Struct({ envVariables: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+      setup: Schema.String,
+    }),
+  ),
+});
+const DATABASE_URL_KEYS = [
+  'DATABASE_URL',
+  'PARTY_REGISTRY_DATABASE_URL',
+  'PARTY_REGISTRY_WORKER_DATABASE_URL',
+  'SHELL_GATEWAY_ISSUER_DATABASE_URL',
+];
+const identityUrl = (role: string, password: string) =>
+  `postgresql://${role}:\${${password}}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 
-  expect(start).toBeGreaterThanOrEqual(0);
-  return zeropsYaml.slice(start, end === -1 ? undefined : end);
+const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, string>>> =>
+  new Map(
+    Schema.decodeUnknownSync(ServiceEnvironmentSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.map(
+      ({ run, setup }) => [setup, run.envVariables ?? {}],
+    ),
+  );
+
+const databaseUrlKeys = (environment: Readonly<Record<string, string>>) =>
+  DATABASE_URL_KEYS.filter((key) => environment[key] !== undefined);
+
+const serviceNode = (zeropsYaml: string, setup: string) => {
+  const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(parseDocument(zeropsYaml).get('zerops', true));
+  const matches = services.items.filter((item) => isMap(item) && item.get('setup') === setup);
+  expect(matches).toHaveLength(1);
+  return Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(matches[0]);
+};
+
+const serviceStrings = (service: YAMLMap, path: readonly string[]): readonly string[] => {
+  const sequence = service.getIn(path, true);
+  if (sequence === undefined) {
+    return [];
+  }
+  const values = isSeq(sequence) ? sequence.items.map((item) => (isScalar(item) ? item.value : item)) : sequence;
+  return Schema.decodeUnknownSync(Schema.Array(Schema.String))(values);
+};
+
+const serviceBlock = (zeropsYaml: string, setup: string): string => {
+  const { range } = Schema.decodeUnknownSync(
+    Schema.Struct({ range: Schema.Tuple([Schema.Number, Schema.Number, Schema.Number]) }),
+  )(serviceNode(zeropsYaml, setup));
+  return zeropsYaml.slice(range[0], range[1]);
+};
+
+const expectPriceGroupBinding = (service: YAMLMap): void => {
+  const binding = Schema.decodeUnknownSync(Schema.String)(
+    service.getIn(['run', 'envVariables', 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL']),
+  );
+  // This provider address is internal to Zerops, not a public clear-text endpoint.
+  expect(new URL(binding)).toMatchObject({
+    hostname: 'pricegroupcatalog',
+    pathname: '/price-group-catalog-api',
+    port: '4108',
+    protocol: 'http:',
+  });
 };
 
 it('binds generated PostgreSQL credentials into every database-using service', () => {
@@ -80,7 +141,9 @@ it('binds the SpiceDB datastore password, never a URL, into the migrator and Spi
   expect(migrator).toContain(`SPICEDB_DATABASE_PASSWORD: \${spicedb_SPICEDB_DATABASE_PASSWORD}`);
   expect(spicedb).toContain(`SPICEDB_DATABASE_HOST: \${db18_hostname}`);
   expect(spicedb).toContain(`SPICEDB_DATABASE_PORT: \${db18_port}`);
-  expect(spicedb).toContain(`- 'app/scripts/spicedb-datastore-uri.sh'`);
+  expect(serviceStrings(serviceNode(zeropsYaml, 'spicedb'), ['build', 'deployFiles'])).toContain(
+    'app/scripts/spicedb-datastore-uri.sh',
+  );
   expect(zeropsYaml).not.toContain('SPICEDB_DATASTORE_CONN_URI');
   expect(zeropsYaml).not.toContain('SPICEDB_DATABASE_URL');
 });
@@ -89,8 +152,16 @@ it('inherits a stable composition source without coupling service startup to pub
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const customerContext = serviceBlock(zeropsYaml, commerceCustomerContextSetup);
 
-  expect(zeropsYaml).toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
-  expect(zeropsYaml).toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN');
+  const sourceConfiguration = readFileSync(
+    new URL('../configure-runtime-composition-source.mts', import.meta.url),
+    'utf-8',
+  );
+  const publication = readFileSync(new URL('../publish-active-application-composition.mts', import.meta.url), 'utf-8');
+  expect(sourceConfiguration).toContain('ACTIVE_APPLICATION_COMPOSITION_POLICY.sourceUrlVariable');
+  expect(sourceConfiguration).toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN');
+  expect(sourceConfiguration).toContain('api.upsertProjectEnv(');
+  expect(publication).toContain("Command.make('configure-source'");
+  expect(publication).toContain('yield* configureRuntimeCompositionSource({ projectId, readToken, url })');
   expect(customerContext).toContain("start: sh -c 'cd app/.zerops/runtime/commerce-customer-context");
   expect(zeropsYaml).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON');
   expect(customerContext).not.toContain('test -n');
@@ -98,14 +169,14 @@ it('inherits a stable composition source without coupling service startup to pub
 
 it('binds Commerce to the independently deployed Price Group Catalog API base', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const commerce = serviceBlock(zeropsYaml, commerceCustomerContextSetup);
-  const priceGroupCatalog = serviceBlock(zeropsYaml, priceGroupCatalogSetup);
 
-  expect(commerce).toContain(
-    `ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`,
+  expectPriceGroupBinding(serviceNode(zeropsYaml, commerceCustomerContextSetup));
+  expect(
+    serviceNode(zeropsYaml, priceGroupCatalogSetup).getIn(['run', 'envVariables', 'VERTICAL_PRICE_GROUP_CATALOG_PORT']),
+  ).toBe('4108');
+  expect(serviceNode(zeropsYaml, priceGroupCatalogSetup).getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe(
+    '/price-group-catalog-api/price-group-catalog/readiness',
   );
-  expect(priceGroupCatalog).toContain(`VERTICAL_PRICE_GROUP_CATALOG_PORT: '4108'`);
-  expect(priceGroupCatalog).toContain(`path: '/price-group-catalog-api/price-group-catalog/readiness'`);
 });
 
 it('declares Price Group Cloudflare proof variables and resolves every provider service id by topology name', () => {
@@ -162,14 +233,16 @@ it('declares the Inventory public URL for Cloudflare proof', () => {
 
 it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const worker = serviceBlock(zeropsYaml, 'price-group-catalog-worker');
+  const worker = serviceBlock(zeropsYaml, priceGroupWorkerSetup);
 
   expect(worker).toContain(
     `zerops:materialize --app '${priceGroupCatalogSetup}' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker`,
   );
-  expect(worker).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4108'`);
+  expect(
+    serviceNode(zeropsYaml, priceGroupWorkerSetup).getIn(['run', 'envVariables', 'OUTBOX_WORKER_HEALTH_PORT']),
+  ).toBe('4108');
   expect(worker).toContain(runtimeDatabaseUrl);
-  expect(worker).toContain(`path: '/live'`);
+  expect(serviceNode(zeropsYaml, priceGroupWorkerSetup).getIn(['run', 'healthCheck', 'httpGet', 'path'])).toBe('/live');
   expect(worker).toContain(`exec node worker.mjs`);
   expect(worker).not.toContain('npm run serve');
 });
@@ -181,15 +254,24 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   expect(host).toContain(
     `zerops:materialize --app '${OUTBOX_WORKER_HOST.id}' --package 'app' --package-dir '.' --worker`,
   );
-  expect(host).toContain(`- 'app/.zerops/runtime/outbox-worker-host'`);
-  expect(host).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4100'`);
+  expect(serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).getIn(['build', 'deployFiles', 0])).toBe(
+    'app/.zerops/runtime/outbox-worker-host',
+  );
+  expect(
+    serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).getIn(['run', 'envVariables', 'OUTBOX_WORKER_HEALTH_PORT']),
+  ).toBe('4100');
   expect(host).toContain(runtimeDatabaseUrl);
   // Commerce's worker reaches Price Group Catalog, so the host carries its binding too.
-  expect(host).toContain(`ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`);
+  expectPriceGroupBinding(serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id));
   expect(host).toContain("start: sh -c 'cd app/.zerops/runtime/outbox-worker-host");
-  expect(host.match(/path: '\/live'/gu)).toHaveLength(2);
+  for (const branch of [
+    ['deploy', 'readinessCheck'],
+    ['run', 'healthCheck'],
+  ]) {
+    expect(serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).getIn([...branch, 'httpGet', 'path'])).toBe('/live');
+  }
   // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
-  for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
+  for (const worker of [PARTY_REGISTRY_WORKER_SETUP, 'commerce-customer-context-worker', priceGroupWorkerSetup]) {
     expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');
   }
 });
@@ -216,26 +298,40 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
   }
 });
 
-it('fails every app build whose Zephyr upload fails', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const appBuilds = zeropsYaml.split(/(?=^ {2}- setup:)/mu).filter((block) => / run build$/mu.test(block));
-
-  expect(appBuilds.length).toBeGreaterThan(8);
-  for (const block of appBuilds) {
-    expect(block).toMatch(/^ {4}build:\n(?: {6}.*\n)*? {6}envVariables:\n(?: {8}.*\n)*? {8}ZE_FAIL_BUILD: 'true'\n/mu);
-  }
-});
+it.effect('fails every app build whose Zephyr upload fails', () =>
+  Effect.gen(function* zephyrBuildFailures() {
+    const deployment = yield* readZeropsDeployment(readFileSync(zeropsYamlPath, 'utf-8'));
+    const appBuilds = [...deployment.services.values()].filter((service) =>
+      serviceStrings(service, ['build', 'buildCommands']).some((command) => command.endsWith(' run build')),
+    );
+    expect(appBuilds.length).toBeGreaterThan(8);
+    for (const service of appBuilds) {
+      expect(service.getIn(['build', 'envVariables', 'ZE_FAIL_BUILD'])).toBe('true');
+    }
+  }),
+);
 
 it('ships every package the migrator runs drizzle-kit in', () => {
-  const migrator = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'migrator');
+  const source = readFileSync(zeropsYamlPath, 'utf-8');
+  const migrator = serviceNode(source, 'migrator');
   const runner = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
   const migratedPackages = [...runner.matchAll(/migrate\('(?<directory>[^']+)'/gu)].map(
     (match) => match.groups?.directory ?? '',
   );
-
+  if (runner.includes("yield* migrateConvergentOwner('core')")) {
+    migratedPackages.push('packages/core-runtime');
+  }
+  if (runner.includes("yield* migrateConvergentOwner('party')")) {
+    migratedPackages.push('verticals/party-registry');
+  }
+  const files = serviceStrings(migrator, ['build', 'deployFiles']);
+  for (const required of ['app/database', 'app/packages', 'app/scripts']) {
+    expect(files.filter((file) => file === required)).toHaveLength(1);
+  }
+  expect(migrator.get('setup')).toBe('migrator');
   expect(migratedPackages).toContain('verticals/catalog');
   for (const directory of new Set(migratedPackages)) {
-    expect(migrator).toMatch(new RegExp(`^ +- 'app/(?:${directory}|${directory.split('/')[0]})'$`, 'mu'));
+    expect(files.some((file) => file === `app/${directory}` || file === `app/${directory.split('/')[0]}`)).toBe(true);
   }
 });
 
@@ -306,8 +402,7 @@ it('lets stage deploy failures fail the job, tolerating only best-effort log col
 });
 
 it('keeps module origins out of the Shell build so new approved modules require no Shell deployment', () => {
-  const shellBlock = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'shellsuperapp');
-  const shellBuild = shellBlock.slice(0, shellBlock.indexOf('\n    deploy:'));
+  const shellBuild = JSON.stringify(serviceNode(readFileSync(zeropsYamlPath, 'utf-8'), 'shellsuperapp').get('build'));
   expect(shellBuild).not.toContain('ULTRAMODERN_PUBLIC_URL_');
   expect(shellBuild).not.toContain('_zeropsSubdomain');
 });
@@ -315,32 +410,47 @@ it('keeps module origins out of the Shell build so new approved modules require 
 it.effect('pushes every Zerops setup with the deploying environment named in its builds and runtimes', () =>
   Effect.gen(function* materializedEnvironment() {
     const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-    const stageLine = `${DEPLOYMENT_ENVIRONMENT_VARIABLE}: stage`;
-    const stageCount = zeropsYaml.split(stageLine).length - 1;
-    expect(stageCount).toBeGreaterThan(0);
-    // The committed file is stage's, byte for byte.
-    expect(yield* materializeZeropsEnvironment(zeropsYaml, { environment: 'stage' })).toBe(zeropsYaml);
-    // Production names itself and reaches its TLS SpiceDB endpoint, and changes nothing else.
+    const source = parseDocument(zeropsYaml);
+    const stage = yield* materializeZeropsEnvironment(zeropsYaml, { environment: 'stage' });
+    expect(Schema.decodeUnknownSync(Schema.Unknown)(parse(stage))).toEqual(
+      Schema.decodeUnknownSync(Schema.Unknown)(parse(zeropsYaml)),
+    );
     const productionEndpoint = 'spicedb.production.example:443';
     const production = yield* materializeZeropsEnvironment(zeropsYaml, {
       environment: 'production',
       spiceDbEndpoint: productionEndpoint,
     });
-    const stageEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: 'spicedb:50051'`;
-    const productionEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: '${productionEndpoint}'`;
-    const certificateLine = `SPICEDB_CA_CERT: \${spicedb_SPICEDB_GRPC_TLS_CERT}`;
-    expect(production.includes(stageLine)).toBe(false);
-    expect(production.includes(stageEndpointLine)).toBe(false);
-    // Every runtime keeps pinning the gRPC certificate; nothing reaches SpiceDB in plaintext.
-    expect(production.split(certificateLine).length - 1).toBe(zeropsYaml.split(stageEndpointLine).length - 1);
-    expect(production.includes('SPICEDB_INSECURE')).toBe(false);
-    expect(production.split(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`).length - 1).toBe(stageCount);
-    expect(production.split(productionEndpointLine).length - 1).toBe(zeropsYaml.split(stageEndpointLine).length - 1);
-    expect(
-      production
-        .replaceAll(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`, stageLine)
-        .replaceAll(productionEndpointLine, stageEndpointLine),
-    ).toBe(zeropsYaml);
+    const actual = parseDocument(production);
+    const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(zeropsYaml));
+    let environmentCount = 0;
+    let endpointCount = 0;
+    for (const [index] of zerops.entries()) {
+      for (const phase of ['build', 'run']) {
+        const environment = ['zerops', index, phase, 'envVariables'];
+        const target = [...environment, DEPLOYMENT_ENVIRONMENT_VARIABLE];
+        if (source.hasIn(target)) {
+          expect(source.getIn(target)).toBe('stage');
+          expect(actual.getIn(target)).toBe('production');
+          source.setIn(target, 'production');
+          environmentCount += 1;
+        }
+        const endpoint = [...environment, SPICEDB_ENDPOINT_VARIABLE];
+        if (source.hasIn(endpoint)) {
+          expect(actual.getIn(endpoint)).toBe(productionEndpoint);
+          expect(actual.getIn([...environment, 'SPICEDB_CA_CERT'])).toBe(
+            source.getIn([...environment, 'SPICEDB_CA_CERT']),
+          );
+          expect(actual.hasIn([...environment, 'SPICEDB_INSECURE'])).toBe(false);
+          source.setIn(endpoint, productionEndpoint);
+          endpointCount += 1;
+        }
+      }
+    }
+    expect(environmentCount).toBeGreaterThan(0);
+    expect(endpointCount).toBeGreaterThan(0);
+    expect(Schema.decodeUnknownSync(Schema.Unknown)(actual.toJS())).toEqual(
+      Schema.decodeUnknownSync(Schema.Unknown)(source.toJS()),
+    );
     const missing = yield* Effect.flip(
       materializeZeropsEnvironment('zerops:\n  - setup: api\n', { environment: 'stage' }),
     );
@@ -362,7 +472,7 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
 
 it('keeps the full demo inventory and binds Party requests and workers to their separate migrator secrets', () => {
   const source = readFileSync(zeropsYamlPath, 'utf-8');
-  const party = serviceBlock(source, 'party-registry');
+  const party = serviceBlock(source, partyRegistrySetup);
   expect(party).toContain(
     `PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:\${migrator_PARTY_REGISTRY_DB_PASSWORD}@`,
   );
@@ -399,8 +509,87 @@ it('keeps the full demo inventory and binds Party requests and workers to their 
       }),
     ),
   )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
-  expect(topology.verticals).toHaveLength(26);
+  expect(topology.verticals.map(({ id }) => id)).toEqual(
+    expect.arrayContaining(['projects', 'crm', 'finance-billing', 'crm-activities']),
+  );
   for (const { id } of topology.verticals) {
-    expect(source).toContain(`  - setup: '${id}'\n`);
+    expect(serviceNode(source, id).get('setup')).toBe(id);
   }
+});
+it('connects Party Registry only as its dedicated request identity', () => {
+  const party = serviceEnvironments().get(partyRegistrySetup) ?? {};
+
+  expect(databaseUrlKeys(party)).toStrictEqual(['PARTY_REGISTRY_DATABASE_URL']);
+  expect(party.PARTY_REGISTRY_DATABASE_URL).toBe(
+    identityUrl('party_registry_runtime', 'migrator_PARTY_REGISTRY_DB_PASSWORD'),
+  );
+});
+
+it('connects the Party Registry worker only as its worker identity and the host with both', () => {
+  const environments = serviceEnvironments();
+  const workerUrl = identityUrl('party_registry_worker', 'migrator_PARTY_REGISTRY_WORKER_DB_PASSWORD');
+
+  expect(databaseUrlKeys(environments.get(PARTY_REGISTRY_WORKER_SETUP) ?? {})).toStrictEqual([
+    'PARTY_REGISTRY_WORKER_DATABASE_URL',
+  ]);
+  expect(environments.get(PARTY_REGISTRY_WORKER_SETUP)?.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+  const host = environments.get(OUTBOX_WORKER_HOST.stageSetup) ?? {};
+  expect(databaseUrlKeys(host)).toStrictEqual(['DATABASE_URL', 'PARTY_REGISTRY_WORKER_DATABASE_URL']);
+  expect(host.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+});
+
+it('gives the Shell its gateway issuer identity next to the shared runtime role', () => {
+  const shell = serviceEnvironments().get('shellsuperapp') ?? {};
+
+  expect(databaseUrlKeys(shell)).toStrictEqual(['DATABASE_URL', 'SHELL_GATEWAY_ISSUER_DATABASE_URL']);
+  expect(shell.SHELL_GATEWAY_ISSUER_DATABASE_URL).toBe(
+    identityUrl('shell_gateway_issuer', 'migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+  );
+});
+
+it('lets only the migrator hold every database identity URL', () => {
+  const environments = serviceEnvironments();
+  const holders = [...environments].filter(
+    ([, environment]) => databaseUrlKeys(environment).length === DATABASE_URL_KEYS.length,
+  );
+
+  expect(holders.map(([setup]) => setup)).toStrictEqual(['migrator']);
+  // Zerops resolves a service's own variables without the hostname prefix, so the migrator, which owns
+  // the identity passwords as its sensitive secrets, references `${<KEY>}` rather than `${migrator_<KEY>}`.
+  expect(environments.get('migrator')).toMatchObject({
+    PARTY_REGISTRY_DATABASE_URL: identityUrl('party_registry_runtime', 'PARTY_REGISTRY_DB_PASSWORD'),
+    PARTY_REGISTRY_WORKER_DATABASE_URL: identityUrl('party_registry_worker', 'PARTY_REGISTRY_WORKER_DB_PASSWORD'),
+    SHELL_GATEWAY_ISSUER_DATABASE_URL: identityUrl('shell_gateway_issuer', 'SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
+  });
+});
+
+it('references each identity password only from the migrator and the services that own it', () => {
+  const environments = serviceEnvironments();
+  const owners = {
+    PARTY_REGISTRY_DB_PASSWORD: ['migrator', partyRegistrySetup],
+    PARTY_REGISTRY_WORKER_DB_PASSWORD: ['migrator', PARTY_REGISTRY_WORKER_SETUP, OUTBOX_WORKER_HOST.stageSetup],
+    SHELL_GATEWAY_ISSUER_DB_PASSWORD: ['migrator', 'shellsuperapp'],
+  };
+
+  for (const [secretKey, expected] of Object.entries(owners)) {
+    const reference = new RegExp(`\\$\\{(?:migrator_)?${secretKey}\\}`, 'u');
+    const referencing = [...environments]
+      .filter(([, environment]) => Object.values(environment).some((value) => reference.test(value)))
+      .map(([setup]) => setup);
+    expect(referencing).toStrictEqual(expected);
+  }
+});
+
+it('declares no project-level variable that could carry a database credential', () => {
+  const deployment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
+    parse(readFileSync(zeropsYamlPath, 'utf-8')),
+  );
+  const imports = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(
+    parse(readFileSync(zeropsImportPath, 'utf-8')),
+  );
+
+  // Every service inherits project variables, so identity passwords stay service secrets on the migrator.
+  expect(Object.keys(deployment)).toStrictEqual(['zerops']);
+  expect(Object.keys(imports)).toStrictEqual(['services']);
+  expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
 });

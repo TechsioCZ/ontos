@@ -2,7 +2,7 @@ import { Cause, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';

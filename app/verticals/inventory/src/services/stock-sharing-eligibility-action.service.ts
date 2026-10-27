@@ -1,5 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import { Context, Effect, Option } from 'effect';
+import type { PlatformError } from 'effect';
+import { Context, Crypto, Effect, Option } from 'effect';
 
 import type {
   ChangeStockSharingEligibilityPayload,
@@ -129,7 +130,7 @@ export interface StockSharingEligibilityActionService {
 
 export const makeStockSharingEligibilityActionService = (dependencies: {
   readonly commerceValidator: StockSharingCommerceScopeValidator;
-  readonly makeEligibilityId: () => string;
+  readonly makeEligibilityId: Effect.Effect<string, PlatformError.PlatformError>;
   readonly persistence: StockSharingEligibilityPersistence;
 }): StockSharingEligibilityActionService => {
   const { persistence } = dependencies;
@@ -170,15 +171,12 @@ export const makeStockSharingEligibilityActionService = (dependencies: {
 };
 
 export const stockSharingEligibilityActionServiceForScope = Effect.fn('StockSharingEligibilityActionService.forScope')(
-  function* forScope(
-    transaction: ScopedTransaction,
-    operationScope: OperationalScope,
-    makeEligibilityId: () => string,
-  ) {
+  function* forScope(transaction: ScopedTransaction, operationScope: OperationalScope) {
+    const crypto = yield* Crypto.Crypto;
     const validator = yield* Effect.serviceOption(StockSharingCommerceScopeValidatorService);
     return makeStockSharingEligibilityActionService({
       commerceValidator: Option.getOrElse(validator, () => unavailableStockSharingCommerceScopeValidator),
-      makeEligibilityId,
+      makeEligibilityId: crypto.randomUUIDv4(),
       persistence: stockSharingEligibilityPersistenceForScope(transaction, operationScope),
     });
   },

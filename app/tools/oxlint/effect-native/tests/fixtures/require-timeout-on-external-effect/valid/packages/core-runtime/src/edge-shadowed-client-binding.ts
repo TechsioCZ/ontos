@@ -1,7 +1,7 @@
 // Proving that *one* binding named `client` is an `HttpClient` must not turn every same-named
 // binding in the file into one. `.get`/`.post` are the most common method names in the codebase.
 import { Effect } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
+import { HttpClient } from 'effect/http';
 
 export const remote = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;

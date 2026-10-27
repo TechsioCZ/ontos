@@ -15,8 +15,8 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Clock, Context, DateTime, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
-import { HttpApi } from 'effect/unstable/httpapi';
+import { HttpClient, HttpClientRequest } from 'effect/http';
+import { HttpApi } from 'effect/http-api';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { MODULE_API_REVISION_HEADER } from '../../src/module-api/admission.ts';

@@ -1,4 +1,5 @@
 // Pure contract-register and deadline computations of the documents agenda (S12-01). OWNED BY THE documents LANE.
+import { DateTime } from 'effect';
 import type { DocumentRecord } from './documents.ts';
 
 export const isContractDocument = (document: DocumentRecord) =>
@@ -6,8 +7,8 @@ export const isContractDocument = (document: DocumentRecord) =>
 
 /** Whole days from `today` to an ISO date (`YYYY-MM-DD`); negative when in the past. */
 export const daysUntil = (isoDate: string, today: string) => {
-  const target = Date.UTC(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)) - 1, Number(isoDate.slice(8, 10)));
-  const base = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));
+  const target = DateTime.toEpochMillis(DateTime.makeUnsafe(`${isoDate}T00:00:00.000Z`));
+  const base = DateTime.toEpochMillis(DateTime.makeUnsafe(`${today}T00:00:00.000Z`));
   return Math.round((target - base) / 86_400_000);
 };
 
@@ -18,7 +19,7 @@ export const contractRegister = (documents: readonly DocumentRecord[]) => {
     .toSorted((left, right) =>
       (left.contract?.validTo ?? '9999-12-31').localeCompare(right.contract?.validTo ?? '9999-12-31'),
     );
-  const rows: { readonly document: DocumentRecord; readonly depth: 0 | 1 }[] = [];
+  const rows: { readonly depth: 0 | 1; readonly document: DocumentRecord }[] = [];
   for (const original of originals) {
     rows.push({ depth: 0, document: original });
     for (const amendment of documents.filter((entry) => entry.amendsDocumentId === original.id)) {
@@ -33,17 +34,17 @@ export const contractRegister = (documents: readonly DocumentRecord[]) => {
 };
 
 export interface Deadline {
-  readonly document: DocumentRecord;
-  readonly kind: 'end' | 'notice';
   readonly date: string;
   readonly days: number;
+  readonly document: DocumentRecord;
+  readonly kind: 'end' | 'notice';
 }
 
 /** Contract ends and notice deadlines from `today - 7` to `today + horizon` days, nearest first. */
 export const upcomingDeadlines = (documents: readonly DocumentRecord[], today: string, horizon = 90): Deadline[] =>
   documents
     .flatMap((document): Deadline[] => {
-      const contract = document.contract;
+      const { contract } = document;
       if (contract === undefined || contract.status === 'terminated' || contract.status === 'expired') {
         return [];
       }
@@ -52,10 +53,13 @@ export const upcomingDeadlines = (documents: readonly DocumentRecord[], today: s
         entries.push({ date: contract.validTo, days: daysUntil(contract.validTo, today), document, kind: 'end' });
       }
       if (contract.noticeDate !== undefined) {
-        entries.push({ date: contract.noticeDate, days: daysUntil(contract.noticeDate, today), document, kind: 'notice' });
+        entries.push({
+          date: contract.noticeDate,
+          days: daysUntil(contract.noticeDate, today),
+          document,
+          kind: 'notice',
+        });
       }
-      return entries;
+      return entries.filter((entry) => entry.days >= -7 && entry.days <= horizon);
     })
-    .filter((entry) => entry.days >= -7 && entry.days <= horizon)
     .toSorted((left, right) => left.days - right.days);
-

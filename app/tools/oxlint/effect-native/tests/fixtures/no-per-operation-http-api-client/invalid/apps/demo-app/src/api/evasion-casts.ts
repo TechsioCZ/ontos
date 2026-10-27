@@ -2,7 +2,7 @@
 // `as` / `!` / `satisfies` wrappers around the callee must not hide the constructor.
 import * as bff from '@modern-js/bff-effect/effect-client';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 type Builder = (api: unknown, options: unknown) => unknown;

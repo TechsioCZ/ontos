@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
@@ -76,7 +77,7 @@ describe('Catalog attribute governance Actions', () => {
       expect(snapshot.transactionCount).toBe(0);
       expect(snapshot.stages).not.toContain('handler_executed');
       expect(snapshot.committed).toHaveLength(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('requires an explicit stable meaning and valid shape for a new definition', () => {
@@ -218,7 +219,7 @@ describe('Catalog attribute governance Actions', () => {
       };
       const result = yield* handleCreateControlledAttributeValue(payload, context);
       expect(result.controlledValueRef.resourceId).toBe(controlledValueRef.resourceId);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('accepts reviewed localized Color rename without changing the controlled-value reference', () => {

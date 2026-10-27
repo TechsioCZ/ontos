@@ -5,7 +5,9 @@ import {
   CheckPermissionResponse_Permissionship,
 } from '@authzed/authzed-node/v1/permissions';
 import type { CheckBulkPermissionsPair } from '@authzed/authzed-node/v1/permissions';
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Hex } from 'effect/encoding';
 import {
   Cause,
   Clock,
@@ -414,6 +416,13 @@ export interface ContextAccessService {
     readonly resources: readonly ResourceAccessTarget[];
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
+  /** Exact Tenant-owned resource permissions; no implicit Legal Entity or tenant-access grant. */
+  readonly tenantResources?: (input: {
+    readonly permission: 'assign' | 'read' | 'write';
+    readonly principalId: string;
+    readonly resources: readonly ResourceAccessTarget[];
+    readonly tenantId: string;
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly tenants: (input: {
     readonly permission: TenantPermissionKey;
     readonly principalId: string;
@@ -476,6 +485,9 @@ export const toResourceAccessObjectId = (
   resource: ResourceAccessTarget,
 ): string | undefined =>
   encodeObjectId([tenantId, legalEntityId, resource.moduleId, resource.resourceType, resource.resourceId]);
+
+export const toTenantResourceAccessObjectId = (tenantId: string, resource: ResourceAccessTarget): string | undefined =>
+  encodeObjectId([tenantId, resource.moduleId, resource.resourceType, resource.resourceId]);
 
 const businessTargetParts = (target: BusinessAccessTarget): readonly string[] => {
   if (target.kind === 'retail_profile') {
@@ -641,13 +653,15 @@ export const toAssortmentPermissionAccessObjectId = (
     : undefined;
   return scopeIdentity === undefined
     ? undefined
-    : `asp_${createHash('sha256')
-        .update(
-          Result.getOrThrow(
-            encodeContextAccessObjectIdParts([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]),
+    : `asp_${Hex.encode(
+        sha256(
+          utf8ToBytes(
+            Result.getOrThrow(
+              encodeContextAccessObjectIdParts([...scopeIdentity, target.permission, ...assortmentTargetParts(target)]),
+            ),
           ),
-        )
-        .digest('hex')}`;
+        ),
+      )}`;
 };
 
 /**
@@ -677,7 +691,7 @@ export const toAssortmentPermissionAccessObjectIdForTargets = (
   const encoded = Result.getOrThrow(
     encodeAssortmentDigestParts({ marker: 'assortment_permission_conjunction', targets: scopeIdentities }),
   );
-  return `asp_${createHash('sha256').update(encoded).digest('hex')}`;
+  return `asp_${Hex.encode(sha256(utf8ToBytes(encoded)))}`;
 };
 
 export const toContextPermissionAccessKey = ({ moduleId, permission }: ContextPermissionAccessTarget): string =>
@@ -1134,6 +1148,16 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         })),
         principalId,
       ),
+    tenantResources: ({ permission, principalId, resources, tenantId }) =>
+      checkBatch(
+        resources.map((resource) => ({
+          key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+          permission,
+          resourceId: toTenantResourceAccessObjectId(tenantId, resource) ?? '',
+          resourceType: 'tenant_resource',
+        })),
+        principalId,
+      ),
     tenants: ({ permission, principalId, tenantIds }) =>
       checkBatch(
         tenantIds.map((tenantId) => ({
@@ -1161,6 +1185,12 @@ const unavailableContextAccess = (): ContextAccessService => {
       Effect.succeed(
         unavailable(
           resources.map(({ moduleId, resourceId, resourceType }) => `${moduleId}:${resourceType}:${resourceId}`),
+        ),
+      ),
+    tenantResources: ({ resources }) =>
+      Effect.succeed(
+        unavailable(
+          resources.map((resource) => `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`),
         ),
       ),
     tenants: ({ tenantIds }) => Effect.succeed(unavailable(tenantIds)),

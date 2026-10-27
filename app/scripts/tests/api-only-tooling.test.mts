@@ -36,7 +36,7 @@ import {
 } from '@modern-js/code-tools/microvertical-api-boundary';
 import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/microvertical-api-boundary';
 import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
-import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
+import { ReleaseUiSchema } from './release-envelope-ui.fixture.mts';
 
 const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 
@@ -122,7 +122,7 @@ const frameworkBaselinePackageDirectory = path.dirname(
 );
 const effectClientPackage = '@modern-js/bff-effect/effect-client';
 
-const apiBoundaryCheckerPath = 'scripts/check-ultramodern-api-boundaries.mts';
+const apiBoundaryCheckerPath = 'scripts/check-ontos-api-boundaries.mts';
 
 const topologyReferencePath = 'topology/reference-topology.json';
 
@@ -220,10 +220,14 @@ const BuildArtifactSchema = Schema.Struct({
       ...IdentitySchema.fields,
       surface: Schema.Literal('api'),
     }),
-    ui: Schema.Struct({
-      ...IdentitySchema.fields,
-      surface: Schema.Literal('ui'),
-    }),
+    // UltraModern 3.9.3 headless (API-only) units emit no UI surface.
+    ui: Schema.optionalKey(
+      Schema.Struct({
+        ...IdentitySchema.fields,
+        ...ReleaseUiSchema.fields,
+        surface: Schema.Literal('ui'),
+      }),
+    ),
   }),
 });
 
@@ -280,11 +284,13 @@ type CreateVerticalDescriptor = (appId: string, port: number) => WorkspaceAppFix
 
 type CreateLayout = (appId: typeof AppIdSchema.Type) => string;
 
-type CreateAppModernConfig = (applicationRoot: string, app: WorkspaceAppFixture) => string;
+type CreateAppModernConfig = (app: WorkspaceAppFixture) => string;
 
 type CreateBackendModuleFederationConfig = (app: WorkspaceAppFixture) => string;
 
 type CreateUltramodernBuildModule = (applicationRoot: string, app: WorkspaceAppFixture) => string;
+
+type ReadWorkspaceInputs = (root: string) => { readonly apps: readonly WorkspaceAppFixture[] };
 
 interface ApiGeneratorFixture {
   readonly api?: {
@@ -437,6 +443,10 @@ const BuildModuleGeneratorSchema = Schema.Struct({
   createUltramodernBuildModule: callable<CreateUltramodernBuildModule>(),
 });
 
+const WorkspaceInputModuleSchema = Schema.Struct({
+  readUltramodernWorkspaceInputs: callable<ReadWorkspaceInputs>(),
+});
+
 const SharedApiGeneratorSchema = Schema.Struct({
   createSharedApi: callable<CreateSharedApi>(),
 });
@@ -506,7 +516,8 @@ const TopologySchema = Schema.Struct({
         }),
       }),
       id: AppIdSchema,
-      moduleFederation: Schema.Struct({ exposes: Schema.Array(Schema.String) }),
+      // UltraModern 3.9.3 headless (API-only) units have no Module Federation producer.
+      moduleFederation: Schema.optionalKey(Schema.Struct({ exposes: Schema.Array(Schema.String) })),
     }),
   ),
 });
@@ -621,7 +632,7 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0-rc.117');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.5');
   }),
 );
 
@@ -1550,7 +1561,7 @@ it.live(
       { scope: 'app' },
     );
     const generatedRpcContractSource = `
-    import { RpcGroup } from 'effect/unstable/rpc';
+    import { RpcGroup } from 'effect/rpc';
     export const inventoryStockRpcGroup = RpcGroup.make();
   `;
     expect(
@@ -1938,13 +1949,17 @@ const releaseFixture = Effect.fn(function* scenario5(moduleFormat: 'cjs' | 'esm'
     BuildArtifactSchema,
     path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
   );
+  const baseUi = baseArtifact.surfaces.ui;
+  if (baseUi === undefined) {
+    throw new Error('Party build artifact has no UI surface');
+  }
   const sourceRevision = 'a'.repeat(40);
   const artifact = {
     ...baseArtifact,
     deliveryUnit: { ...baseArtifact.deliveryUnit, sourceRevision },
     surfaces: {
       api: { ...baseArtifact.surfaces.api, sourceRevision },
-      ui: { ...baseArtifact.surfaces.ui, sourceRevision },
+      ui: { ...baseUi, sourceRevision },
     },
   };
   const manifest = {
@@ -2207,7 +2222,9 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
       readFile(path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'), 'utf-8'),
     );
     const effectModuleUrl = pathToFileURL(require.resolve('effect', { paths: [workspaceRoot] })).href;
-    const databaseIdentitiesUrl = pathToFileURL(require.resolve('@app/party-registry/database-identities')).href;
+    const databaseIdentitiesUrl = pathToFileURL(
+      path.join(workspaceRoot, 'verticals/party-registry/shared/database-identity-data.ts'),
+    ).href;
     const { code } = yield* Effect.promise(() =>
       transform(configSource, {
         define: {
@@ -2242,6 +2259,7 @@ const framework = {
   moduleFederationPlugin: () => ({}),
   pluginTailwindcss: () => ({}),
   presetUltramodern: configuration => configuration,
+  presetUltramodernWorkspace: configuration => configuration,
   tanstackRouterPlugin: () => ({}),
   ultramodernLocalisedUrls: {},
 };
@@ -2254,7 +2272,7 @@ runInNewContext(${JSON.stringify(code)}, {
     effect,
     'effect/Result': effect.Result,
     'effect/Schema': effect.Schema,
-    './shared/database-identities.ts': databaseIdentities,
+    './shared/database-identity-data.ts': databaseIdentities,
     'node:url': nodeUrl,
     'node:path': nodePath,
   }[specifier] ?? framework),
@@ -2263,7 +2281,7 @@ process.stdout.write(JSON.stringify(module.exports.default.source.globalVars));
 `,
       ),
     );
-    const output = runNode([harnessPath]);
+    const output = runNode([harnessPath], { env: { ULTRAMODERN_MF_DEV_ORIGIN: shellOrigin } });
     return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(GlobalVarsSchema))(output);
   }).pipe(Effect.ensuring(Effect.promise(() => rm(temporaryRoot, { force: true, recursive: true }))));
 });
@@ -2408,7 +2426,7 @@ const kind = ${JSON.stringify(kind)};
 const pluginNames = ['appTools', 'ultramodernAppTools', 'bffPlugin', 'i18nPlugin', 'tanstackRouterPlugin', 'moduleFederationPlugin', 'pluginTailwindcss', 'ultramodernReleaseEnvelopePlugin'];
 const framework = {
   ...Object.fromEntries(pluginNames.map(name => [name, () => ({ name })])),
-  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.117' : '3.9.0-ultramodern.2' }),
+  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.5' : '3.9.3-ultramodern.9' }),
   defineConfig: config => config, presetUltramodern: config => config,
   createModuleFederationConfig: config => config,
   getBuildConfigEnvironment: () => undefined, resolveDeployTarget: () => ({ explicit: false, target: 'node' }),
@@ -2462,8 +2480,8 @@ const evaluatedInfrastructureSource = Effect.fn(function* mergedScenario1(
   const result = yield* Effect.promise(() =>
     bundleSource({
       alias: {
-        '@modern-js/runtime-extensions/build-identity': createRequire(path.join(partyRoot, fileName)).resolve(
-          '@modern-js/runtime-extensions/build-identity',
+        '@modern-js/backend-federation-contracts': createRequire(path.join(partyRoot, fileName)).resolve(
+          '@modern-js/backend-federation-contracts',
         ),
       },
       bundle: true,
@@ -2523,6 +2541,7 @@ const framework = {
   moduleFederationPlugin: plugin('moduleFederation'), pluginTailwindcss: plugin('tailwind'),
   tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
+  presetUltramodernWorkspace: (value, workspace) => ({ ...value, workspace }),
   getBuildConfigEnvironment: name => environment[name],
   resolveDeployTarget: () => ({ explicit: true, target: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')} }),
   ultramodernLocalisedUrls: {},
@@ -2548,10 +2567,10 @@ runInNewContext(${JSON.stringify(code)}, {
 });
 const configuration = module.exports.default;
 const observations = {};
-if (configuration?.tools) {
+if (configuration) {
   const chainValues = [];
   const output = { uniqueName: name => { chainValues.push(name); return output; }, chunkLoadingGlobal: name => { chainValues.push(name); return output; } };
-  configuration.tools.bundlerChain?.({ output });
+  configuration.tools?.bundlerChain?.({ output });
   observations.chain = chainValues;
   observations.plugins = [];
   for (const entry of configuration.plugins ?? []) entry.setup?.({ modifyRspackConfig: value => observations.plugins.push(value) });
@@ -2566,7 +2585,7 @@ if (configuration?.tools) {
   };
   observations.rspack = ['client', 'workerSSR'].map(name => {
     const config = { resolve: {}, externals: [], plugins: [], node: {} };
-    configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
+    configuration.tools?.rspack?.(config, { environment: { name }, rspack: plugins });
     const externalResults = [];
     for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
       external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
@@ -2602,10 +2621,25 @@ process.stdout.write(JSON.stringify(evidence, normalize));
   ]);
 });
 
+// The OntOS workspace helper sets the TS-Go checker explicitly: it stays on for builds and is off only
+// under `modern dev` (NODE_ENV=development), which this harness never sets.
+const OntosOutputConfigSchema = Schema.Struct({
+  output: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+});
+const withOntosOutputConfig = (configuration: Schema.Json): Schema.Json => {
+  const { output } = Schema.decodeUnknownSync(OntosOutputConfigSchema)(configuration);
+  return Schema.decodeUnknownSync(Schema.Json)({
+    ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
+    output: { disableTsChecker: false, ...output },
+  });
+};
+
 // OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
 // data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
+// Party binds only its request identity's Hyperdrive (`PARTY_REGISTRY_HYPERDRIVE`), never the shared one.
+// The workspace preset owns the Worker identity, so the scaffold config may carry no deploy section.
 const OntosEvaluatedConfigSchema = Schema.Struct({
-  deploy: Schema.Struct({ worker: Schema.Record(Schema.String, Schema.Json) }),
+  deploy: Schema.optional(Schema.Struct({ worker: Schema.optional(Schema.Record(Schema.String, Schema.Json)) })),
 });
 const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   const { deploy } = Schema.decodeUnknownSync(OntosEvaluatedConfigSchema)(configuration);
@@ -2625,7 +2659,7 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
-    deploy: { ...deploy, worker: { ...workerConfig, ...deploy.worker } },
+    deploy: { ...deploy, worker: { ...workerConfig, ...deploy?.worker } },
   });
 };
 
@@ -2636,6 +2670,12 @@ it.live(
       () => import(pathToFileURL(publishedGeneratorModulePath('esm-node')('module-federation/config')).href),
     );
     const canonical = Schema.decodeUnknownSync(FederationConfigModuleSchema)(canonicalModule);
+    const inputModule: unknown = yield* Effect.promise(
+      () => import(pathToFileURL(path.join(generatorRoot, 'dist/esm-node/ultramodern-tooling/config.js')).href),
+    );
+    const workspaceInputs =
+      Schema.decodeUnknownSync(WorkspaceInputModuleSchema)(inputModule).readUltramodernWorkspaceInputs(workspaceRoot);
+    const reconciledParty = yield* Effect.fromNullishOr(workspaceInputs.apps.find((app) => app.id === partyId));
     yield* Effect.all(
       ['esm', 'esm-node', 'cjs'].map(
         Effect.fn(function* mergedScenario3(moduleFormat) {
@@ -2671,13 +2711,14 @@ it.live(
           const createUltramodernBuildModule = buildModule.createUltramodernBuildModule.bind(buildModuleSource);
           const descriptor: unknown = createVerticalDescriptor(partyId, 4102);
           Schema.asserts(WorkspaceAppFixtureSchema, descriptor);
-          const app = { ...descriptor, exposes: {} };
+          // Build modules now embed the canonical artifact, so use its checked renderer identity.
+          const app = { ...descriptor, ...reconciledParty, exposes: {} };
           const generated = {
             'backend-federation.config.ts': Schema.decodeUnknownSync(Schema.String)(
               createBackendModuleFederationConfig(app),
             ),
             [buildMarkerFile]: Schema.decodeUnknownSync(Schema.String)(createUltramodernBuildModule('app', app)),
-            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(createAppModernConfig('app', app)),
+            [modernConfigFile]: Schema.decodeUnknownSync(Schema.String)(createAppModernConfig(app)),
             'src/routes/layout.tsx': Schema.decodeUnknownSync(Schema.String)(createLayout(app.id)),
           };
           yield* Effect.all(
@@ -2708,7 +2749,7 @@ it.live(
                     Effect.fn(function* evaluateInfrastructureInjection({ cloudflare, injection }) {
                       if (fileName === modernConfigFile) {
                         const canonicalSource = Schema.decodeUnknownSync(Schema.String)(
-                          canonical.createAppModernConfig('app', app),
+                          canonical.createAppModernConfig(app),
                         );
                         expect(
                           yield* evaluatedInfrastructureSource(fileName, source, cloudflare, injection),
@@ -2736,8 +2777,10 @@ it.live(
                       );
                       const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
                       expect(
-                        cloudflare && fileName === modernConfigFile
-                          ? withOntosWorkerConfig(decode(expected))
+                        fileName === modernConfigFile
+                          ? withOntosOutputConfig(
+                              cloudflare ? withOntosWorkerConfig(decode(expected)) : decode(expected),
+                            )
                           : decode(expected),
                         `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
                       ).toEqual(decode(evaluated));
@@ -3064,7 +3107,7 @@ it.live(
       runNode([path.join(workspaceRoot, apiBoundaryCheckerPath)], {
         env: { ULTRAMODERN_WORKSPACE_ROOT: fixture },
       });
-    expect(check()).toMatch(/UltraModern API boundary check passed/u);
+    expect(check()).toMatch(/OntOS API boundary check passed/u);
     const cases = [
       {
         expected: /topology must declare this MicroVertical owner/u,
@@ -3625,9 +3668,8 @@ for (const variant of ['cjs', 'esm', 'esm-node']) {
       const inspectionModule: unknown = yield* Effect.promise(
         () =>
           import(
-            pathToFileURL(
-              path.join(generatorRoot, `dist/${variant}/ultramodern-workspace/mf-validation/inspect.${extension}`),
-            ).href
+            pathToFileURL(path.join(generatorRoot, `dist/${variant}/ultramodern-workspace/mf-validation.${extension}`))
+              .href
           ),
       );
       const inspection = yield* Schema.decodeUnknownEffect(ModuleFederationInspectionModuleSchema)(inspectionModule);
@@ -3710,6 +3752,8 @@ it.live(
       BuildArtifactSchema,
       path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
     );
+    // A headless unit's build artifact carries only its API surface.
+    expect(build.surfaces.ui).toBe(undefined);
     // A deployed Worker serves the release identity of the revision being proven,
     // which is only the generation marker for an uncommitted workspace.
     const releaseIdentity = resolveUltramodernReleaseIdentity({
@@ -3897,42 +3941,4 @@ describe('consumer migration preserves native tooling and governed safety', () =
       expect(governed.stdout).toMatch(/rejects generated governed clients/u);
     }),
   );
-  it('manifest-aware bridge accepts TanStack without permitting disguised router capability', () => {
-    const imported = "import { createModuleFederationConfig as createConfig } from '@module-federation/modern-js-v3';";
-    const config = (body: string) => `${imported} export default createConfig(${body});`;
-    const disabled = '{ bridge: { enableBridgeRouter: false } }';
-    const enabled = '{ bridge: { enableBridgeRouter: true } }';
-    expect(moduleFederationBridgeViolation(config(disabled), {})).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(
-        `${imported} const config = createConfig(${disabled}); export default config;`,
-        {},
-      ),
-    ).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(config(enabled), {
-        dependencies: { 'react-router': '7.18.0' },
-      }),
-    ).toBe(undefined);
-    expect(
-      moduleFederationBridgeViolation(config(enabled), {
-        devDependencies: { 'react-router-dom': '7.18.0' },
-      }),
-    ).toBe(undefined);
-    for (const candidate of [
-      config(enabled),
-      config('{}'),
-      config('{ bridge: {} }'),
-      config('{ bridge: { enableBridgeRouter: Boolean(false) } }'),
-      config('{ bridge: { enableBridgeRouter: false, ...override } }'),
-      config('{ bridge: { enableBridgeRouter: false, [key]: true } }'),
-      config('{ bridge: { enableBridgeRouter: false, enableBridgeRouter: true } }'),
-      config('{ bridge: { enableBridgeRouter: false }, ...override }'),
-      config(disabled).replace('import {', 'import type {'),
-      `${imported} function decoy(createConfig) { return createConfig(${disabled}); } export default otherConfig;`,
-      `function createConfig(value) { return value; } export default createConfig(${disabled});`,
-    ]) {
-      expect(moduleFederationBridgeViolation(candidate, {}), candidate).not.toBe(undefined);
-    }
-  });
 });

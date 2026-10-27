@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
-import { Statement } from 'effect/unstable/sql';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import { Statement } from 'effect/sql';
+import type { SqlError } from 'effect/sql/SqlError';
 
 /** Decides, per compiled statement, whether the database should reject it. */
 export type StatementFaultHook = (statement: string) => Effect.Effect<void, SqlError>;

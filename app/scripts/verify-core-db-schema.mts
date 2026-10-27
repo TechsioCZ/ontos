@@ -1,5 +1,5 @@
 import { Console, Effect, Layer } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../database/identity-enrollment.ts';
 import { verifyCoreDatabaseSchema } from '../packages/core-runtime/scripts/verify-db-schema.mts';

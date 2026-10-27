@@ -1,20 +1,21 @@
 // Open sales cases (obchodní případy) for the Siampark overview, read through the sales-pipeline PUBLIC governed read
 // with the person's own gateway credential (audience `sales-pipeline`). The schema below names only the fields the
 // overview uses, so newer producer fields never break this read.
-import { issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
+import { CalendarDateWireSchema, issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Effect, Redacted, Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 const SalesStageSchema = Schema.String;
+const SalesPartyIdSchema = Schema.String.pipe(Schema.brand('FacilitySalesPartyId'), Schema.decodeTo(Schema.String));
 
 export const SalesCaseSchema = Schema.Struct({
   amountMinor: Schema.Int,
-  archivedAt: Schema.optionalKey(Schema.String),
-  expectedCloseDate: Schema.String,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  expectedCloseDate: CalendarDateWireSchema,
   id: Schema.String,
-  partyId: Schema.String,
+  partyId: SalesPartyIdSchema,
   probability: Schema.Int,
   stage: SalesStageSchema,
   title: Schema.String,

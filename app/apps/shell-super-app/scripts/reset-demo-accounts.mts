@@ -2,7 +2,7 @@ import { DatabaseConfig, parseDatabaseConfig } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
 import { Config, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../api/auth/db/client.ts';
 import { account, user } from '../api/auth/db/schema.ts';

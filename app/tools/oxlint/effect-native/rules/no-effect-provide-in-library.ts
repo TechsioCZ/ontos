@@ -67,7 +67,7 @@ import {
 } from '../shared/reference-positions.ts';
 
 const EFFECT_ROOT_MODULE = 'effect';
-/** `effect/Effect`, and the same module reached through a deeper path (`effect/unstable/.../Effect`). */
+/** `effect/Effect`, and the same module reached through a deeper path (`effect/.../Effect`). */
 const EFFECT_EFFECT_MODULE = /^effect\/(?:.*\/)?Effect$/u;
 const EFFECT_NAMESPACE = 'Effect';
 const PIPE_NAMESPACE = 'pipe';

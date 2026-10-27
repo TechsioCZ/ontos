@@ -19,7 +19,7 @@ import { admin } from 'better-auth/plugins/admin';
 import { asc, eq } from 'drizzle-orm';
 import type { Duration } from 'effect';
 import { Clock, Context, Data, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
-import { Cookies } from 'effect/unstable/http';
+import { Cookies } from 'effect/http';
 
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';

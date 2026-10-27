@@ -7,7 +7,7 @@ import type {
   Schema,
 } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';

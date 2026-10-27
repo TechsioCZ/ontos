@@ -23,7 +23,7 @@ const externalizeRuntimeDependencies = (
   if (request === 'cloudflare:workers' || request?.endsWith('/fixtures/worker-environment.ts') === true) {
     resolveExternal(
       undefined,
-      `module-import ${new URL('./tests/fixtures/worker-environment.ts', import.meta.url).href}`,
+      `module-import ${new URL('tests/fixtures/worker-environment.ts', import.meta.url).href}`,
     );
     return;
   }
@@ -91,7 +91,7 @@ export default defineConfig({
       restoreMocks: true,
       source: {
         define: {
-          __ONTOS_BROWSER_BUILD__: 'true',
+          'import.meta.env.MODERN_TARGET': "'browser'",
           ULTRAMODERN_SITE_URL: encodedSiteUrl,
         },
       },

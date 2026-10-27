@@ -31,6 +31,10 @@ export const TAX_FOREIGN_OWNER_DOUBLES = {
     contract: '#926 Tax-purpose evidence as TAX consumes it (OccurrenceCatalogEvidenceSchema)',
     owner: 'CATALOG',
   },
+  eligibilityHandoff: {
+    contract: 'TAX_LAUNCH_ELIGIBILITY_V1 provisional receiving handoff; issuer authenticity not verified',
+    owner: 'DECLARED_SOURCE_OWNER',
+  },
   places: { contract: '#927 delivery destination', owner: 'DELIVERY' },
   pricingLine: { contract: '#931 published Line Commercial Value (#892 not active)', owner: 'PRICING' },
   purchaseBindingInput: { contract: '#937/#330 frozen purchase binding', owner: 'ORDER' },
@@ -47,7 +51,7 @@ export const PRICING_RESULT_REF = { pricingResultId: 'pricing-result-1', revisio
 export const STANDARD_CODE = 'cz-standard-goods';
 export const REDUCED_CODE = 'cz-reduced-food';
 
-type CatalogEntryInput = TaxEvaluationRequestInput['catalog'][number];
+type CatalogEntryInput = NonNullable<TaxEvaluationRequestInput['catalog']>[number];
 type CatalogSelectionInput = CatalogEntryInput['classificationInput']['catalogSelection'];
 
 /** Catalog evidence of one occurrence: a single Current TAX_CATEGORY fact unless overridden. */
@@ -106,32 +110,56 @@ export const shippingCharge = (amount: string, amountBasis: AmountBasisInput = '
   shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
 });
 
+/** Explicitly unverified source-owner assembly double for the provisional TAX receiving handoff, not a real producer. */
+export const eligibilityHandoff = (
+  purchase: TaxEvaluationRequestInput['purchase'],
+  taxRelevantTime: TaxEvaluationRequestInput['taxRelevantTime'],
+): Extract<NonNullable<TaxEvaluationRequestInput['eligibility']>, { readonly _tag: 'CURRENT' }> => ({
+  _tag: 'CURRENT',
+  authorityContractRef: 'fixture:purchase-tax-scope-authority',
+  contract: 'TAX_LAUNCH_ELIGIBILITY_V1',
+  evidencePurpose: 'TAX',
+  materialEvidenceCompleteness: { _tag: 'OWNER_QUALIFIED_COMPLETE', ownerEvidenceRef: 'fixture:scope-complete-1' },
+  ownerEvidenceRef: 'fixture:purchase-tax-scope-1',
+  ownerEvidenceRevisionRef: 'r1',
+  purchase,
+  requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
+  requiredTaxTreatments: ['TAXABLE'],
+  sourceOwner: 'commerce.order',
+  taxRelevantTime,
+});
+
 /** One CZ domestic purchase; occurrence `o1` is standard-rated at 1000 CZK, `o2` (when present) reduced at 500 CZK. */
 export const evaluationRequestInput = (
   overrides: Partial<TaxEvaluationRequestInput> = {},
   occurrenceIds: readonly [string, ...string[]] = ['o1', 'o2'],
-): TaxEvaluationRequestInput => ({
-  catalog: [
-    catalogEntry(occurrenceIds[0], STANDARD_CODE),
-    ...occurrenceIds.slice(1).map((occurrenceId) => catalogEntry(occurrenceId, REDUCED_CODE)),
-  ],
-  decompositionNeed: 'PER_TAXABLE_SUPPLY_UNIT',
-  places: {
-    deliveryDestination: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'delivery-evidence-1' },
-    invoiceRecipient: { _tag: 'NOT_MATERIAL' },
-    sellingLegalEntity: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'seller-place-evidence-1' },
-  },
-  pricing: {
-    pricingResultRef: PRICING_RESULT_REF,
-    publishedLines: [
-      pricingLine(occurrenceIds[0], '1000.00'),
-      ...occurrenceIds.slice(1).map((occurrenceId) => pricingLine(occurrenceId, '500.00')),
+): TaxEvaluationRequestInput => {
+  const request: TaxEvaluationRequestInput = {
+    catalog: [
+      catalogEntry(occurrenceIds[0], STANDARD_CODE),
+      ...occurrenceIds.slice(1).map((occurrenceId) => catalogEntry(occurrenceId, REDUCED_CODE)),
     ],
-  },
-  purchase: purchaseBindingInput(occurrenceIds),
-  taxRelevantTime: '2026-10-08T10:00:00.000Z',
-  ...overrides,
-});
+    decompositionNeed: 'PER_TAXABLE_SUPPLY_UNIT',
+    places: {
+      deliveryDestination: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'delivery-evidence-1' },
+      invoiceRecipient: { _tag: 'NOT_MATERIAL' },
+      sellingLegalEntity: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'seller-place-evidence-1' },
+    },
+    pricing: {
+      pricingResultRef: PRICING_RESULT_REF,
+      publishedLines: [
+        pricingLine(occurrenceIds[0], '1000.00'),
+        ...occurrenceIds.slice(1).map((occurrenceId) => pricingLine(occurrenceId, '500.00')),
+      ],
+    },
+    purchase: purchaseBindingInput(occurrenceIds),
+    taxRelevantTime: '2026-10-08T10:00:00.000Z',
+    ...overrides,
+  };
+  return Object.hasOwn(overrides, 'eligibility')
+    ? request
+    : { ...request, eligibility: eligibilityHandoff(request.purchase, request.taxRelevantTime) };
+};
 
 export const evaluationRequest = (
   overrides: Partial<TaxEvaluationRequestInput> = {},

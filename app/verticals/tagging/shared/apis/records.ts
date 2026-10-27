@@ -2,7 +2,7 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export const subjectKindValues = ['customer', 'order', 'product', 'employee', 'opportunity'] as const;
 export const tagColorValues = ['gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink'] as const;

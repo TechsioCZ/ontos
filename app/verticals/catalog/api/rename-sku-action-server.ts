@@ -3,7 +3,7 @@
 // @ontos-action-http-slug rename-sku
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import { Redacted, Schema } from 'effect';
 import { catalogApi } from '../shared/api.ts';
 import { renameSkuAction } from '../src/actions/rename-sku.action.ts';

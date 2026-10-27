@@ -1,4 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -23,7 +24,7 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -116,6 +117,7 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
@@ -123,6 +125,7 @@ const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
@@ -159,6 +162,7 @@ export const makePriceGroupCatalogApiRuntime = (
     Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
     Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

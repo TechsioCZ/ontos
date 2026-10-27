@@ -19,12 +19,13 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { pricingApi, pricingOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { pricingCurrentDecisionOwnerFinalFenceGatewaysLive } from '../src/integrations/current-pricing-decision-owner-final-fence.ts';
@@ -130,6 +131,7 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
@@ -159,6 +161,7 @@ const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 const governedReadRuntimeLive = readRuntimeLive;
 const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(
@@ -206,6 +209,7 @@ const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActi
   Layer.provideMerge(compositionSourceLive),
   Layer.provideMerge(runtimeObservabilityLive),
   Layer.provideMerge(databaseIdentitiesLive),
+  Layer.provideMerge(NodeCrypto.layer),
   Layer.orDie,
 );
 type PricingApiGroups = (typeof pricingApi.groups)[keyof typeof pricingApi.groups];
@@ -219,7 +223,7 @@ const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
   PricingApiGroups,
   PricingHandlerRequirements,
   Layer.Success<typeof requestServicesLive>
->['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive), Layer.orDie);
+>['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
 
 export const makePricingApiRuntime = (): EffectBffDefinition<typeof pricingApi> & EffectBffRuntime<typeof pricingApi> =>
   assembleEffectBffRuntime({

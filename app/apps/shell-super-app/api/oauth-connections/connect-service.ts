@@ -4,8 +4,6 @@
  * same user, company, acting principal and client, reusing its profile id) and denial. Pure helpers are exported for
  * unit tests; the HTTP mapping lives in connect-http.ts.
  */
-import { randomUUID } from 'node:crypto';
-
 import {
   OAuthAuthenticationAudit,
   OAuthConnectionCompanies,
@@ -30,7 +28,7 @@ import type {
   ConnectionModulesRequest,
 } from '@app/shared-contracts/oauth-connections';
 import { ConnectionModulesRequestSchema, OAUTH_DRAFT_TTL_SECONDS } from '@app/shared-contracts/oauth-connections';
-import { Clock, Duration, Effect, Schema } from 'effect';
+import { Clock, Crypto, Duration, Effect, Schema } from 'effect';
 
 import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
@@ -280,7 +278,7 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
       clientId: client.clientId,
       legalEntityId: request.legalEntityId,
       userId: session.userId,
-    })) ?? randomUUID();
+    })) ?? (yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.mapError(toUnavailable)));
   // Picked modules without any write box can change nothing, so the draft (and consent) says read-only.
   const writePolicy =
     request.modules !== 'all' && !request.modules.some((grant) => grant.access === 'write')

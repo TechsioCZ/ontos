@@ -16,8 +16,8 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Reactivity } from 'effect/reactivity';
+import { Command, Flag } from 'effect/cli';
 import { FinanceStateSchema, InvoiceLinesSchema } from '../shared/apis/records.ts';
 import type { FinanceState } from '../shared/apis/records.ts';
 import { computeInvoiceTotals, INVOICE_NUMBER_PREFIX } from '../shared/domain/invoice-totals.ts';

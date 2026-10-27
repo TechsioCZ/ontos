@@ -400,6 +400,43 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    // presetUltramodernWorkspace uploads a UI unit to Zephyr by resolving zephyr-rspack-plugin with
+    // createRequire(from) at the unit's own config, so the unit's declaration is the consumed one.
+    const workspacePresetEvidence = Effect.fn('QualityAudit.workspacePresetEvidence')(function* workspacePresetEvidence(
+      prefix: string,
+      workspace: string,
+      manifest: typeof Manifest.Type,
+    ) {
+      const zephyr = 'zephyr-rspack-plugin';
+      if (manifest.dependencies?.[zephyr] === undefined && manifest.devDependencies?.[zephyr] === undefined) {
+        return;
+      }
+      const configFile = `${prefix}modern.config.ts`;
+      const config = uncomment(configFile, yield* read(configFile));
+      const preset = yield* read(
+        `${prefix}node_modules/@modern-js/ultramodern-app-tools/dist/esm-node/native-composition/workspace-preset.mjs`,
+      );
+      if (
+        config?.includes("from '@modern-js/ultramodern-app-tools'") === true &&
+        /presetUltramodernWorkspace\(\s*\{[\s\S]*\{[^{}]*\bappId\b[^{}]*\bfrom:\s*import\.meta\.url\b[^{}]*\}\s*,?\s*\)/u.test(
+          config,
+        ) &&
+        preset?.includes('const require = createRequire(from);') === true &&
+        preset.includes(`require('${zephyr}')`)
+      ) {
+        evidence.push(
+          at(
+            configFile,
+            config,
+            config.indexOf('presetUltramodernWorkspace('),
+            workspace,
+            'dependency',
+            zephyr,
+            'presetUltramodernWorkspace resolves the Zephyr upload plugin from this configuration module',
+          ),
+        );
+      }
+    });
     const zeropsEvidence = Effect.fn('QualityAudit.zeropsEvidence')(function* zeropsEvidence() {
       // Zerops buildCommands run from the repository root and explicitly cd into app.
       for (const file of ['zerops.yaml', 'zerops.yml']) {
@@ -732,6 +769,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         yield* cssEvidence(extension, prefix, workspace);
       }
       yield* federationEvidence(prefix, workspace);
+      yield* workspacePresetEvidence(prefix, workspace, manifest);
     }
     yield* zeropsEvidence();
     yield* tsgoEvidence();

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../verticals/merchandise/shared/apis/records.ts';

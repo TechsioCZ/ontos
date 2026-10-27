@@ -1,7 +1,6 @@
 {
   "deliveryUnit": {
     "appId": "inventory",
-    "buildMarker": "d87a59b2fccc989f",
     "deployProfile": "cloudflare-ssr-mf-effect-v1",
     "kind": "microvertical-delivery-unit",
     "packageName": "@app/inventory",
@@ -9,14 +8,14 @@
     "sourceRevision": "workspace",
     "unitId": "app/inventory",
     "version": "0.1.0",
-    "build": "d87a59b2fccc989f"
+    "buildMarker": "5f588cb1d6d14d10",
+    "build": "5f588cb1d6d14d10"
   },
   "kind": "ultramodern-build-artifact",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "surfaces": {
     "api": {
       "appId": "inventory",
-      "buildMarker": "d87a59b2fccc989f",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/inventory",
@@ -24,12 +23,12 @@
       "sourceRevision": "workspace",
       "unitId": "app/inventory",
       "version": "0.1.0",
-      "build": "d87a59b2fccc989f",
+      "buildMarker": "5f588cb1d6d14d10",
+      "build": "5f588cb1d6d14d10",
       "surface": "api"
     },
     "ui": {
       "appId": "inventory",
-      "buildMarker": "d87a59b2fccc989f",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/inventory",
@@ -37,8 +36,56 @@
       "sourceRevision": "workspace",
       "unitId": "app/inventory",
       "version": "0.1.0",
-      "build": "d87a59b2fccc989f",
-      "surface": "ui"
+      "buildMarker": "5f588cb1d6d14d10",
+      "build": "5f588cb1d6d14d10",
+      "surface": "ui",
+      "rendererIdentity": {
+        "renderer": "react",
+        "appId": "inventory",
+        "entryName": "index",
+        "protocolVersion": 1,
+        "buildId": "5f588cb1d6d14d10"
+      },
+      "rendererProfile": {
+        "renderer": "react",
+        "protocolVersion": 1,
+        "compiler": {
+          "name": "@rsbuild/plugin-react",
+          "version": "2.1.1"
+        },
+        "hydration": {
+          "name": "react-dom",
+          "version": "19.3.1"
+        },
+        "router": {
+          "name": "react-router",
+          "version": "7.18.4",
+          "coreName": "react-router",
+          "coreVersion": "7.18.4"
+        }
+      },
+      "routerBindings": {
+        "index": {
+          "owner": "@modern-js/plugin-tanstack",
+          "evidence": "file-routes",
+          "defaultProvider": {
+            "framework": "tanstack",
+            "name": "@tanstack/react-router",
+            "version": "1.170.39",
+            "coreName": "@tanstack/router-core",
+            "coreVersion": "1.171.32"
+          },
+          "providers": [
+            {
+              "framework": "tanstack",
+              "name": "@tanstack/react-router",
+              "version": "1.170.39",
+              "coreName": "@tanstack/router-core",
+              "coreVersion": "1.171.32"
+            }
+          ]
+        }
+      }
     }
   }
 }

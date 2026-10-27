@@ -1,9 +1,9 @@
 import { PgClient as actualPgClient } from '@effect/sql-pg' with { rstest: 'importActual' };
 import { Array as EffectArray, Effect, Exit, Order, Redacted, Stream } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { SqlClient, Statement } from 'effect/unstable/sql';
-import type { SqlConnection } from 'effect/unstable/sql';
-import { AuthenticationError, SqlError } from 'effect/unstable/sql/SqlError';
+import { Reactivity } from 'effect/reactivity';
+import { SqlClient, Statement } from 'effect/sql';
+import type { SqlConnection } from 'effect/sql';
+import { AuthenticationError, SqlError } from 'effect/sql/SqlError';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';

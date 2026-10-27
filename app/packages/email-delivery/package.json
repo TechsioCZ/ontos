@@ -19,8 +19,8 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.117",
-    "@effect/sql-pg": "4.0.0-rc.117"
+    "effect": "4.0.5",
+    "@effect/sql-pg": "4.0.5"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",

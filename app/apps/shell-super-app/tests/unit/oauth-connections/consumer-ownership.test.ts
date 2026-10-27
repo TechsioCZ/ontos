@@ -7,7 +7,7 @@ import {
 } from '@app/core-runtime';
 import { OAUTH_GRANT_CLAIM } from '@app/shared-contracts/oauth-connections';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { scriptedPgClientLayer } from '../../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { authRelations } from '../../../api/auth/db/schema.ts';
@@ -16,6 +16,7 @@ import { expect, it, rs } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
+import { NodeCrypto } from '@effect/platform-node';
 
 import { CoreDatabase } from '../../../../../packages/core-runtime/src/db/client.ts';
 import { coreRelations } from '../../../../../packages/core-runtime/src/db/schema.ts';
@@ -97,7 +98,7 @@ const unusedCollaborators = Layer.mergeAll(
   Layer.mock(OAuthConnectionCompanies, {}),
   Layer.mock(OAuthFlow, {}),
   Layer.mock(ShellInstalledModuleCatalog, {}),
-);
+).pipe(Layer.provide(NodeCrypto.layer));
 rs.mock('../../../api/oauth-connections/server-config.ts', () => ({
   get loadOAuthServerConfig() {
     return Effect.succeed({

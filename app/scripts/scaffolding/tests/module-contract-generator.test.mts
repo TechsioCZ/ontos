@@ -395,6 +395,7 @@ it.live(
         );
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': 'workspace:*',
+          '@effect/platform-node': '4.0.5',
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });
@@ -438,7 +439,7 @@ it.live(
             authoredManifest
               .replace(
                 '// <generated-module-manifest-imports>',
-                "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);\n// <generated-module-manifest-imports>",
+                "import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);\n// <generated-module-manifest-imports>",
               )
               .replace(
                 '      // <generated-module-manifest-apis>\n      // </generated-module-manifest-apis>',
@@ -736,7 +737,10 @@ export default apiRuntime;
         expect(shared).toContain('export const governedHttpApi = fixtureApi;');
         expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
         expect(runtime).toContain('GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive)');
-        expect(runtime).toContain('GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive)');
+        expect(runtime).toContain("import { NodeCrypto } from '@effect/platform-node';");
+        expect(runtime).toContain(
+          'GovernedReadLayer.provideMerge(GovernedReadLayer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer))',
+        );
         expect(runtime).toContain('defineGovernedDatabaseIdentityEnrollment([])');
         expect(runtime).toContain('GovernedReadLayer.provideMerge(governedDatabaseIdentitiesLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');

@@ -2,7 +2,9 @@
  * Checks run before Better Auth. Refresh reuse revokes only the retained grant's token family, never the user's
  * other company connections. The native Auth producer owns credential SQL; Core owns denied observations.
  */
-import { createHash } from 'node:crypto';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Base64Url } from 'effect/encoding';
 
 import { OAuthAuthenticationAudit } from '@app/core-runtime';
 import { Clock, Context, Effect, Layer, Option, Redacted } from 'effect';
@@ -12,7 +14,7 @@ import { OAuthGuardSessions } from './guard-sessions.ts';
 import type { OAuthEndpointGuards as OAuthEndpointGuardsContract, RefreshTokenVerdict } from './policy.ts';
 
 /** Better Auth stores refresh tokens as unpadded base64url SHA-256 (`storeTokens: 'hashed'`, no prefix). */
-export const refreshTokenStorageKey = (token: string): string => createHash('sha256').update(token).digest('base64url');
+export const refreshTokenStorageKey = (token: string): string => Base64Url.encode(sha256(utf8ToBytes(token)));
 
 export interface StoredRefreshToken {
   readonly revoked: Date | null;

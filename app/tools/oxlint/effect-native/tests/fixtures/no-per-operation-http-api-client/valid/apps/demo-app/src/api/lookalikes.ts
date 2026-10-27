@@ -1,6 +1,6 @@
 // Syntactic look-alikes that are not HttpApi client construction.
 import { Effect } from 'effect';
-import type { HttpApiClient } from 'effect/unstable/httpapi';
+import type { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 /** Locally defined helper with the constructor's name: not an import binding. */

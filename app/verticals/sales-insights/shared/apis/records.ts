@@ -5,7 +5,7 @@ import { Schema } from 'effect';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { MetricRefSchema } from '../resources/metric.ts';
 import { MetricCollectionRefSchema } from '../resources/metric-collection.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 export { CalendarDateWireSchema as CalendarDateSchema } from '@app/shared-contracts';
 

@@ -1,9 +1,9 @@
 import { NodeHttpServer } from '@effect/platform-node';
 import { Clock, Effect, Match, Option, Ref } from 'effect';
 import type { Scope } from 'effect';
-import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
-import type { ServeError } from 'effect/unstable/http/HttpServerError';
+import { HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
+import type { ServeError } from 'effect/http/HttpServerError';
 
 interface HealthState {
   readonly lastSuccessfulCycleAt: Option.Option<number>;

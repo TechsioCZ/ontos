@@ -1,7 +1,7 @@
 import { and, eq, ne, or } from 'drizzle-orm';
 import { v1 } from '@authzed/authzed-node';
 import { Config, ConfigProvider, DateTime, Effect, Option, Redacted, Schema } from 'effect';
-import { isSqlError } from 'effect/unstable/sql/SqlError';
+import { isSqlError } from 'effect/sql/SqlError';
 
 // This installer composes the privileged database used only for stage initialization.
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Native scoped database composition at the installer boundary.

@@ -4,27 +4,37 @@ import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '../../shared/database-identities.ts';
-import { randomUUID } from 'node:crypto';
-
-import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import {
-  DatabaseIdentityEnrollmentContext,
   GatewayScopeGrantRegistrar,
   GatewayScopeGrantRegistrarLive,
   loadDatabaseConnectionPair,
   makeDatabaseConfigLive,
+  DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  Layer,
+  Match,
+  Option,
+  Redacted,
+  Schema,
+  Predicate,
+} from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, pinDocumentCompositionRevision } from '@app/shared-contracts';
@@ -77,6 +87,8 @@ import {
 import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+
 const subjectEvidence = [
   {
     kind: 'ACTOR_ATTESTATION' as const,
@@ -87,6 +99,8 @@ const subjectEvidence = [
     statement: 'Reviewed a concrete external organization in its document',
   },
 ];
+const withFreshSubjectKey = (item: (typeof subjectEvidence)[number]) =>
+  nextUuid.pipe(Effect.map((subjectKey) => ({ ...item, subjectKey: partySubjectKeyFromString(subjectKey) })));
 const rawSubject = {
   datumAktualizace: '2026-09-01',
   datumVzniku: '2020-01-01',
@@ -106,521 +120,541 @@ const rawSubject = {
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
 const lookupIco = Schema.decodeSync(AresSubjectLookupIcoSchema)('27074358');
 
-it.live(
-  'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
-  () =>
-    Effect.gen(function* aresGovernedTestEffect() {
-      // The Party request identity serves every Action, Read and redemption in this test.
-      const connections = yield* loadDatabaseConnectionPair({
-        envPath: '/dev/null',
-        identity: PARTY_REGISTRY_REQUEST_IDENTITY,
-      });
-      const grantRegistrar = Context.get(
-        yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(
-          Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
-          Effect.orDie,
-        ),
-        GatewayScopeGrantRegistrar,
-      );
-      const compositionSnapshot = yield* partyCompositionSnapshot;
-      const fixture = yield* Effect.acquireRelease(
-        makeLiveOperationFixture({
-          databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
-          legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
-          tenantManagerRelations: [
-            'party_identity_manager',
-            'party_identity_reader',
-            'party_identity_reviewer',
-            'party_relationship_manager',
-          ],
-          actionKeys: [
-            addContactPointAction,
-            addPartyOfficialIdentifierAction,
-            correctPartyFactAction,
-            createPartyAction,
-            resolveDuplicateCandidateCreateAction,
-            updatePartyAction,
-          ].map(({ descriptor }) => descriptor.actionKey),
-          // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
-          adminConnectionString: Redacted.make(connections.admin.connectionString),
-          audience: 'party-registry',
-          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-          compositionRevision: compositionSnapshot.composition.revision,
-          moduleKey: 'party.registry',
-          runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
-        }).pipe(Effect.orDie),
-        (resource) => resource.close().pipe(Effect.orDie),
-      );
-      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
-      const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
-      const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
-      // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
-      yield* Effect.addFinalizer(() => deleteTestCoreOutbox(adminClient, fixture.tenantId).pipe(Effect.orDie));
-      // The registrar persists a gateway grant per issued assertion; remove this tenant's grants.
-      yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId]);
-      const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
-      const compositionRevision = compositionSnapshot.composition.revision;
-      const apiBaseUrl = '/party-registry-api';
-      yield* pinDocumentCompositionRevision(compositionRevision);
-      const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
-      const kid = `ares-live-${randomUUID()}`;
-      const issuer = 'https://disposable-shell.ontos.test';
-      const publicJwk = yield* Effect.promise(exportJWK.bind(undefined, publicKey));
-      const jwk = { ...publicJwk, alg: 'EdDSA', kid, use: 'sig' };
-      const encodedPublicJwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-        keys: [jwk],
-      });
-      const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(
-        principal: typeof fixture.manager & { readonly legalEntityId?: string },
-      ) {
-        const assertionId = randomUUID();
-        // Grants expire against PostgreSQL's clock, so the expiry is derived from the database time.
-        const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
-          select floor(extract(epoch from now()))::int as "nowSeconds"
-        `.pipe(Effect.orDie);
-        const expiresAtEpochSeconds = (databaseNow?.nowSeconds ?? 0) + 300;
-        const token = yield* Effect.promise(() =>
-          new SignJWT({
-            compositionRevision: compositionSnapshot.composition.revision,
-            principal,
-            targetBuildMarker: ultramodernApiMarker.buildMarker,
-            ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
-          })
-            .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
-            .setIssuer(issuer)
-            .setAudience('party-registry')
-            .setSubject(principal.principalId)
-            .setIssuedAt()
-            .setExpirationTime(expiresAtEpochSeconds)
-            .setJti(assertionId)
-            .sign(privateKey),
-        );
-        // Shell registers each issued assertion before the token leaves the issuer.
-        const grant = {
-          assertion: Redacted.make(token),
-          audience: 'party-registry',
-          expiresAtEpochSeconds,
-          jti: assertionId,
-          principalId: principal.principalId,
-          tenantId: principal.tenantId,
-        };
-        yield* grantRegistrar
-          .register(
-            principal.legalEntityId === undefined ? grant : { ...grant, legalEntityId: principal.legalEntityId },
-          )
-          .pipe(Effect.orDie);
-        return token;
-      });
-      const authorization = () => sign(managerWithLegalEntity).pipe(Effect.map((token) => `Bearer ${token}`));
-      const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
-        expect(requestedRevision).toBe(compositionRevision);
-        return sign(managerWithLegalEntity).pipe(
-          Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
-        );
-      });
-      let providerRequests = 0;
-      const provider = HttpClient.make((request, url) => {
-        expect(url.href).toBe('https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27074358');
-        providerRequests += 1;
-        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(rawSubject)));
-      });
-      const upstream = AresSubjectServiceLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)));
-      const redemption = GatewayAssertionRedemptionLive.pipe(
-        Layer.provide(GatewayAssertionRedemptionDatabaseLive),
-        Layer.provide(makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY)),
-      );
-      const api = HttpApi.make('PartyRegistryApi')
-        .add(partyRegistryApi.groups.partyCommands)
-        .add(partyRegistryApi.groups.aresLookup)
-        .add(partyRegistryApi.groups.partyDetail)
-        .add(partyRegistryApi.groups.partyOfficialIdentifierHistory)
-        .add(partyRegistryApi.groups.partyContactPoints);
-      const handlers = Layer.mergeAll(
-        partyRegistryCommandsLive,
-        partyDetailReadApiLive,
-        partyOfficialIdentifierHistoryReadApiLive,
-        partyContactPointsReadApiLive,
-        aresLookupReadApiLive.pipe(Layer.provide(upstream)),
-      ).pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            ActionPrincipalVerifierLive,
-            makeActiveApplicationCompositionLayer(Effect.succeed(compositionSnapshot)),
-          ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
-        ),
-        Layer.provide(redemption),
-        Layer.provide(fixture.layer),
-        Layer.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              ONTOS_GATEWAY_ISSUER: issuer,
-              ONTOS_GATEWAY_PUBLIC_JWKS: encodedPublicJwks,
-            }),
+it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
+  suite.effect(
+    'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
+    () =>
+      Effect.gen(function* aresGovernedTestEffect() {
+        // The Party request identity serves every Action, Read and redemption in this test.
+        const connections = yield* loadDatabaseConnectionPair({
+          envPath: '/dev/null',
+          identity: PARTY_REGISTRY_REQUEST_IDENTITY,
+        });
+        const grantRegistrar = Context.get(
+          yield* Layer.build(GatewayScopeGrantRegistrarLive).pipe(
+            Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
+            Effect.orDie,
           ),
-        ),
-      );
-      const app = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          HttpRouter.toWebHandler(
-            HttpApiBuilder.layer(api).pipe(
-              Layer.provide(handlers),
-              Layer.provideMerge(fixture.layer),
-              Layer.provideMerge(upstream),
-              Layer.provide(HttpServer.layerServices),
-              Layer.provide(
-                Layer.effect(
-                  HttpRouter.HttpRouter,
-                  HttpRouter.HttpRouter.pipe(Effect.map((router) => router.prefixed(apiBaseUrl))),
-                ),
-              ),
-              Layer.provide(NodeCrypto.layer),
-            ),
-            { disableLogger: true },
-          ),
-        ),
-        (resource) => Effect.promise(resource.dispose.bind(resource)).pipe(Effect.orDie),
-      );
-      const inMemoryFetch: typeof fetch = (input, init) => {
-        const request = new Request(input, init);
-        expect(new URL(request.url).pathname.startsWith(`${apiBaseUrl}/`)).toBe(true);
-        expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
-        return app.handler(request, emptyRequestContext);
-      };
-      const runHttpEffect = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
-        effect.pipe(Effect.provideService(FetchHttpClient.Fetch, inMemoryFetch));
-      const baseUrl = `https://party.ontos.test${apiBaseUrl}`;
-      const options = () => ({
-        baseUrl,
-        compositionRevision,
-        correlationId: randomUUID(),
-        idempotencyKey: randomUUID(),
-      });
-      const create = Effect.fn('AresGovernedTest.create')(function* createEffect() {
-        const created = yield* runHttpEffect(
-          createPartyWithAuthorization(
-            {
-              candidate: {
-                partyType: 'ORGANIZATION',
-                officialIdentifiers: [],
-                evidenceRefs: ['live-review/ares'],
-                subjectEvidence: subjectEvidence.map((item) => ({
-                  ...item,
-                  subjectKey: partySubjectKeyFromString(randomUUID()),
-                })),
-                provenance: { method: 'DOCUMENT', source: 'live-acceptance' },
-                validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
-              },
-            },
-            yield* authorization(),
-            options(),
-          ),
+          GatewayScopeGrantRegistrar,
         );
-        expect(created.outcome).toBe('AMBIGUOUS');
-        assert.isOk(created.outcome === 'AMBIGUOUS');
-
-        const reviewed = yield* runHttpEffect(
-          resolveDuplicateCandidateCreateWithAuthorization(
-            {
-              caseRef: created.caseRef,
-              expectedRevision: 1,
-              reason: 'Reviewed concrete organization without a strong identifier',
-            },
-            yield* authorization(),
-            options(),
-          ),
-        );
-        assert.isOk(reviewed.partyRef);
-
-        return reviewed.partyRef;
-      });
-      const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
-        return yield* runHttpEffect(
-          executeAresLookupWithAuthorization({ ico: lookupIco }, yield* authorization(), randomUUID(), {
-            baseUrl,
-            compositionRevision,
-          }),
-        );
-      });
-      const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(partyRef: PartyRef) {
-        return yield* runHttpEffect(
-          executePartyDetailWithAuthorization(
-            { partyRef, includeFactHistory: true },
-            yield* authorization(),
-            randomUUID(),
-            { baseUrl, compositionRevision },
-          ),
-        );
-      });
-      const state = Effect.fn('AresGovernedTest.state')(() =>
-        Effect.all(
-          {
-            assertions: admin
-              .select()
-              .from(partyFactAssertions)
-              .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
-            claims: admin
-              .select()
-              .from(partyIdentifierClaims)
-              .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
-            contacts: admin.select().from(partyContactPoints).where(eq(partyContactPoints.tenantId, fixture.tenantId)),
-            core: fixture.evidence(coreAdmin),
-            identifiers: admin
-              .select()
-              .from(partyOfficialIdentifiers)
-              .where(eq(partyOfficialIdentifiers.tenantId, fixture.tenantId)),
-          },
-          { concurrency: 5 },
-        ),
-      );
-      const partyRef = yield* create();
-      const replayAuthorization = yield* authorization();
-      const replayLookup = () =>
-        runHttpEffect(
-          executeAresLookupWithAuthorization({ ico: lookupIco }, replayAuthorization, randomUUID(), {
-            baseUrl,
-            compositionRevision,
-          }),
-        );
-      yield* replayLookup();
-      const providerRequestsBeforeReplay = providerRequests;
-      const replayRejected = yield* replayLookup().pipe(
-        Effect.as(false),
-        Effect.catchTag('AresLookupAuthenticationProblem', () => Effect.succeed(true)),
-      );
-      expect(replayRejected).toBe(true);
-      expect(providerRequests).toBe(providerRequestsBeforeReplay);
-      const observation = yield* lookup();
-      const encodedObservation = yield* Schema.encodeEffect(AresSubjectEvidenceSchema)(observation);
-      const requestFor = (target: PartyRef): AresApplyRequest => ({
-        correlationId: randomUUID(),
-        observation: encodedObservation,
-        partyRef: target,
-        userConfirmed: true,
-        selections: [
-          {
-            fact: 'BUSINESS_NAME',
-            route: 'PARTY_UPDATE',
-            idempotencyKey: randomUUID(),
-            payload: {
-              partyRef: target,
-              displayName: rawSubject.obchodniJmeno,
-              expectedRevision: 1,
-              validFrom: observation.observedAt,
-              provenanceMethod: 'ARES_USER_CONFIRMED',
-              provenanceSource: 'ARES',
-            },
-          },
-          {
-            fact: 'ICO',
-            route: 'IDENTIFIER_ADD',
-            idempotencyKey: randomUUID(),
-            payload: {
-              partyRef: target,
-              identifier: {
-                identifierType: 'ICO',
-                value: '27074358',
-                verification: 'VERIFIED',
-              },
-              validFrom: observation.observedAt,
-              provenanceMethod: 'ARES_USER_CONFIRMED',
-              provenanceSource: 'ARES',
-            },
-          },
-          {
-            fact: 'REGISTERED_ADDRESS',
-            route: 'CONTACT_POINT_ADD',
-            idempotencyKey: randomUUID(),
-            payload: {
-              partyRef: target,
-              privacyClassification: 'PUBLIC',
-              validFrom: observation.observedAt,
-              contactPoint: {
-                type: 'ADDRESS',
-                address: {
-                  addressLine1: 'Main 10',
-                  city: 'Praha',
-                  countryCode: 'CZ',
-                  postalCode: '11000',
-                },
-                purposes: [
-                  {
-                    preferred: false,
-                    purpose: 'REGISTERED',
-                    registryContext: {
-                      jurisdiction: 'CZ',
-                      registryKey: 'ARES',
-                    },
-                  },
-                ],
-              },
-              provenance: {
-                authoritative: true,
-                evidenceReference: 'live-review/ares',
-                method: 'PROVIDER_OBSERVATION',
-                source: 'EXTERNAL_EVIDENCE',
-              },
-              verification: { state: 'UNVERIFIED' },
-            },
-          },
-        ],
-      });
-      const request = requestFor(partyRef);
-      const beforeUnconfirmed = yield* state();
-      const unconfirmed = yield* runHttpEffect(
-        applyAresObservation({ ...request, userConfirmed: false }, { gateway, baseUrl }).pipe(Effect.result),
-      );
-      assert.isOk('failure' in unconfirmed && Predicate.isTagged(unconfirmed.failure, 'AresApplySelectionInvalid'));
-
-      const afterUnconfirmed = yield* state();
-      expect(afterUnconfirmed.core.invocations.length).toBe(beforeUnconfirmed.core.invocations.length);
-      const applied = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
-      const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(applied);
-      assert.isOk(Predicate.isTagged(applied, 'AresApplyCompleted'), appliedMessage);
-
-      expect(applied.completed.length).toBe(3);
-      const persisted = yield* state();
-      expect(persisted.claims.length).toBe(1);
-      expect(persisted.contacts.length).toBe(1);
-      const identifierEvidence = persisted.identifiers[0]?.externalEvidence;
-      const contactEvidence = persisted.contacts[0]?.externalEvidence;
-      assert.ok(identifierEvidence);
-      assert.ok(contactEvidence);
-      expect(identifierEvidence.queryIco).toBe('27074358');
-      expect(identifierEvidence.observedAt).toBe(encodedObservation.observedAt);
-      expect(identifierEvidence.servedAt).toBe(encodedObservation.servedAt);
-      expect(identifierEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
-      expect(identifierEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
-      expect(contactEvidence.observedAt).toBe(encodedObservation.observedAt);
-      expect(contactEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
-      expect(contactEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
-      expect(persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence?.decidedAt).toBe(
-        encodedObservation.servedAt,
-      );
-      expect(persisted.core.events.length).toBe(4);
-      expect(persisted.core.outbox.length).toBe(4);
-      assert.isOk(persisted.core.invocations.every((item) => item.status === 'succeeded'));
-
-      const replay = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
-      assert.isOk(Predicate.isTagged(replay, 'AresApplyCompleted'));
-
-      expect(replay.completed.length).toBe(0);
-      expect(replay.skipped.length).toBe(3);
-      const afterReplay = yield* state();
-      expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
-      const deniedGateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
-        expect(requestedRevision).toBe(compositionRevision);
-        return sign(fixture.denied).pipe(
-          Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
-        );
-      });
-      const denied = yield* runHttpEffect(
-        applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
-      );
-      assert.isOk('failure' in denied && Predicate.isTagged(denied.failure, 'AresLookupForbiddenProblem'));
-
-      const afterDenied = yield* state();
-      expect(afterDenied.core.invocations.length).toBe(persisted.core.invocations.length);
-
-      const collisionParty = yield* create();
-      const collision = yield* runHttpEffect(applyAresObservation(requestFor(collisionParty), { gateway, baseUrl }));
-      const collisionOutcome = Match.value(collision).pipe(
-        Match.tag('AresApplyPartiallyCompleted', (outcome) => outcome),
-        Match.orElse(() => assert.fail(`Expected partial completion, received ${collision._tag}`)),
-      );
-      expect(collisionOutcome.completed.length).toBe(1);
-      expect(collisionOutcome.failed.fact).toBe('ICO');
-      expect(collisionOutcome.failed.recovery).toBe('RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
-      const afterCollision = yield* state();
-      expect(afterCollision.claims.length).toBe(1);
-      expect(afterCollision.contacts.length).toBe(1);
-      const collisionDetail = yield* detail(collisionParty);
-      expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(rawSubject.obchodniJmeno);
-
-      const erroneousParty = yield* create();
-      const logical = deriveAresEvidenceApplication({
-        canonical: {
-          archived: false,
-          displayName: null,
-          icoValues: [],
-          identityAmbiguous: false,
-          partyType: 'ORGANIZATION',
-          registeredAddresses: [],
-        },
-        decidedAt: encodedObservation.servedAt,
-        evidence: encodedObservation,
-        selectedFacts: ['BUSINESS_NAME'],
-        userConfirmed: true,
-      });
-      const [decision] = logical.factDecisions;
-      assert.isOk(decision);
-
-      yield* runHttpEffect(
-        updatePartyWithAuthorization(
-          {
-            partyRef: erroneousParty,
-            displayName: 'Clerical wrong name',
-            expectedRevision: 1,
-            validFrom: observation.observedAt,
-            provenanceMethod: 'ARES_USER_CONFIRMED',
-            provenanceSource: 'ARES',
-            externalEvidence: makeAresAppliedEvidence(logical, decision),
-          },
-          yield* authorization(),
-          options(),
-        ),
-      );
-      const erroneous = yield* detail(erroneousParty);
-      const assertion = erroneous.currentFactAssertions.find((item) => item.factKind === 'DISPLAY_NAME');
-      assert.isOk(assertion);
-
-      const correctionPayload = yield* Schema.decodeEffect(IdentityCorrectionCommandSchema)({
-        partyId: erroneousParty.resourceId,
-        factKind: 'DISPLAY_NAME' as const,
-        targetAssertionId: assertion.assertionId,
-        replacementValue: rawSubject.obchodniJmeno,
-        evidenceRefs: ['live-review/ares'],
-        evidenceSource: 'MANUAL_REVIEW' as const,
-        policyVersion: 'party-correction.v1' as const,
-        reasonCode: 'WRONG_IDENTITY_VALUE' as const,
-        provenance: { method: 'DOCUMENT_REVIEW', source: 'live-acceptance' },
-        subjectEvidence,
-      });
-      const beforeReview = yield* state();
-      const review = yield* runHttpEffect(
-        applyAresObservation(
-          {
-            correlationId: randomUUID(),
-            observation: encodedObservation,
-            partyRef: erroneousParty,
-            userConfirmed: true,
-            selections: [
-              {
-                fact: 'BUSINESS_NAME',
-                route: 'PARTY_CORRECTION',
-                idempotencyKey: randomUUID(),
-                payload: correctionPayload,
-              },
+        const compositionSnapshot = yield* partyCompositionSnapshot;
+        const fixture = yield* Effect.acquireRelease(
+          makeLiveOperationFixture({
+            databaseIdentities: PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
+            legalEntityManagerRelations: ['counterparty_manager', 'counterparty_reader'],
+            tenantManagerRelations: [
+              'party_identity_manager',
+              'party_identity_reader',
+              'party_identity_reviewer',
+              'party_relationship_manager',
             ],
-          },
-          { gateway, baseUrl },
-        ),
-      );
-      const reviewOutcome = Match.value(review).pipe(
-        Match.tag('AresApplyDeferred', (outcome) => outcome),
-        Match.orElse(() => assert.fail(`Expected deferred review, received ${review._tag}`)),
-      );
-      expect(reviewOutcome.application.outcome).toBe('CORRECTION_CANDIDATE');
-      expect(reviewOutcome.correctionCandidates[0]?.targetAssertionId).toBe(assertion.assertionId);
-      const afterReview = yield* state();
-      expect(afterReview.core.invocations.length).toBe(beforeReview.core.invocations.length);
-      yield* runHttpEffect(correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), options()));
-      const corrected = yield* detail(erroneousParty);
-      expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);
-      const correctedState = yield* state();
-      assert.isOk(
-        correctedState.assertions.some((item) => item.assertionId === assertion.assertionId && item.state !== 'ACTIVE'),
-      );
+            actionKeys: [
+              addContactPointAction,
+              addPartyOfficialIdentifierAction,
+              correctPartyFactAction,
+              createPartyAction,
+              resolveDuplicateCandidateCreateAction,
+              updatePartyAction,
+            ].map(({ descriptor }) => descriptor.actionKey),
+            // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
+            adminConnectionString: Redacted.make(connections.admin.connectionString),
+            audience: 'party-registry',
+            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+            compositionRevision: compositionSnapshot.composition.revision,
+            moduleKey: 'party.registry',
+            runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
+          }).pipe(Effect.orDie),
+          (resource) => resource.close().pipe(Effect.orDie),
+        );
+        const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+        const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
+        const coreAdmin = yield* testCoreDatabase.pipe(Effect.provideService(PgClient.PgClient, adminClient));
+        // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
+        yield* Effect.addFinalizer(() => deleteTestCoreOutbox(adminClient, fixture.tenantId).pipe(Effect.orDie));
+        // The registrar persists a gateway grant per issued assertion; remove this tenant's grants.
+        yield* addTestGatewayScopeGrantCleanup(adminClient, [fixture.tenantId]);
+        const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+        const compositionRevision = compositionSnapshot.composition.revision;
+        const apiBaseUrl = '/party-registry-api';
+        yield* pinDocumentCompositionRevision(compositionRevision);
+        const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
+        const kid = `ares-live-${yield* nextUuid}`;
+        const issuer = 'https://disposable-shell.ontos.test';
+        const publicJwk = yield* Effect.promise(exportJWK.bind(undefined, publicKey));
+        const jwk = { ...publicJwk, alg: 'EdDSA', kid, use: 'sig' };
+        const encodedPublicJwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          keys: [jwk],
+        });
+        // The operation gateway issuer contract has no requirements, so assertion IDs come from the captured service.
+        const crypto = yield* Crypto.Crypto;
+        const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(
+          principal: typeof fixture.manager & { readonly legalEntityId?: string },
+        ) {
+          const assertionId = yield* Effect.orDie(crypto.randomUUIDv4());
+          // Grants expire against PostgreSQL's clock, so the expiry is derived from the database time.
+          const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
+            select floor(extract(epoch from now()))::int as "nowSeconds"
+          `.pipe(Effect.orDie);
+          const expiresAtEpochSeconds = (databaseNow?.nowSeconds ?? 0) + 300;
+          const token = yield* Effect.promise(() =>
+            new SignJWT({
+              compositionRevision: compositionSnapshot.composition.revision,
+              principal,
+              targetBuildMarker: ultramodernApiMarker.buildMarker,
+              ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+            })
+              .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
+              .setIssuer(issuer)
+              .setAudience('party-registry')
+              .setSubject(principal.principalId)
+              .setIssuedAt()
+              .setExpirationTime(expiresAtEpochSeconds)
+              .setJti(assertionId)
+              .sign(privateKey),
+          );
+          // Shell registers each issued assertion before the token leaves the issuer.
+          const grant = {
+            assertion: Redacted.make(token),
+            audience: 'party-registry',
+            expiresAtEpochSeconds,
+            jti: assertionId,
+            principalId: principal.principalId,
+            tenantId: principal.tenantId,
+          };
+          yield* grantRegistrar
+            .register(
+              principal.legalEntityId === undefined ? grant : { ...grant, legalEntityId: principal.legalEntityId },
+            )
+            .pipe(Effect.orDie);
+          return token;
+        });
+        const authorization = () => sign(managerWithLegalEntity).pipe(Effect.map((token) => `Bearer ${token}`));
+        const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+          expect(requestedRevision).toBe(compositionRevision);
+          return sign(managerWithLegalEntity).pipe(
+            Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
+          );
+        });
+        let providerRequests = 0;
+        const provider = HttpClient.make((request, url) => {
+          expect(url.href).toBe('https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27074358');
+          providerRequests += 1;
+          return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(rawSubject)));
+        });
+        const upstream = AresSubjectServiceLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, provider)));
+        const redemption = GatewayAssertionRedemptionLive.pipe(
+          Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+          Layer.provide(makeDatabaseConfigLive(PARTY_REGISTRY_REQUEST_IDENTITY)),
+        );
+        const api = HttpApi.make('PartyRegistryApi')
+          .add(partyRegistryApi.groups.partyCommands)
+          .add(partyRegistryApi.groups.aresLookup)
+          .add(partyRegistryApi.groups.partyDetail)
+          .add(partyRegistryApi.groups.partyOfficialIdentifierHistory)
+          .add(partyRegistryApi.groups.partyContactPoints);
+        const handlers = Layer.mergeAll(
+          partyRegistryCommandsLive,
+          partyDetailReadApiLive,
+          partyOfficialIdentifierHistoryReadApiLive,
+          partyContactPointsReadApiLive,
+          aresLookupReadApiLive.pipe(Layer.provide(upstream)),
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ActionPrincipalVerifierLive,
+              makeActiveApplicationCompositionLayer(Effect.succeed(compositionSnapshot)),
+            ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
+          ),
+          Layer.provide(redemption),
+          Layer.provide(fixture.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({
+                ONTOS_GATEWAY_ISSUER: issuer,
+                ONTOS_GATEWAY_PUBLIC_JWKS: encodedPublicJwks,
+              }),
+            ),
+          ),
+        );
+        const app = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            HttpRouter.toWebHandler(
+              HttpApiBuilder.layer(api).pipe(
+                Layer.provide(handlers),
+                Layer.provideMerge(fixture.layer),
+                Layer.provideMerge(upstream),
+                Layer.provide(HttpServer.layerServices),
+                Layer.provide(
+                  Layer.effect(
+                    HttpRouter.HttpRouter,
+                    HttpRouter.HttpRouter.pipe(Effect.map((router) => router.prefixed(apiBaseUrl))),
+                  ),
+                ),
+                Layer.provide(NodeCrypto.layer),
+              ),
+              { disableLogger: true },
+            ),
+          ),
+          (resource) => Effect.promise(resource.dispose.bind(resource)).pipe(Effect.orDie),
+        );
+        const inMemoryFetch: typeof fetch = (input, init) => {
+          const request = new Request(input, init);
+          expect(new URL(request.url).pathname.startsWith(`${apiBaseUrl}/`)).toBe(true);
+          expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+          return app.handler(request, emptyRequestContext);
+        };
+        const runHttpEffect = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+          effect.pipe(Effect.provideService(FetchHttpClient.Fetch, inMemoryFetch));
+        const baseUrl = `https://party.ontos.test${apiBaseUrl}`;
+        const options = Effect.gen(function* commandOptions() {
+          return {
+            baseUrl,
+            compositionRevision,
+            correlationId: yield* nextUuid,
+            idempotencyKey: yield* nextUuid,
+          };
+        });
+        const create = Effect.fn('AresGovernedTest.create')(function* createEffect() {
+          const created = yield* runHttpEffect(
+            createPartyWithAuthorization(
+              {
+                candidate: {
+                  partyType: 'ORGANIZATION',
+                  officialIdentifiers: [],
+                  evidenceRefs: ['live-review/ares'],
+                  subjectEvidence: yield* Effect.all(subjectEvidence.map((item) => withFreshSubjectKey(item))),
+                  provenance: { method: 'DOCUMENT', source: 'live-acceptance' },
+                  validFrom: DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'),
+                },
+              },
+              yield* authorization(),
+              yield* options,
+            ),
+          );
+          expect(created.outcome).toBe('AMBIGUOUS');
+          assert.isOk(created.outcome === 'AMBIGUOUS');
 
-      assert.isOk(providerRequests >= 1);
-    }),
-);
+          const reviewed = yield* runHttpEffect(
+            resolveDuplicateCandidateCreateWithAuthorization(
+              {
+                caseRef: created.caseRef,
+                expectedRevision: 1,
+                reason: 'Reviewed concrete organization without a strong identifier',
+              },
+              yield* authorization(),
+              yield* options,
+            ),
+          );
+          assert.isOk(reviewed.partyRef);
+
+          return reviewed.partyRef;
+        });
+        const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
+          return yield* runHttpEffect(
+            executeAresLookupWithAuthorization({ ico: lookupIco }, yield* authorization(), yield* nextUuid, {
+              baseUrl,
+              compositionRevision,
+            }),
+          );
+        });
+        const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(partyRef: PartyRef) {
+          return yield* runHttpEffect(
+            executePartyDetailWithAuthorization(
+              { partyRef, includeFactHistory: true },
+              yield* authorization(),
+              yield* nextUuid,
+              { baseUrl, compositionRevision },
+            ),
+          );
+        });
+        const state = Effect.fn('AresGovernedTest.state')(() =>
+          Effect.all(
+            {
+              assertions: admin
+                .select()
+                .from(partyFactAssertions)
+                .where(eq(partyFactAssertions.tenantId, fixture.tenantId)),
+              claims: admin
+                .select()
+                .from(partyIdentifierClaims)
+                .where(eq(partyIdentifierClaims.tenantId, fixture.tenantId)),
+              contacts: admin
+                .select()
+                .from(partyContactPoints)
+                .where(eq(partyContactPoints.tenantId, fixture.tenantId)),
+              core: fixture.evidence(coreAdmin),
+              identifiers: admin
+                .select()
+                .from(partyOfficialIdentifiers)
+                .where(eq(partyOfficialIdentifiers.tenantId, fixture.tenantId)),
+            },
+            { concurrency: 5 },
+          ),
+        );
+        const partyRef = yield* create();
+        const replayAuthorization = yield* authorization();
+        const replayLookup = () =>
+          nextUuid.pipe(
+            Effect.flatMap((correlationId) =>
+              runHttpEffect(
+                executeAresLookupWithAuthorization({ ico: lookupIco }, replayAuthorization, correlationId, {
+                  baseUrl,
+                  compositionRevision,
+                }),
+              ),
+            ),
+          );
+        yield* replayLookup();
+        const providerRequestsBeforeReplay = providerRequests;
+        const replayRejected = yield* replayLookup().pipe(
+          Effect.as(false),
+          Effect.catchTag('AresLookupAuthenticationProblem', () => Effect.succeed(true)),
+        );
+        expect(replayRejected).toBe(true);
+        expect(providerRequests).toBe(providerRequestsBeforeReplay);
+        const observation = yield* lookup();
+        const encodedObservation = yield* Schema.encodeEffect(AresSubjectEvidenceSchema)(observation);
+        const requestFor = (target: PartyRef) =>
+          Effect.gen(function* aresApplyRequest() {
+            const applyRequest: AresApplyRequest = {
+              correlationId: yield* nextUuid,
+              observation: encodedObservation,
+              partyRef: target,
+              userConfirmed: true,
+              selections: [
+                {
+                  fact: 'BUSINESS_NAME',
+                  route: 'PARTY_UPDATE',
+                  idempotencyKey: yield* nextUuid,
+                  payload: {
+                    partyRef: target,
+                    displayName: rawSubject.obchodniJmeno,
+                    expectedRevision: 1,
+                    validFrom: observation.observedAt,
+                    provenanceMethod: 'ARES_USER_CONFIRMED',
+                    provenanceSource: 'ARES',
+                  },
+                },
+                {
+                  fact: 'ICO',
+                  route: 'IDENTIFIER_ADD',
+                  idempotencyKey: yield* nextUuid,
+                  payload: {
+                    partyRef: target,
+                    identifier: {
+                      identifierType: 'ICO',
+                      value: '27074358',
+                      verification: 'VERIFIED',
+                    },
+                    validFrom: observation.observedAt,
+                    provenanceMethod: 'ARES_USER_CONFIRMED',
+                    provenanceSource: 'ARES',
+                  },
+                },
+                {
+                  fact: 'REGISTERED_ADDRESS',
+                  route: 'CONTACT_POINT_ADD',
+                  idempotencyKey: yield* nextUuid,
+                  payload: {
+                    partyRef: target,
+                    privacyClassification: 'PUBLIC',
+                    validFrom: observation.observedAt,
+                    contactPoint: {
+                      type: 'ADDRESS',
+                      address: {
+                        addressLine1: 'Main 10',
+                        city: 'Praha',
+                        countryCode: 'CZ',
+                        postalCode: '11000',
+                      },
+                      purposes: [
+                        {
+                          preferred: false,
+                          purpose: 'REGISTERED',
+                          registryContext: {
+                            jurisdiction: 'CZ',
+                            registryKey: 'ARES',
+                          },
+                        },
+                      ],
+                    },
+                    provenance: {
+                      authoritative: true,
+                      evidenceReference: 'live-review/ares',
+                      method: 'PROVIDER_OBSERVATION',
+                      source: 'EXTERNAL_EVIDENCE',
+                    },
+                    verification: { state: 'UNVERIFIED' },
+                  },
+                },
+              ],
+            };
+            return applyRequest;
+          });
+        const request = yield* requestFor(partyRef);
+        const beforeUnconfirmed = yield* state();
+        const unconfirmed = yield* runHttpEffect(
+          applyAresObservation({ ...request, userConfirmed: false }, { gateway, baseUrl }).pipe(Effect.result),
+        );
+        assert.isOk('failure' in unconfirmed && Predicate.isTagged(unconfirmed.failure, 'AresApplySelectionInvalid'));
+
+        const afterUnconfirmed = yield* state();
+        expect(afterUnconfirmed.core.invocations.length).toBe(beforeUnconfirmed.core.invocations.length);
+        const applied = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
+        const appliedMessage = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(applied);
+        assert.isOk(Predicate.isTagged(applied, 'AresApplyCompleted'), appliedMessage);
+
+        expect(applied.completed.length).toBe(3);
+        const persisted = yield* state();
+        expect(persisted.claims.length).toBe(1);
+        expect(persisted.contacts.length).toBe(1);
+        const identifierEvidence = persisted.identifiers[0]?.externalEvidence;
+        const contactEvidence = persisted.contacts[0]?.externalEvidence;
+        assert.ok(identifierEvidence);
+        assert.ok(contactEvidence);
+        expect(identifierEvidence.queryIco).toBe('27074358');
+        expect(identifierEvidence.observedAt).toBe(encodedObservation.observedAt);
+        expect(identifierEvidence.servedAt).toBe(encodedObservation.servedAt);
+        expect(identifierEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
+        expect(identifierEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
+        expect(contactEvidence.observedAt).toBe(encodedObservation.observedAt);
+        expect(contactEvidence.providerChangedOn).toBe(encodedObservation.providerChangedOn);
+        expect(contactEvidence.providerRecordRef).toBe(encodedObservation.providerRecordRef);
+        expect(persisted.assertions.find((item) => item.factKind === 'DISPLAY_NAME')?.externalEvidence?.decidedAt).toBe(
+          encodedObservation.servedAt,
+        );
+        expect(persisted.core.events.length).toBe(4);
+        expect(persisted.core.outbox.length).toBe(4);
+        assert.isOk(persisted.core.invocations.every((item) => item.status === 'succeeded'));
+
+        const replay = yield* runHttpEffect(applyAresObservation(request, { gateway, baseUrl }));
+        assert.isOk(Predicate.isTagged(replay, 'AresApplyCompleted'));
+
+        expect(replay.completed.length).toBe(0);
+        expect(replay.skipped.length).toBe(3);
+        const afterReplay = yield* state();
+        expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
+        const deniedGateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+          expect(requestedRevision).toBe(compositionRevision);
+          return sign(fixture.denied).pipe(
+            Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
+          );
+        });
+        const denied = yield* runHttpEffect(
+          applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
+        );
+        assert.isOk('failure' in denied && Predicate.isTagged(denied.failure, 'AresLookupForbiddenProblem'));
+
+        const afterDenied = yield* state();
+        expect(afterDenied.core.invocations.length).toBe(persisted.core.invocations.length);
+
+        const collisionParty = yield* create();
+        const collision = yield* runHttpEffect(
+          applyAresObservation(yield* requestFor(collisionParty), { gateway, baseUrl }),
+        );
+        const collisionOutcome = Match.value(collision).pipe(
+          Match.tag('AresApplyPartiallyCompleted', (outcome) => outcome),
+          Match.orElse(() => assert.fail(`Expected partial completion, received ${collision._tag}`)),
+        );
+        expect(collisionOutcome.completed.length).toBe(1);
+        expect(collisionOutcome.failed.fact).toBe('ICO');
+        expect(collisionOutcome.failed.recovery).toBe('RESOLVE_STANDARD_ACTION_BEFORE_RETRY');
+        const afterCollision = yield* state();
+        expect(afterCollision.claims.length).toBe(1);
+        expect(afterCollision.contacts.length).toBe(1);
+        const collisionDetail = yield* detail(collisionParty);
+        expect(Option.getOrUndefined(collisionDetail.party.displayName)).toBe(rawSubject.obchodniJmeno);
+
+        const erroneousParty = yield* create();
+        const logical = deriveAresEvidenceApplication({
+          canonical: {
+            archived: false,
+            displayName: null,
+            icoValues: [],
+            identityAmbiguous: false,
+            partyType: 'ORGANIZATION',
+            registeredAddresses: [],
+          },
+          decidedAt: encodedObservation.servedAt,
+          evidence: encodedObservation,
+          selectedFacts: ['BUSINESS_NAME'],
+          userConfirmed: true,
+        });
+        const [decision] = logical.factDecisions;
+        assert.isOk(decision);
+
+        yield* runHttpEffect(
+          updatePartyWithAuthorization(
+            {
+              partyRef: erroneousParty,
+              displayName: 'Clerical wrong name',
+              expectedRevision: 1,
+              validFrom: observation.observedAt,
+              provenanceMethod: 'ARES_USER_CONFIRMED',
+              provenanceSource: 'ARES',
+              externalEvidence: makeAresAppliedEvidence(logical, decision),
+            },
+            yield* authorization(),
+            yield* options,
+          ),
+        );
+        const erroneous = yield* detail(erroneousParty);
+        const assertion = erroneous.currentFactAssertions.find((item) => item.factKind === 'DISPLAY_NAME');
+        assert.isOk(assertion);
+
+        const correctionPayload = yield* Schema.decodeEffect(IdentityCorrectionCommandSchema)({
+          partyId: erroneousParty.resourceId,
+          factKind: 'DISPLAY_NAME' as const,
+          targetAssertionId: assertion.assertionId,
+          replacementValue: rawSubject.obchodniJmeno,
+          evidenceRefs: ['live-review/ares'],
+          evidenceSource: 'MANUAL_REVIEW' as const,
+          policyVersion: 'party-correction.v1' as const,
+          reasonCode: 'WRONG_IDENTITY_VALUE' as const,
+          provenance: { method: 'DOCUMENT_REVIEW', source: 'live-acceptance' },
+          subjectEvidence,
+        });
+        const beforeReview = yield* state();
+        const review = yield* runHttpEffect(
+          applyAresObservation(
+            {
+              correlationId: yield* nextUuid,
+              observation: encodedObservation,
+              partyRef: erroneousParty,
+              userConfirmed: true,
+              selections: [
+                {
+                  fact: 'BUSINESS_NAME',
+                  route: 'PARTY_CORRECTION',
+                  idempotencyKey: yield* nextUuid,
+                  payload: correctionPayload,
+                },
+              ],
+            },
+            { gateway, baseUrl },
+          ),
+        );
+        const reviewOutcome = Match.value(review).pipe(
+          Match.tag('AresApplyDeferred', (outcome) => outcome),
+          Match.orElse(() => assert.fail(`Expected deferred review, received ${review._tag}`)),
+        );
+        expect(reviewOutcome.application.outcome).toBe('CORRECTION_CANDIDATE');
+        expect(reviewOutcome.correctionCandidates[0]?.targetAssertionId).toBe(assertion.assertionId);
+        const afterReview = yield* state();
+        expect(afterReview.core.invocations.length).toBe(beforeReview.core.invocations.length);
+        yield* runHttpEffect(
+          correctPartyFactWithAuthorization(correctionPayload, yield* authorization(), yield* options),
+        );
+        const corrected = yield* detail(erroneousParty);
+        expect(Option.getOrUndefined(corrected.party.displayName)).toBe(rawSubject.obchodniJmeno);
+        const correctedState = yield* state();
+        assert.isOk(
+          correctedState.assertions.some(
+            (item) => item.assertionId === assertion.assertionId && item.state !== 'ACTIVE',
+          ),
+        );
+
+        assert.isOk(providerRequests >= 1);
+      }),
+  );
+});

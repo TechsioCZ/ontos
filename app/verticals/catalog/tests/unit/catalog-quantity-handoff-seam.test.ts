@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -184,7 +185,7 @@ describe('Catalog quantity handoff seam', () => {
       expect(keys).toHaveLength(13);
       expect(() => Schema.encodeSync(CatalogQuantityHandoffSchema)(result)).not.toThrow();
       expect(JSON.stringify(result)).not.toMatch(/allowed|denied|minimum|multiple|customer/iu);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('never estimates missing Package Content as a default package size', () =>
@@ -199,7 +200,7 @@ describe('Catalog quantity handoff seam', () => {
       expect('packageContent' in result).toBe(false);
       expect('quantity' in result).toBe(false);
       expect(JSON.stringify(result)).not.toContain('10');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('forces new matching facts after a box changes from ten to eight', () =>
@@ -224,7 +225,7 @@ describe('Catalog quantity handoff seam', () => {
       ).prepare(request);
       expect(result.status).toBe('STALE');
       expect('packageContent' in result).toBe(false);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('keeps disclosed normalization distinct from any commercial rejection', () =>
@@ -241,7 +242,7 @@ describe('Catalog quantity handoff seam', () => {
       }
       expect(result.quantity).toMatchObject({ changed: true, notice: 'ROUNDED', requested: '2.5', resulting: '3' });
       expect(JSON.stringify(result)).not.toMatch(/reject|denied|forbidden/iu);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed on unavailable Current evidence before reading a deciding basis', () =>
@@ -270,7 +271,7 @@ describe('Catalog quantity handoff seam', () => {
         expect(result.reason).toBe('Current Product and Variant membership is not owner-attested');
       }
       expect(basisReads).toBe(0);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when the prepared divisibility basis is no longer the evidenced one', () =>
@@ -285,7 +286,7 @@ describe('Catalog quantity handoff seam', () => {
       if (result.status === 'STALE') {
         expect(result.reason).toMatch(/do not match the exact Current basis/iu);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('preserves the exact Set Composition Revision on a packaged Set', () =>
@@ -314,6 +315,6 @@ describe('Catalog quantity handoff seam', () => {
       if (result.status === 'READY') {
         expect(result.packageRevision?.setComposition).toEqual(setComposition);
       }
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

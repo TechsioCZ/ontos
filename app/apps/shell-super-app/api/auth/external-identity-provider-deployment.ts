@@ -12,7 +12,7 @@ import type {
   TrustedExternalSubjectAdmissionService,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { Config, ConfigProvider, Effect, Layer, Option, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import type { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './authentication-namespace-registry.ts';

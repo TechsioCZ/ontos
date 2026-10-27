@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   BusinessPermissionCodeSchema,
   ContextAccess,
@@ -11,7 +10,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import { ResolveExternalSubjectRequestSchema } from '@app/shared-contracts/external-identity';
 import { ExternalIdentityClient } from '@app/shared-contracts/server/external-identity-client';
-import { Context, Effect, Layer, Option, Schema } from 'effect';
+import { Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
 
 import type { EnrollmentResourceIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
@@ -70,6 +69,7 @@ export const commerceCustomerAuthorityLive = Layer.effect(
     const compositions = yield* ActiveApplicationCompositionService;
     const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
     const access = yield* ContextAccess;
+    const crypto = yield* Crypto.Crypto;
     return {
       admit: Effect.fn('CommerceCustomerAuthority.admit')(function* admit(input: CustomerAuthorityInput) {
         const active = yield* compositions.load.pipe(
@@ -84,7 +84,13 @@ export const commerceCustomerAuthorityLive = Layer.effect(
           subjectType: 'user',
         }).pipe(Effect.mapError(unavailable));
         const identity = yield* client
-          .resolveExternalSubject(request, commerceCoreIdentityClientOptions(configuration, randomUUID()))
+          .resolveExternalSubject(
+            request,
+            commerceCoreIdentityClientOptions(
+              configuration,
+              yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable)),
+            ),
+          )
           .pipe(
             Effect.mapError((cause) =>
               'status' in cause &&

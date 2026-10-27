@@ -557,7 +557,7 @@ export const ${options.exportedName} = HttpApiBuilder.group(
 
 const moduleContractFixture = (name: string, type: string, camel: string): string => {
   const schemaStem = type;
-  return `${MODULE_API_HEADER}import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+  return `${MODULE_API_HEADER}import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 ${problemKinds.map(([key, suffix, status]) => `export const ${schemaStem}${suffix}ProblemSchema = ${key === 'unavailable' ? 'makeRetryableProblemDetailsSchema' : 'makeProblemDetailsSchema'}('${schemaStem}${suffix}Problem', ${status});`).join('\n')}
 export const ${type}Api = HttpApi.make('${type}Api').add(HttpApiGroup.make('${camel}').add(HttpApiEndpoint.post('execute', '/reads/${name}', {

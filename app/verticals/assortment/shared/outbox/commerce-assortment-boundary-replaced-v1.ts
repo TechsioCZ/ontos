@@ -12,7 +12,9 @@ import {
 } from '../../shared/domain/decision-contracts.ts';
 import { AssortmentProjectionInvalidationKindSchema } from '../../shared/domain/projection-invalidation.ts';
 
-const admissionEntryRefs = (entry: (typeof AssortmentAdmissionSetInputSchema.Type.entries)[number]) => {
+const admissionEntryRefs = (
+  entry: (typeof AssortmentAdmissionSetInputSchema.Type.entries)[number],
+): readonly { readonly tenantId: string }[] => {
   if (entry.kind === 'ALL') {
     return [];
   }

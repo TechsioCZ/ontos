@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { parseSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';

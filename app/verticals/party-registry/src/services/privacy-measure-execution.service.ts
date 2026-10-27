@@ -1,10 +1,8 @@
-import { randomUUID } from 'node:crypto';
-
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { and, eq } from 'drizzle-orm';
-import { Context, DateTime, Effect, Option } from 'effect';
+import { Context, Crypto, DateTime, Effect, Option } from 'effect';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import { privacyMeasureExecutions } from '../db/schema.ts';
@@ -23,7 +21,7 @@ export interface PrivacyMeasureExecutionService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
     actionInvocationId: string,
-  ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureRejected>;
+  ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureRejected, Crypto.Crypto>;
   readonly load: (
     idempotencyKey: string,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureRejected>;
@@ -53,11 +51,11 @@ const persistenceUnavailable = (cause: unknown) =>
 interface MakeOutcomeInput {
   readonly handoff: PrivacyMeasureHandoff;
   readonly now: Date;
+  readonly outcomeId: string;
   readonly reason: string;
 }
 
-const makeOutcome = ({ handoff, now, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
-  const outcomeId = randomUUID();
+const makeOutcome = ({ handoff, now, outcomeId, reason }: MakeOutcomeInput): OwnerExecutionOutcome => {
   const instant = DateTime.formatIso(DateTime.makeUnsafe(now));
   return {
     attempt: 1,
@@ -141,9 +139,12 @@ export const privacyMeasureExecutionService = (
       }
 
       const now = yield* DateTime.nowAsDate;
+      const crypto = yield* Crypto.Crypto;
+      const outcomeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(persistenceUnavailable));
       const outcome = makeOutcome({
         handoff,
         now,
+        outcomeId,
         reason:
           'Party Registry has no approved owner semantic contract for this Privacy Measure; canonical owner data was not changed',
       });

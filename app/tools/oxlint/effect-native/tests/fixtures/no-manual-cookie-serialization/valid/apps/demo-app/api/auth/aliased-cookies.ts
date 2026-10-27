@@ -1,5 +1,5 @@
-import { Cookies as HttpCookies, HttpServerResponse as Respond } from 'effect/unstable/http';
-import * as NamespacedCookies from 'effect/unstable/http/Cookies';
+import { Cookies as HttpCookies, HttpServerResponse as Respond } from 'effect/http';
+import * as NamespacedCookies from 'effect/http/Cookies';
 
 export const writeAliased = (headers: Headers, cookies: HttpCookies.Cookies): void => {
   headers.set('Set-Cookie', HttpCookies.toSetCookieHeaders(cookies).join(', '));

@@ -542,10 +542,9 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
     const rawProofBytes = yield* ownerScope.crypto.randomBytes(32).pipe(Effect.mapError(unavailable));
     const rawProof = Redacted.make(bytesToHex(rawProofBytes));
     const digest = yield* digestRawProof(ownerScope.crypto, rawProof);
-    const reference = yield* ownerScope.crypto.randomUUIDv4.pipe(
-      Effect.mapError(unavailable),
-      Effect.flatMap(proofReference),
-    );
+    const reference = yield* ownerScope.crypto
+      .randomUUIDv4()
+      .pipe(Effect.mapError(unavailable), Effect.flatMap(proofReference));
     const [registration] = yield* ownerScope.transaction
       .invoke(registerProofRoutine, [
         input.invitationRef.resourceId,
@@ -616,10 +615,9 @@ const claimAuthorityForOwnerScope = (
       function* verifyAndConsumeInvitationProof(input: ClaimVerificationInput) {
         yield* validateClaimTenant(input);
         yield* requireInviterAuthority(ownerScope, input);
-        const attestation = yield* ownerScope.crypto.randomUUIDv4.pipe(
-          Effect.mapError(unavailable),
-          Effect.flatMap(proofReference),
-        );
+        const attestation = yield* ownerScope.crypto
+          .randomUUIDv4()
+          .pipe(Effect.mapError(unavailable), Effect.flatMap(proofReference));
         const [row] = yield* ownerScope.transaction
           .invoke(consumeProofRoutine, [
             input.invitationRef.resourceId,

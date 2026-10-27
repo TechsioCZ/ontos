@@ -3,7 +3,7 @@ import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runne
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Match, Redacted, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 
 import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
 import { partyRegistryApi } from '../shared/api.ts';

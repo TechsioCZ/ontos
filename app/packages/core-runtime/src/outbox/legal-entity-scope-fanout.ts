@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { SqlError } from 'effect/unstable/sql/SqlError';
+import { SqlError } from 'effect/sql/SqlError';
 import { CoreDatabase } from '../db/client.ts';
 import { legalEntities } from '../db/schema.ts';
 import { scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';

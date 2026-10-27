@@ -25,8 +25,8 @@ import { randomUUID } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/cli';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';

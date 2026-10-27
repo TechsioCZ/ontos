@@ -1,6 +1,6 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { defineAction } from '../../src/actions/definition.ts';
 import {

@@ -1,7 +1,7 @@
 import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { GatewayContextRequestSchema } from '@app/shared-contracts';
 import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { EnrollmentCommandRecoveryInputSchema } from '../../shared/enrollment-command-recovery-api.ts';

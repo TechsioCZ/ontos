@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
-
 import { PartyRefSchema } from '@app/party-registry/resources/party';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Clock, Context, DateTime, Duration, Effect, Option, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { SellingLegalEntityRefSchema } from '../shared/domain/profile-contracts.ts';
 import type { EnsureRetailCustomerProfileResult } from '../shared/actions/ensure-retail-customer-profile.ts';
@@ -323,7 +324,7 @@ export const retailProfileRecoveryApproval = (
       observation.partyOperation.revision,
       observation.partyOperation.resultReference ?? '',
     ]);
-    return createHash('sha256').update(canonical).digest('hex');
+    return Hex.encode(sha256(utf8ToBytes(canonical)));
   }).pipe(Effect.mapError(() => failure(CONFIGURATION_INVALID)));
 
 const commandFailure = () =>

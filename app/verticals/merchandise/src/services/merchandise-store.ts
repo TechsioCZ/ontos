@@ -7,7 +7,7 @@ import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Data, DateTime, Effect, Schema } from 'effect';
+import { Data, DateTime, Effect, Option, Schema } from 'effect';
 import type { MerchandiseAiSlice, MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandiseAiSliceSchema } from '../../shared/apis/records.ts';
 import {
@@ -16,15 +16,11 @@ import {
   grossUnitPriceMinor,
   OrderSchema,
   ProductSchema,
+  ProductIdReferenceSchema,
+  ProductVariantSchema,
   StockMovementSchema,
 } from '../../shared/domain/merchandise-model.ts';
-import type {
-  CatalogCategory,
-  Order,
-  Product,
-  ProductVariant,
-  StockMovement,
-} from '../../shared/domain/merchandise-model.ts';
+import type { CatalogCategory, Order, Product, StockMovement } from '../../shared/domain/merchandise-model.ts';
 import { ORDER_NUMBER_PREFIX } from '../../shared/domain/order-totals.ts';
 import {
   catalogHeads,
@@ -40,8 +36,8 @@ import type { StockLevels } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 
 export class MerchandiseStoreFailure extends Data.TaggedError('MerchandiseStoreFailure')<{
-  readonly reason: string;
   readonly cause?: unknown;
+  readonly reason: string;
 }> {}
 
 export type MerchandiseDb = Pick<ScopedTransactionExecutor, 'delete' | 'insert' | 'select' | 'update'>;
@@ -58,15 +54,34 @@ export const query = <A, E, R>(effect: Effect.Effect<A, E, R>, reason = 'Merchan
 const attempt = <A>(reason: string, run: () => A) =>
   Effect.try({ catch: (cause) => new MerchandiseStoreFailure({ cause, reason }), try: run });
 
-const encodeProduct = Schema.encodeSync(ProductSchema);
-const decodeProduct = Schema.decodeUnknownSync(ProductSchema);
-const encodeOrder = Schema.encodeSync(OrderSchema);
-const decodeOrder = Schema.decodeUnknownSync(OrderSchema);
-const decodeMovement = Schema.decodeUnknownSync(StockMovementSchema);
-const encodeCategoryHistory = Schema.encodeSync(Schema.Array(CatalogChangeSchema));
-const decodeCategory = Schema.decodeUnknownSync(CatalogCategorySchema);
-const encodeSlice = Schema.encodeSync(MerchandiseAiSliceSchema);
-const decodeSlice = Schema.decodeUnknownSync(MerchandiseAiSliceSchema);
+const encodeProduct = Schema.encodeEffect(ProductSchema);
+const decodeProduct = Schema.decodeUnknownEffect(ProductSchema);
+const encodeOrder = Schema.encodeEffect(OrderSchema);
+const decodeOrder = Schema.decodeUnknownEffect(OrderSchema);
+const decodeMovement = Schema.decodeUnknownEffect(StockMovementSchema);
+const encodeCategoryHistory = Schema.encodeEffect(Schema.Array(CatalogChangeSchema));
+const decodeCategory = Schema.decodeUnknownEffect(CatalogCategorySchema);
+const encodeSlice = Schema.encodeEffect(MerchandiseAiSliceSchema);
+const decodeSlice = Schema.decodeUnknownEffect(
+  Schema.OptionFromNullishOr(MerchandiseAiSliceSchema, { onNoneEncoding: null }),
+);
+const {
+  priceTiers: productTiersSchema,
+  variants: productVariantsSchema,
+  ...storedProductFields
+} = ProductSchema.fields;
+const productDocumentSchema = Schema.toEncoded(Schema.Struct(storedProductFields));
+const productDocumentWithTiersSchema = Schema.toEncoded(
+  Schema.Struct({ ...storedProductFields, priceTiers: productTiersSchema }),
+);
+const productDocumentWithVariantsSchema = Schema.toEncoded(
+  Schema.Struct({ ...storedProductFields, variants: productVariantsSchema }),
+);
+const { priceTiers: _variantTiersSchema, ...storedVariantFields } = ProductVariantSchema.fields;
+void _variantTiersSchema;
+const variantDocumentSchema = Schema.toEncoded(Schema.Struct(storedVariantFields));
+const fullProductDocumentSchema = Schema.toEncoded(ProductSchema);
+const fullVariantDocumentSchema = Schema.toEncoded(ProductVariantSchema);
 
 export const whereScope = (
   table: { readonly legalEntityId: AnyPgColumn; readonly tenantId: AnyPgColumn },
@@ -75,7 +90,9 @@ export const whereScope = (
 
 const inBatches = <T>(items: readonly T[], size: number): readonly (readonly T[])[] => {
   const batches: T[][] = [];
-  for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
+  for (let index = 0; index < items.length; index += size) {
+    batches.push(items.slice(index, index + size));
+  }
   return batches;
 };
 
@@ -83,7 +100,7 @@ const date = (value: DateTime.Utc) => DateTime.toDateUtc(value);
 export const skuKeyOf = (sku: string) => sku.trim().toLowerCase();
 
 const parameterText = (parameters: Product['parameters']) =>
-  (parameters ?? []).map(({ label, value, unit }) => `${label} ${value} ${unit}`);
+  (parameters ?? []).map(({ label, unit, value }) => `${label} ${value} ${unit}`);
 
 /** Folded search text: name, SKU, short description, parameters and every variant's name, SKU and attributes. */
 export const productSearchText = (product: Product) =>
@@ -140,11 +157,13 @@ const tierRowsOf = (
   }));
 
 /** Product row, its variant rows and its price-tier rows. Documents never repeat variants or tiers. */
-export const productRowsOf = (scope: StoreScope, product: Product, stock: StockLevels) => {
-  const encoded = encodeProduct(product) as Record<string, unknown> & {
-    readonly variants?: readonly Record<string, unknown>[];
-  };
-  const { variants: encodedVariants, priceTiers: _tiers, ...document } = encoded;
+export const productRowsOf = Effect.fn('MerchandiseStore.productRowsOf')(function* encodeProductRows(
+  scope: StoreScope,
+  product: Product,
+  stock: StockLevels,
+) {
+  const encoded = yield* encodeProduct(product);
+  const { priceTiers: _tiers, variants: encodedVariants, ...document } = encoded;
   void _tiers;
   const row: ProductRow = {
     ...scope,
@@ -157,7 +176,7 @@ export const productRowsOf = (scope: StoreScope, product: Product, stock: StockL
     createdAt: date(product.createdAt),
     currentPriceMinor: product.currentPriceMinor,
     document,
-    featuredPosition: product.featuredPosition ?? null,
+    featuredPosition: product.featuredPosition === undefined ? null : Option.getOrNull(product.featuredPosition),
     hasPhoto: hasPhoto(product),
     id: product.id,
     isAction: product.isAction === true,
@@ -202,7 +221,7 @@ export const productRowsOf = (scope: StoreScope, product: Product, stock: StockL
     ),
   ];
   return { row, tiers, variants };
-};
+});
 
 type StoredProduct = Pick<typeof products.$inferSelect, 'document' | 'id' | 'stockOnHand'>;
 type StoredVariant = Pick<
@@ -225,12 +244,64 @@ export interface HydratedProduct {
   readonly stock: StockLevels;
 }
 
+const tiersFor = (tiers: ReadonlyMap<string, readonly StoredTier[]>, productId: string, position: number) =>
+  (tiers.get(`${productId}|${position}`) ?? []).toSorted((a, b) => a.position - b.position).map(tierValue);
+
+// Relational rows replace only the document fields they own. Without replacement rows, legacy inline arrays remain.
+const decodeStoredProduct = (row: StoredProduct, keepVariants: boolean, keepTiers: boolean) => {
+  if (keepVariants) {
+    return keepTiers
+      ? Schema.decodeUnknownEffect(fullProductDocumentSchema)(row.document)
+      : Schema.decodeUnknownEffect(productDocumentWithVariantsSchema)(row.document);
+  }
+  return keepTiers
+    ? Schema.decodeUnknownEffect(productDocumentWithTiersSchema)(row.document)
+    : Schema.decodeUnknownEffect(productDocumentSchema)(row.document);
+};
+const hydrateStoredVariant = Effect.fn('MerchandiseStore.hydrateVariant')(function* hydrateVariant(
+  variant: StoredVariant,
+  tiers: ReadonlyMap<string, readonly StoredTier[]>,
+) {
+  const variantTiers = tiersFor(tiers, variant.productId, variant.position);
+  const document = yield* Schema.decodeUnknownEffect(
+    variantTiers.length === 0 ? fullVariantDocumentSchema : variantDocumentSchema,
+  )(variant.document);
+  return variantTiers.length === 0 ? document : { ...document, priceTiers: variantTiers };
+});
+const hydrateStoredProduct = Effect.fn('MerchandiseStore.hydrateProduct')(function* hydrateProduct(
+  row: StoredProduct,
+  variantRows: ReadonlyMap<string, readonly StoredVariant[]>,
+  tiers: ReadonlyMap<string, readonly StoredTier[]>,
+) {
+  const variants = (variantRows.get(row.id) ?? []).toSorted((a, b) => a.position - b.position);
+  const productTiers = tiersFor(tiers, row.id, -1);
+  const stored = yield* decodeStoredProduct(row, variants.length === 0, productTiers.length === 0);
+  const document = productTiers.length === 0 ? stored : { ...stored, priceTiers: productTiers };
+  const variantDocuments =
+    variants.length === 0
+      ? document
+      : {
+          ...document,
+          variants: yield* Effect.forEach(variants, (variant) => hydrateStoredVariant(variant, tiers), {
+            concurrency: 1,
+          }),
+        };
+  const product = yield* decodeProduct(variantDocuments);
+  const levels = new Map<string, number>();
+  for (const variant of variants) {
+    if (variant.variantId !== null) {
+      levels.set(variant.variantId, variant.stockOnHand);
+    }
+  }
+  return { product, stock: { total: row.stockOnHand, variants: levels } };
+});
+
 /** Products from their rows (variants/tiers grouped by product). Rows of other products are ignored. */
-export const hydrateProducts = (
+export const hydrateProducts = Effect.fn('MerchandiseStore.hydrateProducts')(function* hydrateProductRows(
   rows: readonly StoredProduct[],
   variantRows: readonly StoredVariant[],
   tierRows: readonly StoredTier[],
-): readonly HydratedProduct[] => {
+): Effect.fn.Return<readonly HydratedProduct[], Schema.SchemaError> {
   const variantsOf = new Map<string, StoredVariant[]>();
   for (const variant of variantRows) {
     const bucket = variantsOf.get(variant.productId) ?? [];
@@ -244,31 +315,8 @@ export const hydrateProducts = (
     bucket.push(tier);
     tiersOf.set(key, bucket);
   }
-  const tiersFor = (productId: string, variantPosition: number) => {
-    const found = (tiersOf.get(`${productId}|${variantPosition}`) ?? []).toSorted((a, b) => a.position - b.position);
-    return found.length === 0 ? {} : { priceTiers: found.map(tierValue) };
-  };
-  return rows.map((row) => {
-    const variants = (variantsOf.get(row.id) ?? []).toSorted((a, b) => a.position - b.position);
-    const product = decodeProduct({
-      ...(row.document as Record<string, unknown>),
-      ...tiersFor(row.id, -1),
-      ...(variants.length === 0
-        ? {}
-        : {
-            variants: variants.map((variant) => ({
-              ...(variant.document as Record<string, unknown>),
-              ...tiersFor(row.id, variant.position),
-            })),
-          }),
-    });
-    const levels = new Map<string, number>();
-    for (const variant of variants) {
-      if (variant.variantId !== null) levels.set(variant.variantId, variant.stockOnHand);
-    }
-    return { product, stock: { total: row.stockOnHand, variants: levels } };
-  });
-};
+  return yield* Effect.forEach(rows, (row) => hydrateStoredProduct(row, variantsOf, tiersOf), { concurrency: 1 });
+});
 
 type OrderRow = typeof orders.$inferInsert;
 
@@ -277,46 +325,56 @@ const orderSearchText = (order: Order) =>
     [order.number, order.contact?.name ?? '', order.contact?.email ?? '', order.contact?.phone ?? ''].join(' '),
   );
 
-export const orderRowOf = (scope: StoreScope, order: Order): OrderRow => ({
-  ...scope,
-  channel: order.channel ?? null,
-  clientRequestId: order.clientRequestId ?? null,
-  createdAt: date(order.createdAt),
-  document: encodeOrder(order),
-  id: order.id,
-  number: order.number,
-  opportunityId: order.opportunityId ?? null,
-  partyId: order.partyId,
-  removed: order.demoCleanup !== undefined,
-  searchText: orderSearchText(order),
-  status: order.status,
-  totalMinor: order.totalMinor,
-  updatedAt: date(order.updatedAt),
+export const orderRowOf = Effect.fn('MerchandiseStore.orderRowOf')(function* encodeOrderRow(
+  scope: StoreScope,
+  order: Order,
+) {
+  return {
+    ...scope,
+    channel: order.channel ?? null,
+    clientRequestId: order.clientRequestId ?? null,
+    createdAt: date(order.createdAt),
+    document: yield* encodeOrder(order),
+    id: order.id,
+    number: order.number,
+    opportunityId: order.opportunityId ?? null,
+    partyId: order.partyId,
+    removed: order.demoCleanup !== undefined,
+    searchText: orderSearchText(order),
+    status: order.status,
+    totalMinor: order.totalMinor,
+    updatedAt: date(order.updatedAt),
+  } satisfies OrderRow;
 });
 
-export const decodeOrderDocument = (document: unknown): Order => decodeOrder(document);
+export const decodeOrderDocument = decodeOrder;
 
 type CategoryRow = typeof categories.$inferInsert;
 
-export const categoryRowOf = (scope: StoreScope, category: CatalogCategory): CategoryRow => ({
-  ...scope,
-  description: category.description,
-  hasChildren: category.hasChildren,
-  heading: category.heading,
-  history: category.history === undefined ? null : encodeCategoryHistory(category.history),
-  id: category.id,
-  imageAlt: category.imageAlt,
-  imageSrc: category.imageSrc,
-  longDescription: category.longDescription,
-  name: category.name,
-  parentId: category.parentId,
-  position: category.position,
-  published: category.published ?? null,
-  slug: category.slug,
+export const categoryRowOf = Effect.fn('MerchandiseStore.categoryRowOf')(function* encodeCategoryRow(
+  scope: StoreScope,
+  category: CatalogCategory,
+) {
+  return {
+    ...scope,
+    description: category.description,
+    hasChildren: category.hasChildren,
+    heading: category.heading,
+    history: category.history === undefined ? null : yield* encodeCategoryHistory(category.history),
+    id: category.id,
+    imageAlt: category.imageAlt,
+    imageSrc: category.imageSrc,
+    longDescription: category.longDescription,
+    name: category.name,
+    parentId: Option.getOrNull(category.parentId),
+    position: category.position,
+    published: category.published ?? null,
+    slug: category.slug,
+  } satisfies CategoryRow;
 });
 
-export const decodeCategoryRow = (row: typeof categories.$inferSelect): CatalogCategory =>
-  decodeCategory({
+export const decodeCategoryRow = (row: typeof categories.$inferSelect) => {
+  const document = {
     description: row.description,
     hasChildren: row.hasChildren,
     heading: row.heading,
@@ -328,9 +386,10 @@ export const decodeCategoryRow = (row: typeof categories.$inferSelect): CatalogC
     parentId: row.parentId,
     position: row.position,
     slug: row.slug,
-    ...(row.published === null ? {} : { published: row.published }),
-    ...(row.history === null ? {} : { history: row.history }),
-  });
+  };
+  const published = row.published === null ? document : { ...document, published: row.published };
+  return decodeCategory(row.history === null ? published : { ...published, history: row.history });
+};
 
 type MovementRow = typeof stockMovements.$inferInsert;
 
@@ -346,55 +405,63 @@ export const movementRowOf = (scope: StoreScope, movement: StockMovement): Movem
   variantId: movement.variantId ?? null,
 });
 
-export const decodeMovementRow = (row: typeof stockMovements.$inferSelect): StockMovement =>
-  decodeMovement({
+export const decodeMovementRow = (row: typeof stockMovements.$inferSelect) => {
+  const document = {
     at: row.at.toISOString(),
     delta: row.delta,
     id: row.id,
     productId: row.productId,
     reason: row.reason,
-    ...(row.note === null ? {} : { note: row.note }),
-    ...(row.reference === null ? {} : { reference: row.reference }),
-    ...(row.variantId === null ? {} : { variantId: row.variantId }),
-  });
+  };
+  const note = row.note === null ? document : { ...document, note: row.note };
+  const reference = row.reference === null ? note : { ...note, reference: row.reference };
+  return decodeMovement(row.variantId === null ? reference : { ...reference, variantId: row.variantId });
+};
 
-export const decodeAiSlice = (value: unknown): MerchandiseAiSlice | undefined =>
-  value === null || value === undefined ? undefined : decodeSlice(value);
+export const decodeAiSlice = (value: (typeof catalogHeads.$inferSelect)['aiChanges']) =>
+  decodeSlice(value).pipe(Effect.map(Option.getOrUndefined));
 
 // ------------------------------------------------------------------------------------------------ writes
 
-const insertProductRows = (db: MerchandiseDb, rows: readonly ReturnType<typeof productRowsOf>[]) =>
-  Effect.gen(function* insertProductRows() {
-    for (const batch of inBatches(
-      rows.map((entry) => entry.row),
-      400,
-    )) {
-      yield* query(db.insert(products).values([...batch]), 'Products could not be written');
-    }
-    for (const batch of inBatches(
-      rows.flatMap((entry) => entry.variants),
-      1500,
-    )) {
-      yield* query(db.insert(productVariants).values([...batch]), 'Variants could not be written');
-    }
-    for (const batch of inBatches(
-      rows.flatMap((entry) => entry.tiers),
-      2500,
-    )) {
-      yield* query(db.insert(priceTiers).values([...batch]), 'Price tiers could not be written');
-    }
-  });
+type ProductRows = Effect.Success<ReturnType<typeof productRowsOf>>;
+const writeBatches = <A, B, E, R>(
+  rows: readonly A[],
+  size: number,
+  write: (batch: readonly A[]) => Effect.Effect<B, E, R>,
+) => Effect.forEach(inBatches(rows, size), write, { concurrency: 1, discard: true });
+const insertProductRows = Effect.fn('MerchandiseStore.insertProductRows')(function* writeProductRows(
+  db: MerchandiseDb,
+  rows: readonly ProductRows[],
+) {
+  yield* writeBatches(
+    rows.map((entry) => entry.row),
+    400,
+    (batch) => query(db.insert(products).values([...batch]), 'Products could not be written'),
+  );
+  yield* writeBatches(
+    rows.flatMap((entry) => entry.variants),
+    1500,
+    (batch) => query(db.insert(productVariants).values([...batch]), 'Variants could not be written'),
+  );
+  yield* writeBatches(
+    rows.flatMap((entry) => entry.tiers),
+    2500,
+    (batch) => query(db.insert(priceTiers).values([...batch]), 'Price tiers could not be written'),
+  );
+});
 
 /** Deletes every merchandise row of the company except its head row (seeds, demo reset). */
-export const deleteScope = (db: MerchandiseDb, scope: StoreScope) =>
-  Effect.gen(function* deleteScope() {
-    yield* query(db.delete(priceTiers).where(whereScope(priceTiers, scope)));
-    yield* query(db.delete(productVariants).where(whereScope(productVariants, scope)));
-    yield* query(db.delete(products).where(whereScope(products, scope)));
-    yield* query(db.delete(stockMovements).where(whereScope(stockMovements, scope)));
-    yield* query(db.delete(orders).where(whereScope(orders, scope)));
-    yield* query(db.delete(categories).where(whereScope(categories, scope)));
-  });
+export const deleteScope = Effect.fn('MerchandiseStore.deleteScope')(function* deleteCompanyRows(
+  db: MerchandiseDb,
+  scope: StoreScope,
+) {
+  yield* query(db.delete(priceTiers).where(whereScope(priceTiers, scope)));
+  yield* query(db.delete(productVariants).where(whereScope(productVariants, scope)));
+  yield* query(db.delete(products).where(whereScope(products, scope)));
+  yield* query(db.delete(stockMovements).where(whereScope(stockMovements, scope)));
+  yield* query(db.delete(orders).where(whereScope(orders, scope)));
+  yield* query(db.delete(categories).where(whereScope(categories, scope)));
+});
 
 /**
  * Inserts `part` in batched statements: its categories, products (stock derived from the part's movements, so a
@@ -405,32 +472,38 @@ export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart
   scope: StoreScope,
   part: MerchandiseState,
 ) {
-  const rows = yield* attempt('Snapshot does not encode', () => {
-    const byProduct = new Map<string, StockMovement[]>();
-    for (const movement of part.movements) {
-      const bucket = byProduct.get(movement.productId) ?? [];
-      bucket.push(movement);
-      byProduct.set(movement.productId, bucket);
-    }
-    return {
-      categories: (part.categories ?? []).map((category) => categoryRowOf(scope, category)),
-      movements: part.movements.map((movement) => movementRowOf(scope, movement)),
-      orders: part.orders.map((order) => orderRowOf(scope, order)),
-      products: part.products.map((product) =>
-        productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
-      ),
-    };
-  });
-  for (const batch of inBatches(rows.categories, 800)) {
-    yield* query(db.insert(categories).values([...batch]), 'Categories could not be written');
+  const byProduct = new Map<string, StockMovement[]>();
+  for (const movement of part.movements) {
+    const bucket = byProduct.get(movement.productId) ?? [];
+    bucket.push(movement);
+    byProduct.set(movement.productId, bucket);
   }
+  const rows = yield* query(
+    Effect.gen(function* encodeSnapshotRows() {
+      const categoryRows = yield* Effect.forEach(part.categories ?? [], (category) => categoryRowOf(scope, category), {
+        concurrency: 1,
+      });
+      const movementRows = part.movements.map((movement) => movementRowOf(scope, movement));
+      const orderRows = yield* Effect.forEach(part.orders, (order) => orderRowOf(scope, order), { concurrency: 1 });
+      const productRows = yield* Effect.forEach(
+        part.products,
+        (product) => productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
+        { concurrency: 1 },
+      );
+      return { categories: categoryRows, movements: movementRows, orders: orderRows, products: productRows };
+    }),
+    'Snapshot does not encode',
+  );
+  yield* writeBatches(rows.categories, 800, (batch) =>
+    query(db.insert(categories).values([...batch]), 'Categories could not be written'),
+  );
   yield* insertProductRows(db, rows.products);
-  for (const batch of inBatches(rows.movements, 2500)) {
-    yield* query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written');
-  }
-  for (const batch of inBatches(rows.orders, 400)) {
-    yield* query(db.insert(orders).values([...batch]), 'Orders could not be written');
-  }
+  yield* writeBatches(rows.movements, 2500, (batch) =>
+    query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written'),
+  );
+  yield* writeBatches(rows.orders, 400, (batch) =>
+    query(db.insert(orders).values([...batch]), 'Orders could not be written'),
+  );
 });
 
 /**
@@ -442,9 +515,8 @@ export const writeSnapshotHead = Effect.fn('MerchandiseStore.writeSnapshotHead')
   scope: StoreScope,
   head: Pick<MerchandiseState, 'aiChanges' | 'homepageFeaturedProductIds'>,
 ) {
-  const slice = yield* attempt('Snapshot does not encode', () =>
-    head.aiChanges === undefined ? null : encodeSlice(head.aiChanges),
-  );
+  const slice =
+    head.aiChanges === undefined ? null : yield* query(encodeSlice(head.aiChanges), 'Snapshot does not encode');
   const now = DateTime.toDateUtc(yield* DateTime.now);
   const featured = [...(head.homepageFeaturedProductIds ?? [])];
   const heads = yield* query(
@@ -503,11 +575,11 @@ const tierColumns = {
 export const loadProducts = Effect.fn('MerchandiseStore.loadProducts')(function* loadProducts(
   db: MerchandiseDb,
   scope: StoreScope,
-  where: SQL | undefined,
+  where?: SQL,
   options: {
     readonly limit?: number;
-    readonly orderBy?: readonly SQL[];
     readonly offset?: number;
+    readonly orderBy?: readonly SQL[];
     readonly variants?: boolean;
   } = {},
 ) {
@@ -520,7 +592,9 @@ export const loadProducts = Effect.fn('MerchandiseStore.loadProducts')(function*
     options.limit === undefined ? base : base.limit(options.limit).offset(options.offset ?? 0),
     'Products could not be read',
   );
-  if (rows.length === 0) return [];
+  if (rows.length === 0) {
+    return [];
+  }
   const ids = rows.map((row) => row.id);
   const variantRows =
     options.variants === false
@@ -545,12 +619,12 @@ export const loadProducts = Effect.fn('MerchandiseStore.loadProducts')(function*
       ),
     'Price tiers could not be read',
   );
-  return yield* attempt('Stored product does not decode', () => hydrateProducts(rows, variantRows, tierRows));
+  return yield* query(hydrateProducts(rows, variantRows, tierRows), 'Stored product does not decode');
 });
 
 export interface CatalogHead {
   readonly aiChanges: MerchandiseAiSlice | undefined;
-  readonly homepageFeaturedProductIds: readonly string[];
+  readonly homepageFeaturedProductIds: readonly (typeof ProductIdReferenceSchema.Type)[];
   readonly revision: number;
 }
 
@@ -575,12 +649,20 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
     .limit(1);
   const rows = yield* query(options.lock === true ? base.for('update') : base, 'Merchandise head could not be read');
   const [row] = rows;
-  if (row === undefined) return undefined;
-  return yield* attempt('AI changes do not decode', (): CatalogHead => ({
-    aiChanges: decodeAiSlice(row.aiChanges),
-    homepageFeaturedProductIds: row.homepageFeaturedProductIds,
-    revision: row.revision,
-  }));
+  if (row === undefined) {
+    return yield* Effect.succeed(Option.getOrUndefined(Option.none<CatalogHead>()));
+  }
+  const [aiChanges, homepageFeaturedProductIds] = yield* Effect.all(
+    [
+      query(decodeAiSlice(row.aiChanges), 'AI changes do not decode'),
+      query(
+        Schema.decodeUnknownEffect(Schema.Array(ProductIdReferenceSchema))(row.homepageFeaturedProductIds),
+        'AI changes do not decode',
+      ),
+    ],
+    { concurrency: 1 },
+  );
+  return { aiChanges, homepageFeaturedProductIds, revision: row.revision } satisfies CatalogHead;
 });
 
 /** What one command needs to see; everything else stays in the database. */
@@ -610,6 +692,75 @@ const likeEscape = (value: string) => value.replaceAll(/[\\%_]/gu, (match) => `\
 
 const orderLineProductIds = (order: Order) => order.lines.map((line) => line.productId);
 
+interface AncestorState {
+  readonly depth: number;
+  readonly loaded: readonly CatalogCategory[];
+  readonly pending: readonly string[];
+  readonly seen: ReadonlySet<string>;
+}
+const nextAncestorState = (state: AncestorState, decoded: readonly CatalogCategory[]): AncestorState => {
+  const seen = new Set([...state.seen, ...decoded.map((category) => category.id)]);
+  const pending = [
+    ...new Set(
+      decoded.flatMap((category) =>
+        Option.match(category.parentId, {
+          onNone: () => [],
+          onSome: (id) => (seen.has(id) ? [] : [id]),
+        }),
+      ),
+    ),
+  ];
+  return { depth: state.depth + 1, loaded: [...state.loaded, ...decoded], pending, seen };
+};
+const loadCategoryLevel = Effect.fn('MerchandiseStore.loadCategoryLevel')(function* loadAncestorsAtDepth(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  state: AncestorState,
+) {
+  if (state.pending.length === 0) {
+    return state;
+  }
+  const rows = yield* query(
+    db
+      .select()
+      .from(categories)
+      .where(and(whereScope(categories, scope), inArray(categories.id, state.pending))),
+    'Categories could not be read',
+  );
+  const decoded = yield* query(
+    Effect.forEach(rows, decodeCategoryRow, { concurrency: 1 }),
+    'Stored category does not decode',
+  );
+  return nextAncestorState(state, decoded);
+});
+const loadAncestorCategories = Effect.fn('MerchandiseStore.loadAncestorCategories')(function* loadAncestors(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  ids: WorkingSetRequest['categoryIds'],
+) {
+  const initial: AncestorState = { depth: 0, loaded: [], pending: [...new Set(ids)], seen: new Set() };
+  const result = yield* Effect.reduce(
+    Array.from({ length: 32 }),
+    () => initial,
+    (state) => loadCategoryLevel(db, scope, state),
+  );
+  return result.loaded;
+});
+
+const productKeyFilters = (keys: WorkingSetRequest['productKeys']): SQL[] => {
+  const filters: SQL[] = [];
+  if (keys?.sku !== undefined) {
+    filters.push(eq(products.skuKey, skuKeyOf(keys.sku)));
+  }
+  if (keys?.slug !== undefined) {
+    filters.push(sql`lower(${products.slug}) = ${keys.slug.trim().toLowerCase()}`);
+  }
+  if (keys?.slugPrefix !== undefined) {
+    filters.push(like(sql`lower(${products.slug})`, `${likeEscape(keys.slugPrefix.toLowerCase())}%`));
+  }
+  return filters;
+};
+
 /** Loads the rows `request` names under the locked head row. */
 export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(function* loadWorkingSet(
   db: MerchandiseDb,
@@ -634,8 +785,9 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
             .orderBy(asc(orders.ordinal)),
           'Orders could not be read',
         );
-  const loadedOrders = yield* attempt('Stored order does not decode', () =>
-    orderRows.map((row) => decodeOrder(row.document)),
+  const loadedOrders = yield* query(
+    Effect.forEach(orderRows, (row) => decodeOrder(row.document), { concurrency: 1 }),
+    'Stored order does not decode',
   );
   // Movements an order wrote may name products its current lines no longer list.
   const referencedProductIds =
@@ -659,14 +811,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
   const productIds = [
     ...new Set([...(request.productIds ?? []), ...loadedOrders.flatMap(orderLineProductIds), ...referencedProductIds]),
   ];
-  const keys = request.productKeys;
-  const keyFilters = [
-    ...(keys?.sku === undefined ? [] : [eq(products.skuKey, skuKeyOf(keys.sku))]),
-    ...(keys?.slug === undefined ? [] : [sql`lower(${products.slug}) = ${keys.slug.trim().toLowerCase()}`]),
-    ...(keys?.slugPrefix === undefined
-      ? []
-      : [like(sql`lower(${products.slug})`, `${likeEscape(keys.slugPrefix.toLowerCase())}%`)]),
-  ];
+  const keyFilters = productKeyFilters(request.productKeys);
   const productFilters = [...(productIds.length === 0 ? [] : [inArray(products.id, productIds)]), ...keyFilters];
   const loaded = productFilters.length === 0 ? [] : yield* loadProducts(db, scope, or(...productFilters));
   const movementRows =
@@ -688,29 +833,13 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
           'Stock movements could not be read',
         )
       : [];
-  const movements = yield* attempt('Stored movement does not decode', () => movementRows.map(decodeMovementRow));
-  const loadedCategories: CatalogCategory[] = [];
-  const seen = new Set<string>();
-  let pending = [...new Set(request.categoryIds ?? [])];
-  for (let depth = 0; depth < 32 && pending.length > 0; depth += 1) {
-    const rows = yield* query(
-      db
-        .select()
-        .from(categories)
-        .where(and(whereScope(categories, scope), inArray(categories.id, pending))),
-      'Categories could not be read',
-    );
-    const decoded = yield* attempt('Stored category does not decode', () => rows.map(decodeCategoryRow));
-    for (const category of decoded) seen.add(category.id);
-    loadedCategories.push(...decoded);
-    pending = [
-      ...new Set(
-        decoded.flatMap((category) =>
-          category.parentId === null || seen.has(category.parentId) ? [] : [category.parentId],
-        ),
-      ),
-    ];
-  }
+  const [movements, loadedCategories] = yield* Effect.all(
+    [
+      query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
+      loadAncestorCategories(db, scope, request.categoryIds),
+    ],
+    { concurrency: 1 },
+  );
   const orderNumberPattern = `^${ORDER_NUMBER_PREFIX}[0-9]+$`;
   const lastOrderNumber =
     request.lastOrderNumber === true
@@ -733,15 +862,19 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
             .limit(1),
         )).length > 0
       : undefined;
-  const state: MerchandiseState = {
-    movements,
-    orders: loadedOrders,
-    products: loaded.map((entry) => entry.product),
-    ...(request.categoryIds === undefined ? {} : { categories: loadedCategories }),
-    ...(request.aiChanges === true && head.aiChanges !== undefined ? { aiChanges: head.aiChanges } : {}),
-    ...(lastOrderNumber === undefined ? {} : { lastOrderNumber }),
-    ...(sourceCatalog === undefined ? {} : { sourceCatalog }),
-  };
+  let state: MerchandiseState = { movements, orders: loadedOrders, products: loaded.map((entry) => entry.product) };
+  if (request.categoryIds !== undefined) {
+    state = { ...state, categories: loadedCategories };
+  }
+  if (request.aiChanges === true && head.aiChanges !== undefined) {
+    state = { ...state, aiChanges: head.aiChanges };
+  }
+  if (lastOrderNumber !== undefined) {
+    state = { ...state, lastOrderNumber };
+  }
+  if (sourceCatalog !== undefined) {
+    state = { ...state, sourceCatalog };
+  }
   return {
     revision: head.revision,
     state,
@@ -756,8 +889,8 @@ const changedEntities = <T extends { readonly id: string }>(before: readonly T[]
   return after.filter((entity) => previous.get(entity.id) !== entity);
 };
 
-const productUpsertSet = (row: ProductRow) => {
-  const { tenantId: _tenant, legalEntityId: _entity, id: _id, ordinal: _ordinal, ...set } = row;
+const upsertSet = <Row extends ProductRow | OrderRow | CategoryRow>(row: Row) => {
+  const { id: _id, legalEntityId: _entity, ordinal: _ordinal, tenantId: _tenant, ...set } = row;
   void _tenant;
   void _entity;
   void _id;
@@ -765,27 +898,7 @@ const productUpsertSet = (row: ProductRow) => {
   return set;
 };
 
-const orderUpsertSet = (row: OrderRow) => {
-  const { tenantId: _tenant, legalEntityId: _entity, id: _id, ordinal: _ordinal, ...set } = row;
-  void _tenant;
-  void _entity;
-  void _id;
-  void _ordinal;
-  return set;
-};
-
-/**
- * Writes exactly what changed between the working set and the command's result: new movements, rewritten
- * products (row + variants + tiers) or only their stock columns, changed orders and categories, the AI slice, and
- * the head revision. Reducers keep unchanged entities by reference, so reference inequality marks a change.
- */
-export const persistChange = Effect.fn('MerchandiseStore.persistChange')(function* persistChange(
-  db: MerchandiseDb,
-  scope: StoreScope,
-  working: WorkingSet,
-  after: MerchandiseState,
-  now: DateTime.Utc,
-) {
+const stockChangesOf = (working: WorkingSet, after: MerchandiseState) => {
   const before = working.state;
   const knownMovements = new Set(before.movements.map((movement) => movement.id));
   const newMovements = after.movements.filter((movement) => !knownMovements.has(movement.id));
@@ -801,9 +914,13 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   const stockAfter = (productId: string): StockLevels => {
     const stored = working.stock.get(productId) ?? { total: 0, variants: new Map<string, number>() };
     const delta = deltas.get(productId);
-    if (delta === undefined) return stored;
+    if (delta === undefined) {
+      return stored;
+    }
     const variants = new Map(stored.variants);
-    for (const [variantId, change] of delta.variants) variants.set(variantId, (variants.get(variantId) ?? 0) + change);
+    for (const [variantId, change] of delta.variants) {
+      variants.set(variantId, (variants.get(variantId) ?? 0) + change);
+    }
     return { total: stored.total + delta.total, variants };
   };
   const changedProducts = changedEntities(before.products, after.products);
@@ -812,19 +929,15 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
   const unknownStock = [...deltas.keys()].filter(
     (productId) => !after.products.some((product) => product.id === productId),
   );
-  if (unknownStock.length > 0) {
-    return yield* new MerchandiseStoreFailure({ reason: `Stock movement for an unloaded product ${unknownStock[0]}` });
-  }
-  const rewritten = yield* attempt('Changed products do not encode', () =>
-    changedProducts.map((product) => productRowsOf(scope, product, stockAfter(product.id))),
-  );
-  for (const batch of inBatches(
-    newMovements.map((movement) => movementRowOf(scope, movement)),
-    2500,
-  )) {
-    yield* query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written');
-  }
-  if (rewritten.length > 0) {
+  return { changedProducts, deltas, newMovements, stockAfter, stockOnly, unknownStock };
+};
+type StockChanges = ReturnType<typeof stockChangesOf>;
+
+const persistRewrittenProducts = Effect.fn('MerchandiseStore.persistRewrittenProducts')(
+  function* persistProductDocuments(db: MerchandiseDb, scope: StoreScope, rewritten: readonly ProductRows[]) {
+    if (rewritten.length === 0) {
+      return yield* Effect.void;
+    }
     const ids = rewritten.map((entry) => entry.row.id);
     yield* query(db.delete(priceTiers).where(and(whereScope(priceTiers, scope), inArray(priceTiers.productId, ids))));
     yield* query(
@@ -832,115 +945,175 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
         .delete(productVariants)
         .where(and(whereScope(productVariants, scope), inArray(productVariants.productId, ids))),
     );
-    for (const entry of rewritten) {
-      yield* query(
-        db
-          .insert(products)
-          .values(entry.row)
-          .onConflictDoUpdate({
-            set: productUpsertSet(entry.row),
-            target: [products.tenantId, products.legalEntityId, products.id],
-          }),
-        'Product could not be written',
-      );
-    }
-    for (const batch of inBatches(
+    yield* Effect.forEach(
+      rewritten,
+      (entry) =>
+        query(
+          db
+            .insert(products)
+            .values(entry.row)
+            .onConflictDoUpdate({
+              set: upsertSet(entry.row),
+              target: [products.tenantId, products.legalEntityId, products.id],
+            }),
+          'Product could not be written',
+        ),
+      { concurrency: 1, discard: true },
+    );
+    yield* writeBatches(
       rewritten.flatMap((entry) => entry.variants),
       1500,
-    )) {
-      yield* query(db.insert(productVariants).values([...batch]), 'Variants could not be written');
-    }
-    for (const batch of inBatches(
+      (batch) => query(db.insert(productVariants).values([...batch]), 'Variants could not be written'),
+    );
+    return yield* writeBatches(
       rewritten.flatMap((entry) => entry.tiers),
       2500,
-    )) {
-      yield* query(db.insert(priceTiers).values([...batch]), 'Price tiers could not be written');
-    }
-  }
-  for (const product of stockOnly) {
-    const stock = stockAfter(product.id);
-    const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock));
-    yield* query(
-      db
-        .update(products)
-        .set(derived)
-        .where(and(whereScope(products, scope), eq(products.id, product.id))),
-      'Product stock could not be written',
+      (batch) => query(db.insert(priceTiers).values([...batch]), 'Price tiers could not be written'),
     );
-    for (const variantId of deltas.get(product.id)?.variants.keys() ?? []) {
-      yield* query(
-        db
-          .update(productVariants)
-          .set({ stockOnHand: stock.variants.get(variantId) ?? 0 })
-          .where(
-            and(
-              whereScope(productVariants, scope),
-              eq(productVariants.productId, product.id),
-              eq(productVariants.variantId, variantId),
-            ),
-          ),
-        'Variant stock could not be written',
-      );
-    }
-  }
-  const changedOrders = yield* attempt('Changed orders do not encode', () =>
-    changedEntities(before.orders, after.orders).map((order) => orderRowOf(scope, order)),
-  );
-  for (const row of changedOrders) {
-    yield* query(
-      db
-        .insert(orders)
-        .values(row)
-        .onConflictDoUpdate({ set: orderUpsertSet(row), target: [orders.tenantId, orders.legalEntityId, orders.id] }),
-      'Order could not be written',
-    );
-  }
-  const previousCategories = new Map((before.categories ?? []).map((category) => [category.id, category] as const));
-  for (const category of changedEntities(before.categories ?? [], after.categories ?? [])) {
-    const row = yield* attempt('Category does not encode', () => categoryRowOf(scope, category));
-    const { tenantId: _tenant, legalEntityId: _entity, id: _id, ordinal: _ordinal, ...set } = row;
-    void _tenant;
-    void _entity;
-    void _id;
-    void _ordinal;
-    yield* query(
-      db
-        .update(categories)
-        .set(set)
-        .where(and(whereScope(categories, scope), eq(categories.id, category.id))),
-      'Category could not be written',
-    );
-    const renamed = previousCategories.get(category.id)?.name !== category.name;
-    if (renamed) {
-      // Products of the category carry its name; one statement renames all of them, loaded or not.
-      const name = category.name.slice(0, 120);
-      const at = DateTime.formatIso(now);
+  },
+);
+
+const persistStockUpdates = Effect.fn('MerchandiseStore.persistStockUpdates')(function* persistStockColumns(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  { deltas, stockAfter, stockOnly }: StockChanges,
+) {
+  yield* Effect.forEach(
+    stockOnly,
+    Effect.fn('MerchandiseStore.persistProductStock')(function* persistProductStock(product: Product) {
+      const stock = stockAfter(product.id);
+      const derived = yield* attempt('Stock projection failed', () => derivedColumns(product, stock));
       yield* query(
         db
           .update(products)
-          .set({
-            category: name,
-            document: sql`jsonb_set(jsonb_set(${products.document}, '{category}', to_jsonb(${name}::text)), '{updatedAt}', to_jsonb(${at}::text))`,
-            updatedAt: date(now),
-          })
-          .where(and(whereScope(products, scope), eq(products.categoryId, category.id))),
-        'Category products could not be renamed',
+          .set(derived)
+          .where(and(whereScope(products, scope), eq(products.id, product.id))),
+        'Product stock could not be written',
       );
-    }
+      yield* Effect.forEach(
+        deltas.get(product.id)?.variants.keys() ?? [],
+        (variantId) =>
+          query(
+            db
+              .update(productVariants)
+              .set({ stockOnHand: stock.variants.get(variantId) ?? 0 })
+              .where(
+                and(
+                  whereScope(productVariants, scope),
+                  eq(productVariants.productId, product.id),
+                  eq(productVariants.variantId, variantId),
+                ),
+              ),
+            'Variant stock could not be written',
+          ),
+        { concurrency: 1, discard: true },
+      );
+    }),
+    { concurrency: 1, discard: true },
+  );
+});
+
+const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(function* persistCategoryDocuments(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  before: MerchandiseState,
+  after: MerchandiseState,
+  now: DateTime.Utc,
+) {
+  const previousCategories = new Map((before.categories ?? []).map((category) => [category.id, category] as const));
+  yield* Effect.forEach(
+    changedEntities(before.categories ?? [], after.categories ?? []),
+    Effect.fn('MerchandiseStore.persistCategory')(function* persistCategory(category: CatalogCategory) {
+      const row = yield* query(categoryRowOf(scope, category), 'Category does not encode');
+      yield* query(
+        db
+          .update(categories)
+          .set(upsertSet(row))
+          .where(and(whereScope(categories, scope), eq(categories.id, category.id))),
+        'Category could not be written',
+      );
+      const renamed = previousCategories.get(category.id)?.name !== category.name;
+      if (renamed) {
+        // Products of the category carry its name; one statement renames all of them, loaded or not.
+        const name = category.name.slice(0, 120);
+        const at = DateTime.formatIso(now);
+        yield* query(
+          db
+            .update(products)
+            .set({
+              category: name,
+              document: sql`jsonb_set(jsonb_set(${products.document}, '{category}', to_jsonb(${name}::text)), '{updatedAt}', to_jsonb(${at}::text))`,
+              updatedAt: date(now),
+            })
+            .where(and(whereScope(products, scope), eq(products.categoryId, category.id))),
+          'Category products could not be renamed',
+        );
+      }
+    }),
+    { concurrency: 1, discard: true },
+  );
+});
+
+/**
+ * Writes exactly what changed between the working set and the command's result: new movements, rewritten
+ * products (row + variants + tiers) or only their stock columns, changed orders and categories, the AI slice, and
+ * the head revision. Reducers keep unchanged entities by reference, so reference inequality marks a change.
+ */
+export const persistChange = Effect.fn('MerchandiseStore.persistChange')(function* persistChange(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  working: WorkingSet,
+  after: MerchandiseState,
+  now: DateTime.Utc,
+) {
+  const before = working.state;
+  const changes = stockChangesOf(working, after);
+  const { changedProducts, newMovements, stockAfter, unknownStock } = changes;
+  if (unknownStock.length > 0) {
+    return yield* new MerchandiseStoreFailure({ reason: `Stock movement for an unloaded product ${unknownStock[0]}` });
   }
+  const rewritten = yield* query(
+    Effect.forEach(changedProducts, (product) => productRowsOf(scope, product, stockAfter(product.id)), {
+      concurrency: 1,
+    }),
+    'Changed products do not encode',
+  );
+  yield* writeBatches(
+    newMovements.map((movement) => movementRowOf(scope, movement)),
+    2500,
+    (batch) => query(db.insert(stockMovements).values([...batch]), 'Stock movements could not be written'),
+  );
+  yield* persistRewrittenProducts(db, scope, rewritten);
+  yield* persistStockUpdates(db, scope, changes);
+  const changedOrders = yield* query(
+    Effect.forEach(changedEntities(before.orders, after.orders), (order) => orderRowOf(scope, order), {
+      concurrency: 1,
+    }),
+    'Changed orders do not encode',
+  );
+  yield* Effect.forEach(
+    changedOrders,
+    (row) =>
+      query(
+        db
+          .insert(orders)
+          .values(row)
+          .onConflictDoUpdate({ set: upsertSet(row), target: [orders.tenantId, orders.legalEntityId, orders.id] }),
+        'Order could not be written',
+      ),
+    { concurrency: 1, discard: true },
+  );
+  yield* persistCategories(db, scope, before, after, now);
   const sliceChanged = after.aiChanges !== before.aiChanges;
   const slice =
     sliceChanged && after.aiChanges !== undefined
-      ? yield* attempt('AI changes do not encode', () => encodeSlice(after.aiChanges as MerchandiseAiSlice))
+      ? yield* query(encodeSlice(after.aiChanges), 'AI changes do not encode')
       : undefined;
+  const update = { revision: working.revision + 1, updatedAt: date(now) };
   const heads = yield* query(
     db
       .update(catalogHeads)
-      .set({
-        revision: working.revision + 1,
-        updatedAt: date(now),
-        ...(sliceChanged ? { aiChanges: slice ?? null } : {}),
-      })
+      .set(sliceChanged ? { ...update, aiChanges: slice ?? null } : update)
       .where(and(whereScope(catalogHeads, scope), eq(catalogHeads.revision, working.revision)))
       .returning({ revision: catalogHeads.revision }),
     'Merchandise head could not be written',
@@ -954,30 +1127,48 @@ export const readSnapshot = Effect.fn('MerchandiseStore.readSnapshot')(function*
   scope: StoreScope,
 ) {
   const head = yield* loadHead(db, scope, { aiChanges: true });
-  if (head === undefined) return undefined;
-  const loaded = yield* loadProducts(db, scope, undefined);
-  const movementRows = yield* query(
-    db.select().from(stockMovements).where(whereScope(stockMovements, scope)).orderBy(asc(stockMovements.ordinal)),
+  if (head === undefined) {
+    return Option.getOrUndefined(Option.none<Pick<WorkingSet, 'revision' | 'state'>>());
+  }
+  const [loaded, movementRows, orderRows, categoryRows] = yield* Effect.all(
+    [
+      loadProducts(db, scope),
+      query(
+        db.select().from(stockMovements).where(whereScope(stockMovements, scope)).orderBy(asc(stockMovements.ordinal)),
+      ),
+      query(
+        db
+          .select({ document: orders.document })
+          .from(orders)
+          .where(whereScope(orders, scope))
+          .orderBy(asc(orders.ordinal)),
+      ),
+      query(db.select().from(categories).where(whereScope(categories, scope)).orderBy(asc(categories.ordinal))),
+    ],
+    { concurrency: 1 },
   );
-  const orderRows = yield* query(
-    db.select({ document: orders.document }).from(orders).where(whereScope(orders, scope)).orderBy(asc(orders.ordinal)),
+  return yield* query(
+    Effect.gen(function* decodeSnapshot() {
+      const movements = yield* Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 });
+      const decodedOrders = yield* Effect.forEach(orderRows, (row) => decodeOrder(row.document), { concurrency: 1 });
+      let state: MerchandiseState = {
+        movements,
+        orders: decodedOrders,
+        products: loaded.map((entry) => entry.product),
+      };
+      if (categoryRows.length > 0) {
+        state = { ...state, categories: yield* Effect.forEach(categoryRows, decodeCategoryRow, { concurrency: 1 }) };
+      }
+      if (head.homepageFeaturedProductIds.length > 0) {
+        state = { ...state, homepageFeaturedProductIds: [...head.homepageFeaturedProductIds] };
+      }
+      if (head.aiChanges !== undefined) {
+        state = { ...state, aiChanges: head.aiChanges };
+      }
+      return { revision: head.revision, state };
+    }),
+    'Stored snapshot does not decode',
   );
-  const categoryRows = yield* query(
-    db.select().from(categories).where(whereScope(categories, scope)).orderBy(asc(categories.ordinal)),
-  );
-  return yield* attempt('Stored snapshot does not decode', () => ({
-    revision: head.revision,
-    state: {
-      movements: movementRows.map(decodeMovementRow),
-      orders: orderRows.map((row) => decodeOrder(row.document)),
-      products: loaded.map((entry) => entry.product),
-      ...(categoryRows.length === 0 ? {} : { categories: categoryRows.map(decodeCategoryRow) }),
-      ...(head.homepageFeaturedProductIds.length === 0
-        ? {}
-        : { homepageFeaturedProductIds: [...head.homepageFeaturedProductIds] }),
-      ...(head.aiChanges === undefined ? {} : { aiChanges: head.aiChanges }),
-    } satisfies MerchandiseState,
-  }));
 });
 
-export type { ProductVariant };
+export type { ProductVariant } from '../../shared/domain/merchandise-model.ts';

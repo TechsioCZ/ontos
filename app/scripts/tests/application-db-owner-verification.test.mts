@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, FileSystem, Schedule, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { ownerVerifierPaths, verifyOwnerSchema } from '../verify-application-db-schema.mts';
 
@@ -116,7 +116,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       const runnerSource = `
         import { NodeRuntime, NodeServices } from '@effect/platform-node';
         import { Effect, Exit } from 'effect';
-        import { Reactivity } from 'effect/unstable/reactivity';
+        import { Reactivity } from 'effect/reactivity';
         import { verifyOwnerSchema } from ${encodeJson(verifierUrl.href)};
         const main = verifyOwnerSchema(${encodeJson(fixture.file)}).pipe(Effect.provide(NodeServices.layer));
         ${source.slice(footerOffset)}

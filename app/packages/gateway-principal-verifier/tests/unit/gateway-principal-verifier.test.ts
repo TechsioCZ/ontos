@@ -1,4 +1,4 @@
-import { HttpServerRequest } from 'effect/unstable/http';
+import { HttpServerRequest } from 'effect/http';
 import {
   ActiveApplicationCompositionService,
   GatewayAssertionRedemptionUnavailableError,

@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { NodeServices } from '@effect/platform-node';
 import { Clock, Config, ConfigProvider, Console, Effect, Exit, FileSystem, Path, Redacted, Schema } from 'effect';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
 import { demoLegalEntityId } from './fixture-ids.mts';
 

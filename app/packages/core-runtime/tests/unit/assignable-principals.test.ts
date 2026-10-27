@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { OperationalScope } from '../../src/operations/context.ts';

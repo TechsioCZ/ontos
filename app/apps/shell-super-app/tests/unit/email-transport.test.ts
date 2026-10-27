@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@rstest/core';
+import { describe, expect, it } from 'effect-rstest';
+import { Redacted } from 'effect';
 import { isDispatchAuthorized, parseDeliveryQuery } from '../../api/email/transport.ts';
 
 const query = (parameters: string) => parseDeliveryQuery(new URL(`https://shell.test/email/deliveries?${parameters}`));
@@ -9,9 +10,8 @@ describe('email endpoint policy', () => {
     expect(query('source=rent-reminder')).toBeNull();
     expect(query('source=unknown&subjectId=x')).toBeNull();
     expect(query('source=rent-reminder&subjectId=')).toBeNull();
-    expect(
-      query(`source=rent-reminder&${Array.from({ length: 201 }, (_, index) => `subjectId=${index}`).join('&')}`),
-    ).toBeNull();
+    const selectors = Array.from({ length: 201 }, (_, index) => `subjectId=${index}`).join('&');
+    expect(query(`source=rent-reminder&${selectors}`)).toBeNull();
   });
   it('allows buyer access only for one order number plus the checkout recipient', () => {
     expect(query('source=akros-order&subjectNumber=OBJ-1&recipient=buyer%40real.dev')?.recipient).toBe(
@@ -25,11 +25,20 @@ describe('email endpoint policy', () => {
   });
   it('fails closed for an absent, empty, or wrong dispatch secret and accepts only the bearer header', () => {
     const headers = new Headers({ authorization: 'Bearer fixture-secret' });
-    expect(isDispatchAuthorized(headers, undefined)).toBe(false);
-    expect(isDispatchAuthorized(headers, '')).toBe(false);
-    expect(isDispatchAuthorized(headers, 'different')).toBe(false);
-    expect(isDispatchAuthorized(new Headers(), 'fixture-secret')).toBe(false);
-    expect(isDispatchAuthorized(headers, 'fixture-secret')).toBe(true);
-    expect(isDispatchAuthorized(new Headers({ authorization: 'fixture-secret' }), 'fixture-secret')).toBe(false);
+    const configuration = new Map([
+      ['configured', Redacted.make('fixture-secret')],
+      ['different', Redacted.make('different')],
+      ['empty', Redacted.make('')],
+      ['whitespace', Redacted.make('   ')],
+    ]);
+    expect(isDispatchAuthorized(headers, configuration.get('missing'))).toBe(false);
+    expect(isDispatchAuthorized(headers, configuration.get('empty'))).toBe(false);
+    expect(isDispatchAuthorized(headers, configuration.get('whitespace'))).toBe(false);
+    expect(isDispatchAuthorized(headers, configuration.get('different'))).toBe(false);
+    expect(isDispatchAuthorized(new Headers(), configuration.get('configured'))).toBe(false);
+    expect(isDispatchAuthorized(headers, configuration.get('configured'))).toBe(true);
+    expect(
+      isDispatchAuthorized(new Headers({ authorization: 'fixture-secret' }), configuration.get('configured')),
+    ).toBe(false);
   });
 });

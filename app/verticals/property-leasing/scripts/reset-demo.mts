@@ -4,8 +4,8 @@ import { PgClient } from '@effect/sql-pg';
 import { defineRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/cli';
+import { Reactivity } from 'effect/reactivity';
 import { OccupancyStateSchema } from '../shared/apis/records.ts';
 import { occupancyState } from '../src/database/schema.ts';
 

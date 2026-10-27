@@ -3,12 +3,12 @@
 // Old JSONB rows must still decode: add new fields as `Schema.optionalKey(...)` or reseed.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
-import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, opsIdOf } from './common.ts';
+import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, OpsIdSchema } from './common.ts';
 import { StoredFileRefSchema } from './documents.ts';
 
-export const SecurityDeviceIdSchema = opsIdOf('FacilitySecurityDeviceId');
+export const SecurityDeviceIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityDeviceId'));
 export type SecurityDeviceId = typeof SecurityDeviceIdSchema.Type;
-export const SecurityIncidentIdSchema = opsIdOf('FacilitySecurityIncidentId');
+export const SecurityIncidentIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityIncidentId'));
 export type SecurityIncidentId = typeof SecurityIncidentIdSchema.Type;
 
 /** S11: camera / access control / alarm / other. */

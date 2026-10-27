@@ -7,7 +7,7 @@
 // readings of the same meter with the same unit of measure (S04-01); the first reading has no consumption (S04-02).
 // Voided readings stay in the history (who/when/why) and are skipped by every calculation.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 import {
   AuditFieldsSchema,
   FileIdSchema,
@@ -16,12 +16,12 @@ import {
   NoteSchema,
   PropertyRefSchema,
   TextSchema,
-  opsIdOf,
+  OpsIdSchema,
 } from './common.ts';
 
-export const MeterIdSchema = opsIdOf('FacilityMeterId');
+export const MeterIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityMeterId'));
 export type MeterId = typeof MeterIdSchema.Type;
-export const MeterReadingIdSchema = opsIdOf('FacilityMeterReadingId');
+export const MeterReadingIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityMeterReadingId'));
 export type MeterReadingId = typeof MeterReadingIdSchema.Type;
 
 export const meterMedia = ['ELECTRICITY', 'WATER', 'GAS', 'HEAT', 'OTHER'] as const;
@@ -58,8 +58,8 @@ export const MeterReadingSchema = Schema.Struct({
   /** Unit of measure at the time of the reading (snapshot; consumption is only computed for equal units). */
   unit: TextSchema(16),
   /** Responsible person (odpovědná osoba) as typed; the authenticated author is `createdBy`. */
-  readBy: Schema.optionalKey(TextSchema(120)),
   note: Schema.optionalKey(NoteSchema),
+  readBy: Schema.optionalKey(TextSchema(120)),
   /** Cost in CZK minor units for the period that ends with this reading (náklad za období). */
   costMinor: Schema.optionalKey(MinorAmountSchema),
   photo: Schema.optionalKey(MeterPhotoSchema),
@@ -70,11 +70,11 @@ export type MeterReading = typeof MeterReadingSchema.Type;
 export const MeterSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
   id: MeterIdSchema,
-  serialNumber: TextSchema(64),
-  medium: MeterMediumSchema,
-  unit: TextSchema(16),
   location: Schema.optionalKey(PropertyRefSchema),
+  medium: MeterMediumSchema,
   note: Schema.optionalKey(NoteSchema),
+  serialNumber: TextSchema(64),
+  unit: TextSchema(16),
   /** Odběrné místo (EAN / EIC / číslo odběrného místa). */
   supplyPoint: Schema.optionalKey(TextSchema(120)),
   /** Dodavatel média. */
@@ -83,8 +83,8 @@ export const MeterSchema = Schema.Struct({
   consumer: Schema.optionalKey(TextSchema(200)),
   /** Smlouva s dodavatelem (number or name). */
   contract: Schema.optionalKey(TextSchema(200)),
-  status: Schema.optionalKey(MeterStatusSchema),
   readings: Schema.optionalKey(Schema.Array(MeterReadingSchema)),
+  status: Schema.optionalKey(MeterStatusSchema),
 });
 export type Meter = typeof MeterSchema.Type;
 
@@ -105,7 +105,8 @@ export const emptyMetersState: MetersStateEncoded = { meters: [] };
 export const ANOMALY_THRESHOLD = 0.3;
 
 const DAY_MS = 86_400_000;
-const dayNumber = (date: string): number => Math.round(Date.parse(`${date}T00:00:00Z`) / DAY_MS);
+const dayNumber = (date: string): number =>
+  Math.round(DateTime.toEpochMillis(DateTime.makeUnsafe(`${date}T00:00:00Z`)) / DAY_MS);
 /** Whole days between two ISO dates (b - a). */
 export const daysBetween = (from: string, to: string): number => dayNumber(to) - dayNumber(from);
 
@@ -113,27 +114,24 @@ export const isValidReading = (reading: MeterReading): boolean => reading.voided
 
 /** Valid readings sorted by date (oldest first). */
 export const validReadingsOf = (meter: Pick<Meter, 'readings'>): readonly MeterReading[] =>
-  [...(meter.readings ?? [])].filter(isValidReading).sort((left, right) => left.date.localeCompare(right.date));
+  (meter.readings ?? []).filter(isValidReading).toSorted((left, right) => left.date.localeCompare(right.date));
 
-export type ReadingRowStatus =
-  /** First valid reading of the meter: no consumption can be stated (S04-02). */
-  | 'first'
-  /** Previous reading uses a different unit of measure: no difference is computed (S04 rule). */
-  | 'unitChanged'
-  | 'ok';
+/** First readings and unit changes have no comparable consumption. */
+export const ReadingRowStatusSchema = Schema.Literals(['first', 'unitChanged', 'ok']);
+export type ReadingRowStatus = typeof ReadingRowStatusSchema.Type;
 
 export interface ReadingRow {
-  readonly reading: MeterReading;
-  readonly previous: MeterReading | undefined;
-  readonly status: ReadingRowStatus;
-  /** value − previous.value, only when status is `ok`. */
-  readonly consumption: number | undefined;
-  readonly days: number | undefined;
-  /** Consumption per day, only when status is `ok` and days > 0. */
-  readonly dailyRate: number | undefined;
+  readonly anomaly: boolean;
   /** Change of the daily rate against the previous `ok` period (0.45 = +45 %). */
   readonly change: number | undefined;
-  readonly anomaly: boolean;
+  /** value − previous.value, only when status is `ok`. */
+  readonly consumption: number | undefined;
+  /** Consumption per day, only when status is `ok` and days > 0. */
+  readonly dailyRate: number | undefined;
+  readonly days: number | undefined;
+  readonly previous: MeterReading | undefined;
+  readonly reading: MeterReading;
+  readonly status: ReadingRowStatus;
 }
 
 /** History rows of the valid readings (oldest first) with truthful consumption and anomaly flags. */
@@ -141,23 +139,26 @@ export const readingRows = (meter: Pick<Meter, 'readings'>): readonly ReadingRow
   const readings = validReadingsOf(meter);
   const rows: ReadingRow[] = [];
   let previousRate: number | undefined;
-  readings.forEach((reading, index) => {
+  for (const [index, reading] of readings.entries()) {
     const previous = index === 0 ? undefined : readings[index - 1];
+    let status: ReadingRowStatus = 'ok';
+    let consumption: number | undefined;
+    let days: number | undefined;
+    let dailyRate: number | undefined;
+    let change: number | undefined;
     if (previous === undefined) {
-      rows.push({ anomaly: false, change: undefined, consumption: undefined, dailyRate: undefined, days: undefined, previous, reading, status: 'first' });
-      previousRate = undefined;
-      return;
+      status = 'first';
+    } else if (previous.unit === reading.unit) {
+      consumption = Math.round((reading.value - previous.value) * 1000) / 1000;
+      days = daysBetween(previous.date, reading.date);
+      dailyRate = days > 0 ? consumption / days : undefined;
+      change =
+        dailyRate !== undefined && previousRate !== undefined && previousRate > 0
+          ? dailyRate / previousRate - 1
+          : undefined;
+    } else {
+      status = 'unitChanged';
     }
-    if (previous.unit !== reading.unit) {
-      rows.push({ anomaly: false, change: undefined, consumption: undefined, dailyRate: undefined, days: undefined, previous, reading, status: 'unitChanged' });
-      previousRate = undefined;
-      return;
-    }
-    const consumption = Math.round((reading.value - previous.value) * 1000) / 1000;
-    const days = daysBetween(previous.date, reading.date);
-    const dailyRate = days > 0 ? consumption / days : undefined;
-    const change =
-      dailyRate !== undefined && previousRate !== undefined && previousRate > 0 ? dailyRate / previousRate - 1 : undefined;
     rows.push({
       anomaly: change !== undefined && change > ANOMALY_THRESHOLD,
       change,
@@ -166,14 +167,21 @@ export const readingRows = (meter: Pick<Meter, 'readings'>): readonly ReadingRow
       days,
       previous,
       reading,
-      status: 'ok',
+      status,
     });
     previousRate = dailyRate;
-  });
+  }
   return rows;
 };
 
-export type ReadingProblem = 'future' | 'duplicateDate' | 'lowerThanPrevious' | 'higherThanNext' | 'retired';
+export const ReadingProblemSchema = Schema.Literals([
+  'future',
+  'duplicateDate',
+  'lowerThanPrevious',
+  'higherThanNext',
+  'retired',
+]);
+export type ReadingProblem = typeof ReadingProblemSchema.Type;
 
 /**
  * Validates a new reading against the meter's valid history. Used by the reducer (authoritative) and by the form
@@ -197,7 +205,7 @@ export const readingProblem = (
   }
   // Only readings in the meter's current unit are comparable (a unit change starts a new comparable series).
   const comparable = readings.filter((reading) => reading.unit === meter.unit);
-  const previous = comparable.filter((reading) => reading.date < draft.date).at(-1);
+  const previous = comparable.findLast((reading) => reading.date < draft.date);
   if (previous !== undefined && draft.value < previous.value) {
     return 'lowerThanPrevious';
   }
@@ -216,23 +224,21 @@ export const ANOMALY_WINDOW_DAYS = 62;
 
 /** The latest anomalous period closed within the highlight window before `today`, if any. */
 export const recentAnomalyRow = (meter: Pick<Meter, 'readings'>, today: string): ReadingRow | undefined =>
-  readingRows(meter)
-    .filter((row) => row.anomaly && daysBetween(row.reading.date, today) <= ANOMALY_WINDOW_DAYS)
-    .at(-1);
+  readingRows(meter).findLast((row) => row.anomaly && daysBetween(row.reading.date, today) <= ANOMALY_WINDOW_DAYS);
 
 /** `YYYY-MM` of an ISO date. */
 export const monthOf = (date: string): string => date.slice(0, 7);
 
 export interface MonthlyPoint {
-  readonly month: string;
-  readonly medium: MeterMedium;
-  readonly unit: string;
+  readonly anomaly: boolean;
   readonly consumption: number;
   /** Sum of known costs; `undefined` when no period of that month carries a cost. */
   readonly costMinor: number | undefined;
+  readonly medium: MeterMedium;
+  readonly month: string;
   /** Number of periods whose cost is missing (shown as „bez dat“, never as 0). */
   readonly periodsWithoutCost: number;
-  readonly anomaly: boolean;
+  readonly unit: string;
 }
 
 /**
@@ -247,27 +253,29 @@ export const monthlySeries = (meters: readonly Meter[]): readonly MonthlyPoint[]
         continue;
       }
       const month = monthOf(row.reading.date);
+      const { costMinor } = row.reading;
       const key = `${month}|${meter.medium}|${row.reading.unit}`;
-      const bucket = buckets.get(key) ?? {
+      const previousBucket = buckets.get(key);
+      const bucket = previousBucket ?? {
         anomaly: false,
         consumption: 0,
-        costMinor: undefined,
+        costMinor,
         medium: meter.medium,
         month,
         periodsWithoutCost: 0,
         unit: row.reading.unit,
       };
       bucket.consumption = Math.round((bucket.consumption + row.consumption) * 1000) / 1000;
-      if (row.reading.costMinor === undefined) {
+      if (costMinor === undefined) {
         bucket.periodsWithoutCost += 1;
       } else {
-        bucket.costMinor = (bucket.costMinor ?? 0) + row.reading.costMinor;
+        bucket.costMinor = (previousBucket?.costMinor ?? 0) + costMinor;
       }
-      bucket.anomaly = bucket.anomaly || row.anomaly;
+      bucket.anomaly ||= row.anomaly;
       buckets.set(key, bucket);
     }
   }
-  return [...buckets.values()].sort(
+  return [...buckets.values()].toSorted(
     (left, right) => left.month.localeCompare(right.month) || left.medium.localeCompare(right.medium),
   );
 };

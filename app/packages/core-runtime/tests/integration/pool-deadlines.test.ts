@@ -1,10 +1,11 @@
-import { Duplex } from 'node:stream';
-
+import { NodeSocketServer } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Effect, Function as Fn, Layer, Predicate, Redacted } from 'effect';
+import { Context, Effect, Layer, Match, Predicate, Redacted, Stream } from 'effect';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { NetAddress } from 'effect/net';
+import { Reactivity } from 'effect/reactivity';
+import { Socket } from 'effect/socket';
 
 import { DatabaseConfigLive, loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { CoreAdminDatabaseLive, CoreDatabase, CoreDatabaseLive, makeCoreDatabase } from '../../src/db/client.ts';
@@ -72,14 +73,18 @@ it.live('refuses a failed PostgreSQL role query without exposing the driver fail
   }),
 );
 
-/** A transport that accepts the startup packet and never answers, so only the connect deadline ends it. */
-const silentTransport = () =>
-  new Duplex({
-    read: Fn.constVoid,
-    write: (_chunk, _encoding, written) => {
-      written();
-    },
-  });
+/**
+ * A TCP listener that reads the startup packet and never answers, so only the connect deadline ends it.
+ * Each handler drains its socket, so the listener owns every accepted connection and can close.
+ */
+const silentListener = Effect.gen(function* silentListener() {
+  const server = yield* NodeSocketServer.make({ host: '127.0.0.1', port: 0 });
+  yield* server.run((socket) => Stream.runDrain(Socket.toStream(socket))).pipe(Effect.forkScoped);
+  return yield* Match.value(server.address).pipe(
+    Match.when(NetAddress.isInetAddress, (inetAddress) => Effect.succeed(inetAddress)),
+    Match.orElse(() => Effect.die('Silent PostgreSQL listener did not bind to TCP')),
+  );
+});
 
 it.live('applies PostgreSQL connect and statement deadlines', () =>
   Effect.gen(function* poolDeadlines1() {
@@ -116,7 +121,10 @@ it.live('applies PostgreSQL connect and statement deadlines', () =>
     expect(afterCancellation[0]?.pid).toBe(pid);
     expect(afterCancellation[0]?.ok).toBe(1);
 
-    const timeout = yield* Effect.flip(session({ stream: silentTransport }));
+    const silentAddress = yield* silentListener;
+    const timeout = yield* Effect.flip(
+      session({ host: NetAddress.formatIp(silentAddress.address), port: silentAddress.port }),
+    );
     expect(Predicate.isTagged(timeout.reason, 'ConnectionError')).toBe(true);
     expect(timeout.message).toMatch(/timed out/iu);
 

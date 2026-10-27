@@ -11,6 +11,11 @@ import {
   PARTY_REGISTRY_WORKER_IDENTITY,
 } from '../../shared/database-identities.ts';
 import {
+  PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR as pureDescriptor,
+  PARTY_REGISTRY_REQUEST_IDENTITY as pureRequestIdentity,
+  PARTY_REGISTRY_WORKER_IDENTITY as pureWorkerIdentity,
+} from '../../shared/database-identity-data.ts';
+import {
   PARTY_REGISTRY_REQUEST_DATABASE_GRANTS,
   PARTY_REGISTRY_WORKER_DATABASE_GRANTS,
   PRUNE_EXPIRED_GATEWAY_ASSERTION_REDEMPTIONS_SIGNATURE,
@@ -69,6 +74,14 @@ it('freezes the public owner descriptor and every nested identity fact', () => {
   ]) {
     expect(Object.isFrozen(value)).toBe(true);
   }
+});
+
+it('re-exports the same pure identity facts while retaining validated runtime enrollment', () => {
+  expect(PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR).toBe(pureDescriptor);
+  expect(PARTY_REGISTRY_REQUEST_IDENTITY).toBe(pureRequestIdentity);
+  expect(PARTY_REGISTRY_WORKER_IDENTITY).toBe(pureWorkerIdentity);
+  expect(PARTY_REGISTRY_REQUEST_IDENTITY).toBe(pureDescriptor.request);
+  expect(PARTY_REGISTRY_WORKER_IDENTITY).toBe(pureDescriptor.worker);
 });
 
 it('grants only request-scope trust routines and grants none to the worker', () => {

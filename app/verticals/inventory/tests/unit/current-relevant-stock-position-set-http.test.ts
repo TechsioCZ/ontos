@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import {
   ActionRuntime,
   GatewayAssertionRedemptionService,
@@ -16,11 +14,12 @@ import { executeCurrentRelevantStockPositionSetWithAuthorization } from '@app/in
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bff-runtime';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
+import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { ConfigProvider, Context, Effect, Layer, Result, Schema } from 'effect';
+import { ConfigProvider, Context, Crypto, Effect, Layer, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { FetchHttpClient } from 'effect/http';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeInventoryApiRuntime } from '../../api/index.ts';
@@ -52,6 +51,9 @@ const unusedActionRuntime: ActionRuntimeService = {
   runAction: () => Effect.die('Action runtime is outside the Position-set Read proof'),
 };
 
+// The registered Read runtime takes evidence identifiers from Crypto; each live test builds Node Crypto in its scope.
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+
 const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegisteredRuntime')(
   function* makeRegisteredPositionSetRuntime(options: {
     readonly denyPosition?: boolean;
@@ -73,6 +75,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       kid: 'inventory-position-set-runtime',
       use: 'sig',
     };
+    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
     const token = yield* Effect.promise(() =>
       new SignJWT({
         compositionRevision: composition.composition.revision,
@@ -94,7 +97,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
         .setSubject(scope.principalId)
         .setIssuedAt()
         .setExpirationTime('5m')
-        .setJti(randomUUID())
+        .setJti(jti)
         .sign(privateKey),
     );
     const harness = yield* makeReadTestHarness({
@@ -198,7 +201,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       // Allowed evidence follows the committed owner transaction.
       expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
       expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
-    }),
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.live('registered runtime preserves proven empty broader membership', () =>
@@ -214,7 +217,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().statuses).toEqual([200]);
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
-    }),
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.live('registered runtime releases no complete set when a candidate Position is forbidden', () =>
@@ -232,7 +235,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
       expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
       expect(runtime.snapshot().evidenceWrites).toBe(1);
-    }),
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.live('registered runtime maps unavailable owner observation to a sanitized typed 503 instead of empty', () =>
@@ -245,7 +248,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(0);
       expect(runtime.snapshot().statements.at(-1)).toBe('ROLLBACK');
-    }),
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.live('registered exact mode remains UNPROVEN without a composed Commerce verifier', () =>
@@ -257,7 +260,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().redemptions).toBe(1);
       expect(runtime.snapshot().ownerQueries).toEqual([]);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
-    }),
+    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
   it.effect('real codec rejection is typed by the generated client before authentication or owner effects', () =>

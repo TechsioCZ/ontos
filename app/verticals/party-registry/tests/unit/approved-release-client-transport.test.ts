@@ -1,7 +1,7 @@
 import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { loadCounterpartiesClient } from '../../src/api/counterparties-search-client.ts';
 

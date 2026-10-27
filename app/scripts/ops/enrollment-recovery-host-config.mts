@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Layer, Redacted, Schema } from 'effect';
-import { Command } from 'effect/unstable/cli';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Command } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import type { OpsShell } from './ops-shell.mts';

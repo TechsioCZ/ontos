@@ -16,11 +16,12 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
+import { NodeCrypto } from '@effect/platform-node';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Logger, References, Schema, Tracer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
@@ -99,6 +100,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   ),
   Layer.provide(DatabaseConfigLive),
   Layer.provide(databaseIdentitiesLive),
+  Layer.provide(NodeCrypto.layer),
 );
 
 const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
@@ -145,6 +147,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
       ),
     ),
     Layer.provideMerge(databaseIdentitiesLive),
+    Layer.provideMerge(NodeCrypto.layer),
     Layer.orDie,
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));

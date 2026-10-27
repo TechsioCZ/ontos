@@ -226,7 +226,7 @@ const boundaryRefs = (boundary: AssortmentClosedBoundary): readonly { readonly t
   boundary.commercialScope.sellingLegalEntityRef,
   ...(boundary.commercialScope.commerceMarketRef === undefined ? [] : [boundary.commercialScope.commerceMarketRef]),
   ...(boundary.commercialScope.storefrontRef === undefined ? [] : [boundary.commercialScope.storefrontRef]),
-  ...boundary.admissionSet.flatMap((selector) => {
+  ...boundary.admissionSet.flatMap((selector): readonly { readonly tenantId: string }[] => {
     if (selector.kind === 'ALL') {
       return [];
     }

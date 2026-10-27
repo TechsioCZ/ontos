@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionUnavailableError,
@@ -11,11 +9,14 @@ import {
   makeApplicationCompositionSnapshotFixture,
   makeModuleContractFixture,
 } from '@app/core-runtime/testing/module-contract';
+import { sha256 as sha256Bytes } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Layer, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-const digest = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const digest = (document: string): string => Hex.encode(sha256Bytes(utf8ToBytes(document)));
 const contractJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
 /** The real owner's identity, embedded document, and content-addressed release are validated together. */

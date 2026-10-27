@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
-
 import { v1 } from '@authzed/authzed-node';
+import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
 import {
   Context,
+  Crypto,
   Deferred,
   Effect,
   Fiber,
@@ -15,7 +15,7 @@ import {
   Predicate,
 } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
+import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -69,13 +69,17 @@ import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
+import {
+  makePermissionSuite,
+  PermissionSuite,
+  staffAuthenticationNamespaceId,
+} from '../support/action-permission-suite.ts';
+import type { PermissionSuiteFixture } from '../support/action-permission-suite.ts';
 
 class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
   '@app/core-runtime/tests/integration/action-permission.test/PermissionAdmin',
 ) {}
 
-const suiteId = randomUUID();
-const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
   Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
     allowedAudiences: ['core-runtime-test'],
@@ -113,58 +117,6 @@ const testOperationalScopeResolver: OperationalScopeResolverService = {
       return yield* baseTestOperationalScopeResolver.resolve(input);
     }),
 };
-const tenantId = randomUUID();
-const legalEntityId = randomUUID();
-const companyObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
-if (companyObjectId === undefined) {
-  throw new Error('Invalid permission fixture company identity');
-}
-const principalId = randomUUID();
-const principalAuthBindingId = randomUUID();
-const nonMemberPrincipalId = randomUUID();
-const nonMemberAuthBindingId = randomUUID();
-const otherTenantId = randomUUID();
-const otherTenantPrincipalId = randomUUID();
-const otherTenantAuthBindingId = randomUUID();
-const actionPrefix = `test.permission.${suiteId}`;
-const actionKeys = {
-  allowed: `${actionPrefix}.allowed`,
-  concurrentDenied: `${actionPrefix}.concurrent-denied`,
-  crossTenantDenied: `${actionPrefix}.cross-tenant-denied`,
-  denied: `${actionPrefix}.denied`,
-  membershipAllowed: `${actionPrefix}.membership-allowed`,
-  missing: `${actionPrefix}.missing`,
-  nonMemberDenied: `${actionPrefix}.non-member-denied`,
-  unavailable: `${actionPrefix}.unavailable`,
-} as const;
-
-const principal = {
-  authBindingId: principalAuthBindingId,
-  authContextRef: `better-auth-session:${suiteId}:principal`,
-  authenticationNamespaceId: staffAuthenticationNamespaceId,
-  authMethod: 'session',
-  legalEntityId,
-  principalId,
-  tenantId,
-} as const;
-
-const nonMemberPrincipal = {
-  authBindingId: nonMemberAuthBindingId,
-  authContextRef: `better-auth-session:${suiteId}:non-member`,
-  authenticationNamespaceId: staffAuthenticationNamespaceId,
-  authMethod: 'session',
-  principalId: nonMemberPrincipalId,
-  tenantId,
-} as const;
-
-const otherTenantPrincipal = {
-  authBindingId: otherTenantAuthBindingId,
-  authContextRef: `better-auth-session:${suiteId}:other-tenant`,
-  authenticationNamespaceId: staffAuthenticationNamespaceId,
-  authMethod: 'session',
-  principalId: otherTenantPrincipalId,
-  tenantId: otherTenantId,
-} as const;
 
 const transport = (idempotencyKey: string, targetResourceId: string) => ({
   correlationId: `permission-integration-${idempotencyKey}`,
@@ -177,13 +129,17 @@ const transport = (idempotencyKey: string, targetResourceId: string) => ({
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
 const withDatabase = <Value, Failure, Requirements>(
-  operation: (database: ContextServiceContract) => Effect.Effect<Value, Failure, Requirements>,
+  operation: (
+    database: ContextServiceContract,
+    suite: PermissionSuiteFixture,
+  ) => Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
+      const suite = yield* PermissionSuite;
       const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeCoreDatabase(configuration);
-      return yield* operation(database);
+      return yield* operation(database, suite);
     }),
   );
 
@@ -199,33 +155,38 @@ const rememberRelationships = (relationships: readonly v1.Relationship[]) => {
   return relationships;
 };
 
-const installedScopes = [
-  { moduleKeys: ['core.shell'], tenantId },
-  { legalEntityId, moduleKeys: ['core.shell'], tenantId },
-  { moduleKeys: ['core.shell'], tenantId: otherTenantId },
-];
-const policyScopes = installedScopes.filter((scope) => scope.tenantId === tenantId);
-const installedActionRelationships = (actionKey: string) =>
-  rememberRelationships(
-    buildActionAuthorizationRelationships(installedScopes.map((scope) => ({ ...scope, actionKey }))),
-  );
-const actionRoleRelationships = (actionKey: string, roleKey: string) =>
-  buildActionAuthorizationRoleGrantRelationships(
-    policyScopes.map((scope) => ({ ...scope, actionKey, roleKey })),
-    installedScopes,
-  );
-const roleMembershipRelationships = (roleKey: string) =>
-  policyScopes.flatMap((scope) =>
-    // Deliberately grant the role to non-members too: only actual scope membership
-    // admits execution. The role itself must never create tenant/company access.
-    [principalId, nonMemberPrincipalId, otherTenantPrincipalId].map((memberId) =>
-      v1.Relationship.create({
-        relation: 'member',
-        resource: { objectId: toScopedRoleObjectId({ ...scope, roleKey }), objectType: 'scoped_role' },
-        subject: { object: { objectId: memberId, objectType: 'principal' } },
-      }),
-    ),
-  );
+const authorizationRelationships = (suite: PermissionSuiteFixture) => {
+  const { legalEntityId, nonMemberPrincipalId, otherTenantId, otherTenantPrincipalId, principalId, tenantId } = suite;
+  const installedScopes = [
+    { moduleKeys: ['core.shell'], tenantId },
+    { legalEntityId, moduleKeys: ['core.shell'], tenantId },
+    { moduleKeys: ['core.shell'], tenantId: otherTenantId },
+  ];
+  const policyScopes = installedScopes.filter((scope) => scope.tenantId === tenantId);
+  const installedActionRelationships = (actionKey: string) =>
+    rememberRelationships(
+      buildActionAuthorizationRelationships(installedScopes.map((scope) => ({ ...scope, actionKey }))),
+    );
+  const actionRoleRelationships = (actionKey: string, roleKey: string) =>
+    buildActionAuthorizationRoleGrantRelationships(
+      policyScopes.map((scope) => ({ ...scope, actionKey, roleKey })),
+      installedScopes,
+    );
+  const roleMembershipRelationships = (roleKey: string) =>
+    policyScopes.flatMap((scope) =>
+      // Deliberately grant the role to non-members too: only actual scope membership
+      // admits execution. The role itself must never create tenant/company access.
+      [principalId, nonMemberPrincipalId, otherTenantPrincipalId].map((memberId) =>
+        v1.Relationship.create({
+          relation: 'member',
+          resource: { objectId: toScopedRoleObjectId({ ...scope, roleKey }), objectType: 'scoped_role' },
+          subject: { object: { objectId: memberId, objectType: 'principal' } },
+        }),
+      ),
+    );
+
+  return { actionRoleRelationships, installedActionRelationships, roleMembershipRelationships };
+};
 
 const tenantMembership = (membershipTenantId: string, membershipPrincipalId: string) =>
   v1.Relationship.create({
@@ -294,6 +255,25 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
 const PermissionFixture = Layer.effect(
   PermissionAdmin,
   Effect.gen(function* integrationProgram1() {
+    const suite = yield* PermissionSuite;
+    const {
+      actionKeys,
+      legalEntityId,
+      nonMemberAuthBindingId,
+      nonMemberPrincipalId,
+      otherTenantAuthBindingId,
+      otherTenantId,
+      otherTenantPrincipalId,
+      principalAuthBindingId,
+      principalId,
+      tenantId,
+    } = suite;
+    const { actionRoleRelationships, installedActionRelationships, roleMembershipRelationships } =
+      authorizationRelationships(suite);
+    const companyObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
+    if (companyObjectId === undefined) {
+      throw new Error('Invalid permission fixture company identity');
+    }
     const spiceDbConfig = yield* loadSpiceDbConfig();
     const adminClient = newSpiceDbGrpcClient(spiceDbConfig);
 
@@ -502,24 +482,24 @@ const runWithLivePermission = <Value, Failure>(
   configuration?: SpiceDbConfigValue,
   onStage: NonNullable<ActionRuntimeOptions['onStage']> = EffectFunction.constVoid,
 ) =>
-  (configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration)).pipe(
-    Effect.flatMap((config) =>
-      Effect.acquireUseRelease(
-        Effect.sync(() => createPermissionCheckClient(config, SPICEDB_CHECK_TIMEOUT_MS)),
-        (client) =>
-          operation(
-            makeActionRuntime(
-              database,
-              makeActionRepository(),
-              makeActionPermissionService(client),
-              testOperationalScopeResolver,
-              { ...openActionRuntimeOptions, onStage },
-            ),
+  Effect.gen(function* runWithLivePermissionProgram() {
+    const crypto = yield* Crypto.Crypto;
+    const config = yield* configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration);
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => createPermissionCheckClient(config, SPICEDB_CHECK_TIMEOUT_MS)),
+      (client) =>
+        operation(
+          makeActionRuntime(
+            database,
+            makeActionRepository(crypto),
+            makeActionPermissionService(client),
+            testOperationalScopeResolver,
+            { ...openActionRuntimeOptions, onStage },
           ),
-        (client) => Effect.sync(() => client.close()),
-      ),
-    ),
-  );
+        ),
+      (client) => Effect.sync(() => client.close()),
+    );
+  });
 
 type DenialFailureStage = typeof DenialFailureStageSchema.Type;
 const withDenialPersistenceFailure = (
@@ -552,6 +532,7 @@ const DenialFailureStageSchema = Schema.Literals(['audit', 'invocation-update'])
 
 const runFailedAction = (
   runtime: ReturnType<typeof makeActionRuntime>,
+  principal: PermissionSuiteFixture['principal'],
   actionKey: string,
   key: string,
   moduleStateKey: string,
@@ -567,7 +548,7 @@ const runFailedAction = (
   );
 
 const testProgram1 = () =>
-  withDatabase((database) =>
+  withDatabase((database, { actionKeys, actionPrefix, principal }) =>
     Effect.forEach(
       [
         ['assigned-role', actionKeys.allowed],
@@ -598,12 +579,12 @@ const testProgram1 = () =>
 
 const testProgram2 = () =>
   withDatabase(
-    Effect.fn(function* verifyTerminalDenial(database) {
+    Effect.fn(function* verifyTerminalDenial(database, { actionKeys, actionPrefix, principal, tenantId }) {
       const executions: ExecutionCounter = { value: 0 };
       const key = 'missing';
       const moduleStateKey = `${actionPrefix}.state.missing`;
       const failure = yield* runWithLivePermission(database, (runtime) =>
-        runFailedAction(runtime, actionKeys.missing, key, moduleStateKey, executions),
+        runFailedAction(runtime, principal, actionKeys.missing, key, moduleStateKey, executions),
       );
       const [invocation] = yield* database.executor
         .select()
@@ -658,7 +639,7 @@ const testProgram2 = () =>
   );
 
 const testProgram3 = () =>
-  withDatabase((database) =>
+  withDatabase((database, { actionKeys, actionPrefix, nonMemberPrincipal, otherTenantPrincipal, principal }) =>
     Effect.forEach(
       [
         ['installed-without-grant', actionKeys.denied, principal],
@@ -704,7 +685,11 @@ const loadDenialEvidence = Effect.fn('loadDenialEvidence')(function* loadDenialE
   return { audits, invocation };
 });
 
-const deniedInput = (key: string, executions: ExecutionCounter) => {
+const deniedInput = (
+  { actionKeys, actionPrefix, principal }: PermissionSuiteFixture,
+  key: string,
+  executions: ExecutionCounter,
+) => {
   const moduleStateKey = `${actionPrefix}.state.${key}`;
   return {
     payload: undefined,
@@ -720,9 +705,9 @@ const deniedInput = (key: string, executions: ExecutionCounter) => {
 
 const testProgram4 = () =>
   withDatabase(
-    Effect.fn(function* verifyRetryAfterRecordedDenial(database) {
+    Effect.fn(function* verifyRetryAfterRecordedDenial(database, suite) {
       const executions: ExecutionCounter = { value: 0 };
-      const input = deniedInput('retry-after-denial', executions);
+      const input = deniedInput(suite, 'retry-after-denial', executions);
       const first = yield* runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input)));
       const retry = yield* runWithLivePermission(database, (runtime) => Effect.flip(runtime.runAction(input)));
       const { audits, invocation } = yield* loadDenialEvidence(database, 'retry-after-denial');
@@ -752,9 +737,9 @@ const withHeldDenialAudit = (database: ContextServiceContract, release: Deferred
 
 const testProgram4b = () =>
   withDatabase(
-    Effect.fn(function* verifyConcurrentDenials(database) {
+    Effect.fn(function* verifyConcurrentDenials(database, suite) {
       const executions: ExecutionCounter = { value: 0 };
-      const input = deniedInput('concurrent-denied', executions);
+      const input = deniedInput(suite, 'concurrent-denied', executions);
       const secondPrepared = yield* Deferred.make<null>();
       const first = yield* Effect.forkChild(
         runWithLivePermission(withHeldDenialAudit(database, secondPrepared), (runtime) =>
@@ -783,8 +768,10 @@ const testProgram4b = () =>
   );
 
 const testProgram5 = () =>
-  withDatabase((database) =>
-    Effect.forEach(
+  withDatabase((database, suite) => {
+    const { actionPrefix, principal } = suite;
+    const { installedActionRelationships } = authorizationRelationships(suite);
+    return Effect.forEach(
       ['audit', 'invocation-update'] as const,
       Effect.fn(function* verifyDenialRollback(stage) {
         const executions: ExecutionCounter = { value: 0 };
@@ -831,18 +818,18 @@ const testProgram5 = () =>
         expect(audits.length, stage).toBe(0);
       }),
       { concurrency: 1, discard: true },
-    ),
-  );
+    );
+  });
 
 const testProgram6 = () =>
   withDatabase(
-    Effect.fn(function* verifyUnavailablePermissionService(database) {
+    Effect.fn(function* verifyUnavailablePermissionService(database, { actionKeys, actionPrefix, principal }) {
       const executions: ExecutionCounter = { value: 0 };
       const key = 'invalid-credentials';
       const moduleStateKey = `${actionPrefix}.state.invalid-credentials`;
       const failure = yield* runWithLivePermission(
         database,
-        (runtime) => runFailedAction(runtime, actionKeys.unavailable, key, moduleStateKey, executions),
+        (runtime) => runFailedAction(runtime, principal, actionKeys.unavailable, key, moduleStateKey, executions),
         {
           ...(yield* loadSpiceDbConfig()),
           preSharedKey: 'invalid-integration-key',
@@ -873,7 +860,13 @@ const testProgram6 = () =>
   );
 
 it.layer(
-  Layer.merge(PermissionFixture, Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry)),
+  Layer.merge(
+    PermissionFixture.pipe(
+      Layer.provideMerge(Layer.effect(PermissionSuite, makePermissionSuite)),
+      Layer.provideMerge(NodeCrypto.layer),
+    ),
+    Layer.succeed(AuthenticationNamespaceRegistry, authenticationNamespaceRegistry),
+  ),
   {
     excludeTestServices: true,
   },

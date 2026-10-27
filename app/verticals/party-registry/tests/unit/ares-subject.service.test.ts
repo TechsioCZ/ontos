@@ -2,8 +2,8 @@ import { DateTime, Effect, Fiber, Logger, Option, Predicate, Schema } from 'effe
 // @effect-diagnostics strictEffectProvide:off -- Tests intentionally provide isolated adapter and logger layers. expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 
 import { AresSubjectService, AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
 

@@ -25,8 +25,8 @@ import {
 } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
-import type { HttpClientRequest } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
+import type { HttpClientRequest } from 'effect/http';
 
 import {
   ImmutableApplicationReleaseError,
@@ -53,6 +53,7 @@ import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
+import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
 const APP_ID = 'party-registry';
 const GIT_COMMAND = 'git';
@@ -74,7 +75,7 @@ const ASSETS_VERSION_ID = '018c4a3c-a8de-4b15-948c-b45e83adb551';
 const BACKEND_VERSION_ID = '023e105f-2a42-4f8b-a1c1-73f6a2a30c0f';
 const COMPATIBILITY_DATE = '2026-09-24';
 const PUBLIC_RELEASE_DIRECTORY = './public-release';
-const BUILD_MARKER = '0123456789abcdef';
+const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const WRANGLER_VERSION = '4.137.0';
 const WRANGLER_CONFIG_PATH = 'wrangler.json';
@@ -307,6 +308,7 @@ const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(functio
           uiClient: EffectArray.sort(browserPaths, Order.String),
         },
         target: 'cloudflare',
+        ui: releaseUiFor(plan.appId, plan.buildMarker),
       }),
   });
   const destination = nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH);

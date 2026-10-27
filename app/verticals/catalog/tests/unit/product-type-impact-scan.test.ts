@@ -1,3 +1,4 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -138,7 +139,7 @@ describe('Product Type impact scan basis', () => {
       expect(failure).toBeInstanceOf(ProductTypeImpactScanIncomplete);
       expect(failure.code).toBe('product_type_impact_scan_incomplete');
       expect(failure.reason).toContain('open-selection');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('fails closed when a Variant may inherit a changed Product-level requirement', () =>
@@ -160,7 +161,7 @@ describe('Product Type impact scan basis', () => {
       );
       expect(failure).toBeInstanceOf(ProductTypeImpactScanIncomplete);
       expect(failure.reason).toContain('inheritance');
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it('accepts only a complete exact owner value-set basis', () => {
@@ -207,7 +208,7 @@ describe('Product Type impact scan basis', () => {
       const result = yield* scan.scan({ candidateRules: [], expectedCurrentRevision: 1, productTypeId: 'type-1' });
       expect(result.preview).toEqual({ affectedProductIds: [], requiresExplicitRemediation: false, subjects: [] });
       expect(result.token).toMatch(/^[0-9a-f]{64}$/u);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
   it.effect('ignores tenant Cart selections for Products outside the revised Product Type population', () =>
@@ -228,6 +229,6 @@ describe('Product Type impact scan basis', () => {
       const result = yield* scan.scan({ candidateRules: [], expectedCurrentRevision: 1, productTypeId: 'type-1' });
       expect(result.openSelectionRefs).toEqual([]);
       expect(result.token).toMatch(/^[0-9a-f]{64}$/u);
-    }),
+    }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });

@@ -7,6 +7,7 @@ import {
   Config,
   ConfigProvider,
   Context,
+  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -18,8 +19,8 @@ import {
 } from 'effect';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { HttpServer, HttpServerResponse } from 'effect/unstable/http';
-import { NetAddress } from 'effect/unstable/net';
+import { HttpServer, HttpServerResponse } from 'effect/http';
+import { NetAddress } from 'effect/net';
 import {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
@@ -58,7 +59,10 @@ import {
 import { staffAuthenticationNamespaceRegistration } from '../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
-import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   applicationCompositionAuthority,
   auditEvents,
@@ -102,7 +106,11 @@ import {
   makeOutboxWorkerComposition,
 } from '../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { makeApiKeyService } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
@@ -149,6 +157,7 @@ it.live(
   'fingerprints all nine rows and replays native audited profiles/scoped grants with read-only modes and idempotence',
   () =>
     Effect.gen(function* reviewedReplayProof() {
+      const crypto = yield* Crypto.Crypto;
       const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
       expect(pair.runtime.database).toMatch(/^people_model_scratch_20261023_[0-9a-f]+$/u);
       expect(pair.admin.database).toBe(pair.runtime.database);
@@ -246,12 +255,16 @@ it.live(
         })),
       ]);
       const authConfig = yield* loadAuthConfig({ envPath: '/dev/null' });
-      const authDatabase = yield* makeAuthDatabase(authConfig);
+      const authDatabase = yield* makeAuthDatabase({
+        connectionString: authConfig.connectionString,
+        expectedRole: SHARED_RUNTIME_IDENTITY.role,
+      });
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: registration.authenticationNamespaceId,
       });
       const oauthAuthenticationLayer = Layer.mergeAll(
         BetterAuthRuntimeLive,
+        BetterAuthNativeAdapterLive,
         OAuthAuthenticationAuditLive,
         OAuthEndpointGuardDataLive,
         OAuthConnectionHooksLive.pipe(Layer.provide(OAuthGrantRegistryLive)),
@@ -434,9 +447,9 @@ it.live(
       const gate = makeModuleStateGate(makeTenantModuleStateService(database));
       const runtime = makeActionRuntime(
         database,
-        makeActionRepository(),
+        makeActionRepository(crypto),
         actionPermission,
-        makeOperationalScopeResolver(
+        yield* makeOperationalScopeResolver(
           makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
           access,
         ),
@@ -451,7 +464,7 @@ it.live(
       const readRuntime = makeReadRuntime(
         database,
         makeModuleEntrypointGateway(gate),
-        makeOperationalScopeResolver(
+        yield* makeOperationalScopeResolver(
           makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
           access,
         ),
@@ -800,7 +813,7 @@ it.live(
           principalId: original.principalId,
           tenantId,
         };
-        const keyScope = makeOperationalScopeResolver(
+        const keyScope = yield* makeOperationalScopeResolver(
           makeOperationalScopeRepository(database, APP_DATABASE_IDENTITY_ENROLLMENT),
           access,
         );
@@ -1091,7 +1104,7 @@ it.live(
             ),
           ),
         ),
-      ) satisfies Effect.Effect<void, unknown, Scope.Scope>;
+      ) satisfies Effect.Effect<void, unknown, Crypto.Crypto | Scope.Scope>;
       yield* proof;
       // Exercise the exported CLI composition, without the handcrafted proof's registry/runtime injections.
       const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);

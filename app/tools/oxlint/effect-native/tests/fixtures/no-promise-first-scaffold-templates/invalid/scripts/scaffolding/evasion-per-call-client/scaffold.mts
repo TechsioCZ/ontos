@@ -5,7 +5,7 @@
  * context test sees only `  const client = ` and the per-call construction escapes.
  */
 export const renderApiClient = (name: string): string => `import { Effect } from 'effect';
-import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpApiClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 
 export function execute${name}(payload: ${name}Request, authorization: string) {

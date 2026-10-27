@@ -8,7 +8,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';

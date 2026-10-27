@@ -1,8 +1,8 @@
 // expect-count: 2
 // The root barrel (`import * as E from "effect"` -> `E.Effect.tryPromise`) is understood, but the
-// `effect/unstable/http` barrel is not: one import-style change hides every HTTP request in the file.
+// `effect/http` barrel is not: one import-style change hides every HTTP request in the file.
 import { Effect } from 'effect';
-import * as Http from 'effect/unstable/http';
+import * as Http from 'effect/http';
 
 export const viaBarrelClient = Effect.gen(function* () {
   const barrelClient = yield* Http.HttpClient.HttpClient;

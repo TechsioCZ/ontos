@@ -7,7 +7,7 @@ import {
   withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import { Deferred, Effect, Exit, Layer, Result, Schema } from 'effect';
-import { HttpServerRequest } from 'effect/unstable/http';
+import { HttpServerRequest } from 'effect/http';
 import { expect, it, rs } from 'effect-rstest';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';

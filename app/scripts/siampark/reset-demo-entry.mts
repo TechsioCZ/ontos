@@ -3,8 +3,8 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Console, Effect, Exit, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   DemoResetConfigurationError,

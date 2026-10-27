@@ -2,9 +2,10 @@ import { ContextAccess, ReadRuntime } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
+import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Data, Effect, Layer, Predicate, Schema } from 'effect' with { rstest: 'importActual' };
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it, rs } from 'effect-rstest';
 
 import { OAuthGrantRegistryLive } from '../../../../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
@@ -86,7 +87,10 @@ const fixture = (selected: AgentPlatformCaller, privateRecords = false) =>
       Effect.succeed(testSqlConnection(() => Effect.die('Unexpected OAuth owner SQL'))),
     ).pipe(Layer.provideMerge(Reactivity.layer));
     const executor = yield* makeWithDefaults({ relations: coreRelations }).pipe(Effect.provide(driver));
-    const registry = OAuthGrantRegistryLive.pipe(Layer.provide(Layer.succeed(CoreDatabase, { executor })));
+    const registry = OAuthGrantRegistryLive.pipe(
+      Layer.provide(Layer.succeed(CoreDatabase, { executor })),
+      Layer.provide(NodeCrypto.layer),
+    );
     const principals: unknown[] = [];
     const transports: unknown[] = [];
     const readKeys: string[] = [];

@@ -1,5 +1,6 @@
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Effect, Redacted } from 'effect';
+import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
+import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from '../../shared/portal-auth/profile-api.ts';
 import type { UpdateCustomerOwnProfile } from '../../shared/portal-auth/profile-api.ts';
 
@@ -18,20 +19,33 @@ const transportHeaders = (context: CustomerOwnProfileClientContext) => ({
   'x-correlation-id': context.requestCorrelation,
   'x-ontos-composition-revision': context.compositionRevision,
 });
-export const readCustomerOwnProfileWithAuthorization = (context: CustomerOwnProfileClientContext) =>
-  makeEffectBffClient({
-    api: CustomerOwnProfileReadApi,
-    baseUrl: context.baseUrl,
-    defaultApiPrefix: '/commerce-customer-context-api',
-    transportHeaders: transportHeaders(context),
-  }).pipe(Effect.flatMap((client) => client.customerOwnProfileRead.execute()));
-export const updateCustomerOwnProfileWithAuthorization = (
-  payload: UpdateCustomerOwnProfile,
+const makeCustomerOwnProfileClient = Effect.fn('CustomerOwnProfileClient.make')(function* makeClient(
   context: CustomerOwnProfileClientContext,
-) =>
-  makeEffectBffClient({
-    api: CustomerOwnProfileUpdateApi,
+) {
+  const options = yield* makeEffectBffClientOptions({
     baseUrl: context.baseUrl,
     defaultApiPrefix: '/commerce-customer-context-api',
     transportHeaders: transportHeaders(context),
-  }).pipe(Effect.flatMap((client) => client.customerOwnProfileUpdate.execute({ payload })));
+  });
+  const readClient = yield* makeEffectHttpApiClient(CustomerOwnProfileReadApi, options);
+  const updateClient = yield* makeEffectHttpApiClient(CustomerOwnProfileUpdateApi, options);
+  return {
+    read: () => readClient.customerOwnProfileRead.execute(),
+    update: (payload: UpdateCustomerOwnProfile) => updateClient.customerOwnProfileUpdate.execute({ payload }),
+  };
+});
+
+export class CustomerOwnProfileClient extends Context.Service<
+  CustomerOwnProfileClient,
+  Effect.Success<ReturnType<typeof makeCustomerOwnProfileClient>>
+>()('@app/commerce-customer-context/api/customer-profile-self-service-client/CustomerOwnProfileClient') {}
+
+/** Build once for the supplied authenticated context; never share the layer between customer contexts. */
+export const makeCustomerOwnProfileClientLayer = (context: CustomerOwnProfileClientContext) =>
+  Layer.effect(CustomerOwnProfileClient, makeCustomerOwnProfileClient(context));
+
+export const readCustomerOwnProfileWithAuthorization = () =>
+  CustomerOwnProfileClient.pipe(Effect.flatMap((client) => client.read()));
+
+export const updateCustomerOwnProfileWithAuthorization = (payload: UpdateCustomerOwnProfile) =>
+  CustomerOwnProfileClient.pipe(Effect.flatMap((client) => client.update(payload)));

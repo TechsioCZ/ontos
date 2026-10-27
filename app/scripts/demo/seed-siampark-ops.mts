@@ -4,8 +4,9 @@
  * Runs verticals/facility-operations/scripts/reset-demo.mts with the validated local environment. Local only.
  */
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Console, Effect, Exit, Layer, Path, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ConfigProvider, Console, Effect, Exit, Path, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 
@@ -13,7 +14,10 @@ class SeedError extends Schema.TaggedError<SeedError>()('SeedError', { reason: S
 
 const OWNER_SCRIPT = 'verticals/facility-operations/scripts/reset-demo.mts';
 
-const main = Effect.gen(function* seedFacilityOperations() {
+const seed = Effect.fn('Siampark.seedFacilityOperations')(function* seedFacilityOperations(
+  salesDemo: boolean,
+  validateOnly: boolean,
+) {
   const path = yield* Path.Path;
   const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
   const fileProvider = yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') });
@@ -21,8 +25,15 @@ const main = Effect.gen(function* seedFacilityOperations() {
   const childEnvironment = resetChildEnvironment(yield* resetEnvironment.parse(provider));
   yield* validateResetEnvironment(childEnvironment);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const args = [path.join(root, OWNER_SCRIPT)];
+  if (salesDemo) {
+    args.push('--sales-demo');
+  }
+  if (validateOnly) {
+    args.push('--validate-only');
+  }
   const code = yield* spawner.exitCode(
-    ChildProcess.make(process.execPath, [path.join(root, OWNER_SCRIPT), '--sales-demo', ...process.argv.slice(2)], {
+    ChildProcess.make(process.execPath, args, {
       cwd: root,
       env: { ...childEnvironment, DEMO_RESET_PROFILE: 'sales', MISE_ARGV0: '' },
       stderr: 'inherit',
@@ -36,8 +47,16 @@ const main = Effect.gen(function* seedFacilityOperations() {
   return yield* Console.log('Facility operations seeded.');
 });
 
+const command = Command.make(
+  'seed-siampark-ops',
+  {
+    salesDemo: Flag.Boolean('sales-demo').pipe(Flag.withDefault(true)),
+    validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)),
+  },
+  ({ salesDemo, validateOnly }) => seed(salesDemo, validateOnly),
+);
 const exit = await Effect.runPromiseExit(
-  main.pipe(
+  Command.run(command, { version: '1.0.0' }).pipe(
     Effect.tapError((failure) => Console.error(`facility-operations seed failed (${failure._tag}).`)),
     Effect.scoped,
     Effect.provide(NodeServices.layer),

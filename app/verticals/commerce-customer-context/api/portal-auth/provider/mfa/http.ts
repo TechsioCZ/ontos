@@ -1,7 +1,7 @@
 import { createCookieGetter, parseCookies } from 'better-auth/cookies';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Clock, Context, Duration, Effect, Option, Result, Schema } from 'effect';
-import type { HttpServerRequest } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/http';
 import type { Auth } from 'better-auth';
 
 import { commerceCustomerContextApi } from '../../../../shared/api.ts';
@@ -321,17 +321,14 @@ export const commercePortalAuthMfaFreshnessReaderFromApi = (
  * uninstalled realm each call refuses, the read above turns that into "no session", and the
  * freshness gate denies.
  */
-const withCommercePortalAuthMfaFreshnessReader = Effect.provideServiceEffect(
-  CommercePortalAuthMfaFreshnessReaderService,
-  Effect.gen(function* readCommercePortalAuthMfaFreshnessServices() {
-    const provider = yield* CommercePortalAuthService;
-    const lifecycle = yield* CommercePortalAuthSessionLifecycle;
-    return commercePortalAuthMfaFreshnessReaderFromApi(
-      commercePortalAuthMfaSessionReadApiFromBetterAuth(provider.api),
-      lifecycle,
-    );
-  }),
-);
+const readCommercePortalAuthMfaFreshnessReader = Effect.gen(function* readCommercePortalAuthMfaFreshnessServices() {
+  const provider = yield* CommercePortalAuthService;
+  const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+  return commercePortalAuthMfaFreshnessReaderFromApi(
+    commercePortalAuthMfaSessionReadApiFromBetterAuth(provider.api),
+    lifecycle,
+  );
+});
 
 /**
  * `enable`, `confirm-enable`, `disable`, `regenerate-backup-codes` and `totp-uri` all gate on an
@@ -349,8 +346,7 @@ const withCommercePortalAuthMfaFreshnessReader = Effect.provideServiceEffect(
  * become fresh no matter how the customer re-proved themselves.
  */
 const requireFreshMfaAuthentication = Effect.fn('CommercePortalAuthMfaHttp.requireFresh')(
-  function* requireFreshMfaAuthenticationEffect(headers: Headers) {
-    const reader = yield* CommercePortalAuthMfaFreshnessReaderService;
+  function* requireFreshMfaAuthenticationEffect(headers: Headers, reader: CommercePortalAuthMfaFreshnessReader) {
     const current = yield* reader.readCurrentSession(headers);
     if (Option.isNone(current)) {
       return yield* Effect.fail(commercePortalAuthMfaNotFreshProblem);
@@ -373,11 +369,12 @@ const requireFreshMfaAuthentication = Effect.fn('CommercePortalAuthMfaHttp.requi
  */
 const prepareMfaAdminCall = Effect.fn('CommercePortalAuthMfaHttp.prepareAdmin')(function* prepareMfaAdminCallEffect(
   request: HttpServerRequest.HttpServerRequest,
+  reader: CommercePortalAuthMfaFreshnessReader,
 ) {
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthMfaUntrustedOriginProblem);
   const headers = requestHeaders(request.headers);
-  yield* requireFreshMfaAuthentication(headers);
+  yield* requireFreshMfaAuthentication(headers, reader);
   const evidence = yield* consumeMfaBudget(request);
   const service = yield* CommercePortalAuthMfaService;
   const call: CommercePortalAuthMfaCall = { evidence, headers, service };
@@ -466,8 +463,12 @@ const adminCall = <Payload, Body, ResponseBody, R>(
     body: Body,
   ) => Effect.Effect<CommercePortalAuthMfaResponse<ResponseBody>, CommercePortalAuthMfaProviderFailure>,
 ) =>
-  Effect.fn(name)(function* adminCallEffect(payload: Payload, request: HttpServerRequest.HttpServerRequest) {
-    const call = yield* prepareMfaAdminCall(request);
+  Effect.fn(name)(function* adminCallEffect(
+    payload: Payload,
+    request: HttpServerRequest.HttpServerRequest,
+    reader: CommercePortalAuthMfaFreshnessReader,
+  ) {
+    const call = yield* prepareMfaAdminCall(request, reader);
     // Body decoding runs only once the admin gate above has resolved `call`: an unauthenticated or
     // stale-session caller must never learn whether their request body would otherwise decode.
     const body = yield* Effect.succeed(call).pipe(
@@ -530,18 +531,24 @@ export const portalAuthMfaApiLive = HttpApiBuilder.group(commerceCustomerContext
     .handle('verifyTotp', ({ payload, request }) => verifyTotp(payload, request))
     .handle('verifyOtp', ({ payload, request }) => verifyOtp(payload, request))
     .handle('verifyBackupCode', ({ payload, request }) => verifyBackupCode(payload, request))
-    .handle('enable', ({ payload, request }) => enable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader))
+    .handle('enable', ({ payload, request }) =>
+      readCommercePortalAuthMfaFreshnessReader.pipe(Effect.flatMap((reader) => enable(payload, request, reader))),
+    )
     .handle('confirmEnable', ({ payload, request }) =>
-      confirmEnable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+      readCommercePortalAuthMfaFreshnessReader.pipe(
+        Effect.flatMap((reader) => confirmEnable(payload, request, reader)),
+      ),
     )
     .handle('disable', ({ payload, request }) =>
-      disable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+      readCommercePortalAuthMfaFreshnessReader.pipe(Effect.flatMap((reader) => disable(payload, request, reader))),
     )
     .handle('regenerateBackupCodes', ({ payload, request }) =>
-      regenerateBackupCodes(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+      readCommercePortalAuthMfaFreshnessReader.pipe(
+        Effect.flatMap((reader) => regenerateBackupCodes(payload, request, reader)),
+      ),
     )
     .handle('totpUri', ({ payload, request }) =>
-      totpUri(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+      readCommercePortalAuthMfaFreshnessReader.pipe(Effect.flatMap((reader) => totpUri(payload, request, reader))),
     ),
 ).pipe(Layer.provide(commercePortalAuthMfaSchemaErrorLive));
 
@@ -565,9 +572,23 @@ export const portalAuthMfaStandaloneApiLive = HttpApiBuilder.group(
       .handle('verifyTotp', ({ payload, request }) => verifyTotp(payload, request))
       .handle('verifyOtp', ({ payload, request }) => verifyOtp(payload, request))
       .handle('verifyBackupCode', ({ payload, request }) => verifyBackupCode(payload, request))
-      .handle('enable', ({ payload, request }) => enable(payload, request))
-      .handle('confirmEnable', ({ payload, request }) => confirmEnable(payload, request))
-      .handle('disable', ({ payload, request }) => disable(payload, request))
-      .handle('regenerateBackupCodes', ({ payload, request }) => regenerateBackupCodes(payload, request))
-      .handle('totpUri', ({ payload, request }) => totpUri(payload, request)),
+      .handle('enable', ({ payload, request }) =>
+        CommercePortalAuthMfaFreshnessReaderService.pipe(Effect.flatMap((reader) => enable(payload, request, reader))),
+      )
+      .handle('confirmEnable', ({ payload, request }) =>
+        CommercePortalAuthMfaFreshnessReaderService.pipe(
+          Effect.flatMap((reader) => confirmEnable(payload, request, reader)),
+        ),
+      )
+      .handle('disable', ({ payload, request }) =>
+        CommercePortalAuthMfaFreshnessReaderService.pipe(Effect.flatMap((reader) => disable(payload, request, reader))),
+      )
+      .handle('regenerateBackupCodes', ({ payload, request }) =>
+        CommercePortalAuthMfaFreshnessReaderService.pipe(
+          Effect.flatMap((reader) => regenerateBackupCodes(payload, request, reader)),
+        ),
+      )
+      .handle('totpUri', ({ payload, request }) =>
+        CommercePortalAuthMfaFreshnessReaderService.pipe(Effect.flatMap((reader) => totpUri(payload, request, reader))),
+      ),
 ).pipe(Layer.provide(commercePortalAuthMfaSchemaErrorLive));

@@ -1,5 +1,5 @@
 import { Effect, Predicate, Redacted, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
 import { asInvoiceLines, expectedTotals, makePrincipalClient } from '../demo/prove-sales-demo.mts';

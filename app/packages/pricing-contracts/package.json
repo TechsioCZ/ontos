@@ -60,7 +60,7 @@
     "@app/party-registry": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",

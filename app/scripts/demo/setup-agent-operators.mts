@@ -12,7 +12,7 @@ import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/a
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { AuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';

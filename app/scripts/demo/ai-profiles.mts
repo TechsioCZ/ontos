@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { NodeServices } from '@effect/platform-node';
 import { Console, Effect } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Command, Flag } from 'effect/cli';
 
 import { demoAgentProfileSetup } from '../../apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts';
 import { explicitProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';

@@ -12,7 +12,7 @@ import {
 import { OpportunitySchema } from '../model/opportunity.ts';
 import { makeAiApprovalSchemas } from '@app/shared-contracts/ai-approvals';
 import { SalesPipelineAiOperationSchema } from '../actions/apply-command.ts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 /** Server-computed summary over the filtered, visible opportunities. Amounts are minor units. */
 export const OpportunityIndicatorsSchema = Schema.Struct({

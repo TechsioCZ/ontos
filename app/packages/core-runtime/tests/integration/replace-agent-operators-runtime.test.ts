@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { NodeCrypto } from '@effect/platform-node';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { Crypto, Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { ActionAlreadyCommitted, ActionPermissionDenied } from '../../src/actions/errors.ts';
@@ -82,371 +82,397 @@ const operatorIds = (answers: readonly v1.ReadRelationshipsResponse[]) =>
     .toSorted();
 
 // Root runs this only against the same explicitly isolated native-services harness as configure-agent-runtime.
-it.layer(Reactivity.layer, { excludeTestServices: true })('native agent operator lifecycle', (suite) => {
-  suite.effect(
-    'commits tenant-agent-global optimistic commands with trusted audit and projects only latest live members outside SQL',
-    () =>
-      Effect.gen(function* nativeOperatorProof() {
-        const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-        expect(pair.runtime.database).toMatch(/^people_model_scratch_20261023_[0-9a-f]+$/u);
-        expect(pair.admin.database).toBe(pair.runtime.database);
-        const config = yield* loadSpiceDbConfig();
-        expect(config.endpoint).toMatch(/^localhost:\d+$/u);
-        const database = yield* makeCoreDatabase(pair.runtime);
-        const admin = yield* makeCoreDatabase(pair.admin);
-        const graph = yield* Effect.acquireRelease(
-          Effect.sync(() => newSpiceDbGrpcClient(config)),
-          (rpc) => Effect.sync(() => rpc.close()),
-        );
-        yield* Effect.promise(() =>
-          graph.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
-        );
-        const composition = makeOutboxWorkerComposition([]);
-        const authority = { load: freshOutboxWorkerCompositionSnapshot(composition) };
-        const snapshot = yield* authority.load;
-        yield* admin.executor
-          .insert(applicationCompositionAuthority)
-          .values({
-            authorityKey: 'active',
-            phase: 'active',
-            revision: composition.revision,
-            subscriptionsJson: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
-            validUntil: DateTime.toDateUtc(snapshot.validUntil),
-          })
-          .onConflictDoUpdate({
-            set: { revision: composition.revision, validUntil: DateTime.toDateUtc(snapshot.validUntil) },
-            target: applicationCompositionAuthority.authorityKey,
-          });
-        const tenantId = randomUUID();
-        const foreignTenantId = randomUUID();
-        const legalEntityId = randomUUID();
-        const secondCompanyId = randomUUID();
-        const actorId = randomUUID();
-        const bindingId = randomUUID();
-        const agentId = randomUUID();
-        const legacyAgentId = randomUUID();
-        const firstHumanId = randomUUID();
-        const secondHumanId = randomUUID();
-        const disabledHumanId = randomUUID();
-        const foreignHumanId = randomUUID();
-        const foreignAgentId = randomUUID();
-        const registration = yield* staffAuthenticationNamespaceRegistration(['core-runtime-test']);
-        const registry = makeAuthenticationNamespaceRegistry([registration]);
-        yield* admin.executor.insert(tenants).values(
-          [tenantId, foreignTenantId].map((id) => ({
-            defaultLocale: 'cs',
-            name: 'Owned operator proof',
-            slug: `operators-${id}`,
-            status: 'active' as const,
-            tenantId: id,
-          })),
-        );
-        yield* admin.executor.insert(legalEntities).values(
-          [legalEntityId, secondCompanyId].map((id) => ({
-            legalEntityId: id,
-            legalName: 'Owned operator company',
-            registrationCountry: 'CZ',
-            registrationNumber: id,
-            status: 'active' as const,
-            tenantId,
-          })),
-        );
-        yield* admin.executor.insert(principals).values([
-          ...[actorId, firstHumanId, secondHumanId, disabledHumanId].map((id) => ({
-            displayName: 'Owned human',
-            kind: 'human' as const,
-            principalId: id,
-            status: id === disabledHumanId ? ('disabled' as const) : ('active' as const),
-            tenantId,
-          })),
-          ...[agentId, legacyAgentId].map((id) => ({
-            displayName: 'Owned agent',
-            kind: 'agent' as const,
-            principalId: id,
-            status: 'active' as const,
-            tenantId,
-          })),
-          {
-            displayName: 'Foreign human',
-            kind: 'human',
-            principalId: foreignHumanId,
-            status: 'active',
-            tenantId: foreignTenantId,
-          },
-          {
-            displayName: 'Foreign agent',
-            kind: 'agent',
-            principalId: foreignAgentId,
-            status: 'active',
-            tenantId: foreignTenantId,
-          },
-        ]);
-        yield* admin.executor.insert(principalCompanyMemberships).values(
-          [legalEntityId, secondCompanyId].map((company) => ({
-            affiliation: null,
-            legalEntityId: company,
-            principalId: agentId,
-            status: 'active' as const,
-            tenantId,
-          })),
-        );
-        yield* admin.executor.insert(principalAuthBindings).values(
-          [actorId, firstHumanId].map((id) => ({
-            authenticationNamespaceId: registration.authenticationNamespaceId,
-            principalAuthBindingId: id === actorId ? bindingId : firstHumanId,
-            principalId: id,
-            provider: 'better_auth',
-            providerSubjectId: randomUUID(),
-            status: 'active' as const,
-            subjectType: 'user' as const,
-            tenantId,
-          })),
-        );
-        const companyObject = (id: string) =>
-          toLegalEntityAccessObjectId(tenantId, id) ?? expect.unreachable('Invalid company identity');
-        const role = toScopedRoleObjectId({ roleKey: 'tenant-superadmin', tenantId });
-        const rows = [
-          ...[actorId, firstHumanId, secondHumanId].map((id) =>
-            relationship('tenant', tenantId, 'member', 'principal', id),
-          ),
-          ...[legalEntityId, secondCompanyId].flatMap((company) => [
-            relationship('legal_entity', companyObject(company), 'tenant', 'tenant', tenantId),
-            ...[actorId, agentId, legacyAgentId, firstHumanId, secondHumanId].map((id) =>
-              relationship('legal_entity', companyObject(company), 'member', 'principal', id),
-            ),
-          ]),
-          relationship('scoped_role', role, 'member', 'principal', actorId),
-          relationship('tenant', tenantId, 'superadmin', 'scoped_role', role, 'member'),
-          relationship('principal', legacyAgentId, 'operator', 'principal', firstHumanId),
-          ...buildActionAuthorizationRelationships(
-            [legalEntityId, secondCompanyId].flatMap((company) =>
-              [replaceAgentOperatorsAction, manageAgentStatusAction].map(({ descriptor }) => ({
-                actionKey: descriptor.actionKey,
-                legalEntityId: company,
-                tenantId,
-              })),
-            ),
-          ),
-        ];
-        yield* Effect.promise(() =>
-          graph.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: rows.map((row) => ({ operation: v1.RelationshipUpdate_Operation.TOUCH, relationship: row })),
-            }),
-          ),
-        );
-        const permissions = createSpiceDbPermissionClient(config, 5000);
-        const access = makeContextAccess(permissions);
-        const gate = makeModuleStateGate(makeTenantModuleStateService(database));
-        const runtime = makeActionRuntime(
-          database,
-          makeActionRepository(),
-          makeActionPermissionService(permissions),
-          makeOperationalScopeResolver(
-            makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
-            access,
-          ),
-          {
-            contextAccess: access,
-            databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
-            moduleEntrypointGateway: makeModuleEntrypointGateway(gate),
-            moduleStateGate: gate,
-            resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
-          },
-        );
-        const principal = {
-          authBindingId: bindingId,
-          authContextRef: `session:${randomUUID()}`,
-          authenticationNamespaceId: registration.authenticationNamespaceId,
-          authMethod: 'session' as const,
-          legalEntityId,
-          principalId: actorId,
-          tenantId,
-        };
-        const invoke = (
-          payload: ReplaceAgentOperatorsPayload,
-          idempotencyKey = randomUUID(),
-          company = legalEntityId,
-        ) =>
-          runtime
-            .runAction({
-              payload,
-              principal: { ...principal, legalEntityId: company },
-              registration: replaceAgentOperatorsAction,
-              transport: { correlationId: randomUUID(), idempotencyKey },
+it.layer(Layer.merge(Reactivity.layer, NodeCrypto.layer), { excludeTestServices: true })(
+  'native agent operator lifecycle',
+  (suite) => {
+    suite.effect(
+      'commits tenant-agent-global optimistic commands with trusted audit and projects only latest live members outside SQL',
+      () =>
+        Effect.gen(function* nativeOperatorProof() {
+          const crypto = yield* Crypto.Crypto;
+          const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+          expect(pair.runtime.database).toMatch(/^people_model_scratch_20261023_[0-9a-f]+$/u);
+          expect(pair.admin.database).toBe(pair.runtime.database);
+          const config = yield* loadSpiceDbConfig();
+          expect(config.endpoint).toMatch(/^localhost:\d+$/u);
+          const database = yield* makeCoreDatabase(pair.runtime);
+          const admin = yield* makeCoreDatabase(pair.admin);
+          const graph = yield* Effect.acquireRelease(
+            Effect.sync(() => newSpiceDbGrpcClient(config)),
+            (rpc) => Effect.sync(() => rpc.close()),
+          );
+          yield* Effect.promise(() =>
+            graph.promises.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+          );
+          const composition = makeOutboxWorkerComposition([]);
+          const authority = { load: freshOutboxWorkerCompositionSnapshot(composition) };
+          const snapshot = yield* authority.load;
+          yield* admin.executor
+            .insert(applicationCompositionAuthority)
+            .values({
+              authorityKey: 'active',
+              phase: 'active',
+              revision: composition.revision,
+              subscriptionsJson: CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
+              validUntil: DateTime.toDateUtc(snapshot.validUntil),
             })
-            .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
-        const payload: ReplaceAgentOperatorsPayload = {
-          agentPrincipalId: agentId,
-          context: 'operators-edited',
-          expectedRevision: 0,
-          operatorPrincipalIds: [firstHumanId],
-          revokedConnections: 0,
-        };
-        for (const change of [
-          { agentPrincipalId: actorId },
-          { agentPrincipalId: foreignAgentId },
-          { operatorPrincipalIds: [foreignHumanId] },
-          { operatorPrincipalIds: [disabledHumanId] },
-          { operatorPrincipalIds: [agentId] },
-          { operatorPrincipalIds: [randomUUID()] },
-        ]) {
-          expect(yield* invoke({ ...payload, ...change }).pipe(Effect.flip)).toBeInstanceOf(IdentityTargetInvalidError);
-        }
-        expect(
-          yield* runtime
-            .runAction({
-              payload,
-              principal: { ...principal, authBindingId: firstHumanId, principalId: firstHumanId },
-              registration: replaceAgentOperatorsAction,
-              transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
-            })
-            .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry), Effect.flip),
-        ).toBeInstanceOf(ActionPermissionDenied);
-        const key = randomUUID();
-        expect(yield* invoke(payload, key)).toMatchObject({
-          agentPrincipalId: agentId,
-          projection: 'pending',
-          revision: 1,
-        });
-        expect(yield* invoke(payload, key).pipe(Effect.flip)).toBeInstanceOf(ActionAlreadyCommitted);
-        expect(yield* invoke(payload).pipe(Effect.flip)).toBeInstanceOf(IdentityLifecycleConflictError);
-        // Different-company requests compete for the SAME revision and complete desired set.
-        expect(
-          yield* invoke({ ...payload, operatorPrincipalIds: [secondHumanId] }, randomUUID(), secondCompanyId).pipe(
-            Effect.flip,
-          ),
-        ).toBeInstanceOf(IdentityLifecycleConflictError);
-        yield* invoke(
-          { ...payload, expectedRevision: 1, operatorPrincipalIds: [secondHumanId] },
-          randomUUID(),
-          secondCompanyId,
-        );
-        const latest = yield* readLatestAgentOperatorCommand(admin.executor, tenantId, agentId);
-        expect(latest).toMatchObject({
-          desiredOperatorPrincipalIds: [secondHumanId],
-          legalEntityId: secondCompanyId,
-          revision: 2,
-        });
-        const audits = yield* admin.executor
-          .select()
-          .from(auditEvents)
-          .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
-        expect(audits).toHaveLength(2);
-        for (const row of audits) {
-          expect(row).toMatchObject({
-            auditProfile: 'sensitive',
-            authBindingId: bindingId,
-            authContextRef: principal.authContextRef,
-            authMethod: 'session',
-            outcome: 'succeeded',
-            principalId: actorId,
-          });
-          yield* Schema.decodeUnknownEffect(ReplaceAgentOperatorsAuditEvidenceSchema)(row.evidenceJson);
-        }
-        const events = yield* admin.executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId));
-        const wakeups = yield* admin.executor
-          .select()
-          .from(outboxMessages)
-          .where(eq(outboxMessages.tenantId, tenantId));
-        expect(events).toHaveLength(2);
-        expect(wakeups).toHaveLength(2);
-        expect(
-          events.every((event) => event.subjectResourceId === agentId && event.subjectResourceType === 'principal'),
-        ).toBe(true);
-        const lifecycleContext = yield* Layer.build(
-          ActionAuthorizationLifecycleLive.pipe(
-            Layer.provide(ScopedRoleMembershipLifecycleLive),
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(CoreDatabase, database),
-                Layer.succeed(DatabaseConfig, pair.runtime),
-                Layer.succeed(SpiceDbConfig, config),
-                Layer.succeed(ActiveApplicationCompositionService, authority),
-              ),
-            ),
-          ),
-        );
-        const lifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
-        const operatorsOf = (id: string) =>
-          Effect.promise(() =>
-            graph.promises.readRelationships(
-              v1.ReadRelationshipsRequest.create({
-                consistency: fullyConsistent,
-                relationshipFilter: { optionalRelation: 'operator', optionalResourceId: id, resourceType: 'principal' },
+            .onConflictDoUpdate({
+              set: { revision: composition.revision, validUntil: DateTime.toDateUtc(snapshot.validUntil) },
+              target: applicationCompositionAuthority.authorityKey,
+            });
+          const tenantId = yield* crypto.randomUUIDv4();
+          const foreignTenantId = yield* crypto.randomUUIDv4();
+          const legalEntityId = yield* crypto.randomUUIDv4();
+          const secondCompanyId = yield* crypto.randomUUIDv4();
+          const actorId = yield* crypto.randomUUIDv4();
+          const bindingId = yield* crypto.randomUUIDv4();
+          const agentId = yield* crypto.randomUUIDv4();
+          const legacyAgentId = yield* crypto.randomUUIDv4();
+          const firstHumanId = yield* crypto.randomUUIDv4();
+          const secondHumanId = yield* crypto.randomUUIDv4();
+          const disabledHumanId = yield* crypto.randomUUIDv4();
+          const foreignHumanId = yield* crypto.randomUUIDv4();
+          const foreignAgentId = yield* crypto.randomUUIDv4();
+          const registration = yield* staffAuthenticationNamespaceRegistration(['core-runtime-test']);
+          const registry = makeAuthenticationNamespaceRegistry([registration]);
+          yield* admin.executor.insert(tenants).values(
+            [tenantId, foreignTenantId].map((id) => ({
+              defaultLocale: 'cs',
+              name: 'Owned operator proof',
+              slug: `operators-${id}`,
+              status: 'active' as const,
+              tenantId: id,
+            })),
+          );
+          yield* admin.executor.insert(legalEntities).values(
+            [legalEntityId, secondCompanyId].map((id) => ({
+              legalEntityId: id,
+              legalName: 'Owned operator company',
+              registrationCountry: 'CZ',
+              registrationNumber: id,
+              status: 'active' as const,
+              tenantId,
+            })),
+          );
+          yield* admin.executor.insert(principals).values([
+            ...[actorId, firstHumanId, secondHumanId, disabledHumanId].map((id) => ({
+              displayName: 'Owned human',
+              kind: 'human' as const,
+              principalId: id,
+              status: id === disabledHumanId ? ('disabled' as const) : ('active' as const),
+              tenantId,
+            })),
+            ...[agentId, legacyAgentId].map((id) => ({
+              displayName: 'Owned agent',
+              kind: 'agent' as const,
+              principalId: id,
+              status: 'active' as const,
+              tenantId,
+            })),
+            {
+              displayName: 'Foreign human',
+              kind: 'human',
+              principalId: foreignHumanId,
+              status: 'active',
+              tenantId: foreignTenantId,
+            },
+            {
+              displayName: 'Foreign agent',
+              kind: 'agent',
+              principalId: foreignAgentId,
+              status: 'active',
+              tenantId: foreignTenantId,
+            },
+          ]);
+          yield* admin.executor.insert(principalCompanyMemberships).values(
+            [legalEntityId, secondCompanyId].map((company) => ({
+              affiliation: null,
+              legalEntityId: company,
+              principalId: agentId,
+              status: 'active' as const,
+              tenantId,
+            })),
+          );
+          yield* admin.executor.insert(principalAuthBindings).values(
+            yield* Effect.forEach([actorId, firstHumanId], (id) =>
+              Effect.gen(function* actorBinding() {
+                return {
+                  authenticationNamespaceId: registration.authenticationNamespaceId,
+                  principalAuthBindingId: id === actorId ? bindingId : firstHumanId,
+                  principalId: id,
+                  provider: 'better_auth',
+                  providerSubjectId: yield* crypto.randomUUIDv4(),
+                  status: 'active' as const,
+                  subjectType: 'user' as const,
+                  tenantId,
+                };
               }),
             ),
-          ).pipe(Effect.map(operatorIds));
-        expect(yield* operatorsOf(agentId)).toEqual([]);
-        yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
-        expect(yield* operatorsOf(agentId)).toEqual([secondHumanId]);
-        // Replaying an old delivery still loads revision 2; it cannot append another Action/audit.
-        yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
-        expect(yield* operatorsOf(agentId)).toEqual([secondHumanId]);
-        expect(
-          yield* admin.executor
+          );
+          const companyObject = (id: string) =>
+            toLegalEntityAccessObjectId(tenantId, id) ?? expect.unreachable('Invalid company identity');
+          const role = toScopedRoleObjectId({ roleKey: 'tenant-superadmin', tenantId });
+          const rows = [
+            ...[actorId, firstHumanId, secondHumanId].map((id) =>
+              relationship('tenant', tenantId, 'member', 'principal', id),
+            ),
+            ...[legalEntityId, secondCompanyId].flatMap((company) => [
+              relationship('legal_entity', companyObject(company), 'tenant', 'tenant', tenantId),
+              ...[actorId, agentId, legacyAgentId, firstHumanId, secondHumanId].map((id) =>
+                relationship('legal_entity', companyObject(company), 'member', 'principal', id),
+              ),
+            ]),
+            relationship('scoped_role', role, 'member', 'principal', actorId),
+            relationship('tenant', tenantId, 'superadmin', 'scoped_role', role, 'member'),
+            relationship('principal', legacyAgentId, 'operator', 'principal', firstHumanId),
+            ...buildActionAuthorizationRelationships(
+              [legalEntityId, secondCompanyId].flatMap((company) =>
+                [replaceAgentOperatorsAction, manageAgentStatusAction].map(({ descriptor }) => ({
+                  actionKey: descriptor.actionKey,
+                  legalEntityId: company,
+                  tenantId,
+                })),
+              ),
+            ),
+          ];
+          yield* Effect.promise(() =>
+            graph.promises.writeRelationships(
+              v1.WriteRelationshipsRequest.create({
+                updates: rows.map((row) => ({ operation: v1.RelationshipUpdate_Operation.TOUCH, relationship: row })),
+              }),
+            ),
+          );
+          const permissions = createSpiceDbPermissionClient(config, 5000);
+          const access = makeContextAccess(permissions);
+          const gate = makeModuleStateGate(makeTenantModuleStateService(database));
+          const runtime = makeActionRuntime(
+            database,
+            makeActionRepository(crypto),
+            makeActionPermissionService(permissions),
+            yield* makeOperationalScopeResolver(
+              makeOperationalScopeRepository(database, FIXTURE_DATABASE_IDENTITY_ENROLLMENT),
+              access,
+            ),
+            {
+              contextAccess: access,
+              databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+              moduleEntrypointGateway: makeModuleEntrypointGateway(gate),
+              moduleStateGate: gate,
+              resolveCompositionRevision: makeActionCompositionRevisionResolver(
+                authority,
+                composition.shell.deployment,
+              ),
+            },
+          );
+          const principal = {
+            authBindingId: bindingId,
+            authContextRef: `session:${yield* crypto.randomUUIDv4()}`,
+            authenticationNamespaceId: registration.authenticationNamespaceId,
+            authMethod: 'session' as const,
+            legalEntityId,
+            principalId: actorId,
+            tenantId,
+          };
+          const invoke = Effect.fn('replace-agent-operators-runtime.invoke')(function* invoke(
+            payload: ReplaceAgentOperatorsPayload,
+            idempotencyKey?: string,
+            company = legalEntityId,
+          ) {
+            return yield* runtime
+              .runAction({
+                payload,
+                principal: { ...principal, legalEntityId: company },
+                registration: replaceAgentOperatorsAction,
+                transport: {
+                  correlationId: yield* crypto.randomUUIDv4(),
+                  idempotencyKey: idempotencyKey ?? (yield* crypto.randomUUIDv4()),
+                },
+              })
+              .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+          });
+          const payload: ReplaceAgentOperatorsPayload = {
+            agentPrincipalId: agentId,
+            context: 'operators-edited',
+            expectedRevision: 0,
+            operatorPrincipalIds: [firstHumanId],
+            revokedConnections: 0,
+          };
+          for (const change of [
+            { agentPrincipalId: actorId },
+            { agentPrincipalId: foreignAgentId },
+            { operatorPrincipalIds: [foreignHumanId] },
+            { operatorPrincipalIds: [disabledHumanId] },
+            { operatorPrincipalIds: [agentId] },
+            { operatorPrincipalIds: [yield* crypto.randomUUIDv4()] },
+          ]) {
+            expect(yield* invoke({ ...payload, ...change }).pipe(Effect.flip)).toBeInstanceOf(
+              IdentityTargetInvalidError,
+            );
+          }
+          expect(
+            yield* runtime
+              .runAction({
+                payload,
+                principal: { ...principal, authBindingId: firstHumanId, principalId: firstHumanId },
+                registration: replaceAgentOperatorsAction,
+                transport: {
+                  correlationId: yield* crypto.randomUUIDv4(),
+                  idempotencyKey: yield* crypto.randomUUIDv4(),
+                },
+              })
+              .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry), Effect.flip),
+          ).toBeInstanceOf(ActionPermissionDenied);
+          const key = yield* crypto.randomUUIDv4();
+          expect(yield* invoke(payload, key)).toMatchObject({
+            agentPrincipalId: agentId,
+            projection: 'pending',
+            revision: 1,
+          });
+          expect(yield* invoke(payload, key).pipe(Effect.flip)).toBeInstanceOf(ActionAlreadyCommitted);
+          expect(yield* invoke(payload).pipe(Effect.flip)).toBeInstanceOf(IdentityLifecycleConflictError);
+          // Different-company requests compete for the SAME revision and complete desired set.
+          expect(
+            yield* invoke(
+              { ...payload, operatorPrincipalIds: [secondHumanId] },
+              yield* crypto.randomUUIDv4(),
+              secondCompanyId,
+            ).pipe(Effect.flip),
+          ).toBeInstanceOf(IdentityLifecycleConflictError);
+          yield* invoke(
+            { ...payload, expectedRevision: 1, operatorPrincipalIds: [secondHumanId] },
+            yield* crypto.randomUUIDv4(),
+            secondCompanyId,
+          );
+          const latest = yield* readLatestAgentOperatorCommand(admin.executor, tenantId, agentId);
+          expect(latest).toMatchObject({
+            desiredOperatorPrincipalIds: [secondHumanId],
+            legalEntityId: secondCompanyId,
+            revision: 2,
+          });
+          const audits = yield* admin.executor
             .select()
             .from(auditEvents)
-            .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed'))),
-        ).toHaveLength(2);
-        // This human has graph-only company membership. Remove it after the command commits.
-        yield* Effect.promise(() =>
-          graph.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: [
-                {
-                  operation: v1.RelationshipUpdate_Operation.DELETE,
-                  relationship: relationship(
-                    'legal_entity',
-                    companyObject(secondCompanyId),
-                    'member',
-                    'principal',
-                    secondHumanId,
-                  ),
-                },
-              ],
-            }),
-          ),
-        );
-        yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
-        expect(yield* operatorsOf(agentId)).toEqual([]);
-        // An existing agent with no native command retains its operators.
-        yield* lifecycle.reconcilePrincipal(tenantId, legacyAgentId, composition.revision);
-        expect(yield* operatorsOf(legacyAgentId)).toEqual([firstHumanId]);
-        // Archive must remove even an old operator edge unrelated to the newest desired command.
-        yield* Effect.promise(() =>
-          graph.promises.writeRelationships(
-            v1.WriteRelationshipsRequest.create({
-              updates: [
-                {
-                  operation: v1.RelationshipUpdate_Operation.TOUCH,
-                  relationship: relationship('principal', agentId, 'operator', 'principal', firstHumanId),
-                },
-              ],
-            }),
-          ),
-        );
-        expect(yield* operatorsOf(agentId)).toEqual([firstHumanId]);
-        // Archive is the only deletion command; no operator-change command is recorded for cleanup.
-        yield* runtime
-          .runAction({
-            payload: {
-              expectedStatus: 'active',
-              operation: 'archive-agent',
-              principalId: agentId,
-              reason: 'Owned archive proof',
-            },
-            principal,
-            registration: manageAgentStatusAction,
-            transport: { correlationId: randomUUID(), idempotencyKey: randomUUID() },
-          })
-          .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
-        yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
-        expect(yield* operatorsOf(agentId)).toEqual([]);
-        expect(yield* invoke({ ...payload, expectedRevision: 2 }).pipe(Effect.flip)).toBeInstanceOf(
-          IdentityTargetInvalidError,
-        );
-      }).pipe(Effect.scoped),
-    120_000,
-  );
-});
+            .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed')));
+          expect(audits).toHaveLength(2);
+          for (const row of audits) {
+            expect(row).toMatchObject({
+              auditProfile: 'sensitive',
+              authBindingId: bindingId,
+              authContextRef: principal.authContextRef,
+              authMethod: 'session',
+              outcome: 'succeeded',
+              principalId: actorId,
+            });
+            yield* Schema.decodeUnknownEffect(ReplaceAgentOperatorsAuditEvidenceSchema)(row.evidenceJson);
+          }
+          const events = yield* admin.executor.select().from(domainEvents).where(eq(domainEvents.tenantId, tenantId));
+          const wakeups = yield* admin.executor
+            .select()
+            .from(outboxMessages)
+            .where(eq(outboxMessages.tenantId, tenantId));
+          expect(events).toHaveLength(2);
+          expect(wakeups).toHaveLength(2);
+          expect(
+            events.every((event) => event.subjectResourceId === agentId && event.subjectResourceType === 'principal'),
+          ).toBe(true);
+          const lifecycleContext = yield* Layer.build(
+            ActionAuthorizationLifecycleLive.pipe(
+              Layer.provide(ScopedRoleMembershipLifecycleLive),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(CoreDatabase, database),
+                  Layer.succeed(DatabaseConfig, pair.runtime),
+                  Layer.succeed(SpiceDbConfig, config),
+                  Layer.succeed(ActiveApplicationCompositionService, authority),
+                ),
+              ),
+            ),
+          );
+          const lifecycle = Context.get(lifecycleContext, ActionAuthorizationLifecycle);
+          const operatorsOf = (id: string) =>
+            Effect.promise(() =>
+              graph.promises.readRelationships(
+                v1.ReadRelationshipsRequest.create({
+                  consistency: fullyConsistent,
+                  relationshipFilter: {
+                    optionalRelation: 'operator',
+                    optionalResourceId: id,
+                    resourceType: 'principal',
+                  },
+                }),
+              ),
+            ).pipe(Effect.map(operatorIds));
+          expect(yield* operatorsOf(agentId)).toEqual([]);
+          yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
+          expect(yield* operatorsOf(agentId)).toEqual([secondHumanId]);
+          // Replaying an old delivery still loads revision 2; it cannot append another Action/audit.
+          yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
+          expect(yield* operatorsOf(agentId)).toEqual([secondHumanId]);
+          expect(
+            yield* admin.executor
+              .select()
+              .from(auditEvents)
+              .where(and(eq(auditEvents.tenantId, tenantId), eq(auditEvents.eventType, 'action.executed'))),
+          ).toHaveLength(2);
+          // This human has graph-only company membership. Remove it after the command commits.
+          yield* Effect.promise(() =>
+            graph.promises.writeRelationships(
+              v1.WriteRelationshipsRequest.create({
+                updates: [
+                  {
+                    operation: v1.RelationshipUpdate_Operation.DELETE,
+                    relationship: relationship(
+                      'legal_entity',
+                      companyObject(secondCompanyId),
+                      'member',
+                      'principal',
+                      secondHumanId,
+                    ),
+                  },
+                ],
+              }),
+            ),
+          );
+          yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
+          expect(yield* operatorsOf(agentId)).toEqual([]);
+          // An existing agent with no native command retains its operators.
+          yield* lifecycle.reconcilePrincipal(tenantId, legacyAgentId, composition.revision);
+          expect(yield* operatorsOf(legacyAgentId)).toEqual([firstHumanId]);
+          // Archive must remove even an old operator edge unrelated to the newest desired command.
+          yield* Effect.promise(() =>
+            graph.promises.writeRelationships(
+              v1.WriteRelationshipsRequest.create({
+                updates: [
+                  {
+                    operation: v1.RelationshipUpdate_Operation.TOUCH,
+                    relationship: relationship('principal', agentId, 'operator', 'principal', firstHumanId),
+                  },
+                ],
+              }),
+            ),
+          );
+          expect(yield* operatorsOf(agentId)).toEqual([firstHumanId]);
+          // Archive is the only deletion command; no operator-change command is recorded for cleanup.
+          yield* runtime
+            .runAction({
+              payload: {
+                expectedStatus: 'active',
+                operation: 'archive-agent',
+                principalId: agentId,
+                reason: 'Owned archive proof',
+              },
+              principal,
+              registration: manageAgentStatusAction,
+              transport: { correlationId: yield* crypto.randomUUIDv4(), idempotencyKey: yield* crypto.randomUUIDv4() },
+            })
+            .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+          yield* lifecycle.reconcilePrincipal(tenantId, agentId, composition.revision);
+          expect(yield* operatorsOf(agentId)).toEqual([]);
+          expect(yield* invoke({ ...payload, expectedRevision: 2 }).pipe(Effect.flip)).toBeInstanceOf(
+            IdentityTargetInvalidError,
+          );
+        }).pipe(Effect.scoped),
+      120_000,
+    );
+  },
+);

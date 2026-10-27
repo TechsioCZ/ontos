@@ -135,7 +135,7 @@ it.live('waits through a native service bridge', () => bridge());`,
       expected: 0,
       name: 'live-only-native-child-process-chain',
       source: `${liveImports}
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 const wait = () => Effect.gen(function* deferredWait() {
   const child = yield* ChildProcess.make('node', []);
   yield* child.kill().pipe(Effect.timeoutOrElse({

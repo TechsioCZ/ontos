@@ -1,11 +1,14 @@
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
-import type { EffectBffClientOptions, EffectBffRequestContext } from '@app/shared-contracts/client-runtime';
-import { Effect } from '@modern-js/bff-effect/effect-client';
+import { makeEffectBffClientOptions } from '@app/shared-contracts/client-runtime';
+import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type { HttpApi, HttpApiClient, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { Redacted } from 'effect';
+import type { Redacted } from 'effect';
 
 import { partyRegistryApi, partyRegistryApiContract } from '../../shared/api.ts';
 import type { OperationContext } from '../../shared/api.ts';
+import { partyRegistryClientOptions, requestCorrelationHeaderName } from './party-registry-http-client-options.ts';
+import type { PartyRegistryHttpRequestContextValue } from './party-registry-http-client-options.ts';
+
+export type { PartyRegistryHttpRequestContextValue } from './party-registry-http-client-options.ts';
 
 type PartyRegistryApiGroups =
   typeof partyRegistryApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
@@ -13,7 +16,6 @@ type PartyRegistryApiGroups =
 export type PartyRegistryHttpClient = HttpApiClient.Client<Extract<PartyRegistryApiGroups, HttpApiGroup.Constraint>>;
 
 const traceparentOption = 'traceparent' as const;
-const requestCorrelationHeaderName = 'x-correlation-id' as const;
 
 export interface PartyRegistryHttpClientOptions {
   readonly baseUrl?: string | URL;
@@ -21,20 +23,6 @@ export interface PartyRegistryHttpClientOptions {
   readonly locale?: string;
   readonly operationContext?: OperationContext;
   readonly [traceparentOption]?: string;
-}
-
-export interface PartyRegistryHttpRequestContextValue {
-  readonly baseUrl: string | URL;
-  readonly compositionRevision?: string;
-  readonly credential?: Redacted.Redacted<string>;
-  /** Action transport header; the endpoint contracts declare no header codec. */
-  readonly idempotencyKey?: string;
-  readonly operationContext?: OperationContext;
-  readonly requestCorrelationHeader?: 'x-correlation-id';
-  readonly requestCorrelation?: string;
-  readonly requestLocale?: string;
-  readonly requestTrace?: string;
-  readonly requestTraceparent?: string;
 }
 
 export const partyRegistryHttpRequestContext = (
@@ -73,55 +61,26 @@ export const authenticatePartyRegistryHttpRequest = (
         requestTrace,
       };
 
-const effectBffClientOptions = (context: PartyRegistryHttpRequestContextValue): EffectBffClientOptions => {
-  const requestCorrelationHeader = context.requestCorrelationHeader ?? requestCorrelationHeaderName;
-  const transportHeaders =
-    context.credential === undefined || context.requestCorrelation === undefined
-      ? undefined
-      : {
-          authorization: Redacted.value(context.credential),
-          [requestCorrelationHeader]: context.requestCorrelation,
-          'x-trace-id': context.requestTrace,
-          'idempotency-key': context.idempotencyKey,
-          'x-ontos-composition-revision': context.compositionRevision,
-        };
-  const requestContext: EffectBffRequestContext = {};
-  if (context.requestLocale !== undefined) {
-    Object.assign(requestContext, { locale: context.requestLocale });
-  }
-  if (context.operationContext !== undefined) {
-    Object.assign(requestContext, {
-      operationContext: context.operationContext,
-    });
-  }
-  if (context.requestTraceparent !== undefined) {
-    Object.assign(requestContext, { traceparent: context.requestTraceparent });
-  }
-  const options: EffectBffClientOptions = { baseUrl: context.baseUrl };
-  if (Object.keys(requestContext).length > 0) {
-    Object.assign(options, { requestContext });
-  }
-  if (transportHeaders !== undefined) {
-    Object.assign(options, { transportHeaders });
-  }
-  return options;
-};
-
 export const invokePartyRegistryHttpClient = <Success, Failure, Requirements>(
   context: PartyRegistryHttpRequestContextValue,
   operation: (client: PartyRegistryHttpClient) => Effect.Effect<Success, Failure, Requirements>,
 ): Effect.Effect<Success, Failure | Schema.SchemaError, Requirements> =>
-  makeEffectBffClient({
-    api: partyRegistryApi,
+  makeEffectBffClientOptions({
     defaultApiPrefix: partyRegistryApiContract.apiPrefix,
-    ...effectBffClientOptions(context),
-  }).pipe(Effect.flatMap(operation));
+    ...partyRegistryClientOptions(context),
+  }).pipe(
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(partyRegistryApi, clientOptions)),
+    Effect.flatMap(operation),
+  );
 
 export const createPartyRegistryHttpClient = (
   options: PartyRegistryHttpClientOptions = {},
 ): Effect.Effect<PartyRegistryHttpClient, Schema.SchemaError, never> =>
-  makeEffectBffClient({
-    api: partyRegistryApi,
+  makeEffectBffClientOptions({
     defaultApiPrefix: partyRegistryApiContract.apiPrefix,
-    ...effectBffClientOptions(partyRegistryHttpRequestContext(options)),
-  });
+    ...partyRegistryClientOptions(partyRegistryHttpRequestContext(options)),
+  }).pipe(
+    // eslint-disable-next-line effect-native/no-per-operation-http-api-client -- #358 explicitly requires lazy uncached client construction so request metadata and credentials cannot survive across operations. expires: 2026-12-31.
+    Effect.flatMap((clientOptions) => makeEffectHttpApiClient(partyRegistryApi, clientOptions)),
+  );

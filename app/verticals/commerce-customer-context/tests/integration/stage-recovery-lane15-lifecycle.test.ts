@@ -1,12 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Config, Effect, Exit, Layer, Option, Redacted, Ref, Schema, Stream } from 'effect';
+import { Crypto, Config, Effect, Exit, Layer, Option, Redacted, Ref, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import {
   CommercePortalAuthAccountCreationGatewayLive,
@@ -62,6 +61,9 @@ import {
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
 import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
+
+const randomId = Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4()));
 
 // Existing native integration entrypoint and fixture pool ownership. Nothing is added to product.
 // "Reassembly" below discards services but is NOT a production host/process restart claim.
@@ -84,16 +86,16 @@ const ChildReceiptSchema = Schema.Struct({
 const makeScenario = Effect.fn('Lane15.makeScenario')(function* makeScenario() {
   // The existing fixture loader falls back to its configured file. Never let this proof read .env.
   expect(APP_ENV_PATH).toBe('/dev/null');
-  const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
-  const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
+  const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(yield* randomId);
+  const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(yield* randomId);
   const compositionRevision = yield* enrollmentApplicationCompositionRevision;
   const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
   const startInput = {
-    actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+    actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(yield* randomId),
     actorPrincipalId,
     compositionRevision,
     intentDigest: Schema.decodeSync(EnrollmentDigestSchema)('a'.repeat(64)),
-    intentKey: key(`lane15-${randomUUID()}`),
+    intentKey: key(`lane15-${yield* randomId}`),
     journey: 'RETAIL_SELF_ENROLLMENT' as const,
     tenantId,
   };
@@ -101,9 +103,9 @@ const makeScenario = Effect.fn('Lane15.makeScenario')(function* makeScenario() {
   const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId,
     compositionRevision,
-    correlationId: `lane15-${randomUUID()}`,
+    correlationId: `lane15-${yield* randomId}`,
     expectedRevision: attempt.revision,
-    ownerInvocationId: randomUUID(),
+    ownerInvocationId: yield* randomId,
     ownerModuleKey: 'commerce.portal-auth',
     portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
     requestDigest: 'b'.repeat(64),
@@ -146,7 +148,7 @@ const makeScenario = Effect.fn('Lane15.makeScenario')(function* makeScenario() {
     gateway: CommercePortalAuthAccountCreationGatewayService,
     lookup: CommercePortalAuthAccountLookupService,
   }).pipe(Effect.provide(Layer.mergeAll(gatewayLive, lookupLive)));
-  const email = `lane15-${randomUUID()}@example.test`;
+  const email = `lane15-${yield* randomId}@example.test`;
   const removeAccount = database.executor.delete(user).where(eq(user.email, email));
   yield* Effect.addFinalizer(() => removeAccount.pipe(Effect.orDie));
   const dispatches = yield* Ref.make(0);
@@ -220,7 +222,7 @@ it.live('lane15 positive control journals a native owner result and replays with
       expect(yield* Ref.get(scenario.dispatches)).toBe(1);
       expect(yield* scenario.accounts).toEqual(accounts);
     }).pipe(Effect.timeout('20 seconds')),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 for (const boundary of ['lost-response', 'record-failure'] as const) {
@@ -283,8 +285,8 @@ for (const boundary of ['lost-response', 'record-failure'] as const) {
         );
         const denied = yield* startEnrollmentAcceptanceAttempt(fixture, {
           ...scenario.startInput,
-          actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
-          intentKey: key(`lane15-denied-${randomUUID()}`),
+          actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(yield* randomId),
+          intentKey: key(`lane15-denied-${yield* randomId}`),
         }).pipe(Effect.exit);
         expect(Exit.isFailure(denied)).toBe(true);
         expect(
@@ -319,7 +321,7 @@ for (const boundary of ['lost-response', 'record-failure'] as const) {
         expect(yield* Ref.get(scenario.dispatches)).toBe(1);
         expect(yield* scenario.accounts).toEqual(committed);
       }).pipe(Effect.timeout('20 seconds')),
-    ),
+    ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
   );
 }
 
@@ -356,7 +358,7 @@ it.live('lane15 claim-only crash does not create an account until authoritative 
       expect(yield* scenario.accounts).toHaveLength(1);
       expect(yield* Ref.get(scenario.dispatches)).toBe(1);
     }).pipe(Effect.timeout('20 seconds')),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('lane15 kills a post-commit claimant and discovers its journal in a second native process', () =>
@@ -431,7 +433,9 @@ it.live('lane15 kills a post-commit claimant and discovers its journal in a seco
       expect(yield* scenario.accounts).toHaveLength(1);
       expect(yield* Ref.get(scenario.dispatches)).toBe(1);
     }).pipe(Effect.timeout('25 seconds')),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  )
+    .pipe(Effect.provide(NodeServices.layer))
+    .pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
 it.live('lane15 unknown readback fails closed, isolates tenants and cleans only owned rows twice', () =>
@@ -471,11 +475,11 @@ it.live('lane15 unknown readback fails closed, isolates tenants and cleans only 
       ).toBe(true);
       expect(yield* Ref.get(scenario.dispatches)).toBe(1);
       expect(yield* scenario.accounts).toHaveLength(1);
-      const otherTenant = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
+      const otherTenant = Schema.decodeSync(EnrollmentTenantIdSchema)(yield* randomId);
       const foreign = yield* makeEnrollmentAcceptanceFixture({ tenantId: otherTenant }, fixture.compositionRevision);
       const foreignAttempt = yield* startEnrollmentAcceptanceAttempt(foreign, {
         ...scenario.startInput,
-        actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
+        actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(yield* randomId),
         tenantId: otherTenant,
       });
       expect(
@@ -529,5 +533,5 @@ it.live('lane15 unknown readback fails closed, isolates tenants and cleans only 
         ),
       ).toEqual([]);
     }).pipe(Effect.timeout('25 seconds')),
-  ),
+  ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

@@ -6,7 +6,7 @@ import {
 import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   toSpiceDbActionObjectId,

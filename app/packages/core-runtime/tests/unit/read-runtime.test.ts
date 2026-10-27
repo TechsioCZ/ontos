@@ -1,13 +1,13 @@
 import { ReadInputValidationError } from '../../src/reads/read-input-validation-error.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
-import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
-import { Reactivity } from 'effect/unstable/reactivity';
+import { FetchHttpClient, HttpClient } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
 import { constVoid } from 'effect/Function';
 /* oxlint-disable sonarjs/use-type-alias -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
-import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';

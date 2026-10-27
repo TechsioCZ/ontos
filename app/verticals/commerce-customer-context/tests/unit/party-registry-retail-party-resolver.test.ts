@@ -5,7 +5,7 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { GatewayContextApi } from '@app/shared-contracts';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 

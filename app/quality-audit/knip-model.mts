@@ -425,6 +425,12 @@ const exportedBindings = ({ program }: SourceFacts): readonly ExportedBinding[] 
     });
   });
 
+/** Packages whose `defineConfig` produces a Modern application configuration. */
+const MODERN_CONFIG_FACTORY_SOURCES: ReadonlySet<string> = new Set([
+  '@modern-js/app-tools',
+  '@modern-js/ultramodern-app-tools',
+]);
+
 /** Modern's file router consumes splat components and paired client data outside the import graph. */
 const modernRouteEvidence = (
   factsByPath: ReadonlyMap<string, SourceFacts>,
@@ -443,7 +449,9 @@ const modernRouteEvidence = (
     }
     const factories = new Set(
       facts.program.body.flatMap((node) =>
-        node.type === 'ImportDeclaration' && node.importKind !== 'type' && node.source.value === '@modern-js/app-tools'
+        node.type === 'ImportDeclaration' &&
+        node.importKind !== 'type' &&
+        MODERN_CONFIG_FACTORY_SOURCES.has(node.source.value)
           ? node.specifiers.flatMap((specifier) =>
               specifier.type === 'ImportSpecifier' && propertyName(specifier.imported) === 'defineConfig'
                 ? [specifier.local.name]
@@ -1440,9 +1448,7 @@ const nativeSubprocessEvidence = (
     }
   }
   const providers = new Set(
-    [...imports].flatMap(([name, origin]) =>
-      /^(?:child_process|effect\/unstable\/process):/u.test(origin) ? [name] : [],
-    ),
+    [...imports].flatMap(([name, origin]) => (/^(?:child_process|effect\/process):/u.test(origin) ? [name] : [])),
   );
   if (providers.size === 0) {
     return [];
@@ -1730,11 +1736,7 @@ const nativeSubprocessEvidence = (
     const literalStrings = (raw: Node | undefined): string[] => strings(raw, variables);
     const identity = (raw: Node | undefined): string | undefined => identityInScope(raw, variables);
     const factory = identity(call.callee);
-    if (
-      !['child_process:spawn', 'child_process:*.spawn', 'effect/unstable/process:ChildProcess.make'].includes(
-        factory ?? '',
-      )
-    ) {
+    if (!['child_process:spawn', 'child_process:*.spawn', 'effect/process:ChildProcess.make'].includes(factory ?? '')) {
       return;
     }
     if (!['global:process.execPath', 'process:*.execPath'].includes(identity(call.arguments[0]) ?? '')) {
@@ -2550,10 +2552,7 @@ const isNativePortSink = (
   if (['ChildProcess', 'Path', 'Effect', 'process', 'URL'].some((name) => variables.has(name))) {
     return false;
   }
-  if (
-    !importsModelMember(facts, 'effect', 'Path') ||
-    !importsModelMember(facts, 'effect/unstable/process', 'ChildProcess')
-  ) {
+  if (!importsModelMember(facts, 'effect', 'Path') || !importsModelMember(facts, 'effect/process', 'ChildProcess')) {
     return false;
   }
   const joined = nativePortJoin(sink, script);
@@ -2646,7 +2645,7 @@ const ownerPortEvidence = (
     const processImport = facts.program.body.some(
       (statement) =>
         statement.type === 'ImportDeclaration' &&
-        statement.source.value === 'effect/unstable/process' &&
+        statement.source.value === 'effect/process' &&
         statement.specifiers.some(
           (specifier) =>
             specifier.type === 'ImportSpecifier' &&

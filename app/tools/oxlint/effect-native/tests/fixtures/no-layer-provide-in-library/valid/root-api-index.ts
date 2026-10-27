@@ -1,6 +1,6 @@
 // Application composition root (`rootFiles`): composing the whole graph here is the A1 target.
 import { Layer } from 'effect';
-import { HttpApiBuilder } from 'effect/unstable/http';
+import { HttpApiBuilder } from 'effect/http';
 
 import { Api } from './api.ts';
 import { ActionRuntimeLive, CorePersistenceLive, ReadRuntimeLive } from './runtime.ts';

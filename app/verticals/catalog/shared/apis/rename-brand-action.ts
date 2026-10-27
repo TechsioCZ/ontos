@@ -3,7 +3,7 @@
 // @ontos-action-http-slug rename-brand
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { HttpApiMiddleware } from 'effect/unstable/httpapi';
+import { HttpApiMiddleware } from 'effect/http-api';
 import { RenameBrandPayloadSchema, RenameBrandResultSchema } from '../actions/rename-brand.ts';
 
 export { RenameBrandPayloadSchema } from '../actions/rename-brand.ts';

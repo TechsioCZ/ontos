@@ -309,6 +309,7 @@ it.effect('check performs zero native writes or gateway calls and returns a stab
     expect(yield* checked(test)).toEqual(first);
     expect(first.status).toBe('checked');
     expect(first.approvalSha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(first.approvalSha256).toBe('97337aceae75c14655441c7a11c9170add8efa837c5a28b271d150ea724237b5');
     expect(test.counts()).toEqual({ claims: 0, commandReads: 0, dispatches: 0, ownerReads: 0, settlements: 0 });
     const serialized = Schema.encodeSync(Schema.fromJsonString(RecoveryRequestSchema))(request);
     expect(serialized).not.toContain('password');

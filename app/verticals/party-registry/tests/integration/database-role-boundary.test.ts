@@ -10,10 +10,10 @@ import {
 import { addTestGatewayScopeGrantCleanup } from '@app/core-runtime/testing/gateway-scope-grant';
 import type { PgClient } from '@effect/sql-pg';
 import { Context, Data, Effect, Layer, Predicate, Redacted } from 'effect';
-import type { SqlError } from 'effect/unstable/sql/SqlError';
+import type { SqlError } from 'effect/sql/SqlError';
 import { NodeCrypto } from '@effect/platform-node';
 import { assert, expect, it } from 'effect-rstest';
-import type { Row } from 'effect/unstable/sql/SqlConnection';
+import type { Row } from 'effect/sql/SqlConnection';
 
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {

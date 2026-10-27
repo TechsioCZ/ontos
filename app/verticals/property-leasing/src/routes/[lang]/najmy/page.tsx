@@ -107,7 +107,7 @@ const browserCrypto = Crypto.make({
     ),
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
-const newUuid = browserCrypto.randomUUIDv4;
+const newUuid = browserCrypto.randomUUIDv4();
 const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function* resolveOccupantName(
   record: Occupancy | undefined,
 ) {

@@ -1,6 +1,6 @@
 import { commercialDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { Effect, FileSystem, Path, Schema } from 'effect';
-import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import type { BootstrapRelationship } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';

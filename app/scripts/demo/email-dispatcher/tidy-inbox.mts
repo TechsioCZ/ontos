@@ -1,4 +1,3 @@
-// @effect-diagnostics *:off
 // Keeps the demo Mailpit inbox presentable after test runs. Deletes ONLY Mailpit copies of
 //   - e-mails about AKROS orders that were removed from the demo (soft-deleted, `demoCleanup`), and
 //   - e-mails to test/audit recipients (*.invalid, *.test, or audit/critic/fixer/test markers in the address).
@@ -6,30 +5,33 @@
 // recipients to the separate test capture (:8026), this only clears mails from before that change or from foreign senders.
 //   node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts           dry run (lists what would go)
 //   node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts --apply   deletes
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Effect, Layer, ManagedRuntime } from 'effect';
-import { Reactivity } from 'effect/unstable/reactivity';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
-import { isTestRecipient } from './recipients.ts';
+import { Config, Console, Effect, Layer, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
+import { Reactivity } from 'effect/reactivity';
+import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from '../../../packages/email-delivery/src/dispatcher/contract.ts';
+import { isTestRecipient } from '../../../packages/email-delivery/src/dispatcher/recipients.ts';
 
-const mailpit = (process.env['MAILPIT_URL'] ?? 'http://127.0.0.1:8025').replace(/\/+$/u, '');
-const apply = process.argv.includes('--apply');
+export const MailpitMessageSchema = Schema.Struct({
+  Created: Schema.String,
+  ID: Schema.String,
+  Subject: Schema.String,
+  To: Schema.Array(Schema.Struct({ Address: Schema.String })),
+});
+type MailpitMessage = typeof MailpitMessageSchema.Type;
+const pageSchema = Schema.Struct({ messages: Schema.Array(MailpitMessageSchema), total: Schema.Number });
+const deleteSchema = Schema.Struct({ IDs: Schema.Array(Schema.String) });
 
-interface MailpitMessage {
-  readonly Created: string;
-  readonly ID: string;
-  readonly Subject: string;
-  readonly To: readonly { readonly Address: string }[];
-}
-
-const Database = Layer.effect(
+const DatabaseLive = Layer.effect(
   PgClient.PgClient,
-  Effect.gen(function* () {
+  Effect.gen(function* databaseLive() {
     return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_ADMIN_URL') });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
-const removedOrderNumbers = Effect.gen(function* () {
+const removedOrderNumbers = Effect.gen(function* removedOrderNumbers() {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{ readonly number: string }>`
     select number from demo_merchandise.orders
@@ -37,43 +39,70 @@ const removedOrderNumbers = Effect.gen(function* () {
   return new Set(rows.map((row) => row.number));
 });
 
-const listMessages = async (): Promise<readonly MailpitMessage[]> => {
+export const listMessages = Effect.fn('tidyInbox.listMessages')(function* listMailpitMessages(mailpit: string) {
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const all: MailpitMessage[] = [];
   for (let start = 0; ; start += 500) {
-    const response = await fetch(`${mailpit}/api/v1/messages?start=${start}&limit=500`);
-    if (!response.ok) throw new Error(`Mailpit HTTP ${response.status}`);
-    const page = (await response.json()) as { readonly messages: readonly MailpitMessage[]; readonly total: number };
+    const page = yield* client
+      .get(`${mailpit}/api/v1/messages?start=${start}&limit=500`)
+      .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(pageSchema)), Effect.timeout('30 seconds'));
     all.push(...page.messages);
-    if (page.messages.length === 0 || all.length >= page.total) return all;
+    if (page.messages.length === 0 || all.length >= page.total) {
+      return all;
+    }
   }
-};
+});
 
-const main = async () => {
-  const runtime = ManagedRuntime.make(Database);
-  const removed = await runtime.runPromise(removedOrderNumbers);
-  await runtime.dispose();
-  const messages = await listMessages();
-  const doomed = messages.filter((message) => {
+export const messagesToDelete = (messages: readonly MailpitMessage[], removed: ReadonlySet<string>) =>
+  messages.filter((message) => {
     const order = /OBJ-\d{4}-\d{4}/u.exec(message.Subject)?.[0];
     return (order !== undefined && removed.has(order)) || message.To.some((to) => isTestRecipient(to.Address));
   });
+
+export const deleteMessages = Effect.fn('tidyInbox.deleteMessages')(function* deleteMailpitMessages(
+  mailpit: string,
+  messages: readonly MailpitMessage[],
+) {
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  for (let index = 0; index < messages.length; index += 200) {
+    const request = yield* HttpClientRequest.schemaBodyJson(deleteSchema)(
+      HttpClientRequest.make('DELETE')(`${mailpit}/api/v1/messages`),
+      { IDs: messages.slice(index, index + 200).map((message) => message.ID) },
+    );
+    yield* client.execute(request).pipe(Effect.timeout('30 seconds'));
+  }
+});
+
+const tidyInbox = Effect.fn('tidyInbox.run')(function* runTidyInbox(apply: boolean) {
+  const mailpit = yield* Config.String('MAILPIT_URL').pipe(
+    Config.withDefault('http://127.0.0.1:8025'),
+    Config.map((url) => url.replace(/\/+$/u, '')),
+  );
+  const removed = yield* removedOrderNumbers;
+  const messages = yield* listMessages(mailpit);
+  const doomed = messagesToDelete(messages, removed);
   for (const message of doomed) {
-    console.log(`${apply ? 'delete' : 'would delete'}  ${message.Created.slice(0, 16)}  ${message.To.map((to) => to.Address).join(', ')}  ${message.Subject}`);
+    yield* Console.log(
+      `${apply ? 'delete' : 'would delete'}  ${message.Created.slice(0, 16)}  ${message.To.map((to) => to.Address).join(', ')}  ${message.Subject}`,
+    );
   }
   if (apply && doomed.length > 0) {
-    for (let index = 0; index < doomed.length; index += 200) {
-      const response = await fetch(`${mailpit}/api/v1/messages`, {
-        body: JSON.stringify({ IDs: doomed.slice(index, index + 200).map((message) => message.ID) }),
-        headers: { 'content-type': 'application/json' },
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error(`Mailpit delete HTTP ${response.status}`);
-    }
+    yield* deleteMessages(mailpit, doomed);
   }
-  console.log(`${messages.length} messages, ${doomed.length} ${apply ? 'deleted' : 'to delete (dry run, add --apply)'}, ${messages.length - doomed.length} kept`);
-};
-
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exit(1);
+  yield* Console.log(
+    `${messages.length} messages, ${doomed.length} ${apply ? 'deleted' : 'to delete (dry run, add --apply)'}, ${messages.length - doomed.length} kept`,
+  );
 });
+const command = Command.make(
+  'tidy-inbox',
+  { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
+  ({ apply }) => tidyInbox(apply),
+);
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    Command.run(command, { version: '1.0.0' }).pipe(
+      Effect.provide(Layer.mergeAll(DatabaseLive, NodeServices.layer, FetchHttpClient.layer)),
+      Effect.scoped,
+    ),
+  );
+}

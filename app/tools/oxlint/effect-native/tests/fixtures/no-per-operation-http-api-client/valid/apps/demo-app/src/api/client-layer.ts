@@ -1,7 +1,7 @@
 // A1/A9 target shape: the client is constructed once while building the Layer.
 import { Context, Effect, Layer } from 'effect';
-import { HttpClient } from 'effect/unstable/http';
-import { HttpApiClient } from 'effect/unstable/httpapi';
+import { HttpClient } from 'effect/http';
+import { HttpApiClient } from 'effect/http-api';
 import { contactsApi } from './api.ts';
 
 interface ContactsClientService {

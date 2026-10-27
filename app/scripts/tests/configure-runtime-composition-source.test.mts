@@ -1,6 +1,6 @@
 import { ConfigProvider, Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse } from 'effect/http';
 
 import { ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY } from '../../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import { ActiveApplicationCompositionPublicationError } from '../active-application-composition.mts';

@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { Deferred, Effect, Fiber, Layer, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { ChildProcess } from 'effect/unstable/process';
+import { ChildProcess } from 'effect/process';
 
 class WorkerProcessTestFailure extends Schema.TaggedError<WorkerProcessTestFailure>()('WorkerProcessTestFailure', {
   message: Schema.String,

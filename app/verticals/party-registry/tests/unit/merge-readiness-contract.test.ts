@@ -286,22 +286,34 @@ it.layer(NodeFileSystem.layer)('merge-readiness-contract', (suite) => {
     ),
   );
 
+  // Party's config hands its own module URL to the shared OntOS workspace helper, which installs the
+  // development module-contract middleware and serves .dev-public next to the preset's public dirs.
   suite.effect('serves the generated OntOS module contract before i18n redirects in development', () =>
     Effect.map(
       FileSystem.FileSystem.use((fs) =>
-        fs.readFileString(fileURLToPath(new URL('../../modern.config.ts', import.meta.url))),
+        Effect.all([
+          fs.readFileString(fileURLToPath(new URL('../../modern.config.ts', import.meta.url))),
+          fs.readFileString(
+            fileURLToPath(new URL('../../../../packages/shared-contracts/tooling/modern-config.ts', import.meta.url)),
+          ),
+        ]),
       ),
-      (modernConfigSource) => {
+      ([modernConfigSource, workspaceToolingSource]) => {
         expect(modernConfigSource).toMatch(
-          /new URL\(\s*'\.dev-public\/\.well-known\/ontos-module-manifest\.json',\s*import\.meta\.url\s*\)/u,
+          /createWorkspaceModernConfig\(\{\s*appId,\s*cloudflareHyperdrives: \[[^\]]+\],\s*moduleUrl: import\.meta\.url,/u,
         );
-        expect(modernConfigSource).toMatch(/setupMiddlewares:/u);
-        expect(modernConfigSource).toMatch(
+        expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
+        expect(workspaceToolingSource).toMatch(
+          /new URL\('\.dev-public\/\.well-known\/ontos-module-manifest\.json', moduleUrl\)/u,
+        );
+        expect(workspaceToolingSource).toMatch(
           /request\.url\?\.split\('\?', 1\)\[0\]\s*!==\s*'\/\.well-known\/ontos-module-manifest\.json'/u,
         );
-        expect(modernConfigSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
-        expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
-        expect(modernConfigSource).toMatch(/publicDir: \['\.\/locales', '\.\/assets', '\.\/\.dev-public'\]/u);
+        expect(workspaceToolingSource).toMatch(/response\.setHeader\('Content-Type', 'application\/json'\)/u);
+        expect(workspaceToolingSource).toMatch(
+          /dev: \{\s*setupMiddlewares: appId === 'shell-super-app' \? \[\] : \[createDevelopmentContractMiddleware\(moduleUrl\)\],\s*\},/u,
+        );
+        expect(workspaceToolingSource).toMatch(/server: \{\s*publicDir: \['\.\/\.dev-public'\],\s*\},/u);
       },
     ),
   );

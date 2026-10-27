@@ -1336,6 +1336,8 @@ export const deleteMutationEffect = (
 
 const CORE_RUNTIME_PACKAGE = '@app/core-runtime';
 const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
+/** Generated composition roots provide Node platform services, such as `Crypto`, from this exact package. */
+export const PLATFORM_NODE_DEPENDENCY = ['@effect/platform-node', '4.0.5'] as const;
 
 export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undefined => {
   const dependenciesValue = vertical.packageJson['dependencies'];

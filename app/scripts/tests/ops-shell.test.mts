@@ -4,7 +4,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { systemError } from 'effect/PlatformError';
 import { expect, it } from 'effect-rstest';
-import { ChildProcessSpawner } from 'effect/unstable/process';
+import { ChildProcessSpawner } from 'effect/process';
 
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { OpsShellLive, renderCommand, runCommand } from '../ops/ops-shell.mts';

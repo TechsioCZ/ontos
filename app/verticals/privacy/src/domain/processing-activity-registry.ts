@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
 
 import type { PrincipalRef } from '@app/core-runtime';
 import {
@@ -703,10 +702,10 @@ export const buildProcessingActivity = (input: {
   readonly createdAt: string;
   readonly legalEntityId: string;
   readonly request: CreateProcessingActivityInput;
+  readonly resourceId: string;
   readonly tenantId: string;
 }): ProcessingActivity => {
-  const { actor, createdAt, legalEntityId, request, tenantId } = input;
-  const id = request.activityRef?.resourceId ?? randomUUID();
+  const { actor, createdAt, legalEntityId, request, resourceId, tenantId } = input;
   const initialEvent: ProcessingActivityLifecycleEvent = {
     actor,
     decisionEvidenceRefs: [],
@@ -717,7 +716,7 @@ export const buildProcessingActivity = (input: {
     to: 'PROPOSED',
   };
   return {
-    activityRef: request.activityRef ?? activityRef(tenantId, id),
+    activityRef: request.activityRef ?? activityRef(tenantId, resourceId),
     applicabilityDecisions: copyOrEmpty(request.applicabilityDecisions),
     createdAt,
     currentLifecycle: 'PROPOSED',
@@ -802,8 +801,9 @@ export const applyProcessingActivityTransition = (
   updatedAt: recordedAt,
 });
 
-export const makeInMemoryProcessingActivityRegistry = (
-  configuration: InMemoryProcessingActivityRegistryConfiguration = {},
+const makeInMemoryRegistry = (
+  configuration: InMemoryProcessingActivityRegistryConfiguration,
+  crypto: Crypto.Crypto,
 ): ProcessingActivityRepositoryService => {
   const activities = new Map<string, ProcessingActivity>();
   return {
@@ -822,7 +822,26 @@ export const makeInMemoryProcessingActivityRegistry = (
         });
       }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
-      const activity = buildProcessingActivity({ actor, createdAt, legalEntityId, request: input, tenantId });
+      const resourceId =
+        input.activityRef?.resourceId ??
+        (yield* crypto.randomUUIDv4().pipe(
+          Effect.catchTag('PlatformError', () =>
+            Effect.fail(
+              new ProcessingActivityRegistryError({
+                code: 'privacy_processing_activity_persistence_unavailable',
+                reason: 'Processing Activity identifier could not be generated',
+              }),
+            ),
+          ),
+        ));
+      const activity = buildProcessingActivity({
+        actor,
+        createdAt,
+        legalEntityId,
+        request: input,
+        resourceId,
+        tenantId,
+      });
       activities.set(processingActivityScopedKey(tenantId, legalEntityId, activity.activityRef.resourceId), activity);
       return activity;
     }),
@@ -877,3 +896,8 @@ export const makeInMemoryProcessingActivityRegistry = (
     }),
   };
 };
+
+export const makeInMemoryProcessingActivityRegistry = (
+  configuration: InMemoryProcessingActivityRegistryConfiguration = {},
+): Effect.Effect<ProcessingActivityRepositoryService, never, Crypto.Crypto> =>
+  Effect.service(Crypto.Crypto).pipe(Effect.map((crypto) => makeInMemoryRegistry(configuration, crypto)));

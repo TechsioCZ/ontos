@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Effect, FileSystem, Layer, Match, Schema, Sink, Stream } from 'effect';
-import { ChildProcessSpawner } from 'effect/unstable/process';
-import type { ChildProcess } from 'effect/unstable/process';
+import { ChildProcessSpawner } from 'effect/process';
+import type { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 

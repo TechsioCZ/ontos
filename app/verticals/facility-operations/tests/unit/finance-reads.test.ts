@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 import { FinanceRecordsViewSchema } from '../../src/api/finance-reads.ts';
 
 const invoice = {
@@ -54,6 +54,16 @@ it('reads the Finance fields provoz uses', () => {
   expect(view.revision).toBe(42);
   expect(view.state.invoices[0]?.sourceOrder?.number).toBe('OBJ-2026-0003');
   expect(view.state.documents?.[0]?.invoiceResourceId).toBe('inv-1');
+});
+
+it('decodes upload instants natively without changing the Finance wire dates', () => {
+  const view = decode(response);
+  expect(view.state.documents?.map((file) => DateTime.isUtc(file.uploadedAt))).toEqual([true]);
+  const encoded = Schema.encodeSync(FinanceRecordsViewSchema)(view);
+  expect(encoded.state.documents?.[0]?.uploadedAt).toBe('2026-10-02T09:00:00.000Z');
+  expect(encoded.state.invoices[0]?.dueDate).toBe('2026-10-15');
+  expect(encoded.state.invoices[0]?.issueDate).toBe('2026-10-01');
+  expect(encoded.businessDate).toBe('2026-10-21');
 });
 
 it('keeps working when Finance adds fields, states and document kinds', () => {

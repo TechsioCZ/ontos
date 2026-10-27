@@ -2,20 +2,17 @@ import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
 } from '../../shared/database-identities.ts';
-import { randomUUID } from 'node:crypto';
-
-import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import {
   CoreSearchProjectionStoreLive,
   CoreSearchQueryRuntimeLive,
   loadDatabaseIdentityConnections,
+  DatabaseIdentityEnrollmentContext,
   ReadRuntime,
   SHELL_GATEWAY_ISSUER_IDENTITY,
   resolveActionCommit,
   runAction,
-  DatabaseIdentityEnrollmentContext,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import {
@@ -24,8 +21,9 @@ import {
 } from '@app/core-runtime/testing/gateway-scope-grant';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
+import { Crypto, Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -82,19 +80,22 @@ const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): Enc
   validFrom: '2020-01-01T00:00:00.000Z',
   ...extra,
 });
-const transport = (idempotencyKey = randomUUID()) => ({
+const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const transport = (idempotencyKey: string) => ({
   correlationId: `live-${idempotencyKey}`,
   idempotencyKey,
   targetModuleKey: 'party.registry',
 });
+const freshTransport = nextUuid.pipe(Effect.map((idempotencyKey) => transport(idempotencyKey)));
+const freshReadTransport = nextUuid.pipe(Effect.map((correlationId) => ({ correlationId })));
 const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext) =>
-  ReadRuntime.pipe(
-    Effect.flatMap((runtime) =>
+  Effect.all([ReadRuntime, freshReadTransport]).pipe(
+    Effect.flatMap(([runtime, readTransport]) =>
       runtime.runRead({
         registration: partyDetailRead,
         input: { partyRef },
         principal,
-        transport: { correlationId: randomUUID() },
+        transport: readTransport,
       }),
     ),
   );
@@ -220,18 +221,20 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             legalEntityId: fixture.legalEntityId,
           });
           const otherManagerPrincipal = yield* withGatewayScope(other.manager);
-          const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer>>) =>
+          const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer> | Crypto.Crypto>) =>
             effect.pipe(Effect.provideContext(fixtureContext));
           const create = (
             value: EncodedPartyCandidate,
-            idempotencyKey = randomUUID(),
+            idempotencyKey?: string,
             principal: TrustedPrincipalContext = managerPrincipal,
           ) =>
-            runAction({
-              registration: createPartyAction,
-              payload: { candidate: value },
-              principal,
-              transport: transport(idempotencyKey),
+            Effect.gen(function* createParty() {
+              return yield* runAction({
+                registration: createPartyAction,
+                payload: { candidate: value },
+                principal,
+                transport: transport(idempotencyKey ?? (yield* nextUuid)),
+              });
             });
           const snapshot = Effect.fn('GovernedIdentityTest.snapshot')(function* snapshotEffect() {
             const [partyRows, assertions, claims, decisions, cases, core] = yield* Effect.all(
@@ -355,7 +358,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           yield* Effect.forEach(
             recoveryCandidates,
             Effect.fn('GovernedIdentityTest.verifyCommitRecovery')(function* verifyCommitRecoveryEffect(value) {
-              const key = randomUUID();
+              const key = yield* nextUuid;
               fixture.faultNextTransaction('lost-ack');
               assert.isOk(
                 Predicate.isTagged(yield* run(create(value, key).pipe(Effect.flip)), 'ActionCommitIndeterminate'),
@@ -378,15 +381,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               );
 
               const recovered = yield* run(
-                ReadRuntime.pipe(
-                  Effect.flatMap((runtime) =>
+                Effect.all([ReadRuntime, freshReadTransport]).pipe(
+                  Effect.flatMap(([runtime, readTransport]) =>
                     runtime.runRead({
                       registration: partyMatchDecisionRead,
                       input: {
                         actionInvocationId: invocation.actionInvocationId,
                       },
                       principal: managerReadPrincipal,
-                      transport: { correlationId: randomUUID() },
+                      transport: readTransport,
                     }),
                   ),
                 ),
@@ -443,7 +446,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           expect(rolledBack.core.events).toEqual(beforeDenied.core.events);
           expect(rolledBack.core.outbox).toEqual(beforeDenied.core.outbox);
 
-          const independent = yield* create(exact, randomUUID(), otherManagerPrincipal).pipe(
+          const independent = yield* create(exact, yield* nextUuid, otherManagerPrincipal).pipe(
             Effect.provideContext(otherContext),
           );
           assert.isOk(independent.outcome === 'CREATED');
@@ -458,7 +461,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
           assert.isOk(
             Predicate.isTagged(
-              yield* run(create(candidate('00006947'), randomUUID(), legalEntityOnlyPrincipal).pipe(Effect.flip)),
+              yield* run(create(candidate('00006947'), yield* nextUuid, legalEntityOnlyPrincipal).pipe(Effect.flip)),
               'ActionPermissionDenied',
             ),
           );
@@ -478,13 +481,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             Effect.provideContext(fixtureContext),
             Effect.provideService(DatabaseIdentityEnrollmentContext, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT),
           );
-          const deniedSearch = ReadRuntime.pipe(
-            Effect.flatMap((runtime) =>
+          const deniedSearch = Effect.all([ReadRuntime, freshReadTransport]).pipe(
+            Effect.flatMap(([runtime, readTransport]) =>
               runtime.runRead({
                 registration: partiesRead,
                 input: { query: 'Live' },
                 principal: legalEntityOnlyPrincipal,
-                transport: { correlationId: randomUUID() },
+                transport: readTransport,
               }),
             ),
             Effect.provideContext(searchContext),
@@ -494,13 +497,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           assert.isOk(
             Predicate.isTagged(
               yield* run(
-                ReadRuntime.pipe(
-                  Effect.flatMap((runtime) =>
+                Effect.all([ReadRuntime, freshReadTransport]).pipe(
+                  Effect.flatMap(([runtime, readTransport]) =>
                     runtime.runRead({
                       registration: partyMatchDecisionRead,
                       input: { decisionRef: independent.decisionRef },
                       principal: managerReadPrincipal,
-                      transport: { correlationId: randomUUID() },
+                      transport: readTransport,
                     }),
                   ),
                   Effect.flip,
@@ -517,12 +520,16 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             reason: 'Business relationship',
           };
           const counterparty = () =>
-            runAction({
-              registration: counterpartyCreateAction,
-              payload: { partyRef, provenance },
-              principal: legalEntityOnlyPrincipal,
-              transport: transport(),
-            });
+            freshTransport.pipe(
+              Effect.flatMap((commandTransport) =>
+                runAction({
+                  registration: counterpartyCreateAction,
+                  payload: { partyRef, provenance },
+                  principal: legalEntityOnlyPrincipal,
+                  transport: commandTransport,
+                }),
+              ),
+            );
           const counterparties = yield* Effect.all([run(counterparty()), run(counterparty())], {
             concurrency: 2,
           });
@@ -533,13 +540,13 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
           const readCounterparty = () =>
             run(
-              ReadRuntime.pipe(
-                Effect.flatMap((runtime) =>
+              Effect.all([ReadRuntime, freshReadTransport]).pipe(
+                Effect.flatMap(([runtime, readTransport]) =>
                   runtime.runRead({
                     registration: counterpartyReadRead,
                     input: { counterpartyRef },
                     principal: legalEntityOnlyPrincipal,
-                    transport: { correlationId: randomUUID() },
+                    transport: readTransport,
                   }),
                 ),
               ),
@@ -562,23 +569,27 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
               registration: counterpartyCreateAction,
               payload: { partyRef, provenance },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }).pipe(Effect.flip),
           );
           yield* fixture.grantResourceAccess(counterpartyRef, legalEntityOnlyPrincipal.principalId, 'writer');
           const role = (roleType: 'CUSTOMER' | 'SUPPLIER') =>
             run(
-              runAction({
-                registration: counterpartyRoleAddAction,
-                payload: {
-                  counterpartyRef,
-                  roleType,
-                  provenance,
-                  validFrom: '2020-01-01T00:00:00.000Z',
-                },
-                principal: legalEntityOnlyPrincipal,
-                transport: transport(),
-              }),
+              freshTransport.pipe(
+                Effect.flatMap((commandTransport) =>
+                  runAction({
+                    registration: counterpartyRoleAddAction,
+                    payload: {
+                      counterpartyRef,
+                      roleType,
+                      provenance,
+                      validFrom: '2020-01-01T00:00:00.000Z',
+                    },
+                    principal: legalEntityOnlyPrincipal,
+                    transport: commandTransport,
+                  }),
+                ),
+              ),
             );
           const customer = yield* role('CUSTOMER');
           yield* role('SUPPLIER');
@@ -595,7 +606,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 validTo: '2021-01-01T00:00:00.000Z',
               },
               principal: legalEntityOnlyPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           const counterpartyAfterRoleEnd = yield* readCounterparty();
@@ -631,7 +642,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 reason: 'Reviewed concrete external person',
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           assert.isOk(reviewedPerson.partyRef);
@@ -648,7 +659,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 provenance: { method: 'DIRECT_INTERACTION', source: 'live' },
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           // Domain relationships never provision access to Party records.
@@ -677,7 +688,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 provenance: { method: 'DOCUMENT', source: 'live' },
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           expect(updatedRelationship.outcome).toBe('CHANGED');
@@ -692,7 +703,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 provenance: { method: 'DOCUMENT', source: 'live' },
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           expect(endedRelationship.outcome).toBe('CHANGED');
@@ -711,7 +722,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 reason: 'Historical collision fixture',
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           const [identifierTemplate] = yield* admin
@@ -728,7 +739,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
 
           yield* admin.insert(partyOfficialIdentifiers).values({
             ...identifierTemplate,
-            officialIdentifierId: randomUUID(),
+            officialIdentifierId: yield* nextUuid,
             partyId: legacy.partyRef.resourceId,
           });
           const collision = yield* run(
@@ -740,7 +751,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 reason: 'Recheck historical claims',
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           assert.isOk(collision.outcome === 'BLOCKED' && collision.reasonCode === 'EXACT_CLAIM_CONFLICT');
@@ -755,7 +766,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 reason: 'Archive acceptance',
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           const archivedParty = yield* run(readPartyDetail(partyRef, managerReadPrincipal));
@@ -773,7 +784,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 reason: 'Unarchive acceptance',
               },
               principal: managerPrincipal,
-              transport: transport(),
+              transport: yield* freshTransport,
             }),
           );
           expect(unarchive.outcome).toBe('BLOCKED');

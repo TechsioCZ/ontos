@@ -1,6 +1,6 @@
 // The blessed declaration, reached through a destructured member import and through the framework
 // re-export the repo already uses, aliased. Both are Schema-owned contracts, not hand-built payloads.
-import { annotations } from 'effect/unstable/httpapi/HttpApiSchema';
+import { annotations } from 'effect/http-api/HttpApiSchema';
 import { String as SchemaString, TaggedError } from 'effect/Schema';
 import { HttpApiSchema as EdgeApiSchema, Schema as EdgeSchema } from '@modern-js/bff-effect/effect-edge';
 

@@ -4,7 +4,7 @@
  * permissions of the approving person.
  */
 import { DateTime, Effect, Option, Random, Result, Schema } from 'effect';
-import { HttpBody, HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { HttpBody, HttpClient, HttpClientRequest } from 'effect/http';
 
 import {
   AgentActivityRequestSchema,

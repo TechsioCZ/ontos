@@ -5,7 +5,7 @@
  *   - B3 "Convert consequential operational scripts into Effect programs" —
  *     "Approximately 79 of 103 scripts are primarily async/await; hundreds of manual throws and
  *     several independent argv parsers remain. Use scoped resources, shared Layers, typed errors,
- *     Schema decoders, and `effect/unstable/cli`. Keep one small process-exit adapter at the
+ *     Schema decoders, and `effect/cli`. Keep one small process-exit adapter at the
  *     executable edge."
  *   - A8 "Fix the generators before generating more code" — "Generators currently emit
  *     Promise-first browser code ... Bring `scripts/` and `tools/oxlint` under explicit

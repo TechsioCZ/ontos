@@ -1,6 +1,6 @@
 import { Effect, Exit, Logger, Option, Ref, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
-import { HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from '../../api/auth/gateway-timing.ts';

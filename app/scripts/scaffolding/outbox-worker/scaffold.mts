@@ -13,6 +13,7 @@ import {
   OUTBOX_WORKER_IMPORT_SLOT_START,
   OUTBOX_WORKER_REGISTRY_SLOT_END,
   OUTBOX_WORKER_REGISTRY_SLOT_START,
+  PLATFORM_NODE_DEPENDENCY,
   asJsonObject,
   createMutationEffect,
   discoverOntosModuleEffect,
@@ -309,8 +310,9 @@ export const outboxWorkerLayer = Layer.merge(
 
 const renderWorkerHostEntry = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
+import { NodeCrypto } from '@effect/platform-node';
 import { Layer } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { FetchHttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
@@ -349,6 +351,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
     Layer.provide(outboxWorkerDatabaseIdentityEnrollmentLive),
+    Layer.provide(NodeCrypto.layer),
   ),
   registrations: outboxWorkers,
   subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
@@ -390,31 +393,43 @@ const planWorkerHostFile = (filePath: string, consumer: OntosVerticalMetadata, c
 
 const WORKSPACE_DEPENDENCY = 'workspace:*';
 
-/** The dependencies with each named workspace package added, sorted; a different existing range fails. */
-const withWorkspaceDependencies = (dependenciesValue: JsonValue | undefined, names: readonly string[], label: string) =>
-  Effect.gen(function* withWorkspaceDependenciesEffect() {
+const workspaceDependencies = (names: readonly string[]): readonly (readonly [string, string])[] =>
+  names.map((name) => [name, WORKSPACE_DEPENDENCY] as const);
+
+/** The dependencies with each required package range added, sorted; a different existing range fails. */
+const withRequiredDependencies = (
+  dependenciesValue: JsonValue | undefined,
+  required: readonly (readonly [string, string])[],
+  label: string,
+) =>
+  Effect.gen(function* withRequiredDependenciesEffect() {
     const dependencies: MutableJsonObject =
       dependenciesValue === undefined
         ? {}
         : { ...(yield* trySync(() => asJsonObject(dependenciesValue, `${label} dependencies`))) };
-    for (const name of names) {
+    for (const [name, range] of required) {
       const current = dependencies[name];
-      if (current !== undefined && current !== WORKSPACE_DEPENDENCY) {
+      if (current !== undefined && current !== range) {
         return yield* new OutboxWorkerScaffoldError({
           cause: current,
           message: `${label} has an incompatible ${name} dependency`,
         });
       }
-      dependencies[name] = WORKSPACE_DEPENDENCY;
+      dependencies[name] = range;
     }
     return Object.fromEntries(Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)));
   });
 
 const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>
   Effect.gen(function* patchConsumerPackageEffect() {
-    const sortedDependencies = yield* withWorkspaceDependencies(
+    const sortedDependencies = yield* withRequiredDependencies(
       consumer.packageJson['dependencies'],
-      ['@app/core-runtime', producer.packageName].filter((name) => name !== consumer.packageName),
+      [
+        ...workspaceDependencies(
+          ['@app/core-runtime', producer.packageName].filter((name) => name !== consumer.packageName),
+        ),
+        PLATFORM_NODE_DEPENDENCY,
+      ],
       `vertical ${consumer.slug}`,
     );
     const packageScripts = consumer.packageJson['scripts'];
@@ -466,9 +481,9 @@ const patchRootPackage = (workspaceRoot: string, consumer: OntosVerticalMetadata
   Effect.gen(function* patchRootPackageEffect() {
     const packagePath = yield* trySync(() => resolveContainedPath(workspaceRoot, 'package.json'));
     const rootPackage = yield* readJsonEffect(packagePath, 'workspace root package');
-    const dependencies = yield* withWorkspaceDependencies(
+    const dependencies = yield* withRequiredDependencies(
       rootPackage.value['dependencies'],
-      ['@app/core-runtime', consumer.packageName],
+      workspaceDependencies(['@app/core-runtime', consumer.packageName]),
       'workspace root package',
     );
     const content = yield* trySync(() =>

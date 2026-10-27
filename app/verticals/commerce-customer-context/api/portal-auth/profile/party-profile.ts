@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
 import {
   AddContactPointPayloadSchema,
   PartyCommandConflictProblemSchema,
@@ -15,7 +14,10 @@ import {
   updatePartyWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { PartyRef } from '@app/party-registry/resources/party';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Hex } from 'effect/encoding';
 import { acquireRetailPartyGateway } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { CustomerOwnProfile, UpdateCustomerOwnProfile } from '../../../shared/portal-auth/profile-api.ts';
@@ -53,24 +55,26 @@ export const projectCustomerOwnProfile = (
   displayName: Option.getOrElse(detail.party.displayName, () => ''),
   phone: display(selectProfileContact(contacts.items, 'PHONE')),
   // Includes every returned contact revision: adding/changing the preferred contact invalidates an edit too.
-  version: createHash('sha256')
-    .update(
-      // UUIDs, integer revisions and closed lifecycle literals cannot contain the NUL separator.
-      [
-        detail.party.partyRef.tenantId,
-        detail.party.partyRef.resourceId,
-        String(detail.party.revision),
-        ...contacts.items
-          .toSorted((left, right) => left.contactPointRef.resourceId.localeCompare(right.contactPointRef.resourceId))
-          .flatMap((item) => [
-            item.contactPointRef.resourceId,
-            String(item.revision),
-            String(item.current),
-            item.state,
-          ]),
-      ].join('\0'),
-    )
-    .digest('hex'),
+  version: Hex.encode(
+    sha256(
+      utf8ToBytes(
+        // UUIDs, integer revisions and closed lifecycle literals cannot contain the NUL separator.
+        [
+          detail.party.partyRef.tenantId,
+          detail.party.partyRef.resourceId,
+          String(detail.party.revision),
+          ...contacts.items
+            .toSorted((left, right) => left.contactPointRef.resourceId.localeCompare(right.contactPointRef.resourceId))
+            .flatMap((item) => [
+              item.contactPointRef.resourceId,
+              String(item.revision),
+              String(item.current),
+              item.state,
+            ]),
+        ].join('\0'),
+      ),
+    ),
+  ),
 });
 
 export const readCustomerPartyProfile = Effect.fn('CustomerOwnProfile.readParty')(function* readParty(
@@ -142,10 +146,11 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
     ) => Effect.Effect<unknown, ProfileCommandError>,
   ) {
     const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
+    const crypto = yield* Crypto.Crypto;
     return yield* execute(gateway.credential, {
       ...gateway.options,
       correlationId: scope.requestCorrelation,
-      idempotencyKey: randomUUID(),
+      idempotencyKey: yield* crypto.randomUUIDv4().pipe(Effect.mapError(profileUnavailable)),
     }).pipe(
       Effect.mapError((failure) =>
         Schema.is(PartyCommandConflictProblemSchema)(failure) ? profileConflict() : profileUnavailable(),

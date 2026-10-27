@@ -6,7 +6,7 @@ import {
   PROTOCOL_VERSION_META_KEY,
 } from '@modelcontextprotocol/client';
 import { Crypto, Effect, Layer, Option } from 'effect';
-import { HttpRouter } from 'effect/unstable/http';
+import { HttpRouter } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
