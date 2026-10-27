@@ -29,6 +29,7 @@ interface Value {
     | 'function'
     | 'native'
     | 'transform'
+    | 'getter'
     | 'hash'
     | 'sql'
     | 'policy'
@@ -70,6 +71,9 @@ interface Value {
 const BAD: Value = { kind: 'bad' };
 const DATA: Value = { kind: 'data' };
 const NUMBER: Value = { kind: 'data', native: 'number' };
+// Keep native temporal provenance: formatters must never accept an arbitrary DTO
+// merely because it has similarly named fields or executable conversion hooks.
+const DATETIME: Value = { kind: 'data', native: 'datetime' };
 const SQL: Value = { kind: 'sql' };
 const UNDEFINED: Value = { kind: 'data', literal: undefined };
 // As with the native operations below, fresh object literals use the standard intrinsic
@@ -168,6 +172,16 @@ const isCodecData = (value: Value): boolean =>
     value.open !== true &&
     (value.element === undefined || isCodecData(value.element)) &&
     [...(value.fields?.values() ?? [])].every(isCodecData));
+// `Schema.toType` consumes already decoded native Option fields as well as
+// ordinary DTO values. This does not grant metadata or executable values input
+// status, and codecData still proves closure of the decoder's actual output.
+const isCodecInput = (value: Value): boolean =>
+  value.kind === 'data' ||
+  (value.kind === 'option' && isCodecInput(value.payload ?? BAD)) ||
+  (value.kind === 'array' && isCodecInput(value.element ?? BAD)) ||
+  (value.kind === 'record' &&
+    (value.element === undefined || isCodecInput(value.element)) &&
+    [...(value.fields?.values() ?? [])].every(isCodecInput));
 const closeCodecJson = (value: Value): Value =>
   value.kind === 'json'
     ? DATA
@@ -607,7 +621,7 @@ class DataFactoryProof {
         ['pgPolicy', 'pgTable', 'pgSchema', 'pgSequence', 'check', 'foreignKey', 'primaryKey', 'index', 'uniqueIndex',
           'text', 'uuid', 'integer', 'boolean', 'bigint', 'timestamp', 'jsonb'].includes(imported.imported))
         result = native(`drizzle:${imported.imported}`);
-      else if (imported.source === 'effect' && ['Schema', 'Predicate', 'Result', 'Option', 'Order'].includes(imported.imported)) {
+      else if (imported.source === 'effect' && ['Schema', 'SchemaGetter', 'DateTime', 'Predicate', 'Result', 'Option', 'Order'].includes(imported.imported)) {
         result = native(`effect:${imported.imported}`);
       } else if (imported.source === 'node:crypto' && imported.imported === 'createHash')
         result = native('crypto:createHash');
@@ -957,6 +971,9 @@ class DataFactoryProof {
     if (value.kind === 'record') return recordField(value, name);
     if (typeof name !== 'string') return BAD;
     if (value.kind === 'result') return name === 'pipe' ? { ...native('result:pipe'), payload: value } : BAD;
+    // A native Option can expose its checked payload. On None the concrete access
+    // may lead to a rejected/throwing codec; it cannot introduce executable input.
+    if (value.kind === 'option') return name === 'value' ? value.payload ?? BAD : BAD;
     if (value.kind === 'table')
       return name === 'enableRLS' && value.fresh === true
         ? { ...native('drizzle:table.enableRLS'), payload: value } : value.fields?.get(name) ?? BAD;
@@ -1138,6 +1155,8 @@ class DataFactoryProof {
           literal: node.operator === '===' ? left.literal === right.literal : left.literal !== right.literal,
         };
       }
+      if (node.type === 'BinaryExpression' && ['+', '-', '*', '/', '%', '**'].includes(node.operator) &&
+        [left, right].every((value) => value.native === 'number' || typeof value.literal === 'number')) return NUMBER;
       return node.type === 'LogicalExpression' ? merge([left, right]) : DATA;
     }
     if (node.type === 'UnaryExpression' && ['!', '-', '+', 'typeof', 'void'].includes(node.operator))
@@ -1264,6 +1283,8 @@ class DataFactoryProof {
     if (name === 'global:Array.isArray')
       return args.length === 1 && isFactoryData(args[0]) ? DATA : BAD;
     if (name === 'set:has') return args.length === 1 && isClosedData(args[0]) ? DATA : BAD;
+    if (name === 'global:Number')
+      return args.length === 1 && args[0].kind === 'data' ? NUMBER : BAD;
     if (name === 'regexp:test' && args.every(isData)) return DATA;
     if (name === 'regexp:exec' && args.every(isData))
       return record(new Map([['groups', record(new Map(), false, DATA, undefined, 'null')]]));
@@ -1306,6 +1327,8 @@ class DataFactoryProof {
         return array(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner]));
       if (operation === 'some' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
         return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner])) ? DATA : BAD;
+      if (operation === 'every' && owner.kind === 'array' && isFactoryData(owner) && args.length === 1)
+        return isClosedData(this.invoke(args[0], [owner.element ?? BAD, NUMBER, owner])) ? DATA : BAD;
       if (operation === 'toSorted' && owner.kind === 'array')
         return owner.empty ||
           args.length === 0 ||
@@ -1331,6 +1354,28 @@ class DataFactoryProof {
     if (name === 'effect:Option.getOrNull')
       return args.length === 1 && args[0].kind === 'option' && isClosedFactoryData(args[0].payload ?? BAD)
         ? merge([args[0].payload ?? BAD, { kind: 'data', literal: null }]) : BAD;
+    if (name === 'effect:Option.isSome') return args.length === 1 && args[0].kind === 'option' ? DATA : BAD;
+    if (name === 'effect:Option.contains') {
+      const payload = args[0]?.payload, sought = args[1];
+      // Default equality can invoke Equal/Hash protocols on objects. Admit only
+      // the native string-codec case; arbitrary records and callbacks stay unknown.
+      return args.length === 2 && args[0].kind === 'option' && payload?.kind === 'data' &&
+        payload.native === 'string' && sought?.kind === 'data' &&
+        (sought.native === 'string' || typeof sought.literal === 'string') ? DATA : BAD;
+    }
+    if (name === 'effect:DateTime.make' || name === 'effect:DateTime.makeUnsafe') {
+      if (args.length !== 1 || args[0].kind !== 'data') return BAD;
+      return name === 'effect:DateTime.make' ? { kind: 'option', payload: DATETIME } : DATETIME;
+    }
+    if (['effect:DateTime.formatIso', 'effect:DateTime.formatIsoDateUtc', 'effect:DateTime.toEpochMillis'].includes(name))
+      return args.length === 1 && args[0].native === 'datetime'
+        ? name === 'effect:DateTime.toEpochMillis' ? NUMBER : DATA : BAD;
+    if (name === 'effect:DateTime.Order')
+      return args.length === 2 && args.every((value) => value.native === 'datetime') ? NUMBER : BAD;
+    if (name === 'effect:SchemaGetter.transform' && args.length === 1 &&
+      ['function', 'native'].includes(args[0].kind))
+      return { kind: 'getter', apply: (values) => args[0].kind === 'native'
+        ? this.nativeCall(args[0], values) : this.invoke(args[0], values) };
     if (name === 'result:pipe') {
       let value = callee.payload ?? BAD;
       for (const transform of args) {
@@ -1401,17 +1446,18 @@ class DataFactoryProof {
           )) };
         },
       };
-    if (['decodeUnknownSync', 'decodeUnknownResult', 'decodeSync', 'encodeSync', 'encodeResult'].includes(operation)) {
+    if (operation === 'toType') return args.length === 1 && args[0].kind === 'schema' ? args[0] : BAD;
+    if (['decodeUnknownSync', 'decodeUnknownResult', 'decodeResult', 'decodeSync', 'encodeSync', 'encodeResult'].includes(operation)) {
       const value = args[0];
       const payload = value?.payload ?? BAD;
       if (value?.kind !== 'schema' || !isCodecData(payload) || !args.slice(1).every(isData)) return BAD;
       return {
         kind: 'function',
         apply: (inputs) => {
-          if (!inputs.every(isData)) return BAD;
+          if (!inputs.every(isCodecInput)) return BAD;
           const result = codecData(payload, inputs[0] ?? BAD);
           if (!isClosedFactoryData(result)) return BAD;
-          if (operation === 'decodeUnknownResult' || operation === 'encodeResult')
+          if (operation === 'decodeUnknownResult' || operation === 'decodeResult' || operation === 'encodeResult')
             return { kind: 'result', payload: operation === 'encodeResult' ? DATA : result, failure: DATA };
           return operation === 'encodeSync' ? DATA : result;
         },
@@ -1491,6 +1537,22 @@ class DataFactoryProof {
       return { kind: 'transform', apply: (values) => (values[0]?.kind === 'schema' ? values[0] : BAD) };
     if (operation === 'decodeTo' && args.length === 1 && args[0]?.kind === 'schema')
       return { kind: 'transform', apply: (values) => (values[0]?.kind === 'schema' ? args[0] : BAD) };
+    if (operation === 'decodeTo' && args.length === 2 && args[0]?.kind === 'schema' &&
+      args[1]?.kind === 'record' && !args[1].open && args[1].element === undefined &&
+      args[1].fields?.size === 2) {
+      const decode = args[1].fields.get('decode'), encode = args[1].fields.get('encode');
+      if (decode?.kind !== 'getter' || encode?.kind !== 'getter') return BAD;
+      return { kind: 'transform', apply: (values) => {
+        const source = values[0];
+        if (values.length !== 1 || source?.kind !== 'schema' ||
+          !isCodecData(source.payload ?? BAD) || !isCodecData(args[0].payload ?? BAD)) return BAD;
+        // Both callbacks run through the interpreter with actual codec payloads.
+        // Schema target annotations alone cannot hide dependency calls or callbacks.
+        const decoded = decode.apply?.([source.payload ?? BAD]) ?? BAD;
+        const encoded = encode.apply?.([args[0].payload ?? BAD]) ?? BAD;
+        return isCodecData(decoded) && isCodecData(encoded) ? args[0] : BAD;
+      } };
+    }
     if (operation === 'check' && args.every((value) => value.kind === 'transform'))
       return {
         kind: 'transform',
@@ -1511,7 +1573,9 @@ class DataFactoryProof {
       return { kind: 'data', native: 'number', literal: Number.MAX_SAFE_INTEGER };
     if (name === 'effect:Schema.Unknown') return schema(BAD);
     if (name === 'effect:Schema.Json') return schema({ kind: 'json' });
-    if (/^effect:Schema\.(String|NonEmptyString|Number|Int|Finite|Boolean|BigInt|Undefined|Null|Never)$/u.test(name))
+    if (/^effect:Schema\.DateTimeUtc(?:FromString)?$/u.test(name)) return schema(DATETIME);
+    if (/^effect:Schema\.(String|Trim|NonEmptyString)$/u.test(name)) return schema({ kind: 'data', native: 'string' });
+    if (/^effect:Schema\.(Number|Int|Finite|Boolean|BigInt|Undefined|Null|Never)$/u.test(name))
       return schema(DATA);
     if (name === 'effect:Order.String' || name === 'effect:Order.Number')
       return { kind: 'function', apply: (args) => (args.every(isData) ? DATA : BAD) };
