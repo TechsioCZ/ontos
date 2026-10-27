@@ -1,7 +1,6 @@
 import { createMicroVerticalOperationContext } from '@app/shared-contracts';
 import type { MicroVerticalOperationContext } from '@app/shared-contracts';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-/* eslint-disable oxc/no-barrel-file -- This is the generated public contract aggregate; remove-when: Codesmith emits direct re-exports. */
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 import {
@@ -13,9 +12,62 @@ import {
   PersonEngagementProfileSchema,
 } from './domain/engagement-profile.ts';
 
-export * from './domain/engagement-profile.ts';
-export * from './apis/organization-engagement-profile.ts';
-export * from './apis/person-engagement-profile.ts';
+export {
+  EngagementProfileIdSchema,
+  EngagementProfileNotFound,
+  EngagementProfileConflict,
+  EngagementProfilePersistenceUnavailable,
+  PartyRegistryReferenceUnavailable,
+  EngagementIsoTimestampSchema,
+  OrganizationEngagementProfileSchema,
+  PersonEngagementProfileSchema,
+  AttachOrganizationEngagementPayloadSchema,
+  AttachPersonEngagementPayloadSchema,
+  OrganizationEngagementLifecyclePayloadSchema,
+  PersonEngagementLifecyclePayloadSchema,
+} from './domain/engagement-profile.ts';
+export type {
+  OrganizationEngagementProfile,
+  PersonEngagementProfile,
+  AttachOrganizationEngagementPayload,
+  AttachPersonEngagementPayload,
+  OrganizationEngagementLifecyclePayload,
+  PersonEngagementLifecyclePayload,
+} from './domain/engagement-profile.ts';
+export {
+  OrganizationEngagementProfileRequestSchema,
+  OrganizationEngagementProfileResponseSchema,
+  OrganizationEngagementProfileAuthenticationProblemSchema,
+  OrganizationEngagementProfileInvalidProblemSchema,
+  OrganizationEngagementProfileUnavailableProblemSchema,
+  OrganizationEngagementProfileForbiddenProblemSchema,
+  OrganizationEngagementProfileNotFoundProblemSchema,
+  OrganizationEngagementProfilePolicyProblemSchema,
+  OrganizationEngagementProfilePolicyConflictProblemSchema,
+  OrganizationEngagementProfileInternalProblemSchema,
+  OrganizationEngagementProfileApi,
+} from './apis/organization-engagement-profile.ts';
+export type {
+  OrganizationEngagementProfileRequest,
+  OrganizationEngagementProfileResponse,
+} from './apis/organization-engagement-profile.ts';
+export {
+  PersonEngagementProfileRequestSchema,
+  PersonEngagementProfileResponseSchema,
+  PersonEngagementProfileAuthenticationProblemSchema,
+  PersonEngagementProfileInvalidProblemSchema,
+  PersonEngagementProfileUnavailableProblemSchema,
+  PersonEngagementProfileForbiddenProblemSchema,
+  PersonEngagementProfileNotFoundProblemSchema,
+  PersonEngagementProfilePolicyProblemSchema,
+  PersonEngagementProfilePolicyConflictProblemSchema,
+  PersonEngagementProfileInternalProblemSchema,
+  PersonEngagementProfileApi,
+} from './apis/person-engagement-profile.ts';
+export type {
+  PersonEngagementProfileRequest,
+  PersonEngagementProfileResponse,
+} from './apis/person-engagement-profile.ts';
 
 export const ContactsInvalidRequestProblemSchema = makeProblemDetailsSchema('ContactsInvalidRequestProblem', 400);
 export const ContactsAuthenticationProblemSchema = makeProblemDetailsSchema('ContactsAuthenticationProblem', 401);

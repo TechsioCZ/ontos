@@ -25,6 +25,9 @@ import { createArchivePartyPartyRegistryPartyArchivedV1OutboxMessage } from './a
 import { recordPartyInvariantAccess, resolvePartyLifecycle } from './party-lifecycle-action-helpers.ts';
 
 export type { ArchivePartyPayload } from '../../shared/actions/archive-party.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   PartyAliasResolutionBrokenChain,
   PartyAliasResolutionCrossTenant,
@@ -57,8 +60,8 @@ const handle = Effect.fn('ArchivePartyAction.handle')(function* archiveParty(
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-archived.v1',
     payloadJson: { partyRef: result.partyRef },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.partyRef.resourceId,
     subjectResourceType: result.partyRef.resourceType,
   });
@@ -87,12 +90,12 @@ export const archivePartyAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.archive-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: ArchivePartyPayloadSchema,
     policies: [],
     resultSchema: ArchivePartyResultSchema,

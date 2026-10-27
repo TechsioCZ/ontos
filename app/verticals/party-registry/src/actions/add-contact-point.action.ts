@@ -33,6 +33,8 @@ import { createAddContactPointPartyRegistryContactPointAddedV1OutboxMessage } fr
 export { AddContactPointPayloadSchema } from '../../shared/actions/add-contact-point.ts';
 export type { AddContactPointPayload } from '../../shared/actions/add-contact-point.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const AddContactPointErrorSchema = Schema.Union([
   PartyAliasWriteRejected,
   PartyContactPointPartyNotFound,
@@ -111,8 +113,8 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
     accessKind: 'read',
     queryHash: `party-contact-point-add:${contactPoint.partyRef.resourceId}`,
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: contactPoint.partyRef.resourceId,
     targetResourceType: contactPoint.partyRef.resourceType,
   });
@@ -123,8 +125,8 @@ const handleAddContactPoint = Effect.fn('AddContactPointAction.handleAddContactP
       partyRef: contactPoint.partyRef,
       revision: contactPoint.revision,
     },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: contactPoint.contactPointRef.resourceId,
     subjectResourceType: contactPoint.contactPointRef.resourceType,
   });
@@ -157,12 +159,12 @@ export const addContactPointAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.add-contact-point',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: AddContactPointPayloadSchema,
     policies: [],
     resultSchema: AddContactPointResultSchema,

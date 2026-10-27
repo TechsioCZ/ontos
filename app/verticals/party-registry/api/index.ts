@@ -67,12 +67,13 @@ export { partyRegistryFoundationLive } from './party-registry-foundation.ts';
 declare const ULTRAMODERN_SHELL_ORIGIN: unknown;
 
 const readShellOrigin = () => {
-  let configuredShellOrigin: unknown;
-  try {
-    configuredShellOrigin = ULTRAMODERN_SHELL_ORIGIN;
-  } catch {
-    configuredShellOrigin = undefined;
-  }
+  const configuredShellOrigin = (() => {
+    try {
+      return ULTRAMODERN_SHELL_ORIGIN;
+    } catch {
+      return null;
+    }
+  })();
   return resolvePartyRegistryShellOrigin(
     Schema.is(Schema.String)(configuredShellOrigin) ? configuredShellOrigin : undefined,
   );

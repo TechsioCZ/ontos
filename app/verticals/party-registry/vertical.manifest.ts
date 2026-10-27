@@ -81,6 +81,10 @@ import { updatePartyRelationshipAction } from './src/actions/update-party-relati
 // </generated-module-manifest-imports>
 import { partyRegistryMcpContribution } from './shared/mcp/contribution.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+const MODULE_ACCESS_PERMISSION = 'module.access' as const;
+const CUSTOMERS_PAGE_KEY = 'party.registry.page.customers' as const;
+
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
@@ -102,7 +106,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
   module: {
     description: 'Party Registry business capability.',
     displayName: 'Party Registry',
-    id: 'party.registry',
+    id: PARTY_REGISTRY_MODULE_ID,
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
@@ -202,14 +206,14 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       {
         accessFiltering: 'resource_permission',
         key: 'party.registry.counterparties',
-        owningModuleId: 'party.registry',
+        owningModuleId: PARTY_REGISTRY_MODULE_ID,
         requestFilters: ['includeArchived', 'role'],
         resourceType: 'party.registry.counterparty',
       },
       {
         accessFiltering: 'tenant_scope',
         key: 'party.registry.parties',
-        owningModuleId: 'party.registry',
+        owningModuleId: PARTY_REGISTRY_MODULE_ID,
         requestFilters: ['includeArchived'],
         resourceType: 'party.registry.party',
         tenantPermission: 'read_party_identity',
@@ -224,9 +228,9 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           contributionKey: 'party.registry.navigation.customers',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'party.registry.page.customers',
-            moduleKey: 'party.registry',
+            authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'page',
             scope: 'tenant',
           },
@@ -234,7 +238,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
           icon: 'icon-[mdi--domain]',
           label: { cs: 'Zákazníci', en: 'Customers' },
           order: 470,
-          pageKey: 'party.registry.page.customers',
+          pageKey: CUSTOMERS_PAGE_KEY,
         }),
         // </generated-module-shell-navigation>
       ],
@@ -247,10 +251,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.page.contacts',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'page',
             scope: 'tenant',
           },
@@ -259,12 +263,12 @@ export const partyRegistryManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'party.registry.page-customers',
-          contributionKey: 'party.registry.page.customers',
+          contributionKey: CUSTOMERS_PAGE_KEY,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'party.registry.page.customers',
-            moduleKey: 'party.registry',
+            authorization: { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION },
+            entrypointKey: CUSTOMERS_PAGE_KEY,
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'page',
             scope: 'tenant',
           },
@@ -290,10 +294,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.search.counterparties',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'search',
             scope: 'tenant',
           },
@@ -305,10 +309,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: {
               kind: 'context_permission',
-              permission: 'module.access',
+              permission: MODULE_ACCESS_PERMISSION,
             },
             entrypointKey: 'party.registry.search.parties',
-            moduleKey: 'party.registry',
+            moduleKey: PARTY_REGISTRY_MODULE_ID,
             role: 'search',
             scope: 'tenant',
           },

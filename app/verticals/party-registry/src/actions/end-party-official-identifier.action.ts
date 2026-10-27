@@ -36,6 +36,9 @@ import { endOfficialIdentifierRecord } from '../services/party-official-identifi
 import { createEndPartyOfficialIdentifierPartyRegistryOfficialIdentifierEndedV1OutboxMessage } from './end-party-official-identifier.party-registry-official-identifier-ended-v1.outbox-message.ts';
 
 export type { EndPartyOfficialIdentifierPayload } from '../../shared/actions/end-party-official-identifier.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   OfficialIdentifierClaimConflict,
@@ -75,16 +78,16 @@ const handle = Effect.fn('EndPartyOfficialIdentifierAction.handle')(function* en
       .update(`identifier-end-invariants:${result.officialIdentifierRef.resourceId}`)
       .digest('hex'),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.officialIdentifierRef.resourceId,
     targetResourceType: result.officialIdentifierRef.resourceType,
   });
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.official-identifier-ended.v1',
     payloadJson: { ...result, reason: payload.reason },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.officialIdentifierRef.resourceId,
     subjectResourceType: result.officialIdentifierRef.resourceType,
   });
@@ -125,13 +128,13 @@ const makeEndService = (transaction: Parameters<typeof endOfficialIdentifierReco
       Match.tag('found', ({ value }) =>
         Effect.succeed({
           officialIdentifierRef: PartyOfficialIdentifierRefSchema.make({
-            moduleId: 'party.registry',
+            moduleId: PARTY_REGISTRY_MODULE_ID,
             resourceId: value.officialIdentifierId,
             resourceType: 'party.registry.party-official-identifier',
             tenantId,
           }),
           partyRef: PartyRefSchema.make({
-            moduleId: 'party.registry',
+            moduleId: PARTY_REGISTRY_MODULE_ID,
             resourceId: value.partyId,
             resourceType: 'party.registry.party',
             tenantId,
@@ -158,12 +161,12 @@ export const endPartyOfficialIdentifierAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.end-party-official-identifier',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: EndPartyOfficialIdentifierPayloadSchema,
     policies: [],
     resultSchema: EndPartyOfficialIdentifierResultSchema,

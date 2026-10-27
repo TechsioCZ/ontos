@@ -33,6 +33,8 @@ import { requireCanonicalPartyWriteTarget } from '../merge/party-alias-resolutio
 import { requirePartySubjectEvidence } from '../policies/create-party-without-strong-identifier.policy.ts';
 import { lockAndResolveClaims, lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const PartyFoundSchema = Schema.TaggedStruct('found', { value: PartySchema });
 const PartyNotFoundSchema = Schema.TaggedStruct('not_found', {});
 const PartyLookupSchema = Schema.Union([PartyFoundSchema, PartyNotFoundSchema]);
@@ -133,7 +135,7 @@ export const partyDto = (row: PartyRecord): Party => ({
   createdAt: DateTime.makeUnsafe(row.createdAt),
   displayName: Option.fromNullOr(row.currentDisplayName),
   partyRef: PartyRefSchema.make({
-    moduleId: 'party.registry',
+    moduleId: PARTY_REGISTRY_MODULE_ID,
     resourceId: row.partyId,
     resourceType: 'party.registry.party',
     tenantId: row.tenantId,
@@ -252,18 +254,21 @@ export const reconcilePartyIdentifierClaims = Effect.fn(
     )
     .for('update')
     .pipe(Effect.mapError(unavailable));
-  const eligibleIdentifiers = identifierRows
-    .filter((row) => row.namespace === (row.identifierTypeKey === 'ICO' ? 'CZ:ICO' : 'CZ:DIC'))
-    .map((row) => ({
+  const eligibleIdentifiers = identifierRows.flatMap((row) => {
+    if (row.namespace !== (row.identifierTypeKey === 'ICO' ? 'CZ:ICO' : 'CZ:DIC')) {
+      return [];
+    }
+    const identifier = {
       // SAFETY: The owner-local identifier type CHECK admits only the supported identifier codes.
       identifierType: row.identifierTypeKey as NormalizedOfficialIdentifier['identifierType'],
-      // SAFETY: The preceding filter admits only the canonical namespace for the stored type.
+      // SAFETY: The preceding guard admits only the canonical namespace for the stored type.
       namespace: row.namespace as NormalizedOfficialIdentifier['namespace'],
       normalizedValue: row.normalizedValue,
       // SAFETY: The owner-local verification CHECK admits only the declared verification states.
       verification: row.verificationState as NormalizedOfficialIdentifier['verification'],
-    }))
-    .filter((identifier) => qualifiesForExclusiveClaim(identifier, nextPartyType, MATCH_RULE_VERSION));
+    };
+    return qualifiesForExclusiveClaim(identifier, nextPartyType, MATCH_RULE_VERSION) ? [identifier] : [];
+  });
   const uniqueIdentifiers = [
     ...new Map(
       eligibleIdentifiers.map((identifier) => [
@@ -289,11 +294,11 @@ export const reconcilePartyIdentifierClaims = Effect.fn(
       encodeClaimKey([identifier.identifierType, identifier.namespace, identifier.normalizedValue]),
     ),
   );
-  const releasedClaimIds = ownedClaims
-    .filter(
-      (claim) => !eligibleKeys.has(encodeClaimKey([claim.identifierTypeKey, claim.namespace, claim.normalizedValue])),
-    )
-    .map((claim) => claim.identifierClaimId);
+  const releasedClaimIds = ownedClaims.flatMap((claim) =>
+    eligibleKeys.has(encodeClaimKey([claim.identifierTypeKey, claim.namespace, claim.normalizedValue]))
+      ? []
+      : [claim.identifierClaimId],
+  );
   if (releasedClaimIds.length > 0) {
     yield* transaction
       .delete(partyIdentifierClaims)
@@ -700,7 +705,7 @@ const unarchiveReviewExplanations = {
 const partyReviewSourceRef = (tenantId: string, partyId: string): string =>
   encodeJson(
     PartyRefSchema.make({
-      moduleId: 'party.registry',
+      moduleId: PARTY_REGISTRY_MODULE_ID,
       resourceId: partyId,
       resourceType: 'party.registry.party',
       tenantId,
@@ -778,7 +783,7 @@ const createUnarchiveReviewCase = Effect.fn('PartyIdentityPersistenceService.cre
       policyVersion: MATCH_RULE_VERSION,
       provenance: {
         method: 'UNARCHIVE_CANONICAL_RECHECK',
-        source: 'party.registry',
+        source: PARTY_REGISTRY_MODULE_ID,
       },
       sourceRecordRefs: [partyReviewSourceRef(tenantId, party.partyRef.resourceId)],
       validFrom: DateTime.formatIso(party.updatedAt),
@@ -886,13 +891,13 @@ export const unarchivePartyWithReview = Effect.fn('PartyIdentityPersistenceServi
     }
     const value: UnarchivePartyBlocked = {
       caseRef: DuplicateCandidateCaseRefSchema.make({
-        moduleId: 'party.registry',
+        moduleId: PARTY_REGISTRY_MODULE_ID,
         resourceId: candidateCase.candidateCaseId,
         resourceType: 'party.registry.duplicate-candidate-case',
         tenantId,
       }),
       decisionRef: PartyMatchDecisionRefSchema.make({
-        moduleId: 'party.registry',
+        moduleId: PARTY_REGISTRY_MODULE_ID,
         resourceId: decision.matchDecisionId,
         resourceType: 'party.registry.party-match-decision',
         tenantId,

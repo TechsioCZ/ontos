@@ -1,9 +1,11 @@
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
 import type { DatabaseOwnerIdentityDescriptor } from '@app/core-runtime/db/database-identity-manifest';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 /** Party-owned identity facts, without private schema or runtime dependencies. */
 export const PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR = Object.freeze({
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_REGISTRY_MODULE_ID,
   policyPrefix: 'party_registry',
   schemas: Object.freeze(['party', 'contacts']),
   request: Object.freeze({
@@ -14,7 +16,7 @@ export const PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR = Object.freeze({
     gatewayScopeAudiences: Object.freeze(['party-registry']),
     handlesBearerAssertions: true,
     id: 'party_registry_request',
-    ownerModuleKey: 'party.registry',
+    ownerModuleKey: PARTY_REGISTRY_MODULE_ID,
     registersGatewayScopeGrants: false,
     role: 'party_registry_runtime',
     scopeAuthority: 'gateway_grant',
@@ -25,7 +27,7 @@ export const PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR = Object.freeze({
     gatewayScopeAudiences: Object.freeze([]),
     handlesBearerAssertions: false,
     id: 'party_registry_worker',
-    ownerModuleKey: 'party.registry',
+    ownerModuleKey: PARTY_REGISTRY_MODULE_ID,
     registersGatewayScopeGrants: false,
     role: 'party_registry_worker',
     scopeAuthority: 'session_setting',
