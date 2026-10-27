@@ -62,6 +62,7 @@ concurrency:
 env:
   WORKERS_DEV_SUBDOMAIN: edution
   STAGE_SHELL_URL: https://ontos-stage.bleeding.dev
+  STAGE_ZONE: bleeding.dev
   STAGE_STOREFRONT_CATALOG_KV_ID: 24a10598d6154b7aa788fd5b8fc449a7
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.bleeding.dev
 
@@ -360,6 +361,7 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/prepare-stage-release-secrets.test.mts
           scripts/tests/stage-demo-migrate.test.mts
           scripts/tests/stage-deploy-diagnostics.test.mts
           scripts/tests/application-composition-authority-publication.test.mts
@@ -483,6 +485,120 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      # Only Projects may be added, from native shared bindings and derived public JWKS.
+      # The private directory transfers to the final cleanup step only after preparation succeeds.
+      # Outbox-only retries need this too: native recovery check/apply always consume the file.
+      - name: Prepare the runner-only immutable release secret bundle
+        id: release-secrets
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+        run: |
+          umask 077
+          directory=""
+          cleanup() {
+            if [[ -n "$directory" ]]; then
+              rm -f -- "$directory/bundle.json"
+              rmdir -- "$directory"
+            fi
+          }
+          trap cleanup EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          directory="$(mktemp -d "$RUNNER_TEMP/stage-release-secrets.XXXXXX")"
+          chmod 700 "$directory"
+          mise exec -- node scripts/prepare-stage-release-secrets.mts --output-file "$directory/bundle.json"
+          printf 'directory=%s\npath=%s/bundle.json\n' "$directory" "$directory" >>"$GITHUB_OUTPUT"
+          trap - EXIT HUP INT TERM
+
+      # Check the whole served inventory before VPN access, database preparation or provider writes.
+      # This remains fail-closed after the bounded Projects-only preparation.
+      - name: Validate the complete immutable release secret inventory
+        if: ${{ !inputs.outbox_only }}
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
+        run: |
+          mise exec -- node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { NodeServices } from '@effect/platform-node';
+          import { Effect, Redacted, Schema } from 'effect';
+          import { OntosDeploymentAppIdSchema } from './packages/core-runtime/src/modules/manifest.ts';
+          import { ApplicationReleaseIntentSchema } from './scripts/application-release-intent.mts';
+          import { workerSecretPlan } from './scripts/ops/cloudflare-stage-cutover.mts';
+          import { readEdgeUnits } from './scripts/ops/stage-edge-units.mts';
+
+          const failures = [];
+          const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+          try {
+            const intent = Schema.decodeUnknownSync(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
+              readFileSync('topology/application-release-intent.json', 'utf-8'),
+            );
+            const ids = ['shell-super-app', ...intent.modules.map(module => module.appId)];
+            const selected = Schema.decodeUnknownSync(Schema.fromJsonString(
+              Schema.Array(Schema.Struct({ id: OntosDeploymentAppIdSchema })),
+            ))(process.env.UNITS_JSON);
+            const selectedIds = selected.map(unit => unit.id);
+            if (new Set(ids).size !== ids.length ||
+                selectedIds.length !== ids.length || new Set(selectedIds).size !== ids.length ||
+                ids.some(id => !selectedIds.includes(id))) {
+              failures.push('planned units do not match the complete served release inventory');
+            }
+            const units = await Effect.runPromise(readEdgeUnits.pipe(Effect.provide(NodeServices.layer)));
+            const served = units.filter(unit => ids.includes(unit.id));
+            if (served.length !== ids.length || new Set(served.map(unit => unit.id)).size !== ids.length) {
+              failures.push('served release inventory is not completely placed in the native topology');
+            }
+            // Values are unused: only the native planner's binding names are inspected.
+            const nameOnly = Redacted.make('name-projection-only');
+            const hostname = new URL(process.env.STAGE_SHELL_URL).hostname;
+            const plan = workerSecretPlan(served, { shellHostname: hostname, stageZone: process.env.STAGE_ZONE }, {
+              betterAuthSecret: nameOnly,
+              commerceCustomerContextGatewayApiKey: nameOnly,
+              commerceMarketCatalogGatewayApiKey: nameOnly,
+              crmPartyIntakeApiKey: nameOnly,
+              gatewayPrivateJwk: nameOnly,
+              gatewayPublicJwks: nameOnly,
+              pricingGatewayApiKey: nameOnly,
+              spicedbPresharedKey: nameOnly,
+            });
+            const bundle = JSON.parse(readFileSync(process.env.ALL_RELEASE_SECRETS_FILE, 'utf-8'));
+            if (!isRecord(bundle)) {
+              failures.push('DEMO_IMMUTABLE_RELEASE_SECRETS must be a JSON owner record');
+            } else {
+              for (const unit of served) {
+                const owner = Object.hasOwn(bundle, unit.id) ? bundle[unit.id] : undefined;
+                if (!isRecord(owner)) {
+                  failures.push(`${unit.id}: missing or invalid owner secret object`);
+                  continue;
+                }
+                for (const key of Object.keys(plan.get(unit.workerName))) {
+                  if (!Object.hasOwn(owner, key) || typeof owner[key] !== 'string' || owner[key].trim() === '') {
+                    failures.push(`${unit.id}.${key}: missing or invalid required binding`);
+                  }
+                }
+                if (Object.values(owner).some(value => typeof value !== 'string' || value.trim() === '')) {
+                  failures.push(`${unit.id}: secret bindings must all be non-empty strings`);
+                }
+              }
+            }
+          } catch {
+            // Parser and schema errors can contain their input. Do not render them.
+            failures.push('release secret inventory or topology could not be decoded');
+          }
+          delete process.env.ALL_RELEASE_SECRETS_FILE;
+          const message = failures.length === 0
+            ? 'Complete served release secret inventory validated. No secret values printed.'
+            : `Release secret inventory rejected before stage mutation:\n${failures.join('\n')}`;
+          console.log(message);
+          if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${message}\n`);
+          if (failures.length !== 0) {
+            console.error('::error title=Incomplete release secret inventory::See the name-only inventory diagnostics');
+            process.exitCode = 1;
+          }
+          NODE
+
       # Read-only source/provenance gate before connecting to stage or changing any database identity.
       - name: Verify the completed migration incident and reviewed continuation source
         if: inputs.continue_migrated_publication
@@ -547,10 +663,13 @@ jobs:
         timeout-minutes: 2
         working-directory: app
         env:
-          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
           ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
           ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
-        run: mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check
+        run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check
 
       # Advisory only: live pending work may drain, and initial/sealed releases still need their
       # authoritative native guards. Unknown diagnostics fail before any identity or schema mutation.
@@ -666,8 +785,10 @@ jobs:
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BETTER_AUTH_URL: ${{ env.STAGE_SHELL_URL }}
           # Only whole secrets are masked; a field read with fromJSON would print in the step's env block.
-          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
         run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
           BETTER_AUTH_SECRET="$(jq -er '."shell-super-app".BETTER_AUTH_SECRET' <<<"$ALL_RELEASE_SECRETS")"
           echo "::add-mask::$BETTER_AUTH_SECRET"
           export BETTER_AUTH_SECRET
@@ -682,15 +803,20 @@ jobs:
         if: ${{ !inputs.outbox_only }}
         working-directory: app
         env:
-          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
           UPLOAD_PARALLELISM: '8'
         run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
           mkdir -p "$RECEIPTS" "$RUNNER_TEMP/upload-logs"
           upload() {
             local id="$1" unit_path="$2" script=scripts/immutable-application-release.mts started=$SECONDS
             local log="$RUNNER_TEMP/upload-logs/$id.log"
             [[ "$id" == shell-super-app ]] && script=scripts/immutable-shell-release.mts
-            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")" || return 1
+            if ! ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS" 2>/dev/null)"; then
+              printf '::error title=Missing release secrets::%s has no valid owner secret object; upload not started\n' "$id" | tee "$log" >&2
+              return 1
+            fi
             export ONTOS_IMMUTABLE_RELEASE_SECRETS
             # The release script retries a transient Cloudflare failure (unknown error 10013, internal 10021,
             # 429/5xx, dropped connections) up to three times, removing the attempt's half release first so
@@ -766,8 +892,10 @@ jobs:
         timeout-minutes: 20
         working-directory: app
         env:
-          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
         run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
           export ONTOS_IMMUTABLE_RELEASE_SECRETS
           ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
           mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
@@ -796,10 +924,12 @@ jobs:
         timeout-minutes: 5
         working-directory: app
         env:
-          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
           ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
           ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
         run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
           mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply
           mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify
 
@@ -888,6 +1018,22 @@ jobs:
           }
           check "$STAGE_SHELL_URL/cs/login"
           check "$STAGE_SHELL_URL/.well-known/oauth-authorization-server"
+
+      - name: Remove the runner-only immutable release secret bundle
+        if: always() && steps.release-secrets.outputs.directory != ''
+        env:
+          PREPARED_SECRETS_DIRECTORY: ${{ steps.release-secrets.outputs.directory }}
+        run: |
+          parent="${PREPARED_SECRETS_DIRECTORY%/*}"
+          name="${PREPARED_SECRETS_DIRECTORY##*/}"
+          if [[ "$parent" != "$RUNNER_TEMP" || ! "$name" =~ ^stage-release-secrets\.[A-Za-z0-9]+$ || -L "$PREPARED_SECRETS_DIRECTORY" ]]; then
+            echo '::error::Refusing cleanup outside the exact runner-owned secret directory' >&2
+            exit 1
+          fi
+          rm -f -- "$PREPARED_SECRETS_DIRECTORY/bundle.json"
+          if [[ -d "$PREPARED_SECRETS_DIRECTORY" ]]; then
+            rmdir -- "$PREPARED_SECRETS_DIRECTORY"
+          fi
 
   # One verification pass after every deploy, no load (the stage Workers CPU budget is capped).
   verify:

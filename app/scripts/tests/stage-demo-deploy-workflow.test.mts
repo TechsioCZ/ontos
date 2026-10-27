@@ -1,9 +1,13 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { ApplicationReleaseIntentSchema } from '../application-release-intent.mts';
 import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
+import { gatewayPublicJwksFor, workerSecretPlan } from '../ops/cloudflare-stage-cutover.mts';
+import { readEdgeUnits } from '../ops/stage-edge-units.mts';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -26,17 +30,20 @@ const StepSchema = Schema.Struct({
   'working-directory': Schema.optionalKey(Schema.String),
 });
 const WorkflowSchema = Schema.Struct({
+  env: Schema.Record(Schema.String, Schema.String),
   jobs: Schema.Struct({
     build: Schema.Struct({ steps: Schema.Array(StepSchema) }),
+    'profile-recovery': Schema.Struct({ if: Schema.String, steps: Schema.Array(StepSchema) }),
     release: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     'release-script-tests': Schema.Struct({ steps: Schema.Array(StepSchema) }),
     verify: Schema.Struct({ steps: Schema.Array(StepSchema), 'timeout-minutes': Schema.Number }),
   }),
 });
-const readJobs = () =>
+const readWorkflow = () =>
   Schema.decodeUnknownSync(WorkflowSchema)(
     parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
-  ).jobs;
+  );
+const readJobs = () => readWorkflow().jobs;
 
 const localBootstrapScript = new URL('../demo/up.sh', import.meta.url);
 const MIGRATE = 'Migrate every owner schema';
@@ -45,6 +52,16 @@ const READINESS = 'Inspect migration readiness before database preparation';
 const INITIAL_BOOTSTRAP = 'Bootstrap every database identity before migrations';
 const RECOVERY_CONFIG_CHECK = 'Validate canonical enrollment recovery host configuration';
 const RECOVERY_CONFIG_APPLY = 'Provision canonical enrollment recovery host configuration';
+const PREPARE_SECRETS = 'Prepare the runner-only immutable release secret bundle';
+const CLEANUP_SECRETS = 'Remove the runner-only immutable release secret bundle';
+const preparedFileReference = ['${{', 'steps.release-secrets.outputs.path', '}}'].join(' ');
+const loadPreparedSecrets = [
+  'ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"',
+  'export ALL_RELEASE_SECRETS',
+];
+const RELEASE_SECRET_CHECK = 'Validate the complete immutable release secret inventory';
+const SERVICE_GRANTS = 'Reconcile storefront, Commerce and Privacy service grants';
+const IMMUTABLE_UPLOAD = 'Upload every immutable release Worker';
 const PUBLICATION = 'Publish the Application Composition';
 const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
@@ -52,6 +69,537 @@ const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
 const indexOf = (steps: readonly { readonly name: string }[], name: string) =>
   steps.findIndex((step) => step.name === name);
+const TEST_STAGE_URL = 'https://stage.example.test';
+const TEST_STAGE_ZONE = 'example.test';
+const RUNNER_TEMP_CONTEXT = 'runner.temp';
+const SECRET_CLEANUP_CONDITION = "always() && steps.release-secrets.outputs.directory != ''";
+const OUTBOX_ONLY_SUCCESS = 'outbox-only-success';
+
+// Deliberately bounded to the conditions used by the producer and its file consumers.
+// An unfamiliar condition fails this test model instead of being treated as unreachable.
+const secretStepRuns = (condition: string | undefined, outboxOnly: boolean, precedingSuccess: boolean) => {
+  const expression = condition?.replace('${{', '').replace('}}', '').trim() ?? 'success()';
+  if (expression === '!inputs.outbox_only') {
+    return precedingSuccess && !outboxOnly;
+  }
+  if (expression === 'always()') {
+    return true;
+  }
+  expect(expression).toBe('success()');
+  return precedingSuccess;
+};
+const secretFileSafetyViolations = (steps: readonly (typeof StepSchema.Type)[]) => {
+  const violations: string[] = [];
+  const producer = steps.find(({ name }) => name === PREPARE_SECRETS);
+  const producerIndex = indexOf(steps, PREPARE_SECRETS);
+  for (const outboxOnly of [false, true]) {
+    for (const producerSucceeds of [false, true]) {
+      const producerRuns = producer !== undefined && secretStepRuns(producer.if, outboxOnly, true);
+      const fileAvailable = producerRuns && producerSucceeds;
+      const precedingSuccess = !producerRuns || producerSucceeds || producer?.['continue-on-error'] === true;
+      for (const consumer of steps.filter(({ env }) => env?.ALL_RELEASE_SECRETS_FILE !== undefined)) {
+        if (
+          secretStepRuns(consumer.if, outboxOnly, precedingSuccess) &&
+          (!fileAvailable || producerIndex >= indexOf(steps, consumer.name))
+        ) {
+          violations.push(consumer.name);
+        }
+      }
+    }
+  }
+  if (steps.find(({ name }) => name === CLEANUP_SECRETS)?.if !== SECRET_CLEANUP_CONDITION) {
+    violations.push(CLEANUP_SECRETS);
+  }
+  return [...new Set(violations)];
+};
+
+it('makes every file consumer unreachable unless its producer has run successfully, including outbox-only', () => {
+  const { steps } = readJobs().release;
+  expect(secretFileSafetyViolations(steps)).toEqual([]);
+  const original = steps.find(({ name }) => name === PREPARE_SECRETS);
+  expect(original?.if).toBeUndefined();
+  expect(original?.['continue-on-error']).toBeUndefined();
+  // A full-only producer is the exact regression: the always-running native recovery steps
+  // would read an undefined path during an exact-revision outbox-only retry.
+  const fullOnlyProducer = steps.map((step) =>
+    step.name === PREPARE_SECRETS ? { ...step, if: fullPublicationCondition } : step,
+  );
+  expect(secretFileSafetyViolations(fullOnlyProducer)).toEqual(
+    expect.arrayContaining([RECOVERY_CONFIG_CHECK, RECOVERY_CONFIG_APPLY, SERVICE_GRANTS]),
+  );
+});
+
+it('rejects fail-open producer/consumer guards, late producers, and success-only cleanup', () => {
+  const { steps } = readJobs().release;
+  const ignoredProducerFailure = steps.map((step) =>
+    step.name === PREPARE_SECRETS ? { ...step, 'continue-on-error': true } : step,
+  );
+  expect(secretFileSafetyViolations(ignoredProducerFailure)).toContain(RECOVERY_CONFIG_CHECK);
+  const unguardedConsumer = steps.map((step) =>
+    step.name === RECOVERY_CONFIG_CHECK ? { ...step, if: 'always()' } : step,
+  );
+  expect(secretFileSafetyViolations(unguardedConsumer)).toContain(RECOVERY_CONFIG_CHECK);
+  const lateProducer = [
+    ...steps.filter(({ name }) => name !== PREPARE_SECRETS),
+    ...steps.filter(({ name }) => name === PREPARE_SECRETS),
+  ];
+  expect(secretFileSafetyViolations(lateProducer)).toContain(RECOVERY_CONFIG_CHECK);
+  const successOnlyCleanup = steps.map((step) =>
+    step.name === CLEANUP_SECRETS ? { ...step, if: SECRET_CLEANUP_CONDITION.replace('always()', 'success()') } : step,
+  );
+  expect(secretFileSafetyViolations(successOnlyCleanup)).toContain(CLEANUP_SECRETS);
+});
+
+it('keeps isolated profile recovery on its original bundle without the release producer or file consumers', () => {
+  const job = readJobs()['profile-recovery'];
+  const command = job.steps.find(({ name }) => name === 'Run only the exact admitted profile recovery');
+  expect(job.if).toContain("inputs.profile_recovery_mode != 'none'");
+  expect(command?.env?.ALL_RELEASE_SECRETS).toBe(secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS'));
+  expect(job.steps.some(({ env }) => env?.ALL_RELEASE_SECRETS_FILE !== undefined)).toBe(false);
+  expect(indexOf(job.steps, PREPARE_SECRETS)).toBe(-1);
+  expect(indexOf(job.steps, CLEANUP_SECRETS)).toBe(-1);
+});
+
+it('keeps the original bundle only in preparation and gives every later release consumer the same private file', () => {
+  expect(readWorkflow().env.STAGE_ZONE).toBe('bleeding.dev');
+  expect(readWorkflow().env.STAGE_SHELL_URL).toBe('https://ontos-stage.bleeding.dev');
+  const { steps } = readJobs().release;
+  const prepare = steps.find(({ name }) => name === PREPARE_SECRETS);
+  const cleanup = steps.find(({ name }) => name === CLEANUP_SECRETS);
+  expect(prepare?.id).toBe('release-secrets');
+  expect(prepare?.if).toBeUndefined();
+  expect(prepare?.env).toEqual({ ALL_RELEASE_SECRETS: secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS') });
+  expect(prepare?.run).toContain('umask 077');
+  expect(prepare?.run).toContain('trap cleanup EXIT');
+  expect(prepare?.run).toContain("trap 'exit 143' TERM");
+  expect(indexOf(steps, PREPARE_SECRETS)).toBeLessThan(indexOf(steps, RELEASE_SECRET_CHECK));
+  const consumers = steps.filter(({ env }) => env?.ALL_RELEASE_SECRETS_FILE !== undefined);
+  expect(consumers.map(({ name }) => name)).toEqual([
+    RELEASE_SECRET_CHECK,
+    RECOVERY_CONFIG_CHECK,
+    SERVICE_GRANTS,
+    IMMUTABLE_UPLOAD,
+    'Activate the Shell ingress',
+    RECOVERY_CONFIG_APPLY,
+  ]);
+  for (const step of consumers) {
+    expect(step.env?.ALL_RELEASE_SECRETS_FILE).toBe(preparedFileReference);
+    expect(step.env?.ALL_RELEASE_SECRETS).toBeUndefined();
+    expect(step.run).toContain('ALL_RELEASE_SECRETS_FILE');
+    expect(indexOf(steps, step.name)).toBeGreaterThan(indexOf(steps, PREPARE_SECRETS));
+  }
+  expect(steps.filter(({ env }) => env?.ALL_RELEASE_SECRETS !== undefined)).toEqual([prepare]);
+  expect(cleanup?.if).toBe(SECRET_CLEANUP_CONDITION);
+  expect(indexOf(steps, CLEANUP_SECRETS)).toBe(steps.length - 1);
+  for (const step of steps.filter(({ uses }) => uses?.startsWith('actions/upload-artifact@') === true)) {
+    expect(step.with?.path).not.toContain('stage-release-secrets');
+    expect(step.with?.path).not.toContain('steps.release-secrets.outputs');
+    expect(step.with?.path).not.toBe(['${{', RUNNER_TEMP_CONTEXT, '}}'].join(' '));
+  }
+});
+
+const runnerBundleFixture = Effect.gen(function* validRunnerBundleFixture() {
+  const units = yield* readEdgeUnits;
+  const key = JSON.stringify({
+    ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
+    alg: 'EdDSA',
+    kid: 'runner-test-key',
+    use: 'sig',
+  });
+  const secret = Redacted.make('synthetic-runner-shared-service-secret');
+  const plan = workerSecretPlan(
+    units,
+    { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+    {
+      betterAuthSecret: secret,
+      commerceCustomerContextGatewayApiKey: secret,
+      commerceMarketCatalogGatewayApiKey: secret,
+      crmPartyIntakeApiKey: secret,
+      gatewayPrivateJwk: Redacted.make(key),
+      gatewayPublicJwks: yield* gatewayPublicJwksFor(Redacted.make(key)),
+      pricingGatewayApiKey: secret,
+      spicedbPresharedKey: secret,
+    },
+  );
+  const owners = Object.fromEntries(
+    units
+      .filter(({ id }) => id !== 'projects')
+      .map((unit) => [
+        unit.id,
+        Object.fromEntries(
+          Object.entries(plan.get(unit.workerName) ?? {}).map(([name, value]) => [name, Redacted.value(value)]),
+        ),
+      ]),
+  );
+  return { encoded: JSON.stringify(owners), key };
+});
+
+const verifyNativeRecoveryFileLoaders = (steps: readonly (typeof StepSchema.Type)[], file: string) =>
+  Effect.forEach([RECOVERY_CONFIG_CHECK, RECOVERY_CONFIG_APPLY], (name) => {
+    const prefix = steps.find((step) => step.name === name)?.run?.split('mise exec --')[0];
+    // Execute only the exact loader, never the native command or a new unreviewed shell prefix.
+    expect(prefix?.trim()).toBe(loadPreparedSecrets.join('\n'));
+    return runCommand({
+      args: [
+        '-euo',
+        'pipefail',
+        '-c',
+        `${prefix}\njq -e 'has("projects") and (.projects | length == 5)' <<<"$ALL_RELEASE_SECRETS" >/dev/null`,
+      ],
+      command: 'bash',
+      env: { ALL_RELEASE_SECRETS_FILE: Redacted.make(file) },
+    });
+  });
+
+for (const mode of [
+  'success',
+  OUTBOX_ONLY_SUCCESS,
+  'preparation-failure',
+  'registration-failure',
+  'termination-after-write',
+]) {
+  it.effect(`the actual runner preparation owns and cleans its exact secret file: ${mode}`, () =>
+    Effect.scoped(
+      Effect.gen(function* verifiesRunnerSecretLifecycle() {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-secret-lifecycle-' });
+        const { encoded, key } = yield* runnerBundleFixture;
+        const unrelated = `${root}/unrelated.txt`;
+        yield* fs.writeFileString(unrelated, 'preserved');
+        const output = `${root}/step-output`;
+        const log = `${root}/process.log`;
+        const { steps } = readJobs().release;
+        const expectedSuccess = mode === 'success' || mode === OUTBOX_ONLY_SUCCESS;
+        const prepare = steps.find(({ name }) => name === PREPARE_SECRETS)?.run;
+        const cleanup = steps.find(({ name }) => name === CLEANUP_SECRETS)?.run;
+        expect(prepare).toBeDefined();
+        expect(cleanup).toBeDefined();
+        const program =
+          mode === 'termination-after-write'
+            ? prepare?.replace("printf 'directory=", "kill -TERM $$\nprintf 'directory=")
+            : prepare;
+        const status = yield* runCommand({
+          args: [
+            '-euo',
+            'pipefail',
+            '-c',
+            'status=0\nbash -euo pipefail - >"$1" 2>&1 || status=$?\nprintf "%s" "$status"',
+            'runner-lifecycle-test',
+            log,
+          ],
+          command: 'bash',
+          cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+          env: {
+            ALL_RELEASE_SECRETS: Redacted.make(
+              mode === 'preparation-failure' ? '{"synthetic-runner-shared-service-secret":' : encoded,
+            ),
+            GITHUB_OUTPUT: Redacted.make(mode === 'registration-failure' ? `${root}/missing/step-output` : output),
+            RUNNER_TEMP: Redacted.make(root),
+            STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
+            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
+            UNITS_JSON: Redacted.make(''),
+          },
+          stdin: Redacted.make(program ?? ''),
+        });
+        expect(status === '0').toBe(expectedSuccess);
+        const diagnostics = yield* fs.readFileString(log);
+        expect(diagnostics).not.toContain(key);
+        expect(diagnostics).not.toContain('synthetic-runner-shared-service-secret');
+        const directories = (yield* fs.readDirectory(root)).filter((name) => name.startsWith('stage-release-secrets.'));
+        if (expectedSuccess) {
+          expect(directories).toHaveLength(1);
+          const directory = `${root}/${directories[0]}`;
+          const file = `${directory}/bundle.json`;
+          expect((yield* fs.stat(file)).mode % 0o1000).toBe(0o600);
+          expect(yield* fs.readFileString(output)).toContain(`path=${file}`);
+          const prepared = Schema.decodeUnknownSync(
+            Schema.fromJsonString(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
+          )(yield* fs.readFileString(file));
+          expect(Object.keys(prepared.projects)).toHaveLength(5);
+          yield* verifyNativeRecoveryFileLoaders(steps, file);
+          expect((yield* fs.stat(directory)).mode % 0o1000).toBe(0o700);
+          const intent = Schema.decodeUnknownSync(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
+            readFileSync(new URL('../../topology/application-release-intent.json', import.meta.url), 'utf-8'),
+          );
+          const gate = steps.find(({ name }) => name === RELEASE_SECRET_CHECK)?.run;
+          expect(
+            secretStepRuns(
+              steps.find(({ name }) => name === RELEASE_SECRET_CHECK)?.if,
+              mode === OUTBOX_ONLY_SUCCESS,
+              true,
+            ),
+          ).toBe(mode !== OUTBOX_ONLY_SUCCESS);
+          yield* runCommand({
+            args: ['-euo', 'pipefail', '-c', gate ?? ''],
+            command: 'bash',
+            cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+            env: {
+              ALL_RELEASE_SECRETS_FILE: Redacted.make(file),
+              STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
+              STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
+              UNITS_JSON: Redacted.make(
+                JSON.stringify([{ id: 'shell-super-app' }, ...intent.modules.map(({ appId }) => ({ id: appId }))]),
+              ),
+            },
+          });
+          for (const _ of [0, 1]) {
+            yield* runCommand({
+              args: ['-euo', 'pipefail', '-c', cleanup ?? ''],
+              command: 'bash',
+              env: { PREPARED_SECRETS_DIRECTORY: Redacted.make(directory), RUNNER_TEMP: Redacted.make(root) },
+            });
+          }
+          expect(yield* fs.exists(directory)).toBe(false);
+        } else {
+          expect(directories).toEqual([]);
+        }
+        expect(yield* fs.readFileString(unrelated)).toBe('preserved');
+      }),
+    ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+}
+
+it.effect('the actual cleanup refuses caller-owned and symlinked directories', () =>
+  Effect.scoped(
+    Effect.gen(function* fencesSecretCleanup() {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-secret-cleanup-fence-' });
+      const unrelated = `${root}/unrelated`;
+      yield* fs.makeDirectory(unrelated);
+      yield* fs.writeFileString(`${unrelated}/bundle.json`, 'preserved');
+      const link = `${root}/stage-release-secrets.link`;
+      yield* fs.symlink(unrelated, link);
+      const cleanup = readJobs().release.steps.find(({ name }) => name === CLEANUP_SECRETS)?.run;
+      for (const directory of [unrelated, link]) {
+        const result = yield* runCommand({
+          args: ['-euo', 'pipefail', '-c', cleanup ?? ''],
+          command: 'bash',
+          env: { PREPARED_SECRETS_DIRECTORY: Redacted.make(directory), RUNNER_TEMP: Redacted.make(root) },
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* fs.readFileString(`${unrelated}/bundle.json`)).toBe('preserved');
+      }
+    }),
+  ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it('checks every served owner secret before private network access or any stage mutation', () => {
+  const { steps } = readJobs().release;
+  const check = steps.find(({ name }) => name === RELEASE_SECRET_CHECK);
+  expect(check?.env).toEqual({ ALL_RELEASE_SECRETS_FILE: preparedFileReference });
+  expect(check?.if).toBe(fullPublicationCondition);
+  expect(check?.['continue-on-error']).toBeUndefined();
+  expect(check?.['working-directory']).toBe('app');
+  expect(check?.run).toContain('workerSecretPlan');
+  expect(indexOf(steps, RELEASE_SECRET_CHECK)).toBeGreaterThan(indexOf(steps, 'Install the app workspace'));
+  for (const later of [
+    'Connect the runner to the private Zerops database network',
+    RECOVERY_CONFIG_CHECK,
+    READINESS,
+    INITIAL_BOOTSTRAP,
+    MIGRATE,
+    'Continue publication of the completed owner migration',
+    SERVICE_GRANTS,
+    IMMUTABLE_UPLOAD,
+  ]) {
+    expect(indexOf(steps, RELEASE_SECRET_CHECK)).toBeLessThan(indexOf(steps, later));
+  }
+});
+
+type SyntheticReleaseBundle = Readonly<Record<string, Readonly<Record<string, string>>>>;
+interface PlannedSecretUnit {
+  readonly id: string;
+}
+interface SecretInventoryExample {
+  readonly diagnostic?: string;
+  readonly input: (bundle: SyntheticReleaseBundle) => string;
+  readonly name: string;
+  readonly passes: boolean;
+  readonly select?: (units: readonly PlannedSecretUnit[]) => readonly PlannedSecretUnit[];
+}
+const SYNTHETIC_SECRET = 'synthetic-secret-must-never-be-rendered';
+const PROJECTS_BINDING = 'projects.SPICEDB_PRESHARED_KEY';
+const encodeBundle = (bundle: SyntheticReleaseBundle) => JSON.stringify(bundle);
+const withoutSecretName = (owner: Readonly<Record<string, string>>, key: string) =>
+  Object.fromEntries(Object.entries(owner).filter(([name]) => name !== key));
+const secretInventoryExamples: readonly SecretInventoryExample[] = [
+  { input: encodeBundle, name: 'complete native inventory', passes: true },
+  {
+    diagnostic: 'projects',
+    input: (bundle) => JSON.stringify(Object.fromEntries(Object.entries(bundle).filter(([id]) => id !== 'projects'))),
+    name: 'missing projects owner',
+    passes: false,
+  },
+  { input: (bundle) => JSON.stringify({ ...bundle, projects: {} }), name: 'empty projects owner', passes: false },
+  { input: (bundle) => JSON.stringify({ ...bundle, projects: null }), name: 'null projects owner', passes: false },
+  { input: (bundle) => JSON.stringify({ ...bundle, projects: [] }), name: 'array projects owner', passes: false },
+  {
+    diagnostic: PROJECTS_BINDING,
+    input: (bundle) =>
+      JSON.stringify({ ...bundle, projects: withoutSecretName(bundle.projects, 'SPICEDB_PRESHARED_KEY') }),
+    name: 'missing projects binding',
+    passes: false,
+  },
+  {
+    diagnostic: PROJECTS_BINDING,
+    input: (bundle) => JSON.stringify({ ...bundle, projects: { ...bundle.projects, SPICEDB_PRESHARED_KEY: ' \n ' } }),
+    name: 'blank projects binding',
+    passes: false,
+  },
+  {
+    diagnostic: PROJECTS_BINDING,
+    input: (bundle) => JSON.stringify({ ...bundle, projects: { ...bundle.projects, SPICEDB_PRESHARED_KEY: 42 } }),
+    name: 'non-string projects binding',
+    passes: false,
+  },
+  {
+    diagnostic: 'shell-super-app.ONTOS_GATEWAY_PRIVATE_JWK',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        'shell-super-app': withoutSecretName(bundle['shell-super-app'], 'ONTOS_GATEWAY_PRIVATE_JWK'),
+      }),
+    name: 'missing Shell private key',
+    passes: false,
+  },
+  {
+    diagnostic: 'projects.ONTOS_GATEWAY_PUBLIC_JWKS',
+    input: (bundle) =>
+      JSON.stringify({
+        ...bundle,
+        projects: {
+          ...withoutSecretName(bundle.projects, 'ONTOS_GATEWAY_PUBLIC_JWKS'),
+          ONTOS_GATEWAY_PRIVATE_JWK: SYNTHETIC_SECRET,
+        },
+      }),
+    name: 'foreign owner key cannot replace projects public key',
+    passes: false,
+  },
+  { input: () => `{"${SYNTHETIC_SECRET}":`, name: 'malformed secret JSON', passes: false },
+  { input: () => '[]', name: 'array secret JSON', passes: false },
+  { input: () => 'null', name: 'null secret JSON', passes: false },
+  {
+    input: encodeBundle,
+    name: 'missing planned projects',
+    passes: false,
+    select: (units) => units.filter(({ id }) => id !== 'projects'),
+  },
+  { input: encodeBundle, name: 'empty planned inventory', passes: false, select: () => [] },
+  {
+    input: encodeBundle,
+    name: 'duplicate planned unit',
+    passes: false,
+    select: (units) => [...units, { id: 'projects' }],
+  },
+];
+for (const example of secretInventoryExamples) {
+  it.effect(`the actual early secret gate checks ${example.name}`, () =>
+    Effect.scoped(
+      Effect.gen(function* checksReleaseSecretInventory() {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-release-secret-gate-' });
+        const summary = `${root}/summary.md`;
+        const output = `${root}/output.log`;
+        const bundleFile = `${root}/bundle.json`;
+        const released = Schema.decodeUnknownSync(Schema.fromJsonString(ApplicationReleaseIntentSchema))(
+          readFileSync(new URL('../../topology/application-release-intent.json', import.meta.url), 'utf-8'),
+        );
+        const ids = new Set(['shell-super-app', ...released.modules.map(({ appId }) => appId)]);
+        const units = (yield* readEdgeUnits).filter(({ id }) => ids.has(id));
+        // Synthetic values only. The fixture and gate both use the native name contract.
+        const secret = Redacted.make(SYNTHETIC_SECRET);
+        const plan = workerSecretPlan(
+          units,
+          { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+          {
+            betterAuthSecret: secret,
+            commerceCustomerContextGatewayApiKey: secret,
+            commerceMarketCatalogGatewayApiKey: secret,
+            crmPartyIntakeApiKey: secret,
+            gatewayPrivateJwk: secret,
+            gatewayPublicJwks: secret,
+            pricingGatewayApiKey: secret,
+            spicedbPresharedKey: secret,
+          },
+        );
+        const bundle: SyntheticReleaseBundle = Object.fromEntries(
+          units.map((unit) => [
+            unit.id,
+            Object.fromEntries(Object.keys(plan.get(unit.workerName) ?? {}).map((key) => [key, SYNTHETIC_SECRET])),
+          ]),
+        );
+        const planned = units.map(({ id }) => ({ id }));
+        const step = readJobs().release.steps.find(({ name }) => name === RELEASE_SECRET_CHECK);
+        const program = step?.run?.match(/<<'NODE'\n(?<program>[\s\S]+)\nNODE/u)?.groups?.program;
+        expect(program).toBeDefined();
+        yield* fs.writeFileString(bundleFile, example.input(bundle));
+        const status = yield* runCommand({
+          args: [
+            '-euo',
+            'pipefail',
+            '-c',
+            'status=0\nnode --input-type=module - >"$1" 2>&1 || status=$?\nprintf "%s" "$status"',
+            'release-secret-inventory-test',
+            output,
+          ],
+          command: 'bash',
+          cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+          env: {
+            ALL_RELEASE_SECRETS_FILE: Redacted.make(bundleFile),
+            GITHUB_STEP_SUMMARY: Redacted.make(summary),
+            STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
+            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
+            UNITS_JSON: Redacted.make(JSON.stringify(example.select?.(planned) ?? planned)),
+          },
+          stdin: Redacted.make(program ?? ''),
+        });
+        expect(status).toBe(example.passes ? '0' : '1');
+        const rendered = yield* fs.readFileString(summary);
+        expect(yield* fs.readFileString(output)).not.toContain(SYNTHETIC_SECRET);
+        expect(rendered).not.toContain(SYNTHETIC_SECRET);
+        if (example.diagnostic !== undefined) {
+          expect(rendered).toContain(example.diagnostic);
+        }
+      }),
+    ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+}
+
+for (const encoded of ['{}', '{"projects":null}', `{"${SYNTHETIC_SECRET}":`]) {
+  it.effect(`the actual uploader records a name-only error before a missing owner can silently exit: ${encoded}`, () =>
+    Effect.scoped(
+      Effect.gen(function* checksUploadConfigurationFailure() {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-upload-secret-failure-' });
+        const upload = readJobs().release.steps.find(({ name }) => name === IMMUTABLE_UPLOAD);
+        const setup = upload?.run?.split('export -f upload')[0];
+        expect(setup).toBeDefined();
+        const bundleFile = `${root}/bundle.json`;
+        yield* fs.writeFileString(bundleFile, encoded);
+        const status = yield* runCommand({
+          args: [
+            '-euo',
+            'pipefail',
+            '-c',
+            `${setup}\nstatus=0\nupload projects verticals/projects >"$RUNNER_TEMP/output.log" 2>&1 || status=$?\nprintf "%s" "$status"`,
+          ],
+          command: 'bash',
+          env: {
+            ALL_RELEASE_SECRETS_FILE: Redacted.make(bundleFile),
+            RECEIPTS: Redacted.make(`${root}/receipts`),
+            RUNNER_TEMP: Redacted.make(root),
+          },
+        });
+        expect(status).toBe('1');
+        const log = yield* fs.readFileString(`${root}/upload-logs/projects.log`);
+        expect(log).toContain('projects has no valid owner secret object; upload not started');
+        expect(log).not.toContain(SYNTHETIC_SECRET);
+        expect(yield* fs.readFileString(`${root}/output.log`)).toBe(log);
+        expect(yield* fs.exists(`${root}/receipts/projects.json`)).toBe(false);
+      }),
+    ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+}
 
 it('builds each unit reference graph before the native Cloudflare build on a fresh runner', () => {
   const { steps } = readJobs().build;
@@ -86,12 +634,7 @@ it('runs every owner migration through the native lifecycle on the private netwo
   expect(indexOf(steps, READINESS)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
   expect(steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP)?.run).toBe('mise exec -- pnpm db:verify');
   expect(indexOf(steps, MIGRATE)).toBeGreaterThan(connect);
-  for (const later of [
-    'Upload every immutable release Worker',
-    PUBLICATION,
-    'Activate the Shell ingress',
-    'Deploy the AKROS storefront',
-  ]) {
+  for (const later of [IMMUTABLE_UPLOAD, PUBLICATION, 'Activate the Shell ingress', 'Deploy the AKROS storefront']) {
     expect(indexOf(steps, later)).toBeGreaterThan(indexOf(steps, MIGRATE));
   }
 });
@@ -140,14 +683,18 @@ it('checks canonical recovery configuration before database mutation and provisi
   const { steps } = readJobs().release;
   const check = steps.find(({ name }) => name === RECOVERY_CONFIG_CHECK);
   const provision = steps.find(({ name }) => name === RECOVERY_CONFIG_APPLY);
-  expect(check?.run).toBe('mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check');
+  expect(check?.run?.split('\n').filter(Boolean)).toEqual([
+    ...loadPreparedSecrets,
+    'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check',
+  ]);
   expect(check?.env).toEqual({
-    ALL_RELEASE_SECRETS: secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS'),
+    ALL_RELEASE_SECRETS_FILE: preparedFileReference,
     ZEROPS_MIGRATOR_SERVICE_ID: ['${{', 'vars.ZEROPS_MIGRATOR_SERVICE_ID', '}}'].join(' '),
     ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ['${{', 'vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID', '}}'].join(' '),
   });
   expect(provision?.env).toEqual(check?.env);
   expect(provision?.run?.split('\n').filter(Boolean)).toEqual([
+    ...loadPreparedSecrets,
     'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply',
     'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify',
   ]);
@@ -165,6 +712,7 @@ it('runs this workflow test with the release script tests that gate the release 
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
   for (const name of [
     'stage-demo-deploy-workflow',
+    'prepare-stage-release-secrets',
     'stage-demo-migrate',
     'stage-deploy-diagnostics',
     'application-composition-authority-publication',
@@ -432,7 +980,7 @@ it('runs the existing newsletter browser proof after Chromium even if timing fai
   expect(proof?.['continue-on-error']).toBeUndefined();
   expect(proof?.['working-directory']).toBe('app');
   expect(proof?.env).toEqual({
-    AKROS_EVIDENCE_DIR: ['${{', 'runner.temp', '}}/newsletter-consent'].join(' '),
+    AKROS_EVIDENCE_DIR: ['${{', RUNNER_TEMP_CONTEXT, '}}/newsletter-consent'].join(' '),
     AKROS_TEST_BASE_URL: ['${{', 'env.STAGE_STOREFRONT_URL', '}}'].join(' '),
   });
   const mcp = steps.find(({ name }) => name === 'Prove MCP over OAuth end to end');
@@ -458,7 +1006,7 @@ it('uploads only runner-temp newsletter screenshots even when the browser proof 
   expect(upload?.with).toEqual({
     'if-no-files-found': 'ignore',
     name: 'newsletter-consent',
-    path: ['${{', 'runner.temp', '}}/newsletter-consent/*.png'].join(' '),
+    path: ['${{', RUNNER_TEMP_CONTEXT, '}}/newsletter-consent/*.png'].join(' '),
   });
   expect(indexOf(steps, uploadName)).toBeGreaterThan(
     indexOf(steps, 'Prove the native newsletter grant and withdrawal'),
@@ -467,10 +1015,10 @@ it('uploads only runner-temp newsletter screenshots even when the browser proof 
 
 it('reconciles service grants and the isolated verification context after migrations and before publication', () => {
   const { steps } = readJobs().release;
-  const name = 'Reconcile storefront, Commerce and Privacy service grants';
+  const name = SERVICE_GRANTS;
   const reconcile = steps.find((step) => step.name === name);
   expect(indexOf(steps, name)).toBeGreaterThan(indexOf(steps, MIGRATE));
-  expect(indexOf(steps, name)).toBeLessThan(indexOf(steps, 'Upload every immutable release Worker'));
+  expect(indexOf(steps, name)).toBeLessThan(indexOf(steps, IMMUTABLE_UPLOAD));
   expect(reconcile?.if).toBeUndefined();
   expect(reconcile?.['continue-on-error']).toBeUndefined();
   expect(reconcile?.env?.ZEROPS_TOKEN).toBe(secretReference('ZEROPS_TOKEN'));
@@ -498,11 +1046,9 @@ it('reconciles service grants and the isolated verification context after migrat
 });
 
 it('never extracts a secret into the step environment and masks its value before any command', () => {
-  const reconcile = readJobs().release.steps.find(
-    ({ name }) => name === 'Reconcile storefront, Commerce and Privacy service grants',
-  );
+  const reconcile = readJobs().release.steps.find(({ name }) => name === SERVICE_GRANTS);
   expect(reconcile?.env?.BETTER_AUTH_SECRET).toBeUndefined();
-  expect(reconcile?.env?.ALL_RELEASE_SECRETS).toBe(secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS'));
+  expect(reconcile?.env?.ALL_RELEASE_SECRETS_FILE).toBe(preparedFileReference);
   expect(Object.values(reconcile?.env ?? {}).some((value) => value.includes('fromJSON'))).toBe(false);
   expect(reconcile?.run).toContain('echo "::add-mask::$BETTER_AUTH_SECRET"');
   expect(reconcile?.run).toContain('export BETTER_AUTH_SECRET');
