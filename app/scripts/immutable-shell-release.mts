@@ -64,6 +64,19 @@ const ShellTopologySchema = Schema.Struct({
     id: Schema.Literal(SHELL_ID),
   }),
 });
+const ShellIngressTopologySchema = Schema.Struct({
+  verticals: Schema.Array(
+    Schema.Struct({
+      cloudflare: Schema.Struct({ workerName: Schema.NonEmptyString }),
+      id: Schema.NonEmptyString,
+    }),
+  ),
+});
+const NativeServiceBindingSchema = Schema.StructWithRest(
+  Schema.Struct({ binding: Schema.NonEmptyString, service: Schema.NonEmptyString }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
+type NativeServiceBinding = typeof NativeServiceBindingSchema.Type;
 const NativeOutputConfigSchema = Schema.Struct({
   assets: Schema.Struct({ directory: Schema.NonEmptyString }),
   compatibility_date: Schema.NonEmptyString,
@@ -252,6 +265,32 @@ export const shellReleaseServiceBindings = (modules: readonly Pick<ApplicationCo
       : [],
   );
 
+/** Native API and SSR aliases must reach the same approved release as identity-keyed dispatch. */
+export const retargetShellNativeServiceBindings = Effect.fn('ImmutableShellRelease.nativeServiceBindings')(
+  function* retargetNativeServices(input: {
+    readonly modules: readonly Pick<ApplicationCompositionModule, 'backend' | 'deployment'>[];
+    readonly services: readonly NativeServiceBinding[];
+    readonly verticals: (typeof ShellIngressTopologySchema.Type)['verticals'];
+  }) {
+    const services: NativeServiceBinding[] = [];
+    for (const binding of input.services) {
+      const owners = input.verticals.filter(({ cloudflare }) => cloudflare.workerName === binding.service);
+      if (owners.length === 0) {
+        services.push(binding);
+        continue;
+      }
+      const [owner] = owners;
+      const approved = input.modules.filter(({ deployment }) => deployment.appId === owner?.id);
+      const [module] = approved;
+      if (owners.length !== 1 || approved.length !== 1 || module?.backend.transport !== 'cloudflare-worker') {
+        return yield* fail('each native module service binding must identify one approved Worker release');
+      }
+      services.push({ ...binding, service: module.backend.workerName });
+    }
+    return services;
+  },
+);
+
 /** The one public Shell ingress is deployed separately from its retained frontend artifact release. */
 export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingress')(
   function* deployShellIngress(input: {
@@ -323,12 +362,20 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         Schema.StructWithRest(
           Schema.Struct({
             assets: Schema.Record(Schema.String, Schema.Json),
-            services: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Json))),
+            services: Schema.optionalKey(Schema.Array(NativeServiceBindingSchema)),
           }),
           [Schema.Record(Schema.String, Schema.Json)],
         ),
       ),
     )(yield* fileSystem.readFileString(path.join(output, 'wrangler.json')));
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ShellIngressTopologySchema))(
+      yield* fileSystem.readFileString(path.resolve(input.appDirectory, '../../topology/reference-topology.json')),
+    );
+    const approvedNativeServices = yield* retargetShellNativeServiceBindings({
+      modules: approved.composition.modules,
+      services: nativeServices,
+      verticals: topology.verticals,
+    });
     yield* fileSystem.writeFileString(
       ingressConfig,
       yield* Schema.encodeEffect(JsonText)({
@@ -336,7 +383,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         assets: { ...nativeConfig.assets, directory: ingressAssets },
         main: path.resolve(output, config.main),
         services: [
-          ...nativeServices,
+          ...approvedNativeServices,
           ...shellReleaseServiceBindings(approved.composition.modules),
           // Server rendering reaches this Shell's own BFF on this machine instead of through its public domain.
           { binding: SHELL_SELF_SERVICE_BINDING, service: config.name },

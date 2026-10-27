@@ -48,6 +48,7 @@ import {
 import {
   deployImmutableShellIngress,
   deployImmutableShellRelease,
+  retargetShellNativeServiceBindings,
   shellReleaseServiceBindings,
   validateImmutableShellReleaseArtifacts,
 } from '../immutable-shell-release.mts';
@@ -59,6 +60,10 @@ import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 const BUILD_MARKER = '0123456789abcdef'.repeat(4);
 const SOURCE_REVISION = 'a'.repeat(40);
 const APP_ID = 'shell-super-app';
+const PARTY_APP_ID = 'party-registry';
+const CONFIGURED_PARTY_WORKER = 'configured-party-worker';
+const AUDIT_ENTRYPOINT = 'AuditEntrypoint';
+const AUDIT_WORKER = 'audit-worker';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
 const MANIFEST_PATH = 'mf-manifest.json';
 const ROUTES_MANIFEST_PATH = 'routes-manifest.json';
@@ -279,7 +284,7 @@ it.effect('rejects malformed UTF-8 or JSON and a runtime contract from another S
       {
         ...createShellRuntimeContract(plan.buildMarker),
         deployment: {
-          appId: 'party-registry',
+          appId: PARTY_APP_ID,
           buildMarker: plan.buildMarker,
         },
       },
@@ -372,6 +377,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         main: BACKEND_PATH,
         name: 'app-shell-super-app',
         placement: { host: 'backend.example.com:443' },
+        services: [{ binding: 'NATIVE_AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER }],
       }),
     ),
     file(
@@ -473,6 +479,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         deliveryUnit: { buildMarker: plan.buildMarker, unitId: `app/${APP_ID}` },
         id: APP_ID,
       },
+      verticals: [],
     }),
   );
   return { output, publicDirectory: nodePath.join(output, 'public') };
@@ -608,7 +615,13 @@ const deploymentLayer = (
                     placement: Schema.optionalKey(Schema.Struct({ host: Schema.String })),
                     preview_urls: Schema.optional(Schema.Boolean),
                     services: Schema.optional(
-                      Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String })),
+                      Schema.Array(
+                        Schema.Struct({
+                          binding: Schema.String,
+                          entrypoint: Schema.optionalKey(Schema.String),
+                          service: Schema.String,
+                        }),
+                      ),
                     ),
                     workers_dev: Schema.optional(Schema.Boolean),
                   }),
@@ -627,8 +640,11 @@ const deploymentLayer = (
                 expect(config.main).toBe(expectedEntrypoint);
                 expect(config.placement).toEqual({ host: 'backend.example.com:443' });
                 expect(resolvedEntrypoint).toBe(expectedEntrypoint);
-                // The fixture's published composition approves no module release: only the Shell's self binding.
-                expect(config.services).toEqual([{ binding: 'ONTOS_SHELL_SELF', service: config.name }]);
+                // Non-module native bindings survive alongside the Shell's self binding.
+                expect(config.services).toEqual([
+                  { binding: 'NATIVE_AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+                  { binding: 'ONTOS_SHELL_SELF', service: config.name },
+                ]);
                 expect(yield* fileSystem.readFileString(resolvedEntrypoint)).toBe(
                   'export default { fetch() { return new Response("Shell"); } };',
                 );
@@ -1295,6 +1311,64 @@ it.effect('binds the ingress to exactly the Worker releases of the published com
   }),
 );
 
+it.effect('retargets generated native API and SSR aliases to their published immutable owners', () =>
+  Effect.gen(function* nativeAliasesUsePublishedReleases() {
+    const workerName = yield* moduleReleaseWorkerName(PARTY_APP_ID, BUILD_MARKER);
+    const services = yield* retargetShellNativeServiceBindings({
+      modules: [
+        {
+          backend: fixtureWorkerBackend(workerName),
+          deployment: { appId: PARTY_APP_ID, buildMarker: BUILD_MARKER },
+        },
+      ],
+      services: [
+        { binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: CONFIGURED_PARTY_WORKER },
+        { binding: 'PARTY_SSR', entrypoint: 'PartyFragment', service: CONFIGURED_PARTY_WORKER },
+        { binding: 'AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+      ],
+      verticals: [{ cloudflare: { workerName: CONFIGURED_PARTY_WORKER }, id: PARTY_APP_ID }],
+    });
+    expect(services).toEqual([
+      { binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: workerName },
+      { binding: 'PARTY_SSR', entrypoint: 'PartyFragment', service: workerName },
+      { binding: 'AUDIT', entrypoint: AUDIT_ENTRYPOINT, service: AUDIT_WORKER },
+    ]);
+    expect(services.some(({ service }) => service === CONFIGURED_PARTY_WORKER)).toBe(false);
+  }),
+);
+
+it.effect('refuses native owner aliases without a unique published Worker target', () =>
+  Effect.gen(function* refusesUnapprovedNativeAliases() {
+    const workerName = yield* moduleReleaseWorkerName(PARTY_APP_ID, BUILD_MARKER);
+    const owner = { cloudflare: { workerName: 'app-party-registry' }, id: PARTY_APP_ID };
+    const module = {
+      backend: fixtureWorkerBackend(workerName),
+      deployment: { appId: PARTY_APP_ID, buildMarker: BUILD_MARKER },
+    };
+    for (const input of [
+      { modules: [], verticals: [owner] },
+      { modules: [module, module], verticals: [owner] },
+      { modules: [module], verticals: [owner, owner] },
+      {
+        modules: [
+          {
+            backend: { baseUrl: 'http://127.0.0.1:3041/', transport: 'node-http' as const },
+            deployment: module.deployment,
+          },
+        ],
+        verticals: [owner],
+      },
+    ]) {
+      const failure = yield* retargetShellNativeServiceBindings({
+        ...input,
+        services: [{ binding: 'VERTICAL_PARTY_REGISTRY_WORKER', service: 'app-party-registry' }],
+      }).pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe('each native module service binding must identify one approved Worker release');
+    }
+  }),
+);
+
 it.effect('publishes the exact Shell receipt identity and artifact pins and refuses an absent approved snapshot', () =>
   Effect.gen(function* retainedShellPublicationUrls() {
     const plan = yield* planFor();
@@ -1332,7 +1406,7 @@ it.effect('rejects Shell publication receipts that identify a business module or
     const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, inventoryFor(plan));
     const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };
     const businessPlan = yield* deriveImmutableApplicationReleasePlan({
-      appId: 'party-registry',
+      appId: PARTY_APP_ID,
       buildMarker: BUILD_MARKER,
       sourceRevision: SOURCE_REVISION,
       workersDevSubdomain: WORKERS_DEV_SUBDOMAIN,
