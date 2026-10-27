@@ -15,7 +15,7 @@ export const contractMonthlyTotal = (record: Contract) =>
 
 /** Subject, responsible person, notice period and the agreed rent of one contract (S12, S10-03). */
 export const ContractTermsCard = ({ state }: { readonly state: PageState }) => {
-  const { selected, t } = state;
+  const { openTerms: handleOpenTerms, selected, t } = state;
   if (selected === undefined) {
     return null;
   }
@@ -25,7 +25,7 @@ export const ContractTermsCard = ({ state }: { readonly state: PageState }) => {
     <SectionCard
       actions={
         state.detailView.canEditTerms ? (
-          <Button disabled={state.busy} onClick={state.openTerms} size="sm" theme="outlined" variant="secondary">
+          <Button disabled={state.busy} onClick={handleOpenTerms} size="sm" theme="outlined" variant="secondary">
             {t(`${P}.terms.edit`)}
           </Button>
         ) : undefined
@@ -78,6 +78,7 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
     return null;
   }
   const counterparty = state.counterpartyOf(selected);
+  const counterpartyName = counterparty?.displayName;
   const invoiceParams =
     counterparty === undefined
       ? ''
@@ -125,19 +126,12 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
   ].filter((link) => link !== undefined);
   return (
     <SectionCard title={t(`${P}.links.title`)}>
-      {counterparty?.displayName != null && (
-        <DetailList items={[{ label: t(`${P}.links.tenant`), value: counterparty.displayName }]} />
+      {counterpartyName !== null && counterpartyName !== undefined && (
+        <DetailList items={[{ label: t(`${P}.links.tenant`), value: counterpartyName }]} />
       )}
       <div className="legalagreements:flex legalagreements:flex-col legalagreements:items-start legalagreements:gap-2">
         {links.map((link) => (
-          <LinkButton
-            href={link.href}
-            icon={link.icon}
-            key={link.href}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
+          <LinkButton href={link.href} icon={link.icon} key={link.href} size="sm" theme="outlined" variant="secondary">
             {link.label}
           </LinkButton>
         ))}
@@ -147,7 +141,7 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
 };
 
 export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
-  const { busy, feedback, t, terms } = state;
+  const { busy, feedback, saveTerms: handleSaveTerms, t, terms } = state;
   if (!state.termsOpen) {
     return null;
   }
@@ -160,7 +154,7 @@ export const ContractTermsForm = ({ state }: { readonly state: PageState }) => {
           <Button disabled={busy} onClick={() => state.setTermsOpen(false)} theme="outlined" variant="secondary">
             {t('legal-agreements.detail.close')}
           </Button>
-          <Button disabled={busy} isLoading={feedback === 'saving'} onClick={state.saveTerms} variant="primary">
+          <Button disabled={busy} isLoading={feedback === 'saving'} onClick={handleSaveTerms} variant="primary">
             {t(`${P}.terms.save`)}
           </Button>
         </>

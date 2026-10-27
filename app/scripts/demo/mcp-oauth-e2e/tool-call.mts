@@ -1,5 +1,6 @@
 import type { Client } from '@modelcontextprotocol/client';
 import { Console, Effect, Option, Schedule, Schema } from 'effect';
+import type { Cause } from 'effect';
 
 type ProofToolArguments = NonNullable<Parameters<Client['callTool']>[0]['arguments']>;
 
@@ -23,12 +24,16 @@ const logRetryBoundary = (failure: McpProofCallFailed) =>
   failure.retryable ? Console.error(`${failure.message}; at most one same-key retry permitted`) : Effect.void;
 
 /** Retry only an identified transport failure of a write carrying the same explicit idempotency key. */
-export const proofToolCall = <A,>(name: string, args: ProofToolArguments, invoke: () => Promise<A>) => {
+export const proofToolCall = <A, R>(
+  name: string,
+  args: ProofToolArguments,
+  invoke: Effect.Effect<A, Cause.UnknownError, R>,
+) => {
   const write = Schema.decodeUnknownOption(StableWrite)(args);
   const stable = (name === 'ontos_execute' || name === 'ontos_propose') && Option.isSome(write);
   const operation = Option.match(write, { onNone: () => name, onSome: ({ id }) => `${name}/${id}` });
-  return Effect.tryPromise({
-    catch: (cause) => {
+  return invoke.pipe(
+    Effect.mapError(({ cause }) => {
       const transport = Schema.decodeUnknownOption(TransientFetchError)(cause);
       const code = Option.match(transport, { onNone: () => 'unclassified', onSome: (error) => error.cause.code });
       const detail = code === 'unclassified' ? 'request failed' : `transport ${code}`;
@@ -36,9 +41,7 @@ export const proofToolCall = <A,>(name: string, args: ProofToolArguments, invoke
         message: `${operation}: ${detail} (remote outcome unknown)`,
         retryable: stable && Option.isSome(transport),
       });
-    },
-    try: invoke,
-  }).pipe(
+    }),
     Effect.tapError(logRetryBoundary),
     Effect.retry({ schedule: Schedule.spaced('250 millis'), times: 1, while: retryable }),
   );

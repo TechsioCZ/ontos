@@ -4,7 +4,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '@app/shared-contracts/agent-review';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-export { AgentReviewRequestSchema, AgentReviewResponseSchema };
+export { AgentReviewRequestSchema, AgentReviewResponseSchema } from '@app/shared-contracts/agent-review';
 export type { AgentReviewRequest } from '@app/shared-contracts/agent-review';
 
 export const AgentReviewAuthenticationProblemSchema = makeProblemDetailsSchema('AgentReviewAuthenticationProblem', 401);

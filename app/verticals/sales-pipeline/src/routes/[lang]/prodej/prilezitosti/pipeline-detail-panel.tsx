@@ -17,18 +17,34 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { DateTime } from 'effect';
 import type { ReactNode } from 'react';
-import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
+import type { Opportunity, OpportunityLine } from '../../../../../shared/model/opportunity.ts';
 import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import { formatWholeKc } from './pipeline-model.ts';
 import type { PipelineLookups } from './pipeline-table.tsx';
 import type { RelatedContract, RelatedOrder, RelatedSection, RelatedTask } from './pipeline-related.ts';
 import { useOpportunityRelated } from './pipeline-related.ts';
 
-const contractStates: Readonly<Record<RelatedContract['lifecycleState'], string>> = {
+const opportunityLineIdentity = (line: OpportunityLine) =>
+  [line.productId ?? '', line.productName, String(line.quantity), String(line.unitPriceMinor), String(line.vatRate)]
+    .map((value) => `${value.length}:${value}`)
+    .join('');
+
+const contractStates = {
   ACTIVE: 'Platná',
   DRAFT: 'Návrh smlouvy',
   EXPIRED: 'Vypršela',
   TERMINATED: 'Ukončená',
+} satisfies Readonly<Record<RelatedContract['lifecycleState'], string>>;
+
+/** Repeated snapshots have no entity id, so disambiguate equal content within this list. */
+const withOccurrenceKeys = <Item,>(items: readonly Item[], identity: (item: Item) => string) => {
+  const occurrences = new Map<string, number>();
+  return items.map((item) => {
+    const content = identity(item);
+    const occurrence = occurrences.get(content) ?? 0;
+    occurrences.set(content, occurrence + 1);
+    return { item, key: `${content}:${occurrence}` };
+  });
 };
 
 interface RelatedListProps<Item> {
@@ -55,9 +71,7 @@ const RelatedList = <Item extends { readonly id: string }>({
       <h3 className="font-semibold text-sm">{title}</h3>
       {section.status === 'loading' && <p className="text-fg-secondary text-sm">Načítám…</p>}
       {section.status === 'unavailable' && <StatusText status="error">{unavailable}</StatusText>}
-      {section.status === 'ready' && section.items.length === 0 && (
-        <p className="text-fg-secondary text-sm">{empty}</p>
-      )}
+      {section.status === 'ready' && section.items.length === 0 && <p className="text-fg-secondary text-sm">{empty}</p>}
       {section.status === 'ready' && section.items.length > 0 && (
         <ul className="flex flex-col gap-100">
           {section.items.map((item) => (
@@ -233,7 +247,9 @@ export const PipelineDetailPanel = ({
               Případ zatím nemá položky nabídky. Doplníte je přes Upravit.
             </p>
           ) : (
-            <div aria-label="Položky nabídky" role="region" style={{ overflowX: 'auto' }} tabIndex={0}>
+            /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Approved demo/sales-crm policy: this named scroll region preserves keyboard access to horizontal table scrolling. */
+            <section aria-label="Položky nabídky" className="overflow-x-auto" tabIndex={0}>
+              {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
               <Table size="sm" variant="line">
                 <Table.Header>
                   <Table.Row>
@@ -244,8 +260,8 @@ export const PipelineDetailPanel = ({
                   </Table.Row>
                 </Table.Header>
                 <Table.Body>
-                  {opportunity.lines.map((line, index) => (
-                    <Table.Row key={`${line.productId ?? line.productName}-${index}`}>
+                  {withOccurrenceKeys(opportunity.lines, opportunityLineIdentity).map(({ item: line, key }) => (
+                    <Table.Row key={key}>
                       <Table.Cell>{line.productName}</Table.Cell>
                       <Table.Cell align="end">{line.quantity}</Table.Cell>
                       <Table.Cell align="end">{formatMoney(line.unitPriceMinor)}</Table.Cell>
@@ -254,15 +270,18 @@ export const PipelineDetailPanel = ({
                   ))}
                 </Table.Body>
               </Table>
-            </div>
+            </section>
           )}
         </SectionCard>
 
         {opportunity.stageHistory.length > 0 && (
           <SectionCard title="Historie fází">
             <ul className="flex flex-col gap-50 text-sm">
-              {[...opportunity.stageHistory].reverse().map((entry, index) => (
-                <li className="flex flex-wrap items-center gap-100" key={`${entry.stage}-${index}`}>
+              {withOccurrenceKeys(
+                opportunity.stageHistory.toReversed(),
+                (entry) => `${entry.stage}:${DateTime.toEpochMillis(entry.at)}`,
+              ).map(({ item: entry, key }) => (
+                <li className="flex flex-wrap items-center gap-100" key={key}>
                   <span className="text-fg-secondary tabular-nums">{formatDateTime(DateTime.formatIso(entry.at))}</span>
                   <StatusBadge kind="opportunity" value={entry.stage} />
                 </li>

@@ -4,6 +4,7 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
+import { EntityIdSchema, IsoTimeSchema, PrincipalIdSchema } from '../domain/common.ts';
 import { CrmViewerSchema } from '../domain/access.ts';
 import { CrmStateSchema } from '../domain/state.ts';
 
@@ -14,26 +15,28 @@ export type { CrmViewer } from '../domain/access.ts';
 /** Optional narrowing; the read always applies the viewer's ACL first. */
 export const RecordsRequestSchema = Schema.Struct({
   agentHistory: Schema.optionalKey(AgentHistoryRequestSchema),
-  clientId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  clientId: Schema.optionalKey(EntityIdSchema),
   /** Distinguishes an explicit fresh read from the shell's URL/body read cache; never persisted. */
-  refreshToken: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  requestNonce: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 
+export const RecordsAssignmentCandidateSchema = Schema.Struct({
+  displayName: Schema.String,
+  principalRef: Schema.Struct({
+    principalId: PrincipalIdSchema,
+    tenantId: Schema.String.pipe(Schema.brand('CrmAssignableTenantId')),
+  }),
+});
+export const RecordsAssignmentDirectorySchema = Schema.Struct({
+  assignmentCandidates: Schema.Array(RecordsAssignmentCandidateSchema),
+  departedPrincipalIds: Schema.Array(PrincipalIdSchema),
+});
+
 export const RecordsResponseSchema = Schema.Struct({
-  assignmentCandidates: Schema.Array(
-    Schema.Struct({
-      displayName: Schema.String,
-      principalRef: Schema.Struct({
-        principalId: Schema.String.pipe(Schema.brand('CrmAssignablePrincipalId'), Schema.decodeTo(Schema.String)),
-        tenantId: Schema.String.pipe(Schema.brand('CrmAssignableTenantId'), Schema.decodeTo(Schema.String)),
-      }),
-    }),
-  ),
-  departedPrincipalIds: Schema.Array(
-    Schema.String.pipe(Schema.brand('CrmDepartedPrincipalId'), Schema.decodeTo(Schema.String)),
-  ),
+  assignmentCandidates: Schema.Array(RecordsAssignmentCandidateSchema),
+  departedPrincipalIds: Schema.Array(PrincipalIdSchema),
   /** Company-wide seed samples; supplied only to viewers authorized to import orders. Never persisted. */
   importSamples: Schema.optionalKey(
     Schema.Array(
@@ -47,7 +50,7 @@ export const RecordsResponseSchema = Schema.Struct({
     ),
   ),
   /** Server time of the read (ISO). */
-  now: Schema.String,
+  now: IsoTimeSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   /** The state projected for this viewer (ACL-filtered on the server). */
   state: CrmStateSchema,

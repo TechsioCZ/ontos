@@ -5,13 +5,18 @@ import {
   OAuthAuthenticationAuditUnavailable,
   OAuthConnectionCompanies,
 } from '@app/core-runtime';
-import { OAUTH_GRANT_CLAIM } from '@app/shared-contracts/oauth-connections';
+import {
+  ConnectionDescriptionSchema,
+  ConnectApproveRequestSchema,
+  ConnectDenyRequestSchema,
+  OAUTH_GRANT_CLAIM,
+} from '@app/shared-contracts/oauth-connections';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { scriptedPgClientLayer } from '../../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from '../../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { authRelations } from '../../../api/auth/db/schema.ts';
-import { DateTime, Effect, Layer, Result } from 'effect';
+import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it, rs } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
@@ -147,7 +152,8 @@ const grant = (): GrantRow => ({
 });
 const flow = {
   deleteGrantTokens: () => Effect.void,
-  findClient: () => Effect.succeed({ clientId: grant().clientId, logoUri: null, name: 'Connector client' }),
+  findClient: () =>
+    Effect.succeed(Option.some({ clientId: grant().clientId, logoUri: null, name: 'Connector client' })),
   verifyQuery: () =>
     Effect.succeed({
       agent: null,
@@ -178,13 +184,15 @@ it.effect('records fixed creation and denial observations through the Core obser
           observations.push(observation);
         }),
     };
-    const approved = yield* approve(session, { grantId: draft.grantId, oauthQuery: 'signed-query' }).pipe(
-      Effect.provideService(OAuthAuthenticationAudit, audit),
-    );
+    const approved = yield* approve(
+      session,
+      yield* Schema.decodeEffect(ConnectApproveRequestSchema)({ grantId: draft.grantId, oauthQuery: 'signed-query' }),
+    ).pipe(Effect.provideService(OAuthAuthenticationAudit, audit));
     expect(approved.status).toBe('active');
-    const denied = yield* deny(session, { grantId: draft.grantId, oauthQuery: 'signed-query' }).pipe(
-      Effect.provideService(OAuthAuthenticationAudit, audit),
-    );
+    const denied = yield* deny(
+      session,
+      yield* Schema.decodeEffect(ConnectDenyRequestSchema)({ grantId: draft.grantId, oauthQuery: 'signed-query' }),
+    ).pipe(Effect.provideService(OAuthAuthenticationAudit, audit));
     expect(denied.redirectTo).toContain('state=original-state');
     expect(observations).toEqual([
       {
@@ -226,8 +234,11 @@ it.effect('fails approval and denial with ConnectionUnavailable retaining the ob
     controls.denied = { ...draft, status: 'denied' };
     const request = { grantId: draft.grantId, oauthQuery: 'signed-query' };
     const results = yield* Effect.all([
-      approve(session, request).pipe(Effect.asVoid, Effect.result),
-      deny(session, request).pipe(Effect.asVoid, Effect.result),
+      approve(session, yield* Schema.decodeEffect(ConnectApproveRequestSchema)(request)).pipe(
+        Effect.asVoid,
+        Effect.result,
+      ),
+      deny(session, yield* Schema.decodeEffect(ConnectDenyRequestSchema)(request)).pipe(Effect.asVoid, Effect.result),
     ]);
     for (const result of results) {
       expect(Result.isFailure(result)).toBe(true);
@@ -273,7 +284,7 @@ it.effect('audits MCP use only when last-used is updated and preserves observer 
   Effect.gen(function* throttledMcpObservation() {
     const active = { ...grant(), authBindingId: session.authBindingId ?? null, status: 'active' as const };
     const live: LiveConnection = {
-      description: {
+      description: yield* Schema.decodeEffect(ConnectionDescriptionSchema)({
         acting: { displayName: session.displayName, kind: 'human', principalId },
         client: {
           clientId: active.clientId,
@@ -292,7 +303,7 @@ it.effect('audits MCP use only when last-used is updated and preserves observer 
         status: 'active',
         tenantId: active.tenantId,
         writePolicy: 'read_only',
-      },
+      }),
       grant: active,
     };
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('EdDSA'));

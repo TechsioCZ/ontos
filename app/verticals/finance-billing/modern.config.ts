@@ -42,7 +42,6 @@ const OptionalText = optional(Trim);
 const BuildSettingsSchema = Struct({
   assetPrefix: OptionalText,
   cloudflareUrl: OptionalText,
-  disableTsChecker: optional(Literals(['0', '1'])),
   failUpload: optional(Literals(['true', 'false'])),
   modernAssetPrefix: OptionalText,
   port: Union([NumberFromString, Int]).check(isInt(), isGreaterThanOrEqualTo(1), isLessThanOrEqualTo(65_535)),
@@ -53,7 +52,6 @@ const BuildSettingsSchema = Struct({
 const buildSettings = decodeUnknownSync(BuildSettingsSchema)({
   assetPrefix: getBuildConfigEnvironment('ULTRAMODERN_ASSET_PREFIX'),
   cloudflareUrl: getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING'),
-  disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER'),
   failUpload: getBuildConfigEnvironment('ZE_FAIL_BUILD'),
   modernAssetPrefix: getBuildConfigEnvironment('MODERN_ASSET_PREFIX'),
   port: getBuildConfigEnvironment('VERTICAL_FINANCE_BILLING_PORT') ?? developmentOverlay.ports[appId],
@@ -209,7 +207,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: buildSettings.disableTsChecker === '1',
+        disableTsChecker: true,
         distPath: {
           html: './',
           root: buildOutputRoot,

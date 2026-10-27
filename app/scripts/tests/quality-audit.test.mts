@@ -30,10 +30,26 @@ const GITIGNORE_FILE = '.gitignore';
 const KNIP_CONFIG = 'quality-audit/knip.json';
 const PACKAGE_JSON = 'package.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
+const SCRIPT_ENTRY = 'scripts/index.ts';
+const STOREFRONT_STYLESHEET = 'akros-storefront/src/storefront.css';
+const COVERAGE_REPORT = 'coverage.json';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
     sourceState: Schema.String,
     workingTreeChanges: Schema.Array(Schema.String),
+  }),
+);
+const AnalyzerMetadataSchema = Schema.fromJsonString(
+  Schema.Struct({
+    environment: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+const SourceInventorySchema = Schema.fromJsonString(Schema.Struct({ files: Schema.Array(Schema.String) }));
+const SourceCoverageSchema = Schema.fromJsonString(
+  Schema.Struct({
+    assetFiles: Schema.Array(Schema.String),
+    extra: Schema.Array(Schema.String),
+    missing: Schema.Array(Schema.String),
   }),
 );
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -200,7 +216,7 @@ const createFixture = () =>
     writeFileSync(
       path.join(root, KNIP_CONFIG),
       yield* encodeReport({
-        entry: ['scripts/index.ts'],
+        entry: [SCRIPT_ENTRY],
         lefthook: false,
         node: false,
         project: ['scripts/**/*.ts'],
@@ -210,7 +226,7 @@ const createFixture = () =>
       '\n',
     );
     const body = `export function calculate(input: number) {\nlet result = input;\n${branches}\nreturn result;\n}\n`;
-    writeFileSync(path.join(root, 'scripts/index.ts'), body);
+    writeFileSync(path.join(root, SCRIPT_ENTRY), body);
     writeFileSync(path.join(root, 'scripts/dead.ts'), body.replace('calculate', 'unusedCalculation'));
     return root;
   });
@@ -269,6 +285,16 @@ it.live(
   Effect.fn(function* testEffect9() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
+    const storefrontSource = 'akros-storefront/src/storefront.ts';
+    const databaseSource = 'database/storage.cts';
+    mkdirSync(path.join(root, 'akros-storefront/src'), { recursive: true });
+    mkdirSync(path.join(root, 'akros-storefront/.next'), { recursive: true });
+    mkdirSync(path.join(root, 'database'));
+    writeFileSync(path.join(root, storefrontSource), 'export const storefront = 1;');
+    writeFileSync(path.join(root, STOREFRONT_STYLESHEET), '.storefront { color: red; }');
+    writeFileSync(path.join(root, databaseSource), 'export const storage = 1;');
+    writeFileSync(path.join(root, 'akros-storefront/.next/generated.ts'), 'export const generated = 1;');
+
     const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
     const branches = Array.from({ length: 11 }, (_, index) => `if (value === ${index + 1}) return ${index + 1};`).join(
       '\n',
@@ -290,6 +316,20 @@ export function branchHeavy(value: number) {
     );
     yield* runFixture(root, output, 'fallow');
     const result = yield* summary(output);
+    const inventory = yield* Schema.decodeEffect(SourceInventorySchema)(
+      readFileSync(path.join(result.runDirectory, 'source-inventory.json'), 'utf-8'),
+    );
+    expect(inventory.files).toContain(storefrontSource);
+    expect(inventory.files).toContain(databaseSource);
+    expect(inventory.files).not.toContain('akros-storefront/.next/generated.ts');
+    expect(inventory.files).not.toContain(STOREFRONT_STYLESHEET);
+    const coverage = yield* Schema.decodeEffect(SourceCoverageSchema)(
+      readFileSync(path.join(result.runDirectory, COVERAGE_REPORT), 'utf-8'),
+    );
+    expect(coverage.assetFiles).toContain(STOREFRONT_STYLESHEET);
+    expect(coverage.extra).toEqual([]);
+    expect(coverage.missing).toEqual([]);
+
     const healthDirectory = path.join(result.runDirectory, FALLOW_HEALTH);
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(
@@ -401,6 +441,13 @@ it.live(
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(first.status).toBe('reported');
     expect(first.results.length).toBe(6);
+    for (const result of first.results) {
+      const metadata = yield* Schema.decodeEffect(AnalyzerMetadataSchema)(
+        readFileSync(path.join(result.directory, 'metadata.json'), 'utf-8'),
+      );
+      expect(metadata.environment.KNIP_DISABLE_RAW_TRANSFER).toBe(result.name === 'knip' ? '1' : undefined);
+    }
+
     for (const name of ['knip', 'jscpd', FALLOW_CLONES, FALLOW_HEALTH]) {
       expect(
         first.results.some((row) => row.name === name && row.findings > 0),
@@ -420,6 +467,62 @@ it.live(
     expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
     expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(/Malformed .*configs\/knip\.json/u);
     expect(readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0).toBe(true);
+  }),
+);
+
+it.live(
+  'native Knip admits scoped consumers outside ignored reports without hiding unused neighbors',
+  Effect.fn(function* scopedConsumerAdmission() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const workspace = 'verticals/admission';
+    const gateway = `${workspace}/src/api/action-gateway.ts`;
+    mkdirSync(path.join(root, workspace, 'src/api'), { recursive: true });
+    writeFileSync(path.join(root, GITIGNORE_FILE), 'node_modules/\n.codex/\n');
+    writeFileSync(path.join(root, '.codex/ignored-neighbor.ts'), 'export const ignoredNeighbor = 1;');
+    writeFileSync(path.join(root, workspace, PACKAGE_JSON), '{"name":"@fixture/admission","type":"module"}');
+    writeFileSync(
+      path.join(root, gateway),
+      '// @generated by OntOS Codesmith MicroVertical Action Boundary v1\nexport const ACTION_GATEWAY_AUDIENCE = "admission"; export const unusedNeighbor = 1;',
+    );
+    writeFileSync(path.join(root, SCRIPT_ENTRY), `import '../${gateway}';`);
+    writeFileSync(
+      path.join(root, KNIP_CONFIG),
+      yield* encodeReport({
+        workspaces: {
+          '.': { entry: [SCRIPT_ENTRY], lefthook: false, node: false, project: ['scripts/**/*.ts'] },
+          'verticals/*': { entry: [], lefthook: false, node: false, project: ['src/**/*.ts'] },
+        },
+      }),
+    );
+    yield* runFixture(root, output, 'all');
+    const report = yield* summary(output);
+    expect(report.results.every((result) => result.status === 'reported')).toBe(true);
+    const [issues, coverage] = readFileSync(path.join(report.runDirectory, 'knip/report.ndjson'), 'utf-8')
+      .trim()
+      .split('\n');
+    const native = yield* Schema.decodeEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          issues: Schema.Array(
+            Schema.Struct({
+              exports: Schema.Array(Schema.Struct({ name: Schema.String })),
+              file: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    )(issues ?? '');
+    expect(native.issues.find((issue) => issue.file === gateway)?.exports.map((item) => item.name)).toEqual([
+      'unusedNeighbor',
+    ]);
+    expect(coverage).not.toContain('entry-empty');
+    expect(issues).not.toContain('ignored-neighbor');
+    expect(readdirSync(root).filter((name) => name.startsWith('.quality-audit-model-'))).toEqual([]);
+    expect(readFileSync(path.join(root, '.codex/ignored-neighbor.ts'), 'utf-8')).toContain('ignoredNeighbor');
+    writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
+    yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(readdirSync(root).filter((name) => name.startsWith('.quality-audit-model-'))).toEqual([]);
   }),
 );
 
@@ -611,6 +714,11 @@ it.live(
   Effect.fn(function* testEffect18() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
+    mkdirSync(path.join(root, 'akros-storefront'));
+    writeFileSync(
+      path.join(root, 'akros-storefront/package.json'),
+      yield* encodeReport({ name: 'akros-storefront', private: true }),
+    );
     mkdirSync(path.join(root, 'packages/omitted'), { recursive: true });
     writeFileSync(
       path.join(root, 'packages/omitted/package.json'),
@@ -622,6 +730,7 @@ it.live(
     expect(narrowed.results[0]?.status).toBe('reported');
     expect(narrowed.results.at(-1)?.name).toBe('coverage');
     expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/Knip workspace coverage mismatch/u);
+    expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/akros-storefront/u);
     expect(narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
     mkdirSync(path.join(root, 'vendor/omitted'), { recursive: true });
     writeFileSync(
@@ -642,7 +751,7 @@ it.live(
     expect(omittedSourceError.message).toMatch(/analysis failed/u);
     const omitted = yield* summary(output);
     expect(omitted.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
-    expect(readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8')).toMatch(/scripts\/index.ts/u);
+    expect(readFileSync(path.join(omitted.runDirectory, COVERAGE_REPORT), 'utf-8')).toMatch(/scripts\/index.ts/u);
   }),
 );
 
@@ -744,7 +853,7 @@ it.live('external report directories preserve valid Fallow exclusions and source
           missing: Schema.Array(Schema.String),
         }),
       ),
-    )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
+    )(readFileSync(path.join(result.runDirectory, COVERAGE_REPORT), 'utf-8'));
     // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
     expect(coverage).toEqual({ extra: [], intendedSources: 3, missing: [] });
     expect(result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0)).toBeTruthy();

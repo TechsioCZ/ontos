@@ -23,7 +23,7 @@ const externalizeRuntimeDependencies = (
   if (request === 'cloudflare:workers' || request?.endsWith('/fixtures/worker-environment.ts') === true) {
     resolveExternal(
       undefined,
-      `module-import ${new URL('./tests/fixtures/worker-environment.ts', import.meta.url).href}`,
+      `module-import ${new URL('tests/fixtures/worker-environment.ts', import.meta.url).href}`,
     );
     return;
   }

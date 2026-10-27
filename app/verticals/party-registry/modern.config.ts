@@ -13,8 +13,6 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { getOrThrow } from 'effect/Result';
-import { Literals, Struct, decodeUnknownResult, optional } from 'effect/Schema';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
@@ -33,11 +31,6 @@ const resolveDevelopmentModuleContractPath = () =>
 
 const appId = 'party-registry';
 const cloudflareWorkerName = 'app-party-registry';
-const buildEnvironment = getOrThrow(
-  decodeUnknownResult(Struct({ disableTsChecker: optional(Literals(['0', '1'])) }))({
-    disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER'),
-  }),
-);
 const {
   assetPrefix,
   buildCacheDirectory,
@@ -156,7 +149,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: buildEnvironment.disableTsChecker === '1',
+        disableTsChecker: true,
         distPath: {
           html: './',
           root: buildOutputRoot,

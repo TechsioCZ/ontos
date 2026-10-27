@@ -11,6 +11,7 @@ import { buildKnipRuntimeEvidence, workspaceDirectories } from '../../quality-au
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellRoot = 'apps/shell';
+const sourcePattern = 'src/**/*.ts';
 const layoutFile = `${shellRoot}/src/routes/layout.tsx`;
 const vendorRoot = 'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts';
 const resetFile = 'scripts/reset.mjs';
@@ -368,7 +369,7 @@ it.live(
       {
         workspaces: {
           '.': { entry: [], node: false, project: [] },
-          'tools/*': { entry: ['src/server.ts'], node: false, project: ['src/**/*.ts'] },
+          'tools/*': { entry: ['src/server.ts'], node: false, project: [sourcePattern] },
         },
       },
       consumerPath,
@@ -378,5 +379,26 @@ it.live(
     const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
     expect(run.stdout).toContain('unusedToolExport');
     expect(run.stdout).toContain(`${tool}/src/dead.ts`);
+  }),
+);
+
+it.effect(
+  'root-level storefront workspace discovery retains its explicit Knip configuration',
+  Effect.fn(function* storefrontWorkspaceDiscovery() {
+    const root = yield* fixture();
+    write(root, 'akros-storefront/package.json', '{"name":"akros-storefront","private":true,"type":"module"}');
+    write(root, 'akros-storefront/src/index.ts', 'export const storefront = 1;');
+    write(root, 'akros-storefront-backup/package.json', '{"name":"not-a-workspace","private":true}');
+    const directories = yield* workspaceDirectories(root).pipe(Effect.provide(NodeServices.layer));
+    expect(directories).toContain('akros-storefront');
+    expect(directories).not.toContain('akros-storefront-backup');
+    const model = yield* buildKnipModel(root, {
+      workspaces: {
+        '.': { entry: [], node: false, project: [] },
+        'akros-storefront': { entry: ['src/index.ts'], node: false, project: [sourcePattern] },
+      },
+    }).pipe(Effect.provide(NodeServices.layer));
+    expect(model.config.workspaces?.['akros-storefront']?.project).toEqual([sourcePattern]);
+    expect(model.config.workspaces?.['akros-storefront']?.entry).toContain('src/index.ts');
   }),
 );

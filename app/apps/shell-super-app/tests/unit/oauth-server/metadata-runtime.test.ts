@@ -7,7 +7,7 @@ import { jwt } from 'better-auth/plugins/jwt';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { fetchClientMetadataResource } from '../../../api/auth/cimd-transport.workerd.ts';
+import { fetchClientMetadataResource } from '../../../api/auth/cimd-transport.node.ts';
 import { forwardOAuthRequest } from '../../../api/auth/oauth-server/forward.ts';
 import { OAUTH_BASE_PATH } from '../../../api/auth/oauth-server/policy.ts';
 import { oauthMetadataTarget } from '../../../shared/oauth-metadata-routes.ts';

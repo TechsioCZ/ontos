@@ -20,9 +20,7 @@ export const subjectIdOf = (partyId: string): SubjectId =>
 
 /** Subject ids carrying the tag, read from the assignments loaded for the tag column. */
 const subjectsTaggedWith = (tagsBySubject: ReadonlyMap<SubjectId, readonly Tag[]>, tagId: TagId): ReadonlySet<string> =>
-  new Set(
-    [...tagsBySubject].filter(([, tags]) => tags.some((tag) => tag.id === tagId)).map(([subjectId]) => subjectId),
-  );
+  new Set([...tagsBySubject].flatMap(([subjectId, tags]) => (tags.some((tag) => tag.id === tagId) ? [subjectId] : [])));
 
 /**
  * Segment and tag data for the customers list. Segments arrive with the customer list (`loadCustomers`), so their

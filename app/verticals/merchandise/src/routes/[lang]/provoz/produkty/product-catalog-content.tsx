@@ -6,7 +6,8 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { formatDateTime, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { runCommand } from './products-api.ts';
@@ -31,12 +32,12 @@ interface ParameterDraft {
   readonly value: string;
 }
 
-type Flags = {
+interface Flags {
   readonly isAction: boolean;
   readonly isNew: boolean;
   readonly isRecommended: boolean;
   readonly isSale: boolean;
-};
+}
 
 export const CatalogContentPanel = ({
   canWrite,
@@ -48,7 +49,8 @@ export const CatalogContentPanel = ({
   revision,
 }: CatalogContentPanelProps) => {
   const failure = useCommandFailure();
-  const [picked, setPicked] = useState<CategoryTrail | null>(category);
+  const [categoryDraft, setCategoryDraft] = useState<CategoryTrail | null>();
+  const picked = categoryDraft === undefined ? category : categoryDraft;
   const categoryId = picked?.id ?? product.categoryId;
   const [parameters, setParameters] = useState<readonly ParameterDraft[]>(() =>
     (product.parameters ?? []).map((parameter, index) => ({
@@ -58,7 +60,7 @@ export const CatalogContentPanel = ({
       value: parameter.value,
     })),
   );
-  const [nextKey, setNextKey] = useState(() => (product.parameters ?? []).length);
+  const nextKey = useRef((product.parameters ?? []).length);
   const [flags, setFlags] = useState<Flags>(() => ({
     isAction: product.isAction === true,
     isNew: product.isNew === true,
@@ -73,6 +75,8 @@ export const CatalogContentPanel = ({
     (parameter) => parameter.label.trim() === '' || parameter.value.trim() === '',
   );
 
+  const removeParameter = (key: number) => setParameters((current) => current.filter((entry) => entry.key !== key));
+
   const patchParameter = (key: number, next: Partial<ParameterDraft>) =>
     setParameters((current) =>
       current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
@@ -84,31 +88,28 @@ export const CatalogContentPanel = ({
     }
     setBusy(true);
     setServerError(null);
-    runCommand(
-      {
-        _tag: 'UpdateProduct',
-        id: product.id,
-        patch: {
-          ...(categoryId !== undefined && categoryId !== product.categoryId ? { categoryId } : {}),
-          parameters: parameters.map(({ label, value, unit }) => ({
-            label: label.trim(),
-            unit: unit.trim(),
-            value: value.trim(),
-          })),
-          ...flags,
-          imageAlt: imageAlt.trim(),
-        },
-      },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          setServerError(failure(outcome.reason, onReload));
-          return;
-        }
-        onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');
-      },
-    );
+    const patch: { -readonly [Key in keyof ProductPatch]: ProductPatch[Key] } = {};
+    if (categoryId !== undefined && categoryId !== product.categoryId) {
+      patch.categoryId = categoryId;
+    }
+    patch.parameters = parameters.map(({ label, unit, value }) => ({
+      label: label.trim(),
+      unit: unit.trim(),
+      value: value.trim(),
+    }));
+    patch.isAction = flags.isAction;
+    patch.isNew = flags.isNew;
+    patch.isRecommended = flags.isRecommended;
+    patch.isSale = flags.isSale;
+    patch.imageAlt = imageAlt.trim();
+    runCommand({ _tag: 'UpdateProduct', id: product.id, patch }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        setServerError(failure(outcome.reason, onReload));
+        return;
+      }
+      onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.');
+    });
   };
 
   const history = (product.contentHistory ?? []).toReversed();
@@ -131,7 +132,7 @@ export const CatalogContentPanel = ({
                   `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.`
                 }
                 noResultsMessage="Žádná kategorie neodpovídá hledání."
-                onSelect={setPicked}
+                onSelect={setCategoryDraft}
                 placeholder="název nebo cesta, např. din 912 a 2"
                 retryLabel="Zkusit znovu"
                 selected={picked}
@@ -223,7 +224,7 @@ export const CatalogContentPanel = ({
                   <Button
                     aria-label={`Odebrat parametr ${index + 1}`}
                     icon="icon-[mdi--delete-outline]"
-                    onClick={() => setParameters((current) => current.filter((entry) => entry.key !== parameter.key))}
+                    onClick={() => removeParameter(parameter.key)}
                     size="sm"
                     theme="borderless"
                     type="button"
@@ -244,8 +245,9 @@ export const CatalogContentPanel = ({
             <Button
               icon="icon-[mdi--plus]"
               onClick={() => {
-                setParameters((current) => [...current, { key: nextKey, label: '', unit: '', value: '' }]);
-                setNextKey((current) => current + 1);
+                const key = nextKey.current;
+                nextKey.current += 1;
+                setParameters((current) => [...current, { key, label: '', unit: '', value: '' }]);
               }}
               size="sm"
               theme="outlined"
@@ -289,7 +291,9 @@ export const CatalogContentPanel = ({
         {history.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím žádné změny obsahu.</p>
         ) : (
-          <div role="region" aria-label="Historie změn obsahu" style={{ overflowX: 'auto' }} tabIndex={0}>
+          /* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Approved demo/sales-crm exception: this named overflow viewport needs keyboard scrolling. */
+          <section aria-label="Historie změn obsahu" style={{ overflowX: 'auto' }} tabIndex={0}>
+            {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -310,7 +314,7 @@ export const CatalogContentPanel = ({
                 ))}
               </Table.Body>
             </Table>
-          </div>
+          </section>
         )}
       </SectionCard>
     </div>

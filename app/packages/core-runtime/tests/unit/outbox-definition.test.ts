@@ -2,7 +2,10 @@ import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { OntosOutboxSubscriptionContractSchema, OutboxSubscriptionAuthoritySchema } from '../../src/modules/manifest.ts';
+import {
+  OntosOutboxSubscriptionContractSchema,
+  OutboxSubscriptionAuthoritySchema,
+} from '../../src/modules/manifest.ts';
 import {
   defineOutboxWorker,
   getOutboxWorkerHandler,
@@ -212,19 +215,28 @@ it('admits only explicitly tenant-wide Core system workers, without changing pub
   expect(validateOutboxWorkerSubscriptions([subscription])).toEqual([subscription]);
   expect(Schema.is(OutboxSubscriptionAuthoritySchema)(subscription)).toBe(true);
   expect(Schema.is(OntosOutboxSubscriptionContractSchema)(subscription)).toBe(false);
-  expect(() => defineOutboxWorker({ ...descriptor, legalEntityScope: 'required' }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
-  expect(() => defineOutboxWorker({ ...descriptor, producerModuleKey: 'tenant.module' }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
-  expect(() => defineOutboxWorker({
-    ...required.descriptor,
-    entrypoint: defineSystemModuleEntrypoint({
-      access: 'background',
-      authorization: { kind: 'owner_local_background' },
-      entrypointKey: required.descriptor.workerKey,
-      moduleKey: required.descriptor.consumerModuleKey,
-      role: 'worker',
-    }),
-    legalEntityScope: 'forbidden',
-  }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
+  expect(() => defineOutboxWorker({ ...descriptor, legalEntityScope: 'required' }, () => Effect.void)).toThrow(
+    OutboxWorkerDescriptorError,
+  );
+  expect(() => defineOutboxWorker({ ...descriptor, producerModuleKey: 'tenant.module' }, () => Effect.void)).toThrow(
+    OutboxWorkerDescriptorError,
+  );
+  expect(() =>
+    defineOutboxWorker(
+      {
+        ...required.descriptor,
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'background',
+          authorization: { kind: 'owner_local_background' },
+          entrypointKey: required.descriptor.workerKey,
+          moduleKey: required.descriptor.consumerModuleKey,
+          role: 'worker',
+        }),
+        legalEntityScope: 'forbidden',
+      },
+      () => Effect.void,
+    ),
+  ).toThrow(OutboxWorkerDescriptorError);
 });
 
 it('validates and freezes the schema-free installed subscription catalog', () => {

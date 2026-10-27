@@ -101,7 +101,9 @@ export function CustomerNewsletterConsentForm() {
             size="sm"
             checked={consent.decision === "GRANTED"}
             disabled={pending}
-            onCheckedChange={(checked) => void choose(checked)}
+            onCheckedChange={(checked) => {
+              void choose(checked);
+            }}
           />
           <p>
             Stav v OntOS:{" "}

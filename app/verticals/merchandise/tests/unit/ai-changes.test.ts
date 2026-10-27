@@ -1,14 +1,29 @@
+import { AiAdapterFailure, AiFailure } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { MerchandiseCommandSchema, MerchandisePermissionDenied } from '../../shared/actions/apply-command.ts';
-import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
+import {
+  MerchandiseCommandSchema,
+  merchandiseAiCommandSchemas,
+  MerchandiseNotFound,
+  MerchandisePermissionDenied,
+} from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { applyMerchandiseAiCommand } from '../../src/services/ai-changes.ts';
-import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import {
+  describeAddress,
+  describeContact,
+  describeLines,
+  describeShipping,
+  evolveMerchandiseState,
+  orderStatusLabels,
+} from '../../src/services/persistence.service.ts';
 import { stockOnHandOf } from '../../src/services/stock-levels.ts';
+
+/** A real asynchronous boundary with no timing assertion or external I/O. */
+const nextMicrotask = Effect.promise(() => Promise.resolve());
 
 const agent = { principalId: '20000000-0000-4000-8000-0000000000c1', tenantId: '20000000-0000-4000-8000-000000000001' };
 const approver = {
@@ -16,26 +31,26 @@ const approver = {
   tenantId: '20000000-0000-4000-8000-000000000001',
 };
 const now = DateTime.makeUnsafe('2026-10-21T08:00:00Z');
-type AiCommand = Extract<
-  MerchandiseCommand,
-  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
->;
+const AiCommandSchema = Schema.Union(merchandiseAiCommandSchemas);
+type CommandInput = typeof MerchandiseCommandSchema.Encoded;
+type AiCommandInput = typeof AiCommandSchema.Encoded;
 const decode = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const roundTrip = (state: MerchandiseState) =>
-  Schema.decodeUnknownSync(MerchandiseStateSchema)(
-    JSON.parse(JSON.stringify(Schema.encodeSync(MerchandiseStateSchema)(state))),
-  );
+  Schema.decodeUnknownSync(MerchandiseStateSchema)(Schema.encodeSync(MerchandiseStateSchema)(state));
 const stock = (state: MerchandiseState) =>
   stockOnHandOf(state.movements, Schema.decodeUnknownSync(ProductIdSchema)('product-1'));
 
-const run = (state: MerchandiseState, input: unknown, resourceId: string) =>
+const run = (state: MerchandiseState, input: CommandInput, resourceId: string) =>
   evolveMerchandiseState(state, decode(input), { actor: approver, now, resourceId }).pipe(
     Effect.map((change) => roundTrip(change.state)),
   );
-const ai = (state: MerchandiseState, input: unknown, invocationId: string, actor = approver) =>
-  applyMerchandiseAiCommand(state, decode(input) as AiCommand, { actor, invocationId, now }).pipe(
-    Effect.map((outcome) => ({ ...outcome, state: roundTrip(outcome.state) })),
-  );
+const ai = (state: MerchandiseState, input: AiCommandInput, invocationId: string, actor = approver) =>
+  applyMerchandiseAiCommand(
+    state,
+    Schema.decodeUnknownSync(AiCommandSchema)(input),
+    { actor, invocationId, now },
+    { describeAddress, describeContact, describeLines, describeShipping, evolveMerchandiseState, orderStatusLabels },
+  ).pipe(Effect.map((outcome) => ({ ...outcome, state: roundTrip(outcome.state) })));
 
 const seeded = Effect.gen(function* seed() {
   const product = yield* run(
@@ -157,5 +172,74 @@ it.effect('API keys may propose but never decide or revert', () =>
       const denied = yield* assertCommandAllowed('non_human', tag).pipe(Effect.flip);
       expect(Schema.is(MerchandisePermissionDenied)(denied)).toBe(true);
     }
+  }),
+);
+
+it.live('order description awaits the owner reducer without starting a nested runtime', () =>
+  Effect.gen(function* asynchronousDescription() {
+    const start = yield* seeded;
+    const proposed = yield* applyMerchandiseAiCommand(
+      start,
+      Schema.decodeUnknownSync(AiCommandSchema)({
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CANCELLED' },
+            reason: 'Zákazník objednávku zrušil.',
+          },
+        ],
+        instruction: 'Stornuj objednávku zákazníka.',
+      }),
+      { actor: agent, invocationId: 'async-order-description', now },
+      {
+        describeAddress,
+        describeContact,
+        describeLines,
+        describeShipping,
+        evolveMerchandiseState: (state, command, input) =>
+          evolveMerchandiseState(state, command, input).pipe(Effect.tap(() => nextMicrotask)),
+        orderStatusLabels,
+      },
+    );
+    expect(proposed.state.orders).toBe(start.orders);
+    expect(stock(proposed.state)).toBe(7);
+    expect(proposed.state.aiChanges?.changes[0]?.diff[0]).toEqual({
+      after: 'Stornovaná',
+      before: 'Nová',
+      field: 'status',
+      label: 'Stav',
+    });
+    expect(proposed.state.aiChanges?.changes[0]?.proposedSnapshots?.map((snapshot) => snapshot.kind)).toEqual([
+      'order',
+      'movement',
+    ]);
+  }),
+);
+
+it.effect('order proposal rejection preserves its Czech message and original typed reducer failure', () =>
+  Effect.gen(function* failedOrderProposal() {
+    const start = yield* seeded;
+    const failure = yield* ai(
+      start,
+      {
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'EditOrder', id: 'missing-order', note: 'Doručit po 14:00' },
+            reason: 'Zákazník volal.',
+          },
+        ],
+        instruction: 'Doplň poznámku k objednávce.',
+      },
+      'missing-order-proposal',
+      agent,
+    ).pipe(Effect.flip);
+    expect(Schema.is(AiFailure)(failure)).toBe(true);
+    expect(failure.kind).toBe('invalid');
+    expect(failure.message).toBe('Návrh č. 1 (Úprava objednávky) nelze přijmout: Objednávka neexistuje.');
+    expect(Schema.is(AiAdapterFailure)(failure.cause)).toBe(true);
+    expect(Schema.is(MerchandiseNotFound)(failure.cause?.cause)).toBe(true);
+    expect(start.aiChanges).toBeUndefined();
+    expect(stock(start)).toBe(7);
   }),
 );

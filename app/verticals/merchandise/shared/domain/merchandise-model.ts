@@ -4,7 +4,7 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 
-const idOf = (brand: string) =>
+const idOf = <const Brand extends string>(brand: Brand) =>
   Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand(brand));
 
 export const ProductIdSchema = idOf('ProductId');
@@ -19,6 +19,18 @@ export type PartyId = typeof PartyIdSchema.Type;
 /** Opaque reference to a sales-pipeline opportunity. Never joined here. */
 export const OpportunityIdSchema = idOf('OpportunityId');
 export type OpportunityId = typeof OpportunityIdSchema.Type;
+
+/** References retain the wire bounds of their individual owners; branding adds no validation. */
+export const ProductReferenceSchema = Schema.String.pipe(Schema.brand('ProductId'));
+export const VariantReferenceSchema = Schema.String.pipe(Schema.brand('VariantId'));
+export const OrderReferenceSchema = Schema.String.pipe(Schema.brand('OrderId'));
+export const CategoryIdSchema = Schema.String.pipe(Schema.brand('CategoryId'));
+export type CategoryId = typeof CategoryIdSchema.Type;
+export const CatalogSourceIdSchema = Schema.String.pipe(Schema.brand('CatalogSourceId'));
+export const SourceGroupIdSchema = Schema.String.pipe(Schema.brand('SourceGroupId'));
+export const SourceProductIdSchema = Schema.String.pipe(Schema.brand('SourceProductId'));
+export const ClientRequestIdSchema = Schema.String.pipe(Schema.brand('ClientRequestId'));
+export const CustomerAccountIdSchema = Schema.String.pipe(Schema.brand('CustomerAccountId'));
 
 export const ProductUnitSchema = Schema.Literals(['ks', 'bal', 'hod', 'lic', 'm', 'tab', 'set', '0', '1']);
 export type ProductUnit = typeof ProductUnitSchema.Type;
@@ -39,9 +51,9 @@ const TextSchema = (maximum: number) => Schema.Trim.check(Schema.isMinLength(1),
 
 export const PriceHistoryEntrySchema = Schema.Struct({
   /** Snapshot before the edit; optional for legacy and initial-price entries. */
-  previousPriceMinor: Schema.optionalKey(MinorAmountSchema),
   changedBy: Schema.optionalKey(PrincipalRefSchema),
   effectiveFrom: Schema.DateTimeUtcFromString,
+  previousPriceMinor: Schema.optionalKey(MinorAmountSchema),
   priceMinor: MinorAmountSchema,
 });
 export type PriceHistoryEntry = typeof PriceHistoryEntrySchema.Type;
@@ -57,34 +69,33 @@ export type VariantId = typeof VariantIdSchema.Type;
 /** Source catalog gross tiers; legacy priceMinor remains net. */
 export const CatalogParameterSchema = Schema.Struct({
   label: Schema.String,
-  value: Schema.String,
   unit: Schema.String,
+  value: Schema.String,
 });
 export const PriceTierSchema = Schema.Struct({
   minimumQuantity: Schema.Finite,
-  priceMinor: MinorAmountSchema,
   priceExcludingVatMinor: MinorAmountSchema,
+  priceMinor: MinorAmountSchema,
 });
 export const CatalogFieldsSchema = Schema.Struct({
+  imageSrc: Schema.optionalKey(Schema.String),
   minimumQuantity: Schema.optionalKey(Schema.Finite),
   packageQuantity: Schema.optionalKey(Schema.Finite),
-  priceTiers: Schema.optionalKey(Schema.Array(PriceTierSchema)),
   parameters: Schema.optionalKey(Schema.Array(CatalogParameterSchema)),
-  sourceId: Schema.optionalKey(Schema.String),
+  priceTiers: Schema.optionalKey(Schema.Array(PriceTierSchema)),
+  sourceId: Schema.optionalKey(CatalogSourceIdSchema),
   sourceUnit: Schema.optionalKey(Schema.String),
-  imageSrc: Schema.optionalKey(Schema.String),
 });
 /** Storefront labels: akce / doporučujeme / výprodej / novinka. Absent means false. */
 export const CatalogFlagsSchema = Schema.Struct({
   isAction: Schema.optionalKey(Schema.Boolean),
+  isNew: Schema.optionalKey(Schema.Boolean),
   isRecommended: Schema.optionalKey(Schema.Boolean),
   isSale: Schema.optionalKey(Schema.Boolean),
-  isNew: Schema.optionalKey(Schema.Boolean),
 });
 export const ProductVariantSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
   ...CatalogFlagsSchema.fields,
-  unit: Schema.optionalKey(Schema.String),
   active: Schema.optionalKey(Schema.Boolean),
   attributes: Schema.Trim.check(Schema.isMaxLength(1000)),
   id: Schema.optionalKey(VariantIdSchema),
@@ -92,14 +103,17 @@ export const ProductVariantSchema = Schema.Struct({
   priceHistory: Schema.optionalKey(Schema.Array(PriceHistoryEntrySchema)),
   priceMinor: Schema.optionalKey(MinorAmountSchema),
   sku: Schema.optionalKey(TextSchema(64)),
+  unit: Schema.optionalKey(Schema.String),
 });
 export type ProductVariant = typeof ProductVariantSchema.Type;
 
 /** A variant with an identity and a price is a real sellable variant. */
-export const isRealVariant = (
-  variant: ProductVariant,
-): variant is ProductVariant & { readonly id: VariantId; readonly priceMinor: number } =>
-  variant.id !== undefined && variant.priceMinor !== undefined;
+const RealProductVariantSchema = Schema.Struct({
+  ...ProductVariantSchema.fields,
+  id: VariantIdSchema,
+  priceMinor: MinorAmountSchema,
+});
+export const isRealVariant = Schema.is(RealProductVariantSchema);
 
 export const AvailabilitySchema = Schema.Literals(['IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK', 'UNKNOWN']);
 export type Availability = typeof AvailabilitySchema.Type;
@@ -113,28 +127,28 @@ const MeasurementSchema = Schema.OptionFromNullOr(
 );
 /** One audited catalog-content change; `fields` are Czech field labels, `before`/`after` Czech summaries. */
 export const CatalogChangeSchema = Schema.Struct({
-  at: Schema.DateTimeUtcFromString,
   actor: PrincipalRefSchema,
-  fields: Schema.Array(Schema.String),
-  before: Schema.String,
   after: Schema.String,
+  at: Schema.DateTimeUtcFromString,
+  before: Schema.String,
+  fields: Schema.Array(Schema.String),
 });
 export type CatalogChange = typeof CatalogChangeSchema.Type;
 /** Storefront category (AKROS source shape + optional audit history). `position` orders siblings ascending. */
 export const CatalogCategorySchema = Schema.Struct({
-  id: Schema.String,
-  parentId: Schema.NullOr(Schema.String),
-  name: TextSchema(200),
-  slug: TextSchema(200),
-  heading: Schema.String,
   description: Schema.String,
-  longDescription: Schema.String,
-  position: Schema.Finite,
-  imageSrc: Schema.String,
-  imageAlt: Schema.String,
   hasChildren: Schema.Boolean,
-  published: Schema.optionalKey(Schema.Boolean),
+  heading: Schema.String,
   history: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
+  id: CategoryIdSchema,
+  imageAlt: Schema.String,
+  imageSrc: Schema.String,
+  longDescription: Schema.String,
+  name: TextSchema(200),
+  parentId: Schema.OptionFromNullOr(CategoryIdSchema),
+  position: Schema.Finite,
+  published: Schema.optionalKey(Schema.Boolean),
+  slug: TextSchema(200),
 });
 export type CatalogCategory = typeof CatalogCategorySchema.Type;
 
@@ -143,39 +157,39 @@ export type CatalogCategory = typeof CatalogCategorySchema.Type;
  * children flag, published); the content fields are present for the category a read asks about in detail.
  */
 export const CategoryNodeSchema = Schema.Struct({
-  id: Schema.String,
-  parentId: Schema.NullOr(Schema.String),
-  name: Schema.String,
-  slug: Schema.String,
-  position: Schema.Finite,
-  hasChildren: Schema.Boolean,
-  published: Schema.optionalKey(Schema.Boolean),
-  heading: Schema.optionalKey(Schema.String),
   description: Schema.optionalKey(Schema.String),
-  longDescription: Schema.optionalKey(Schema.String),
-  imageSrc: Schema.optionalKey(Schema.String),
-  imageAlt: Schema.optionalKey(Schema.String),
+  hasChildren: Schema.Boolean,
+  heading: Schema.optionalKey(Schema.String),
   history: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
+  id: CategoryIdSchema,
+  imageAlt: Schema.optionalKey(Schema.String),
+  imageSrc: Schema.optionalKey(Schema.String),
+  longDescription: Schema.optionalKey(Schema.String),
+  name: Schema.String,
+  parentId: Schema.OptionFromNullOr(CategoryIdSchema),
+  position: Schema.Finite,
+  published: Schema.optionalKey(Schema.Boolean),
+  slug: Schema.String,
 });
 export type CategoryNode = typeof CategoryNodeSchema.Type;
 
 export const ProductMetadataSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
   /** Alt text of the main image (storefront `imageAlt`). The gallery is `images`; paragraphs derive from `description`. */
+  categoryId: Schema.optionalKey(CategoryIdSchema),
+  categoryPathIds: Schema.optionalKey(Schema.Array(CategoryIdSchema)),
+  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
+  featuredPosition: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Finite)),
+  heightMm: Schema.optionalKey(MeasurementSchema),
   imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
-  sourceProductId: Schema.optionalKey(Schema.String),
-  sourceGroupId: Schema.optionalKey(Schema.String),
-  categoryId: Schema.optionalKey(Schema.String),
-  categoryPathIds: Schema.optionalKey(Schema.Array(Schema.String)),
-  featuredPosition: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+  images: Schema.optionalKey(Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20))),
   isAction: Schema.optionalKey(Schema.Boolean),
+  isNew: Schema.optionalKey(Schema.Boolean),
   isRecommended: Schema.optionalKey(Schema.Boolean),
   isSale: Schema.optionalKey(Schema.Boolean),
-  isNew: Schema.optionalKey(Schema.Boolean),
-  description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
-  heightMm: Schema.optionalKey(MeasurementSchema),
   lengthMm: Schema.optionalKey(MeasurementSchema),
-  images: Schema.optionalKey(Schema.Array(ImageRefSchema).check(Schema.isMaxLength(20))),
+  sourceGroupId: Schema.optionalKey(SourceGroupIdSchema),
+  sourceProductId: Schema.optionalKey(SourceProductIdSchema),
   /** Storefront visibility; absent means published when active. */
   published: Schema.optionalKey(Schema.Boolean),
   shortDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
@@ -191,8 +205,8 @@ export type ProductMetadata = typeof ProductMetadataSchema.Type;
 export const ProductSchema = Schema.Struct({
   demoArchive: Schema.optionalKey(
     Schema.Struct({
-      at: Schema.DateTimeUtcFromString,
       actor: PrincipalRefSchema,
+      at: Schema.DateTimeUtcFromString,
       reason: Schema.String,
     }),
   ),
@@ -226,7 +240,6 @@ export const grossUnitPriceMinor = (netMinor: number, vatRate: number): number =
 export const VariantRecordSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
   ...CatalogFlagsSchema.fields,
-  unit: Schema.optionalKey(Schema.String),
   active: Schema.Boolean,
   attributes: Schema.String,
   availability: AvailabilitySchema,
@@ -237,10 +250,18 @@ export const VariantRecordSchema = Schema.Struct({
   priceMinor: MinorAmountSchema,
   sku: Schema.String,
   stockOnHand: Schema.Finite,
+  unit: Schema.optionalKey(Schema.String),
 });
 export type VariantRecord = typeof VariantRecordSchema.Type;
 
 /** Product plus values derived from the stock ledger and current price at read time. */
+export const VariantSummarySchema = Schema.Struct({
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  minGrossPriceMinor: Schema.OptionFromNullOr(MinorAmountSchema),
+  stockOnHand: Schema.Finite,
+  units: Schema.Array(Schema.String),
+});
+
 export const ProductRecordSchema = Schema.Struct({
   ...ProductSchema.fields,
   availability: Schema.optionalKey(AvailabilitySchema),
@@ -255,14 +276,7 @@ export const ProductRecordSchema = Schema.Struct({
    */
   /** Staff list rows: number of sellable variants (active or not), counted in SQL; detail reads `variantRecords`. */
   variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  variantSummary: Schema.optionalKey(
-    Schema.Struct({
-      count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-      minGrossPriceMinor: Schema.NullOr(MinorAmountSchema),
-      stockOnHand: Schema.Finite,
-      units: Schema.Array(Schema.String),
-    }),
-  ),
+  variantSummary: Schema.optionalKey(VariantSummarySchema),
   /** Storefront-only derived fields: `description` split on blank lines, and `images` (or `[imageSrc]`). */
   descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
   gallery: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -298,14 +312,18 @@ export const ShippingMethodSchema = Schema.Literals(['ZASILKOVNA', 'PPL', 'CESKA
 export type ShippingMethod = typeof ShippingMethodSchema.Type;
 
 /** Owner shipping tariffs, gross (incl. 21 % VAT). Carrier booking is not implemented. */
-export const shippingMethods: Readonly<
-  Record<ShippingMethod, { readonly grossPriceMinor: number; readonly label: string }>
-> = {
+interface ShippingTariff {
+  readonly grossPriceMinor: number;
+  readonly label: string;
+}
+type ShippingTariffs = Readonly<Record<ShippingMethod, ShippingTariff>>;
+
+export const shippingMethods = {
   CESKA_POSTA: { grossPriceMinor: 11_900, label: 'Česká pošta – doručení na adresu' },
   OSOBNI_ODBER: { grossPriceMinor: 0, label: 'Osobní odběr' },
   PPL: { grossPriceMinor: 12_900, label: 'PPL – doručení na adresu' },
-  ZASILKOVNA: { grossPriceMinor: 7_900, label: 'Zásilkovna – výdejní místo' },
-};
+  ZASILKOVNA: { grossPriceMinor: 7900, label: 'Zásilkovna – výdejní místo' },
+} satisfies ShippingTariffs;
 
 /** Keep pickup identity consistent across storefront placement, staff editing and audit snapshots. */
 export const shippingMethodFor = (method: ShippingMethod, akros = false) =>
@@ -378,24 +396,24 @@ export type OrderChannel = typeof OrderChannelSchema.Type;
 export const OrderSchema = Schema.Struct({
   billingAddress: Schema.optionalKey(OrderAddressSchema),
   /** Verified commerce-portal subject, supplied only by the trusted storefront server. */
-  customerAccountId: Schema.optionalKey(TextSchema(300)),
   channel: Schema.optionalKey(OrderChannelSchema),
+  customerAccountId: Schema.optionalKey(TextSchema(300).pipe(Schema.brand('CustomerAccountId'))),
   /** Caller-supplied storefront submission id; one id maps to exactly one order. */
-  clientRequestId: Schema.optionalKey(Schema.String),
+  clientRequestId: Schema.optionalKey(ClientRequestIdSchema),
   contact: Schema.optionalKey(OrderContactSchema),
   createdAt: Schema.DateTimeUtcFromString,
   /** DEMO marker: a presentation order, never paid, reserved or shipped. */
   demo: Schema.optionalKey(Schema.Boolean),
   /** Soft removal preserves the receipt, audit history and clientRequestId replay identity. */
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  deliveryRecipient: Schema.optionalKey(OrderDeliveryRecipientSchema),
   demoCleanup: Schema.optionalKey(
     Schema.Struct({
-      at: Schema.DateTimeUtcFromString,
       actor: PrincipalRefSchema,
+      at: Schema.DateTimeUtcFromString,
       reason: TextSchema(500),
     }),
   ),
-  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
-  deliveryRecipient: Schema.optionalKey(OrderDeliveryRecipientSchema),
   history: Schema.optionalKey(Schema.Array(OrderHistoryEntrySchema)),
   id: OrderIdSchema,
   lines: Schema.Array(OrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),

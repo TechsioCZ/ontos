@@ -1,0 +1,18 @@
+diff --git a/dist/lint.js b/dist/lint.js
+--- a/dist/lint.js
++++ b/dist/lint.js
+@@ -22034,12 +22034,12 @@
+ 	let keys = keys_default[node.type], keysLen = keys.length;
+ 	for (let i = 0; i < keysLen; i++) {
+ 		let child = node[keys[i]];
+-		if (child !== null) {
++		if (child != null) {
+ 			if (ArrayIsArray(child)) {
+ 				let len = child.length;
+ 				for (let i = 0; i < len; i++) {
+ 					let element = child[i];
+-					element !== null && traverseNode(element, enter, leave);
++					element != null && traverseNode(element, enter, leave);
+ 				}
+ 			} else traverseNode(child, enter, leave);
+ 		}

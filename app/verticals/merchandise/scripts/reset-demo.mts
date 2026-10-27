@@ -169,6 +169,8 @@ const AdminDatabaseLive = Layer.effect(
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
+const sameEncodedState = Schema.toEquivalence(Schema.toEncoded(MerchandiseStateSchema));
+
 const scope = { legalEntityId: demoLegalEntityId, tenantId: demoTenantId };
 
 const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoState(state: MerchandiseState) {
@@ -181,14 +183,17 @@ const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoSt
 /** Explicit non-destructive mode: patch only untouched old open fixtures in Obchodní firma. */
 const repairOrderPresentation = Effect.gen(function* repairOrderPresentation() {
   const current = yield* readCompanySnapshot(scope);
-  if (current === undefined) return yield* Effect.fail(new Error('Obchodní firma merchandise must already exist'));
+  if (current === undefined) {
+    return yield* Effect.fail(new ResetInputError({ reason: 'Obchodní firma merchandise must already exist' }));
+  }
   const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(current.state);
   const repaired = refreshObchodOrderPresentation(encoded);
-  if (JSON.stringify(repaired) === JSON.stringify(encoded))
+  if (sameEncodedState(repaired, encoded)) {
     return yield* Console.log('Obchodní firma open orders already presentable; nothing changed');
+  }
   const state = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired);
   yield* writeCompanySnapshot(scope, state);
-  yield* Console.log(
+  return yield* Console.log(
     'Obchodní firma: five old open fixture dates and matching stock timestamps refreshed; completed history, prices and statuses preserved',
   );
 });

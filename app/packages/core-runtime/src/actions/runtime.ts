@@ -1759,6 +1759,72 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       },
     );
 
+    const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
+      policyInput: ActionPolicyEvaluatorInput<typeof payload>,
+      policy: ActionPolicy<typeof payload, Owner>,
+    ) {
+      const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
+      if (Exit.isSuccess(policyExit)) {
+        return policyEvidence(policy);
+      }
+
+      const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
+      const [failureReason] = failureReasons;
+      if (
+        failureReasons.length === policyExit.cause.reasons.length &&
+        failureReason !== undefined &&
+        Schema.is(PolicyDenied)(failureReason.error)
+      ) {
+        const denial = failureReason.error;
+        const earlierRejection = yield* repository
+          .finalizePolicyDenial(
+            invocationScopeExecutor(scope),
+            withOptionalProperty(
+              {
+                actionInvocationId: invocation.actionInvocationId,
+                actionKey: input.registration.descriptor.actionKey,
+                auditProfile: input.registration.descriptor.auditProfile,
+                policy: policyEvidence(policy),
+                principal,
+                reasonCode: denial.reasonCode,
+                transport: governedTransport,
+              },
+              deniedAuditEvidence !== undefined,
+              'deniedAuditEvidence',
+              deniedAuditEvidence,
+              {},
+            ),
+          )
+          .pipe(
+            Effect.tapError((error) =>
+              logInvocationPersistenceFailure(error, {
+                actionKey: input.registration.descriptor.actionKey,
+                correlationId: transport.correlationId,
+                invocationId: invocation.actionInvocationId,
+                policyKey: policy.policyKey,
+              }),
+            ),
+          );
+        if (
+          Option.isSome(earlierRejection) &&
+          !(earlierRejection.value.stage === 'policy' && earlierRejection.value.policyReasonCode === denial.reasonCode)
+        ) {
+          return yield* recordedRejectionFailure(earlierRejection);
+        }
+        return yield* new ActionPolicyDenied({
+          code: 'action_policy_denied',
+          policyReasonCode: denial.reasonCode,
+          reason: denial.reason,
+        });
+      }
+
+      yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
+      return yield* new ActionPolicyEvaluationError({
+        code: 'action_policy_evaluation_failed',
+        reason: 'A required Action Policy could not be evaluated',
+      });
+    });
+
     const evaluatePolicies = Effect.fn('ActionRuntime.evaluatePolicies')(function* evaluatePoliciesEffect() {
       notifyStage('policy_boundary');
 
@@ -1783,78 +1849,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ),
         ),
       });
-      const evaluateActionPolicy = Effect.fn('ActionRuntime.evaluatePolicy')(function* evaluatePolicy(
-        policy: ActionPolicy<typeof payload, Owner>,
-      ) {
-        const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
-        if (Exit.isSuccess(policyExit)) {
-          return policyEvidence(policy);
-        }
-
-        const failureReasons = policyExit.cause.reasons.filter(Cause.isFailReason);
-        const [failureReason] = failureReasons;
-        if (
-          failureReasons.length === policyExit.cause.reasons.length &&
-          failureReason !== undefined &&
-          Schema.is(PolicyDenied)(failureReason.error)
-        ) {
-          const denial = failureReason.error;
-          const earlierRejection = yield* repository
-            .finalizePolicyDenial(
-              invocationScopeExecutor(scope),
-              withOptionalProperty(
-                {
-                  actionInvocationId: invocation.actionInvocationId,
-                  actionKey: input.registration.descriptor.actionKey,
-                  auditProfile: input.registration.descriptor.auditProfile,
-                  policy: policyEvidence(policy),
-                  principal,
-                  reasonCode: denial.reasonCode,
-                  transport: governedTransport,
-                },
-                deniedAuditEvidence !== undefined,
-                'deniedAuditEvidence',
-                deniedAuditEvidence,
-                {},
-              ),
-            )
-            .pipe(
-              Effect.tapError((error) =>
-                logInvocationPersistenceFailure(error, {
-                  actionKey: input.registration.descriptor.actionKey,
-                  correlationId: transport.correlationId,
-                  invocationId: invocation.actionInvocationId,
-                  policyKey: policy.policyKey,
-                }),
-              ),
-            );
-          if (
-            Option.isSome(earlierRejection) &&
-            !(
-              earlierRejection.value.stage === 'policy' && earlierRejection.value.policyReasonCode === denial.reasonCode
-            )
-          ) {
-            return yield* recordedRejectionFailure(earlierRejection);
-          }
-          return yield* new ActionPolicyDenied({
-            code: 'action_policy_denied',
-            policyReasonCode: denial.reasonCode,
-            reason: denial.reason,
-          });
-        }
-
-        yield* Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause);
-        return yield* new ActionPolicyEvaluationError({
-          code: 'action_policy_evaluation_failed',
-          reason: 'A required Action Policy could not be evaluated',
-        });
-      });
       // MCP OAuth connections: the grant's write scope is a policy every Action must pass (ONTOS-MCP-AUTH-DESIGN.md §4.3).
       const connectionPolicies: readonly ActionPolicy<typeof payload, Owner>[] =
         principal.authMethod === 'oauth_connection' ? [connectionScopePolicy] : [];
       const allowedPolicies = yield* Effect.forEach(
         [...connectionPolicies, ...input.registration.descriptor.policies],
-        evaluateActionPolicy,
+        (policy) => evaluateActionPolicy(policyInput, policy),
         { concurrency: 1 },
       );
       return allowedPolicies;
@@ -1885,275 +1885,271 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       }),
     );
 
-    const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
-      function* executeTransactionAndHandleExitEffect() {
-        const transactionBodyCompleted = yield* Ref.make(false);
-        const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
-        const transactionProgram: (
-          drizzleTransaction: CoreTransaction,
-        ) => Effect.Effect<
-          ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
-          ActionCoreError | DomainErrorSchema['Type'],
-          HandlerRequirements
-        > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
-          const scopedTransaction = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
-          notifyStage('database_scope_installed');
-          yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
-            Effect.mapError((cause) =>
-              createActionTransactionErrorWithCause(
-                {
-                  code: 'action_transaction_failed',
-                  reason: 'The approved Application Composition no longer admits owner writes',
-                },
-                cause,
+    const transactionBodyCompleted = yield* Ref.make(false);
+    const transactionBodyExit = yield* Ref.make<Exit.Exit<unknown, unknown> | null>(null);
+    const transactionProgram: (
+      drizzleTransaction: CoreTransaction,
+    ) => Effect.Effect<
+      ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
+      ActionCoreError | DomainErrorSchema['Type'],
+      HandlerRequirements
+    > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
+      const scopedTransaction = yield* installScope(drizzleTransaction, scope, options.databaseIdentities);
+      notifyStage('database_scope_installed');
+      yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
+        Effect.mapError((cause) =>
+          createActionTransactionErrorWithCause(
+            {
+              code: 'action_transaction_failed',
+              reason: 'The approved Application Composition no longer admits owner writes',
+            },
+            cause,
+          ),
+        ),
+      );
+      notifyStage('composition_authority_locked');
+      const lockedInvocation = yield* repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId).pipe(
+        Effect.tapError((error) =>
+          logInvocationPersistenceFailure(error, {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+          }),
+        ),
+      );
+      notifyStage('invocation_locked');
+      yield* verifyInvocation(
+        lockedInvocation,
+        requestHash,
+        repository.loadRecordedRejection(drizzleTransaction, lockedInvocation.actionInvocationId),
+      );
+
+      const actionEntrypoint = input.registration.descriptor.entrypoint;
+      if (actionEntrypoint.scope === 'tenant') {
+        const tenantEntrypoint = Object.freeze({
+          ...actionEntrypoint,
+          scope: 'tenant' as const,
+        }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
+        yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
+      }
+      notifyStage('module_state_rechecked');
+      const operationAt = yield* trustedTransactionTime(drizzleTransaction);
+      const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scopedTransaction, operationAt);
+      if (ownerAuthorizationDecision !== 'allowed') {
+        return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
+      }
+      const runningInvocation = yield* repository
+        .transitionInvocationToRunning(scopedTransaction, invocation.actionInvocationId)
+        .pipe(
+          Effect.tapError((error) =>
+            logInvocationPersistenceFailure(error, {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            }),
+          ),
+        );
+      yield* verifyInvocation(
+        runningInvocation,
+        requestHash,
+        repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
+      );
+      const serviceFactory = resolveServiceFactory(input.registration);
+      const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
+      const handler = resolveHandler(input.registration);
+
+      const collector = createActionCollector(
+        input.registration.descriptor.domainEvents,
+        input.registration.descriptor.owningModuleKey,
+        input.registration.descriptor.accessEvidencePolicy,
+        input.registration.descriptor.auditEvidenceSchema,
+      );
+      const handlerContext = Object.freeze({
+        actionInvocationId: lockedInvocation.actionInvocationId,
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: admittedCompositionRevision,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services,
+      });
+
+      const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
+
+      if (Exit.isFailure(handlerExit)) {
+        const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
+        const [failureReason] = failureReasons;
+        if (failureReasons.length === handlerExit.cause.reasons.length && failureReason !== undefined) {
+          if (Schema.is(ActionCollectorError)(failureReason.error)) {
+            return yield* failureReason.error;
+          }
+          const decodedDomainError = yield* Effect.option(
+            Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+          );
+          if (Option.isSome(decodedDomainError)) {
+            return yield* Effect.fail(decodedDomainError.value);
+          }
+        }
+        yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
+        return yield* makeHandlerExecutionError();
+      }
+      notifyStage('handler_executed');
+
+      const handlerValue = handlerExit.value;
+      let transactionValue: ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>;
+      let resultHash: string;
+      if (Schema.is(CommittedActionDomainRejectionSchema)(handlerValue)) {
+        const committedDomainError = yield* Schema.encodeUnknownEffect(
+          Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.domainErrorSchema.ast),
+        )(getCommittedActionDomainError(handlerValue)).pipe(
+          Effect.flatMap((encodedDomainError) =>
+            Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(encodedDomainError).pipe(
+              Effect.map((domainError) => ({ domainError, encodedDomainError })),
+            ),
+          ),
+          Effect.tapError((cause) =>
+            Effect.logError('Invalid committed Action domain rejection returned by handler', cause),
+          ),
+          Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)),
+        );
+        transactionValue = commitActionThenReject(committedDomainError.domainError);
+        resultHash = yield* Effect.try({
+          catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
+          try: () => computeCanonicalValueHash(committedDomainError.encodedDomainError),
+        });
+      } else {
+        const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
+        transactionValue = result;
+        resultHash = yield* Effect.try({
+          catch: (cause) =>
+            attachFailureCause(
+              new ActionResultValidationError({
+                code: 'action_result_invalid',
+                reason: 'The decoded Action result cannot be normalized safely',
+              }),
+              cause,
+            ),
+          try: () =>
+            computeCanonicalValueHash(
+              Result.getOrThrow(
+                Schema.encodeUnknownResult(
+                  Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.resultSchema.ast),
+                )(result),
+              ),
+            ),
+        });
+        const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
+        if (onDecodedSuccess !== undefined) {
+          const hookExit = yield* Effect.exit(
+            Effect.suspend(() =>
+              onDecodedSuccess(
+                Object.freeze({
+                  actionInvocationId: lockedInvocation.actionInvocationId,
+                  result,
+                  scope,
+                  services,
+                }),
               ),
             ),
           );
-          notifyStage('composition_authority_locked');
-          const lockedInvocation = yield* repository
-            .lockInvocation(drizzleTransaction, invocation.actionInvocationId)
-            .pipe(
-              Effect.tapError((error) =>
-                logInvocationPersistenceFailure(error, {
-                  actionKey: input.registration.descriptor.actionKey,
-                  correlationId: transport.correlationId,
-                  invocationId: invocation.actionInvocationId,
-                }),
-              ),
-            );
-          notifyStage('invocation_locked');
-          yield* verifyInvocation(
-            lockedInvocation,
-            requestHash,
-            repository.loadRecordedRejection(drizzleTransaction, lockedInvocation.actionInvocationId),
-          );
-
-          const actionEntrypoint = input.registration.descriptor.entrypoint;
-          if (actionEntrypoint.scope === 'tenant') {
-            const tenantEntrypoint = Object.freeze({
-              ...actionEntrypoint,
-              scope: 'tenant' as const,
-            }) satisfies TenantModuleEntrypoint<'action', 'write', Owner>;
-            yield* moduleStateGate.recheckWrite(drizzleTransaction, scope.tenantId, tenantEntrypoint);
-          }
-          notifyStage('module_state_rechecked');
-          const operationAt = yield* trustedTransactionTime(drizzleTransaction);
-          const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scopedTransaction, operationAt);
-          if (ownerAuthorizationDecision !== 'allowed') {
-            return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
-          }
-          const runningInvocation = yield* repository
-            .transitionInvocationToRunning(scopedTransaction, invocation.actionInvocationId)
-            .pipe(
-              Effect.tapError((error) =>
-                logInvocationPersistenceFailure(error, {
-                  actionKey: input.registration.descriptor.actionKey,
-                  correlationId: transport.correlationId,
-                  invocationId: invocation.actionInvocationId,
-                }),
-              ),
-            );
-          yield* verifyInvocation(
-            runningInvocation,
-            requestHash,
-            repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
-          );
-          const serviceFactory = resolveServiceFactory(input.registration);
-          const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
-          const handler = resolveHandler(input.registration);
-
-          const collector = createActionCollector(
-            input.registration.descriptor.domainEvents,
-            input.registration.descriptor.owningModuleKey,
-            input.registration.descriptor.accessEvidencePolicy,
-            input.registration.descriptor.auditEvidenceSchema,
-          );
-          const handlerContext = Object.freeze({
-            actionInvocationId: lockedInvocation.actionInvocationId,
-            addDomainEvent: collector.addDomainEvent,
-            addOutboxMessage: collector.addOutboxMessage,
-            compositionRevision: admittedCompositionRevision,
-            recordAuditEvidence: collector.recordAuditEvidence,
-            recordDataAccess: collector.recordDataAccess,
-            scope,
-            services,
-          });
-
-          const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
-
-          if (Exit.isFailure(handlerExit)) {
-            const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
+          if (Exit.isFailure(hookExit)) {
+            const failureReasons = hookExit.cause.reasons.filter(Cause.isFailReason);
             const [failureReason] = failureReasons;
-            if (failureReasons.length === handlerExit.cause.reasons.length && failureReason !== undefined) {
-              if (Schema.is(ActionCollectorError)(failureReason.error)) {
-                return yield* failureReason.error;
-              }
+            if (failureReasons.length === hookExit.cause.reasons.length && failureReason !== undefined) {
               const decodedDomainError = yield* Effect.option(
                 Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
               );
               if (Option.isSome(decodedDomainError)) {
                 return yield* Effect.fail(decodedDomainError.value);
               }
+              if (Schema.is(ActionCoreErrorSchema)(failureReason.error)) {
+                return yield* Effect.failCause(Cause.fail(failureReason.error));
+              }
             }
-            yield* Effect.logError('Unexpected Action execution defect', handlerExit.cause);
+            yield* Effect.logError('Unexpected Action decoded-success hook defect', hookExit.cause);
             return yield* makeHandlerExecutionError();
           }
-          notifyStage('handler_executed');
-
-          const handlerValue = handlerExit.value;
-          let transactionValue: ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>;
-          let resultHash: string;
-          if (Schema.is(CommittedActionDomainRejectionSchema)(handlerValue)) {
-            const committedDomainError = yield* Schema.encodeUnknownEffect(
-              Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.domainErrorSchema.ast),
-            )(getCommittedActionDomainError(handlerValue)).pipe(
-              Effect.flatMap((encodedDomainError) =>
-                Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(encodedDomainError).pipe(
-                  Effect.map((domainError) => ({ domainError, encodedDomainError })),
-                ),
-              ),
-              Effect.tapError((cause) =>
-                Effect.logError('Invalid committed Action domain rejection returned by handler', cause),
-              ),
-              Effect.mapError((cause) => attachFailureCause(makeHandlerExecutionError(), cause)),
-            );
-            transactionValue = commitActionThenReject(committedDomainError.domainError);
-            resultHash = yield* Effect.try({
-              catch: (cause) => attachFailureCause(makeHandlerExecutionError(), cause),
-              try: () => computeCanonicalValueHash(committedDomainError.encodedDomainError),
-            });
-          } else {
-            const result = yield* decodeActionResult(input.registration.descriptor.resultSchema, handlerValue);
-            transactionValue = result;
-            resultHash = yield* Effect.try({
-              catch: (cause) =>
-                attachFailureCause(
-                  new ActionResultValidationError({
-                    code: 'action_result_invalid',
-                    reason: 'The decoded Action result cannot be normalized safely',
-                  }),
-                  cause,
-                ),
-              try: () =>
-                computeCanonicalValueHash(
-                  Result.getOrThrow(
-                    Schema.encodeUnknownResult(
-                      Schema.make<Schema.ConstraintEncoder<unknown>>(input.registration.descriptor.resultSchema.ast),
-                    )(result),
-                  ),
-                ),
-            });
-            const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
-            if (onDecodedSuccess !== undefined) {
-              const hookExit = yield* Effect.exit(
-                Effect.suspend(() =>
-                  onDecodedSuccess(
-                    Object.freeze({
-                      actionInvocationId: lockedInvocation.actionInvocationId,
-                      result,
-                      scope,
-                      services,
-                    }),
-                  ),
-                ),
-              );
-              if (Exit.isFailure(hookExit)) {
-                const failureReasons = hookExit.cause.reasons.filter(Cause.isFailReason);
-                const [failureReason] = failureReasons;
-                if (failureReasons.length === hookExit.cause.reasons.length && failureReason !== undefined) {
-                  const decodedDomainError = yield* Effect.option(
-                    Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
-                  );
-                  if (Option.isSome(decodedDomainError)) {
-                    return yield* Effect.fail(decodedDomainError.value);
-                  }
-                  if (Schema.is(ActionCoreErrorSchema)(failureReason.error)) {
-                    return yield* Effect.failCause(Cause.fail(failureReason.error));
-                  }
-                }
-                yield* Effect.logError('Unexpected Action decoded-success hook defect', hookExit.cause);
-                return yield* makeHandlerExecutionError();
-              }
-            }
-          }
-          yield* repository
-            .flushSuccess(drizzleTransaction, {
-              actionInvocationId: invocation.actionInvocationId,
+        }
+      }
+      yield* repository
+        .flushSuccess(drizzleTransaction, {
+          actionInvocationId: invocation.actionInvocationId,
+          actionKey: input.registration.descriptor.actionKey,
+          allowedPolicies,
+          auditProfile: input.registration.descriptor.auditProfile,
+          evidence: collector.snapshot(),
+          principal,
+          resultHash,
+          transport: governedTransport,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            logActionTransactionFailureCause(error, 'Unexpected Action success evidence persistence failure', {
               actionKey: input.registration.descriptor.actionKey,
-              allowedPolicies,
-              auditProfile: input.registration.descriptor.auditProfile,
-              evidence: collector.snapshot(),
-              principal,
-              resultHash,
-              transport: governedTransport,
-            })
-            .pipe(
-              Effect.tapError((error) =>
-                logActionTransactionFailureCause(error, 'Unexpected Action success evidence persistence failure', {
-                  actionKey: input.registration.descriptor.actionKey,
-                  correlationId: transport.correlationId,
-                  invocationId: invocation.actionInvocationId,
-                }),
-              ),
-            );
-          notifyStage('success_evidence_flushed');
-          yield* Ref.set(transactionBodyCompleted, true);
-          return transactionValue;
-        });
-        // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
-        const transactionOutcomeExit = yield* Effect.exit(
-          Effect.uninterruptibleMask(
-            Effect.fn('ActionRuntime.classifyTransactionOutcome')(function* classifyTransactionOutcome(
-              restore: <Value, Failure, Requirements>(
-                effect: Effect.Effect<Value, Failure, Requirements>,
-              ) => Effect.Effect<Value, Failure, Requirements>,
-            ) {
-              const transactionExit = yield* Effect.exit(
-                restore(
-                  database.executor.transaction((transaction) =>
-                    transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
-                  ),
-                ),
-              );
-              if (Exit.isSuccess(transactionExit)) {
-                return transactionExit.value;
-              }
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            }),
+          ),
+        );
+      notifyStage('success_evidence_flushed');
+      yield* Ref.set(transactionBodyCompleted, true);
+      return transactionValue;
+    });
 
-              const bodyExit = yield* Ref.get(transactionBodyExit);
-              const bodyCompleted =
-                (yield* Ref.get(transactionBodyCompleted)) && bodyExit !== null && Exit.isSuccess(bodyExit);
-              if (
-                bodyExit !== null &&
-                Exit.isFailure(bodyExit) &&
-                transactionExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))
-              ) {
-                yield* Effect.logError('Action body failed before transaction rollback failed', bodyExit.cause);
+    const observeTransactionBody = (transaction: CoreTransaction) =>
+      transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)));
+
+    const classifyTransactionOutcome = Effect.fn('ActionRuntime.classifyTransactionOutcome')(
+      function* classifyTransactionOutcome(
+        restore: <Value, Failure, Requirements>(
+          effect: Effect.Effect<Value, Failure, Requirements>,
+        ) => Effect.Effect<Value, Failure, Requirements>,
+      ) {
+        const transactionExit = yield* Effect.exit(restore(database.executor.transaction(observeTransactionBody)));
+        if (Exit.isSuccess(transactionExit)) {
+          return transactionExit.value;
+        }
+
+        const bodyExit = yield* Ref.get(transactionBodyExit);
+        const bodyCompleted =
+          (yield* Ref.get(transactionBodyCompleted)) && bodyExit !== null && Exit.isSuccess(bodyExit);
+        if (
+          bodyExit !== null &&
+          Exit.isFailure(bodyExit) &&
+          transactionExit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isSqlError(reason.defect))
+        ) {
+          yield* Effect.logError('Action body failed before transaction rollback failed', bodyExit.cause);
+        }
+        return yield* Effect.failCause(
+          Cause.fromReasons(
+            transactionExit.cause.reasons.map((reason) => {
+              if (Cause.isInterruptReason(reason)) {
+                return reason;
               }
-              return yield* Effect.failCause(
-                Cause.fromReasons(
-                  transactionExit.cause.reasons.map((reason) => {
-                    if (Cause.isInterruptReason(reason)) {
-                      return reason;
-                    }
-                    const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
-                    if (!isSqlError(failure)) {
-                      return reason;
-                    }
-                    return Cause.makeFailReason(
-                      bodyCompleted && isCommitAcknowledgementFailure(failure)
-                        ? new ActionCommitIndeterminate({
-                            code: 'action_commit_indeterminate',
-                            invocationId: invocation.actionInvocationId,
-                            reason: 'The database did not confirm whether the Action commit completed',
-                          })
-                        : transactionFailure(),
-                    );
-                  }),
-                ),
+              const failure = Cause.isFailReason(reason) ? reason.error : reason.defect;
+              if (!isSqlError(failure)) {
+                return reason;
+              }
+              return Cause.makeFailReason(
+                bodyCompleted && isCommitAcknowledgementFailure(failure)
+                  ? new ActionCommitIndeterminate({
+                      code: 'action_commit_indeterminate',
+                      invocationId: invocation.actionInvocationId,
+                      reason: 'The database did not confirm whether the Action commit completed',
+                    })
+                  : transactionFailure(),
               );
             }),
           ),
         );
+      },
+    );
+
+    const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
+      function* executeTransactionAndHandleExitEffect() {
+        // The driver/body stay interruptible; classify the settled Cause before interruption resumes.
+        const transactionOutcomeExit = yield* Effect.exit(Effect.uninterruptibleMask(classifyTransactionOutcome));
         if (Exit.isFailure(transactionOutcomeExit)) {
           const ownerDenied = transactionOutcomeExit.cause.reasons.some(
             (reason) => Cause.isFailReason(reason) && Schema.is(ActionPermissionDenied)(reason.error),

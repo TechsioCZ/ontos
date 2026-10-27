@@ -18,6 +18,7 @@ import type { Context, ESTree } from '@oxlint/plugins';
 
 import { parentOf } from '../shared/ast.ts';
 import { createPromisePortTypeResolver } from '../shared/no-promise-port-types.ts';
+import { foreignDecodedPortMembers } from '../shared/foreign-decoded-port-proof.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray, booleanOption as boolean } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
@@ -354,8 +355,10 @@ export const rule = defineRule({
       if (node.type === 'TSSatisfiesExpression' && externalValue(node.expression)) markType(node.typeAnnotation);
       if (node.type === 'CallExpression') markDecodedDriverTypes(node);
     });
+    const foreignMembers = foreignDecodedPortMembers(context);
     const withinMirror = (node: any): boolean => {
-      for (let current = node; current; current = current.parent) if (mirrorTypes.has(current)) return true;
+      for (let current = node; current; current = current.parent)
+        if (mirrorTypes.has(current) || foreignMembers.has(current)) return true;
       return false;
     };
 
@@ -519,8 +522,7 @@ export const rule = defineRule({
         current = parent.parent;
       }
       const call = current.parent;
-      if (call?.type !== 'CallExpression' || call.arguments.length !== 1 || call.arguments[0] !== current)
-        return false;
+      if (call?.type !== 'CallExpression' || call.arguments.length !== 1 || call.arguments[0] !== current) return false;
       const constructor = authConstructor(call.callee);
       const databaseHook =
         ['better-auth:betterAuth', 'better-auth/minimal:betterAuth'].includes(constructor ?? '') &&

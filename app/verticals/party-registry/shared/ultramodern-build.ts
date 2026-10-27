@@ -1,49 +1,55 @@
 import { resolveUltramodernBuildArtifact } from '@modern-js/runtime-extensions/build-identity';
 
+const PARTY_REGISTRY_APP_ID = 'party-registry' as const;
+const DEPLOY_PROFILE = 'cloudflare-ssr-mf-effect-v1' as const;
+const DELIVERY_UNIT_KIND = 'microvertical-delivery-unit' as const;
+const PARTY_REGISTRY_PACKAGE_NAME = '@app/party-registry' as const;
+const PARTY_REGISTRY_UNIT_ID = 'app/party-registry' as const;
+
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
 const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
   {
     deliveryUnit: {
-      appId: 'party-registry',
+      appId: PARTY_REGISTRY_APP_ID,
       build: '3f023644c8a07e9a',
       buildMarker: '3f023644c8a07e9a',
-      deployProfile: 'cloudflare-ssr-mf-effect-v1',
-      kind: 'microvertical-delivery-unit',
-      packageName: '@app/party-registry',
+      deployProfile: DEPLOY_PROFILE,
+      kind: DELIVERY_UNIT_KIND,
+      packageName: PARTY_REGISTRY_PACKAGE_NAME,
       schemaVersion: 1,
       sourceRevision: 'workspace',
-      unitId: 'app/party-registry',
+      unitId: PARTY_REGISTRY_UNIT_ID,
       version: '0.1.0',
     },
     kind: 'ultramodern-build-artifact',
     schemaVersion: 1,
     surfaces: {
       api: {
-        appId: 'party-registry',
+        appId: PARTY_REGISTRY_APP_ID,
         build: '3f023644c8a07e9a',
         buildMarker: '3f023644c8a07e9a',
-        deployProfile: 'cloudflare-ssr-mf-effect-v1',
-        kind: 'microvertical-delivery-unit',
-        packageName: '@app/party-registry',
+        deployProfile: DEPLOY_PROFILE,
+        kind: DELIVERY_UNIT_KIND,
+        packageName: PARTY_REGISTRY_PACKAGE_NAME,
         schemaVersion: 1,
         sourceRevision: 'workspace',
         surface: 'api',
-        unitId: 'app/party-registry',
+        unitId: PARTY_REGISTRY_UNIT_ID,
         version: '0.1.0',
       },
       ui: {
-        appId: 'party-registry',
+        appId: PARTY_REGISTRY_APP_ID,
         build: '3f023644c8a07e9a',
         buildMarker: '3f023644c8a07e9a',
-        deployProfile: 'cloudflare-ssr-mf-effect-v1',
-        kind: 'microvertical-delivery-unit',
-        packageName: '@app/party-registry',
+        deployProfile: DEPLOY_PROFILE,
+        kind: DELIVERY_UNIT_KIND,
+        packageName: PARTY_REGISTRY_PACKAGE_NAME,
         schemaVersion: 1,
         sourceRevision: 'workspace',
         surface: 'ui',
-        unitId: 'app/party-registry',
+        unitId: PARTY_REGISTRY_UNIT_ID,
         version: '0.1.0',
       },
     },

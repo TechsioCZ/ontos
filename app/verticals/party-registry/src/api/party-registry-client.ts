@@ -1,4 +1,3 @@
-/* eslint-disable oxc/no-barrel-file -- The published client entrypoint must aggregate the governed generated operation clients. expires: 2026-12-31. */
 import { Effect } from '@modern-js/bff-effect/effect-client';
 import type { HttpClientError, Schema } from '@modern-js/bff-effect/effect-client';
 
@@ -54,32 +53,195 @@ export type { PartyDetailResponse } from '../../shared/api.ts';
 export { customerSegmentDefinitions } from '../../shared/api.ts';
 export type { CustomerSegmentCode, CustomerSegmentDefinition } from '../../shared/api.ts';
 
-export * from './ares-lookup-client.ts';
-export * from './counterparties-search-client.ts';
-export * from './counterparty-read-client.ts';
-export * from './counterparty-role-history-client.ts';
-export * from './customer-list-client.ts';
-export * from './customers-client.ts';
-export * from './duplicate-candidate-detail-client.ts';
-export * from './engagement-profile-client.ts';
-export * from './guest-party-resolution-client.ts';
-export * from './organization-engagement-profile-client.ts';
-export * from './person-engagement-profile-client.ts';
-export * from './parties-search-client.ts';
-export * from './party-contact-point-detail-client.ts';
-export * from './party-contact-points-client.ts';
-export * from './party-correction-client.ts';
-export * from './party-detail-client.ts';
-export * from './party-match-decision-client.ts';
-export * from './party-match-client.ts';
-export * from './party-merge-readiness-client.ts';
-export * from './party-official-identifier-detail-client.ts';
-export * from './party-official-identifier-history-client.ts';
-export * from './party-relationship-detail-client.ts';
-export * from './privacy-measure-execution-client.ts';
-export * from './party-command-client.ts';
+export { executeAresLookupWithAuthorization, executeAresLookup } from './ares-lookup-client.ts';
+export type { AresLookupClientOptions } from './ares-lookup-client.ts';
+export { loadCounterpartiesClientWithAuthorization, loadCounterpartiesClient } from './counterparties-search-client.ts';
+export type { CounterpartiesSearchClientOptions } from './counterparties-search-client.ts';
+export { executeCounterpartyReadWithAuthorization, executeCounterpartyRead } from './counterparty-read-client.ts';
+export type { CounterpartyReadClientOptions } from './counterparty-read-client.ts';
+export {
+  executeCounterpartyRoleHistoryWithAuthorization,
+  executeCounterpartyRoleHistory,
+} from './counterparty-role-history-client.ts';
+export type { CounterpartyRoleHistoryClientOptions } from './counterparty-role-history-client.ts';
+export { executeCustomerListWithAuthorization, executeCustomerList } from './customer-list-client.ts';
+export type { CustomerListClientOptions } from './customer-list-client.ts';
+export {
+  listCustomers,
+  CustomerCreateAmbiguous,
+  CreatedCustomerOutcomeSchema,
+  createCustomer,
+  updateCustomer,
+  archiveCustomer,
+} from './customers-client.ts';
+export type {
+  CustomerListItem,
+  CustomerListRequest,
+  CreateCustomerAddress,
+  CreateCustomerInput,
+  CreatedCustomerOutcome,
+  CreatedCustomer,
+  UpdateCustomerPatch,
+} from './customers-client.ts';
+export {
+  executeDuplicateCandidateDetailWithAuthorization,
+  executeDuplicateCandidateDetail,
+} from './duplicate-candidate-detail-client.ts';
+export type { DuplicateCandidateDetailClientOptions } from './duplicate-candidate-detail-client.ts';
+export {
+  executeDuplicateCandidateListWithAuthorization,
+  executeDuplicateCandidateList,
+} from './duplicate-candidate-list-client.ts';
+export type { DuplicateCandidateListClientOptions } from './duplicate-candidate-list-client.ts';
+export {
+  createContactsClient,
+  getContactsReadiness,
+  attachOrganizationEngagement,
+  archiveOrganizationEngagement,
+  unarchiveOrganizationEngagement,
+  attachPersonEngagement,
+  archivePersonEngagement,
+  unarchivePersonEngagement,
+} from './engagement-profile-client.ts';
+export type {
+  ContactsClient,
+  ContactsClientError,
+  ContactsClientEffect,
+  ContactsClientOptions,
+  ContactsOperationOptions,
+  ContactsMutationOptions,
+} from './engagement-profile-client.ts';
+export {
+  executeGuestPartyResolutionWithAuthorization,
+  executeGuestPartyResolution,
+} from './guest-party-resolution-client.ts';
+export type { GuestPartyResolutionClientOptions } from './guest-party-resolution-client.ts';
+export {
+  executeOrganizationEngagementProfileWithAuthorization,
+  executeOrganizationEngagementProfile,
+} from './organization-engagement-profile-client.ts';
+export type { OrganizationEngagementProfileClientOptions } from './organization-engagement-profile-client.ts';
+export {
+  executePersonEngagementProfileWithAuthorization,
+  executePersonEngagementProfile,
+} from './person-engagement-profile-client.ts';
+export type { PersonEngagementProfileClientOptions } from './person-engagement-profile-client.ts';
+export { loadPartiesClientWithAuthorization, loadPartiesClient } from './parties-search-client.ts';
+export type { PartiesSearchClientOptions } from './parties-search-client.ts';
+export {
+  executePartyContactPointDetailWithAuthorization,
+  executePartyContactPointDetail,
+} from './party-contact-point-detail-client.ts';
+export type { PartyContactPointDetailClientOptions } from './party-contact-point-detail-client.ts';
+export {
+  executePartyContactPointsWithAuthorization,
+  executePartyContactPoints,
+} from './party-contact-points-client.ts';
+export type { PartyContactPointsClientOptions } from './party-contact-points-client.ts';
+export { executePartyCorrectionWithAuthorization, executePartyCorrection } from './party-correction-client.ts';
+export type { PartyCorrectionClientOptions } from './party-correction-client.ts';
+export { executePartyDetailWithAuthorization, executePartyDetail } from './party-detail-client.ts';
+export type { PartyDetailClientOptions } from './party-detail-client.ts';
+export {
+  executePartyMatchDecisionWithAuthorization,
+  executePartyMatchDecision,
+} from './party-match-decision-client.ts';
+export type { PartyMatchDecisionClientOptions } from './party-match-decision-client.ts';
+export { executePartyMatchWithAuthorization, executePartyMatch } from './party-match-client.ts';
+export type { PartyMatchClientOptions } from './party-match-client.ts';
+export {
+  executePartyMergeReadinessWithAuthorization,
+  executePartyMergeReadiness,
+} from './party-merge-readiness-client.ts';
+export type { PartyMergeReadinessClientOptions } from './party-merge-readiness-client.ts';
+export {
+  executePartyOfficialIdentifierDetailWithAuthorization,
+  executePartyOfficialIdentifierDetail,
+} from './party-official-identifier-detail-client.ts';
+export type { PartyOfficialIdentifierDetailClientOptions } from './party-official-identifier-detail-client.ts';
+export {
+  executePartyOfficialIdentifierHistoryWithAuthorization,
+  executePartyOfficialIdentifierHistory,
+} from './party-official-identifier-history-client.ts';
+export type { PartyOfficialIdentifierHistoryClientOptions } from './party-official-identifier-history-client.ts';
+export {
+  executePartyRelationshipDetailWithAuthorization,
+  executePartyRelationshipDetail,
+} from './party-relationship-detail-client.ts';
+export type { PartyRelationshipDetailClientOptions } from './party-relationship-detail-client.ts';
+export {
+  executePrivacyMeasureExecutionWithAuthorization,
+  executePrivacyMeasureExecution,
+} from './privacy-measure-execution-client.ts';
+export type { PrivacyMeasureExecutionClientOptions } from './privacy-measure-execution-client.ts';
+export {
+  resolvePartyCommandCommitWithAuthorization,
+  resolvePartyCommandCommit,
+  acceptRetailEnrollmentEvidenceWithAuthorization,
+  acceptRetailEnrollmentEvidence,
+  addContactPointWithAuthorization,
+  addContactPoint,
+  addPartyOfficialIdentifierWithAuthorization,
+  addPartyOfficialIdentifier,
+  archivePartyWithAuthorization,
+  archiveParty,
+  confirmDuplicatePartiesWithAuthorization,
+  confirmDuplicateParties,
+  correctPartyFactWithAuthorization,
+  correctPartyFact,
+  counterpartyCreateWithAuthorization,
+  counterpartyCreate,
+  counterpartyCustomerOnboardWithAuthorization,
+  counterpartyCustomerOnboard,
+  counterpartyRoleAddWithAuthorization,
+  counterpartyRoleAdd,
+  counterpartyRoleEndWithAuthorization,
+  counterpartyRoleEnd,
+  createPartyRelationshipWithAuthorization,
+  createPartyRelationship,
+  createPartyWithAuthorization,
+  createParty,
+  dismissDuplicateCandidateWithAuthorization,
+  dismissDuplicateCandidate,
+  endContactPointWithAuthorization,
+  endContactPoint,
+  endPartyOfficialIdentifierWithAuthorization,
+  endPartyOfficialIdentifier,
+  endPartyRelationshipWithAuthorization,
+  endPartyRelationship,
+  markDuplicateCandidateNeedsEvidenceWithAuthorization,
+  markDuplicateCandidateNeedsEvidence,
+  matchPartyWithAuthorization,
+  matchParty,
+  requestSearchRebuildWithAuthorization,
+  requestSearchRebuild,
+  resolveDuplicateCandidateCreateWithAuthorization,
+  resolveDuplicateCandidateCreate,
+  resolveDuplicateCandidateMatchWithAuthorization,
+  resolveDuplicateCandidateMatch,
+  unarchivePartyWithAuthorization,
+  unarchiveParty,
+  updateContactPointWithAuthorization,
+  updateContactPoint,
+  updatePartyOfficialIdentifierWithAuthorization,
+  updatePartyOfficialIdentifier,
+  updatePartyRelationshipWithAuthorization,
+  updatePartyRelationship,
+  updatePartyWithAuthorization,
+  updateParty,
+} from './party-command-client.ts';
+export type {
+  PartyCommandClient,
+  PartyCommandRecoveryOptions,
+  PartyCommandOptions,
+  PartyCreateRecoveryAuthorization,
+} from './party-command-client.ts';
 // <generated-action-http-client-exports>
-export * from './execute-privacy-measure-action-client.ts';
+export {
+  executeExecutePrivacyMeasureWithAuthorization,
+  executeExecutePrivacyMeasure,
+} from './execute-privacy-measure-action-client.ts';
+export type { ExecutePrivacyMeasureActionClientOptions } from './execute-privacy-measure-action-client.ts';
 // </generated-action-http-client-exports>
 export {
   AresApplySelectionInvalid,

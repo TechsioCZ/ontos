@@ -295,7 +295,19 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
         // The BFF source loader resolves this app's own imports with Node conditions, so the runtime picks.
         fetchClientMetadataResource:
           globalThis.navigator?.userAgent === 'Cloudflare-Workers'
-            ? fetchClientMetadataOnWorkerd
+            ? Fn.flow(
+                (
+                  input: Parameters<typeof fetchClientMetadataOnWorkerd>[0],
+                  init?: Parameters<typeof fetchClientMetadataOnWorkerd>[1],
+                ) => {
+                  const bindings = requestBindings();
+                  return (bindings.runResolverEffect<
+                    Effect.Success<ReturnType<typeof fetchClientMetadataOnWorkerd>>,
+                    Effect.Error<ReturnType<typeof fetchClientMetadataOnWorkerd>>
+                  >).bind(undefined, fetchClientMetadataOnWorkerd(input, init));
+                },
+                Fn.apply({}),
+              )
             : fetchClientMetadataOnNode,
         metadataProfile: 'mcp-2026-07-28',
       }),

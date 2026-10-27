@@ -426,6 +426,7 @@ it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
       'price-group-catalog-worker',
       'inventory-worker',
       'privacy-worker',
+      'finance-billing-worker',
     ]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual(

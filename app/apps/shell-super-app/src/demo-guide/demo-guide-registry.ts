@@ -8,5 +8,5 @@ import { siamparkGuide } from './guides/siampark.ts';
 export const demoGuides: readonly DemoGuide[] = [siamparkGuide, hanakGuide, akrosGuide, obchodGuide];
 
 /** Guide of the selected legal entity; `undefined` for companies without a guide or without a selection. */
-export const demoGuideFor = (legalEntityId: string | undefined): DemoGuide | undefined =>
+export const demoGuideFor = (legalEntityId?: string): DemoGuide | undefined =>
   legalEntityId === undefined ? undefined : demoGuides.find((guide) => guide.legalEntityId === legalEntityId);

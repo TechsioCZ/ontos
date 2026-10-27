@@ -4,438 +4,582 @@
 // Run via app/scripts/demo/prove-agent-entity.mts. Never writes the coordination board.
 import { isDeepStrictEqual } from 'node:util';
 import { decodeJwt } from 'jose';
-import { Predicate } from 'effect';
+import {
+  Array as EffectArray,
+  Order,
+  Cause,
+  Clock,
+  Console,
+  Effect,
+  Exit,
+  flow as compose,
+  Option,
+  Redacted,
+  Runtime,
+  Schema,
+} from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
+import { FetchHttpClient } from 'effect/unstable/http';
+import { NodeServices } from '@effect/platform-node';
+import { randomUUID } from 'node:crypto';
 import type { Client } from '@modelcontextprotocol/client';
-import { E2E, CIMD_CLIENT_ID, GRANT_CLAIM, sleep } from './env.mts';
+import { E2eSettings, loadE2eSettings, CIMD_CLIENT_ID, GRANT_CLAIM } from './env.mts';
 import { Recorder } from './report.mts';
 import { startLoopbackCallback } from './loopback.mts';
-import type { LoopbackCallback } from './loopback.mts';
-import { E2eOAuthProvider } from './provider.mts';
+import type { E2eOAuthProviderOptions } from './provider.mts';
 import { runOAuthFlow } from './flow.mts';
-import { connectMcp, callJson, rawMcpStatus } from './mcp.mts';
+import { closeMcpClient, connectMcp, callJson, rawMcpStatus } from './mcp.mts';
 import { openSharedTab, ensureLoggedIn, approveConnection, sessionPost } from './browser.mts';
 import type { E2eTab } from './browser.mts';
-
-const USAGE = [
-  'Použití (z app/):',
-  '  node scripts/demo/prove-agent-entity.mts [--policy=approval|direct] [--keep] [--help]',
-  '  --policy=approval|direct  zápis agenta: návrh ke schválení (výchozí), nebo přímý zápis',
-  '  --keep                    agenta ponechá (přeskočí závěrečné smazání)',
-  '  --help, -h                vypíše nápovědu a skončí',
-  '',
-].join('\n');
-
-const argv = process.argv.slice(2);
-
-if (argv.includes('--help') || argv.includes('-h')) {
-  process.stdout.write(USAGE);
-  process.exit(0);
-}
-
-function argValue(name: string): string | undefined {
-  const prefix = `--${name}=`;
-  const hit = argv.find((arg) => arg.startsWith(prefix));
-  return hit === undefined ? undefined : hit.slice(prefix.length);
-}
-
-const policyArg = argValue('policy') ?? 'approval';
-if (policyArg !== 'approval' && policyArg !== 'direct') {
-  throw new Error(`Neplatná hodnota --policy=${policyArg} (očekává se approval nebo direct).`);
-}
-const policy: 'approval' | 'direct' = policyArg;
-const keep = argv.includes('--keep');
 
 const ADMIN_EMAIL = 'management@siampark.demo';
 const ADMIN_ID = '72000000-0000-4000-8000-000000000021';
 const LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000021';
 const LIST = '/shell-super-app-api/auth/identity/agent-entities/list';
+const AGENT_NOT_CREATED = 'agent nebyl založen';
 const MANAGE = '/shell-super-app-api/auth/identity/agent-entities';
 const SHOTS = '/Volumes/TraceDecayKingston/techsio-demo/v2/shots/v5-agent-entities-admin';
-const runId = `agent-entity-e2e-${Date.now()}`;
-const AGENT_NAME = `Důkaz agent ${String(Date.now()).slice(-6)}`;
+const runId = `agent-entity-e2e-${randomUUID()}`;
+const AGENT_NAME = `Důkaz agent ${randomUUID().slice(-6)}`;
 const PROOF_TITLE = `Důkaz agentní entity ${runId}`;
 const GRANTS = [
   { access: 'read', moduleId: 'property.portfolio' },
   { access: 'write', moduleId: 'work.tasks' },
 ];
 
-type Json = Record<string, unknown>;
+type Json = Schema.JsonObject;
 
-function asRecord(value: unknown): Json {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Json) : {};
-}
+class ProofFailed extends Schema.TaggedError<ProofFailed>()('ProofFailed', {
+  message: Schema.String,
+}) {}
 
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
+const asRecord = compose(
+  Schema.decodeUnknownOption(Schema.JsonObject),
+  Option.getOrElse((): Json => ({})),
+);
+const asArray = compose(
+  Schema.decodeUnknownOption(Schema.Array(Schema.Json)),
+  Option.getOrElse((): readonly Schema.Json[] => []),
+);
+const asString = compose(Schema.decodeUnknownOption(Schema.String), Option.getOrUndefined);
+const isString = Schema.is(Schema.String);
+const displayJson = (value: Schema.Json | undefined): string => {
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (value === null) {
+    return 'null';
+  }
+  if (EffectArray.isArray<Schema.Json | undefined>(value)) {
+    return value.map((item) => (item === null ? '' : displayJson(item))).join(',');
+  }
+  if (Schema.is(Schema.JsonObject)(value)) {
+    return '[object Object]';
+  }
+  return String(value);
+};
 
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
-}
-
-function errorText(error: unknown): string {
-  return Predicate.isError(error) ? error.message : String(error);
-}
-
-function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {
-  return asArray(value.modules).map((item) => {
+const readModules = (value: Json): { moduleId: string; write: boolean }[] =>
+  asArray(value.modules).map((item) => {
     const module = asRecord(item);
     return { moduleId: asString(module.moduleId) ?? '', write: module.write === true };
   });
-}
 
-function sortByModule<T extends { moduleId: string }>(items: T[]): T[] {
-  return [...items].sort((a, b) => (a.moduleId < b.moduleId ? -1 : a.moduleId > b.moduleId ? 1 : 0));
-}
+const sortByModule = <T extends { moduleId: string }>(items: readonly T[]): T[] =>
+  EffectArray.sort(
+    items,
+    Order.mapInput(Order.String, (item: T) => item.moduleId),
+  );
 
 /** Finds the agent with the given principalId in an `AgentEntityOverview` answer (`agents`). */
-function findByPrincipal(value: unknown, principalId: string): Json | undefined {
-  return asArray(asRecord(value).agents)
-    .map(asRecord)
+const findByPrincipal = (value: Json, principalId: string): Json | undefined =>
+  asArray(value.agents)
+    .map((item) => asRecord(item))
     .find((agent) => agent.principalId === principalId);
-}
 
-function hasId(list: unknown, id: string): boolean {
-  return asArray(list).some((item) => item === id || asRecord(item).principalId === id);
-}
+const hasId = (list: Schema.Json | undefined, id: string): boolean =>
+  asArray(list).some((item) => item === id || asRecord(item).principalId === id);
 
-async function listToolNames(client: Client): Promise<string[]> {
-  const listed = await client.listTools();
-  return listed.tools.map((tool) => tool.name);
-}
+const listToolNames = (client: Client) =>
+  Effect.gen(function* listClientTools() {
+    const listed = yield* Effect.tryPromise(async () => await client.listTools());
+    return listed.tools.map((tool) => tool.name);
+  });
 
 /** Polls the MCP resource with the given token every 5 s for at most 35 s. */
-async function waitForInvalidToken(token: string): Promise<{ ok: boolean; seconds: number; status: number }> {
-  const started = Date.now();
-  for (;;) {
-    const response = await rawMcpStatus(E2E.mcpUrl, token);
-    const seconds = Math.round((Date.now() - started) / 1000);
-    if (response.status === 401 && (response.wwwAuthenticate ?? '').includes('error="invalid_token"')) {
-      return { ok: true, seconds, status: response.status };
+const waitForInvalidToken = (token: Redacted.Redacted) =>
+  Effect.gen(function* pollInvalidToken() {
+    const E2E = yield* E2eSettings;
+    const started = yield* Clock.monotonicTimeNanos;
+    for (;;) {
+      const response = yield* Effect.suspend(() => rawMcpStatus(E2E.mcpUrl, Option.some(token)));
+      const now = yield* Clock.monotonicTimeNanos;
+      const seconds = Math.round(Number(now - started) / 1_000_000_000);
+      if (
+        response.status === 401 &&
+        Option.getOrElse(response.wwwAuthenticate, () => '').includes('error="invalid_token"')
+      ) {
+        return { ok: true, seconds, status: response.status };
+      }
+      if (now - started >= 35_000_000_000n) {
+        return { ok: false, seconds, status: response.status };
+      }
+      yield* Effect.sleep(5000);
     }
-    if (Date.now() - started >= 35_000) {
-      return { ok: false, seconds, status: response.status };
-    }
-    await sleep(5_000);
-  }
-}
+  });
 
 const rec = new Recorder();
 let grantId: string | null = null;
 
-async function run(): Promise<void> {
-  const tab: E2eTab = await openSharedTab();
-  const open: Client[] = [];
-  let loopback: LoopbackCallback | undefined = undefined;
-  let agentId: string | undefined = undefined;
-  let cleanupAttempted = false;
+const run = (policy: 'approval' | 'direct', keep: boolean) =>
+  Effect.gen(function* runAgentProof() {
+    const E2E = yield* E2eSettings;
+    const tab: E2eTab = yield* Effect.acquireRelease(openSharedTab(), (value) => value.close.pipe(Effect.orDie));
+    const open: Client[] = [];
+    let agentId: string | null = null;
+    let cleanupAttempted = false;
+    let agentWasDisabled = false;
 
-  try {
-    await ensureLoggedIn(tab.page, E2E.shellUrl, ADMIN_EMAIL, E2E.password);
-    await sessionPost(tab.page, E2E.shellUrl, '/shell-super-app-api/auth/legal-entity/switch', {
-      legalEntityId: LEGAL_ENTITY_ID,
-    });
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* removeInterruptedAgent() {
+        if (agentId !== null && !keep && !cleanupAttempted) {
+          yield* sessionPost(
+            tab.page,
+            E2E.shellUrl,
+            MANAGE,
+            {
+              expectedStatus: agentWasDisabled ? 'disabled' : 'active',
+              operation: 'delete',
+              principalId: agentId,
+              reason: 'Úklid po přerušeném důkazu',
+            },
+            { 'idempotency-key': `${runId}-delete` },
+          ).pipe(Effect.ignore);
+        }
+      }),
+    );
+    yield* Effect.suspend(() => ensureLoggedIn(tab.page, E2E.shellUrl, ADMIN_EMAIL, E2E.password));
+    yield* Effect.suspend(() =>
+      sessionPost(tab.page, E2E.shellUrl, '/shell-super-app-api/auth/legal-entity/switch', {
+        legalEntityId: LEGAL_ENTITY_ID,
+      }),
+    );
 
     // Administrator creates the agent entity with its grants, operator and write policy.
-    agentId = await rec.step('agent', 'správce založí agenta', async () => {
-      const res = await sessionPost(
-        tab.page,
-        E2E.shellUrl,
-        MANAGE,
-        {
-          description: 'Agent vytvořený automatickým důkazem; po důkazu se smaže.',
-          displayName: AGENT_NAME,
-          modules: GRANTS,
-          operation: 'create',
-          operatorPrincipalIds: [ADMIN_ID],
-          ownerPrincipalId: ADMIN_ID,
-          writePolicy: policy,
-        },
-        { 'idempotency-key': `${runId}-create` },
-      );
-      const json = asRecord(res.json);
-      return {
-        pass: res.status === 200 && json.status === 'active',
-        detail: `status ${res.status}, stav ${String(json.status)}, zásady ${policy}`,
-        value: asString(json.principalId),
-      };
-    });
-
-    await rec.step('agent', 'agent je v seznamu s oprávněními a operátorem', async () => {
-      if (agentId === undefined) {
-        return { pass: false, detail: 'agent nebyl založen' };
-      }
-      const listed = await sessionPost(tab.page, E2E.shellUrl, LIST, {});
-      const agent = findByPrincipal(listed.json, agentId);
-      if (agent === undefined) {
-        return { pass: false, detail: `agent ${agentId} není v seznamu (status ${listed.status})` };
-      }
-      const modules = sortByModule(
-        asArray(agent.modules).map((item) => {
-          const module = asRecord(item);
-          return { access: asString(module.access) ?? '', moduleId: asString(module.moduleId) ?? '' };
+    agentId = Option.getOrNull(
+      yield* rec.stepEffect(
+        'agent',
+        'správce založí agenta',
+        Effect.gen(function* createAgentEntity() {
+          const res = yield* Effect.suspend(() =>
+            sessionPost(
+              tab.page,
+              E2E.shellUrl,
+              MANAGE,
+              {
+                description: 'Agent vytvořený automatickým důkazem; po důkazu se smaže.',
+                displayName: AGENT_NAME,
+                modules: GRANTS,
+                operation: 'create',
+                operatorPrincipalIds: [ADMIN_ID],
+                ownerPrincipalId: ADMIN_ID,
+                writePolicy: policy,
+              },
+              { 'idempotency-key': `${runId}-create` },
+            ),
+          );
+          const json = asRecord(res.json);
+          return {
+            detail: `status ${res.status}, stav ${displayJson(json.status)}, zásady ${policy}`,
+            pass: res.status === 200 && json.status === 'active',
+            value: asString(json.principalId),
+          };
         }),
-      );
-      const pass =
-        isDeepStrictEqual(modules, sortByModule(GRANTS)) &&
-        agent.writePolicy === policy &&
-        hasId(agent.operators, ADMIN_ID);
-      return {
-        pass,
-        detail: `moduly ${modules.map((m) => `${m.moduleId}:${m.access}`).join(', ')}, writePolicy=${String(agent.writePolicy)}`,
-      };
-    });
+      ),
+    );
+
+    yield* rec.stepEffect(
+      'agent',
+      'agent je v seznamu s oprávněními a operátorem',
+      Effect.gen(function* verifyAgentDirectory() {
+        if (agentId === null) {
+          return { detail: AGENT_NOT_CREATED, pass: false };
+        }
+        const listed = yield* Effect.suspend(() => sessionPost(tab.page, E2E.shellUrl, LIST, {}));
+        const agent = findByPrincipal(asRecord(listed.json), agentId);
+        if (agent === undefined) {
+          return { detail: `agent ${agentId} není v seznamu (status ${listed.status})`, pass: false };
+        }
+        const modules = sortByModule(
+          asArray(agent.modules).map((item) => {
+            const module = asRecord(item);
+            return { access: asString(module.access) ?? '', moduleId: asString(module.moduleId) ?? '' };
+          }),
+        );
+        const moduleDetails = modules.map((module) => `${module.moduleId}:${module.access}`).join(', ');
+        const pass =
+          isDeepStrictEqual(modules, sortByModule(GRANTS)) &&
+          agent.writePolicy === policy &&
+          hasId(agent.operators, ADMIN_ID);
+        return {
+          detail: `moduly ${moduleDetails}, writePolicy=${displayJson(agent.writePolicy)}`,
+          pass,
+        };
+      }),
+    );
 
     // OAuth exactly like runVariant in prove.mts, acting as the agent ("Za agenta").
-    const lb = await startLoopbackCallback();
-    loopback = lb;
-    const provider = new E2eOAuthProvider({
-      clientName: 'Claude Code',
+    const lb = yield* Effect.acquireRelease(startLoopbackCallback(), (value) => value.close.pipe(Effect.ignore));
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* closeProofClients() {
+        for (const item of open) {
+          yield* closeMcpClient(item).pipe(Effect.ignore);
+        }
+      }),
+    );
+    const approve = (url: URL) =>
+      approveConnection(tab.page, url.toString(), {
+        actAs: { agentName: AGENT_NAME, kind: 'agent' },
+        email: ADMIN_EMAIL,
+        password: E2E.password,
+        shotPrefix: `agent-${policy}`,
+        shotsDir: SHOTS,
+        writeMode: policy,
+      });
+    const providerOptions: E2eOAuthProviderOptions = {
       clientMetadataUrl: CIMD_CLIENT_ID,
+      clientName: 'Claude Code',
       redirectUrl: lb.redirectUrl,
-      onRedirect: (url: URL) =>
-        approveConnection(tab.page, url.toString(), {
-          actAs: { kind: 'agent', agentName: AGENT_NAME },
-          email: ADMIN_EMAIL,
-          password: E2E.password,
-          shotPrefix: `agent-${policy}`,
-          shotsDir: SHOTS,
-          writeMode: policy,
-        }),
-    });
+    };
 
-    const flow = await rec.step('agent', 'OAuth přihlášení a souhlas Za agenta', async () => {
-      const result = await runOAuthFlow({ loopback: lb, provider, serverUrl: E2E.mcpUrl });
-      return {
-        pass: result.iss === E2E.issuer,
-        detail: `iss=${String(result.iss)} code=${result.code.length}zn refresh=${result.refreshToken ? 'ano' : 'ne'}`,
-        value: result,
-      };
-    });
-    if (flow === undefined || flow.iss !== E2E.issuer) {
+    const recordedFlow = yield* rec.stepEffect(
+      'agent',
+      'OAuth přihlášení a souhlas Za agenta',
+      Effect.gen(function* authorizeAgent() {
+        const result = yield* runOAuthFlow({ approve, loopback: lb, providerOptions, serverUrl: E2E.mcpUrl });
+        return {
+          detail: `iss=${String(Option.getOrNull(result.iss))} code=${result.code.length}zn refresh=${Option.exists(result.refreshToken, (token) => Redacted.value(token) !== '') ? 'ano' : 'ne'}`,
+          pass: Option.contains(result.iss, E2E.issuer),
+          value: result,
+        };
+      }),
+    );
+    const flow = Option.getOrUndefined(recordedFlow);
+    if (flow === undefined || !Option.contains(flow.iss, E2E.issuer)) {
       return;
     }
 
     const access = flow.accessToken;
-    grantId = String(decodeJwt(access)[GRANT_CLAIM]);
+    const claims = yield* Effect.try(() => decodeJwt(Redacted.value(access)));
+    grantId = yield* Schema.decodeUnknownEffect(Schema.String)(claims[GRANT_CLAIM]);
 
-    const { client } = await connectMcp(E2E.mcpUrl, access);
+    const { client } = yield* Effect.suspend(() => connectMcp(E2E.mcpUrl, access));
     open.push(client);
 
-    await rec.step('agent', 'tools/list', async () => {
-      const names = await listToolNames(client);
-      const pass = ['ontos_whoami', 'ontos_read', 'ontos_execute'].every((name) => names.includes(name));
-      return { pass, detail: `${names.length} nástrojů` };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'tools/list',
+      Effect.gen(function* verifyTools() {
+        const names = yield* listToolNames(client);
+        const pass = ['ontos_whoami', 'ontos_read', 'ontos_execute'].every((name) => names.includes(name));
+        return { detail: `${names.length} nástrojů`, pass };
+      }),
+    );
 
-    await rec.step('agent', 'ontos_whoami = agent s oprávněními od správce', async () => {
-      const outcome = await callJson(client, 'ontos_whoami');
-      const value = asRecord(outcome.value);
-      const acting = asRecord(value.acting);
-      const modules = sortByModule(readModules(value));
-      const pass =
-        !outcome.isError &&
-        acting.kind === 'agent' &&
-        acting.principalId === agentId &&
-        value.writePolicy === policy &&
-        isDeepStrictEqual(modules, [
-          { moduleId: 'property.portfolio', write: false },
-          { moduleId: 'work.tasks', write: true },
-        ]);
-      return {
-        pass,
-        detail: `acting=${String(acting.kind)}, writePolicy=${String(value.writePolicy)}, moduly=${modules
-          .map((m) => `${m.moduleId}${m.write ? '(zápis)' : ''}`)
-          .join(', ')}`,
-      };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'ontos_whoami = agent s oprávněními od správce',
+      Effect.gen(function* verifyAgentIdentity() {
+        const outcome = yield* Effect.suspend(() => callJson(client, 'ontos_whoami'));
+        const value = asRecord(outcome.value);
+        const acting = asRecord(value.acting);
+        const modules = sortByModule(readModules(value));
+        const pass =
+          !outcome.isError &&
+          acting.kind === 'agent' &&
+          acting.principalId === agentId &&
+          value.writePolicy === policy &&
+          isDeepStrictEqual(modules, [
+            { moduleId: 'property.portfolio', write: false },
+            { moduleId: 'work.tasks', write: true },
+          ]);
+        return {
+          detail: `acting=${displayJson(acting.kind)}, writePolicy=${displayJson(value.writePolicy)}, moduly=${modules
+            .map((m) => `${m.moduleId}${m.write ? '(zápis)' : ''}`)
+            .join(', ')}`,
+          pass,
+        };
+      }),
+    );
 
-    await rec.step('agent', 'čtení v oprávnění', async () => {
-      const outcome = await callJson(client, 'ontos_read', { id: 'work.tasks/read/records', limit: 3 });
-      return { pass: !outcome.isError, detail: outcome.isError ? 'isError' : 'záznamy načteny' };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'čtení v oprávnění',
+      Effect.gen(function* verifyAllowedRead() {
+        const outcome = yield* Effect.suspend(() =>
+          callJson(client, 'ontos_read', { id: 'work.tasks/read/records', limit: 3 }),
+        );
+        return { detail: outcome.isError ? 'isError' : 'záznamy načteny', pass: !outcome.isError };
+      }),
+    );
 
-    await rec.step('agent', 'čtení mimo oprávnění = chyba nástroje', async () => {
-      const outcome = await callJson(client, 'ontos_read', { id: 'finance.billing/read/records', limit: 1 });
-      return { pass: outcome.isError === true, detail: `isError=${String(outcome.isError)}` };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'čtení mimo oprávnění = chyba nástroje',
+      Effect.gen(function* verifyDeniedRead() {
+        const outcome = yield* Effect.suspend(() =>
+          callJson(client, 'ontos_read', { id: 'finance.billing/read/records', limit: 1 }),
+        );
+        return { detail: `isError=${outcome.isError}`, pass: outcome.isError };
+      }),
+    );
 
     if (policy === 'approval') {
       // Approval policy: the write becomes a proposal awaiting human approval.
-      const proposal = await rec.step('agent', 'zápis = návrh ke schválení', async () => {
-        const outcome = await callJson(client, 'ontos_execute', {
-          id: 'work.tasks/command/CreateTask',
-          input: { title: PROOF_TITLE },
-          reason: 'Automatický důkaz připojení přes MCP; návrh bude zamítnut.',
-          idempotencyKey: `${runId}-write`,
-        });
-        const value = asRecord(outcome.value);
-        const proposalId = asString(value.proposalId);
-        const batchId = asString(value.batchId);
-        const ids = asArray(value.proposalIds).filter(isString);
-        const pass =
-          !outcome.isError &&
-          value.status === 'proposed' &&
-          proposalId !== undefined &&
-          String(value.reviewUrl).includes('/cs/sprava/ke-schvaleni');
-        return {
-          pass,
-          detail: pass ? `návrh ${String(proposalId)}` : `status ${String(value.status)}, isError=${outcome.isError}`,
-          value:
-            batchId === undefined
-              ? undefined
-              : { batchId, proposalIds: ids.length > 0 ? ids : proposalId === undefined ? [] : [proposalId] },
-        };
-      });
-
-      if (keep) {
-        rec.log(`návrh ponechán: ${proposal?.batchId ?? 'žádný'}`);
-      } else {
-        await rec.step('agent', 'úklid: návrh zamítnut', async () => {
-          if (proposal === undefined) {
-            return { pass: false, detail: 'chybí batchId návrhu' };
-          }
-          const decided = await sessionPost(
-            tab.page,
-            E2E.shellUrl,
-            '/shell-super-app-api/agent-platform/decide',
-            {
-              batchKey: `core:${proposal.batchId}`,
-              decision: 'reject',
-              itemKeys: proposal.proposalIds.map((id) => `core:${id}`),
-              note: 'Automatický důkaz agentní entity – zamítnuto.',
-            },
-            { 'idempotency-key': `${runId}-decide` },
+      const recordedProposal = yield* rec.stepEffect(
+        'agent',
+        'zápis = návrh ke schválení',
+        Effect.gen(function* proposeAgentTask() {
+          const outcome = yield* Effect.suspend(() =>
+            callJson(client, 'ontos_execute', {
+              id: 'work.tasks/command/CreateTask',
+              idempotencyKey: `${runId}-write`,
+              input: { title: PROOF_TITLE },
+              reason: 'Automatický důkaz připojení přes MCP; návrh bude zamítnut.',
+            }),
           );
-          return { pass: decided.status === 200, detail: `status ${decided.status}` };
-        });
-      }
+          const value = asRecord(outcome.value);
+          const proposalId = asString(value.proposalId);
+          const batchId = asString(value.batchId);
+          const ids = asArray(value.proposalIds).filter(isString);
+          const pass =
+            !outcome.isError &&
+            value.status === 'proposed' &&
+            proposalId !== undefined &&
+            displayJson(value.reviewUrl).includes('/cs/sprava/ke-schvaleni');
+          const fallbackIds = proposalId === undefined ? [] : [proposalId];
+          const result = {
+            detail: pass ? `návrh ${proposalId}` : `status ${displayJson(value.status)}, isError=${outcome.isError}`,
+            pass,
+          };
+          if (batchId === undefined) {
+            return result;
+          }
+          return { ...result, value: { batchId, proposalIds: ids.length > 0 ? ids : fallbackIds } };
+        }),
+      );
+
+      const proposal = Option.getOrUndefined(recordedProposal);
+      yield* keep
+        ? rec.log(`návrh ponechán: ${proposal?.batchId ?? 'žádný'}`)
+        : rec.stepEffect(
+            'agent',
+            'úklid: návrh zamítnut',
+            Effect.gen(function* rejectAgentProposal() {
+              if (proposal === undefined) {
+                return { detail: 'chybí batchId návrhu', pass: false };
+              }
+              const itemKeys = proposal.proposalIds.map((id) => `core:${id}`);
+              const decided = yield* Effect.suspend(() =>
+                sessionPost(
+                  tab.page,
+                  E2E.shellUrl,
+                  '/shell-super-app-api/agent-platform/decide',
+                  {
+                    batchKey: `core:${proposal.batchId}`,
+                    decision: 'reject',
+                    itemKeys,
+                    note: 'Automatický důkaz agentní entity – zamítnuto.',
+                  },
+                  { 'idempotency-key': `${runId}-decide` },
+                ),
+              );
+              return { detail: `status ${decided.status}`, pass: decided.status === 200 };
+            }),
+          );
     } else {
       // Direct policy: the write executes at once; the task is cancelled and hidden again so the board stays clean.
-      await rec.step('agent', 'zápis přímo: úkol vytvořen, zrušen a skryt', async () => {
-        const created = await callJson(client, 'ontos_execute', {
-          id: 'work.tasks/command/CreateTask',
-          input: { title: PROOF_TITLE },
-          idempotencyKey: `${runId}-write`,
-        });
-        const createdValue = asRecord(created.value);
-        // TaskRef is a resource reference object ({ moduleId, resourceId, resourceType, tenantId }), passed back as is.
-        const taskRef = asRecord(asRecord(asRecord(createdValue.result).task).ref);
-        const taskId = asString(taskRef.resourceId);
-        if (created.isError || createdValue.status !== 'executed' || taskId === undefined) {
+      yield* rec.stepEffect(
+        'agent',
+        'zápis přímo: úkol vytvořen, zrušen a skryt',
+        Effect.gen(function* createCancelAndHideAgentTask() {
+          const created = yield* Effect.suspend(() =>
+            callJson(client, 'ontos_execute', {
+              id: 'work.tasks/command/CreateTask',
+              idempotencyKey: `${runId}-write`,
+              input: { title: PROOF_TITLE },
+            }),
+          );
+          const createdValue = asRecord(created.value);
+          // TaskRef is a resource reference object ({ moduleId, resourceId, resourceType, tenantId }), passed back as is.
+          const taskRef = asRecord(asRecord(asRecord(createdValue.result).task).ref);
+          const taskId = asString(taskRef.resourceId);
+          if (created.isError || createdValue.status !== 'executed' || taskId === undefined) {
+            return {
+              detail: `vytvoření: status ${displayJson(createdValue.status)}, isError=${created.isError}`,
+              pass: false,
+            };
+          }
+          const cancelled = yield* Effect.suspend(() =>
+            callJson(client, 'ontos_execute', {
+              id: 'work.tasks/command/ChangeTaskState',
+              idempotencyKey: `${runId}-cancel`,
+              input: { state: 'CANCELLED', taskRef },
+            }),
+          );
+          const cancelledStatus = asRecord(cancelled.value).status;
+          // Cancelled stays in the journal; hiding it keeps the demo task lists clean.
+          const hidden = yield* Effect.suspend(() =>
+            callJson(client, 'ontos_execute', {
+              id: 'work.tasks/command/SetTaskArchived',
+              idempotencyKey: `${runId}-hide`,
+              input: { archived: true, taskRef },
+            }),
+          );
+          const hiddenStatus = asRecord(hidden.value).status;
+          const cancelDetail = cancelled.isError ? ` (${cancelled.text})` : '';
+          const hideDetail = hidden.isError ? ` (${hidden.text})` : '';
           return {
-            pass: false,
-            detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}`,
+            detail: `úkol ${taskId}: zrušení ${displayJson(cancelledStatus)}${cancelDetail}; skrytí ${displayJson(hiddenStatus)}${hideDetail}`,
+            pass:
+              !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError && hiddenStatus === 'executed',
           };
-        }
-        const cancelled = await callJson(client, 'ontos_execute', {
-          id: 'work.tasks/command/ChangeTaskState',
-          input: { state: 'CANCELLED', taskRef },
-          idempotencyKey: `${runId}-cancel`,
-        });
-        const cancelledStatus = asRecord(cancelled.value).status;
-        // Cancelled stays in the journal; hiding it keeps the demo task lists clean.
-        const hidden = await callJson(client, 'ontos_execute', {
-          id: 'work.tasks/command/SetTaskArchived',
-          input: { archived: true, taskRef },
-          idempotencyKey: `${runId}-hide`,
-        });
-        const hiddenStatus = asRecord(hidden.value).status;
-        return {
-          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError && hiddenStatus === 'executed',
-          detail: `úkol ${taskId}: zrušení ${String(cancelledStatus)}${cancelled.isError ? ` (${cancelled.text})` : ''}; skrytí ${String(hiddenStatus)}${hidden.isError ? ` (${hidden.text})` : ''}`,
-        };
-      });
+        }),
+      );
     }
 
-    await client.close();
+    yield* Effect.tryPromise(async () => await client.close());
 
     // Administrator deactivates the agent: its connections must be revoked.
-    await rec.step('agent', 'deaktivace agenta odpojí jeho připojení', async () => {
-      if (agentId === undefined) {
-        return { pass: false, detail: 'agent nebyl založen' };
-      }
-      const res = await sessionPost(
-        tab.page,
-        E2E.shellUrl,
-        MANAGE,
-        {
-          expectedStatus: 'active',
-          newStatus: 'disabled',
-          operation: 'change-status',
-          principalId: agentId,
-          reason: 'Důkaz: deaktivace agenta',
-        },
-        { 'idempotency-key': `${runId}-disable` },
-      );
-      const revoked = asRecord(res.json).revokedConnections;
-      const count = typeof revoked === 'number' ? revoked : 0;
-      return { pass: res.status === 200 && count >= 1, detail: `status ${res.status}, odpojeno ${count}` };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'deaktivace agenta odpojí jeho připojení',
+      Effect.gen(function* deactivateAgent() {
+        if (agentId === null) {
+          return { detail: AGENT_NOT_CREATED, pass: false };
+        }
+        const res = yield* Effect.suspend(() =>
+          sessionPost(
+            tab.page,
+            E2E.shellUrl,
+            MANAGE,
+            {
+              expectedStatus: 'active',
+              newStatus: 'disabled',
+              operation: 'change-status',
+              principalId: agentId,
+              reason: 'Důkaz: deaktivace agenta',
+            },
+            { 'idempotency-key': `${runId}-disable` },
+          ),
+        );
+        const revoked = asRecord(res.json).revokedConnections;
+        if (res.status === 200) {
+          agentWasDisabled = true;
+        }
+        const count = Option.getOrElse(Schema.decodeUnknownOption(Schema.Number)(revoked), () => 0);
+        return { detail: `status ${res.status}, odpojeno ${count}`, pass: res.status === 200 && count >= 1 };
+      }),
+    );
 
-    await rec.step('agent', 'další volání MCP selže (401)', async () => {
-      const waited = await waitForInvalidToken(access);
-      return { pass: waited.ok, detail: `${waited.seconds} s` };
-    });
+    yield* rec.stepEffect(
+      'agent',
+      'další volání MCP selže (401)',
+      Effect.gen(function* verifyAgentTokenRevoked() {
+        const waited = yield* waitForInvalidToken(access);
+        return { detail: `${waited.seconds} s`, pass: waited.ok };
+      }),
+    );
 
     if (keep) {
-      rec.log(`agent ponechán: ${agentId ?? 'žádný'}`);
+      yield* rec.log(`agent ponechán: ${agentId ?? 'žádný'}`);
     } else {
       cleanupAttempted = true;
-      await rec.step('agent', 'úklid: agent smazán a není v seznamu', async () => {
-        if (agentId === undefined) {
-          return { pass: false, detail: 'agent nebyl založen' };
-        }
-        const res = await sessionPost(
-          tab.page,
-          E2E.shellUrl,
-          MANAGE,
-          { operation: 'delete', principalId: agentId, reason: 'Úklid po automatickém důkazu' },
-          { 'idempotency-key': `${runId}-delete` },
-        );
-        const listed = await sessionPost(tab.page, E2E.shellUrl, LIST, {});
-        const stillListed = findByPrincipal(listed.json, agentId) !== undefined;
-        return {
-          pass: res.status === 200 && !stillListed,
-          detail: `smazání status ${res.status}, v seznamu ${stillListed ? 'ano' : 'ne'}`,
-        };
+      yield* rec.stepEffect(
+        'agent',
+        'úklid: agent smazán a není v seznamu',
+        Effect.gen(function* deleteAgentEntity() {
+          if (agentId === null) {
+            return { detail: AGENT_NOT_CREATED, pass: false };
+          }
+          const res = yield* Effect.suspend(() =>
+            sessionPost(
+              tab.page,
+              E2E.shellUrl,
+              MANAGE,
+              {
+                expectedStatus: agentWasDisabled ? 'disabled' : 'active',
+                operation: 'delete',
+                principalId: agentId,
+                reason: 'Úklid po automatickém důkazu',
+              },
+              { 'idempotency-key': `${runId}-delete` },
+            ),
+          );
+          const listed = yield* Effect.suspend(() => sessionPost(tab.page, E2E.shellUrl, LIST, {}));
+          const stillListed = findByPrincipal(asRecord(listed.json), agentId) !== undefined;
+          return {
+            detail: `smazání status ${res.status}, v seznamu ${stillListed ? 'ano' : 'ne'}`,
+            pass: res.status === 200 && !stillListed,
+          };
+        }),
+      );
+    }
+  }).pipe(Effect.scoped);
+
+const command = Command.make(
+  'prove-agent-entity',
+  {
+    keep: Flag.Boolean('keep').pipe(Flag.withDefault(false)),
+    policy: Flag.Literals('policy', ['approval', 'direct']).pipe(Flag.withDefault('approval')),
+  },
+  ({ keep, policy }) =>
+    Effect.gen(function* runAgentProofCommand() {
+      const E2E = yield* E2eSettings;
+      yield* run(policy, keep).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : rec.stepEffect('agent', 'výjimka', Effect.succeed({ detail: Cause.pretty(cause), pass: false })),
+        ),
+      );
+      yield* rec.log(`agent-entity-e2e: ${rec.pass ? 'PASS' : 'FAIL'} (${rec.steps.length} kroků)`);
+      yield* rec.writeEffect(E2E.outDir, 'v5-agent-entities-e2e', {
+        agentName: AGENT_NAME,
+        grantId,
+        mcpUrl: E2E.mcpUrl,
+        policy,
+        runId,
+        shellUrl: E2E.shellUrl,
       });
-    }
-  } finally {
-    for (const item of open) {
-      await item.close().catch(() => undefined);
-    }
-    await loopback?.close().catch(() => undefined);
-    if (agentId !== undefined && !keep && !cleanupAttempted) {
-      await sessionPost(
-        tab.page,
-        E2E.shellUrl,
-        MANAGE,
-        { operation: 'delete', principalId: agentId, reason: 'Úklid po přerušeném důkazu' },
-        { 'idempotency-key': `${runId}-delete` },
-      ).catch(() => undefined);
-    }
-    await tab.close();
-  }
-}
+      if (!rec.pass) {
+        return yield* new ProofFailed({ message: 'Agent entity proof failed' });
+      }
+      return yield* Effect.void;
+    }),
+);
 
-try {
-  await run();
-} catch (error) {
-  await rec.step('agent', 'výjimka', async () => ({ pass: false, detail: errorText(error) }));
-}
-
-rec.log(`agent-entity-e2e: ${rec.pass ? 'PASS' : 'FAIL'} (${rec.steps.length} kroků)`);
-await rec.write(E2E.outDir, 'v5-agent-entities-e2e', {
-  agentName: AGENT_NAME,
-  grantId,
-  mcpUrl: E2E.mcpUrl,
-  policy,
-  runId,
-  shellUrl: E2E.shellUrl,
+const abort = new AbortController();
+const interrupt = (): void => {
+  abort.abort();
+};
+process.once('SIGINT', interrupt);
+process.once('SIGTERM', interrupt);
+const exit = await Effect.runPromiseExit(
+  Command.run(command, { version: '1.0.0' }).pipe(
+    Effect.provideServiceEffect(E2eSettings, loadE2eSettings),
+    Effect.provide(FetchHttpClient.layer),
+    Effect.provide(NodeServices.layer),
+    Effect.tapCause((cause) =>
+      Runtime.getErrorReported(Cause.squash(cause)) ? Console.error(Cause.pretty(cause)) : Effect.void,
+    ),
+  ),
+  { signal: abort.signal },
+);
+process.off('SIGINT', interrupt);
+process.off('SIGTERM', interrupt);
+const outcomeCode = Exit.match(exit, {
+  onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? 130 : Runtime.getErrorExitCode(Cause.squash(cause))),
+  onSuccess: () => 0,
 });
-process.exitCode = rec.pass ? 0 : 1;
+process.exitCode = outcomeCode;

@@ -1,3 +1,4 @@
+import { Schema } from 'effect';
 /**
  * Pure helpers of the platform approval layer: what a module's review means for showing and deciding a proposal,
  * key parsing and Czech texts.
@@ -7,9 +8,7 @@ import type { AgentReviewItem } from '@app/shared-contracts/agent-review';
 
 import type { ModuleReview } from './module-review.ts';
 
-type Rec = Readonly<Record<string, unknown>>;
-
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(Schema.JsonObject);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
@@ -45,8 +44,12 @@ export const revertResultMessage = ({ changed, failed, reverted, unavailable }: 
   if (failed > 0) {
     parts.push(`Vrácení se nepodařilo: ${failed}.`);
   }
-  const outcome =
-    reverted === 0 ? 'failed' : failed === 0 && unavailable === 0 && changed === 0 ? 'reverted' : 'partial';
+  let outcome: AgentRevertResponse['outcome'] = 'partial';
+  if (reverted === 0) {
+    outcome = 'failed';
+  } else if (failed === 0 && unavailable === 0 && changed === 0) {
+    outcome = 'reverted';
+  }
   return { message: parts.join(' '), outcome };
 };
 
@@ -62,7 +65,7 @@ const blocked = (reason: string, hidden = false): ApproverCheck => ({ hidden, ok
  * Is a proposal hidden from the person? The module's review says so, or the module keeps private records and its
  * review cannot answer now (history and pending proposals about records the person cannot see stay hidden).
  */
-export const hiddenByReview = (review: ModuleReview | undefined, item: AgentReviewItem | undefined): boolean => {
+export const hiddenByReview = (review: ModuleReview | undefined, item?: AgentReviewItem): boolean => {
   if (review === undefined || review.state === 'none') {
     return false;
   }
@@ -80,8 +83,8 @@ export const hiddenByReview = (review: ModuleReview | undefined, item: AgentRevi
  */
 export const approverCheck = (
   review: ModuleReview | undefined,
-  item: AgentReviewItem | undefined,
-  moduleBody: unknown,
+  item?: AgentReviewItem,
+  moduleBody?: Schema.Json,
 ): ApproverCheck => {
   if (hiddenByReview(review, item)) {
     return blocked('Záznam, který návrh mění, nevidíte nebo už neexistuje.', true);

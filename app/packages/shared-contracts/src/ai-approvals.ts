@@ -10,10 +10,20 @@
 //            entities since; pending proposals of the batch are rejected. History stays (nothing is deleted).
 //
 // Snapshots are stored ENCODED (wire JSON) so they compare equal after a database round trip.
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
+import { AiAdapterFailure } from './ai-adapter-failure.ts';
+
+export { AiAdapterFailure } from './ai-adapter-failure.ts';
 
 const ShortText = Schema.String.check(Schema.isMaxLength(300));
 const LongText = Schema.String.check(Schema.isMaxLength(4000));
+
+export const AiPrincipalIdSchema = ShortText.pipe(Schema.brand('AiPrincipalId'));
+export const AiBatchIdSchema = ShortText.pipe(Schema.brand('AiBatchId'));
+export const AiChangeIdSchema = ShortText.pipe(Schema.brand('AiChangeId'));
+export const AiRunIdSchema = ShortText.pipe(Schema.brand('AiRunId'));
+export const AiInvocationIdSchema = ShortText.pipe(Schema.brand('AiInvocationId'));
+export const AiLogIdSchema = ShortText.pipe(Schema.brand('AiLogId'));
 
 export const AiRiskSchema = Schema.Literals(['low', 'medium', 'high']);
 export type AiRisk = typeof AiRiskSchema.Type;
@@ -58,18 +68,19 @@ export const AiTargetSchema = Schema.Struct({
 });
 export type AiTarget = typeof AiTargetSchema.Type;
 
+/** Canonical UTC strings round-trip exactly; valid offset timestamps normalize to UTC when next encoded. */
 export const AiBatchSchema = Schema.Struct({
   agentLabel: ShortText,
-  agentPrincipalId: ShortText,
-  createdAt: ShortText,
-  id: ShortText,
+  agentPrincipalId: AiPrincipalIdSchema,
+  createdAt: Schema.DateTimeUtcFromString,
+  id: AiBatchIdSchema,
   /** What the agent was asked to do. */
   instruction: LongText,
-  revertedAt: Schema.optionalKey(ShortText),
-  revertedBy: Schema.optionalKey(ShortText),
+  revertedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  revertedBy: Schema.optionalKey(AiPrincipalIdSchema),
   revertNote: Schema.optionalKey(LongText),
   /** Agent-side run id; a repeated run id returns the existing batch (no duplicates). */
-  runId: Schema.optionalKey(ShortText),
+  runId: Schema.optionalKey(AiRunIdSchema),
 });
 export type AiBatch = typeof AiBatchSchema.Type;
 
@@ -87,43 +98,46 @@ export type AiLogAction = typeof AiLogActionSchema.Type;
 export const AiLogEntrySchema = Schema.Struct({
   action: AiLogActionSchema,
   actorKind: Schema.Literals(['agent', 'human']),
-  actorPrincipalId: ShortText,
-  at: ShortText,
-  batchId: ShortText,
-  changeId: Schema.optionalKey(ShortText),
-  id: ShortText,
+  actorPrincipalId: AiPrincipalIdSchema,
+  at: Schema.DateTimeUtcFromString,
+  batchId: AiBatchIdSchema,
+  changeId: Schema.optionalKey(AiChangeIdSchema),
+  id: AiLogIdSchema,
   /** Core action invocation of the step (link to the Core audit record). */
-  invocationId: Schema.optionalKey(ShortText),
+  invocationId: Schema.optionalKey(AiInvocationIdSchema),
   message: LongText,
 });
 export type AiLogEntry = typeof AiLogEntrySchema.Type;
 
-/** Change and slice schemas for one module's operation union. */
+const changeFieldsBeforeOperation = {
+  appliedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  applySequence: Schema.optionalKey(Schema.Int),
+  batchId: AiBatchIdSchema,
+  decidedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  decidedBy: Schema.optionalKey(AiPrincipalIdSchema),
+  decisionNote: Schema.optionalKey(LongText),
+  diff: Schema.Array(AiDiffLineSchema),
+  failure: Schema.optionalKey(LongText),
+  id: AiChangeIdSchema,
+};
+const changeFieldsAfterOperation = {
+  proposedAt: Schema.DateTimeUtcFromString,
+  /** Entity snapshots of the dry run; approval refuses stale proposals. */
+  proposedSnapshots: Schema.optionalKey(Schema.Array(AiSnapshotSchema)),
+  reason: LongText,
+  revertedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  revertedBy: Schema.optionalKey(AiPrincipalIdSchema),
+  risk: AiRiskSchema,
+  snapshots: Schema.optionalKey(Schema.Array(AiSnapshotSchema)),
+  status: AiChangeStatusSchema,
+  summary: ShortText,
+  target: AiTargetSchema,
+};
+const AiChangeMetadataSchema = Schema.Struct({ ...changeFieldsBeforeOperation, ...changeFieldsAfterOperation });
+
+/** Change and slice schemas for one module's operation union, preserving encoded field order. */
 export const makeAiApprovalSchemas = <Operation extends Schema.Top>(operation: Operation) => {
-  const change = Schema.Struct({
-    appliedAt: Schema.optionalKey(ShortText),
-    applySequence: Schema.optionalKey(Schema.Int),
-    batchId: ShortText,
-    decidedAt: Schema.optionalKey(ShortText),
-    decidedBy: Schema.optionalKey(ShortText),
-    decisionNote: Schema.optionalKey(LongText),
-    diff: Schema.Array(AiDiffLineSchema),
-    failure: Schema.optionalKey(LongText),
-    id: ShortText,
-    operation,
-    proposedAt: ShortText,
-    /** Entity snapshots of the dry run; approval refuses stale proposals. */
-    proposedSnapshots: Schema.optionalKey(Schema.Array(AiSnapshotSchema)),
-    /** The agent's justification. */
-    reason: LongText,
-    revertedAt: Schema.optionalKey(ShortText),
-    revertedBy: Schema.optionalKey(ShortText),
-    risk: AiRiskSchema,
-    snapshots: Schema.optionalKey(Schema.Array(AiSnapshotSchema)),
-    status: AiChangeStatusSchema,
-    summary: ShortText,
-    target: AiTargetSchema,
-  });
+  const change = Schema.Struct({ ...changeFieldsBeforeOperation, operation, ...changeFieldsAfterOperation });
   const slice = Schema.Struct({
     batches: Schema.Array(AiBatchSchema),
     changes: Schema.Array(change),
@@ -132,28 +146,7 @@ export const makeAiApprovalSchemas = <Operation extends Schema.Top>(operation: O
   return { change, slice };
 };
 
-export interface AiChange<Operation> {
-  readonly appliedAt?: string;
-  readonly applySequence?: number;
-  readonly batchId: string;
-  readonly decidedAt?: string;
-  readonly decidedBy?: string;
-  readonly decisionNote?: string;
-  readonly diff: readonly AiDiffLine[];
-  readonly failure?: string;
-  readonly id: string;
-  readonly operation: Operation;
-  readonly proposedAt: string;
-  readonly proposedSnapshots?: readonly AiSnapshot[];
-  readonly reason: string;
-  readonly revertedAt?: string;
-  readonly revertedBy?: string;
-  readonly risk: AiRisk;
-  readonly snapshots?: readonly AiSnapshot[];
-  readonly status: AiChangeStatus;
-  readonly summary: string;
-  readonly target: AiTarget;
-}
+export type AiChange<Operation> = typeof AiChangeMetadataSchema.Type & { readonly operation: Operation };
 
 export interface AiSlice<Operation> {
   readonly batches: readonly AiBatch[];
@@ -163,21 +156,21 @@ export interface AiSlice<Operation> {
 
 export const emptyAiSlice = <Operation>(): AiSlice<Operation> => ({ batches: [], changes: [], log: [] });
 
-export const aiRiskLabel: Readonly<Record<AiRisk, string>> = {
+export const aiRiskLabel = {
   high: 'Vysoké riziko',
   low: 'Nízké riziko',
   medium: 'Střední riziko',
-};
+} satisfies Readonly<Record<AiRisk, string>>;
 
-export const aiStatusLabel: Readonly<Record<AiChangeStatus, string>> = {
+export const aiStatusLabel = {
   applied: 'Provedeno',
   failed: 'Nelze provést',
   pending: 'Čeká na schválení',
   rejected: 'Zamítnuto',
   reverted: 'Vráceno',
-};
+} satisfies Readonly<Record<AiChangeStatus, string>>;
 
-export const aiLogActionLabel: Readonly<Record<AiLogAction, string>> = {
+export const aiLogActionLabel = {
   apply_failed: 'Neprovedeno',
   approved: 'Schváleno a provedeno',
   batch_reverted: 'Dávka vrácena',
@@ -185,22 +178,23 @@ export const aiLogActionLabel: Readonly<Record<AiLogAction, string>> = {
   rejected: 'Zamítnuto',
   revert_conflict: 'Vrácení zablokováno',
   reverted: 'Vráceno',
-};
+} satisfies Readonly<Record<AiLogAction, string>>;
 
 // ------------------------------------------------------------------------------------------------ engine
 
-export interface AiContext {
-  /** Core action invocation id of the current command. */
-  readonly invocationId: string;
-  /** ISO timestamp of the current command. */
-  readonly now: string;
-  readonly principalId: string;
-}
+export const AiContextSchema = Schema.Struct({
+  invocationId: AiInvocationIdSchema,
+  now: Schema.DateTimeUtc,
+  principalId: AiPrincipalIdSchema,
+});
+export type AiContext = typeof AiContextSchema.Type;
 
-export interface AiFailure {
-  readonly kind: 'conflict' | 'invalid' | 'not_found';
-  readonly message: string;
-}
+/** Engine rejection; kind/message retain the public contract and cause keeps an adapter failure when present. */
+export class AiFailure extends Schema.TaggedError<AiFailure>()('AiFailure', {
+  cause: Schema.optionalKey(AiAdapterFailure),
+  kind: Schema.Literals(['conflict', 'invalid', 'not_found']),
+  message: Schema.String,
+}) {}
 
 export interface AiDescribed {
   readonly diff: readonly AiDiffLine[];
@@ -212,42 +206,44 @@ export interface AiEntity {
   readonly id: string;
 }
 
-/** How one module plugs into the engine. Every function is pure. */
+/** Reducers return new state values. Description, codecs and reducers compose through Effect; collection access stays pure. */
 export interface AiApprovalAdapter<State, Operation extends { readonly _tag: string }> {
-  /** Entity collections a change may create or modify (snapshot kinds). */
-  readonly kinds: readonly string[];
-  readonly entities: (state: State, kind: string) => readonly AiEntity[];
-  /** Wire (JSON) form of one entity of `kind`. */
-  readonly encode: (kind: string, entity: AiEntity) => Schema.Json;
-  /** Runs one operation through the module's own reducer; every module rule applies. Failure = readable reason. */
-  readonly run: (
-    state: State,
-    operation: Operation,
-    invocationId: string,
-  ) => Effect.Effect<{ readonly entityIds: readonly string[]; readonly state: State }, string>;
-  readonly describe: (state: State, operation: Operation) => AiDescribed;
-  readonly risk: (operation: Operation) => AiRisk;
   /** True when the operation creates the entity its target points at (target id = first entity id). */
   readonly creates: (operation: Operation) => boolean;
+  readonly describe: (state: State, operation: Operation) => Effect.Effect<AiDescribed, AiAdapterFailure>;
+  /** Wire (JSON) form of one entity of `kind`. */
+  readonly encode: (kind: string, entity: AiEntity) => Effect.Effect<Schema.Json, AiAdapterFailure>;
+  readonly entities: (state: State, kind: string) => readonly AiEntity[];
+  readonly getSlice: (state: State) => AiSlice<Operation> | undefined;
+  /** Entity collections a change may create or modify (snapshot kinds). */
+  readonly kinds: readonly string[];
   /** Undo one snapshot of an applied change; the engine already verified the entity is unchanged since. */
   readonly restore: (
     state: State,
     snapshot: AiSnapshot,
     context: AiContext & { readonly suffix: string },
     note: string,
-  ) => Effect.Effect<State, string>;
-  readonly getSlice: (state: State) => AiSlice<Operation> | undefined;
+  ) => Effect.Effect<State, AiAdapterFailure>;
+  readonly risk: (operation: Operation) => AiRisk;
+  /** Runs one operation through the module's own reducer; every module rule applies. Failures retain a readable message and their original cause. */
+  readonly run: (
+    state: State,
+    operation: Operation,
+    invocationId: string,
+  ) => Effect.Effect<{ readonly entityIds: readonly string[]; readonly state: State }, AiAdapterFailure>;
   readonly setSlice: (state: State, slice: AiSlice<Operation>) => State;
 }
 
 /** JSONB reorders object keys on persistence; snapshots compare values, not insertion order. */
 const canonical = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonical);
+  if (Array.isArray(value)) {
+    return value.map(canonical);
+  }
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([, entry]) => entry !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
+        .toSorted(([a], [b]) => a.localeCompare(b))
         .map(([key, entry]) => [key, canonical(entry)]),
     );
   }
@@ -256,62 +252,107 @@ const canonical = (value: unknown): unknown => {
 export const sameJson = (left: unknown, right: unknown) =>
   JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
+/* oxlint-disable no-bitwise, unicorn/prefer-code-point -- User-approved demo/sales-crm policy: preserve persisted IDs from the existing 32-bit UTF-16 hash. */
 /** Deterministic RFC 4122-shaped id from a seed (pure; same seed, same id). */
 export const deriveAiUuid = (seed: string): string => {
-  let h1 = 0x6a09e667;
-  let h2 = 0xbb67ae85;
-  let h3 = 0x3c6ef372;
-  let h4 = 0xa54ff53a;
+  let h1 = 0x6a_09_e6_67;
+  let h2 = 0xbb_67_ae_85;
+  let h3 = 0x3c_6e_f3_72;
+  let h4 = 0xa5_4f_f5_3a;
   for (let index = 0; index < seed.length; index += 1) {
     const code = seed.charCodeAt(index);
-    h1 = h2 ^ Math.imul(h1 ^ code, 597399067);
-    h2 = h3 ^ Math.imul(h2 ^ code, 2869860233);
-    h3 = h4 ^ Math.imul(h3 ^ code, 951274213);
-    h4 = h1 ^ Math.imul(h4 ^ code, 2716044179);
+    h1 = h2 ^ Math.imul(h1 ^ code, 597_399_067);
+    h2 = h3 ^ Math.imul(h2 ^ code, 2_869_860_233);
+    h3 = h4 ^ Math.imul(h3 ^ code, 951_274_213);
+    h4 = h1 ^ Math.imul(h4 ^ code, 2_716_044_179);
   }
-  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
-  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
-  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
-  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597_399_067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2_869_860_233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951_274_213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2_716_044_179);
   const hex = [h1 ^ h2 ^ h3 ^ h4, h2 ^ h1, h3 ^ h1, h4 ^ h1]
     .map((part) => (part >>> 0).toString(16).padStart(8, '0'))
     .join('');
   const variant = ((Number.parseInt(hex.slice(16, 17), 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
+/* oxlint-enable no-bitwise, unicorn/prefer-code-point */
 
-const invalid = (message: string): AiFailure => ({ kind: 'invalid', message });
-const conflict = (message: string): AiFailure => ({ kind: 'conflict', message });
-const notFound = (message: string): AiFailure => ({ kind: 'not_found', message });
+const invalid = (message: string, cause?: AiAdapterFailure): AiFailure =>
+  cause === undefined
+    ? new AiFailure({ kind: 'invalid', message })
+    : new AiFailure({ cause, kind: 'invalid', message });
+const conflict = (message: string, cause?: AiAdapterFailure): AiFailure =>
+  cause === undefined
+    ? new AiFailure({ kind: 'conflict', message })
+    : new AiFailure({ cause, kind: 'conflict', message });
+const notFound = (message: string): AiFailure => new AiFailure({ kind: 'not_found', message });
 
-/** Every entity the change created or modified, with its exact previous and next encoded value. */
-const snapshotsBetween = <State, Operation extends { readonly _tag: string }>(
+const snapshotOfEntity = Effect.fn('AiApprovals.snapshotOfEntity')(function* collectEntitySnapshot<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  kind: string,
+  before: ReadonlyMap<string, AiEntity>,
+  entity: AiEntity,
+): Effect.fn.Return<readonly AiSnapshot[], AiAdapterFailure> {
+  const old = before.get(entity.id);
+  if (old === entity) {
+    return [];
+  }
+  // Encode the new entity before its previous value, as the persisted snapshot contract requires.
+  const after = yield* adapter.encode(kind, entity);
+  if (old === undefined) {
+    return [{ after, id: entity.id, kind }];
+  }
+  const encodedBefore = yield* adapter.encode(kind, old);
+  return sameJson(encodedBefore, after) ? [] : [{ after, before: encodedBefore, id: entity.id, kind }];
+});
+
+const snapshotsOfKind = Effect.fn('AiApprovals.snapshotsOfKind')(function* collectKindSnapshots<
+  State,
+  Operation extends { readonly _tag: string },
+>(
   adapter: AiApprovalAdapter<State, Operation>,
   previous: State,
   next: State,
-): readonly AiSnapshot[] =>
-  adapter.kinds.flatMap((kind) => {
-    const before = new Map(adapter.entities(previous, kind).map((entity) => [entity.id, entity] as const));
-    return adapter.entities(next, kind).flatMap((entity): AiSnapshot[] => {
-      const old = before.get(entity.id);
-      // Reducers keep untouched entities by reference, so most entities skip the encode entirely.
-      if (old === entity) return [];
-      const after = adapter.encode(kind, entity);
-      if (old === undefined) return [{ after, id: entity.id, kind }];
-      const encodedBefore = adapter.encode(kind, old);
-      return sameJson(encodedBefore, after) ? [] : [{ after, before: encodedBefore, id: entity.id, kind }];
-    });
+  kind: string,
+): Effect.fn.Return<readonly AiSnapshot[], AiAdapterFailure> {
+  const before = new Map(adapter.entities(previous, kind).map((entity) => [entity.id, entity] as const));
+  const snapshots = yield* Effect.forEach(
+    adapter.entities(next, kind),
+    (entity) => snapshotOfEntity(adapter, kind, before, entity),
+    { concurrency: 1 },
+  );
+  return snapshots.flat();
+});
+
+/** Every entity the change created or modified, with its exact previous and next encoded value. */
+const snapshotsBetween = Effect.fn('AiApprovals.snapshotsBetween')(function* collectSnapshots<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  previous: State,
+  next: State,
+): Effect.fn.Return<readonly AiSnapshot[], AiAdapterFailure> {
+  const snapshots = yield* Effect.forEach(adapter.kinds, (kind) => snapshotsOfKind(adapter, previous, next, kind), {
+    concurrency: 1,
   });
+  return snapshots.flat();
+});
 
 const currentEncoded = <State, Operation extends { readonly _tag: string }>(
   adapter: AiApprovalAdapter<State, Operation>,
   state: State,
   kind: string,
   id: string,
-): unknown => {
-  const entity = adapter.entities(state, kind).find((entry) => entry.id === id);
-  return entity === undefined ? undefined : adapter.encode(kind, entity);
-};
+): Effect.Effect<Option.Option<Schema.Json>, AiAdapterFailure> =>
+  Effect.suspend((): Effect.Effect<Option.Option<Schema.Json>, AiAdapterFailure> => {
+    const entity = adapter.entities(state, kind).find((entry) => entry.id === id);
+    return entity === undefined ? Effect.succeedNone : adapter.encode(kind, entity).pipe(Effect.asSome);
+  });
 
 const sliceOf = <State, Operation extends { readonly _tag: string }>(
   adapter: AiApprovalAdapter<State, Operation>,
@@ -321,25 +362,32 @@ const sliceOf = <State, Operation extends { readonly _tag: string }>(
 const replaceChange = <Operation>(changes: readonly AiChange<Operation>[], next: AiChange<Operation>) =>
   changes.map((entry) => (entry.id === next.id ? next : entry));
 
-const logEntry = (
+const invalidIdentity = (cause: Schema.SchemaError) => {
+  const message = 'Identitu záznamu schvalování AI nelze vytvořit.';
+  return invalid(message, new AiAdapterFailure({ cause, message }));
+};
+
+const logEntry = Effect.fn('AiApprovals.logEntry')(function* createLogEntry(
   context: AiContext,
   index: number,
   entry: Omit<AiLogEntry, 'actorPrincipalId' | 'at' | 'id' | 'invocationId'>,
-): AiLogEntry => ({
-  ...entry,
-  actorPrincipalId: context.principalId,
-  at: context.now,
-  id: `${context.invocationId}:ai-log-${index}`,
-  invocationId: context.invocationId,
+): Effect.fn.Return<AiLogEntry, AiFailure> {
+  const id = yield* Schema.decodeEffect(AiLogIdSchema)(`${context.invocationId}:ai-log-${index}`).pipe(
+    Effect.mapError(invalidIdentity),
+  );
+  return { ...entry, actorPrincipalId: context.principalId, at: context.now, id, invocationId: context.invocationId };
 });
 
 /** Czech plural: 1 změna vrácena, 2–4 změny vráceny, 0/5+ změn vráceno. */
-const revertedCount = (count: number) =>
-  count === 1
-    ? '1 provedená změna vrácena'
-    : count >= 2 && count <= 4
-      ? `${count} provedené změny vráceny`
-      : `${count} provedených změn vráceno`;
+const revertedCount = (count: number) => {
+  if (count === 1) {
+    return '1 provedená změna vrácena';
+  }
+  if (count >= 2 && count <= 4) {
+    return `${count} provedené změny vráceny`;
+  }
+  return `${count} provedených změn vráceno`;
+};
 
 const subInvocation = (context: AiContext, suffix: string) => deriveAiUuid(`${context.invocationId}:${suffix}`);
 
@@ -356,109 +404,313 @@ export interface AiOutcome<State> {
   readonly state: State;
 }
 
+interface ProposalProgress<Operation> {
+  readonly changes: readonly AiChange<Operation>[];
+  readonly log: readonly AiLogEntry[];
+  readonly touched: ReadonlySet<string>;
+}
+
+const claimSnapshots = (
+  previous: ReadonlySet<string>,
+  snapshots: readonly AiSnapshot[],
+): Option.Option<ReadonlySet<string>> => {
+  const touched = new Set(previous);
+  for (const snapshot of snapshots) {
+    const key = `${snapshot.kind}:${snapshot.id}`;
+    if (snapshot.before !== undefined && touched.has(key)) {
+      return Option.none();
+    }
+    touched.add(key);
+  }
+  return Option.some(touched);
+};
+
+const prepareProposal = Effect.fn('AiApprovals.prepareProposal')(function* prepareOneProposal<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  state: State,
+  progress: ProposalProgress<Operation>,
+  entry: AiProposal<Operation>['changes'][number],
+  index: number,
+  batch: AiBatch,
+  context: AiContext,
+): Effect.fn.Return<ProposalProgress<Operation>, AiFailure> {
+  const { described, dryRun } = yield* adapter.describe(state, entry.operation).pipe(
+    Effect.mapError((cause) => invalid(`Návrh č. ${index + 1} nelze přijmout: ${cause.message}`, cause)),
+    Effect.flatMap((description) =>
+      adapter.run(state, entry.operation, subInvocation(context, `c${index}`)).pipe(
+        Effect.result,
+        Effect.map((dryRunResult) => ({ described: description, dryRun: dryRunResult })),
+      ),
+    ),
+  );
+  if (Result.isFailure(dryRun)) {
+    return yield* invalid(
+      `Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${dryRun.failure.message}`,
+      dryRun.failure,
+    );
+  }
+  if (described.diff.length === 0) {
+    return yield* invalid(`Návrh č. ${index + 1} (${described.summary}) nic nemění.`);
+  }
+  const proposedSnapshots = yield* snapshotsBetween(adapter, state, dryRun.success.state).pipe(
+    Effect.mapError((cause) =>
+      invalid(`Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${cause.message}`, cause),
+    ),
+  );
+  const touched = claimSnapshots(progress.touched, proposedSnapshots);
+  if (Option.isNone(touched)) {
+    return yield* invalid(
+      `Návrh č. ${index + 1} (${described.summary}) mění stejný záznam jako dřívější návrh dávky. Spojte je do jedné změny.`,
+    );
+  }
+  const change: AiChange<Operation> = {
+    batchId: batch.id,
+    diff: described.diff,
+    id: yield* Schema.decodeEffect(AiChangeIdSchema)(`${context.invocationId}:ai-change-${index}`).pipe(
+      Effect.mapError(invalidIdentity),
+    ),
+    operation: entry.operation,
+    proposedAt: context.now,
+    proposedSnapshots,
+    reason: entry.reason,
+    risk: adapter.risk(entry.operation),
+    status: 'pending',
+    summary: described.summary,
+    target: described.target,
+  };
+  return {
+    changes: [...progress.changes, change],
+    log: [
+      ...progress.log,
+      yield* logEntry(context, progress.log.length, {
+        action: 'proposed',
+        actorKind: 'agent',
+        batchId: batch.id,
+        changeId: change.id,
+        message: `${batch.agentLabel} navrhl: ${change.summary} — ${change.target.label}. Důvod: ${entry.reason}`,
+      }),
+    ],
+    touched: touched.value,
+  };
+});
+
 /** Stores one pending batch. Data does not change; each proposal is dry-run first. */
-export const proposeAiChanges = <State, Operation extends { readonly _tag: string }>(
+export const proposeAiChanges = Effect.fn('AiApprovals.proposeAiChanges')(function* propose<
+  State,
+  Operation extends { readonly _tag: string },
+>(
   adapter: AiApprovalAdapter<State, Operation>,
   state: State,
   proposal: AiProposal<Operation>,
   context: AiContext,
-): Effect.Effect<AiOutcome<State>, AiFailure> =>
-  Effect.gen(function* propose() {
-    const slice = sliceOf(adapter, state);
-    const repeated =
-      proposal.runId === undefined
-        ? undefined
-        : slice.batches.find(
-            (batch) => batch.runId === proposal.runId && batch.agentPrincipalId === context.principalId,
-          );
-    if (repeated !== undefined) {
-      const existing = slice.changes.filter((change) => change.batchId === repeated.id);
-      if (
-        repeated.instruction !== proposal.instruction ||
-        !sameJson(
-          existing.map((change) => ({ operation: change.operation, reason: change.reason })),
-          proposal.changes,
-        )
-      ) {
-        return yield* Effect.fail(
-          conflict('Toto označení běhu už patří jinému návrhu. Pro nový návrh použijte nové runId.'),
-        );
-      }
-      return { entityIds: [repeated.id, ...existing.map((change) => change.id)], state };
+): Effect.fn.Return<AiOutcome<State>, AiFailure> {
+  const slice = sliceOf(adapter, state);
+  const repeated =
+    proposal.runId === undefined
+      ? undefined
+      : slice.batches.find((batch) => batch.runId === proposal.runId && batch.agentPrincipalId === context.principalId);
+  if (repeated !== undefined) {
+    const existing = slice.changes.filter((change) => change.batchId === repeated.id);
+    if (
+      repeated.instruction !== proposal.instruction ||
+      !sameJson(
+        existing.map((change) => ({ operation: change.operation, reason: change.reason })),
+        proposal.changes,
+      )
+    ) {
+      return yield* conflict('Toto označení běhu už patří jinému návrhu. Pro nový návrh použijte nové runId.');
     }
-    const batchId = `${context.invocationId}:ai-batch`;
-    const batch: AiBatch = {
-      agentLabel: proposal.agentLabel,
-      agentPrincipalId: context.principalId,
-      createdAt: context.now,
-      id: batchId,
-      instruction: proposal.instruction,
-      ...(proposal.runId === undefined ? {} : { runId: proposal.runId }),
-    };
-    const touched = new Set<string>();
-    const changes: AiChange<Operation>[] = [];
-    const log: AiLogEntry[] = [];
-    for (const [index, entry] of proposal.changes.entries()) {
-      const described = adapter.describe(state, entry.operation);
-      const dryRun = yield* adapter
-        .run(state, entry.operation, subInvocation(context, `c${index}`))
-        .pipe(Effect.result);
-      if (Result.isFailure(dryRun)) {
-        return yield* Effect.fail(
-          invalid(`Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${dryRun.failure}`),
-        );
+    return { entityIds: [repeated.id, ...existing.map((change) => change.id)], state };
+  }
+  const batch: AiBatch = {
+    agentLabel: proposal.agentLabel,
+    agentPrincipalId: context.principalId,
+    createdAt: context.now,
+    id: yield* Schema.decodeEffect(AiBatchIdSchema)(`${context.invocationId}:ai-batch`).pipe(
+      Effect.mapError(invalidIdentity),
+    ),
+    instruction: proposal.instruction,
+  };
+  if (proposal.runId !== undefined) {
+    Object.assign(batch, {
+      runId: yield* Schema.decodeEffect(AiRunIdSchema)(proposal.runId).pipe(Effect.mapError(invalidIdentity)),
+    });
+  }
+  const initial: ProposalProgress<Operation> = { changes: [], log: [], touched: new Set<string>() };
+  const prepared = yield* Effect.reduce(
+    proposal.changes,
+    () => initial,
+    (progress, entry, index) => prepareProposal(adapter, state, progress, entry, index, batch, context),
+  );
+  return {
+    entityIds: [batch.id, ...prepared.changes.map((change) => change.id)],
+    state: adapter.setSlice(state, {
+      batches: [...slice.batches, batch],
+      changes: [...slice.changes, ...prepared.changes],
+      log: [...slice.log, ...prepared.log],
+    }),
+  };
+});
+
+interface DecisionStep {
+  readonly context: AiContext;
+  readonly decision: 'approve' | 'reject';
+  readonly note: string;
+  readonly noteText: string;
+}
+interface DecisionProgress<State> {
+  readonly log: readonly AiLogEntry[];
+  readonly state: State;
+}
+
+const proposalSnapshotChanged = Effect.fn('AiApprovals.proposalSnapshotChanged')(function* checkProposedSnapshot<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  state: State,
+  change: AiChange<Operation>,
+  slice: AiSlice<Operation>,
+  snapshot: AiSnapshot,
+  alreadyStale: boolean,
+): Effect.fn.Return<boolean, AiAdapterFailure> {
+  if (alreadyStale) {
+    return true;
+  }
+  let expected = snapshot.before;
+  const siblings = slice.changes
+    .filter((entry) => entry.batchId === change.batchId && entry.status === 'applied')
+    .toSorted((left, right) => (left.applySequence ?? 0) - (right.applySequence ?? 0));
+  for (const sibling of siblings) {
+    const previous = sibling.snapshots?.find((entry) => entry.id === snapshot.id && entry.kind === snapshot.kind);
+    if (previous !== undefined) {
+      if (!sameJson(expected, previous.before)) {
+        return true;
       }
-      if (described.diff.length === 0) {
-        return yield* Effect.fail(invalid(`Návrh č. ${index + 1} (${described.summary}) nic nemění.`));
-      }
-      const proposedSnapshots = snapshotsBetween(adapter, state, dryRun.success.state);
-      for (const snapshot of proposedSnapshots) {
-        const key = `${snapshot.kind}:${snapshot.id}`;
-        if (snapshot.before !== undefined && touched.has(key)) {
-          return yield* Effect.fail(
-            invalid(
-              `Návrh č. ${index + 1} (${described.summary}) mění stejný záznam jako dřívější návrh dávky. Spojte je do jedné změny.`,
-            ),
-          );
-        }
-        touched.add(key);
-      }
-      const change: AiChange<Operation> = {
-        batchId,
-        diff: described.diff,
-        id: `${context.invocationId}:ai-change-${index}`,
-        operation: entry.operation,
-        proposedAt: context.now,
-        proposedSnapshots,
-        reason: entry.reason,
-        risk: adapter.risk(entry.operation),
-        status: 'pending',
-        summary: described.summary,
-        target: described.target,
-      };
-      log.push(
-        logEntry(context, log.length, {
-          action: 'proposed',
-          actorKind: 'agent',
-          batchId,
-          changeId: change.id,
-          message: `${batch.agentLabel} navrhl: ${change.summary} — ${change.target.label}. Důvod: ${entry.reason}`,
-        }),
-      );
-      changes.push(change);
+      expected = previous.after;
     }
+  }
+  const current = yield* currentEncoded(adapter, state, snapshot.kind, snapshot.id);
+  return !sameJson(Option.getOrUndefined(current), expected);
+});
+
+const decideChange = Effect.fn('AiApprovals.decideChange')(function* decideOne<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  progress: DecisionProgress<State>,
+  changeId: string,
+  index: number,
+  step: DecisionStep,
+): Effect.fn.Return<DecisionProgress<State>, AiFailure> {
+  const working = progress.state;
+  const slice = sliceOf(adapter, working);
+  const change = slice.changes.find((entry) => entry.id === changeId);
+  if (change === undefined) {
+    return yield* notFound('Návrh AI neexistuje.');
+  }
+  const targetLabel = change.target.label;
+  if (change.status !== 'pending') {
+    return yield* conflict(`Návrh „${change.summary} — ${targetLabel}“ už byl vyřízen.`);
+  }
+  const decided: AiChange<Operation> = { ...change, decidedAt: step.context.now, decidedBy: step.context.principalId };
+  if (step.note !== '') {
+    Object.assign(decided, { decisionNote: step.note });
+  }
+  if (step.decision === 'reject') {
+    const rejectedState = adapter.setSlice(working, {
+      ...slice,
+      changes: replaceChange(slice.changes, { ...decided, status: 'rejected' }),
+    });
     return {
-      entityIds: [batchId, ...changes.map((change) => change.id)],
-      state: adapter.setSlice(state, {
-        batches: [...slice.batches, batch],
-        changes: [...slice.changes, ...changes],
-        log: [...slice.log, ...log],
-      }),
+      log: [
+        ...progress.log,
+        yield* logEntry(step.context, progress.log.length, {
+          action: 'rejected',
+          actorKind: 'human',
+          batchId: change.batchId,
+          changeId: change.id,
+          message: `Zamítnuto: ${change.summary} — ${targetLabel}${step.noteText}`,
+        }),
+      ],
+      state: rejectedState,
     };
+  }
+  const stale = yield* Effect.reduce(
+    change.proposedSnapshots ?? [],
+    (): boolean => false,
+    (alreadyStale, snapshot) => proposalSnapshotChanged(adapter, working, change, slice, snapshot, alreadyStale),
+  ).pipe(Effect.mapError((cause) => conflict(cause.message, cause)));
+  if (stale) {
+    return yield* conflict(`Záznam „${targetLabel}“ se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.`);
+  }
+  const applied = yield* adapter
+    .run(working, change.operation, subInvocation(step.context, `a${index}`))
+    .pipe(Effect.result);
+  if (Result.isFailure(applied)) {
+    const failedState = adapter.setSlice(working, {
+      ...slice,
+      changes: replaceChange(slice.changes, { ...decided, failure: applied.failure.message, status: 'failed' }),
+    });
+    return {
+      log: [
+        ...progress.log,
+        yield* logEntry(step.context, progress.log.length, {
+          action: 'apply_failed',
+          actorKind: 'human',
+          batchId: change.batchId,
+          changeId: change.id,
+          message: `Schválení nešlo provést: ${change.summary} — ${targetLabel}: ${applied.failure.message}`,
+        }),
+      ],
+      state: failedState,
+    };
+  }
+  const appliedState = applied.success.state;
+  const snapshots = yield* snapshotsBetween(adapter, working, appliedState).pipe(
+    Effect.mapError((cause) => conflict(cause.message, cause)),
+  );
+  const after = sliceOf(adapter, appliedState);
+  const createdId = adapter.creates(change.operation) ? applied.success.entityIds[0] : undefined;
+  const appliedChange: AiChange<Operation> = { ...decided };
+  if (createdId !== undefined) {
+    Object.assign(appliedChange, { target: { ...change.target, id: createdId } });
+  }
+  Object.assign(appliedChange, {
+    appliedAt: step.context.now,
+    applySequence:
+      after.changes.filter((entry) => entry.status === 'applied' || entry.status === 'reverted').length + 1,
+    snapshots,
+    status: 'applied',
   });
+  const approvedState = adapter.setSlice(appliedState, {
+    ...after,
+    changes: replaceChange(after.changes, appliedChange),
+  });
+  return {
+    log: [
+      ...progress.log,
+      yield* logEntry(step.context, progress.log.length, {
+        action: 'approved',
+        actorKind: 'human',
+        batchId: change.batchId,
+        changeId: change.id,
+        message: `Schváleno a provedeno: ${change.summary} — ${targetLabel}${step.noteText}`,
+      }),
+    ],
+    state: approvedState,
+  };
+});
 
 /** Approves (applies through the module reducer) or rejects pending changes. The caller checks human + write. */
-export const decideAiChanges = <State, Operation extends { readonly _tag: string }>(
+export const decideAiChanges = Effect.fn('AiApprovals.decideAiChanges')(function* decide<
+  State,
+  Operation extends { readonly _tag: string },
+>(
   adapter: AiApprovalAdapter<State, Operation>,
   state: State,
   input: {
@@ -467,218 +719,211 @@ export const decideAiChanges = <State, Operation extends { readonly _tag: string
     readonly note?: string | undefined;
   },
   context: AiContext,
-): Effect.Effect<AiOutcome<State>, AiFailure> =>
-  Effect.gen(function* decide() {
-    let working = state;
-    const log: AiLogEntry[] = [];
-    const note = input.note?.trim() ?? '';
-    const noteText = note === '' ? '' : `. Poznámka: ${note}`;
-    for (const [index, changeId] of input.changeIds.entries()) {
-      const slice = sliceOf(adapter, working);
-      const change = slice.changes.find((entry) => entry.id === changeId);
-      if (change === undefined) {
-        return yield* Effect.fail(notFound('Návrh AI neexistuje.'));
-      }
-      if (change.status !== 'pending') {
-        return yield* Effect.fail(conflict(`Návrh „${change.summary} — ${change.target.label}“ už byl vyřízen.`));
-      }
-      const decided: AiChange<Operation> = {
-        ...change,
-        decidedAt: context.now,
-        decidedBy: context.principalId,
-        ...(note === '' ? {} : { decisionNote: note }),
-      };
-      if (input.decision === 'reject') {
-        working = adapter.setSlice(working, {
-          ...slice,
-          changes: replaceChange(slice.changes, { ...decided, status: 'rejected' }),
-        });
-        log.push(
-          logEntry(context, log.length, {
-            action: 'rejected',
-            actorKind: 'human',
-            batchId: change.batchId,
-            changeId,
-            message: `Zamítnuto: ${change.summary} — ${change.target.label}${noteText}`,
-          }),
-        );
-        continue;
-      }
-      const stale = (change.proposedSnapshots ?? []).some((snapshot) => {
-        // Proposals are dry runs against the same original state. An approved sibling of this batch may already
-        // have changed the entity; follow only that batch's applied snapshot chain, never foreign edits.
-        let expected = snapshot.before;
-        const siblings = slice.changes
-          .filter((entry) => entry.batchId === change.batchId && entry.status === 'applied')
-          .toSorted((left, right) => (left.applySequence ?? 0) - (right.applySequence ?? 0));
-        for (const sibling of siblings) {
-          const previous = sibling.snapshots?.find((entry) => entry.id === snapshot.id && entry.kind === snapshot.kind);
-          if (previous !== undefined) {
-            if (!sameJson(expected, previous.before)) return true;
-            expected = previous.after;
-          }
-        }
-        return !sameJson(currentEncoded(adapter, working, snapshot.kind, snapshot.id), expected);
-      });
-      if (stale) {
-        return yield* Effect.fail(
-          conflict(`Záznam „${change.target.label}“ se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.`),
-        );
-      }
-      const applied = yield* adapter
-        .run(working, change.operation, subInvocation(context, `a${index}`))
-        .pipe(Effect.result);
-      if (Result.isFailure(applied)) {
-        working = adapter.setSlice(working, {
-          ...slice,
-          changes: replaceChange(slice.changes, { ...decided, failure: applied.failure, status: 'failed' }),
-        });
-        log.push(
-          logEntry(context, log.length, {
-            action: 'apply_failed',
-            actorKind: 'human',
-            batchId: change.batchId,
-            changeId,
-            message: `Schválení nešlo provést: ${change.summary} — ${change.target.label}: ${applied.failure}`,
-          }),
-        );
-        continue;
-      }
-      const snapshots = snapshotsBetween(adapter, working, applied.success.state);
-      const after = sliceOf(adapter, applied.success.state);
-      const createdId = adapter.creates(change.operation) ? applied.success.entityIds[0] : undefined;
-      working = adapter.setSlice(applied.success.state, {
-        ...after,
-        changes: replaceChange(after.changes, {
-          ...decided,
-          ...(createdId === undefined ? {} : { target: { ...change.target, id: createdId } }),
-          appliedAt: context.now,
-          applySequence:
-            after.changes.filter((entry) => entry.status === 'applied' || entry.status === 'reverted').length + 1,
-          snapshots,
-          status: 'applied',
-        }),
-      });
-      log.push(
-        logEntry(context, log.length, {
-          action: 'approved',
-          actorKind: 'human',
-          batchId: change.batchId,
-          changeId,
-          message: `Schváleno a provedeno: ${change.summary} — ${change.target.label}${noteText}`,
-        }),
-      );
-    }
-    const slice = sliceOf(adapter, working);
-    return {
-      entityIds: [...input.changeIds],
-      state: adapter.setSlice(working, { ...slice, log: [...slice.log, ...log] }),
-    };
+): Effect.fn.Return<AiOutcome<State>, AiFailure> {
+  const note = input.note?.trim() ?? '';
+  const step: DecisionStep = {
+    context,
+    decision: input.decision,
+    note,
+    noteText: note === '' ? '' : `. Poznámka: ${note}`,
+  };
+  const initial: DecisionProgress<State> = { log: [], state };
+  const decided = yield* Effect.reduce(
+    input.changeIds,
+    () => initial,
+    (progress, changeId, index) => decideChange(adapter, progress, changeId, index, step),
+  );
+  const slice = sliceOf(adapter, decided.state);
+  return {
+    entityIds: [...input.changeIds],
+    state: adapter.setSlice(decided.state, { ...slice, log: [...slice.log, ...decided.log] }),
+  };
+});
+
+interface RevertProgress<State, Operation> extends DecisionProgress<State> {
+  readonly changes: readonly AiChange<Operation>[];
+}
+interface RevertStep {
+  readonly batchId: AiBatch['id'];
+  readonly context: AiContext;
+  readonly note: string;
+}
+
+const appliedSnapshotChanged = Effect.fn('AiApprovals.appliedSnapshotChanged')(function* checkAppliedSnapshot<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  state: State,
+  snapshot: AiSnapshot,
+  alreadyChanged: boolean,
+): Effect.fn.Return<boolean, AiAdapterFailure> {
+  if (alreadyChanged) {
+    return true;
+  }
+  const current = yield* currentEncoded(adapter, state, snapshot.kind, snapshot.id);
+  return !sameJson(Option.getOrUndefined(current), snapshot.after);
+});
+
+const restoreSnapshot = Effect.fn('AiApprovals.restoreSnapshot')(function* restoreOneSnapshot<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  state: State,
+  snapshot: AiSnapshot,
+  position: number,
+  change: AiChange<Operation>,
+  index: number,
+  step: RevertStep,
+): Effect.fn.Return<State, AiFailure> {
+  return yield* adapter
+    .restore(state, snapshot, { ...step.context, suffix: `r${index}-${position}` }, step.note)
+    .pipe(Effect.mapError((cause) => conflict(`${change.summary} (${change.target.label}): ${cause.message}`, cause)));
+});
+
+const revertChange = Effect.fn('AiApprovals.revertChange')(function* revertOne<
+  State,
+  Operation extends { readonly _tag: string },
+>(
+  adapter: AiApprovalAdapter<State, Operation>,
+  progress: RevertProgress<State, Operation>,
+  change: AiChange<Operation>,
+  index: number,
+  step: RevertStep,
+): Effect.fn.Return<RevertProgress<State, Operation>, AiFailure> {
+  const snapshots = change.snapshots ?? [];
+  const targetLabel = change.target.label;
+  const changedSince = yield* Effect.reduce(
+    snapshots,
+    (): boolean => false,
+    (alreadyChanged, snapshot) => appliedSnapshotChanged(adapter, progress.state, snapshot, alreadyChanged),
+  ).pipe(Effect.mapError((cause) => conflict(cause.message, cause)));
+  if (changedSince) {
+    return yield* conflict(
+      `${change.summary} (${targetLabel}): záznam se od schválení změnil, automaticky ho nevracím. Pozdější úpravy zůstaly zachovány.`,
+    );
+  }
+  const restored = yield* Effect.reduce(
+    snapshots.toReversed(),
+    () => progress.state,
+    (working, snapshot, position) => restoreSnapshot(adapter, working, snapshot, position, change, index, step),
+  );
+  return {
+    changes: replaceChange(progress.changes, {
+      ...change,
+      revertedAt: step.context.now,
+      revertedBy: step.context.principalId,
+      status: 'reverted',
+    }),
+    log: [
+      ...progress.log,
+      yield* logEntry(step.context, progress.log.length, {
+        action: 'reverted',
+        actorKind: 'human',
+        batchId: step.batchId,
+        changeId: change.id,
+        message: `${change.summary} (${targetLabel}) vráceno do stavu před změnou.`,
+      }),
+    ],
+    state: restored,
+  };
+});
+
+interface PendingProgress<Operation> {
+  readonly changes: readonly AiChange<Operation>[];
+  readonly log: readonly AiLogEntry[];
+}
+const rejectPendingChange = Effect.fn('AiApprovals.rejectPendingChange')(function* rejectOnePending<Operation>(
+  progress: PendingProgress<Operation>,
+  change: AiChange<Operation>,
+  step: RevertStep,
+): Effect.fn.Return<PendingProgress<Operation>, AiFailure> {
+  const changes = replaceChange(progress.changes, {
+    ...change,
+    decidedAt: step.context.now,
+    decidedBy: step.context.principalId,
+    decisionNote: 'Zamítnuto při vrácení celé dávky',
+    status: 'rejected',
   });
+  const entry = yield* logEntry(step.context, progress.log.length, {
+    action: 'rejected',
+    actorKind: 'human',
+    batchId: step.batchId,
+    changeId: change.id,
+    message: `Zamítnuto při vrácení dávky: ${change.summary} — ${change.target.label}`,
+  });
+  return { changes, log: [...progress.log, entry] };
+});
+const rejectPendingForBatch = Effect.fn('AiApprovals.rejectPendingForBatch')(function* rejectPending<Operation>(
+  progress: PendingProgress<Operation>,
+  original: readonly AiChange<Operation>[],
+  step: RevertStep,
+): Effect.fn.Return<PendingProgress<Operation>, AiFailure> {
+  const pending = original.filter((entry) => entry.batchId === step.batchId && entry.status === 'pending');
+  return yield* Effect.reduce(
+    pending,
+    () => progress,
+    (current, change) => rejectPendingChange(current, change, step),
+  );
+});
 
 /** Restores every applied change of one batch (newest first). Refuses the whole revert when anything changed since. */
-export const revertAiBatch = <State, Operation extends { readonly _tag: string }>(
+export const revertAiBatch = Effect.fn('AiApprovals.revertAiBatch')(function* revertBatch<
+  State,
+  Operation extends { readonly _tag: string },
+>(
   adapter: AiApprovalAdapter<State, Operation>,
   state: State,
   input: { readonly batchId: string; readonly note?: string | undefined },
   context: AiContext,
-): Effect.Effect<AiOutcome<State>, AiFailure> =>
-  Effect.gen(function* revertBatch() {
-    const slice = sliceOf(adapter, state);
-    const batch = slice.batches.find((entry) => entry.id === input.batchId);
-    if (batch === undefined) {
-      return yield* Effect.fail(notFound('Dávka AI změn neexistuje.'));
-    }
-    if (batch.revertedAt !== undefined) {
-      return yield* Effect.fail(conflict('Dávka už byla vrácena.'));
-    }
-    const note =
-      input.note !== undefined && input.note.trim().length >= 3
-        ? input.note.trim()
-        : `Vráceno: dávka AI „${batch.instruction.slice(0, 120)}“`;
-    let working = state;
-    let changes = slice.changes;
-    const log: AiLogEntry[] = [];
-    const applied = slice.changes
-      .filter((change) => change.batchId === batch.id && change.status === 'applied')
-      .toSorted((left, right) => (right.applySequence ?? 0) - (left.applySequence ?? 0));
-    for (const [index, change] of applied.entries()) {
-      const snapshots = change.snapshots ?? [];
-      const changedSince = snapshots.some(
-        (snapshot) => !sameJson(currentEncoded(adapter, working, snapshot.kind, snapshot.id), snapshot.after),
-      );
-      if (changedSince) {
-        return yield* Effect.fail(
-          conflict(
-            `${change.summary} (${change.target.label}): záznam se od schválení změnil, automaticky ho nevracím. Pozdější úpravy zůstaly zachovány.`,
-          ),
-        );
-      }
-      for (const [position, snapshot] of snapshots.toReversed().entries()) {
-        const restored = yield* adapter
-          .restore(working, snapshot, { ...context, suffix: `r${index}-${position}` }, note)
-          .pipe(Effect.result);
-        if (Result.isFailure(restored)) {
-          return yield* Effect.fail(conflict(`${change.summary} (${change.target.label}): ${restored.failure}`));
-        }
-        working = restored.success;
-      }
-      changes = replaceChange(changes, {
-        ...change,
-        revertedAt: context.now,
-        revertedBy: context.principalId,
-        status: 'reverted',
-      });
-      log.push(
-        logEntry(context, log.length, {
-          action: 'reverted',
-          actorKind: 'human',
-          batchId: batch.id,
-          changeId: change.id,
-          message: `${change.summary} (${change.target.label}) vráceno do stavu před změnou.`,
-        }),
-      );
-    }
-    for (const change of slice.changes.filter((entry) => entry.batchId === batch.id && entry.status === 'pending')) {
-      changes = replaceChange(changes, {
-        ...change,
-        decidedAt: context.now,
-        decidedBy: context.principalId,
-        decisionNote: 'Zamítnuto při vrácení celé dávky',
-        status: 'rejected',
-      });
-      log.push(
-        logEntry(context, log.length, {
-          action: 'rejected',
-          actorKind: 'human',
-          batchId: batch.id,
-          changeId: change.id,
-          message: `Zamítnuto při vrácení dávky: ${change.summary} — ${change.target.label}`,
-        }),
-      );
-    }
-    log.push(
-      logEntry(context, log.length, {
-        action: 'batch_reverted',
-        actorKind: 'human',
-        batchId: batch.id,
-        message: `Vrátit vše: ${revertedCount(applied.length)} do původního stavu.`,
-      }),
-    );
-    const current = sliceOf(adapter, working);
-    return {
-      entityIds: [batch.id],
-      state: adapter.setSlice(working, {
-        batches: current.batches.map((entry) =>
-          entry.id === batch.id
-            ? { ...entry, revertNote: note, revertedAt: context.now, revertedBy: context.principalId }
-            : entry,
-        ),
-        changes,
-        log: [...current.log, ...log],
-      }),
-    };
-  });
+): Effect.fn.Return<AiOutcome<State>, AiFailure> {
+  const slice = sliceOf(adapter, state);
+  const batch = slice.batches.find((entry) => entry.id === input.batchId);
+  if (batch === undefined) {
+    return yield* notFound('Dávka AI změn neexistuje.');
+  }
+  if (batch.revertedAt !== undefined) {
+    return yield* conflict('Dávka už byla vrácena.');
+  }
+  const note =
+    input.note !== undefined && input.note.trim().length >= 3
+      ? input.note.trim()
+      : `Vráceno: dávka AI „${batch.instruction.slice(0, 120)}“`;
+  const step: RevertStep = { batchId: batch.id, context, note };
+  const applied = slice.changes
+    .filter((change) => change.batchId === batch.id && change.status === 'applied')
+    .toSorted((left, right) => (right.applySequence ?? 0) - (left.applySequence ?? 0));
+  const initial: RevertProgress<State, Operation> = { changes: slice.changes, log: [], state };
+  const reverted = yield* Effect.reduce(
+    applied,
+    () => initial,
+    (progress, change, index) => revertChange(adapter, progress, change, index, step),
+  );
+  const pending = yield* rejectPendingForBatch(reverted, slice.changes, step);
+  const log = [
+    ...pending.log,
+    yield* logEntry(context, pending.log.length, {
+      action: 'batch_reverted',
+      actorKind: 'human',
+      batchId: batch.id,
+      message: `Vrátit vše: ${revertedCount(applied.length)} do původního stavu.`,
+    }),
+  ];
+  const current = sliceOf(adapter, reverted.state);
+  return {
+    entityIds: [batch.id],
+    state: adapter.setSlice(reverted.state, {
+      batches: current.batches.map((entry) =>
+        entry.id === batch.id
+          ? { ...entry, revertedAt: context.now, revertedBy: context.principalId, revertNote: note }
+          : entry,
+      ),
+      changes: pending.changes,
+      log: [...current.log, ...log],
+    }),
+  };
+});
 
 /** Only people decide and revert; an API key may only propose. */
 export const aiHumanOnlyCommands: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);

@@ -351,7 +351,11 @@ describe("OntOS source-of-truth boundary", () => {
     const p = live();
     expect(
       project({ products: [p] }).catalog.products[0].detail.variants[0].priceTiers,
-    ).toContainEqual({ minimumQuantity: 20, priceMinor: 110, priceExcludingVatMinor: 91 });
+    ).toContainEqual({
+      minimumQuantity: 20,
+      priceMinor: 110,
+      priceExcludingVatMinor: 91,
+    });
     p.variantRecords[0].active = false;
     expect(project({ products: [p] }).catalog.products).toEqual([]);
   });

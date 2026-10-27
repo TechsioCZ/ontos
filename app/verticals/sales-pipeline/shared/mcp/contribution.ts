@@ -4,7 +4,6 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 export const salesPipelineMcpContribution = defineOntosMcpContribution({
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
-  ownProposalEngine: true,
   commandFieldLabels: {
     expectedCloseDate: 'Předpokládané uzavření',
     lines: 'Položky',
@@ -34,6 +33,7 @@ export const salesPipelineMcpContribution = defineOntosMcpContribution({
   },
   keywords: 'obchod obchodní případ příležitost fáze nabídka prodej deal opportunity pipeline sales stage',
   label: { cs: 'Obchodní příležitosti', en: 'Sales opportunities' },
+  ownProposalEngine: true,
   page: '/prodej/prilezitosti',
   reads: {
     records: { title: { cs: 'Přehled obchodních příležitostí', en: 'Sales opportunities overview' } },

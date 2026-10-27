@@ -2,7 +2,8 @@
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { formatDateTime, formatMoney, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
+import { PurchaseOrderHistorySchema } from '../../../../../shared/domain/purchasing.ts';
 import { useEffect, useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type {
@@ -18,12 +19,12 @@ import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { quantityUnitLabel } from '../../../../ui/quantity-unit.ts';
 
-export type RunCommand = (command: OpsCommand) => Promise<CommandOutcome>;
+export type RunCommand = (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 
 /** Translator scoped to `facility-operations.purchasing.*`. */
 export const usePurchasingT = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.purchasing.${key}`, options);
+  return (key: string, options?: Parameters<typeof t>[1]) => t(`facility-operations.purchasing.${key}`, options);
 };
 
 const pragueDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
@@ -35,7 +36,7 @@ export const formatQuantity = (value: number, unit: string) =>
 export const formatAmount = (minor: number, currency = 'CZK') => formatMoney(minor, currency);
 /** Whole CZK typed by the user → minor units; `undefined` when not a non-negative number. */
 export const parseAmountMinor = (text: string): number | undefined => {
-  const value = Number(text.replace(/\s/g, '').replace(',', '.'));
+  const value = Number(text.replaceAll(/\s/gu, '').replace(',', '.'));
   return text.trim() === '' || !Number.isFinite(value) || value < 0 ? undefined : Math.round(value * 100);
 };
 export const parsePositiveInt = (text: string): number | undefined => {
@@ -49,7 +50,7 @@ export const parseInteger = (text: string): number | undefined => {
 /** Serial numbers typed one per line or separated by commas. */
 export const parseSerials = (text: string) =>
   text
-    .split(/[\n,;]+/)
+    .split(/[\n,;]+/u)
     .map((value) => value.trim())
     .filter((value) => value !== '');
 
@@ -62,15 +63,15 @@ export const formatStamp = (value: DateTime.Utc) => formatDateTime(DateTime.form
 
 export interface Lookup {
   readonly item: (id: string | undefined) => StockItem | undefined;
+  readonly order: (id: string | undefined) => PurchaseOrder | undefined;
   readonly supplier: (id: string | undefined) => Supplier | undefined;
   readonly warehouse: (id: string | undefined) => StockWarehouse | undefined;
-  readonly order: (id: string | undefined) => PurchaseOrder | undefined;
 }
 export const lookupOf = (state: PurchasingState): Lookup => {
-  const items = new Map(state.items.map((entry) => [entry.id as string, entry]));
-  const suppliers = new Map(state.suppliers.map((entry) => [entry.id as string, entry]));
-  const warehouses = new Map(state.warehouses.map((entry) => [entry.id as string, entry]));
-  const orders = new Map(state.orders.map((entry) => [entry.id as string, entry]));
+  const items = new Map<string, StockItem>(state.items.map((entry) => [entry.id, entry]));
+  const suppliers = new Map<string, Supplier>(state.suppliers.map((entry) => [entry.id, entry]));
+  const warehouses = new Map<string, StockWarehouse>(state.warehouses.map((entry) => [entry.id, entry]));
+  const orders = new Map<string, PurchaseOrder>(state.orders.map((entry) => [entry.id, entry]));
   return {
     item: (id) => (id === undefined ? undefined : items.get(id)),
     order: (id) => (id === undefined ? undefined : orders.get(id)),
@@ -83,13 +84,13 @@ export const failureKey = (reason: FailureReason | 'required') =>
   reason === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${reason}`;
 
 export interface RefOption {
-  readonly value: string;
   readonly ref: StockRef;
+  readonly value: string;
 }
 
 export type TaskOptionsState =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
+  | { readonly cause: Effect.Error<ReturnType<typeof executeWorkRecords>>; readonly status: 'failed' }
   | { readonly options: readonly RefOption[]; readonly status: 'ready' };
 
 /** Open Siampark work tasks (work-tasks public records read) for movement traceability. */
@@ -100,22 +101,28 @@ export const useTaskOptions = (): TaskOptionsState => {
     void browserRuntime.runPromise(
       executeWorkRecords({}, 'facility-operations.purchasing.tasks').pipe(
         Effect.match({
-          onFailure: (): TaskOptionsState => ({ status: 'failed' }),
+          onFailure: (cause): TaskOptionsState => ({ cause, status: 'failed' }),
           onSuccess: (response): TaskOptionsState => ({
-            options: response.items
-              .filter((task) => task.state !== 'CANCELLED')
-              .map((task) => ({
-                ref: { id: task.ref.resourceId, kind: 'task' as const, label: task.title },
-                value: `task:${task.ref.resourceId}`,
-              })),
+            options: response.items.flatMap((task) =>
+              task.state === 'CANCELLED'
+                ? []
+                : [
+                    {
+                      ref: { id: task.ref.resourceId, kind: 'task' as const, label: task.title },
+                      value: `task:${task.ref.resourceId}`,
+                    },
+                  ],
+            ),
             status: 'ready',
           }),
         }),
-        Effect.map((next) => {
-          if (alive) {
-            setState(next);
-          }
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {
@@ -124,3 +131,19 @@ export const useTaskOptions = (): TaskOptionsState => {
   }, []);
   return state;
 };
+
+const encodeHistoryEntry = Schema.encodeResult(Schema.fromJsonString(PurchaseOrderHistorySchema));
+
+/** Source-order occurrence numbers distinguish identical immutable events and remain stable as history grows. */
+export const historyRows = (history: PurchaseOrder['history']) =>
+  Result.gen(function* projectHistoryRows() {
+    const occurrences = new Map<string, number>();
+    const rows: { readonly entry: PurchaseOrder['history'][number]; readonly key: string }[] = [];
+    for (const entry of history) {
+      const identity = yield* encodeHistoryEntry(entry);
+      const occurrence = (occurrences.get(identity) ?? 0) + 1;
+      occurrences.set(identity, occurrence);
+      rows.push({ entry, key: `${identity}:${occurrence}` });
+    }
+    return rows.toReversed();
+  });

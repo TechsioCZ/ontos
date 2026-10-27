@@ -37,7 +37,7 @@ Read a specification only when the task or GitHub issue names it. A specificatio
 - Start supported business artifacts with Codesmith. If a category has no approved generator or gateway, extend or approve that boundary before creating the artifact.
 - Infrastructure and architecture files may be created directly when no generator applies.
 - Keep third-party HTTP adapters private to their owner. Define provider schemas, typed failures, request construction, resilience, diagnostics, and business mapping; use the generated Effect `HttpClient` service as the test seam.
-- Run pnpm commands from `app/` through `mise exec -- pnpm`.
+- Run pnpm commands from `app/` through `mise exec -- pnpm`. Install dependencies with `mise run deps`; this task caps pnpm importer workers to reduce APFS clone contention without limiting lint or build concurrency.
 
 ## Codesmith
 

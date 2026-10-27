@@ -3,15 +3,22 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { agentActivityKindLabel } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentActivityKindSchema,
+  AgentModuleKeySchema,
+  AgentPrincipalIdSchema,
+  agentActivityKindLabel,
+} from '@app/shared-contracts/agent-proposals';
 import type {
+  AgentActivityEntry,
   AgentActivityKind,
   AgentActivityRequest,
   AgentActivityResponse,
   AgentPageCursor,
 } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
-import type { ReactNode } from 'react';
+import { Option, Schema } from 'effect';
+import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -19,18 +26,19 @@ import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import { formatAgentTime } from './agent-platform-client.ts';
 import { DEFAULT_ACTIVITY_REQUEST, agentActivityData } from './platform-page-data.ts';
 
-type BadgeVariant = 'secondary' | 'success' | 'warning' | 'info' | 'outline';
+type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['variant']>;
+const ActivityFilterKind = Schema.Union([Schema.Literal(''), AgentActivityKindSchema]);
 
 const activityKinds: readonly AgentActivityKind[] = ['read', 'write', 'denied', 'failed', 'proposal', 'decision'];
 
-const kindBadgeVariant: Readonly<Record<AgentActivityKind, BadgeVariant>> = {
+const kindBadgeVariant = {
   decision: 'outline',
   denied: 'warning',
   failed: 'warning',
   proposal: 'info',
   read: 'secondary',
   write: 'success',
-};
+} satisfies Readonly<Record<AgentActivityKind, BadgeVariant>>;
 
 const activityFailureText = (httpStatus: number): string => {
   if (httpStatus === 403) {
@@ -43,19 +51,30 @@ const activityFailureText = (httpStatus: number): string => {
 };
 
 export const ActivityText = ({
-  path,
   children,
+  path,
 }: {
-  readonly path: string | undefined;
   readonly children: ReactNode;
+  readonly path: string | undefined;
 }) =>
   path === undefined ? (
-    <>{children}</>
+    children
   ) : (
     <LocalizedLink className="agent-activity-link" to={path}>
       {children}
     </LocalizedLink>
   );
+
+const activityDetail = (entry: AgentActivityEntry) => {
+  if (entry.record !== undefined) {
+    return (
+      <small className="block text-xs">
+        <ActivityText path={entry.record.path}>{entry.record.label}</ActivityText>
+      </small>
+    );
+  }
+  return entry.detail === undefined ? null : <small className="text-fg-secondary text-xs"> {entry.detail}</small>;
+};
 
 const activityRequest = (
   agent: string,
@@ -68,10 +87,10 @@ const activityRequest = (
     value = { ...value, cursor };
   }
   if (agent !== '') {
-    value = { ...value, agentPrincipalId: agent };
+    value = { ...value, agentPrincipalId: AgentPrincipalIdSchema.make(agent) };
   }
   if (moduleKey !== '') {
-    value = { ...value, moduleKey };
+    value = { ...value, moduleKey: AgentModuleKeySchema.make(moduleKey) };
   }
   if (kind !== '') {
     value = { ...value, kind };
@@ -154,7 +173,12 @@ export const ActivityPanel = () => {
         </label>
         <label>
           <span>Výsledek</span>
-          <select onChange={(event) => setKind(event.target.value as '' | AgentActivityKind)} value={kind}>
+          <select
+            onChange={(event) =>
+              setKind(Option.getOrElse(Schema.decodeUnknownOption(ActivityFilterKind)(event.target.value), () => ''))
+            }
+            value={kind}
+          >
             <option value="">Vše</option>
             {activityKinds.map((value) => (
               <option key={value} value={value}>
@@ -185,46 +209,44 @@ export const ActivityPanel = () => {
           <StatusText status="default">Žádná aktivita pro zvolený filtr.</StatusText>
         ) : (
           <>
-            <div aria-label="Aktivita agentů" className="agent-activity-table" role="table">
-              <div className="agent-activity-head" role="row">
-                <span role="columnheader">Čas</span>
-                <span role="columnheader">Agent</span>
-                <span role="columnheader">Modul</span>
-                <span role="columnheader">Akce</span>
-                <span role="columnheader">Výsledek</span>
-              </div>
-              {state.value.entries.map((entry) => (
-                <div key={entry.id} role="row">
-                  <span role="cell">{formatAgentTime(entry.occurredAt)}</span>
-                  <span role="cell">
-                    <ActivityText path={entry.agentPath}>{entry.agentName}</ActivityText>
-                    {entry.grants?.map((grant) => (
-                      <small className="block text-xs" key={grant.path}>
-                        <ActivityText path={grant.path}>{`Oprávnění: ${grant.label}`}</ActivityText>
-                      </small>
-                    ))}
-                  </span>
-                  <span role="cell">
-                    <ActivityText path={entry.modulePath}>{entry.moduleLabel}</ActivityText>
-                  </span>
-                  <span role="cell">
-                    <ActivityText path={entry.actionPath}>{entry.actionLabel}</ActivityText>
-                    {entry.record !== undefined ? (
-                      <small className="block text-xs">
-                        <ActivityText path={entry.record.path}>{entry.record.label}</ActivityText>
-                      </small>
-                    ) : entry.detail !== undefined ? (
-                      <small className="text-fg-secondary text-xs"> {entry.detail}</small>
-                    ) : null}
-                  </span>
-                  <span role="cell">
-                    <Badge size="sm" variant={kindBadgeVariant[entry.kind]}>
-                      {agentActivityKindLabel[entry.kind]}
-                    </Badge>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <table aria-label="Aktivita agentů" className="agent-activity-table">
+              <thead>
+                <tr className="agent-activity-head">
+                  <th scope="col">Čas</th>
+                  <th scope="col">Agent</th>
+                  <th scope="col">Modul</th>
+                  <th scope="col">Akce</th>
+                  <th scope="col">Výsledek</th>
+                </tr>
+              </thead>
+              <tbody>
+                {state.value.entries.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>{formatAgentTime(entry.occurredAt)}</td>
+                    <td>
+                      <ActivityText path={entry.agentPath}>{entry.agentName}</ActivityText>
+                      {entry.grants?.map((grant) => (
+                        <small className="block text-xs" key={grant.path}>
+                          <ActivityText path={grant.path}>{`Oprávnění: ${grant.label}`}</ActivityText>
+                        </small>
+                      ))}
+                    </td>
+                    <td>
+                      <ActivityText path={entry.modulePath}>{entry.moduleLabel}</ActivityText>
+                    </td>
+                    <td>
+                      <ActivityText path={entry.actionPath}>{entry.actionLabel}</ActivityText>
+                      {activityDetail(entry)}
+                    </td>
+                    <td>
+                      <Badge size="sm" variant={kindBadgeVariant[entry.kind]}>
+                        {agentActivityKindLabel[entry.kind]}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             <p className="text-fg-secondary text-xs">{`Zobrazeno ${state.value.entries.length} záznamů.`}</p>
           </>
         ))}

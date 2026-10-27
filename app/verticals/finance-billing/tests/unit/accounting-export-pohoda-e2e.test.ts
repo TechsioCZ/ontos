@@ -1,19 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics processEnv:off
-// @effect-diagnostics globalConsole:off
-import { execFileSync } from 'node:child_process';
+import { FinanceCompanyIdSchema } from '../../shared/apis/records.ts';
+import { NodeServices } from '@effect/platform-node';
+import { ChildProcess } from 'effect/unstable/process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, expect, it } from 'effect-rstest';
-import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
-import { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
-import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
+import { expect, it } from 'effect-rstest';
+import { Config, ConfigProvider, DateTime, Effect, FileSystem, Path, Schema, Stream } from 'effect';
+import { ApplyCommandPayloadSchema, FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import { transitionFinance } from '../../src/services/persistence.service.ts';
 import type { ExportPartnerReference, FinanceValidators } from '../../src/services/persistence.service.ts';
 
-const XSD = join(process.env['POHODA_XSD_DIR'] ?? '/Volumes/DevWork/agent-scratch/pohoda-xsd/download', 'data.xsd');
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
@@ -59,27 +54,45 @@ const empty: FinanceState = {
   invoices: [],
 };
 let counter = 0;
-const run = (state: FinanceState, command: FinanceCommand, validators = trustedReferences('Siampark')) => {
+const run = (
+  state: FinanceState,
+  command: typeof FinanceCommandSchema.Encoded,
+  validators = trustedReferences('Siampark'),
+) => {
   counter += 1;
-  return transitionFinance(state, command, scope, validators, {
+  const execution = {
     attemptId: `attempt-${counter}`,
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  }).pipe(
+  };
+  return Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap((decoded) => transitionFinance(state, decoded, scope, validators, execution)),
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' }),
     ),
   );
 };
-const validateAgainstXsd = (xml: string) => {
-  if (!existsSync(XSD)) {
-    console.warn(`POHODA XSD not found at ${XSD}; schema validation skipped`);
+/** Official STORMWARE dataPack 2.0 schemas are supplied outside the repository. */
+const validateAgainstXsd = Effect.fn('FinanceTest.validatePohodaXsd')(function* validateAgainstXsd(xml: string) {
+  const directory = yield* Config.String('POHODA_XSD_DIR').pipe(
+    Config.withDefault('/Volumes/DevWork/agent-scratch/pohoda-xsd/download'),
+  );
+  const path = yield* Path.Path;
+  const xsd = path.join(directory, 'data.xsd');
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(xsd))) {
+    yield* Effect.logWarning(`POHODA XSD not found at ${xsd}; schema validation skipped`);
     return;
   }
-  execFileSync('xmllint', ['--noout', '--schema', XSD, '-'], { input: xml, stdio: ['pipe', 'pipe', 'pipe'] });
-};
+  const validation = yield* ChildProcess.make('/usr/bin/xmllint', ['--noout', '--schema', xsd, '-'], {
+    stderr: 'inherit',
+    stdin: Stream.make(new TextEncoder().encode(xml)),
+    stdout: 'ignore',
+  });
+  expect(yield* validation.exitCode).toBe(0);
+});
 
 const issued = invoice('fv-1', {
   counterpartyName: 'Ateliér Horák s.r.o.',
@@ -92,19 +105,19 @@ const issued = invoice('fv-1', {
   vatRecap: [{ baseMinor: 2_500_000, rate: 21, vatMinor: 525_000 }],
 });
 const received = invoice('pf-1', {
-  counterpartyCompanyId: '47116617',
+  counterpartyCompanyId: Schema.decodeSync(FinanceCompanyIdSchema)('47116617'),
   counterpartyName: 'Kooperativa pojišťovna, a.s.',
   // Hand-typed supplier: no registry party, the IČO snapshot on the invoice is the partner identity.
   counterpartyRef: { ...counterpartyRef, resourceId: '00000000-0000-4000-8000-000000000000' },
   direction: 'INCOMING',
   documentNumber: '7720115',
-  issueDate: '2026-09-20',
   dueDate: '2026-10-04',
+  issueDate: '2026-09-20',
   totalMinor: 3_120_000,
 });
 
-describe('S08 POHODA XML handover end-to-end', () => {
-  it.effect('Siampark: setup IČO + session name + registry partner become a valid, hashed, versioned dataPack', () =>
+it.layer(NodeServices.layer)('S08 POHODA XML handover end-to-end', (test) => {
+  test.effect('Siampark: setup IČO + session name + registry partner become a valid, hashed, versioned dataPack', () =>
     Effect.gen(function* siampark() {
       const configured = yield* run(
         { ...empty, invoices: [issued, received] },
@@ -135,7 +148,7 @@ describe('S08 POHODA XML handover end-to-end', () => {
       expect(created?.issuerName).toBe('Siampark');
       expect(created?.issuerIco).toBe('12345678');
       const content = created?.content ?? '';
-      expect(created?.sha256).toBe(createHash('sha256').update(content, 'utf8').digest('hex'));
+      expect(created?.sha256).toBe(createHash('sha256').update(content, 'utf-8').digest('hex'));
       expect(content).toContain('id="UP-2026-001-v1" ico="12345678"');
       expect(content).toContain('<typ:company>Siampark</typ:company>');
       expect(content).toContain('<typ:dic>CZ12345678</typ:dic>');
@@ -147,11 +160,11 @@ describe('S08 POHODA XML handover end-to-end', () => {
       expect(content).not.toContain('SIMULACE');
       // S08-03: a handover never marks invoices as booked.
       expect(result.state.invoices.every((entry) => entry.accountingSyncState === 'NOT_SYNCED')).toBe(true);
-      validateAgainstXsd(content);
+      yield* validateAgainstXsd(content);
     }),
   );
 
-  it.effect('Obchodní firma without an IČO: issuer is the selected company name, no ico attribute, still valid', () =>
+  test.effect('Obchodní firma without an IČO: issuer is the selected company name, no ico attribute, still valid', () =>
     Effect.gen(function* obchod() {
       const result = yield* run(
         { ...empty, invoices: [issued] },
@@ -168,11 +181,11 @@ describe('S08 POHODA XML handover end-to-end', () => {
       expect(created?.issuerIco).toBeUndefined();
       expect(created?.content).not.toContain(' ico="');
       expect(created?.content).toContain('<typ:company>Obchodní firma</typ:company>');
-      validateAgainstXsd(created?.content ?? '');
+      yield* validateAgainstXsd(created?.content ?? '');
     }),
   );
 
-  it.effect('browser-sent issuer, partner and author fields cannot reach the file', () =>
+  test.effect('browser-sent issuer, partner and author fields cannot reach the file', () =>
     Effect.gen(function* forged() {
       const payload = yield* Schema.decodeUnknownEffect(ApplyCommandPayloadSchema)({
         command: {
@@ -202,7 +215,7 @@ describe('S08 POHODA XML handover end-to-end', () => {
       expect(content).not.toContain('ucetni@demo.ontos');
       expect(content).toContain('https://shell.example.test/cs/finance?resourceId=fv-1');
       expect(content).not.toContain('untrusted.example.test');
-      validateAgainstXsd(content);
+      yield* validateAgainstXsd(content);
     }),
   );
 });

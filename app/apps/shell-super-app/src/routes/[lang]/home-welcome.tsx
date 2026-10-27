@@ -57,9 +57,10 @@ export const HomeWelcome = ({
     { homeCurrent: true, language: language ?? '', navigation, unavailableDeployments },
     t,
   );
-  const groups = model.groups
-    .map((group) => ({ ...group, links: group.links.filter((link) => link.enabled && link.href !== null) }))
-    .filter((group) => group.links.length > 0);
+  const groups = model.groups.flatMap((group) => {
+    const links = group.links.filter((link) => link.enabled && link.href !== null);
+    return links.length > 0 ? [{ ...group, links }] : [];
+  });
   const links = groups.flatMap((group) => group.links);
   const start = startLink(links);
 

@@ -1,5 +1,6 @@
 import { assert, describe, expect, it } from 'effect-rstest';
-import { ConfigProvider, DateTime, Effect, Exit } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Schema } from 'effect';
+import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
@@ -72,14 +73,16 @@ const empty: FinanceState = {
   invoices: [],
 };
 let counter = 0;
-const run = (state: FinanceState, command: FinanceCommand) => {
+const run = (state: FinanceState, command: typeof FinanceCommandSchema.Encoded) => {
   counter += 1;
-  return transitionFinance(state, command, scope, validators, {
+  const execution = {
     attemptId: `attempt-${counter}`,
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  }).pipe(
+  };
+  return Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap((decoded) => transitionFinance(state, decoded, scope, validators, execution)),
     Effect.provideService(
       ConfigProvider.ConfigProvider,
       ConfigProvider.fromEnvRecord({ ONTOS_GATEWAY_ISSUER: 'https://shell.example.test' }),

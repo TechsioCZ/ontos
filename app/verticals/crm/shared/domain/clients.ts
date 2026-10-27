@@ -2,8 +2,9 @@
 // Client cards, contact persons and the assignment history client -> salesperson.
 // Adding fields: make them Schema.optionalKey (persisted JSON from older revisions must still decode).
 import { Schema } from 'effect';
-import type { CrmViewer } from './access.ts';
 import { canReadClient } from './access.ts';
+import type { CrmViewer } from './access.ts';
+
 import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
 
 /**
@@ -140,8 +141,15 @@ export type ClientsSlice = typeof ClientsSliceSchema.Type;
 export const initialClientsSlice: ClientsSlice = { assignmentHistory: [], contacts: [], events: [], items: [] };
 
 /** Ids of the clients this viewer may see. Every other area filters by this set. */
-export const visibleClientIds = (slice: ClientsSlice, viewer: CrmViewer): ReadonlySet<string> =>
-  new Set(slice.items.filter((client) => canReadClient(viewer, client)).map((client) => client.id));
+export const visibleClientIds = (slice: ClientsSlice, viewer: CrmViewer): ReadonlySet<string> => {
+  const ids = new Set<string>();
+  for (const client of slice.items) {
+    if (canReadClient(viewer, client)) {
+      ids.add(client.id);
+    }
+  }
+  return ids;
+};
 
 /** Read projection: only visible clients and their contacts / assignment history. */
 export const projectClientsSlice = (slice: ClientsSlice, visible: ReadonlySet<string>): ClientsSlice => ({

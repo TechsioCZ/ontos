@@ -1,8 +1,16 @@
 import { dayOccupancy } from '../../src/routes/[lang]/najmy/occupancy-calendar.tsx';
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Exit, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 
-import { OccupancySchema, OccupancyStateSchema, TenantCaseDetailsSchema } from '../../shared/apis/records.ts';
+import {
+  NoticeTemplateKeySchema,
+  OccupancySchema,
+  OccupancyStateSchema,
+  PreparedNoticeIdSchema,
+  RegistrationSheetIdSchema,
+  RegistrationSheetSchema,
+  TenantCaseDetailsSchema,
+} from '../../shared/apis/records.ts';
 import type { Occupancy, OccupancyState } from '../../shared/apis/records.ts';
 import {
   filterOccupancyRecords,
@@ -302,23 +310,23 @@ it.effect(
       const initial = { occupancies: [draft] };
       const contacts = [
         {
+          email: 'lucie@kavarna.demo',
           id: '81000000-0000-4000-8000-000000000001',
           name: 'Lucie Parková',
-          role: 'Jednatelka',
-          email: 'lucie@kavarna.demo',
           phone: '+420 777 101 101',
+          role: 'Jednatelka',
         },
         {
+          email: 'petr@kavarna.demo',
           id: '81000000-0000-4000-8000-000000000002',
           name: 'Petr Novák',
-          role: 'Provozní',
-          email: 'petr@kavarna.demo',
           phone: '+420 777 101 102',
+          role: 'Provozní',
         },
       ];
       const created = yield* transitionOccupancy(
         initial,
-        { _tag: 'UpdateTenantDossier', occupancyRef, contacts },
+        { _tag: 'UpdateTenantDossier', contacts, occupancyRef },
         actor,
         unavailableOccupancyValidators,
       );
@@ -326,16 +334,16 @@ it.effect(
         created.snapshot,
         {
           _tag: 'UpdateTenantDossier',
-          occupancyRef,
           activity: { kind: 'CALL', summary: 'Domluven termín předání jednotky.' },
           caseState: 'IN_PROGRESS',
+          occupancyRef,
         },
         actor,
         unavailableOccupancyValidators,
       );
       const archived = yield* transitionOccupancy(
         call.snapshot,
-        { _tag: 'UpdateTenantDossier', occupancyRef, archived: true },
+        { _tag: 'UpdateTenantDossier', archived: true, occupancyRef },
         actor,
         unavailableOccupancyValidators,
       );
@@ -346,13 +354,13 @@ it.effect(
       expect(dossier?.history.map((entry) => entry.kind)).toEqual(['CONTACTS', 'CASE', 'CALL', 'ARCHIVE']);
       expect(
         dossier?.history.every(
-          (entry) => entry.authorPrincipalId === actor.principalId && entry.occurredAt.length > 10,
+          (entry) => entry.authorPrincipalId === actor.principalId && DateTime.formatIso(entry.occurredAt).length > 10,
         ),
       ).toBe(true);
       expect(archived.snapshot.occupancies).toEqual(initial.occupancies);
       const restored = yield* transitionOccupancy(
         archived.snapshot,
-        { _tag: 'UpdateTenantDossier', occupancyRef, archived: false },
+        { _tag: 'UpdateTenantDossier', archived: false, occupancyRef },
         actor,
         unavailableOccupancyValidators,
       );
@@ -366,8 +374,8 @@ it.effect('rejects dossier updates without trusted author, for another tenant an
     const initial = { occupancies: [draft] };
     const command = {
       _tag: 'UpdateTenantDossier' as const,
-      occupancyRef,
       activity: { kind: 'NOTE' as const, summary: 'Předání.' },
+      occupancyRef,
     };
     expect(
       Exit.isFailure(yield* Effect.exit(transitionOccupancy(initial, command, scope, unavailableOccupancyValidators))),
@@ -385,11 +393,11 @@ it.effect('rejects dossier updates without trusted author, for another tenant an
       ),
     ).toBe(true);
     const contact = {
+      email: '',
       id: '81000000-0000-4000-8000-000000000001',
       name: 'Lucie Parková',
-      role: '',
-      email: '',
       phone: '',
+      role: '',
     };
     expect(
       Exit.isFailure(
@@ -407,7 +415,7 @@ it.effect('rejects dossier updates without trusted author, for another tenant an
 );
 
 it('uses the source lease interval for each calendar day and immediately frees cancelled reservations', () => {
-  const confirmed = { ...draft, state: 'CONFIRMED' as const, startDate: '2027-01-01', endDate: '2027-01-31' };
+  const confirmed = { ...draft, endDate: '2027-01-31', startDate: '2027-01-01', state: 'CONFIRMED' as const };
   expect(dayOccupancy([confirmed], unitRef.resourceId, '2027-01-15')).toBe(confirmed);
   expect(dayOccupancy([confirmed], unitRef.resourceId, '2027-01-31')).toBeUndefined();
   expect(dayOccupancy([{ ...confirmed, state: 'CANCELLED' }], unitRef.resourceId, '2027-01-15')).toBeUndefined();
@@ -417,43 +425,45 @@ it('uses the source lease interval for each calendar day and immediately frees c
 it.effect('stores complete tenant case metadata with actor and history across later status updates', () =>
   Effect.gen(function* caseMetadata() {
     const actor = { ...scope, principalId: '72000000-0000-4000-8000-000000000021' };
-    const caseDetails = {
-      subject: 'Prodloužení nájmu R101',
-      owner: 'Vedení Siampark',
+    const caseWire = {
       deadline: '2026-11-15',
       estimatedValueMinor: 5_450_000,
+      owner: 'Vedení Siampark',
+      subject: 'Prodloužení nájmu R101',
     };
+    const caseDetails = yield* Schema.decodeEffect(TenantCaseDetailsSchema)(caseWire);
     const created = yield* transitionOccupancy(
       { ...empty, occupancies: [draft] },
-      { _tag: 'UpdateTenantDossier', occupancyRef, caseState: 'IN_PROGRESS', caseDetails },
+      { _tag: 'UpdateTenantDossier', caseDetails, caseState: 'IN_PROGRESS', occupancyRef },
       actor,
       validators,
     );
     const changed = yield* transitionOccupancy(
       created.snapshot,
-      { _tag: 'UpdateTenantDossier', occupancyRef, caseState: 'CONFIRMED' },
+      { _tag: 'UpdateTenantDossier', caseState: 'CONFIRMED', occupancyRef },
       actor,
       validators,
     );
-    const reloaded = yield* Schema.decodeEffect(OccupancyStateSchema)(changed.snapshot);
+    const wireSnapshot = yield* Schema.encodeEffect(OccupancyStateSchema)(changed.snapshot);
+    const reloaded = yield* Schema.decodeEffect(OccupancyStateSchema)(wireSnapshot);
     expect(reloaded.tenantDossiers?.[0]).toMatchObject({
-      counterpartyId: customerCounterpartyRef.resourceId,
-      caseState: 'CONFIRMED',
       caseDetails,
+      caseState: 'CONFIRMED',
+      counterpartyId: customerCounterpartyRef.resourceId,
     });
     expect(reloaded.tenantDossiers?.[0]?.history).toHaveLength(3);
     expect(reloaded.tenantDossiers?.[0]?.history.every((entry) => entry.authorPrincipalId === actor.principalId)).toBe(
       true,
     );
-    expect(
-      Exit.isSuccess(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: null })),
-    ).toBe(true);
-    expect(Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, deadline: '2026-02-31' }))).toBe(
+    expect(Exit.isSuccess(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseWire, estimatedValueMinor: null }))).toBe(
       true,
     );
-    expect(
-      Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseDetails, estimatedValueMinor: -1 })),
-    ).toBe(true);
+    expect(Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseWire, deadline: '2026-02-31' }))).toBe(
+      true,
+    );
+    expect(Exit.isFailure(Schema.decodeExit(TenantCaseDetailsSchema)({ ...caseWire, estimatedValueMinor: -1 }))).toBe(
+      true,
+    );
   }),
 );
 
@@ -461,16 +471,16 @@ it.effect('manually reserves a stay with people and note without creating integr
   Effect.gen(function* manualStay() {
     const record: Occupancy = {
       ...draft,
-      kind: 'SHORT_STAY',
       customerCounterpartyRef: null,
       guestPartyRef: {
         moduleId: 'party.registry',
-        resourceType: 'party.registry.party',
         resourceId: '77777777-7777-4777-8777-777777777777',
+        resourceType: 'party.registry.party',
         tenantId,
       },
-      peopleCount: 3,
+      kind: 'SHORT_STAY',
       note: 'Rodinný pobyt, příjezd odpoledne.',
+      peopleCount: 3,
     };
     const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record }, scope, validators);
     const confirmed = yield* transitionOccupancy(
@@ -492,10 +502,10 @@ it.effect('manually reserves a stay with people and note without creating integr
       validators,
     );
     expect(completed.snapshot.occupancies[0]).toMatchObject({
-      peopleCount: 3,
-      note: record.note,
-      state: 'COMPLETED',
       externalBookingCorrelation: null,
+      note: record.note,
+      peopleCount: 3,
+      state: 'COMPLETED',
     });
     const cancelled = yield* transitionOccupancy(
       confirmed.snapshot,
@@ -516,8 +526,8 @@ describe('Counterparty dossier, audit, registration sheet and notices', () => {
         empty,
         {
           _tag: 'UpdateCounterpartyDossier',
-          counterpartyRef: prospect,
           activity: { kind: 'NOTE', summary: 'První kontakt.' },
+          counterpartyRef: prospect,
         },
         actor,
         validators,
@@ -527,12 +537,12 @@ describe('Counterparty dossier, audit, registration sheet and notices', () => {
         noted.snapshot,
         {
           _tag: 'UpdateCounterpartyDossier',
-          counterpartyRef: prospect,
-          contacts: [
-            { id: '99999999-9999-4999-8999-999999999991', name: 'Eva Bílá', role: 'Jednatelka', email: '', phone: '' },
-            { id: '99999999-9999-4999-8999-999999999992', name: 'Petr Bílý', role: 'Provoz', email: '', phone: '' },
-          ],
           caseState: 'IN_PROGRESS',
+          contacts: [
+            { email: '', id: '99999999-9999-4999-8999-999999999991', name: 'Eva Bílá', phone: '', role: 'Jednatelka' },
+            { email: '', id: '99999999-9999-4999-8999-999999999992', name: 'Petr Bílý', phone: '', role: 'Provoz' },
+          ],
+          counterpartyRef: prospect,
         },
         actor,
         validators,
@@ -544,7 +554,7 @@ describe('Counterparty dossier, audit, registration sheet and notices', () => {
       yield* rejected(
         transitionOccupancy(
           empty,
-          { _tag: 'UpdateCounterpartyDossier', counterpartyRef: prospect, activity: { kind: 'NOTE', summary: 'x' } },
+          { _tag: 'UpdateCounterpartyDossier', activity: { kind: 'NOTE', summary: 'x' }, counterpartyRef: prospect },
           actor,
           {
             ...validators,
@@ -591,13 +601,19 @@ describe('Counterparty dossier, audit, registration sheet and notices', () => {
         const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record: draft }, actor, validators);
         const sheet = {
           _tag: 'CreateRegistrationSheet',
+          note: '',
           occupancyRef,
-          sheetId: 'abababab-abab-4bab-8bab-abababababab',
           occupants: [
-            { name: 'Eva Bílá', birthDate: null, nationality: 'Česká republika', identityDocument: '', address: '' },
+            {
+              address: '',
+              birthDate: Option.none(),
+              identityDocument: '',
+              name: 'Eva Bílá',
+              nationality: 'Česká republika',
+            },
           ],
           purpose: 'Bydlení – nájem',
-          note: '',
+          sheetId: RegistrationSheetIdSchema.make('abababab-abab-4bab-8bab-abababababab'),
         } as const;
         yield* rejected(transitionOccupancy(created.snapshot, sheet, actor, validators));
         const confirmed = yield* transitionOccupancy(
@@ -607,22 +623,28 @@ describe('Counterparty dossier, audit, registration sheet and notices', () => {
           validators,
         );
         const withSheet = yield* transitionOccupancy(confirmed.snapshot, sheet, actor, validators);
-        expect(withSheet.snapshot.registrationSheets?.[0]).toMatchObject({
+        const storedSheet = withSheet.snapshot.registrationSheets?.[0];
+        expect(storedSheet).toBeDefined();
+        if (storedSheet === undefined) {
+          expect.unreachable('Expected the created registration sheet');
+        }
+        const sheetWire = yield* Schema.encodeEffect(RegistrationSheetSchema)(storedSheet);
+        expect(sheetWire).toMatchObject({
+          endDate: draft.endDate,
           number: expect.stringMatching(/^EL-\d{4}-001$/u),
           startDate: draft.startDate,
-          endDate: draft.endDate,
           unitId: unitRef.resourceId,
         });
         yield* rejected(transitionOccupancy(withSheet.snapshot, sheet, actor, validators));
         const notice = {
           _tag: 'PrepareNotice',
-          occupancyRef,
-          noticeId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+          body: 'Dobrý den, navrhněte termín předání.',
           channel: 'EMAIL',
-          templateKey: 'lease-handover',
+          noticeId: PreparedNoticeIdSchema.make('cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd'),
+          occupancyRef,
           recipient: 'eva@pekarna-bila.example',
           subject: 'Předání jednotky',
-          body: 'Dobrý den, navrhněte termín předání.',
+          templateKey: NoticeTemplateKeySchema.make('lease-handover'),
         } as const;
         yield* rejected(
           transitionOccupancy(withSheet.snapshot, { ...notice, recipient: 'není e-mail' }, actor, validators),

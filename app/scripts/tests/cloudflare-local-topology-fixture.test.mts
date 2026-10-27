@@ -552,17 +552,28 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     expect(readdirSync(directory).some((name) => name.startsWith(proofDirectoryPrefix))).toBe(false);
     const shellFields = readFileSync(shellFile, 'utf-8').trim().split('\n');
     const partyFields = readFileSync(partyFile, 'utf-8').trim().split('\n');
-    const existingKeys = [
+    const bindingKeys = [
       'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE',
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE',
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE',
       'SPICEDB_ENDPOINT',
       'SPICEDB_PRESHARED_KEY',
     ];
-    expect(partyFields.length).toBe(3);
-    expect(partyFields.map((line) => line.split('=', 1)[0])).toEqual(expect.arrayContaining(existingKeys));
-    expect(shellFields.length).toBe(5);
-    expect(shellFields.map((line) => line.split('=', 1)[0])).toEqual(
-      expect.arrayContaining([...existingKeys, 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET']),
-    );
+    expect(partyFields.length).toBe(5);
+    expect(partyFields.map((line) => line.split('=', 1)[0])).toEqual(bindingKeys);
+    expect(partyFields).toEqual([
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://ontos_runtime:workerd-proof@127.0.0.1:5432/workerd-proof',
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_PARTY_REGISTRY_HYPERDRIVE=postgresql://party_registry_runtime:workerd-proof@127.0.0.1:5432/workerd-proof',
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_GATEWAY_ISSUER_HYPERDRIVE=postgresql://shell_gateway_issuer:workerd-proof@127.0.0.1:5432/workerd-proof',
+      'SPICEDB_ENDPOINT=localhost:8443',
+      'SPICEDB_PRESHARED_KEY=workerd-proof',
+    ]);
+    expect(shellFields.length).toBe(7);
+    expect(shellFields.map((line) => line.split('=', 1)[0])).toEqual([
+      ...bindingKeys,
+      'BETTER_AUTH_URL',
+      'BETTER_AUTH_SECRET',
+    ]);
     const authUrl = shellFields.find((line) => line.startsWith('BETTER_AUTH_URL='))?.slice('BETTER_AUTH_URL='.length);
     expect(authUrl).toBe(localShellOrigin);
     expect(new URL(authUrl ?? '').protocol).toBe('http:');

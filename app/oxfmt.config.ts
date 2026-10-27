@@ -3,6 +3,7 @@ import { defineConfig } from 'oxfmt';
 export default defineConfig({
   printWidth: 120,
   trailingComma: 'all',
+  overrides: [{ files: ['akros-storefront/**'], options: { singleQuote: false, printWidth: 100 } }],
   ignorePatterns: [
     '.agents',
     '.codex/skills',

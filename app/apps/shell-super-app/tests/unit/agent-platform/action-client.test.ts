@@ -1,4 +1,9 @@
-import { Deferred, Effect, Fiber, Random } from 'effect';
+import {
+  AgentDecideRequestSchema,
+  AgentItemKeySchema,
+  AgentRevertRequestSchema,
+} from '@app/shared-contracts/agent-proposals';
+import { Deferred, Effect, Fiber, Random, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { TestClock } from 'effect/testing';
 import { afterAll, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -19,14 +24,19 @@ beforeEach(() => {
 afterAll(() => {
   globalThis.fetch = originalFetch;
 });
-const decision = { batchKey: 'core:batch', decision: 'approve', itemKeys: ['core:item'], note: 'Reviewed' } as const;
+const decision = Schema.decodeUnknownSync(AgentDecideRequestSchema)({
+  batchKey: 'core:batch',
+  decision: 'approve',
+  itemKeys: ['core:item'],
+  note: 'Reviewed',
+});
 
 it.effect('retries a lost decision response with the same ingress key and exact original payload', () =>
   Effect.gen(function* retryDecision() {
-    const itemKeys: string[] = [...decision.itemKeys];
+    const itemKeys = [...decision.itemKeys];
     const payload = { ...decision, itemKeys };
     const intent = yield* agentMutationIntent(undefined, payload);
-    payload.itemKeys.push('core:changed-after-dispatch');
+    payload.itemKeys.push(AgentItemKeySchema.make('core:changed-after-dispatch'));
     fetch.mockRejectedValueOnce(new Error('connection lost'));
     const first = yield* decideAgentItems(intent);
     expect(agentMutationUncertain(first)).toBe(true);
@@ -44,7 +54,10 @@ it.effect('retries a lost decision response with the same ingress key and exact 
 
 it.effect('retains a revert intent after an unreadable success body and retries with the same header', () =>
   Effect.gen(function* retryRevert() {
-    const intent = yield* agentMutationIntent(undefined, { batchKey: 'core:batch', note: 'Restore' });
+    const intent = yield* agentMutationIntent(
+      undefined,
+      Schema.decodeUnknownSync(AgentRevertRequestSchema)({ batchKey: 'core:batch', note: 'Restore' }),
+    );
     fetch.mockResolvedValueOnce(new Response('not the expected response'));
     expect(agentMutationUncertain(yield* revertAgentBatch(intent))).toBe(true);
     fetch.mockResolvedValueOnce(Response.json({ message: 'Restored', outcome: 'reverted' }));

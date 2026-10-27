@@ -9,7 +9,7 @@
  * carries only the module texts; the Shell loads a module's tools when its MCP endpoint needs them. Core and the
  * Shell never name a vertical, a tool or a schema.
  */
-import { Predicate, Schema } from 'effect';
+import { Result, Schema } from 'effect';
 
 const nonEmpty = Schema.String.check(Schema.isMinLength(1));
 
@@ -18,8 +18,6 @@ export const OntosMcpTextSchema = Schema.Struct({
   en: nonEmpty.check(Schema.isMaxLength(400)),
 });
 export type OntosMcpText = typeof OntosMcpTextSchema.Type;
-
-const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
 /** Where a command's optimistic-concurrency revision lives in the answer of one read. */
 export const OntosMcpRevisionSchema = Schema.Struct({
@@ -30,7 +28,7 @@ export const OntosMcpRevisionSchema = Schema.Struct({
   /** Path of the read on the vertical BFF, e.g. `/reads/records`. */
   path: nonEmpty,
   /** JSON body of the read. */
-  query: JsonObjectSchema,
+  query: Schema.Record(Schema.String, Schema.Json),
 });
 export type OntosMcpRevision = typeof OntosMcpRevisionSchema.Type;
 
@@ -45,7 +43,7 @@ export const OntosMcpToolSchema = Schema.Struct({
   /** Stable id: `<moduleId>/read/<slug>`, `<moduleId>/command/<Tag>` or `<moduleId>/action/<slug>`. */
   id: nonEmpty,
   /** JSON Schema of the tool arguments; `$ref`s point into the contribution's `definitions`. */
-  inputSchema: JsonObjectSchema,
+  inputSchema: Schema.Record(Schema.String, Schema.Json),
   /**
    * Handler on the vertical BFF (`path` relative to `/<appId>-api`). With `commandTag` the arguments are wrapped as
    * `{ command: { _tag, ...arguments }, expectedRevision }`; otherwise they are posted as they are.
@@ -89,17 +87,17 @@ export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
 
 /** Record navigation owned by the module. Records are resolved only from its read as the viewer. */
 export const OntosMcpRecordLinkSchema = Schema.Struct({
-  resourceType: nonEmpty,
-  path: shellPagePath,
-  queryParam: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/u)),
-  /** Target kind used by this module’s own proposal engine, when it has one. */
-  proposalTargetKind: Schema.optionalKey(nonEmpty),
-  /** Dot path of the visible record array in the module's declared revision read. */
-  recordsPath: nonEmpty,
+  /** Exact commands which touch this record, and the field containing its id. */
+  commands: Schema.Array(Schema.Struct({ idField: nonEmpty, tag: nonEmpty })),
   idField: nonEmpty,
   labelField: nonEmpty,
-  /** Exact commands which touch this record, and the field containing its id. */
-  commands: Schema.Array(Schema.Struct({ tag: nonEmpty, idField: nonEmpty })),
+  path: shellPagePath,
+  /** Target kind used by this module’s own proposal engine, when it has one. */
+  proposalTargetKind: Schema.optionalKey(nonEmpty),
+  queryParam: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/u)),
+  /** Dot path of the visible record array in the module's declared revision read. */
+  recordsPath: nonEmpty,
+  resourceType: nonEmpty,
 });
 export type OntosMcpRecordLink = typeof OntosMcpRecordLinkSchema.Type;
 
@@ -182,7 +180,6 @@ export interface OntosMcpWriteInput extends OntosMcpToolTextInput {
 
 /** Explicitly not offered to agents (approval plumbing, demo maintenance, internal recovery). */
 export const OntosMcpHidden = 'hidden' as const;
-export type OntosMcpHidden = typeof OntosMcpHidden;
 
 /**
  * What a vertical authors. Every read (`/reads/<slug>` of its public APIs), every variant of a command-union Action
@@ -190,9 +187,9 @@ export type OntosMcpHidden = typeof OntosMcpHidden;
  * {@link OntosMcpHidden}; the contract generator fails otherwise.
  */
 export interface OntosMcpContributionInput {
+  readonly actions?: Readonly<Record<string, OntosMcpWriteInput | typeof OntosMcpHidden>>;
   /** Module-owned page showing an agent’s identity and company grants; accepts `?agent=<principalId>`. */
   readonly agentAdministrationPage?: string;
-  readonly actions?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
   /** Read slug of the module's agent review read (see {@link OntosMcpApprovalReviewSchema}). */
   readonly approvalReview?: { readonly privateRecords?: boolean; readonly read: string };
   readonly approvals: boolean;
@@ -200,7 +197,7 @@ export interface OntosMcpContributionInput {
   readonly approvalsPage?: OntosMcpApprovalsPage;
   /** See {@link OntosMcpCommandFieldLabelsSchema}; needs `approvals`. */
   readonly commandFieldLabels?: OntosMcpCommandFieldLabels;
-  readonly commands?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
+  readonly commands?: Readonly<Record<string, OntosMcpWriteInput | typeof OntosMcpHidden>>;
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
@@ -208,7 +205,7 @@ export interface OntosMcpContributionInput {
   readonly legalEntityWriteRelations?: readonly string[];
   readonly ownProposalEngine?: boolean;
   readonly page?: string;
-  readonly reads: Readonly<Record<string, OntosMcpToolTextInput | OntosMcpHidden>>;
+  readonly reads: Readonly<Record<string, OntosMcpToolTextInput | typeof OntosMcpHidden>>;
   readonly recordLinks?: readonly OntosMcpRecordLink[];
   readonly revision?: {
     readonly field?: string;
@@ -219,25 +216,19 @@ export interface OntosMcpContributionInput {
   };
 }
 
-const isText = (value: unknown): value is OntosMcpText =>
-  Predicate.isObject(value) &&
-  Predicate.isString(Reflect.get(value, 'cs')) &&
-  Predicate.isString(Reflect.get(value, 'en')) &&
-  Reflect.get(value, 'cs') !== '' &&
-  Reflect.get(value, 'en') !== '';
+// Import-time authoring checks require nonempty text; the serialized codec applies its length limit.
+const RequiredMcpTextSchema = Schema.Struct({ cs: nonEmpty, en: nonEmpty });
+const isText = Schema.is(RequiredMcpTextSchema);
 
 class OntosMcpContributionError extends Schema.TaggedError<OntosMcpContributionError>()('OntosMcpContributionError', {
   message: Schema.String,
 }) {}
 
-/** Checks the authored texts early (at import), so a missing title fails the vertical's own tests. */
-export const defineOntosMcpContribution = <const Input extends OntosMcpContributionInput>(input: Input): Input => {
-  const fail = (message: string): never => {
-    throw new OntosMcpContributionError({ message });
-  };
-  if (!isText(input.label) || !isText(input.description)) {
-    fail('MCP contribution needs Czech and English label and description');
-  }
+const fail = (message: string): never => {
+  throw new OntosMcpContributionError({ message });
+};
+
+const validateToolTexts = (input: OntosMcpContributionInput): void => {
   for (const [group, entries] of [
     ['reads', input.reads],
     ['commands', input.commands ?? {}],
@@ -252,6 +243,14 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
       }
     }
   }
+};
+
+/** Checks the authored texts early (at import), so a missing title fails the vertical's own tests. */
+export const defineOntosMcpContribution = <const Input extends OntosMcpContributionInput>(input: Input): Input => {
+  if (!isText(input.label) || !isText(input.description)) {
+    fail('MCP contribution needs Czech and English label and description');
+  }
+  validateToolTexts(input);
   if (input.approvalReview !== undefined && !(input.approvalReview.read in input.reads)) {
     fail(`MCP approval review read ${input.approvalReview.read} is not one of the module's reads`);
   }
@@ -271,7 +270,7 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
     if (input.revision === undefined) {
       fail('MCP record links need a declared records read');
     }
-    Schema.decodeSync(Schema.Array(OntosMcpRecordLinkSchema))(input.recordLinks);
+    Result.getOrThrow(Schema.decodeResult(Schema.Array(OntosMcpRecordLinkSchema))(input.recordLinks));
   }
   return Object.freeze(input);
 };

@@ -21,9 +21,8 @@ import {
   WorkforceScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type { WorkforceCommand } from '../../shared/actions/apply-command.ts';
-import { WorkforceStateSchema } from '../../shared/apis/records.ts';
+import { AiActivityEntrySchema, WorkforceStateSchema } from '../../shared/apis/records.ts';
 import type {
-  AiActivityEntry,
   Employee,
   EmployeeRole,
   RecordsRequest,
@@ -34,6 +33,12 @@ import { TenantIdSchema } from '../../shared/resources/employee.ts';
 import type { EmployeeId, EmployeeRef } from '../../shared/resources/employee.ts';
 import { coreActionInvocations, coreAuditEvents, corePrincipals } from '../database/core-audit-view.ts';
 import { workforceStates } from '../database/schema.ts';
+
+const workforceModuleId = 'demo.workforce';
+const aiActivityDatabaseEntrySchema = Schema.Struct({
+  ...AiActivityEntrySchema.fields,
+  occurredAt: Schema.DateTimeUtcFromDate,
+});
 
 type TenantId = EmployeeRef['tenantId'];
 type ResourceDecisions = Effect.Success<ReturnType<ContextAccessService['resources']>>;
@@ -66,7 +71,7 @@ const referenceUnavailable = (cause?: unknown) =>
   );
 
 export const employeeRefFor = (id: EmployeeId, tenantId: TenantId): EmployeeRef => ({
-  moduleId: 'demo.workforce',
+  moduleId: workforceModuleId,
   resourceId: id,
   resourceType: 'demo.workforce.employee',
   tenantId,
@@ -219,7 +224,7 @@ const contextGrants = Effect.fn('Workforce.contextGrants')(function* contextGran
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
     targets: permissions.map((permission) => ({
-      moduleId: 'demo.workforce',
+      moduleId: workforceModuleId,
       permission: `demo.workforce.${permission}`,
     })),
     tenantId: scope.tenantId,
@@ -336,7 +341,7 @@ export const finishWorkforceRecords = Effect.fn('Workforce.finishRecords')(funct
       (request.active === undefined || employee.active === request.active),
   );
   const activity = loaded.aiActivity === undefined ? {} : { aiActivity: loaded.aiActivity };
-  const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.workforce');
+  const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, workforceModuleId);
   return {
     ...activity,
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
@@ -520,12 +525,13 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         )
         .orderBy(desc(coreAuditEvents.occurredAt))
         .limit(60);
-      return rows.map((row): AiActivityEntry => ({
-        ...row,
-        actionKey: row.actionKey ?? null,
-        occurredAt: row.occurredAt.toISOString(),
-        targetModuleKey: row.targetModuleKey ?? null,
-      }));
+      return yield* Schema.decodeEffect(Schema.Array(aiActivityDatabaseEntrySchema))(
+        rows.map((row) => ({
+          ...row,
+          actionKey: row.actionKey ?? null,
+          targetModuleKey: row.targetModuleKey ?? null,
+        })),
+      );
     });
     /** The records read's whole transaction step: the raw state row and the AI feed; decoding runs after commit. */
     const loadRecords = Effect.fn('Workforce.loadRecords')(function* loadRecords(
@@ -550,7 +556,11 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         .pipe(Effect.mapError(unavailable));
       // The activity feed is best-effort: an unreadable audit table never breaks the employee list.
       const activity =
-        request.includeAiActivity === true ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.void)) : undefined;
+        request.includeAiActivity === true
+          ? yield* aiActivity().pipe(
+              Effect.catch((error) => Effect.logWarning('Workforce AI activity is unavailable', error)),
+            )
+          : undefined;
       return { aiActivity: activity ?? undefined, availablePrincipals, row } satisfies LoadedRecords;
     });
     return { apply, loadRecords };

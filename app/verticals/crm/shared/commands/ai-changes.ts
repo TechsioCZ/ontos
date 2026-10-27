@@ -1,3 +1,6 @@
+import { AiSnapshotValueSchema } from '@app/shared-contracts/ai-approvals';
+import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import type { EntityId } from '../domain/common.ts';
 // AREA: AI level C (specs AGENT.md) — owned by the ai-level-c lane. Command schemas + reducer.
 //
 //   AiProposeChanges  one pending batch of proposals. Every item waits for approval. Every proposal is dry-run
@@ -7,7 +10,8 @@
 //                     (only when nobody changed the entity since); pending proposals of the batch are rejected.
 //
 // Native Action grants authorize execution; the reducer retains its write_all and proposal state checks.
-import { Effect, Match, Predicate, Result, Schema } from 'effect';
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
+import { AiOperationSchema, initialAiChangesSlice, newClientContactsDiff } from '../domain/ai-changes.ts';
 import type {
   AiBatch,
   AiChange,
@@ -18,17 +22,26 @@ import type {
   AiRisk,
   AiSnapshot,
 } from '../domain/ai-changes.ts';
-import { AiOperationSchema, initialAiChangesSlice, newClientContactsDiff } from '../domain/ai-changes.ts';
+
+import { ClientSchema, ContactPersonSchema, PartyLinkInputSchema } from '../domain/clients.ts';
 import type { Client, ClientEvent, ContactPerson } from '../domain/clients.ts';
-import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+
+import { ImportedOrderSchema } from '../domain/imports.ts';
 import type { ImportedOrder, PairingChange } from '../domain/imports.ts';
+
 import type { CrmState } from '../domain/state.ts';
+import { CrmReferenceIneligible } from '../errors/crm-reference-ineligible.ts';
+import { PlanItemSchema } from '../domain/visits.ts';
 import type { PlanItem } from '../domain/visits.ts';
+
 import { applyClientsCommand } from './clients.ts';
-import type { CommandChange, CommandContext, CrmCommandFailure, Reducer } from './context.ts';
 import { conflict, invalid, newId, notFound, requireWriteAll } from './context.ts';
+import type { CommandChange, CommandContext, CrmCommandFailure, Reducer } from './context.ts';
+
 import { applyImportsCommand } from './imports.ts';
 import { applyVisitsCommand } from './visits.ts';
+
+const missingProposalReason = 'Návrh AI neexistuje';
 
 const ReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
 
@@ -63,8 +76,8 @@ export type AiChangesCommand = typeof AiChangesCommandSchema.Type;
 const runOperation = (state: CrmState, operation: AiOperation, context: CommandContext) =>
   Match.value(operation).pipe(
     Match.tags({
-      AssignClient: (value) => applyClientsCommand(state, value, context),
       AddContactPerson: (value) => applyClientsCommand(state, value, context),
+      AssignClient: (value) => applyClientsCommand(state, value, context),
       CreateClient: (value) => applyClientsCommand(state, value, context),
       PairOrder: (value) => applyImportsCommand(state, value, context),
       PlanContact: (value) => applyVisitsCommand(state, value, context),
@@ -78,63 +91,78 @@ const runOperation = (state: CrmState, operation: AiOperation, context: CommandC
 const riskOf = (operation: AiOperation): AiRisk =>
   Match.value(operation).pipe(
     Match.tags({
-      AssignClient: (): AiRisk => 'high',
       AddContactPerson: (): AiRisk => 'low',
+      AssignClient: (): AiRisk => 'high',
       CreateClient: (): AiRisk => 'medium',
       PairOrder: (): AiRisk => 'high',
       PlanContact: (): AiRisk => 'low',
       UnpairOrder: (): AiRisk => 'high',
       UpdateClient: (value): AiRisk =>
-        ['name', 'regNo', 'vatNo', 'kind'].some((key) => (value.patch as Record<string, unknown>)[key] !== undefined)
-          ? 'high'
-          : 'medium',
+        (['name', 'regNo', 'vatNo', 'kind'] as const).some((key) => value.patch[key] !== undefined) ? 'high' : 'medium',
       UpdateContactPerson: (): AiRisk => 'medium',
     }),
     Match.exhaustive,
   );
 
-const fieldLabels: Record<string, string> = {
-  address: 'Adresa',
-  clientId: 'Klient',
-  contacts: 'Kontaktní osoby',
-  dueDate: 'Ozvat se dne',
-  email: 'E-mail',
-  kind: 'Typ klienta',
-  name: 'Název / jméno',
-  note: 'Poznámka',
-  pairing: 'Stav párování',
-  phone: 'Telefon',
-  primary: 'Hlavní kontakt',
-  regNo: 'IČO',
-  role: 'Role',
-  salespersonId: 'Obchodník',
-  ownerSalespersonId: 'Přidělený obchodník',
-  segment: 'Segment',
-  vatNo: 'DIČ',
-  website: 'Web',
-};
-const segmentLabels: Record<string, string> = {
-  bakery: 'Pekárna / výrobna',
-  cafe: 'Kavárna / cukrárna',
-  catering: 'Catering',
-  hotel: 'Hotel',
-  institution: 'Instituce / jídelna',
-  restaurant: 'Restaurace',
-  retail: 'Maloobchod',
-  wholesale: 'Velkoobchod',
-};
-const pairingLabels: Record<string, string> = { paired: 'Napárováno', review: 'Ke kontrole', unpaired: 'Nenapárováno' };
+const fieldLabels = new Map(
+  Object.entries({
+    address: 'Adresa',
+    clientId: 'Klient',
+    contacts: 'Kontaktní osoby',
+    dueDate: 'Ozvat se dne',
+    email: 'E-mail',
+    kind: 'Typ klienta',
+    name: 'Název / jméno',
+    note: 'Poznámka',
+    ownerSalespersonId: 'Přidělený obchodník',
+    pairing: 'Stav párování',
+    phone: 'Telefon',
+    primary: 'Hlavní kontakt',
+    regNo: 'IČO',
+    role: 'Role',
+    salespersonId: 'Obchodník',
+    segment: 'Segment',
+    vatNo: 'DIČ',
+    website: 'Web',
+  }),
+);
+const segmentLabels = new Map(
+  Object.entries({
+    bakery: 'Pekárna / výrobna',
+    cafe: 'Kavárna / cukrárna',
+    catering: 'Catering',
+    hotel: 'Hotel',
+    institution: 'Instituce / jídelna',
+    restaurant: 'Restaurace',
+    retail: 'Maloobchod',
+    wholesale: 'Velkoobchod',
+  }),
+);
+const pairingLabels = new Map(
+  Object.entries({ paired: 'Napárováno', review: 'Ke kontrole', unpaired: 'Nenapárováno' }),
+);
 
-const display = (state: CrmState, key: string, value: unknown): string | undefined => {
-  if (value === undefined || value === null || value === '') {
+type OwnerFieldValue<T> = T extends object ? T[keyof T] : never;
+type AiDisplayValue = OwnerFieldValue<AiOperation | Client | ContactPerson | PlanItem> | undefined;
+type AiDisplayFields = Readonly<Record<string, AiDisplayValue>>;
+type AiPatch = Extract<AiOperation, { readonly _tag: 'UpdateClient' | 'UpdateContactPerson' }>['patch'];
+
+const DisplayValueSchema = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]);
+const display = (state: CrmState, key: string, value: AiDisplayValue): string | undefined => {
+  const decoded = Schema.decodeUnknownOption(DisplayValueSchema)(value);
+  if (Option.isNone(decoded)) {
+    const party = Schema.decodeUnknownOption(PartyLinkInputSchema)(value);
+    return Option.isSome(party) ? party.value.partyId : undefined;
+  }
+  if (decoded.value === '') {
     return undefined;
   }
-  if (typeof value === 'boolean') {
-    return value ? 'ano' : 'ne';
+  if (Schema.is(Schema.Boolean)(decoded.value)) {
+    return decoded.value ? 'ano' : 'ne';
   }
-  const text = String(value);
+  const text = String(decoded.value);
   if (key === 'segment') {
-    return segmentLabels[text] ?? text;
+    return segmentLabels.get(text) ?? text;
   }
   if (key === 'kind') {
     return text === 'person' ? 'Fyzická osoba' : 'Firma';
@@ -146,35 +174,44 @@ const display = (state: CrmState, key: string, value: unknown): string | undefin
     return state.salespeople.find((person) => person.id === text)?.name ?? text;
   }
   if (key === 'pairing') {
-    return pairingLabels[text] ?? text;
+    return pairingLabels.get(text) ?? text;
   }
   return text;
 };
 
-const line = (state: CrmState, field: string, before: unknown, after: unknown): AiDiffLine | undefined => {
+const line = (
+  state: CrmState,
+  field: string,
+  before: AiDisplayValue,
+  after: AiDisplayValue,
+): AiDiffLine | undefined => {
   const from = display(state, field, before);
   const to = after === '' ? undefined : display(state, field, after);
   if (from === to) {
     return undefined;
   }
-  return {
-    ...(from === undefined ? {} : { before: from }),
-    ...(to === undefined ? {} : { after: to }),
-    field,
-    label: fieldLabels[field] ?? field,
-  };
+  const entry: AiDiffLine = { field, label: fieldLabels.get(field) ?? field };
+  if (from !== undefined) {
+    Object.assign(entry, { before: from });
+  }
+  if (to !== undefined) {
+    Object.assign(entry, { after: to });
+  }
+  return entry;
 };
 
-const patchLines = (state: CrmState, current: Record<string, unknown>, patch: Record<string, unknown>) =>
-  Object.entries(patch).flatMap(([field, value]) => {
+const patchLines = (state: CrmState, current: Client | ContactPerson | undefined, patch: AiPatch) => {
+  const previous = new Map<string, AiDisplayValue>(Object.entries(current ?? {}));
+  return Object.entries(patch).flatMap(([field, value]) => {
     if (value === undefined) {
       return [];
     }
-    const entry = line(state, field, current[field], value);
+    const entry = line(state, field, previous.get(field), value);
     return entry === undefined ? [] : [entry];
   });
+};
 
-const newValueLines = (state: CrmState, values: Record<string, unknown>) =>
+const newValueLines = (state: CrmState, values: AiDisplayFields) =>
   Object.entries(values).flatMap(([field, value]) => {
     if (field === '_tag' || field === 'contacts' || value === undefined) {
       return [];
@@ -194,24 +231,24 @@ interface Described {
 /** Readable summary, target and before -> after lines of a proposal against the current state. */
 const describe = (state: CrmState, operation: AiOperation): Described => {
   const clientOf = (id: string) => state.clients.items.find((client) => client.id === id);
-  const clientTarget = (id: string): AiChange['target'] => ({
+  const clientTarget = (id: EntityId): AiChange['target'] => ({
     id,
     kind: 'client',
     label: clientOf(id)?.name ?? 'Neznámý klient',
   });
   return Match.value(operation).pipe(
     Match.tags({
+      AddContactPerson: ({ _tag, clientId, ...values }): Described => ({
+        diff: newValueLines(state, values),
+        summary: 'Nová kontaktní osoba',
+        target: clientTarget(clientId),
+      }),
       AssignClient: (value): Described => ({
         diff: [
           line(state, 'ownerSalespersonId', clientOf(value.clientId)?.ownerSalespersonId, value.toSalespersonId ?? ''),
         ].filter((entry): entry is AiDiffLine => entry !== undefined),
         summary: 'Přidělení klienta obchodníkovi',
         target: clientTarget(value.clientId),
-      }),
-      AddContactPerson: ({ _tag, clientId, ...values }): Described => ({
-        diff: newValueLines(state, values),
-        summary: 'Nová kontaktní osoba',
-        target: clientTarget(clientId),
       }),
       CreateClient: (value): Described => ({
         diff: [...newValueLines(state, value), ...newClientContactsDiff(value.contacts)],
@@ -259,7 +296,7 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
       UpdateClient: (value): Described => {
         const client = clientOf(value.id);
         return {
-          diff: patchLines(state, (client ?? {}) as Record<string, unknown>, value.patch),
+          diff: patchLines(state, client, value.patch),
           summary: 'Úprava údajů klienta',
           target: clientTarget(value.id),
         };
@@ -268,7 +305,7 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
         const contact = state.clients.contacts.find((entry) => entry.id === value.contactId);
         const client = contact === undefined ? undefined : clientOf(contact.clientId);
         return {
-          diff: patchLines(state, (contact ?? {}) as Record<string, unknown>, value.patch),
+          diff: patchLines(state, contact, value.patch),
           summary: 'Úprava kontaktní osoby',
           target: {
             id: value.contactId,
@@ -276,7 +313,7 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
             label:
               contact === undefined
                 ? 'Neznámá kontaktní osoba'
-                : `${contact.name}${client === undefined ? '' : ` · ${client.name}`}`,
+                : contact.name + (client === undefined ? '' : ` · ${client.name}`),
           },
         };
       },
@@ -287,37 +324,38 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
 
 // ------------------------------------------------------------------------------------------------ snapshots
 
-type Entity = Client | ContactPerson | ImportedOrder | PlanItem;
+const EntitySchema = Schema.Union([ClientSchema, ContactPersonSchema, ImportedOrderSchema, PlanItemSchema]);
+type Entity = typeof EntitySchema.Type;
+const SnapshotObjectSchema = Schema.Record(Schema.String, AiSnapshotValueSchema);
+const encodeEntity = (entity: Entity) =>
+  Schema.encodeEffect(EntitySchema)(entity).pipe(
+    Effect.flatMap((encoded) => Schema.decodeUnknownEffect(SnapshotObjectSchema)({ ...entity, ...encoded })),
+  );
+const entityWire = (entity: Entity | undefined) =>
+  entity === undefined
+    ? Option.none<typeof SnapshotObjectSchema.Type>()
+    : Schema.encodeOption(EntitySchema)(entity).pipe(
+        Option.flatMap((encoded) => Schema.decodeUnknownOption(SnapshotObjectSchema)({ ...entity, ...encoded })),
+      );
 interface Collection {
   readonly get: (state: CrmState) => readonly Entity[];
-  readonly set: (state: CrmState, items: readonly Entity[]) => CrmState;
 }
-const collections: Record<AiEntityKind, Collection> = {
-  client: {
-    get: (state) => state.clients.items,
-    set: (state, items) => ({ ...state, clients: { ...state.clients, items: items as readonly Client[] } }),
-  },
-  contact: {
-    get: (state) => state.clients.contacts,
-    set: (state, items) => ({ ...state, clients: { ...state.clients, contacts: items as readonly ContactPerson[] } }),
-  },
-  order: {
-    get: (state) => state.imports.orders,
-    set: (state, items) => ({ ...state, imports: { ...state.imports, orders: items as readonly ImportedOrder[] } }),
-  },
-  plan: {
-    get: (state) => state.visits.plan,
-    set: (state, items) => ({ ...state, visits: { ...state.visits, plan: items as readonly PlanItem[] } }),
-  },
-};
+const collections = {
+  client: { get: (state: CrmState) => state.clients.items },
+  contact: { get: (state: CrmState) => state.clients.contacts },
+  order: { get: (state: CrmState) => state.imports.orders },
+  plan: { get: (state: CrmState) => state.visits.plan },
+} satisfies Record<AiEntityKind, Collection>;
 const entityKinds: readonly AiEntityKind[] = ['client', 'contact', 'order', 'plan'];
 /** JSONB reorders object keys on persistence; snapshots must compare values, not insertion order. */
 const canonical = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonical);
+  if (Array.isArray(value)) {
+    return value.map(canonical);
+  }
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
+        .toSorted(([a], [b]) => a.localeCompare(b))
         .map(([key, entry]) => [key, canonical(entry)]),
     );
   }
@@ -326,17 +364,85 @@ const canonical = (value: unknown): unknown => {
 const same = (left: unknown, right: unknown) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
 /** Every entity the change created or modified, with its exact previous and next value. */
-const snapshotsBetween = (previous: CrmState, next: CrmState): readonly AiSnapshot[] =>
-  entityKinds.flatMap((kind) => {
-    const before = new Map(collections[kind].get(previous).map((entity) => [entity.id, entity] as const));
-    return collections[kind].get(next).flatMap((entity): AiSnapshot[] => {
-      const old = before.get(entity.id);
-      if (old !== undefined && same(old, entity)) {
-        return [];
+const snapshotsBetween = Effect.fn('Crm.snapshotChanges')(function* snapshotChanges(
+  previous: CrmState,
+  next: CrmState,
+) {
+  const byKind = yield* Effect.forEach(
+    entityKinds,
+    (kind) => {
+      const before = new Map(collections[kind].get(previous).map((entity) => [entity.id, entity] as const));
+      return Effect.forEach(
+        collections[kind].get(next),
+        Effect.fn('Crm.snapshotEntity')(function* snapshotEntity(entity: Entity) {
+          const old = before.get(entity.id);
+          const after = yield* encodeEntity(entity);
+          const encodedBefore = old === undefined ? undefined : yield* encodeEntity(old);
+          if (old !== undefined && same(encodedBefore, after)) {
+            return [];
+          }
+          const snapshot: AiSnapshot = { after, id: entity.id, kind };
+          if (encodedBefore !== undefined) {
+            Object.assign(snapshot, { before: encodedBefore });
+          }
+          return [snapshot];
+        }),
+        { concurrency: 1 },
+      );
+    },
+    { concurrency: 1 },
+  ).pipe(
+    Effect.mapError((cause) =>
+      Object.defineProperty(
+        new CrmReferenceIneligible({
+          code: 'crm_reference_ineligible',
+          reason: 'Záznam neodpovídá schématu CRM',
+        }),
+        'cause',
+        { value: cause },
+      ),
+    ),
+  );
+  // Entity kinds contain per-id arrays with zero or one snapshot.
+  const snapshotArrayDepth = 2;
+  return byKind.flat(snapshotArrayDepth);
+});
+
+const entityMatchesSnapshot = (entity: Entity | undefined, snapshot: AiSnapshot['after']) => {
+  if (entity === undefined) {
+    return snapshot === undefined;
+  }
+  const encoded = entityWire(entity);
+  return Option.isSome(encoded) && same(encoded.value, snapshot);
+};
+
+const proposalIsStale = (
+  change: AiChange,
+  current: { readonly changes: readonly AiChange[]; readonly state: CrmState },
+) =>
+  (change.proposedSnapshots ?? []).some((snapshot) => {
+    // Follow this batch's exact applied snapshot chain from its original independent dry run.
+    let expected = snapshot.before;
+    const siblings = current.changes
+      .filter((entry) => entry.batchId === change.batchId && entry.status === 'applied')
+      .toSorted((left, right) => (left.applySequence ?? 0) - (right.applySequence ?? 0));
+    for (const sibling of siblings) {
+      const previous = sibling.snapshots?.find((entry) => entry.id === snapshot.id && entry.kind === snapshot.kind);
+      if (previous !== undefined) {
+        if (!same(expected, previous.before)) {
+          return true;
+        }
+        expected = previous.after;
       }
-      return [{ ...(old === undefined ? {} : { before: old }), after: entity, id: entity.id, kind }];
-    });
+    }
+    return !entityMatchesSnapshot(
+      collections[snapshot.kind].get(current.state).find((entity) => entity.id === snapshot.id),
+      expected,
+    );
   });
+
+const decisionNoteSuffix = (note: string | undefined) =>
+  note === undefined || note === '' ? '' : `. Poznámka: ${note}`;
 
 // ------------------------------------------------------------------------------------------------ helpers
 
@@ -365,10 +471,208 @@ const replaceChange = (changes: readonly AiChange[], next: AiChange) =>
 // ------------------------------------------------------------------------------------------------ revert
 
 interface RevertOutcome {
-  readonly state: CrmState;
-  readonly ok: boolean;
   readonly message: string;
+  readonly ok: boolean;
+  readonly state: CrmState;
 }
+
+interface SnapshotRestoration {
+  readonly event?: ClientEvent;
+  readonly pairing?: PairingChange;
+  readonly state: CrmState;
+}
+
+const changedFields = (before: Entity, current: Entity | undefined): string[] => {
+  const previous = new Map<string, unknown>(Object.entries(Option.getOrElse(entityWire(before), () => ({}))));
+  const latest = new Map<string, unknown>(Object.entries(Option.getOrElse(entityWire(current), () => ({}))));
+  return Object.keys({ ...before, ...current }).filter(
+    (key) => key !== 'updatedAt' && !same(previous.get(key), latest.get(key)),
+  );
+};
+
+const restoredEvent = (
+  context: CommandContext,
+  suffix: string,
+  clientId: EntityId,
+  kind: ClientEvent['kind'],
+  subject: string,
+  fields: readonly string[] = [],
+): ClientEvent => {
+  const event: ClientEvent = {
+    at: context.now,
+    by: context.viewer.principalId,
+    clientId,
+    id: newId(context, `ai-revert-${suffix}`),
+    kind,
+    subject,
+  };
+  if (fields.length > 0) {
+    Object.assign(event, { fields });
+  }
+  return event;
+};
+
+/** Snapshot wire values stay generic JSON. Only restoration checks an owner's entity schema. */
+const restoreSnapshot = (
+  state: CrmState,
+  snapshot: AiSnapshot,
+  context: CommandContext,
+  suffix: string,
+  note: string,
+): Option.Option<SnapshotRestoration> =>
+  Match.value(snapshot.kind).pipe(
+    Match.when('client', () => {
+      const current = state.clients.items.find((entry) => entry.id === snapshot.id);
+      if (snapshot.before === undefined) {
+        if (current === undefined) {
+          return Option.some({ state });
+        }
+        const archived: Client = { ...current, archivedAt: context.now, status: 'archived', updatedAt: context.now };
+        Reflect.deleteProperty(archived, 'primary');
+        return Option.some({
+          event: restoredEvent(context, suffix, snapshot.id, 'client_archived', current.name),
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              items: state.clients.items.map((entry) => (entry.id === snapshot.id ? archived : entry)),
+            },
+          },
+        });
+      }
+      const decoded = Schema.decodeUnknownOption(ClientSchema)(snapshot.before);
+      const original = Schema.decodeUnknownOption(SnapshotObjectSchema)(snapshot.before);
+      if (Option.isNone(decoded) || Option.isNone(original) || decoded.value.id !== snapshot.id) {
+        return Option.none();
+      }
+      const before: Client = { ...original.value, ...decoded.value };
+      return Option.some({
+        event: restoredEvent(
+          context,
+          suffix,
+          snapshot.id,
+          'client_updated',
+          before.name,
+          changedFields(before, current),
+        ),
+        state: {
+          ...state,
+          clients: {
+            ...state.clients,
+            items: state.clients.items.map((entry) => (entry.id === snapshot.id ? before : entry)),
+          },
+        },
+      });
+    }),
+    Match.when('contact', () => {
+      const current = state.clients.contacts.find((entry) => entry.id === snapshot.id);
+      if (snapshot.before === undefined) {
+        if (current === undefined) {
+          return Option.some({ state });
+        }
+        const { primary: _primary, ...rest } = current;
+        const archived: ContactPerson = {
+          ...rest,
+          archivedAt: context.now,
+          status: 'archived',
+          updatedAt: context.now,
+        };
+        return Option.some({
+          event: restoredEvent(context, suffix, current.clientId, 'contact_removed', current.name),
+          state: {
+            ...state,
+            clients: {
+              ...state.clients,
+              contacts: state.clients.contacts.map((entry) => (entry.id === snapshot.id ? archived : entry)),
+            },
+          },
+        });
+      }
+      const decoded = Schema.decodeUnknownOption(ContactPersonSchema)(snapshot.before);
+      const original = Schema.decodeUnknownOption(SnapshotObjectSchema)(snapshot.before);
+      if (Option.isNone(decoded) || Option.isNone(original) || decoded.value.id !== snapshot.id) {
+        return Option.none();
+      }
+      const before: ContactPerson = { ...original.value, ...decoded.value };
+      return Option.some({
+        event: restoredEvent(
+          context,
+          suffix,
+          before.clientId,
+          'contact_updated',
+          before.name,
+          changedFields(before, current),
+        ),
+        state: {
+          ...state,
+          clients: {
+            ...state.clients,
+            contacts: state.clients.contacts.map((entry) => (entry.id === snapshot.id ? before : entry)),
+          },
+        },
+      });
+    }),
+    Match.when('order', () => {
+      // CRM AI can pair an imported order, but cannot create or delete one.
+      const decoded = Schema.decodeUnknownOption(ImportedOrderSchema)(snapshot.before);
+      const original = Schema.decodeUnknownOption(SnapshotObjectSchema)(snapshot.before);
+      if (Option.isNone(decoded) || Option.isNone(original) || decoded.value.id !== snapshot.id) {
+        return Option.none();
+      }
+      const before: ImportedOrder = { ...original.value, ...decoded.value };
+      const current = state.imports.orders.find((entry) => entry.id === snapshot.id);
+      const pairing: PairingChange = {
+        at: context.now,
+        by: context.viewer.principalId,
+        id: newId(context, `ai-revert-pairing-${suffix}`),
+        orderId: snapshot.id,
+        reason: note,
+        via: 'manual',
+      };
+      if (current?.clientId !== undefined) {
+        Object.assign(pairing, { fromClientId: current.clientId });
+      }
+      if (before.clientId !== undefined) {
+        Object.assign(pairing, { toClientId: before.clientId });
+      }
+      return Option.some({
+        pairing,
+        state: {
+          ...state,
+          imports: {
+            ...state.imports,
+            orders: state.imports.orders.map((entry) => (entry.id === snapshot.id ? before : entry)),
+          },
+        },
+      });
+    }),
+    Match.when('plan', () => {
+      if (snapshot.before === undefined) {
+        return Option.some({
+          state: {
+            ...state,
+            visits: { ...state.visits, plan: state.visits.plan.filter((entry) => entry.id !== snapshot.id) },
+          },
+        });
+      }
+      const decoded = Schema.decodeUnknownOption(PlanItemSchema)(snapshot.before);
+      const original = Schema.decodeUnknownOption(SnapshotObjectSchema)(snapshot.before);
+      if (Option.isNone(decoded) || Option.isNone(original) || decoded.value.id !== snapshot.id) {
+        return Option.none();
+      }
+      const before: PlanItem = { ...original.value, ...decoded.value };
+      return Option.some({
+        state: {
+          ...state,
+          visits: {
+            ...state.visits,
+            plan: state.visits.plan.map((entry) => (entry.id === snapshot.id ? before : entry)),
+          },
+        },
+      });
+    }),
+    Match.exhaustive,
+  );
 
 /** Restores one applied change from its snapshots, newest entity first. Refuses when anything changed since. */
 const revertChange = (
@@ -381,7 +685,7 @@ const revertChange = (
   const snapshots = change.snapshots ?? [];
   const changedSince = snapshots.find((snapshot) => {
     const current = collections[snapshot.kind].get(state).find((entity) => entity.id === snapshot.id);
-    return !same(current, snapshot.after);
+    return !entityMatchesSnapshot(current, snapshot.after);
   });
   if (changedSince !== undefined) {
     return {
@@ -403,84 +707,28 @@ const revertChange = (
       ) ||
       state.visits.plan.some((entry) => entry.clientId === createdClient.id))
   ) {
-    return { state, ok: false, message: 'Nový klient má navazující záznamy. Nejprve vyřešte jejich vazby.' };
+    return { message: 'Nový klient má navazující záznamy. Nejprve vyřešte jejich vazby.', ok: false, state };
   }
   let next = state;
   const events: ClientEvent[] = [];
   const pairing: PairingChange[] = [];
-  snapshots.toReversed().forEach((snapshot, index) => {
-    const collection = collections[snapshot.kind];
-    const items = collection.get(next);
-    const current = items.find((entity) => entity.id === snapshot.id) as Record<string, unknown> | undefined;
-    const eventBase = {
-      at: context.now,
-      by: context.viewer.principalId,
-      id: newId(context, `ai-revert-${suffix}-${index}`),
-    };
-    if (snapshot.before === undefined) {
-      // Created by the change: clients and contacts are archived (CRM never deletes), plan items removed.
-      if (snapshot.kind === 'plan') {
-        next = collection.set(
-          next,
-          items.filter((entity) => entity.id !== snapshot.id),
-        );
-        return;
-      }
-      if (current === undefined) {
-        return;
-      }
-      const { primary: _primary, ...rest } = current;
-      const archived = {
-        ...rest,
-        archivedAt: context.now,
-        status: 'archived',
-        updatedAt: context.now,
-      } as unknown as Entity;
-      next = collection.set(
-        next,
-        items.map((entity) => (entity.id === snapshot.id ? archived : entity)),
-      );
-      const clientId = snapshot.kind === 'client' ? snapshot.id : String(current['clientId'] ?? '');
-      events.push({
-        ...eventBase,
-        clientId,
-        kind: snapshot.kind === 'client' ? 'client_archived' : 'contact_removed',
-        subject: String(current['name'] ?? ''),
-      });
-      return;
+  for (const [index, snapshot] of snapshots.toReversed().entries()) {
+    const restored = restoreSnapshot(next, snapshot, context, `${suffix}-${index}`, note);
+    if (Option.isNone(restored)) {
+      return {
+        message: `${change.summary} (${change.target.label}): snímek neodpovídá záznamu CRM, automaticky ho nevracím.`,
+        ok: false,
+        state,
+      };
     }
-    const before = snapshot.before as Entity & Record<string, unknown>;
-    next = collection.set(
-      next,
-      items.map((entity) => (entity.id === snapshot.id ? before : entity)),
-    );
-    const fields = Object.keys({ ...before, ...current }).filter(
-      (key) => key !== 'updatedAt' && !same(before[key], current?.[key]),
-    );
-    if (snapshot.kind === 'client' || snapshot.kind === 'contact') {
-      events.push({
-        ...eventBase,
-        clientId: snapshot.kind === 'client' ? snapshot.id : String(before['clientId'] ?? ''),
-        ...(fields.length === 0 ? {} : { fields }),
-        kind: snapshot.kind === 'client' ? 'client_updated' : 'contact_updated',
-        subject: String(before['name'] ?? ''),
-      });
+    next = restored.value.state;
+    if (restored.value.event !== undefined) {
+      events.push(restored.value.event);
     }
-    if (snapshot.kind === 'order') {
-      const from = current?.['clientId'];
-      const to = before['clientId'];
-      pairing.push({
-        ...(typeof from === 'string' ? { fromClientId: from } : {}),
-        ...(typeof to === 'string' ? { toClientId: to } : {}),
-        at: context.now,
-        by: context.viewer.principalId,
-        id: newId(context, `ai-revert-pairing-${suffix}-${index}`),
-        orderId: snapshot.id,
-        reason: note,
-        via: 'manual',
-      });
+    if (restored.value.pairing !== undefined) {
+      pairing.push(restored.value.pairing);
     }
-  });
+  }
   next = {
     ...next,
     clients: { ...next.clients, events: [...(next.clients.events ?? []), ...events] },
@@ -489,12 +737,29 @@ const revertChange = (
   return { message: `${change.summary} (${change.target.label}) vráceno do stavu před změnou.`, ok: true, state: next };
 };
 
+type AiProposal = Extract<AiChangesCommand, { readonly _tag: 'AiProposeChanges' }>['changes'][number];
+interface ProposedChanges {
+  readonly changes: readonly AiChange[];
+  readonly log: readonly AiLogEntry[];
+}
+interface DecisionProgress {
+  readonly log: readonly AiLogEntry[];
+  readonly state: CrmState;
+}
+interface RevertProgress extends DecisionProgress {
+  readonly changes: readonly AiChange[];
+  readonly reverted: number;
+}
+
 // ------------------------------------------------------------------------------------------------ reducer
 
 export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('AiProposeChanges', (value) =>
-      Effect.gen(function* propose() {
+    Match.tag(
+      'AiProposeChanges',
+      Effect.fn('Crm.propose')(function* propose(
+        value: Extract<AiChangesCommand, { readonly _tag: 'AiProposeChanges' }>,
+      ) {
         const slice = sliceOf(state);
         const repeated =
           value.runId === undefined
@@ -513,7 +778,7 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
           ) {
             return yield* conflict('Toto označení běhu už patří jinému návrhu. Pro nový návrh použijte nové runId.');
           }
-          const ids = slice.changes.filter((change) => change.batchId === repeated.id).map((change) => change.id);
+          const ids = existing.map((change) => change.id);
           return { entityIds: [repeated.id, ...ids], state } satisfies CommandChange;
         }
         const batchId = newId(context, 'ai-batch');
@@ -523,59 +788,77 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
           createdAt: context.now,
           id: batchId,
           instruction: value.instruction,
-          ...(value.runId === undefined ? {} : { runId: value.runId }),
         };
-        let working = state;
-        const changes: AiChange[] = [];
-        const log: AiLogEntry[] = [];
-        for (const [index, proposal] of value.changes.entries()) {
-          if (Predicate.isTagged(proposal.operation, 'PairOrder') && proposal.operation.approveCustomerLink === true) {
-            return yield* invalid(
-              'AI smí navrhnout párování jedné objednávky, ne trvalé propojení externího zákazníka.',
-            );
-          }
-          const risk = riskOf(proposal.operation);
-          const described = describe(working, proposal.operation);
-          // Dry run as the agent: a proposal outside the agent's own scope is refused right away.
-          const dryRun = yield* runOperation(working, proposal.operation, subContext(context, `c${index}`)).pipe(
-            Effect.mapError((failure) => new Error(failureReason(failure))),
-            Effect.result,
-          );
-          if (Result.isFailure(dryRun)) {
-            return yield* invalid(
-              `Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${dryRun.failure.message}`,
-            );
-          }
-          if (described.diff.length === 0) {
-            return yield* invalid(`Návrh č. ${index + 1} (${described.summary}) nic nemění`);
-          }
-          const base: AiChange = {
-            batchId,
-            proposedSnapshots: snapshotsBetween(working, dryRun.success.state),
-            diff: described.diff,
-            id: newId(context, `ai-change-${index}`),
-            operation: proposal.operation,
-            proposedAt: context.now,
-            reason: proposal.reason,
-            risk,
-            status: 'pending',
-            summary: described.summary,
-            target:
-              described.target.id === undefined && Predicate.isTagged(proposal.operation, 'CreateClient')
-                ? { ...described.target, id: dryRun.success.entityIds[0] ?? '' }
-                : described.target,
-          };
-          log.push(
-            logEntry(context, log.length, {
-              action: 'proposed',
-              actorKind: 'agent',
-              batchId,
-              changeId: base.id,
-              message: `${batch.agentLabel} navrhl: ${base.summary} — ${base.target.label}. Důvod: ${proposal.reason}`,
-            }),
-          );
-          changes.push(base);
+        if (value.runId !== undefined) {
+          Object.assign(batch, { runId: value.runId });
         }
+        const working = state;
+        const { changes, log } = yield* Effect.reduce(
+          value.changes,
+          (): ProposedChanges => ({ changes: [], log: [] }),
+          Effect.fn('Crm.proposeChange')(function* proposeChange(
+            progress: ProposedChanges,
+            proposal: AiProposal,
+            index: number,
+          ) {
+            if (
+              Predicate.isTagged(proposal.operation, 'PairOrder') &&
+              proposal.operation.approveCustomerLink === true
+            ) {
+              return yield* invalid(
+                'AI smí navrhnout párování jedné objednávky, ne trvalé propojení externího zákazníka.',
+              );
+            }
+            const risk = riskOf(proposal.operation);
+            const described = describe(working, proposal.operation);
+            // Dry run as the agent: a proposal outside the agent's own scope is refused right away.
+            const dryRun = yield* runOperation(working, proposal.operation, subContext(context, `c${index}`)).pipe(
+              Effect.result,
+            );
+            if (Result.isFailure(dryRun)) {
+              return yield* invalid(
+                `Návrh č. ${index + 1} (${described.summary}) nelze přijmout: ${failureReason(dryRun.failure)}`,
+              );
+            }
+            if (described.diff.length === 0) {
+              return yield* invalid(`Návrh č. ${index + 1} (${described.summary}) nic nemění`);
+            }
+            let { target } = described;
+            if (target.id === undefined && Predicate.isTagged(proposal.operation, 'CreateClient')) {
+              const [createdId] = dryRun.success.entityIds;
+              if (createdId === undefined) {
+                return yield* invalid(missingProposalReason);
+              }
+              target = { ...target, id: createdId };
+            }
+            const base: AiChange = {
+              batchId,
+              diff: described.diff,
+              id: newId(context, `ai-change-${index}`),
+              operation: proposal.operation,
+              proposedAt: context.now,
+              proposedSnapshots: yield* snapshotsBetween(working, dryRun.success.state),
+              reason: proposal.reason,
+              risk,
+              status: 'pending',
+              summary: described.summary,
+              target,
+            };
+            return {
+              changes: [...progress.changes, base],
+              log: [
+                ...progress.log,
+                logEntry(context, progress.log.length, {
+                  action: 'proposed',
+                  actorKind: 'agent',
+                  batchId,
+                  changeId: base.id,
+                  message: `${batch.agentLabel} navrhl: ${base.summary} — ${base.target.label}. Důvod: ${proposal.reason}`,
+                }),
+              ],
+            };
+          }),
+        );
         const current = sliceOf(working);
         return {
           entityIds: [batchId, ...changes.map((change) => change.id)],
@@ -587,116 +870,112 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
         } satisfies CommandChange;
       }),
     ),
-    Match.tag('AiDecideChanges', (value) =>
-      Effect.gen(function* decide() {
+    Match.tag(
+      'AiDecideChanges',
+      Effect.fn('Crm.decide')(function* decide(value: Extract<AiChangesCommand, { readonly _tag: 'AiDecideChanges' }>) {
         yield* requireWriteAll(context);
-        let working = state;
-        const log: AiLogEntry[] = [];
-        for (const [index, changeId] of value.changeIds.entries()) {
-          const slice = sliceOf(working);
-          const change = slice.changes.find((entry) => entry.id === changeId);
-          if (change === undefined) {
-            return yield* notFound('Návrh AI neexistuje');
-          }
-          if (change.status !== 'pending') {
-            return yield* conflict(`Návrh „${change.summary} — ${change.target.label}“ už byl vyřízen`);
-          }
-          const decided = {
-            ...change,
-            decidedAt: context.now,
-            decidedBy: context.viewer.principalId,
-            ...(value.note === undefined || value.note === '' ? {} : { decisionNote: value.note }),
-          };
-          if (value.decision === 'reject') {
-            working = withSlice(working, {
-              ...slice,
-              changes: replaceChange(slice.changes, { ...decided, status: 'rejected' }),
-            });
-            log.push(
-              logEntry(context, log.length, {
-                action: 'rejected',
-                actorKind: 'human',
-                batchId: change.batchId,
-                changeId,
-                message: `Zamítnuto: ${change.summary} — ${change.target.label}${value.note !== undefined && value.note !== '' ? `. Poznámka: ${value.note}` : ''}`,
-              }),
-            );
-            continue;
-          }
-          const stale = (change.proposedSnapshots ?? []).some((snapshot) => {
-            // Proposals are independent dry runs against the same original state. An approved sibling
-            // may already have changed this entity. Follow only that batch's exact applied snapshot
-            // chain, never arbitrary current values or another batch's edits.
-            let expected = snapshot.before;
-            const siblings = slice.changes
-              .filter((entry) => entry.batchId === change.batchId && entry.status === 'applied')
-              .toSorted((left, right) => (left.applySequence ?? 0) - (right.applySequence ?? 0));
-            for (const sibling of siblings) {
-              const previous = sibling.snapshots?.find(
-                (entry) => entry.id === snapshot.id && entry.kind === snapshot.kind,
-              );
-              if (previous !== undefined) {
-                if (!same(expected, previous.before)) return true;
-                expected = previous.after;
-              }
+        const progress = yield* Effect.reduce(
+          value.changeIds,
+          (): DecisionProgress => ({ log: [], state }),
+          Effect.fn('Crm.decideChange')(function* decideChange(
+            prior: DecisionProgress,
+            changeId: EntityId,
+            index: number,
+          ) {
+            let working = prior.state;
+            const log = [...prior.log];
+            const slice = sliceOf(working);
+            const change = slice.changes.find((entry) => entry.id === changeId);
+            if (change === undefined) {
+              return yield* notFound(missingProposalReason);
             }
-            return !same(
-              collections[snapshot.kind].get(working).find((entity) => entity.id === snapshot.id),
-              expected,
+            if (change.status !== 'pending') {
+              return yield* conflict(`Návrh „${change.summary} — ${change.target.label}“ už byl vyřízen`);
+            }
+            const decided: AiChange = {
+              ...change,
+              decidedAt: context.now,
+              decidedBy: context.viewer.principalId,
+            };
+            if (value.note !== undefined && value.note !== '') {
+              Object.assign(decided, { decisionNote: value.note });
+            }
+            if (value.decision === 'reject') {
+              working = withSlice(working, {
+                ...slice,
+                changes: replaceChange(slice.changes, { ...decided, status: 'rejected' }),
+              });
+              log.push(
+                logEntry(context, log.length, {
+                  action: 'rejected',
+                  actorKind: 'human',
+                  batchId: change.batchId,
+                  changeId,
+                  message: `Zamítnuto: ${change.summary} — ${change.target.label}${decisionNoteSuffix(value.note)}`,
+                }),
+              );
+              return { log, state: working };
+            }
+            if (proposalIsStale(change, { changes: slice.changes, state: working })) {
+              return yield* conflict('Záznam se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.');
+            }
+            const applied = yield* runOperation(working, change.operation, subContext(context, `a${index}`)).pipe(
+              Effect.result,
             );
-          });
-          if (stale) {
-            return yield* conflict('Záznam se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.');
-          }
-          const applied = yield* runOperation(working, change.operation, subContext(context, `a${index}`)).pipe(
-            Effect.result,
-          );
-          if (Result.isFailure(applied)) {
-            working = withSlice(working, {
-              ...slice,
-              changes: replaceChange(slice.changes, {
-                ...decided,
-                failure: failureReason(applied.failure),
-                status: 'failed',
-              }),
-            });
-            log.push(
-              logEntry(context, log.length, {
-                action: 'apply_failed',
-                actorKind: 'human',
-                batchId: change.batchId,
-                changeId,
-                message: `Schválení nešlo provést: ${change.summary} — ${change.target.label}: ${failureReason(applied.failure)}`,
-              }),
-            );
-            continue;
-          }
-          const snapshots = snapshotsBetween(working, applied.success.state);
-          const after = sliceOf(applied.success.state);
-          working = withSlice(applied.success.state, {
-            ...after,
-            changes: replaceChange(after.changes, {
+            if (Result.isFailure(applied)) {
+              working = withSlice(working, {
+                ...slice,
+                changes: replaceChange(slice.changes, {
+                  ...decided,
+                  failure: failureReason(applied.failure),
+                  status: 'failed',
+                }),
+              });
+              log.push(
+                logEntry(context, log.length, {
+                  action: 'apply_failed',
+                  actorKind: 'human',
+                  batchId: change.batchId,
+                  changeId,
+                  message: `Schválení nešlo provést: ${change.summary} — ${change.target.label}: ${failureReason(applied.failure)}`,
+                }),
+              );
+              return { log, state: working };
+            }
+            const snapshots = yield* snapshotsBetween(working, applied.success.state);
+            const after = sliceOf(applied.success.state);
+            const approved: AiChange = {
               ...decided,
-              ...(Predicate.isTagged(change.operation, 'CreateClient')
-                ? { target: { ...change.target, id: applied.success.entityIds[0] ?? change.target.id ?? '' } }
-                : {}),
               appliedAt: context.now,
               applySequence:
                 slice.changes.filter((entry) => entry.status === 'applied' || entry.status === 'reverted').length + 1,
               snapshots,
               status: 'applied',
-            }),
-          });
-          log.push(
-            logEntry(context, log.length, {
-              action: 'approved',
-              actorKind: 'human',
-              batchId: change.batchId,
-              changeId,
-              message: `Schváleno a provedeno: ${change.summary} — ${change.target.label}${value.note !== undefined && value.note !== '' ? `. Poznámka: ${value.note}` : ''}`,
-            }),
-          );
-        }
+            };
+            if (Predicate.isTagged(change.operation, 'CreateClient')) {
+              const createdId = applied.success.entityIds[0] ?? change.target.id;
+              if (createdId === undefined) {
+                return yield* conflict(missingProposalReason);
+              }
+              Object.assign(approved, { target: { ...change.target, id: createdId } });
+            }
+            working = withSlice(applied.success.state, {
+              ...after,
+              changes: replaceChange(after.changes, approved),
+            });
+            log.push(
+              logEntry(context, log.length, {
+                action: 'approved',
+                actorKind: 'human',
+                batchId: change.batchId,
+                changeId,
+                message: `Schváleno a provedeno: ${change.summary} — ${change.target.label}${decisionNoteSuffix(value.note)}`,
+              }),
+            );
+            return { log, state: working };
+          }),
+        );
+        const { log, state: working } = progress;
         const slice = sliceOf(working);
         return {
           entityIds: [...value.changeIds],
@@ -704,8 +983,11 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
         } satisfies CommandChange;
       }),
     ),
-    Match.tag('AiRevertBatch', (value) =>
-      Effect.gen(function* revertBatch() {
+    Match.tag(
+      'AiRevertBatch',
+      Effect.fn('Crm.revertBatch')(function* revertBatch(
+        value: Extract<AiChangesCommand, { readonly _tag: 'AiRevertBatch' }>,
+      ) {
         yield* requireWriteAll(context);
         const slice = sliceOf(state);
         const batch = slice.batches.find((entry) => entry.id === value.batchId);
@@ -719,74 +1001,87 @@ export const applyAiChangesCommand: Reducer<AiChangesCommand> = (state, command,
           value.note !== undefined && value.note.length >= 3
             ? value.note
             : `Vráceno: dávka AI „${batch.instruction.slice(0, 120)}“`;
-        let working = state;
-        const log: AiLogEntry[] = [];
-        let changes = slice.changes;
         const applied = slice.changes
           .filter((change) => change.batchId === batch.id && change.status === 'applied')
           .toSorted((left, right) => (right.applySequence ?? 0) - (left.applySequence ?? 0));
-        let reverted = 0;
-        for (const [index, change] of applied.entries()) {
-          const outcome = revertChange(working, change, context, `${index}`, note);
-          if (!outcome.ok) {
-            return yield* conflict(outcome.message);
-          }
-          working = outcome.state;
-          if (outcome.ok) {
-            reverted += 1;
-            changes = replaceChange(changes, {
-              ...change,
-              revertedAt: context.now,
-              revertedBy: context.viewer.principalId,
-              status: 'reverted',
-            });
-          }
-          log.push(
-            logEntry(context, log.length, {
-              action: outcome.ok ? 'reverted' : 'revert_conflict',
-              actorKind: 'human',
-              batchId: batch.id,
-              changeId: change.id,
-              message: outcome.message,
-            }),
-          );
-        }
-        for (const change of slice.changes.filter(
-          (entry) => entry.batchId === batch.id && entry.status === 'pending',
-        )) {
-          changes = replaceChange(changes, {
-            ...change,
-            decidedAt: context.now,
-            decidedBy: context.viewer.principalId,
-            decisionNote: 'Zamítnuto při vrácení celé dávky',
-            status: 'rejected',
-          });
-          log.push(
-            logEntry(context, log.length, {
-              action: 'rejected',
-              actorKind: 'human',
-              batchId: batch.id,
-              changeId: change.id,
-              message: `Zamítnuto při vrácení dávky: ${change.summary} — ${change.target.label}`,
-            }),
-          );
-        }
+        const restored = yield* Effect.reduce(
+          applied,
+          (): RevertProgress => ({ changes: slice.changes, log: [], reverted: 0, state }),
+          Effect.fn('Crm.revertChange')(function* revertApplied(
+            previous: RevertProgress,
+            change: AiChange,
+            index: number,
+          ) {
+            const outcome = revertChange(previous.state, change, context, `${index}`, note);
+            if (!outcome.ok) {
+              return yield* conflict(outcome.message);
+            }
+            return {
+              changes: replaceChange(previous.changes, {
+                ...change,
+                revertedAt: context.now,
+                revertedBy: context.viewer.principalId,
+                status: 'reverted',
+              }),
+              log: [
+                ...previous.log,
+                logEntry(context, previous.log.length, {
+                  action: 'reverted',
+                  actorKind: 'human',
+                  batchId: batch.id,
+                  changeId: change.id,
+                  message: outcome.message,
+                }),
+              ],
+              reverted: previous.reverted + 1,
+              state: outcome.state,
+            };
+          }),
+        );
+        const progress = yield* Effect.reduce(
+          slice.changes.filter((entry) => entry.batchId === batch.id && entry.status === 'pending'),
+          (): RevertProgress => restored,
+          (previous, change) =>
+            Effect.sync(() => ({
+              ...previous,
+              changes: replaceChange(previous.changes, {
+                ...change,
+                decidedAt: context.now,
+                decidedBy: context.viewer.principalId,
+                decisionNote: 'Zamítnuto při vrácení celé dávky',
+                status: 'rejected',
+              }),
+              log: [
+                ...previous.log,
+                logEntry(context, previous.log.length, {
+                  action: 'rejected',
+                  actorKind: 'human',
+                  batchId: batch.id,
+                  changeId: change.id,
+                  message: `Zamítnuto při vrácení dávky: ${change.summary} — ${change.target.label}`,
+                }),
+              ],
+            })),
+        );
+        const { changes, reverted, state: working } = progress;
         const conflicts = applied.length - reverted;
-        log.push(
-          logEntry(context, log.length, {
+        const conflictSuffix = conflicts > 0 ? `, ${conflicts} ponecháno (záznam se mezitím změnil)` : '';
+        const log = [
+          ...progress.log,
+          logEntry(context, progress.log.length, {
             action: 'batch_reverted',
             actorKind: 'human',
             batchId: batch.id,
-            message: `Vrátit vše: ${reverted} z ${applied.length} provedených změn vráceno${conflicts > 0 ? `, ${conflicts} ponecháno (záznam se mezitím změnil)` : ''}.`,
+            message: `Vrátit vše: ${reverted} z ${applied.length} provedených změn vráceno${conflictSuffix}.`,
           }),
-        );
+        ];
         const current = sliceOf(working);
         return {
           entityIds: [batch.id],
           state: withSlice(working, {
             batches: current.batches.map((entry) =>
               entry.id === batch.id
-                ? { ...entry, revertNote: note, revertedAt: context.now, revertedBy: context.viewer.principalId }
+                ? { ...entry, revertedAt: context.now, revertedBy: context.viewer.principalId, revertNote: note }
                 : entry,
             ),
             changes,

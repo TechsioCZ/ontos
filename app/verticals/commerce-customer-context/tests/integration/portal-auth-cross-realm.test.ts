@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import { ContextAccess, ContextAccessLive, DatabaseConfigLive, PrincipalResolver } from '@app/core-runtime';
+import {
+  ContextAccess,
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfigLive,
+  OAuthAuthenticationAuditLive,
+  OAuthGrantRegistryLive,
+  PrincipalResolver,
+  SHARED_RUNTIME_IDENTITY,
+} from '@app/core-runtime';
 import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { eq } from 'drizzle-orm';
@@ -24,9 +33,19 @@ import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/co
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { session as portalSession, user as portalUser } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { AuthConfig, loadAuthConfig } from '../../../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../../../apps/shell-super-app/api/auth/db/client.ts';
 import { session as staffSession, user as staffUser } from '../../../../apps/shell-super-app/api/auth/db/schema.ts';
 import { makeAuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
+import { BetterAuthFrameworkLive } from '../../../../apps/shell-super-app/api/auth/better-auth-framework.ts';
+import { BetterAuthRuntimeLive } from '../../../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
+import { OAuthEndpointGuardsLive } from '../../../../apps/shell-super-app/api/auth/oauth-server/endpoint-guards.ts';
+import { OAuthConnectionHooksLive } from '../../../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
+import { OAuthEndpointGuardDataLive } from '../../../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
+import { OAuthCredentialsLive } from '../../../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import type { AuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -206,11 +225,22 @@ const makeStaffSession = Effect.fnUntraced(function* makeStaffSession(
 
 const shellAuthentication = Effect.fnUntraced(function* shellAuthentication() {
   const configuration = yield* loadAuthConfig();
-  const database = yield* acquireOutlivingCleanup(makeAuthDatabase(configuration));
-  const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
-    Effect.provideService(AuthConfig, configuration),
-    Effect.provideService(AuthDatabase, database),
-    Effect.provideService(
+  const database = yield* acquireOutlivingCleanup(
+    makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    }),
+  );
+  const authDatabaseLive = Layer.succeed(AuthDatabase, database);
+  const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
+  const grantRegistryLive = OAuthGrantRegistryLive.pipe(Layer.provide(corePersistenceLive));
+  const nativeDependenciesLive = Layer.mergeAll(
+    Layer.succeed(AuthConfig, configuration),
+    authDatabaseLive,
+    BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabaseLive)),
+    BetterAuthRuntimeLive,
+    OAuthConnectionHooksLive.pipe(Layer.provide(grantRegistryLive)),
+    Layer.succeed(
       PrincipalResolver,
       makePrincipalResolverDouble({
         resolveDefaultBetterAuthUser: () =>
@@ -224,6 +254,22 @@ const shellAuthentication = Effect.fnUntraced(function* shellAuthentication() {
       }),
     ),
   );
+  const frameworkLive = BetterAuthFrameworkLive({ allowFixtureSignUp: true }).pipe(
+    Layer.provide(nativeDependenciesLive),
+  );
+  const guardsLive = OAuthEndpointGuardsLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        frameworkLive,
+        OAuthAuthenticationAuditLive.pipe(Layer.provide(corePersistenceLive)),
+        OAuthEndpointGuardDataLive.pipe(
+          Layer.provide(Layer.merge(grantRegistryLive, OAuthCredentialsLive.pipe(Layer.provide(authDatabaseLive)))),
+        ),
+      ),
+    ),
+  );
+  const services = yield* Layer.build(Layer.mergeAll(nativeDependenciesLive, frameworkLive, guardsLive));
+  const authentication = yield* makeAuthenticationService().pipe(Effect.provideContext(services));
   return { authentication, database };
 });
 

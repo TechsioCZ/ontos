@@ -95,9 +95,10 @@ const hasIncompatiblePartyType = (partyType: string, candidate: PartyCandidate) 
   partyType !== 'UNRESOLVED' && candidate.partyType !== 'UNRESOLVED' && partyType !== candidate.partyType;
 
 const qualifyingCandidateClaims = (candidate: PartyCandidate) =>
-  candidate.officialIdentifiers
-    .map(normalizeOfficialIdentifier)
-    .filter((identifier) => qualifiesForExclusiveClaim(identifier, candidate.partyType, MATCH_RULE_VERSION));
+  candidate.officialIdentifiers.flatMap((candidateIdentifier) => {
+    const identifier = normalizeOfficialIdentifier(candidateIdentifier);
+    return qualifiesForExclusiveClaim(identifier, candidate.partyType, MATCH_RULE_VERSION) ? [identifier] : [];
+  });
 
 const canonicalPartyId = (transaction: Pick<PartyTransaction, 'select'>, tenantId: string, partyId: string) =>
   resolvePartyAlias(transaction, tenantId, partyId).pipe(
@@ -180,10 +181,13 @@ const resolvedCaseLifecycle = (
   return outcome === 'DISMISSED_AS_NON_SUBJECT' ? 'DISMISSED' : 'RESOLVED';
 };
 
+const CandidateEvidenceOutcomeSchema = Schema.Literals(['CREATED', 'MATCHED', 'NO_MATCH', 'AMBIGUOUS']);
+type CandidateEvidenceOutcome = typeof CandidateEvidenceOutcomeSchema.Type;
+
 const explainCandidateEvidence = (
   tenantId: string,
   candidate: PartyCandidate,
-  outcome: 'CREATED' | 'MATCHED' | 'NO_MATCH' | 'AMBIGUOUS',
+  outcome: CandidateEvidenceOutcome,
   claims: readonly ResolvedClaim[] = candidate.officialIdentifiers.map((identifier) => ({
     claim: normalizeOfficialIdentifier(identifier),
   })),

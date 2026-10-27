@@ -36,7 +36,8 @@ const command = Schema.toEncoded(MerchandiseCommandSchema);
 /** Repair only imported groups. Never move stock, reprice, reset an order, or change a custom product. */
 export const seedAkrosStock = (client: SeedClient, apply: boolean) =>
   Effect.gen(function* seedMinimums() {
-    const minima = new Map(buildAkrosEncoded().products.map((product) => [product.id, product.lowStockThreshold]));
+    const baseline = yield* buildAkrosEncoded();
+    const minima = new Map(baseline.products.map((product) => [product.id, product.lowStockThreshold]));
     let changed = 0;
     for (let offset = 0; ; offset += 250) {
       const snapshot = yield* client.call(

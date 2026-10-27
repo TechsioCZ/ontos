@@ -7,7 +7,7 @@
  * forms; comments, text literals and unrelated Node stream .pipe are not evidence.
  * Proven local scalar/data parameter shapes are excluded: B4 is dependency vocabulary, not
  * a ban on URL builders or CRUD request options. Native service factories also own the required
- * transaction, scope, and composition revision arguments. Unknown/imported types and untyped wide
+ * transaction, scope, and composition revision arguments. Unproved types and untyped wide
  * signatures remain heuristic; this AST-only rule cannot prove all such parameters are services.
  * Configurable naming and width controls intentionally cover only part of B4. Report only.
  */
@@ -19,6 +19,9 @@ import { lookupVariable } from '../shared/bindings.ts';
 import { isCoreReadTestHarnessCallback, isNativeServiceFactoryCallback } from '../shared/native-service-factory.ts';
 import { booleanOption, compile, positiveInteger, stringList } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
+import { importedDtoProof } from '../shared/imported-dto-proof.ts';
+import { importedName } from '../shared/imports.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -206,12 +209,12 @@ export const rule = defineRule({
     type: 'problem',
     docs: {
       description:
-        'Audit B4: detect wide named factories and option-bag factories containing scope-resolved Effect calls. Proven local data-only signatures are excluded; unknown types and untyped parameters remain a naming/width heuristic, not proof of collaborator injection.',
+        'Audit B4: detect wide named factories and option-bag factories containing scope-resolved Effect calls. Proven data-only signatures are excluded; unknown types and untyped parameters remain a naming/width heuristic, not proof of collaborator injection.',
       url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#b4-make-context-services-and-effectfn-the-default-dependency-vocabulary',
     },
     messages: {
       optionBagFactory:
-        "Audit B4: factory '{{name}}' uses an Effect call and a '{{type}}' bag not proven to be local data. Express collaborators through Context/Layer while retaining genuine per-call data; imported bag semantics are not inferred.",
+        "Audit B4: factory '{{name}}' uses an Effect call and a '{{type}}' bag not proven data. Express collaborators through Context/Layer while retaining genuine per-call data; unproved imported bag semantics remain unknown.",
       wideSignature:
         "Audit B4: factory '{{name}}' has {{count}} positional parameters (max {{max}}), not all proven data. Prefer Context/Layer for collaborators; width alone does not prove these parameters are dependencies.",
     },
@@ -339,15 +342,17 @@ export const rule = defineRule({
         (node) => node.type === 'CallExpression' && /^(?:root\.)?Effect\./u.test(resolve(node.callee) ?? ''),
       );
 
-    // Only proven local scalar/data shapes are exempt. Unknown/imported annotations stay
-    // conservative; AST-only analysis cannot establish their runtime role.
-    const dataType = (node: any, seen = new Set<any>()): boolean => {
+    // Follow only the actual import binding into bounded, parsed owner DTO declarations.
+    // Missing, opaque, callable and service-shaped contracts remain unproved.
+    const importedData = importedDtoProof();
+    const dataType = (node: any, seen = new Set<any>(), omitted = new Set<string>()): boolean => {
       if (!node || seen.has(node)) return false;
       seen.add(node);
-      return classifyDataType(node, seen);
+      return classifyDataType(node, seen, omitted);
     };
-    const classifyDataType = (node: any, seen: Set<any>): boolean => {
-      if (['TSTypeAnnotation', 'TSTypeOperator'].includes(node.type)) return dataType(node.typeAnnotation, seen);
+    const classifyDataType = (node: any, seen: Set<any>, omitted: Set<string>): boolean => {
+      if (['TSTypeAnnotation', 'TSTypeOperator'].includes(node.type))
+        return dataType(node.typeAnnotation, seen, omitted);
       if (
         [
           'TSStringKeyword',
@@ -360,29 +365,147 @@ export const rule = defineRule({
       )
         return true;
       if (['TSUnionType', 'TSIntersectionType'].includes(node.type))
-        return node.types.every((t: any) => dataType(t, new Set(seen)));
+        return node.types.every((t: any) => dataType(t, new Set(seen), omitted));
       if (node.type === 'TSArrayType') return dataType(node.elementType, seen);
       if (node.type === 'TSTypeLiteral' || node.type === 'TSInterfaceDeclaration') {
-        return dataMembers(node, seen);
+        return dataMembers(node, seen, omitted);
       }
+      if (
+        node.type === 'TSTypeQuery' &&
+        node.exprName.type === 'TSQualifiedName' &&
+        node.exprName.right.name === 'Type'
+      )
+        return dataSchema(node.exprName.left, seen, omitted, true);
       if (node.type !== 'TSTypeReference' || node.typeName.type !== 'Identifier') return false;
-      return dataReference(node.typeName, seen);
+      const binding = lookupVariable(context, node.typeName);
+      if (node.typeName.name === 'Omit' && (binding === null || binding.defs.length === 0)) {
+        const args = node.typeArguments?.params;
+        const keys = args?.length === 2 ? omittedKeys(args[1]) : null;
+        return keys !== null && dataType(args[0], seen, new Set([...omitted, ...keys]));
+      }
+      return dataReference(node.typeName, seen, omitted);
     };
-    const dataMembers = (node: any, seen: Set<any>): boolean => {
+    const omittedKeys = (node: any): string[] | null => {
+      if (!node) return null;
+      if (node.type === 'TSParenthesizedType') return omittedKeys(node.typeAnnotation);
+      if (node.type === 'TSLiteralType' && typeof node.literal?.value === 'string') return [node.literal.value];
+      if (node.type !== 'TSUnionType') return null;
+      const parts = node.types.map(omittedKeys);
+      return parts.every((part: string[] | null) => part !== null) ? parts.flat() : null;
+    };
+    const dataMembers = (node: any, seen: Set<any>, omitted: Set<string>): boolean => {
       const members = node.members ?? node.body.body;
       return (
-        members.every((m: any) => m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen))) &&
+        members.every(
+          (m: any) =>
+            (m.key !== undefined && omitted.has(keyName(m.key, m.computed === true) ?? '')) ||
+            (m.type === 'TSPropertySignature' && dataType(m.typeAnnotation, new Set(seen))),
+        ) &&
         (node.extends ?? []).every((e: any) =>
-          dataType({ type: 'TSTypeReference', typeName: e.expression }, new Set(seen)),
+          dataType({ type: 'TSTypeReference', typeName: e.expression }, new Set(seen), omitted),
         )
       );
     };
-    const dataReference = (name: AnyNode, seen: Set<any>): boolean => {
+    const dataReference = (name: AnyNode, seen: Set<any>, omitted: Set<string>): boolean => {
       const variable = lookupVariable(context, name);
       const declaration: any = variable?.defs.find((d: any) =>
         ['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'].includes(d.node.type),
       )?.node;
-      return declaration ? dataType(declaration.typeAnnotation ?? declaration, seen) : false;
+      if (declaration) return dataType(declaration.typeAnnotation ?? declaration, seen, omitted);
+      const origin = variable?.defs.find((definition) => definition.type === 'ImportBinding');
+      if (origin?.parent?.type !== 'ImportDeclaration' || origin.node.type !== 'ImportSpecifier') return false;
+      return importedData.type(context.filename, origin.parent.source.value, importedName(origin.node), omitted);
+    };
+    // Schema-derived values are data only when their actual local constructors prove it.
+    // Opaque/declare/Unknown fields and Context services stay unproved. Imported schemas
+    // must resolve to actual owner constructors too.
+    const dataSchema = (node: any, seen: Set<any>, omitted = new Set<string>(), typeQuery = false): boolean => {
+      if (!node || seen.has(node)) return false;
+      const next = new Set(seen).add(node);
+      const identity = schemaIdentity(context, node);
+      if (
+        identity !== null &&
+        [
+          'String',
+          'Trim',
+          'Number',
+          'Finite',
+          'Int',
+          'Boolean',
+          'Null',
+          'Undefined',
+          'DateTimeUtc',
+          'DateTimeUtcFromString',
+        ].includes(identity)
+      )
+        return true;
+      if (node.type === 'Identifier') {
+        const binding = lookupVariable(context, node);
+        if (!binding || binding.references.some((reference) => reference.isWrite() && !reference.init)) return false;
+        const definition = binding.defs[0];
+        // A type-only import may legally name a schema in `typeof Schema.Type`.
+        // Only that type-query entry point can use it; runtime initializer walks
+        // still require a value import, and the owner constructor must prove data.
+        if (
+          definition?.type === 'ImportBinding' &&
+          definition.parent?.type === 'ImportDeclaration' &&
+          definition.node.type === 'ImportSpecifier' &&
+          (typeQuery || (definition.parent.importKind !== 'type' && definition.node.importKind !== 'type'))
+        )
+          return importedData.schema(
+            context.filename,
+            definition.parent.source.value,
+            importedName(definition.node),
+            omitted,
+          );
+        return definition?.type === 'Variable' &&
+          definition.node.type === 'VariableDeclarator' &&
+          definition.node.parent?.type === 'VariableDeclaration' &&
+          definition.node.parent.kind === 'const'
+          ? dataSchema(definition.node.init, next, omitted)
+          : false;
+      }
+      if (node.type !== 'CallExpression') return false;
+      const constructor = schemaIdentity(context, node.callee);
+      if (constructor === 'Struct' && node.arguments.length === 1 && node.arguments[0]?.type === 'ObjectExpression')
+        return node.arguments[0].properties.every(
+          (property: any) =>
+            property.type === 'Property' &&
+            !property.computed &&
+            (omitted.has(keyName(property.key, false) ?? '') || dataSchema(property.value, new Set(next))),
+        );
+      if (constructor === 'Literal') return node.arguments.length === 1 && node.arguments[0].type === 'Literal';
+      if (constructor === 'Literals')
+        return (
+          node.arguments.length === 1 &&
+          node.arguments[0]?.type === 'ArrayExpression' &&
+          node.arguments[0].elements.every((element: any) => element?.type === 'Literal')
+        );
+      if (constructor === 'Array') return node.arguments.length === 1 && dataSchema(node.arguments[0], next);
+      if (['optionalKey', 'optional', 'NullOr', 'OptionFromNullOr', 'toType', 'toEncoded'].includes(constructor ?? ''))
+        return node.arguments.length === 1 && dataSchema(node.arguments[0], next, omitted);
+      if (constructor === 'Record')
+        return (
+          node.arguments.length === 2 && node.arguments.every((argument: any) => dataSchema(argument, new Set(next)))
+        );
+      if (constructor === 'Union')
+        return (
+          node.arguments.length === 1 &&
+          node.arguments[0]?.type === 'ArrayExpression' &&
+          node.arguments[0].elements.every((element: any) => dataSchema(element, new Set(next), omitted))
+        );
+      if (node.callee.type !== 'MemberExpression') return false;
+      const method = keyName(node.callee.property, node.callee.computed);
+      if (method === 'check') return dataSchema(node.callee.object, next, omitted);
+      if (method === 'pipe')
+        return (
+          dataSchema(node.callee.object, next, omitted) &&
+          node.arguments.every(
+            (argument: any) =>
+              argument.type === 'CallExpression' && schemaIdentity(context, argument.callee) === 'brand',
+          )
+        );
+      return false;
     };
 
     const optionBagType = (params: readonly AnyNode[]): string | null => {

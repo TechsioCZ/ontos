@@ -14,6 +14,7 @@ import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, LocalJWKSet } from 'jose';
 import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
+  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   REFERENCE_GATEWAY_CREDENTIALS_HEADER,
 } from '@app/shared-contracts';
@@ -168,11 +169,31 @@ it.effect('attaches the redeemed token as the scope assertion only after redempt
     const signatureOnly = yield* verifier.verify(Redacted.make(`Bearer ${fixture.token}`), verificationOptions);
     expect(readVerifiedGatewayScopeAssertion(signatureOnly)).toBeUndefined();
 
-    const replayed = yield* Effect.exit(
+    const unavailable = yield* Effect.exit(
       verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
         ...verificationOptions,
         redemption: {
-          consume: () => Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
+          consume: () => Effect.fail(new GatewayAssertionRedemptionUnavailableError({ reason: 'Store unavailable' })),
+        },
+      }),
+    );
+    expect(Exit.isFailure(unavailable)).toBe(true);
+
+    // Recorded assertions are reusable while valid. Expiry during redemption must still refuse attachment.
+    let replayTime = currentTimeSeconds;
+    const replayed = yield* Effect.exit(
+      verifier.verifyAndRedeem(Redacted.make(`Bearer ${fixture.token}`), {
+        ...verificationOptions,
+        currentTimeSeconds: Effect.sync(() => replayTime),
+        redemption: {
+          consume: ({ expiresAtEpochSeconds }) =>
+            Effect.sync(() => {
+              replayTime = expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(new GatewayAssertionReplayError({ reason: 'The assertion was already used' })),
+              ),
+            ),
         },
       }),
     );

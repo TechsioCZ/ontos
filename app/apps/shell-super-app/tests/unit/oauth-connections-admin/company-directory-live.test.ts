@@ -1,3 +1,4 @@
+import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import type { ReadRuntimeService } from '@app/core-runtime';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
@@ -47,7 +48,7 @@ const snapshot = (
     },
   ],
   members: [agentPrincipalId, principal.principalId],
-  people: [{ displayName: 'Jana', principalId: principal.principalId }],
+  people: [{ displayName: 'Jana', principalId: AgentPrincipalIdSchema.make(principal.principalId) }],
 });
 const fixture = (confirmed: CompanyDirectorySnapshot, request: CompanyDirectoryRequest = defaultRequest) =>
   Effect.gen(function* directoryFixture() {

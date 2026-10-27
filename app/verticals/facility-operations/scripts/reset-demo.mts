@@ -26,23 +26,27 @@ const demoTenantId = '70000000-0000-4000-8000-000000000020';
 const siamparkLegalEntityId = rentalDemoCompany.legalEntityId;
 
 /** Encoded seed state per agenda; each comes from the lane-owned scripts/seed/<agenda>.mts. */
-const seeds: Readonly<Record<AgendaId, () => unknown>> = {
-  agenda: seedAgendaState,
-  assets: seedAssetsState,
+const seeds = {
+  agenda: () => Effect.sync(seedAgendaState),
+  assets: () => Effect.sync(seedAssetsState),
   documents: seedDocumentsState,
-  meters: seedMetersState,
+  meters: () => Effect.sync(seedMetersState),
   purchasing: seedPurchasingState,
-  security: seedSecurityState,
+  security: () => Effect.sync(seedSecurityState),
 };
 
 /** Decodes then re-encodes every seed through the agenda schema (fails fast on a bad seed). */
-const buildStates = Effect.forEach(agendaIds, (agenda) =>
-  Effect.gen(function* buildState() {
-    const schema = agendaDefinitions[agenda].stateSchema;
-    const decoded: unknown = yield* Schema.decodeUnknownEffect(schema)(seeds[agenda]());
-    const encoded: unknown = yield* Schema.encodeUnknownEffect(schema)(decoded);
-    return { agenda, encoded };
-  }),
+const buildStates = Effect.forEach(
+  agendaIds,
+  (agenda) =>
+    Effect.gen(function* buildState() {
+      const schema = agendaDefinitions[agenda].stateSchema;
+      const seed = yield* seeds[agenda]();
+      const decoded: unknown = yield* Schema.decodeUnknownEffect(schema)(seed);
+      const encoded: unknown = yield* Schema.encodeUnknownEffect(schema)(decoded);
+      return { agenda, encoded };
+    }),
+  { concurrency: 1 },
 );
 
 const AdminDatabaseLive = Layer.effect(
@@ -57,7 +61,7 @@ const AdminDatabaseLive = Layer.effect(
 ).pipe(Layer.provide(Reactivity.layer));
 
 const writeStates = Effect.fn('FacilityOperations.writeDemoStates')(function* writeDemoStates(
-  states: ReadonlyArray<{ readonly agenda: AgendaId; readonly encoded: unknown }>,
+  states: readonly { readonly agenda: AgendaId; readonly encoded: unknown }[],
 ) {
   const db = yield* makeWithDefaults({ relations: facilityOperationsRelations });
   const now = DateTime.toDateUtc(yield* DateTime.now);
@@ -84,7 +88,7 @@ const writeStates = Effect.fn('FacilityOperations.writeDemoStates')(function* wr
       });
   }
   // documents lane: real seed files (PDF/PNG) referenced by the documents seed state, upserted by id.
-  const seedFiles = seedDocumentFiles();
+  const seedFiles = yield* seedDocumentFiles();
   for (const file of seedFiles) {
     const values = {
       bytes: sql`decode(${file.bytes.toString('base64')}, 'base64')`,
@@ -105,7 +109,9 @@ const writeStates = Effect.fn('FacilityOperations.writeDemoStates')(function* wr
         target: [files.tenantId, files.legalEntityId, files.id],
       });
   }
-  yield* Console.log(`facility-operations demo state reset for ${selected.length} agendas (legal entity ${siamparkLegalEntityId})`);
+  yield* Console.log(
+    `facility-operations demo state reset for ${selected.length} agendas (legal entity ${siamparkLegalEntityId})`,
+  );
 });
 
 const command = Command.make(

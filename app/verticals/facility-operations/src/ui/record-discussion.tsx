@@ -1,12 +1,13 @@
 // Public, self-contained S12/S14 panel for records in other verticals. Reads and writes retain the
 // Siampark operations gateway, legal-entity scope and restricted documents permission.
-export { PropertyEquipment } from './property-equipment.tsx';
 import { AgendaFrame } from './agenda-frame.tsx';
 import { CommentThread } from './comment-thread.tsx';
 import { PartyFinanceFiles } from './finance-files.tsx';
 import { LinkedDocuments } from './linked-documents.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { SubjectRef } from '../../shared/domain/documents.ts';
+
+export { PropertyEquipment } from './property-equipment.tsx';
 
 const RecordDiscussionContent = ({ subject }: { readonly subject: SubjectRef }) => {
   const records = useAgendaRecords(['documents']);

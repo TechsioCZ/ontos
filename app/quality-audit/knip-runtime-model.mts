@@ -1,7 +1,9 @@
 import { Effect, FileSystem, Path, Schema } from 'effect';
 import { parse as parseJsonc } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
-import { parseSync } from 'oxc-parser';
+import { parseSync, Visitor } from 'oxc-parser';
+import type { Node, Program } from 'oxc-parser';
+import { parse as parseYaml } from 'yaml';
 
 import type { KnipModelEvidence } from './knip-model.mts';
 
@@ -185,12 +187,270 @@ const cssDependencies = (cssFile: string, css: string, layoutFile: string, works
   return result;
 };
 
+const WorkflowRunDefaults = Schema.Struct({
+  run: Schema.optionalKey(Schema.Struct({ 'working-directory': Schema.optionalKey(Schema.String) })),
+});
+const Workflow = Schema.Struct({
+  defaults: Schema.optionalKey(WorkflowRunDefaults),
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      defaults: Schema.optionalKey(WorkflowRunDefaults),
+      steps: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            run: Schema.optionalKey(Schema.String),
+            'working-directory': Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+interface ShellLine {
+  readonly offset: number;
+  readonly text: string;
+}
+const shellLines = (source: string): readonly ShellLine[] => {
+  // Keep offsets while joining native continuations. Function bodies are not invocations.
+  const joined = source.replaceAll(/\\\r?\n/gu, (value) => ' '.repeat(value.length));
+  const topLevel = joined.replaceAll(/^[\t ]*[\w-]+\(\)[\t ]*\{[\t ]*(?:#[^\n]*)?\n[\s\S]*?^\}/gmu, (value) =>
+    value.replaceAll(/[^\n]/gu, ' '),
+  );
+  let offset = 0;
+  let quote: string | undefined;
+  let hereDocument: string | undefined;
+  return topLevel.split('\n').map((text) => {
+    const continuedQuote = quote !== undefined;
+    const inHereDocument = hereDocument !== undefined;
+    if (inHereDocument) {
+      if (text.trim() === hereDocument) {
+        hereDocument = undefined;
+      }
+    } else {
+      for (let index = 0; index < text.length; index += 1) {
+        const character = text[index];
+        if (character === '\\' && quote !== "'") {
+          index += 1;
+          continue;
+        }
+        if (quote === undefined && character === '#' && (index === 0 || /\s/u.test(text[index - 1] ?? ''))) {
+          break;
+        }
+        if (character === quote) {
+          quote = undefined;
+        } else if (quote === undefined && (character === '"' || character === "'")) {
+          quote = character;
+        }
+      }
+      hereDocument = /(?:^|\s)<<-?["']?(?<delimiter>\w+)["']?(?:\s|$)/u.exec(text)?.groups?.delimiter;
+    }
+    const line = { offset, text: continuedQuote || inHereDocument || quote !== undefined ? '' : text };
+    offset += text.length + 1;
+    return line;
+  });
+};
+const shellWords = (line: string): readonly string[] => {
+  const words: string[] = [];
+  for (const match of line.matchAll(/(?:[^\s"'\\]|\\.|"(?:\\.|[^"\\])*"|'[^']*')+/gu)) {
+    const raw = match[0];
+    if (raw.startsWith('#')) {
+      break;
+    }
+    words.push(
+      (raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")) ? raw.slice(1, -1) : raw,
+    );
+  }
+  return words;
+};
+const scriptCommand = (words: readonly string[], withEnvironment: boolean): string | undefined => {
+  let index = 0;
+  while (index < words.length) {
+    const word = words[index];
+    if (word === 'env' || word === 'exec' || word === 'nohup' || /^[A-Z_][A-Z_\d]*=/u.test(word ?? '')) {
+      index += 1;
+    } else if (withEnvironment && word === '${WITH_ENV[@]}') {
+      index += 1;
+    } else if (word === 'mise' && words[index + 1] === 'exec' && words[index + 2] === '--') {
+      index += 3;
+    } else {
+      break;
+    }
+  }
+  if (words[index] !== 'node') {
+    return undefined;
+  }
+  index += 1;
+  while (words[index]?.startsWith('--') === true) {
+    const option = words[index];
+    if (
+      option === '--experimental-strip-types' ||
+      option === '--enable-source-maps' ||
+      option === '--no-warnings' ||
+      option?.startsWith('--env-file=') === true
+    ) {
+      index += 1;
+    } else {
+      return undefined;
+    }
+  }
+  const target = words[index]?.replace(/^\.\//u, '');
+  return target !== undefined && /^scripts\/[\w./-]+\.[cm]?[jt]s$/u.test(target) && !target.split('/').includes('..')
+    ? target
+    : undefined;
+};
+const forwardsArguments = (source: string, name: string): boolean => {
+  if ([...source.matchAll(new RegExp(String.raw`^${name}\(\)`, 'gmu'))].length !== 1) {
+    return false;
+  }
+  const body = new RegExp(String.raw`^${name}\(\)\s*\{[^\n]*\n(?<body>[\s\S]*?)^\}`, 'mu').exec(source)?.groups?.body;
+  return (
+    body !== undefined &&
+    /^\s*local name="\$1"\s*$/mu.test(body) &&
+    /^\s*shift\s*$/mu.test(body) &&
+    /^\s*(?:if ! |nohup )?"\$@"(?:\s|$)/mu.test(body)
+  );
+};
+const memberIs = (node: Node | undefined | null, object: string, property: string): boolean =>
+  node?.type === 'MemberExpression' &&
+  !node.computed &&
+  node.object.type === 'Identifier' &&
+  node.object.name === object &&
+  node.property.type === 'Identifier' &&
+  node.property.name === property;
+const fieldOf = (node: Node | undefined | null, name: string): Node | undefined =>
+  node?.type === 'ObjectExpression'
+    ? node.properties.flatMap((property) =>
+        property.type === 'Property' &&
+        ((property.key.type === 'Identifier' && property.key.name === name) ||
+          (property.key.type === 'Literal' && property.key.value === name))
+          ? [property.value]
+          : [],
+      )[0]
+    : undefined;
+const variablesIn = (node: Node): ReadonlyMap<string, Node> => {
+  const variables = new Map<string, Node>();
+  const duplicates = new Set<string>();
+  new Visitor({
+    VariableDeclarator: (binding) => {
+      if (binding.id.type === 'Identifier' && binding.init !== null) {
+        if (variables.has(binding.id.name)) {
+          duplicates.add(binding.id.name);
+        }
+        variables.set(binding.id.name, binding.init);
+      }
+    },
+  }).visit(node);
+  for (const duplicate of duplicates) {
+    variables.delete(duplicate);
+  }
+  return variables;
+};
+const importsName = (program: Program, module: string, name: string): boolean =>
+  program.body.some(
+    (statement) =>
+      statement.type === 'ImportDeclaration' &&
+      statement.source.value === module &&
+      statement.specifiers.some(
+        (specifier) =>
+          specifier.type === 'ImportSpecifier' &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === name &&
+          specifier.local.name === name,
+      ),
+  );
+
+/** Follow the exact Core entry through the native identity resolver into esbuild's entryPoints option. */
+const coreWorkerTarget = (registry: string, materializer: string): string | undefined => {
+  const declared = parseSync('outbox-worker-delivery.mjs', registry);
+  const consumer = parseSync('materialize-outbox-worker.mjs', materializer);
+  if (
+    declared.errors.length > 0 ||
+    consumer.errors.length > 0 ||
+    !importsName(consumer.program, 'esbuild', 'build') ||
+    !importsName(consumer.program, './outbox-worker-delivery.mjs', 'CORE_SYSTEM_OUTBOX_WORKER')
+  ) {
+    return undefined;
+  }
+  const descriptor = variablesIn(declared.program).get('CORE_SYSTEM_OUTBOX_WORKER');
+  if (descriptor?.type !== 'CallExpression' || !memberIs(descriptor.callee, 'Object', 'freeze')) {
+    return undefined;
+  }
+  const entry = fieldOf(descriptor.arguments[0], 'entry');
+  if (entry?.type !== 'Literal' || !Schema.is(Schema.String)(entry.value)) {
+    return undefined;
+  }
+  const variables = variablesIn(consumer.program);
+  const resolver = variables.get('resolveOutboxWorkerEffect');
+  const materialize = variables.get('materializeOutboxWorkerEffect');
+  if (resolver?.type !== 'ArrowFunctionExpression' || materialize?.type !== 'ArrowFunctionExpression') {
+    return undefined;
+  }
+  const resolverVariables = variablesIn(resolver);
+  const selected = resolverVariables.get('entryPoint');
+  const dedicated = resolverVariables.get('dedicatedCore');
+  const materializerVariables = variablesIn(materialize);
+  const delivery = materializerVariables.get('delivery');
+  if (
+    resolverVariables.has('CORE_SYSTEM_OUTBOX_WORKER') ||
+    materializerVariables.has('build') ||
+    selected?.type !== 'ConditionalExpression' ||
+    selected.test.type !== 'Identifier' ||
+    selected.test.name !== 'dedicatedCore' ||
+    !memberIs(selected.consequent, 'CORE_SYSTEM_OUTBOX_WORKER', 'entry') ||
+    dedicated?.type !== 'BinaryExpression' ||
+    dedicated.operator !== '===' ||
+    dedicated.left.type !== 'Identifier' ||
+    dedicated.left.name !== 'appId' ||
+    !memberIs(dedicated.right, 'CORE_SYSTEM_OUTBOX_WORKER', 'id') ||
+    delivery?.type !== 'YieldExpression' ||
+    delivery.argument?.type !== 'CallExpression' ||
+    delivery.argument.callee.type !== 'Identifier' ||
+    delivery.argument.callee.name !== 'resolveOutboxWorkerEffect'
+  ) {
+    return undefined;
+  }
+  let returnsEntry = false;
+  let bundled = false;
+  new Visitor({
+    ReturnStatement: (statement) => {
+      const returned = fieldOf(statement.argument, 'entryPoint');
+      if (returned?.type === 'Identifier' && returned.name === 'entryPoint') {
+        returnsEntry = true;
+      }
+    },
+  }).visit(resolver);
+  new Visitor({
+    CallExpression: (call) => {
+      const entries = fieldOf(call.arguments[0], 'entryPoints');
+      if (
+        call.callee.type === 'Identifier' &&
+        call.callee.name === 'build' &&
+        entries?.type === 'ArrayExpression' &&
+        entries.elements.length === 1 &&
+        memberIs(entries.elements[0], 'delivery', 'entryPoint')
+      ) {
+        bundled = true;
+      }
+    },
+  }).visit(materialize);
+  return returnsEntry &&
+    bundled &&
+    /^scripts\/[\w./-]+\.[cm]?[jt]s$/u.test(entry.value) &&
+    !entry.value.split('/').includes('..')
+    ? entry.value
+    : undefined;
+};
+
 export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(function* readModelWorkspaces(
   appRoot: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const workspaces = ['.'];
+  if (yield* fs.exists(path.join(appRoot, 'akros-storefront', PACKAGE_MANIFEST))) {
+    workspaces.push('akros-storefront');
+  }
   for (const directory of ['apps', 'verticals', 'packages', 'vendor', 'tools']) {
     const location = path.join(appRoot, directory);
     if (!(yield* fs.exists(location))) {
@@ -426,6 +686,112 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           }
         }
       }
+    });
+    const nativeScriptFact = Effect.fn('QualityAudit.nativeScriptFact')(function* nativeScriptFact(
+      file: string,
+      source: string,
+      offset: number,
+      target: string | undefined,
+      reason: string,
+    ) {
+      if (target !== undefined && (yield* read(target)) !== undefined) {
+        evidence.push(at(file, source, offset, '.', 'file', target, reason));
+      }
+    });
+    const workflowScriptEvidence = Effect.fn('QualityAudit.workflowScriptEvidence')(function* workflowScriptEvidence() {
+      const workflowDirectory = '../.github/workflows';
+      if (!(yield* fs.exists(path.join(appRoot, workflowDirectory)))) {
+        return;
+      }
+      for (const name of yield* fs.readDirectory(path.join(appRoot, workflowDirectory))) {
+        if (!/\.ya?ml$/u.test(name)) {
+          continue;
+        }
+        const file = `${workflowDirectory}/${name}`;
+        const source = yield* read(file);
+        if (source === undefined) {
+          continue;
+        }
+        const document: unknown = yield* Effect.try(() => parseYaml(source));
+        const workflow = yield* Schema.decodeUnknownEffect(Workflow)(document);
+        for (const job of Object.values(workflow.jobs)) {
+          for (const step of job.steps ?? []) {
+            if (step.run === undefined || /^\s*node\s*\(\)/mu.test(step.run)) {
+              continue;
+            }
+            let workingDirectory =
+              step['working-directory'] ??
+              job.defaults?.run?.['working-directory'] ??
+              workflow.defaults?.run?.['working-directory'] ??
+              '.';
+            for (const line of shellLines(step.run)) {
+              const words = shellWords(line.text);
+              if (words[0] === 'cd') {
+                workingDirectory =
+                  words.length === 2 && words[1] !== undefined && /^[\w./-]+$/u.test(words[1])
+                    ? path.normalize(path.join(workingDirectory, words[1]))
+                    : '';
+                continue;
+              }
+              if (workingDirectory !== 'app' && workingDirectory !== './app') {
+                continue;
+              }
+              yield* nativeScriptFact(
+                file,
+                source,
+                Math.max(source.indexOf(line.text.trim()), 0),
+                scriptCommand(words, false),
+                'Native GitHub Actions run step executes Node from the app workspace',
+              );
+            }
+          }
+        }
+      }
+    });
+    const demoShellScriptEvidence = Effect.fn('QualityAudit.demoShellScriptEvidence')(
+      function* demoShellScriptEvidence() {
+        const file = 'scripts/demo/up.sh';
+        const source = yield* read(file);
+        if (source === undefined || /^\s*node\s*\(\)/mu.test(source)) {
+          return;
+        }
+        const lines = shellLines(source);
+        if (
+          !lines.some(({ text }) => text === 'APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"') ||
+          !lines.some(({ text }) => text === 'cd "$APP"')
+        ) {
+          return;
+        }
+        const wrappers = new Set(['step', 'start'].filter((name) => forwardsArguments(source, name)));
+        const withEnvironment =
+          /^WITH_ENV=\(mise exec --\)$/mu.test(source) && [...source.matchAll(/^WITH_ENV(?:\+)?=/gmu)].length === 1;
+        for (const line of lines) {
+          const words = shellWords(line.text);
+          const command = words[0] !== undefined && wrappers.has(words[0]) ? words.slice(2) : words;
+          yield* nativeScriptFact(
+            file,
+            source,
+            line.offset,
+            scriptCommand(command, withEnvironment),
+            'Native demo shell changes to app and forwards the invoked command through its proven wrapper',
+          );
+        }
+      },
+    );
+    const coreWorkerEvidence = Effect.fn('QualityAudit.coreWorkerEvidence')(function* coreWorkerEvidence() {
+      const file = 'scripts/materialize-outbox-worker.mjs';
+      const consumer = yield* read(file);
+      const registry = yield* read('scripts/outbox-worker-delivery.mjs');
+      if (consumer === undefined || registry === undefined) {
+        return;
+      }
+      yield* nativeScriptFact(
+        file,
+        consumer,
+        consumer.indexOf('entryPoints:'),
+        coreWorkerTarget(registry, consumer),
+        'Native esbuild entryPoints consumes the Core worker selected by its imported delivery identity',
+      );
     });
     const tsgoDocumentation = Effect.fn('QualityAudit.tsgoDocumentation')(function* tsgoDocumentation() {
       const readme = yield* read('node_modules/@effect/tsgo/README.md');
@@ -734,6 +1100,9 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       yield* federationEvidence(prefix, workspace);
     }
     yield* zeropsEvidence();
+    yield* workflowScriptEvidence();
+    yield* demoShellScriptEvidence();
+    yield* coreWorkerEvidence();
     yield* tsgoEvidence();
     yield* readinessEvidence();
     yield* lefthookEvidence();

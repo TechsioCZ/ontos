@@ -3,7 +3,7 @@
 import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { DateTime, Effect, Match, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 
 import {
   FacilityOperationsPermissionDenied,
@@ -16,20 +16,21 @@ import type { ApplyCommandResult, OpsCommand } from '../../shared/actions/apply-
 import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { OverviewRequest, OverviewResponse } from '../../shared/apis/overview.ts';
+import { AgendaEnvelopeSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
-import { agendaStateForAssignee, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
-import type { AgendaState } from '../../shared/domain/agenda.ts';
+import { AgendaStateSchema, agendaStateForAssignee, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
-import type { MetersState } from '../../shared/domain/meters.ts';
-import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
+import { MetersStateSchema } from '../../shared/domain/meters.ts';
+import { optionalField, FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
 import {
   CHANGE_LOG_ROW,
   ChangeLogStateSchema,
+  ChangeSnapshotSchema,
   MAX_CHANGE_LOG_ENTRIES,
   changeEntries,
   touchedSince,
 } from '../../shared/domain/change-log.ts';
-import type { ChangeEntry } from '../../shared/domain/change-log.ts';
+import type { BaseUpdatedAt, ChangeEntry } from '../../shared/domain/change-log.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { opsOverviewOf } from '../../shared/domain/ops-overview.ts';
 import { agendaStates, files } from '../database/schema.ts';
@@ -97,38 +98,49 @@ const canWriteAgendaEvents = (grants: Grants) =>
 
 /** Decoded byte length of a padded base64 string. */
 const base64ByteLength = (value: string) => {
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  let padding = 0;
+  if (value.endsWith('==')) {
+    padding = 2;
+  } else if (value.endsWith('=')) {
+    padding = 1;
+  }
   return (value.length / 4) * 3 - padding;
 };
+
+const evaluateFacilityOperationsGrants = Effect.fn('FacilityOperations.evaluateGrants')(
+  function* evaluateFacilityOperationsGrants(scope: OperationalScope, access: typeof ContextAccess.Service) {
+    if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
+      return yield* referenceUnavailable();
+    }
+    const keys: readonly PermissionKey[] = Object.values(facilityOperationsPermissions);
+    const decisions = yield* access.contextPermissions({
+      legalEntityId: scope.legalEntityId,
+      principalId: scope.principalId,
+      targets: keys.map((permission) => ({ moduleId: FACILITY_OPERATIONS_MODULE_ID, permission })),
+      tenantId: scope.tenantId,
+    });
+    const allowed = (permission: PermissionKey) => {
+      const decision = decisions.find((entry) => entry.key === `${FACILITY_OPERATIONS_MODULE_ID}:${permission}`);
+      return decision?.decision === 'allowed';
+    };
+    if (decisions.some((entry) => entry.decision === 'unavailable')) {
+      return yield* referenceUnavailable();
+    }
+    return {
+      readAll: allowed(facilityOperationsPermissions.readAll),
+      readOperational: allowed(facilityOperationsPermissions.readOperational),
+      writeAll: allowed(facilityOperationsPermissions.writeAll),
+      writeOperational: allowed(facilityOperationsPermissions.writeOperational),
+    } satisfies Grants;
+  },
+);
 
 /** One bulk SpiceDB check for every Facility Operations context permission of the scope's company. */
 export const facilityOperationsGrants = Effect.fn('FacilityOperations.grants')(function* facilityOperationsGrants(
   scope: OperationalScope,
 ) {
   const access = yield* ContextAccess;
-  if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
-    return yield* referenceUnavailable();
-  }
-  const keys: readonly PermissionKey[] = Object.values(facilityOperationsPermissions);
-  const decisions = yield* access.contextPermissions({
-    legalEntityId: scope.legalEntityId,
-    principalId: scope.principalId,
-    targets: keys.map((permission) => ({ moduleId: FACILITY_OPERATIONS_MODULE_ID, permission })),
-    tenantId: scope.tenantId,
-  });
-  const allowed = (permission: PermissionKey) => {
-    const decision = decisions.find((entry) => entry.key === `${FACILITY_OPERATIONS_MODULE_ID}:${permission}`);
-    return decision?.decision === 'allowed';
-  };
-  if (decisions.some((entry) => entry.decision === 'unavailable')) {
-    return yield* referenceUnavailable();
-  }
-  return {
-    readAll: allowed(facilityOperationsPermissions.readAll),
-    readOperational: allowed(facilityOperationsPermissions.readOperational),
-    writeAll: allowed(facilityOperationsPermissions.writeAll),
-    writeOperational: allowed(facilityOperationsPermissions.writeOperational),
-  } satisfies Grants;
+  return yield* evaluateFacilityOperationsGrants(scope, access);
 });
 
 const recordsAccessList = (granted: Grants) => {
@@ -147,7 +159,7 @@ const recordsAccessList = (granted: Grants) => {
 
 /** The rows a records read needs, exactly as the owner transaction read them (still encoded). */
 export interface LoadedFacilityRecords {
-  readonly file: StoredFile | undefined;
+  readonly file?: StoredFile | undefined;
   readonly rows: ReadonlyMap<string, { readonly revision: number; readonly state: unknown; readonly updatedAt: Date }>;
 }
 
@@ -157,7 +169,7 @@ const decodeAgendaRow = Effect.fn('FacilityOperations.decodeAgenda')(function* d
 ) {
   const definition = agendaDefinitions[agenda];
   const row = loaded.rows.get(agenda);
-  const state: unknown = yield* Schema.decodeUnknownEffect(definition.stateSchema)(row?.state ?? definition.empty);
+  const state = yield* Schema.decodeUnknownEffect(definition.stateSchema)(row?.state ?? definition.empty);
   const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
   return { revision: row?.revision ?? 0, state, updatedAt };
 }, Effect.mapError(unavailable));
@@ -167,6 +179,13 @@ const decodeAgendaRow = Effect.fn('FacilityOperations.decodeAgenda')(function* d
  * own inbox/preferences in the calendar agenda (only assigned events for external partners), meters without
  * financial values without that permission. Records and overview reads both show exactly these states.
  */
+type VisibleAgendaEnvelope = NonNullable<RecordsResponse['agendas'][keyof RecordsResponse['agendas']]>;
+interface VisibleAgendas {
+  readonly actorRef: RecordsResponse['actorPrincipalRef'];
+  readonly envelopes: ReadonlyMap<AgendaId, VisibleAgendaEnvelope>;
+  readonly ownEventIds?: ReadonlySet<string>;
+}
+
 const visibleAgendas = Effect.fn('FacilityOperations.visibleAgendas')(function* visibleAgendas(
   requested: readonly AgendaId[],
   loaded: LoadedFacilityRecords,
@@ -175,40 +194,62 @@ const visibleAgendas = Effect.fn('FacilityOperations.visibleAgendas')(function* 
 ) {
   const meters = meterAccess(granted);
   const assignedOnly = isAssignedOnly(granted);
-  const actorRef = { principalId: scope.principalId, tenantId: scope.tenantId } as RecordsResponse['actorPrincipalRef'];
-  let ownEventIds: ReadonlySet<string> | undefined;
-  const envelopes = new Map<
-    AgendaId,
-    Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }
-  >();
-  for (const entry of recordsAccessList(granted)) {
-    if (!entry.canRead || !requested.includes(entry.agenda)) {
-      continue;
-    }
-    const snapshot = yield* decodeAgendaRow(loaded, entry.agenda);
-    envelopes.set(entry.agenda, {
-      canWrite: entry.canWrite,
-      ...(entry.agenda === 'agenda' && assignedOnly ? { assignedOnly: true as const } : {}),
-      ...(entry.agenda === 'meters' ? { canReadFinancial: meters.canReadFinancial, canManage: meters.canManage } : {}),
-      revision: snapshot.revision,
-      state:
-        entry.agenda === 'agenda'
-          ? (() => {
-              const personal = agendaStateForPrincipal(snapshot.state as AgendaState, actorRef);
-              if (!assignedOnly) {
-                return personal;
-              }
-              const own = agendaStateForAssignee(personal, actorRef);
-              ownEventIds = new Set(own.events.map((event) => event.id));
-              return own;
-            })()
-          : entry.agenda === 'meters' && !meters.canReadFinancial
-            ? operationalMetersState(snapshot.state as MetersState)
-            : snapshot.state,
-      updatedAt: snapshot.updatedAt,
-    });
-  }
-  return { actorRef, envelopes, ownEventIds };
+  const actorRef = yield* Schema.decodeEffect(RecordsResponseSchema.fields.actorPrincipalRef)({
+    principalId: scope.principalId,
+    tenantId: scope.tenantId,
+  }).pipe(Effect.mapError(unavailable));
+  const requestedAgendas = new Set(requested);
+  return yield* Effect.reduce(
+    recordsAccessList(granted),
+    (): VisibleAgendas => ({ actorRef, envelopes: new Map() }),
+    (visible, entry) => {
+      if (!entry.canRead || !requestedAgendas.has(entry.agenda)) {
+        return Effect.succeed(visible);
+      }
+      return Effect.gen(function* visibleAgenda() {
+        const snapshot = yield* decodeAgendaRow(loaded, entry.agenda);
+        let { state } = snapshot;
+        let { ownEventIds } = visible;
+        if (entry.agenda === 'agenda') {
+          const calendar = yield* Schema.decodeUnknownEffect(Schema.toType(AgendaStateSchema))(state).pipe(
+            Effect.mapError(unavailable),
+          );
+          const personal = agendaStateForPrincipal(calendar, actorRef);
+          if (assignedOnly) {
+            const own = agendaStateForAssignee(personal, actorRef);
+            state = own;
+            ownEventIds = new Set(own.events.map((event) => event.id));
+          } else {
+            state = personal;
+          }
+        } else if (entry.agenda === 'meters' && !meters.canReadFinancial) {
+          const meterState = yield* Schema.decodeUnknownEffect(Schema.toType(MetersStateSchema))(state).pipe(
+            Effect.mapError(unavailable),
+          );
+          state = operationalMetersState(meterState);
+        }
+        const envelope = yield* Schema.decodeUnknownEffect(
+          Schema.toType(RecordsResponseSchema.fields.agendas.fields[entry.agenda]),
+        )({
+          canWrite: entry.canWrite,
+          ...optionalField<'assignedOnly', true>(
+            'assignedOnly',
+            entry.agenda === 'agenda' && assignedOnly ? true : undefined,
+          ),
+          ...optionalField('canManage', entry.agenda === 'meters' ? meters.canManage : undefined),
+          ...optionalField('canReadFinancial', entry.agenda === 'meters' ? meters.canReadFinancial : undefined),
+          revision: snapshot.revision,
+          state,
+          updatedAt: snapshot.updatedAt,
+        }).pipe(Effect.mapError(unavailable));
+        return {
+          ...visible,
+          envelopes: new Map(visible.envelopes).set(entry.agenda, envelope),
+          ...optionalField('ownEventIds', ownEventIds),
+        };
+      });
+    },
+  );
 });
 
 /**
@@ -226,40 +267,44 @@ export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords
   const visible = yield* visibleAgendas(request.agendas ?? agendaIds, loaded, granted, scope);
   const { actorRef } = visible;
   let { ownEventIds } = visible;
-  const agendas = Object.fromEntries(visible.envelopes);
-  const readable = new Set(accessList.filter((entry) => entry.canRead).map((entry) => entry.agenda as string));
+  const agendas = yield* Schema.decodeEffect(Schema.toType(RecordsResponseSchema.fields.agendas))(
+    Object.fromEntries(visible.envelopes),
+  ).pipe(Effect.mapError(unavailable));
+  const readable = new Set(accessList.flatMap((entry) => (entry.canRead ? [entry.agenda] : [])));
   // An operational-only principal sees the history of their own events only, never of other people's.
   if (assignedOnly && request.historyFor !== undefined) {
     if (ownEventIds === undefined) {
       const snapshot = yield* decodeAgendaRow(loaded, 'agenda');
-      ownEventIds = new Set(
-        agendaStateForAssignee(snapshot.state as AgendaState, actorRef).events.map((event) => event.id),
+      const calendar = yield* Schema.decodeUnknownEffect(Schema.toType(AgendaStateSchema))(snapshot.state).pipe(
+        Effect.mapError(unavailable),
       );
+      ownEventIds = new Set(agendaStateForAssignee(calendar, actorRef).events.map((event) => event.id));
     }
     if (!ownEventIds.has(request.historyFor)) {
       readable.delete('agenda');
     }
   }
-  const historyFor = request.historyFor;
+  const { historyFor } = request;
   const changeLog = loaded.rows.get(CHANGE_LOG_ROW)?.state;
-  const history =
-    historyFor === undefined
-      ? undefined
-      : changeLog === undefined
-        ? ([] as readonly ChangeEntry[])
-        : (yield* Schema.decodeUnknownEffect(ChangeLogStateSchema)(changeLog).pipe(
-            Effect.mapError(unavailable),
-          )).entries
-            .filter((entry) => entry.entityId === historyFor && readable.has(entry.agenda))
-            .toReversed()
-            .slice(0, 200);
+  let history: readonly ChangeEntry[] | undefined;
+  if (historyFor !== undefined) {
+    if (changeLog === undefined) {
+      history = [];
+    } else {
+      const log = yield* Schema.decodeUnknownEffect(ChangeLogStateSchema)(changeLog).pipe(Effect.mapError(unavailable));
+      history = log.entries
+        .filter((entry) => entry.entityId === historyFor && readable.has(entry.agenda))
+        .toReversed()
+        .slice(0, 200);
+    }
+  }
   // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
   const response: RecordsResponse = {
     access: accessList,
     actorPrincipalRef: actorRef,
-    agendas: agendas as RecordsResponse['agendas'],
-    ...(loaded.file === undefined ? {} : { file: loaded.file }),
-    ...(history === undefined ? {} : { history }),
+    agendas,
+    ...optionalField('file', loaded.file),
+    ...optionalField('history', history),
   };
   return response;
 });
@@ -276,16 +321,26 @@ export const finishFacilityOverview = Effect.fn('FacilityOperations.finishOvervi
   scope: OperationalScope,
 ) {
   const { actorRef, envelopes } = yield* visibleAgendas(agendaIds, loaded, granted, scope);
-  const agenda = envelopes.get('agenda');
+  const calendarEnvelope = envelopes.get('agenda');
+  const agenda =
+    calendarEnvelope === undefined
+      ? undefined
+      : yield* Schema.decodeUnknownEffect(Schema.toType(AgendaEnvelopeSchema))(calendarEnvelope).pipe(
+          Effect.mapError(unavailable),
+        );
   // The read definition validates the result against OverviewResponseSchema.
   const response: OverviewResponse = {
     access: recordsAccessList(granted),
     actorPrincipalRef: actorRef,
-    ...(agenda === undefined ? {} : { agenda: agenda as NonNullable<OverviewResponse['agenda']> }),
+    ...optionalField('agenda', agenda),
     ...opsOverviewOf(envelopes, request.includeSearch === true),
   };
   return response;
 });
+
+/** Personal inbox, preferences and export log are not record history. */
+const loggedCommand = (tag: string) =>
+  !tag.startsWith('AgendaNotifications') && tag !== 'AgendaExportRecord' && tag !== 'AgendaPreferencesSet';
 
 export const persistenceService = Effect.fn('FacilityOperations.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
@@ -303,7 +358,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
     const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
 
     const access = yield* ContextAccess;
-    const grants = () => facilityOperationsGrants(scope).pipe(Effect.provideService(ContextAccess, access));
+    const grants = () => evaluateFacilityOperationsGrants(scope, access);
 
     const whereAgenda = (agenda: AgendaId) =>
       and(
@@ -323,9 +378,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
         .pipe(Effect.mapError(unavailable));
       const [row] = rows;
       const raw: unknown = row === undefined ? definition.empty : row.state;
-      const state: unknown = yield* Schema.decodeUnknownEffect(definition.stateSchema)(raw).pipe(
-        Effect.mapError(unavailable),
-      );
+      const state = yield* Schema.decodeUnknownEffect(definition.stateSchema)(raw).pipe(Effect.mapError(unavailable));
       const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
       return { exists: row !== undefined, raw, revision: row?.revision ?? 0, state, updatedAt };
     });
@@ -333,7 +386,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
     const save = Effect.fn('FacilityOperations.save')(function* save(
       agenda: AgendaId,
       snapshot: { readonly exists: boolean; readonly revision: number },
-      encoded: unknown,
+      encoded: Schema.Json,
     ) {
       const now = DateTime.toDateUtc(yield* DateTime.now);
       const next = snapshot.revision + 1;
@@ -419,24 +472,24 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
         })
         .from(files)
         .where(and(eq(files.tenantId, scope.tenantId), eq(files.legalEntityId, legalEntityId), eq(files.id, fileId)))
-        .limit(1)
-        .pipe(Effect.mapError(unavailable));
+        .limit(1);
       const [row] = rows;
       if (row === undefined) {
-        return undefined;
+        return Option.getOrUndefined(Option.none<StoredFile>());
       }
+      const id = yield* Schema.decodeEffect(FileIdSchema)(row.id);
       const file: StoredFile = {
         // Postgres wraps encode() output every 76 characters.
         contentBase64: row.content.replaceAll('\n', ''),
         createdAt: DateTime.fromDateUnsafe(row.createdAt),
-        createdBy: { principalId: row.createdBy, tenantId: scope.tenantId } as StoredFile['createdBy'],
-        id: row.id as StoredFile['id'],
+        createdBy: { principalId: row.createdBy, tenantId: scope.tenantId },
+        id,
         mime: row.mime,
         name: row.name,
         size: row.size,
       };
       return file;
-    });
+    }, Effect.mapError(unavailable));
 
     /** Appends change entries to the company's change-log row in the same transaction (row lock via upsert). */
     const appendHistory = Effect.fn('FacilityOperations.appendHistory')(function* appendHistory(
@@ -479,15 +532,11 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
         .pipe(Effect.mapError(unavailable));
     });
 
-    /** Personal inbox, preferences and export log are not record history. */
-    const loggedCommand = (tag: string) =>
-      !tag.startsWith('AgendaNotifications') && tag !== 'AgendaExportRecord' && tag !== 'AgendaPreferencesSet';
-
     const apply = Effect.fn('FacilityOperations.apply')(function* apply(
       command: OpsCommand,
       expectedRevision: number,
       resourceId: string,
-      baseUpdatedAt?: string,
+      baseUpdatedAt?: BaseUpdatedAt,
     ) {
       if (Predicate.isTagged(command, 'FileUpload')) {
         return yield* uploadFile(command, resourceId);
@@ -526,21 +575,29 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       }
       const now = yield* DateTime.now;
       // The reducer always runs against the CURRENT state, so every business rule sees the latest data.
-      const change = yield* definition.evolve(snapshot.state, command, { actor, now, resourceId });
-      if (stale && baseUpdatedAt !== undefined && touchedSince(snapshot.raw, change.entityIds, baseUpdatedAt)) {
+      const change = yield* definition
+        .dispatch(snapshot.state, command, { actor, now, resourceId })
+        .pipe(Effect.catchTag('SchemaError', (cause) => Effect.fail(unavailable(cause))));
+      const before = (yield* Schema.decodeUnknownEffect(ChangeSnapshotSchema)({
+        agenda: definition.id,
+        document: snapshot.raw,
+      }).pipe(Effect.mapError(unavailable))).document;
+      if (stale && baseUpdatedAt !== undefined && touchedSince(before, change.entityIds, baseUpdatedAt)) {
         return yield* revisionConflict();
       }
-      const encoded = yield* Schema.encodeUnknownEffect(definition.stateSchema)(change.state).pipe(
-        Effect.mapError(unavailable),
-      );
-      const revision = yield* save(definition.id, snapshot, encoded);
+      const encoded = yield* change.encoding.pipe(Effect.mapError(unavailable));
+      const after = (yield* Schema.decodeEffect(ChangeSnapshotSchema)({
+        agenda: definition.id,
+        document: encoded,
+      }).pipe(Effect.mapError(unavailable))).document;
+      const revision = yield* save(definition.id, snapshot, after);
       if (loggedCommand(command._tag)) {
         yield* appendHistory(
           changeEntries({
-            after: encoded,
+            after,
             agenda: definition.id,
             at: DateTime.formatIso(now),
-            before: snapshot.raw,
+            before,
             by: actor,
             command: command._tag,
             entityIds: change.entityIds,
@@ -562,11 +619,13 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       const requested = request.agendas ?? agendaIds;
       const accessList = recordsAccessList(granted);
       const needed = new Set<string>(
-        accessList.filter((entry) => entry.canRead && requested.includes(entry.agenda)).map((entry) => entry.agenda),
+        accessList.flatMap((entry) => (entry.canRead && requested.includes(entry.agenda) ? [entry.agenda] : [])),
       );
       if (request.historyFor !== undefined) {
         needed.add(CHANGE_LOG_ROW);
-        if (isAssignedOnly(granted)) needed.add('agenda');
+        if (isAssignedOnly(granted)) {
+          needed.add('agenda');
+        }
       }
       const rows =
         needed.size === 0

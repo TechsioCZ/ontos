@@ -7,14 +7,21 @@ import {
   isConnectionWriteAllowed,
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
-import { DateTime, Effect, Struct } from 'effect';
-import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { DateTime, Effect, Option, Struct } from 'effect';
+import type { OperationalScope, ReadFinishContext, ReadServiceFactory } from '@app/core-runtime';
 import { decodeFinanceState, persistenceService } from '../services/finance-state-repository.ts';
 import { projectFinanceRecords } from '../services/persistence.service.ts';
 import { pragueCalendarDate } from '../../shared/domain/finance-planning.ts';
+import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
+type MutableRecordsResponse = { -readonly [Key in keyof RecordsResponse]: RecordsResponse[Key] };
+
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
+interface LoadedRecords {
+  readonly document: Effect.Success<ReturnType<Services['loadDocument']>>;
+  readonly row: Effect.Success<ReturnType<Services['loadStateRow']>>;
+}
 
 const financeModuleKey = 'finance.billing';
 
@@ -94,18 +101,22 @@ export const recordsRead = defineRead(
     load: (input, context) =>
       Effect.all(
         {
-          document: input.documentId === undefined ? Effect.void : context.services.loadDocument(input.documentId),
+          document:
+            input.documentId === undefined
+              ? Effect.succeed(Option.none<NonNullable<LoadedRecords['document']>>())
+              : context.services.loadDocument(input.documentId).pipe(Effect.map(Option.fromUndefinedOr)),
           row: context.services.loadStateRow(),
         },
         // Both reads share the read's single transaction connection.
         { concurrency: 1 },
       ).pipe(
+        Effect.map(({ document, row }): LoadedRecords => ({ document: Option.getOrUndefined(document), row })),
         Effect.mapError(
           (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
         ),
       ),
-    finish: (input, context) =>
-      Effect.gen(function* recordsFinish() {
+    finish: Effect.fn('recordsRead.finish')(
+      function* recordsFinish(input: RecordsRequest, context: ReadFinishContext<boolean, LoadedRecords>) {
         const canWrite = context.prepared;
         const { revision, state } = yield* decodeFinanceState(context.loaded.row);
         const businessDate = pragueCalendarDate(DateTime.toEpochMillis(yield* DateTime.now));
@@ -126,19 +137,19 @@ export const recordsRead = defineRead(
               };
         // Handover files carry partner IČO/DIČ and amounts: only principals who may run finance commands get them.
         const visible = canWrite ? result : withoutExportFiles(result);
+        const response: MutableRecordsResponse = { ...visible, canWrite };
+        if (document !== undefined) {
+          response.document = document;
+        }
         return {
           evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
-          result: {
-            ...visible,
-            ...(document === undefined ? {} : { document }),
-            canWrite,
-          },
+          result: response,
         };
-      }).pipe(
-        Effect.mapError(
-          (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
-        ),
+      },
+      Effect.mapError(
+        (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
       ),
+    ),
     // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,

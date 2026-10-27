@@ -7,7 +7,7 @@ import type { HttpServerRequest } from 'effect/unstable/http';
 import { Match, Option, Redacted, Schema } from 'effect';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
-import { makePartyIntake } from '../src/services/party-intake.ts';
+import { PartyIntake, PartyIntakeCompany, PartyIntakeCorrelation } from '../src/services/party-intake.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import {
   applyCommandActionProblem,
@@ -19,6 +19,23 @@ const runActionHttp = bindActionHttpRunner({
   authentication: applyCommandActionProblem.authentication,
   unavailable: () => applyCommandActionProblem.unavailable('operation_context_unavailable'),
 });
+
+const AssertionClaimsSchema = Schema.fromJsonString(
+  Schema.Struct({
+    principal: Schema.Struct({
+      legalEntityId: Schema.optionalKey(Schema.String.pipe(Schema.brand('CrmAssertionLegalEntityId'))),
+    }),
+  }),
+);
+/** Company of the (already verified and redeemed) gateway assertion of this request. */
+const legalEntityOfAssertion = (authorization: Redacted.Redacted | undefined) => {
+  const payload = authorization === undefined ? undefined : Redacted.value(authorization).split('.')[1];
+  const decoded =
+    payload === undefined
+      ? Option.none()
+      : Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(payload, 'base64url').toString('utf-8'));
+  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
+};
 
 const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeApplyCommand(
   payload: typeof applyCommandAction.descriptor.payloadSchema.Encoded,
@@ -56,37 +73,26 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
     Match.orElse(() => Option.none()),
   );
   if (Option.isSome(intakeEntityIds)) {
-    const legalEntityId = legalEntityOfAssertion(request.headers['authorization']);
+    const { authorization } = request.headers;
+    const legalEntityId = legalEntityOfAssertion(
+      authorization === undefined ? undefined : Redacted.make(authorization),
+    );
     const compositionRevision = request.headers['x-ontos-composition-revision'];
     if (legalEntityId !== undefined && compositionRevision !== undefined) {
-      yield* makePartyIntake({
-        compositionRevision,
-        correlationId: correlationId ?? `crm-intake-${result.revision}`,
-        legalEntityId,
-      })
-        .reconcile(intakeEntityIds.value)
-        .pipe(
-          Effect.uninterruptible,
-          Effect.tapError((error) => Effect.logWarning('CRM Party Registry intake failed', error)),
-          Effect.ignore,
-        );
+      yield* Effect.gen(function* reconcileCommittedClients() {
+        const intake = yield* PartyIntake;
+        return yield* intake.reconcile(intakeEntityIds.value);
+      }).pipe(
+        Effect.provideService(PartyIntakeCompany, { compositionRevision, legalEntityId }),
+        Effect.provideService(PartyIntakeCorrelation, correlationId ?? `crm-intake-${result.revision}`),
+        Effect.uninterruptible,
+        Effect.tapError((error) => Effect.logWarning('CRM Party Registry intake failed', error)),
+        Effect.ignore,
+      );
     }
   }
   return result;
 });
-
-const AssertionClaimsSchema = Schema.fromJsonString(
-  Schema.Struct({ principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String) }) }),
-);
-/** Company of the (already verified and redeemed) gateway assertion of this request. */
-const legalEntityOfAssertion = (authorization: string | undefined) => {
-  const payload = authorization?.split('.')[1];
-  if (payload === undefined) {
-    return undefined;
-  }
-  const decoded = Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(payload, 'base64url').toString('utf8'));
-  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
-};
 
 export const applyCommandActionApiLive = HttpApiBuilder.group(crmApi, 'applyCommandAction', (handlers) =>
   handlers.handle('execute', ({ payload, request }) => execute(payload, request)),

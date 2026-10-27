@@ -5,11 +5,19 @@ import type { DocumentUpload, FinanceCommand, FinanceError } from '../../shared/
 import {
   FinanceConflict,
   FinanceNotFound,
+  FinancePersistenceUnavailable,
   FinanceReferenceUnavailable,
   FinanceRejected,
   MAX_DOCUMENT_BYTES,
 } from '../../shared/actions/apply-command.ts';
-import { DEMO_BUSINESS_DATE } from '../../shared/apis/records.ts';
+import {
+  DEMO_BUSINESS_DATE,
+  FinanceDocumentIdSchema,
+  FinanceInvoiceResourceIdSchema,
+  FinancePriceListItemIdSchema,
+  FinancePrincipalIdSchema,
+  FinanceRecurringTemplateIdSchema,
+} from '../../shared/apis/records.ts';
 import type {
   FinanceDocument,
   FinanceState,
@@ -73,6 +81,16 @@ const INVOICE_RESOURCE_TYPE = 'finance.billing.invoice';
 const EXPORT_NOT_FOUND = 'Export not found';
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
 const conflict = (reason: string) => new FinanceConflict({ code: 'finance_conflict', reason });
+const constructionUnavailable = (cause: Schema.SchemaError) =>
+  Object.defineProperty(
+    new FinancePersistenceUnavailable({
+      code: 'finance_persistence_unavailable',
+      reason: 'Finance data could not be constructed',
+    }),
+    'cause',
+    { value: cause },
+  );
+
 /** Stable code first (the UI matches it), then a readable Czech explanation for API callers. */
 export const CONFIRM_REQUIRES_PREPARED =
   'confirm_requires_prepared: Doklad nelze schválit, dokud není ve stavu „Připraveno ke schválení“. Nejdřív zvolte „Připravit ke schválení“.';
@@ -474,19 +492,22 @@ const handleVoidInvoice = Effect.fn('Finance.handleVoidInvoice')(function* handl
 
 // ---- Sales demo v2 (S07 – S09) ----
 type CommandOf<Tag extends FinanceCommand['_tag']> = Extract<FinanceCommand, { readonly _tag: Tag }>;
-const actorOf = (
+const actorOf = Effect.fn('Finance.actorOf')(function* actorOf(
   context: FinanceTransitionContext,
   label: string | undefined,
-): Pick<FinanceDocument, 'actorLabel' | 'actorPrincipalId'> => {
+): Effect.fn.Return<Pick<FinanceDocument, 'actorLabel' | 'actorPrincipalId'>, FinancePersistenceUnavailable> {
   let actor: Pick<FinanceDocument, 'actorLabel' | 'actorPrincipalId'> = {};
   if (label !== undefined) {
     actor = { ...actor, actorLabel: label };
   }
   if (context.input.principalId !== undefined) {
-    actor = { ...actor, actorPrincipalId: context.input.principalId };
+    const actorPrincipalId = yield* Schema.decodeEffect(FinancePrincipalIdSchema)(context.input.principalId).pipe(
+      Effect.mapError(constructionUnavailable),
+    );
+    actor = { ...actor, actorPrincipalId };
   }
   return actor;
-};
+});
 const stateOnly = (state: FinanceState, invoice?: Invoice): FinanceTransition => ({ changed: true, invoice, state });
 const invoiceRefFor = (scope: FinanceScope, resourceId: string): Invoice['ref'] => ({
   moduleId: FINANCE_MODULE_ID,
@@ -511,16 +532,19 @@ const prepareDocument = Effect.fn('Finance.prepareDocument')(function* prepareDo
     return yield* rejected('document_too_large');
   }
   let document: FinanceDocument = {
-    ...actorOf(context, label),
+    ...(yield* actorOf(context, label)),
     fileName: upload.fileName,
-    id: documentId,
+    id: yield* Schema.decodeEffect(FinanceDocumentIdSchema)(documentId).pipe(Effect.mapError(constructionUnavailable)),
     mimeType: upload.mimeType,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     sizeBytes: bytes.length,
     uploadedAt: context.input.now,
   };
   if (invoiceResourceId !== undefined) {
-    document = { ...document, invoiceResourceId };
+    const linkedInvoiceId = yield* Schema.decodeEffect(FinanceInvoiceResourceIdSchema)(invoiceResourceId).pipe(
+      Effect.mapError(constructionUnavailable),
+    );
+    document = { ...document, invoiceResourceId: linkedInvoiceId };
   }
   return {
     document,
@@ -727,10 +751,12 @@ const handleRecordManualPayment = Effect.fn('Finance.handleRecordManualPayment')
     updatedAt: context.input.now,
   };
   let payment: NonNullable<FinanceState['manualPayments']>[number] = {
-    ...actorOf(context, command.actorLabel),
+    ...(yield* actorOf(context, command.actorLabel)),
     amountMinor: command.amountMinor,
     id: context.input.attemptId,
-    invoiceResourceId: previous.ref.resourceId,
+    invoiceResourceId: yield* Schema.decodeEffect(FinanceInvoiceResourceIdSchema)(previous.ref.resourceId).pipe(
+      Effect.mapError(constructionUnavailable),
+    ),
     paidOn: command.paidOn,
     recordedAt: context.input.now,
   };
@@ -761,11 +787,13 @@ const handleRecordReminder = Effect.fn('Finance.handleRecordReminder')(function*
       reminders: [
         ...(context.state.reminders ?? []),
         {
-          ...actorOf(context, command.actorLabel),
+          ...(yield* actorOf(context, command.actorLabel)),
           createdAt: context.input.now,
           deliveryMode: 'EMAIL',
           id: context.input.attemptId,
-          invoiceResourceId: invoice.ref.resourceId,
+          invoiceResourceId: yield* Schema.decodeEffect(FinanceInvoiceResourceIdSchema)(invoice.ref.resourceId).pipe(
+            Effect.mapError(constructionUnavailable),
+          ),
           recipient: command.recipient,
           status: 'QUEUED',
           text: command.text,
@@ -788,7 +816,14 @@ const handleCreateRecurringTemplate = Effect.fn('Finance.handleCreateRecurringTe
     ...context.state,
     recurringTemplates: [
       ...(context.state.recurringTemplates ?? []),
-      { ...fields, active: true, createdAt: context.input.now, id: context.input.resourceId },
+      {
+        ...fields,
+        active: true,
+        createdAt: context.input.now,
+        id: yield* Schema.decodeEffect(FinanceRecurringTemplateIdSchema)(context.input.resourceId).pipe(
+          Effect.mapError(constructionUnavailable),
+        ),
+      },
     ],
   });
 });
@@ -975,9 +1010,10 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
     }
     return partner;
   };
-  const content = buildAccountingExport(
-    command.format,
-    selected.flatMap((invoice) =>
+  const content = yield* buildAccountingExport({
+    format: command.format,
+    meta: { batchNumber, createdAt: DateTime.formatIso(input.now), createdBy, issuer, version },
+    rows: selected.flatMap((invoice) =>
       invoice === undefined
         ? []
         : [
@@ -991,10 +1027,9 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
             },
           ],
     ),
-    { batchNumber, createdAt: DateTime.formatIso(input.now), createdBy, issuer, version },
-  );
+  }).pipe(Effect.mapError(constructionUnavailable));
   let accountingExport: NonNullable<FinanceState['accountingExports']>[number] = {
-    ...actorOf(context, command.actorLabel),
+    ...(yield* actorOf(context, command.actorLabel)),
     batchNumber,
     content,
     createdAt: input.now,
@@ -1074,7 +1109,7 @@ const handleUpsertBudgetLine = Effect.fn('Finance.handleUpsertBudgetLine')(funct
   }
   yield* validateAnchors(anchorsOf(command), context.scope, context.validators);
   const { _tag: _command, actorLabel, id: _id, ...fields } = command;
-  const line = { ...actorOf(context, actorLabel), ...fields, id, updatedAt: context.input.now };
+  const line = { ...(yield* actorOf(context, actorLabel)), ...fields, id, updatedAt: context.input.now };
   return stateOnly({
     ...context.state,
     budgets: command.id === undefined ? [...budgets, line] : budgets.map((entry) => (entry.id === id ? line : entry)),
@@ -1092,20 +1127,20 @@ const handleDeleteBudgetLine = Effect.fn('Finance.handleDeleteBudgetLine')(funct
   return stateOnly({ ...context.state, budgets: budgets.filter((entry) => entry.id !== command.id) });
 });
 
-const handleSetOpeningBalance = Effect.fn('Finance.handleSetOpeningBalance')(
-  (command: CommandOf<'SetOpeningBalance'>, context: FinanceTransitionContext) =>
-    Effect.sync((): FinanceTransition =>
-      stateOnly({
-        ...context.state,
-        cashFlowOpening: {
-          ...actorOf(context, command.actorLabel),
-          confirmedAt: context.input.now,
-          openingBalanceMinor: command.openingBalanceMinor,
-          openingDate: command.openingDate,
-        },
-      }),
-    ),
-);
+const handleSetOpeningBalance = Effect.fn('Finance.handleSetOpeningBalance')(function* setOpeningBalance(
+  command: CommandOf<'SetOpeningBalance'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  return stateOnly({
+    ...context.state,
+    cashFlowOpening: {
+      ...(yield* actorOf(context, command.actorLabel)),
+      confirmedAt: context.input.now,
+      openingBalanceMinor: command.openingBalanceMinor,
+      openingDate: command.openingDate,
+    },
+  });
+});
 
 const handleMarkInvoicesPrepared = Effect.fn('Finance.handleMarkInvoicesPrepared')(function* markPrepared(
   command: CommandOf<'MarkInvoicesPrepared'>,
@@ -1115,8 +1150,9 @@ const handleMarkInvoicesPrepared = Effect.fn('Finance.handleMarkInvoicesPrepared
     command.invoiceRefs,
     (ref) =>
       findInvoice(context.state, ref, context.scope).pipe(
-        Effect.flatMap((invoice): Effect.Effect<Invoice, FinanceConflict> =>
-          invoice.businessState === 'DRAFT' ? Effect.succeed(invoice) : Effect.fail(conflict('prepare_requires_draft')),
+        Effect.filterOrFail(
+          (invoice) => invoice.businessState === 'DRAFT',
+          () => conflict('prepare_requires_draft'),
         ),
       ),
     { concurrency: 1 },
@@ -1191,7 +1227,10 @@ const handleSetPriorSettlement = Effect.fn('Finance.handleSetPriorSettlement')(f
     priorSettlement = { ...priorSettlement, confirmedByLabel: command.actorLabel };
   }
   if (context.input.principalId !== undefined) {
-    priorSettlement = { ...priorSettlement, confirmedByPrincipalId: context.input.principalId };
+    const confirmedByPrincipalId = yield* Schema.decodeEffect(FinancePrincipalIdSchema)(context.input.principalId).pipe(
+      Effect.mapError(constructionUnavailable),
+    );
+    priorSettlement = { ...priorSettlement, confirmedByPrincipalId };
   }
   if (command.note !== undefined) {
     priorSettlement = { ...priorSettlement, note: command.note };
@@ -1240,7 +1279,10 @@ const handleSetPaymentTerms = Effect.fn('Finance.handleSetPaymentTerms')(functio
     paymentTerms = { ...paymentTerms, updatedByLabel: command.actorLabel };
   }
   if (context.input.principalId !== undefined) {
-    paymentTerms = { ...paymentTerms, updatedByPrincipalId: context.input.principalId };
+    const updatedByPrincipalId = yield* Schema.decodeEffect(FinancePrincipalIdSchema)(context.input.principalId).pipe(
+      Effect.mapError(constructionUnavailable),
+    );
+    paymentTerms = { ...paymentTerms, updatedByPrincipalId };
   }
   return replace(context.state, { ...rest, paymentTerms, updatedAt: context.input.now });
 });
@@ -1320,7 +1362,7 @@ const handleUpsertPlanItem = Effect.fn('Finance.handleUpsertPlanItem')(function*
   yield* validateAnchors(anchorsOf(command), context.scope, context.validators);
   const { _tag: _command, actorLabel, id: _id, ...fields } = command;
   const item = {
-    ...actorOf(context, actorLabel),
+    ...(yield* actorOf(context, actorLabel)),
     ...fields,
     createdAt: existing?.createdAt ?? context.input.now,
     id: existing?.id ?? context.input.resourceId,
@@ -1362,7 +1404,10 @@ const handleUpsertPriceListItem = Effect.fn('Finance.handleUpsertPriceListItem')
     return yield* conflict('price_list_item_already_exists');
   }
   const { _tag: _command, actorLabel, id: _id, ...fields } = command;
-  const item = { ...actorOf(context, actorLabel), ...fields, id, updatedAt: context.input.now };
+  const itemId = yield* Schema.decodeEffect(FinancePriceListItemIdSchema)(id).pipe(
+    Effect.mapError(constructionUnavailable),
+  );
+  const item = { ...(yield* actorOf(context, actorLabel)), ...fields, id: itemId, updatedAt: context.input.now };
   return stateOnly({
     ...context.state,
     priceList: command.id === undefined ? [...items, item] : items.map((entry) => (entry.id === id ? item : entry)),

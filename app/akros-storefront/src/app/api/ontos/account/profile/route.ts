@@ -14,7 +14,9 @@ export async function GET(request: Request) {
   try {
     return Response.json(
       await readCustomerProfile(new URL(request.url).origin, request.headers.get("cookie")),
-      { headers: noStore },
+      {
+        headers: noStore,
+      },
     );
   } catch (error) {
     if (OntosError.is(error) && error.status === 401) {

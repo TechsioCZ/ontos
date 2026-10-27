@@ -1,54 +1,63 @@
-// @effect-diagnostics *:off
-import { Effect, Redacted } from 'effect';
-import type { EmailDeliveryServiceContract } from './server.ts';
+import type { SendEmail } from '@cloudflare/workers-types';
+import { Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+
+import type { EmailDeliveryMessage } from './server.ts';
 import {
   EmailDeliveryAcceptanceIndeterminate,
   EmailDeliveryInvalidMessage,
+  EmailDeliveryService,
   EmailDeliveryUnavailable,
 } from './server.ts';
 
-/** Cloudflare Email Service's Workers send_email binding (not the email-routing forward API). */
-export interface CloudflareEmailBinding {
-  readonly send: (message: {
-    readonly from: string;
-    readonly to: string;
-    readonly subject: string;
-    readonly text: string;
-    readonly html?: string;
-  }) => Promise<{ readonly messageId: string }>;
-}
+/** Foreign Workers send_email binding. Its SDK contract requires a Promise. */
+export type CloudflareEmailBinding = Pick<SendEmail, 'send'>;
 
-/** One submission, no automatic retry. A thrown binding error cannot prove non-acceptance. */
-export const makeCloudflareEmailDelivery = (
-  binding: CloudflareEmailBinding | undefined,
-  from: string,
-): EmailDeliveryServiceContract => ({
-  send: (message) =>
-    Effect.gen(function* () {
-      if (binding === undefined || from.trim() === '' || /[\r\n\x00]/u.test(from)) {
-        return yield* Effect.fail(new EmailDeliveryUnavailable({ reason: 'configuration' }));
+export const CloudflareEmailBindingSchema = Schema.Struct({
+  send: Schema.declare<CloudflareEmailBinding['send']>((value): value is CloudflareEmailBinding['send'] =>
+    Predicate.isFunction(value),
+  ),
+});
+const CloudflareMessageIdSchema = Schema.String.check(Schema.isPattern(/\S/u)).pipe(
+  Schema.brand('CloudflareEmailMessageId'),
+);
+const ReceiptSchema = Schema.Struct({ messageId: CloudflareMessageIdSchema });
+const hasHeaderControl = (value: string) => value.includes('\r') || value.includes('\n') || value.includes('\0');
+
+/** One submission. A timeout or binding failure cannot establish non-acceptance and is never retried here. */
+export const CloudflareEmailDeliveryLive = (binding: CloudflareEmailBinding | undefined, from: string) =>
+  Layer.succeed(EmailDeliveryService, {
+    send: Effect.fn('CloudflareEmail.send')(function* sendMessage(message: EmailDeliveryMessage) {
+      if (binding === undefined || from.trim() === '' || hasHeaderControl(from)) {
+        return yield* new EmailDeliveryUnavailable({ reason: 'configuration' });
       }
       if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(message.to)) {
-        return yield* Effect.fail(new EmailDeliveryInvalidMessage({ field: 'to', reason: 'invalid_format' }));
+        return yield* new EmailDeliveryInvalidMessage({ field: 'to', reason: 'invalid_format' });
       }
-      if (message.subject.length === 0 || /[\r\n\x00]/u.test(message.subject)) {
-        return yield* Effect.fail(new EmailDeliveryInvalidMessage({ field: 'subject', reason: 'control_character' }));
+      if (message.subject.length === 0 || hasHeaderControl(message.subject)) {
+        return yield* new EmailDeliveryInvalidMessage({ field: 'subject', reason: 'control_character' });
       }
+      const envelope = { from, subject: message.subject, text: Redacted.value(message.text), to: message.to };
+      const submission = message.html === undefined ? envelope : { ...envelope, html: Redacted.value(message.html) };
       const receipt = yield* Effect.tryPromise({
-        try: () =>
-          binding.send({
-            from,
-            to: message.to,
-            subject: message.subject,
-            text: Redacted.value(message.text),
-            ...(message.html === undefined ? {} : { html: Redacted.value(message.html) }),
+        // A redacted private cause preserves diagnostics without exposing message content or recipients.
+        catch: (cause) =>
+          Object.defineProperty(new EmailDeliveryAcceptanceIndeterminate({ reason: 'transport' }), 'cause', {
+            value: Redacted.make(cause),
           }),
-        // Do not log binding errors: they may contain message content or addresses.
-        catch: () => new EmailDeliveryAcceptanceIndeterminate({ reason: 'transport' }),
-      });
-      if (typeof receipt?.messageId !== 'string' || receipt.messageId.trim() === '') {
-        return yield* Effect.fail(new EmailDeliveryAcceptanceIndeterminate({ reason: 'response_invalid' }));
-      }
-      return { accepted: true as const, id: receipt.messageId };
+        try: binding.send.bind(binding, submission),
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: '10 seconds',
+          orElse: () => Effect.fail(new EmailDeliveryAcceptanceIndeterminate({ reason: 'timeout' })),
+        }),
+      );
+      const decoded = yield* Schema.decodeEffect(ReceiptSchema)(receipt).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(new EmailDeliveryAcceptanceIndeterminate({ reason: 'response_invalid' }), 'cause', {
+            value: Redacted.make(cause),
+          }),
+        ),
+      );
+      return { accepted: true as const, id: decoded.messageId };
     }),
-});
+  });

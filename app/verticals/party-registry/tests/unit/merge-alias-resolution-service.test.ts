@@ -1,7 +1,10 @@
 import { Effect, Match, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeBatchPartyAliasResolution, makePartyAliasResolutionService } from '../../src/merge/party-alias-resolution.service.ts';
+import {
+  makeBatchPartyAliasResolution,
+  makePartyAliasResolutionService,
+} from '../../src/merge/party-alias-resolution.service.ts';
 import type { PartyAliasLookup } from '../../src/merge/party-alias-resolution.service.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -108,14 +111,17 @@ it.effect('central write guard returns typed canonical-survivor guidance and nev
   }),
 );
 
-const batchLookup = (aliases: readonly { readonly aliasPartyId: string; readonly canonicalPartyId: string; readonly tenantId: string }[], parties: readonly string[]) => {
+const batchLookup = (
+  aliases: readonly { readonly aliasPartyId: string; readonly canonicalPartyId: string; readonly tenantId: string }[],
+  parties: readonly string[],
+) => {
   const calls: string[] = [];
   return {
     calls,
     lookup: {
       existingParties: (_tenantId: string, ids: readonly string[]) => {
         calls.push(`parties:${ids.join(',')}`);
-        return Effect.succeed(new Set(ids.filter((id) => parties.includes(id))) as ReadonlySet<string>);
+        return Effect.succeed(new Set(ids.filter((id) => parties.includes(id))));
       },
       findAliases: (_tenantId: string, ids: readonly string[]) => {
         calls.push(`aliases:${ids.join(',')}`);
@@ -134,8 +140,15 @@ it.effect('batch resolution matches the per-Party service with two lookups per c
       ],
       ['party-c', 'party-d'],
     );
-    const resolved = yield* makeBatchPartyAliasResolution(batch)(tenantId, ['party-b', 'party-d', 'party-a', 'party-d']);
-    const single = makePartyAliasResolutionService(lookup({ partyExists: (_tenantId, partyId) => Effect.succeed(partyId === 'party-c' || partyId === 'party-d') }));
+    const resolved = yield* makeBatchPartyAliasResolution(batch)(tenantId, [
+      'party-b',
+      'party-d',
+      'party-a',
+      'party-d',
+    ]);
+    const single = makePartyAliasResolutionService(
+      lookup({ partyExists: (_tenantId, partyId) => Effect.succeed(partyId === 'party-c' || partyId === 'party-d') }),
+    );
     for (const partyId of ['party-b', 'party-d', 'party-a']) {
       expect(resolved.get(partyId)).toBe((yield* single.resolvePartyAlias(tenantId, partyId)).canonicalPartyId);
     }
@@ -163,12 +176,17 @@ it.effect('batch resolution fails closed for cycles, cross-tenant targets, and b
     const cycleError = yield* Effect.flip(makeBatchPartyAliasResolution(cycle.lookup)(tenantId, ['party-a']));
     expect(Predicate.isTagged(cycleError, 'PartyAliasResolutionCycle')).toBe(true);
 
-    const crossTenant = batchLookup([{ aliasPartyId: 'party-a', canonicalPartyId: 'party-b', tenantId: 'other' }], ['party-b']);
+    const crossTenant = batchLookup(
+      [{ aliasPartyId: 'party-a', canonicalPartyId: 'party-b', tenantId: 'other' }],
+      ['party-b'],
+    );
     const crossError = yield* Effect.flip(makeBatchPartyAliasResolution(crossTenant.lookup)(tenantId, ['party-a']));
     expect(Predicate.isTagged(crossError, 'PartyAliasResolutionCrossTenant')).toBe(true);
 
     const broken = batchLookup([], ['party-a']);
-    const brokenError = yield* Effect.flip(makeBatchPartyAliasResolution(broken.lookup)(tenantId, ['party-a', 'party-x']));
+    const brokenError = yield* Effect.flip(
+      makeBatchPartyAliasResolution(broken.lookup)(tenantId, ['party-a', 'party-x']),
+    );
     expect(Predicate.isTagged(brokenError, 'PartyAliasResolutionBrokenChain')).toBe(true);
   }),
 );

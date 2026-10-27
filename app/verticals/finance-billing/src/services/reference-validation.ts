@@ -16,6 +16,8 @@ import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
 import { matchesFinanceRef } from './persistence.service.ts';
 import type { ExportPartnerReference, FinanceAnchors, FinanceValidators } from './persistence.service.ts';
 
+type MutableExportPartnerReference = { -readonly [Key in keyof ExportPartnerReference]: ExportPartnerReference[Key] };
+
 type ReferenceFailure = Effect.Error<
   | ReturnType<typeof makeReferenceGatewayCredentialSource>
   | ReturnType<Effect.Success<ReturnType<typeof makeReferenceGatewayCredentialSource>>['issue']>
@@ -48,32 +50,50 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
   const readRuntime = yield* ReadRuntime;
   /** S08: the issuer name comes from Core's legal entity of the trusted scope, partners from the party registry. */
   const exportReferences = Effect.gen(function* exportReferences() {
-    const issuer = yield* readRuntime.runRead({
-      input: {
-        legalEntityRef: {
-          moduleId: 'core.identity',
-          resourceId: legalEntityId,
-          resourceType: 'core.identity.legal-entity',
-          tenantId: scope.tenantId,
+    const { issuer, target } = yield* readRuntime
+      .runRead({
+        input: {
+          legalEntityRef: {
+            moduleId: 'core.identity',
+            resourceId: legalEntityId,
+            resourceType: 'core.identity.legal-entity',
+            tenantId: scope.tenantId,
+          },
         },
-      },
-      principal: scope,
-      registration: legalEntityDetailRead,
-      transport: { correlationId: scope.correlationId },
-    });
-    const target = yield* source.issue('party-registry');
+        principal: scope,
+        registration: legalEntityDetailRead,
+        transport: { correlationId: scope.correlationId },
+      })
+      .pipe(
+        // No partner credential is issued before the trusted issuer read succeeds.
+        Effect.flatMap((resolvedIssuer) =>
+          source.issue('party-registry').pipe(
+            Effect.map((issuedTarget) => ({
+              issuer: resolvedIssuer,
+              target: issuedTarget,
+            })),
+          ),
+        ),
+      );
     const customers = yield* executeCustomerListWithAuthorization({}, target.authorization, scope.correlationId, {
       baseUrl: target.apiBaseUrl,
       compositionRevision: target.compositionRevision,
     });
     const partners = new Map<string, ExportPartnerReference>();
     for (const customer of customers.items) {
-      const partner: ExportPartnerReference = {
-        ...(customer.city === null ? {} : { city: customer.city }),
-        ...(customer.displayName === null ? {} : { displayName: customer.displayName }),
-        ...(customer.companyId === null ? {} : { ico: customer.companyId }),
-        ...(customer.vatId === null ? {} : { vatId: customer.vatId }),
-      };
+      const partner: MutableExportPartnerReference = {};
+      if (customer.city !== null) {
+        partner.city = customer.city;
+      }
+      if (customer.displayName !== null) {
+        partner.displayName = customer.displayName;
+      }
+      if (customer.companyId !== null) {
+        partner.ico = customer.companyId;
+      }
+      if (customer.vatId !== null) {
+        partner.vatId = customer.vatId;
+      }
       partners.set(customer.counterpartyId, partner);
       partners.set(customer.partyId, partner);
     }
@@ -242,10 +262,15 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     if (anchors.contractRef !== undefined) {
       const wanted = anchors.contractRef;
       const target = yield* source.issue('legal-agreements').pipe(Effect.mapError(unavailable));
-      const response = yield* readAgreements({ resourceId: wanted.resourceId }, target.authorization, scope.correlationId, {
-        baseUrl: target.apiBaseUrl,
-        compositionRevision: target.compositionRevision,
-      }).pipe(Effect.mapError(unavailable));
+      const response = yield* readAgreements(
+        { resourceId: wanted.resourceId },
+        target.authorization,
+        scope.correlationId,
+        {
+          baseUrl: target.apiBaseUrl,
+          compositionRevision: target.compositionRevision,
+        },
+      ).pipe(Effect.mapError(unavailable));
       if (!response.contracts.some((record) => matchesFinanceRef(record.contractRef, wanted))) {
         return yield* rejected('contract_not_usable');
       }

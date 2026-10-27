@@ -25,7 +25,8 @@ export const metadata: Metadata = {
     template: "%s | AKROS",
   },
   robots: { index: false, follow: false, nocache: true },
-  description: "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
+  description:
+    "E-shop AKROS s nerezovým, hutním a spojovacím materiálem v prezentačním prostředí OntOS.",
 };
 
 export const dynamic = "force-dynamic";

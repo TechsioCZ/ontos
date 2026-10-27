@@ -1,6 +1,7 @@
 import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
+import { genericJsonCanonicalizerProof } from "../../shared/generic-json-canonicalizer.ts";
 
 type RuntimeFunction = ESTree.ArrowFunctionExpression | ESTree.Function;
 
@@ -23,7 +24,7 @@ function isInsideTypeGuard(node: ESTree.Node): boolean {
 	return false;
 }
 
-/** Disallow runtime typeof checks that narrow unparsed values instead of decoding them. */
+/** Disallow domain guessing; proved generic JSON normalization can branch on JSON value kinds. */
 export const noRuntimeTypeofRule = defineRule({
 	meta: {
 		type: "problem",
@@ -47,8 +48,10 @@ export const noRuntimeTypeofRule = defineRule({
 		defaultOptions: [{ allowInTypeGuards: false }],
 	},
 	createOnce(context) {
+		const canonicalJson = genericJsonCanonicalizerProof(context);
 		return {
 			UnaryExpression(node) {
+				if (canonicalJson.isCanonicalTraversal(node)) return;
 				const option = context.options?.[0];
 				const allowInTypeGuards =
 					typeof option === "object" &&

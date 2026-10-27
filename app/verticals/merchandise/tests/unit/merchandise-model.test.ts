@@ -92,19 +92,22 @@ it('detail page keeps release-change, permission and revision failures distinct'
   }
 });
 
+const admissionError = (
+  status: number,
+  url = 'http://localhost:3020/module-api/merchandise/release/merchandise-api/reads/records',
+) => {
+  const request = HttpClientRequest.get(url);
+  const admissionResponse = HttpClientResponse.fromWeb(
+    request,
+    new Response('Reload the document to use the active release', { status }),
+  );
+  return new HttpClientError.HttpClientError({
+    reason: new HttpClientError.DecodeError({ request, response: admissionResponse }),
+  });
+};
+
 it('plain module admission 409 requires document reload, not query retry or a connection message', () => {
-  const error = (
-    status: number,
-    url = 'http://localhost:3020/module-api/merchandise/release/merchandise-api/reads/records',
-  ) => {
-    const request = HttpClientRequest.get(url);
-    const response = HttpClientResponse.fromWeb(
-      request,
-      new Response('Reload the document to use the active release', { status }),
-    );
-    return new HttpClientError.HttpClientError({ reason: new HttpClientError.DecodeError({ request, response }) });
-  };
-  expect(recordsReason(error(409))).toBe('reload-required');
-  expect(recordsReason(error(503))).toBe('unavailable');
-  expect(recordsReason(error(409, 'http://localhost:4120/merchandise-api/reads/records'))).toBe('unavailable');
+  expect(recordsReason(admissionError(409))).toBe('reload-required');
+  expect(recordsReason(admissionError(503))).toBe('unavailable');
+  expect(recordsReason(admissionError(409, 'http://localhost:4120/merchandise-api/reads/records'))).toBe('unavailable');
 });

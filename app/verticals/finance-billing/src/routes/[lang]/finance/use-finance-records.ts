@@ -9,9 +9,14 @@ import { defaultParseSearch } from '@tanstack/react-router';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { FinanceCommand } from '../../../../shared/actions/apply-command.ts';
+import { FinanceCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import { FinancePartyIdSchema, RecordsRequestSchema } from '../../../../shared/apis/records.ts';
-import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../shared/apis/records.ts';
+import type {
+  CalendarDateSchema,
+  Invoice,
+  InvoiceLineSchema,
+  RecordsResponse,
+} from '../../../../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../../../../shared/domain/invoice-totals.ts';
 import { commandReferenceAudiences } from '../../../../shared/domain/reference-audiences.ts';
 import { InvoiceRefSchema } from '../../../../shared/resources/invoice.ts';
@@ -20,10 +25,14 @@ import { browserCrypto } from '../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { reasonText } from './finance-ui.tsx';
+import type { FinanceCommandDraft } from './finance-ui.tsx';
 import { useFinanceReferences } from './use-finance-references.ts';
 import { useRentalObjects } from './use-rental-objects.ts';
+import { invoiceSessionForDocument } from './use-invoice-issuer.ts';
 
-export type CalendarDate = typeof CalendarDateSchema.Type;
+type FinanceCommandInput = typeof FinanceCommandSchema.Encoded;
+
+export type CalendarDate = typeof CalendarDateSchema.Encoded;
 
 export interface DraftInvoiceInput {
   readonly anchors?: {
@@ -35,7 +44,7 @@ export interface DraftInvoiceInput {
   readonly documentKind?: NonNullable<Invoice['documentKind']>;
   readonly dueDate: CalendarDate;
   readonly issueDate: CalendarDate;
-  readonly lines: readonly InvoiceLine[];
+  readonly lines: readonly (typeof InvoiceLineSchema.Encoded)[];
 }
 
 export type DraftInvoiceOutcome =
@@ -121,17 +130,22 @@ export const financeFailureFeedback = (error: UiFailure): Feedback =>
   );
 const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submitFinanceCommand(
   snapshot: RecordsResponse,
-  command: FinanceCommand,
+  command: FinanceCommandInput,
 ) {
+  const decodedCommand = yield* Schema.decodeEffect(FinanceCommandSchema)(command);
   // Only the modules the validators will read: asking for an audience outside the composition fails the command.
   const referenceCredentials = yield* makeReferenceGatewayCredentials(
-    commandReferenceAudiences(command, snapshot.state.invoices, snapshot.state.recurringTemplates ?? []),
+    commandReferenceAudiences(decodedCommand, snapshot.state.invoices, snapshot.state.recurringTemplates ?? []),
   );
   const idempotencyKey = yield* browserCrypto.randomUUIDv4;
-  return yield* executeApplyCommand({ command, expectedRevision: snapshot.revision }, 'finance-billing.command', {
-    idempotencyKey,
-    referenceCredentials,
-  });
+  return yield* executeApplyCommand(
+    { command: decodedCommand, expectedRevision: snapshot.revision },
+    'finance-billing.command',
+    {
+      idempotencyKey,
+      referenceCredentials,
+    },
+  );
 });
 
 const fetchRecords = (request: RecordsRequest) => executeRecords(request, 'finance-billing.records');
@@ -184,57 +198,64 @@ const pushDetailUrl = (id: string) => {
 };
 
 export type CommandOutcome =
-  | { readonly feedback: Feedback; readonly ok: false; readonly reason: string | undefined }
+  | { readonly feedback: Feedback; readonly ok: false; readonly reason?: string }
   | { readonly invoice: Invoice | undefined; readonly ok: true };
 
 /** Problem `detail`/`reason` of a failed command, so the UI can explain known domain refusals. */
-const failureReason = (error: unknown): string | undefined => {
-  if (typeof error !== 'object' || error === null) {
-    return undefined;
-  }
-  const record = error as Record<string, unknown>;
-  for (const key of ['reason', 'detail', 'title']) {
-    const value = record[key];
-    if (typeof value === 'string') {
-      return value;
-    }
-  }
-  return undefined;
-};
+const ReasonFieldSchema = Schema.Struct({ reason: Schema.String });
+const DetailFieldSchema = Schema.Struct({ detail: Schema.String });
+const TitleFieldSchema = Schema.Struct({ title: Schema.String });
+const failureReason = (error: UiFailure): string | undefined =>
+  Schema.decodeUnknownOption(ReasonFieldSchema)(error).pipe(
+    Option.map((problem) => problem.reason),
+    Option.orElse(() =>
+      Schema.decodeUnknownOption(DetailFieldSchema)(error).pipe(Option.map((problem) => problem.detail)),
+    ),
+    Option.orElse(() =>
+      Schema.decodeUnknownOption(TitleFieldSchema)(error).pipe(Option.map((problem) => problem.title)),
+    ),
+    Option.getOrUndefined,
+  );
 
-/** Signed-in user's display name from the shell session; used as a readable author label next to the principal. */
-// @effect-diagnostics-next-line globalFetch:off
-const fetchSession = () => fetch('/shell-super-app-api/auth/session', { credentials: 'include' });
+/** Signed-in user's display name from the shell session, used as a readable author label. */
 const useActorLabel = () => {
   const [label, setLabel] = useState<string>();
   useEffect(() => {
     let active = true;
-    void fetchSession()
-      .then((response) => (response.ok ? response.json() : undefined))
-      .then((body: unknown) => {
-        const identity =
-          typeof body === 'object' && body !== null
-            ? (body as { readonly identity?: Record<string, unknown> }).identity
-            : undefined;
-        const rawName = identity?.['displayName'];
-        const email = identity?.['email'];
-        const name =
-          typeof rawName === 'string' && rawName.trim() !== ''
-            ? typeof email === 'string'
-              ? `${rawName} (${email})`
-              : rawName
-            : email;
-        if (active && typeof name === 'string') {
-          setLabel(name.slice(0, 200));
-        }
-      })
-      .catch(() => undefined);
+    void financeBrowserRuntime.runPromise(
+      invoiceSessionForDocument.pipe(
+        Effect.tap((session) =>
+          Effect.sync(() => {
+            if (!active || session.state !== 'authenticated') {
+              return;
+            }
+            const displayName = Option.getOrUndefined(session.identity.displayName ?? Option.none());
+            const email = Option.getOrUndefined(session.identity.email ?? Option.none());
+            let name = email ?? undefined;
+            if (displayName !== undefined && displayName !== null && displayName.trim() !== '') {
+              name = email === undefined || email === null ? displayName : `${displayName} (${email})`;
+            }
+            if (name !== undefined) {
+              setLabel(name.slice(0, 200));
+            }
+          }),
+        ),
+        Effect.result,
+      ),
+    );
     return () => {
       active = false;
     };
   }, []);
   return label;
 };
+
+/** Loads uploaded bytes with the owning records client and keeps transport failures typed. */
+const fetchDocument = (documentId: string) =>
+  Schema.decodeEffect(RecordsRequestSchema)({ documentId }).pipe(
+    Effect.flatMap((request) => executeRecords(request, 'finance-billing.document')),
+    Effect.map((response) => Option.fromUndefinedOr(response.document)),
+  );
 
 /**
  * Invoice list and detail state. The ledger comes from the page-data store (ready on first paint when the Shell
@@ -280,7 +301,8 @@ export const useFinanceRecords = () => {
   const objects = useRentalObjects();
 
   /** Never fails: a failed reload keeps the rows on screen. */
-  const load = (): Effect.Effect<void> => (Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void);
+  const load = (): Effect.Effect<void> =>
+    Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void;
 
   /**
    * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
@@ -290,7 +312,7 @@ export const useFinanceRecords = () => {
     if (snapshot === undefined || !canWrite) {
       return Effect.succeed({ feedback: 'unavailable', ok: false });
     }
-    const command: FinanceCommand = {
+    const command: FinanceCommandDraft<'CreateInvoiceDraft'> = {
       _tag: 'CreateInvoiceDraft',
       counterpartyRef: input.customer.counterpartyRef,
       currency: 'CZK',
@@ -300,9 +322,11 @@ export const useFinanceRecords = () => {
       issueDate: input.issueDate,
       lines: [...input.lines],
       partyId: input.customer.partyId,
-      ...(input.documentKind === undefined || input.documentKind === 'STANDARD' ? {} : { documentKind: input.documentKind }),
       ...input.anchors,
     };
+    if (input.documentKind !== undefined && input.documentKind !== 'STANDARD') {
+      command.documentKind = input.documentKind;
+    }
     return submitFinanceCommand(snapshot, command).pipe(
       Effect.tap(load),
       // A 409 means the snapshot revision is stale (another write landed first); reload it so the next try can succeed.
@@ -329,7 +353,7 @@ export const useFinanceRecords = () => {
     void financeBrowserRuntime.runPromise(load().pipe(Effect.andThen(Effect.sync(() => setActionFeedback('ready')))));
   };
 
-  const runCommand = (command: FinanceCommand, successTitle: string) => {
+  const runCommand = (command: FinanceCommandInput, successTitle: string) => {
     if (snapshot === undefined || !canWrite) {
       return;
     }
@@ -347,11 +371,14 @@ export const useFinanceRecords = () => {
             // A known domain refusal (e.g. approving a draft that was not prepared) is explained in Czech.
             const reason = failureReason(error);
             const known = Object.entries(reasonText).find(([key]) => reason?.includes(key) === true)?.[1];
-            toaster.create({
-              ...(known === undefined ? {} : { description: known }),
+            let notification: Parameters<typeof toaster.create>[0] = {
               title: t(`finance-billing.demo.feedback.${known === undefined ? failure : 'refused'}`),
               type: 'error',
-            });
+            };
+            if (known !== undefined) {
+              notification = { ...notification, description: known };
+            }
+            toaster.create(notification);
           },
           onSuccess: (result) => {
             setActionFeedback('ready');
@@ -367,20 +394,24 @@ export const useFinanceRecords = () => {
   };
 
   /** Runs any command, reloads the ledger on success and reports the outcome (toasts on success when titled). */
-  const execute = (command: FinanceCommand, successTitle?: string): Promise<CommandOutcome> => {
-    const current = latestSnapshot() ?? snapshot;
-    if (current === undefined || !canWrite) {
-      return Promise.resolve({ feedback: 'unavailable', ok: false, reason: undefined });
-    }
-    setActionFeedback('saving');
-    return financeBrowserRuntime.runPromise(
-      submitFinanceCommand(current, command).pipe(
+  const execute = (command: FinanceCommandInput, successTitle?: string): Effect.Effect<CommandOutcome> =>
+    Effect.suspend((): Effect.Effect<CommandOutcome> => {
+      const current = latestSnapshot() ?? snapshot;
+      if (current === undefined || !canWrite) {
+        return Effect.succeed({ feedback: 'unavailable', ok: false });
+      }
+      setActionFeedback('saving');
+      return submitFinanceCommand(current, command).pipe(
         Effect.tap(load),
         Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
         Effect.match({
           onFailure: (error): CommandOutcome => {
             setActionFeedback('ready');
-            return { feedback: financeFailureFeedback(error), ok: false, reason: failureReason(error) };
+            const nextFeedback = financeFailureFeedback(error);
+            const reason = failureReason(error);
+            return reason === undefined
+              ? { feedback: nextFeedback, ok: false }
+              : { feedback: nextFeedback, ok: false, reason };
           },
           onSuccess: (result): CommandOutcome => {
             setActionFeedback('ready');
@@ -390,23 +421,11 @@ export const useFinanceRecords = () => {
             return { invoice: result.invoice, ok: true };
           },
         }),
-      ),
-    );
-  };
-
-  /** Loads the stored bytes of one uploaded document. */
-  const fetchDocument = (documentId: string) =>
-    financeBrowserRuntime.runPromise(
-      executeRecords({ documentId }, 'finance-billing.document').pipe(
-        Effect.map((response) => response.document),
-        Effect.orElseSucceed(() => undefined),
-      ),
-    );
+      );
+    });
 
   return {
     actorLabel,
-    execute,
-    fetchDocument,
     busy,
     cancelConfirm: () => setConfirmTarget(undefined),
     cancelVoid: () => setVoidTarget(undefined),
@@ -421,18 +440,20 @@ export const useFinanceRecords = () => {
       }
       window.history.replaceState(window.history.state, '', detailUrl());
     },
+    execute,
+    fetchDocument,
     /** Asks before confirming; `confirmPending` runs the command once the user agrees. */
     confirmInvoice: (invoice: Invoice) => setConfirmTarget(invoice),
     confirmPending: () => {
       if (confirmTarget !== undefined) {
-        runCommand(
-          {
-            _tag: 'ConfirmInvoice',
-            ...(actorLabel === undefined ? {} : { actorLabel }),
-            invoiceRef: confirmTarget.ref,
-          },
-          t('finance-billing.faktury.confirmed'),
-        );
+        const command: FinanceCommandDraft<'ConfirmInvoice'> = {
+          _tag: 'ConfirmInvoice',
+          invoiceRef: confirmTarget.ref,
+        };
+        if (actorLabel !== undefined) {
+          command.actorLabel = actorLabel;
+        }
+        runCommand(command, t('finance-billing.faktury.confirmed'));
       }
       setConfirmTarget(undefined);
     },

@@ -1,4 +1,3 @@
-// @effect-diagnostics strictEffectProvide:off nodeBuiltinImport:off
 // Governed server-side Party Registry intake for CRM clients (CRM.md §3/§4, ADR-0015).
 //
 // A salesperson has no Party Registry rights (its customer list is company-wide), yet every active CRM client must
@@ -13,9 +12,10 @@
 // Core authorizes and audits every step for that principal; the salesperson never receives registry access and the
 // browser never sends a registry claim. It runs outside the CRM transaction: a registry Action started inside an
 // open CRM Action transaction would wait on the same tenant row lock.
-import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import type { RecordsRequestEncoded } from '../../shared/apis/records.ts';
+import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { EntityIdSchema, IcoSchema, RegistryCompanyIdSchema } from '../../shared/domain/common.ts';
 
 import {
   AddContactPointPayloadSchema,
@@ -30,12 +30,20 @@ import {
   executeDuplicateCandidateDetailWithAuthorization,
   resolveDuplicateCandidateCreateWithAuthorization,
 } from '@app/party-registry/api/client';
-import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Config, Context, DateTime, Effect, FileSystem, Option, Redacted, Ref, Schema } from 'effect';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 
-import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
-import type { Client } from '../../shared/domain/clients.ts';
+
+import type { ClientSchema } from '../../shared/domain/clients.ts';
+import { PartyIntakeSteps } from './party-intake-steps.ts';
+import { PartyIntakeCompany } from './party-intake-company.ts';
+import { PartyIntakeCorrelation } from './party-intake-correlation.ts';
+
+export { PartyIntakeSteps } from './party-intake-steps.ts';
+export { PartyIntakeCompany } from './party-intake-company.ts';
+export { PartyIntakeCorrelation } from './party-intake-correlation.ts';
 
 const REGISTRY = 'party-registry';
 const CRM = 'crm';
@@ -44,7 +52,10 @@ const KEY_VARIABLE = 'ONTOS_CRM_PARTY_INTAKE_API_KEY';
 const BATCH = 20;
 const PROVENANCE_SOURCE = 'demo.crm.client-intake';
 
-export type IntakeClient = Pick<Client, 'address' | 'email' | 'id' | 'kind' | 'name' | 'phone' | 'regNo' | 'vatNo'>;
+export type IntakeClient = Pick<
+  typeof ClientSchema.Encoded,
+  'address' | 'email' | 'id' | 'kind' | 'name' | 'phone' | 'regNo' | 'vatNo'
+>;
 
 const unavailable = (reason: string, cause?: unknown) =>
   Object.defineProperty(new CrmReferenceUnavailable({ code: 'crm_reference_unavailable', reason }), 'cause', {
@@ -64,19 +75,12 @@ const fold = (value: string) =>
     .trim();
 
 /** Czech IČO checksum; the registry refuses an invalid one, so such a value is not sent as an identifier. */
-export const validIco = (value: string | undefined): value is string => {
-  if (value === undefined || !/^\d{8}$/u.test(value)) {
-    return false;
-  }
-  const digits = [...value].map(Number);
-  const sum = digits.slice(0, 7).reduce((total, digit, index) => total + digit * (8 - index), 0);
-  return (11 - (sum % 11)) % 10 === digits[7];
-};
+export const validIco = Schema.is(IcoSchema);
 
 /** "Ulice 12, 602 00 Brno" -> the registry ADDRESS Contact Point (only when street and PSČ + city are present). */
 export const addressContactPoint = (address: string | undefined) => {
   const parts = (address ?? '').split(',').map((part) => part.trim());
-  const zip = /^(\d{3}\s?\d{2})\s+(.+)$/u.exec(parts.at(-1) ?? '');
+  const zip = /^(?<postalCode>\d{3}\s?\d{2})\s+(?<city>.+)$/u.exec(parts.at(-1) ?? '');
   if (zip === null || parts.length < 2) {
     return [];
   }
@@ -106,13 +110,15 @@ const contactPointsOf = (client: IntakeClient) => [
   ...addressContactPoint(client.address),
 ];
 
-export interface RegistryCustomer {
-  readonly companyId: string | null;
-  readonly counterpartyId: string;
-  readonly displayName: string | null;
-  readonly partyId: string;
-  readonly status: string;
-}
+export const RegistryCustomerSchema = Schema.Struct({
+  companyId: Schema.OptionFromNullOr(RegistryCompanyIdSchema),
+  counterpartyId: EntityIdSchema,
+  displayName: Schema.OptionFromNullOr(Schema.String),
+  partyId: EntityIdSchema,
+  status: Schema.String,
+});
+export type RegistryCustomer = typeof RegistryCustomerSchema.Type;
+export type RegistryCustomerInput = typeof RegistryCustomerSchema.Encoded;
 
 /** IČO without inner whitespace ("270 82 440" = "27082440"); empty = none. */
 export const normalizedIco = (value: string | null | undefined) => (value ?? '').replaceAll(/\s+/gu, '');
@@ -134,13 +140,13 @@ export const matchingRegistryCustomer = (
       return false;
     }
     if (ico !== '') {
-      return normalizedIco(customer.companyId) === ico;
+      return normalizedIco(Option.getOrElse(customer.companyId, () => '')) === ico;
     }
     return (
       !taken.has(customer.counterpartyId) &&
       !taken.has(customer.partyId) &&
-      customer.displayName !== null &&
-      fold(customer.displayName) === fold(client.name)
+      Option.isSome(customer.displayName) &&
+      fold(customer.displayName.value) === fold(client.name)
     );
   });
 };
@@ -159,20 +165,19 @@ export const sameIcoClientCustomer = (
   customers: readonly RegistryCustomer[],
 ) => {
   const ico = normalizedIco(client.regNo);
-  if (ico === '') {
-    return undefined;
-  }
   const holders = crmClients.filter(
     (entry) => entry.id !== client.id && entry.partyRef !== undefined && normalizedIco(entry.regNo) === ico,
   );
-  return customers.find(
-    (customer) =>
-      customer.status === 'ACTIVE' &&
-      holders.some(
-        (entry) =>
-          entry.partyRef?.counterpartyId === customer.counterpartyId && entry.partyRef.partyId === customer.partyId,
-      ),
-  );
+  return ico === ''
+    ? undefined
+    : customers.find(
+        (customer) =>
+          customer.status === 'ACTIVE' &&
+          holders.some(
+            (entry) =>
+              entry.partyRef?.counterpartyId === customer.counterpartyId && entry.partyRef.partyId === customer.partyId,
+          ),
+      );
 };
 
 /**
@@ -201,103 +206,131 @@ export type IntakeCrmClient = IntakeClient & {
  * even before the registry customer list shows the new customer. One client's refused registry step must not leave
  * the remaining clients without identity: it counts as waiting for review.
  */
-export const linkClientsInBatch = Effect.fn('Crm.partyIntake.linkBatch')(function* linkClientsInBatch<E, R>(
+export const linkClientsInBatch = Effect.fn('Crm.partyIntake.linkBatch')(function* linkClientsInBatch(
   items: readonly IntakeCrmClient[],
   targets: readonly IntakeCrmClient[],
   initialRevision: number,
-  steps: {
-    readonly identify: (
-      client: IntakeCrmClient,
-      taken: ReadonlySet<string>,
-      crmClients: readonly IntakeCrmClient[],
-    ) => Effect.Effect<Option.Option<VerifiedParty>, E, R>;
-    readonly link: (clientId: string, party: VerifiedParty, expectedRevision: number) => Effect.Effect<number, E, R>;
-  },
 ) {
-  let working = [...items];
-  const taken = new Set(
-    items.flatMap((client) =>
-      client.partyRef === undefined
-        ? []
-        : [
-            client.partyRef.partyId,
-            ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId]),
-          ],
-    ),
-  );
-  const linkedByIco = new Map<string, VerifiedParty>();
-  let revision = initialRevision;
-  const outcome = { linked: 0, review: 0 };
-  for (const client of targets) {
-    const ico = normalizedIco(client.regNo);
-    const sameBatchParty = ico === '' ? undefined : linkedByIco.get(ico);
-    const linked = yield* (
-      sameBatchParty === undefined ? steps.identify(client, taken, working) : Effect.succeedSome(sameBatchParty)
-    ).pipe(
-      Effect.flatMap((verified) =>
-        Option.isNone(verified)
-          ? Effect.succeed(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>())
-          : steps
-              .link(client.id, verified.value, revision)
-              .pipe(Effect.map((next) => Option.some({ party: verified.value, revision: next }))),
-      ),
-      Effect.catch((error) =>
-        Effect.logWarning('CRM Evidence zákazníků intake skipped a client', client.id, error).pipe(
-          Effect.as(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>()),
-        ),
-      ),
-    );
-    if (Option.isNone(linked)) {
-      outcome.review += 1;
-      continue;
-    }
-    const { party } = linked.value;
-    revision = linked.value.revision;
-    taken.add(party.counterpartyId);
-    taken.add(party.partyId);
-    if (ico !== '') {
-      linkedByIco.set(ico, party);
-    }
-    working = working.map((entry) =>
-      entry.id === client.id
-        ? { ...entry, partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId } }
-        : entry,
-    );
-    outcome.linked += 1;
+  const steps = yield* PartyIntakeSteps;
+  interface Progress {
+    readonly linked: number;
+    readonly linkedByIco: ReadonlyMap<string, VerifiedParty>;
+    readonly review: number;
+    readonly revision: number;
+    readonly taken: ReadonlySet<string>;
+    readonly working: readonly IntakeCrmClient[];
   }
-  return outcome;
+  const outcome = yield* Effect.reduce(
+    targets,
+    (): Progress => ({
+      linked: 0,
+      linkedByIco: new Map<string, VerifiedParty>(),
+      review: 0,
+      revision: initialRevision,
+      taken: new Set(
+        items.flatMap((client) => {
+          if (client.partyRef === undefined) {
+            return [];
+          }
+          const ids = [client.partyRef.partyId];
+          if (client.partyRef.counterpartyId !== undefined) {
+            ids.push(client.partyRef.counterpartyId);
+          }
+          return ids;
+        }),
+      ),
+      working: [...items],
+    }),
+    Effect.fn('Crm.partyIntake.linkBatchClient')(function* linkBatchClient(
+      progress: Progress,
+      client: IntakeCrmClient,
+    ) {
+      const ico = normalizedIco(client.regNo);
+      const sameBatchParty = ico === '' ? undefined : progress.linkedByIco.get(ico);
+      const linked = yield* (
+        sameBatchParty === undefined
+          ? steps.identify(client, progress.taken, progress.working)
+          : Effect.succeedSome(sameBatchParty)
+      ).pipe(
+        Effect.flatMap((verified) =>
+          Option.isNone(verified)
+            ? Effect.succeed(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>())
+            : steps
+                .link(client.id, verified.value, progress.revision)
+                .pipe(Effect.map((revision) => Option.some({ party: verified.value, revision }))),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning('CRM Evidence zákazníků intake skipped a client', client.id, error).pipe(
+            Effect.as(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>()),
+          ),
+        ),
+      );
+      if (Option.isNone(linked)) {
+        return { ...progress, review: progress.review + 1 };
+      }
+      const { party, revision } = linked.value;
+      const taken = new Set([...progress.taken, party.counterpartyId, party.partyId]);
+      const linkedByIco = new Map(progress.linkedByIco);
+      if (ico !== '') {
+        linkedByIco.set(ico, party);
+      }
+      return {
+        ...progress,
+        linked: progress.linked + 1,
+        linkedByIco,
+        revision,
+        taken,
+        working: progress.working.map((entry) =>
+          entry.id === client.id
+            ? { ...entry, partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId } }
+            : entry,
+        ),
+      };
+    }),
+  );
+  return { linked: outcome.linked, review: outcome.review };
 });
 
 const GatewayContextSchema = Schema.Struct({
   apiBaseUrl: Schema.String,
   compositionRevision: Schema.String,
-  token: Schema.String,
+  token: Schema.RedactedFromValue(Schema.String),
 });
 
 /** A local intake setting: the environment, else the gitignored demo secrets file app/.env.demo.local. */
-const localSetting = (name: string) =>
-  Effect.gen(function* readLocalSetting() {
-    const fromEnvironment = yield* Config.option(Config.String(name));
-    if (Option.isSome(fromEnvironment) && fromEnvironment.value.trim() !== '') {
-      return Option.some(fromEnvironment.value.trim());
+const localSetting = Effect.fn('Crm.partyIntake.localSetting')(
+  function* localSetting(name: string) {
+    const fromEnvironment = yield* Config.option(Config.Redacted(name));
+    if (Option.isSome(fromEnvironment)) {
+      const value = Redacted.value(fromEnvironment.value).trim();
+      if (value !== '') {
+        return Option.some(Redacted.make(value));
+      }
     }
-    const file = yield* Config.String('ONTOS_DEMO_LOCAL_ENV_FILE').pipe(
-      Config.withDefault(join(process.cwd(), '../../.env.demo.local')),
+    const file = yield* Config.String('ONTOS_DEMO_LOCAL_ENV_FILE').pipe(Config.withDefault('../../.env.demo.local'));
+    const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+    if (Option.isNone(fileSystem)) {
+      return Option.none<Redacted.Redacted>();
+    }
+    const text = yield* fileSystem.value.readFileString(file).pipe(
+      Effect.timeout('5 seconds'),
+      Effect.orElseSucceed(() => ''),
     );
-    const text = yield* Effect.tryPromise(() => readFile(file, 'utf8')).pipe(Effect.orElseSucceed(() => ''));
     const line = text.split('\n').find((entry) => entry.startsWith(`${name}=`));
     const value = line?.slice(name.length + 1).trim() ?? '';
-    return value === '' ? Option.none<string>() : Option.some(value);
-  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    return value === '' ? Option.none<Redacted.Redacted>() : Option.some(Redacted.make(value));
+  },
+  Effect.orElseSucceed(() => Option.none<Redacted.Redacted>()),
+);
 
 const CrmClientSchema = Schema.Struct({
   address: Schema.optionalKey(Schema.String),
   email: Schema.optionalKey(Schema.String),
-  id: Schema.String,
+  id: EntityIdSchema,
   kind: Schema.Literals(['organization', 'person']),
   name: Schema.String,
   partyRef: Schema.optionalKey(
-    Schema.Struct({ counterpartyId: Schema.optionalKey(Schema.String), partyId: Schema.String }),
+    Schema.Struct({ counterpartyId: Schema.optionalKey(EntityIdSchema), partyId: EntityIdSchema }),
   ),
   phone: Schema.optionalKey(Schema.String),
   regNo: Schema.optionalKey(Schema.String),
@@ -310,7 +343,7 @@ const CrmRecordsSchema = Schema.Struct({
 });
 const RevisionSchema = Schema.Struct({ revision: Schema.Int });
 const ReferenceCredentialsJsonSchema = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ audience: Schema.String, authorization: Schema.String })),
+  Schema.Array(Schema.Struct({ audience: Schema.String, authorization: Schema.RedactedFromValue(Schema.String) })),
 );
 
 /**
@@ -318,67 +351,78 @@ const ReferenceCredentialsJsonSchema = Schema.fromJsonString(
  * the registry holds a lookalike Party that needs an identity reviewer (the client stays unlinked; the správce sees
  * it on the Klienti page), or fails when the registry or the intake principal is unavailable.
  */
-export const makePartyIntake = (scope: {
-  readonly compositionRevision: string;
-  readonly correlationId: string;
-  readonly legalEntityId: string;
-}) => {
-  const { correlationId } = scope;
-  let compositionRevision = scope.compositionRevision;
+export class PartyIntake extends Context.Service<
+  PartyIntake,
+  {
+    readonly reconcile: (
+      clientIds: readonly string[],
+    ) => Effect.Effect<
+      { readonly linked: number; readonly review: number },
+      CrmReferenceUnavailable,
+      PartyIntakeCompany | PartyIntakeCorrelation
+    >;
+  }
+>()('@app/crm/services/party-intake/PartyIntake') {}
+
+export const partyIntakeServices = Effect.gen(function* partyIntakeServices() {
+  const scope = yield* PartyIntakeCompany;
+  const correlationId = yield* PartyIntakeCorrelation;
+  const compositionRevision = yield* Ref.make(scope.compositionRevision);
 
   /** One single-use gateway assertion of the intake principal for `audience`. */
-  const assertion = (audience: string) =>
-    Effect.gen(function* issueAssertion() {
-      const key = yield* localSetting(KEY_VARIABLE);
-      if (Option.isNone(key)) {
-        return yield* unavailable(
-          'Zápis klientů do evidence zákazníků není nastaven (chybí klíč služby CRM); požádejte správce systému',
-        );
-      }
-      const gatewayBase = yield* Config.String('ONTOS_SHELL_GATEWAY_BASE_URL').pipe(
-        Config.withDefault('http://127.0.0.1:3020/shell-super-app-api'),
-        Effect.mapError(registryDown),
+  const assertion = Effect.fn('Crm.issueAssertion')(function* issueAssertion(audience: string) {
+    const key = yield* localSetting(KEY_VARIABLE);
+    if (Option.isNone(key)) {
+      return yield* unavailable(
+        'Zápis klientů do evidence zákazníků není nastaven (chybí klíč služby CRM); požádejte správce systému',
       );
-      const http = yield* HttpClient.HttpClient;
-      const response = yield* HttpClientRequest.post(`${gatewayBase}/auth/api-key/gateway-context`).pipe(
-        HttpClientRequest.setHeaders({ 'x-api-key': key.value, 'x-correlation-id': correlationId }),
-        HttpClientRequest.bodyJsonUnsafe({ audience, compositionRevision, legalEntityId: scope.legalEntityId }),
-        http.execute,
-        Effect.timeout('15 seconds'),
-        Effect.mapError(registryDown),
-      );
-      if (response.status !== 200) {
-        return yield* registryDown(new Error(`intake gateway-context ${audience} HTTP ${response.status}`));
-      }
-      const context = yield* HttpClientResponse.schemaBodyJson(GatewayContextSchema)(response).pipe(
-        Effect.mapError(registryDown),
-      );
-      compositionRevision = context.compositionRevision;
-      return {
-        authorization: `Bearer ${context.token}`,
-        credential: `Bearer ${context.token}`,
-        options: {
-          baseUrl: new URL(context.apiBaseUrl, new URL(gatewayBase).origin).href,
-          compositionRevision: context.compositionRevision,
-        },
-      };
-    });
+    }
+    const gatewayBase = yield* Config.String('ONTOS_SHELL_GATEWAY_BASE_URL').pipe(
+      Config.withDefault('http://127.0.0.1:3020/shell-super-app-api'),
+      Effect.mapError(registryDown),
+    );
+    const http = yield* HttpClient.HttpClient;
+    const currentCompositionRevision = yield* Ref.get(compositionRevision);
+    const response = yield* HttpClientRequest.post(`${gatewayBase}/auth/api-key/gateway-context`).pipe(
+      HttpClientRequest.setHeaders({ 'x-api-key': Redacted.value(key.value), 'x-correlation-id': correlationId }),
+      HttpClientRequest.bodyJsonUnsafe({
+        audience,
+        compositionRevision: currentCompositionRevision,
+        legalEntityId: scope.legalEntityId,
+      }),
+      http.execute,
+      Effect.timeout('15 seconds'),
+      Effect.mapError(registryDown),
+    );
+    if (response.status !== 200) {
+      return yield* registryDown({ audience, operation: 'gateway-context', status: response.status });
+    }
+    const context = yield* HttpClientResponse.schemaBodyJson(GatewayContextSchema)(response).pipe(
+      Effect.mapError(registryDown),
+    );
+    yield* Ref.set(compositionRevision, context.compositionRevision);
+    const credential = Redacted.make(`Bearer ${Redacted.value(context.token)}`);
+    return {
+      authorization: credential,
+      credential,
+      options: {
+        baseUrl: new URL(context.apiBaseUrl, new URL(gatewayBase).origin).href,
+        compositionRevision: context.compositionRevision,
+      },
+    };
+  });
 
   const customers = Effect.gen(function* loadCustomers() {
     const { credential, options } = yield* assertion(REGISTRY);
     const list = yield* executeCustomerListWithAuthorization(
       { includeArchived: false, limit: 500 },
-      credential,
+      Redacted.value(credential),
       correlationId,
       options,
     ).pipe(Effect.mapError(registryDown));
-    return list.items.map((item): RegistryCustomer => ({
-      companyId: item.companyId,
-      counterpartyId: item.counterpartyId,
-      displayName: item.displayName,
-      partyId: item.partyId,
-      status: item.status,
-    }));
+    return yield* Schema.decodeEffect(Schema.Array(RegistryCustomerSchema))(list.items).pipe(
+      Effect.mapError(registryDown),
+    );
   });
 
   const createCustomer = Effect.fn('Crm.partyIntake.create')(function* createCustomer(
@@ -416,7 +460,7 @@ export const makePartyIntake = (scope: {
       },
     }).pipe(Effect.mapError(registryDown));
     const first = yield* assertion(REGISTRY);
-    const created = yield* createPartyWithAuthorization(createPayload, first.credential, {
+    const created = yield* createPartyWithAuthorization(createPayload, Redacted.value(first.credential), {
       ...first.options,
       correlationId,
       idempotencyKey: `${operationKey}:party`,
@@ -426,7 +470,7 @@ export const makePartyIntake = (scope: {
       const second = yield* assertion(REGISTRY);
       const detail = yield* executeDuplicateCandidateDetailWithAuthorization(
         { caseRef: created.caseRef },
-        second.credential,
+        Redacted.value(second.credential),
         correlationId,
         second.options,
       ).pipe(Effect.mapError(registryDown));
@@ -443,13 +487,13 @@ export const makePartyIntake = (scope: {
           reason:
             'New CRM client; the candidate Parties share only a lookalike name or contact, no official identifier',
         },
-        third.credential,
+        Redacted.value(third.credential),
         { ...third.options, correlationId, idempotencyKey: `${operationKey}:resolve-create` },
       ).pipe(Effect.mapError(registryDown));
       if (resolved.partyRef === null) {
         return Option.none<VerifiedParty>();
       }
-      partyRef = resolved.partyRef;
+      ({ partyRef } = resolved);
     }
     if (partyRef === undefined) {
       return Option.none<VerifiedParty>();
@@ -471,46 +515,51 @@ export const makePartyIntake = (scope: {
       validFrom: now,
     }).pipe(Effect.mapError(registryDown));
     const fourth = yield* assertion(REGISTRY);
-    const onboarded = yield* counterpartyCustomerOnboardWithAuthorization(onboardPayload, fourth.credential, {
-      ...fourth.options,
-      correlationId,
-      idempotencyKey: `${operationKey}:onboard`,
-    }).pipe(Effect.mapError(registryDown));
+    const onboarded = yield* counterpartyCustomerOnboardWithAuthorization(
+      onboardPayload,
+      Redacted.value(fourth.credential),
+      {
+        ...fourth.options,
+        correlationId,
+        idempotencyKey: `${operationKey}:onboard`,
+      },
+    ).pipe(Effect.mapError(registryDown));
     const contactPoints = contactPointsOf(client);
-    for (const [index, contactPoint] of contactPoints.entries()) {
-      // A malformed legacy phone or address must not block the identity; the CRM card keeps the value.
-      yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)({
-        contactPoint,
-        partyRef,
-        privacyClassification: 'BUSINESS_SENSITIVE',
-        provenance: {
-          authoritative: false,
-          evidenceReference,
-          method: 'MANUAL_CONFIRMATION',
-          source: 'USER_ASSERTION',
+    // A malformed legacy phone or address must not block the identity; the CRM card keeps the value.
+    yield* Effect.forEach(
+      contactPoints,
+      Effect.fn('Crm.partyIntake.addContact')(
+        function* addContact(contactPoint: (typeof contactPoints)[number], index: number) {
+          const payload = yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)({
+            contactPoint,
+            partyRef,
+            privacyClassification: 'BUSINESS_SENSITIVE',
+            provenance: {
+              authoritative: false,
+              evidenceReference,
+              method: 'MANUAL_CONFIRMATION',
+              source: 'USER_ASSERTION',
+            },
+            validFrom: now,
+            verification: { state: 'UNVERIFIED' },
+          });
+          const { credential, options } = yield* assertion(REGISTRY);
+          return yield* addContactPointWithAuthorization(payload, Redacted.value(credential), {
+            ...options,
+            correlationId,
+            idempotencyKey: `${operationKey}:contact:${index}`,
+          });
         },
-        validFrom: now,
-        verification: { state: 'UNVERIFIED' },
-      }).pipe(
-        Effect.flatMap((payload) =>
-          assertion(REGISTRY).pipe(
-            Effect.flatMap(({ credential, options }) =>
-              addContactPointWithAuthorization(payload, credential, {
-                ...options,
-                correlationId,
-                idempotencyKey: `${operationKey}:contact:${index}`,
-              }),
-            ),
-          ),
-        ),
-        Effect.ignore,
-      );
-    }
-    return Option.some<VerifiedParty>({
+        (effect) => effect.pipe(Effect.ignore),
+      ),
+      { concurrency: 1, discard: true },
+    );
+    const verified = yield* Schema.decodeEffect(VerifiedPartySchema)({
       counterpartyId: onboarded.counterpartyRef.resourceId,
       displayName: client.name,
       partyId: partyRef.resourceId,
-    });
+    }).pipe(Effect.mapError(registryDown));
+    return Option.some(verified);
   });
 
   /**
@@ -528,26 +577,54 @@ export const makePartyIntake = (scope: {
       sameIcoClientCustomer(client, crmClients, registryCustomers) ??
       matchingRegistryCustomer(client, registryCustomers, taken);
     if (existing !== undefined) {
-      return Option.some<VerifiedParty>({
+      const candidate = {
         counterpartyId: existing.counterpartyId,
-        ...(existing.displayName === null ? {} : { displayName: existing.displayName }),
         partyId: existing.partyId,
-      });
+      };
+      if (Option.isSome(existing.displayName)) {
+        Object.assign(candidate, { displayName: existing.displayName.value });
+      }
+      return Option.some(
+        yield* Schema.decodeEffect(VerifiedPartySchema)(candidate).pipe(Effect.mapError(registryDown)),
+      );
     }
     return yield* createCustomer(client, operationKey);
   });
 
-  const postJson = (url: string, body: unknown, headers: Readonly<Record<string, string>>) =>
-    Effect.gen(function* postJsonRequest() {
-      const http = yield* HttpClient.HttpClient;
-      return yield* HttpClientRequest.post(url).pipe(
-        HttpClientRequest.setHeaders({ 'x-correlation-id': correlationId, ...headers }),
-        HttpClientRequest.bodyJsonUnsafe(body),
-        http.execute,
-        Effect.timeout('20 seconds'),
-        Effect.mapError(registryDown),
-      );
-    });
+  type IntakeHttpBody = RecordsRequestEncoded | typeof ApplyCommandPayloadSchema.Encoded;
+  interface IntakeHttpHeaders {
+    readonly authorization: Redacted.Redacted;
+    readonly 'idempotency-key'?: string;
+    readonly 'x-ontos-composition-revision': string;
+    readonly 'x-ontos-reference-credentials'?: Redacted.Redacted;
+  }
+  const postJson = Effect.fn('Crm.postJsonRequest')(function* postJsonRequest(
+    url: string,
+    body: IntakeHttpBody,
+    headers: IntakeHttpHeaders,
+  ) {
+    const http = yield* HttpClient.HttpClient;
+    const wireHeaders = {
+      authorization: Redacted.value(headers.authorization),
+      'x-correlation-id': correlationId,
+      'x-ontos-composition-revision': headers['x-ontos-composition-revision'],
+    };
+    if (headers['idempotency-key'] !== undefined) {
+      Object.assign(wireHeaders, { 'idempotency-key': headers['idempotency-key'] });
+    }
+    if (headers['x-ontos-reference-credentials'] !== undefined) {
+      Object.assign(wireHeaders, {
+        'x-ontos-reference-credentials': Redacted.value(headers['x-ontos-reference-credentials']),
+      });
+    }
+    return yield* HttpClientRequest.post(url).pipe(
+      HttpClientRequest.setHeaders(wireHeaders),
+      HttpClientRequest.bodyJsonUnsafe(body),
+      http.execute,
+      Effect.timeout('20 seconds'),
+      Effect.mapError(registryDown),
+    );
+  });
 
   /** The company's CRM clients as the intake principal sees them (read_all). */
   const crmRecords = Effect.gen(function* readCrmRecords() {
@@ -561,7 +638,7 @@ export const makePartyIntake = (scope: {
       },
     );
     if (response.status !== 200) {
-      return yield* registryDown(new Error(`intake CRM records HTTP ${response.status}`));
+      return yield* registryDown({ operation: 'crm-records', status: response.status });
     }
     return yield* HttpClientResponse.schemaBodyJson(CrmRecordsSchema)(response).pipe(Effect.mapError(registryDown));
   });
@@ -589,14 +666,20 @@ export const makePartyIntake = (scope: {
         authorization: crm.authorization,
         'idempotency-key': `${operationKey}:link`,
         'x-ontos-composition-revision': crm.options.compositionRevision,
-        'x-ontos-reference-credentials': yield* Schema.encodeEffect(ReferenceCredentialsJsonSchema)([
-          { audience: REGISTRY, authorization: registry.authorization },
-        ]).pipe(Effect.mapError(registryDown)),
+        'x-ontos-reference-credentials': Redacted.make(
+          yield* Schema.encodeEffect(ReferenceCredentialsJsonSchema)([
+            { audience: REGISTRY, authorization: registry.authorization },
+          ]).pipe(Effect.mapError(registryDown)),
+        ),
       },
     );
     if (response.status !== 200) {
       const detail = yield* response.text.pipe(Effect.orElseSucceed(() => ''));
-      return yield* registryDown(new Error(`intake LinkClientParty HTTP ${response.status} ${detail.slice(0, 300)}`));
+      return yield* registryDown({
+        detail: detail.slice(0, 300),
+        operation: 'LinkClientParty',
+        status: response.status,
+      });
     }
     return (yield* HttpClientResponse.schemaBodyJson(RevisionSchema)(response).pipe(Effect.mapError(registryDown)))
       .revision;
@@ -608,19 +691,19 @@ export const makePartyIntake = (scope: {
    */
   const reconcile = Effect.fn('Crm.partyIntake.reconcile')(function* reconcile(clientIds: readonly string[]) {
     const records = yield* crmRecords;
-    const items = records.state.clients.items;
+    const { items } = records.state.clients;
+    const requestedIds = new Set(clientIds);
     const targets = items
-      .filter(
-        (client) => client.partyRef === undefined && (client.status === 'active' || clientIds.includes(client.id)),
-      )
+      .filter((client) => client.partyRef === undefined && (client.status === 'active' || requestedIds.has(client.id)))
       .slice(0, BATCH);
-    return yield* linkClientsInBatch(items, targets, records.revision, {
-      identify: (client, taken, crmClients) =>
-        identify(client, taken, `crm-intake:${correlationId}:${client.id}`.slice(0, 180), crmClients),
-      link: (clientId, party, expectedRevision) =>
-        linkClient(clientId, party, expectedRevision, `crm-intake:${correlationId}:${clientId}`.slice(0, 180)),
-    });
-  }, Effect.provide(FetchHttpClient.layer));
+    return yield* linkClientsInBatch(items, targets, records.revision);
+  });
 
-  return { identify, reconcile };
-};
+  return {
+    identify: (client: IntakeCrmClient, taken: ReadonlySet<string>, crmClients: readonly IntakeCrmClient[]) =>
+      identify(client, taken, `crm-intake:${correlationId}:${client.id}`.slice(0, 180), crmClients),
+    link: (clientId: string, party: VerifiedParty, expectedRevision: number) =>
+      linkClient(clientId, party, expectedRevision, `crm-intake:${correlationId}:${clientId}`.slice(0, 180)),
+    reconcile,
+  };
+});

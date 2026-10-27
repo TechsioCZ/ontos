@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { NodeCrypto } from '@effect/platform-node';
@@ -154,7 +155,9 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     );
     const coreClient = yield* makeTestPgClient(connectionString, { connectTimeout, startupParameters });
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(makeAuthDatabase({ connectionString }));
+    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(
+      makeAuthDatabase({ connectionString, expectedRole: SHARED_RUNTIME_IDENTITY.role }),
+    );
     const authentication = betterAuth({
       baseURL,
       database: adapter,

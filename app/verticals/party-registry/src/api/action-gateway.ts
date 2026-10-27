@@ -17,7 +17,13 @@ import type {
 } from '../../shared/actions/add-party-official-identifier.ts';
 import type { CorrectPartyFactPayload } from '../../shared/actions/correct-party-fact.ts';
 import type { UpdatePartyPayload, UpdatePartyResult } from '../../shared/actions/update-party.ts';
-import * as AresApplication from '../../shared/domain/ares-application.ts';
+import {
+  AresCanonicalRouteSchema,
+  aresRegisteredAddressMatches,
+  deriveAresEvidenceApplication,
+  deriveAresCorrectionReviewHandoffs,
+  makeAresAppliedEvidence,
+} from '../../shared/domain/ares-application.ts';
 import type {
   AresAppliedEvidence,
   AresCanonicalSnapshot,
@@ -52,7 +58,10 @@ export const makeOperationGateway = (acquire: OperationGatewayIssuer = issueGate
 
 export const operationGateway = makeOperationGateway();
 
-export const { deriveAresCorrectionReviewHandoffs, prefillPartyCandidateFromAres } = AresApplication;
+export {
+  deriveAresCorrectionReviewHandoffs,
+  prefillPartyCandidateFromAres,
+} from '../../shared/domain/ares-application.ts';
 
 export class AresApplySelectionInvalid extends Schema.TaggedError<AresApplySelectionInvalid>()(
   'AresApplySelectionInvalid',
@@ -253,7 +262,7 @@ const sameParty = (left: PartyRef, right: PartyRef): boolean =>
 
 const hasSupportedCanonicalRoute = (selection: AresApplySelection): boolean =>
   !(
-    !Schema.is(AresApplication.AresCanonicalRouteSchema)(selection.route) ||
+    !Schema.is(AresCanonicalRouteSchema)(selection.route) ||
     (selection.route === 'PARTY_UPDATE' && selection.fact !== 'BUSINESS_NAME') ||
     (selection.route === 'IDENTIFIER_ADD' && selection.fact !== 'ICO') ||
     (selection.route === 'CONTACT_POINT_ADD' && selection.fact !== 'REGISTERED_ADDRESS')
@@ -327,7 +336,7 @@ const matchesObservation = (selection: ExecutableSelection, observation: AresSub
         selected.payload.contactPoint.purposes[0]?.purpose === 'REGISTERED' &&
         selected.payload.contactPoint.purposes[0]?.registryContext?.jurisdiction === 'CZ' &&
         selected.payload.contactPoint.purposes[0]?.registryContext?.registryKey === 'ARES' &&
-        AresApplication.aresRegisteredAddressMatches(registeredAddress, selected.payload.contactPoint.address),
+        aresRegisteredAddressMatches(registeredAddress, selected.payload.contactPoint.address),
     ),
     Match.exhaustive,
   );
@@ -703,9 +712,9 @@ const loadCanonicalSnapshot = Effect.fn('AresApply.loadCanonicalSnapshot')(funct
             : [],
         ),
       ],
-      icoValues: activeIdentifiers
-        .filter(({ identifierType }) => identifierType === 'ICO')
-        .map(({ normalizedValue }) => normalizedValue),
+      icoValues: activeIdentifiers.flatMap(({ identifierType, normalizedValue }) =>
+        identifierType === 'ICO' ? [normalizedValue] : [],
+      ),
       identityAmbiguous: activeIdentifiers.some(({ identifierType, normalizedValue, verification }) => {
         const observedDic = Option.getOrNull(observation.subject.dic);
         return (
@@ -782,7 +791,7 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
     const application = yield* Effect.try({
       catch: (error) => invalidSelection('The trusted ARES evidence cannot be evaluated under the owner policy', error),
       try: () =>
-        AresApplication.deriveAresEvidenceApplication({
+        deriveAresEvidenceApplication({
           canonical,
           decidedAt,
           evidence: observationInput,
@@ -790,8 +799,7 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
           userConfirmed: request.userConfirmed,
         }),
     });
-    const correctionCandidates =
-      canonical === null ? [] : AresApplication.deriveAresCorrectionReviewHandoffs(application, canonical);
+    const correctionCandidates = canonical === null ? [] : deriveAresCorrectionReviewHandoffs(application, canonical);
     if (observationIsStale(supplied, observation, decisionTime)) {
       return {
         _tag: 'AresApplyDeferred' as const,
@@ -839,7 +847,7 @@ export const applyAresObservationWithActions = Effect.fn('ActionGateway.applyAre
         }
         // Logical as-of time of the confirmed observation, stable across delivery retries.
         // The standard Action records its trusted actual acceptance time independently.
-        const evidence = AresApplication.makeAresAppliedEvidence(
+        const evidence = makeAresAppliedEvidence(
           { ...application, decidedAt: supplied.servedAt, evidence: supplied },
           decision,
         );

@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Data, Effect, Option, Schema } from 'effect';
+import { Context, Data, Effect, Option, Schema, flow } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 /**
@@ -54,18 +54,19 @@ const fetchTarget = (input: Request | URL | string): string => {
 };
 
 /** Every Effect HTTP client built on `FetchHttpClient` reads its fetch from the fiber; inside a mark it refuses. */
-const refusingFetch =
-  (open: OpenTransaction) =>
-  // oxlint-disable-next-line typescript/promise-function-async -- Native `fetch` contract: the refusal is a rejected Promise, recorded first so the mark re-raises it.
-  (input: Request | URL | string): Promise<Response> => {
-    const refusal = new IoInsideDatabaseTransaction({
-      io: 'outbound-fetch',
-      operationKey: open.operationKey,
-      target: fetchTarget(input),
-    });
-    open.refusedFetches.push(refusal);
-    return Promise.reject(refusal);
-  };
+const refusingFetch = (open: OpenTransaction) =>
+  flow(
+    (input: Request | URL | string) => {
+      const refusal = new IoInsideDatabaseTransaction({
+        io: 'outbound-fetch',
+        operationKey: open.operationKey,
+        target: fetchTarget(input),
+      });
+      open.refusedFetches.push(refusal);
+      return refusal;
+    },
+    Promise.reject.bind(Promise)<Response>,
+  );
 
 /**
  * Marks `effect` as the body of the named operation's database transaction: SpiceDB, module transport,

@@ -100,7 +100,7 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
           Effect.mapError(unavailable),
         ),
     operatorsOf,
-    replaceOperators: Effect.fn('PrincipalOperators.replaceOperators')(function* (input) {
+    replaceOperators: Effect.fn('PrincipalOperators.replaceOperators')(function* replaceOperators(input) {
       const current = yield* operatorsOf(input.agentPrincipalId);
       const { add, remove } = operatorChanges(current, input.operatorPrincipalIds);
       const resource = principalObject(input.agentPrincipalId);

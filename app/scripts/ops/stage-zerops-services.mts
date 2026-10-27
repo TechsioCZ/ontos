@@ -47,7 +47,7 @@ import type { ServiceImport, ZeropsImportEntry, ZeropsService } from './stage-op
 
 /**
  * Retires and restores the stage Zerops services Cloudflare mode no longer uses (design section
- * 11a): the 10 application services the Workers replace. The migrator, SpiceDB and the Outbox Worker
+ * 11a): the application services the Workers replace. The migrator, SpiceDB and the Outbox Worker
  * host keep running on the Cloudflare target. The per-vertical outbox workers are not needed in `host`
  * mode and may be deleted: each deploy treats a deleted worker like a stopped one when it detects an
  * OUTBOX_WORKER_MODE switch. A switch back to `dedicated` first re-imports them from `zerops-import.yaml`
@@ -83,6 +83,19 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'availability', setup: 'availability' },
   { hostname: 'tax', setup: 'tax' },
   { hostname: 'privacy', setup: 'privacy' },
+  { hostname: 'propertyportfolio', setup: 'property-portfolio' },
+  { hostname: 'propertyleasing', setup: 'property-leasing' },
+  { hostname: 'legalagreements', setup: 'legal-agreements' },
+  { hostname: 'worktasks', setup: 'work-tasks' },
+  { hostname: 'workforce', setup: 'workforce' },
+  { hostname: 'tagging', setup: 'tagging' },
+  { hostname: 'salespipeline', setup: 'sales-pipeline' },
+  { hostname: 'merchandise', setup: 'merchandise' },
+  { hostname: 'facilityoperations', setup: 'facility-operations' },
+  { hostname: 'salesinsights', setup: 'sales-insights' },
+  { hostname: 'financebilling', setup: 'finance-billing' },
+  { hostname: 'crmactivities', setup: 'crm-activities' },
+  { hostname: 'crm', setup: 'crm' },
 ] as const;
 
 const EnvironmentKeySchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvironmentKey'));

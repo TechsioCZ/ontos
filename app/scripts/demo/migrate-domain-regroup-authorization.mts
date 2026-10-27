@@ -14,12 +14,16 @@
  * Set ONTOS_DEMO_ENV_FILE to the running runtime's .env when its local TLS certificate differs.
  */
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
-import { Console, Effect } from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Config, Console, Effect, Schema } from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 
-const dryRun = process.argv.includes('--dry-run');
+class AuthorizationMigrationFailure extends Schema.TaggedError<AuthorizationMigrationFailure>()(
+  'AuthorizationMigrationFailure',
+  { message: Schema.String },
+) {}
 
 /** Old module ids, permission prefixes and action keys (decoded object ids are matched against this). */
 const obsoletePattern =
@@ -40,71 +44,86 @@ const isObsolete = (relationship: v1.Relationship): boolean =>
   obsoletePattern.test(decodeObjectId(relationship.resource?.objectId ?? '')) ||
   obsoletePattern.test(decodeObjectId(relationship.subject?.object?.objectId ?? ''));
 
-const program = Effect.gen(function* migrateRegroupAuthorization() {
-  const configuration = yield* loadSpiceDbConfig({
-    envPath: process.env.ONTOS_DEMO_ENV_FILE ?? new URL('../../.env', import.meta.url).pathname,
-  });
-  if (
-    configuration.deploymentEnvironment !== 'development' ||
-    !/^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/u.test(configuration.endpoint)
-  ) {
-    return yield* Effect.fail(new Error('This demo migration requires local development SpiceDB'));
-  }
-  const client = yield* Effect.acquireRelease(
-    Effect.try(() => openSpiceDbGrpcRpc(configuration, 30_000)),
-    (value) => Effect.sync(() => value.close()),
-  );
-  const consistency = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
-  const obsolete: v1.Relationship[] = [];
-  for (const resourceType of resourceTypes) {
-    const responses = yield* client.readRelationships(
-      v1.ReadRelationshipsRequest.create({
-        consistency,
-        relationshipFilter: v1.RelationshipFilter.create({ resourceType }),
-      }),
+const program = (dryRun: boolean) =>
+  Effect.gen(function* migrateRegroupAuthorization() {
+    const envPath = yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+      Config.withDefault(new URL('../../.env', import.meta.url).pathname),
     );
-    const matches = responses.flatMap((response) =>
-      response.relationship !== undefined && isObsolete(response.relationship) ? [response.relationship] : [],
+    const configuration = yield* loadSpiceDbConfig({
+      envPath,
+    });
+    if (
+      configuration.deploymentEnvironment !== 'development' ||
+      !/^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/u.test(configuration.endpoint)
+    ) {
+      return yield* new AuthorizationMigrationFailure({
+        message: 'This demo migration requires local development SpiceDB',
+      });
+    }
+    const client = yield* Effect.acquireRelease(
+      Effect.try(() => openSpiceDbGrpcRpc(configuration, 30_000)),
+      (value) => Effect.sync(() => value.close()),
     );
-    yield* Console.log(`${resourceType}: ${responses.length} relationship(s), ${matches.length} obsolete`);
-    obsolete.push(...matches);
-  }
-  for (const relationship of obsolete) {
-    yield* Console.log(`  ${dryRun ? 'would delete' : 'delete'} ${describe(relationship)}`);
-  }
-  if (dryRun || obsolete.length === 0) {
-    return yield* Console.log(dryRun ? 'dry run: nothing deleted' : 'domain regroup authorization: nothing to do');
-  }
-  // SpiceDB caps one write at 1,000 updates by default.
-  for (let index = 0; index < obsolete.length; index += 500) {
-    yield* client.writeRelationships(
-      v1.WriteRelationshipsRequest.create({
-        updates: obsolete
-          .slice(index, index + 500)
-          .map((relationship) =>
-            v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship }),
-          ),
-      }),
-    );
-  }
-  const remaining: string[] = [];
-  for (const resourceType of resourceTypes) {
-    const responses = yield* client.readRelationships(
-      v1.ReadRelationshipsRequest.create({
-        consistency,
-        relationshipFilter: v1.RelationshipFilter.create({ resourceType }),
-      }),
-    );
-    for (const response of responses) {
-      if (response.relationship !== undefined && isObsolete(response.relationship)) {
-        remaining.push(describe(response.relationship));
+    const consistency = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
+    const obsolete: v1.Relationship[] = [];
+    for (const resourceType of resourceTypes) {
+      const responses = yield* client.readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency,
+          relationshipFilter: v1.RelationshipFilter.create({ resourceType }),
+        }),
+      );
+      const matches = responses.flatMap((response) =>
+        response.relationship !== undefined && isObsolete(response.relationship) ? [response.relationship] : [],
+      );
+      yield* Console.log(`${resourceType}: ${responses.length} relationship(s), ${matches.length} obsolete`);
+      obsolete.push(...matches);
+    }
+    for (const relationship of obsolete) {
+      yield* Console.log(`  ${dryRun ? 'would delete' : 'delete'} ${describe(relationship)}`);
+    }
+    if (dryRun || obsolete.length === 0) {
+      yield* Console.log(dryRun ? 'dry run: nothing deleted' : 'domain regroup authorization: nothing to do');
+      return yield* Effect.void;
+    }
+    // SpiceDB caps one write at 1,000 updates by default.
+    for (let index = 0; index < obsolete.length; index += 500) {
+      yield* client.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          updates: obsolete
+            .slice(index, index + 500)
+            .map((relationship) =>
+              v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship }),
+            ),
+        }),
+      );
+    }
+    const remaining: string[] = [];
+    for (const resourceType of resourceTypes) {
+      const responses = yield* client.readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency,
+          relationshipFilter: v1.RelationshipFilter.create({ resourceType }),
+        }),
+      );
+      for (const response of responses) {
+        if (response.relationship !== undefined && isObsolete(response.relationship)) {
+          remaining.push(describe(response.relationship));
+        }
       }
     }
-  }
-  if (remaining.length > 0) {
-    return yield* Effect.fail(new Error(`obsolete relationships remain: ${remaining.join(', ')}`));
-  }
-  yield* Console.log(`domain regroup authorization: deleted ${obsolete.length} obsolete relationship(s)`);
-}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+    if (remaining.length > 0) {
+      return yield* new AuthorizationMigrationFailure({
+        message: `obsolete relationships remain: ${remaining.join(', ')}`,
+      });
+    }
+    yield* Console.log(`domain regroup authorization: deleted ${obsolete.length} obsolete relationship(s)`);
+    return yield* Effect.void;
+  });
 
-await Effect.runPromise(program);
+const command = Command.make(
+  'migrate-domain-regroup-authorization',
+  { dryRun: Flag.Boolean('dry-run') },
+  ({ dryRun }) => program(dryRun),
+);
+NodeRuntime.runMain(Command.run(command, { version: '1.0.0' }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)));

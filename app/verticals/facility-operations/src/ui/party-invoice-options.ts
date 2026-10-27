@@ -2,37 +2,41 @@
 // read, filtered to what the current person may see; the link stores the owner's resource id + a display snapshot.
 import { listCustomers } from '@app/party-registry/api/client';
 import { Effect } from 'effect';
+import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 import type { SubjectRef } from '../../shared/domain/documents.ts';
 import { readFinance } from '../api/finance-reads.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
-export type OptionsState =
+export type OptionsState<Failure> =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
-  | { readonly status: 'ready'; readonly options: readonly SubjectRef[] };
+  | { readonly error: Failure; readonly status: 'failed' }
+  | { readonly options: readonly SubjectRef[]; readonly status: 'ready' };
 
-const useOptions = <E,>(load: () => Effect.Effect<readonly SubjectRef[], E>): OptionsState => {
-  const [state, setState] = useState<OptionsState>({ status: 'loading' });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: loaders are module constants.
+const useOptions = <E>(load: () => Effect.Effect<readonly SubjectRef[], E>): OptionsState<E | Cause.TimeoutError> => {
+  const [state, setState] = useState<OptionsState<E | Cause.TimeoutError>>({ status: 'loading' });
   useEffect(() => {
     let alive = true;
     void browserRuntime.runPromise(
       load().pipe(
         Effect.timeout('12 seconds'),
         Effect.match({
-          onFailure: (): OptionsState => ({ status: 'failed' }),
-          onSuccess: (options): OptionsState => ({ options, status: 'ready' }),
+          onFailure: (error): OptionsState<E | Cause.TimeoutError> => ({ error, status: 'failed' }),
+          onSuccess: (options): OptionsState<E | Cause.TimeoutError> => ({ options, status: 'ready' }),
         }),
-        Effect.map((next) => {
-          if (alive) setState(next);
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {
       alive = false;
     };
-  }, []);
+  }, [load]);
   return state;
 };
 
@@ -52,15 +56,20 @@ const loadContacts = () =>
 const loadInvoices = () =>
   readFinance('facility-operations.document-invoice-options').pipe(
     Effect.map((records) =>
-      records.state.invoices
-        .filter((invoice) => invoice.businessState !== 'VOIDED')
-        .map(
-          (invoice): SubjectRef => ({
-            id: invoice.ref.resourceId,
-            kind: 'invoice',
-            label: [invoice.number ?? invoice.documentNumber, invoice.counterpartyName].filter((part) => part !== undefined).join(' · ').slice(0, 300),
-          }),
-        ),
+      records.state.invoices.flatMap((invoice): SubjectRef[] =>
+        invoice.businessState === 'VOIDED'
+          ? []
+          : [
+              {
+                id: invoice.ref.resourceId,
+                kind: 'invoice',
+                label: [invoice.number ?? invoice.documentNumber, invoice.counterpartyName]
+                  .filter((part) => part !== undefined)
+                  .join(' · ')
+                  .slice(0, 300),
+              },
+            ],
+      ),
     ),
   );
 

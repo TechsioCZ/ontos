@@ -94,10 +94,10 @@ export const DocumentSchema = Schema.Struct({
   /** Known keys: contract, amendment, annex, protocol, revision, invoice, photo, plan, other (free text tolerated). */
   category: TextSchema(120),
   /** Scaffold-era single property/unit link. New documents use `links`. */
-  related: Schema.optionalKey(PropertyRefSchema),
-  links: Schema.optionalKey(Schema.Array(SubjectRefSchema).check(Schema.isMaxLength(20))),
-  description: Schema.optionalKey(NoteSchema),
   contract: Schema.optionalKey(ContractTermsSchema),
+  description: Schema.optionalKey(NoteSchema),
+  links: Schema.optionalKey(Schema.Array(SubjectRefSchema).check(Schema.isMaxLength(20))),
+  related: Schema.optionalKey(PropertyRefSchema),
   /** Amendment (dodatek) or annex of this original contract document. */
   amendsDocumentId: Schema.optionalKey(DocumentIdSchema),
   signature: Schema.optionalKey(SignatureRecordSchema),
@@ -117,9 +117,9 @@ export type CommentEditEntry = typeof CommentEditSchema.Type;
 /** Comment or message in a thread attached to any record or channel (S14). */
 export const CommentSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
+  body: TextSchema(4000),
   id: CommentIdSchema,
   subject: SubjectRefSchema,
-  body: TextSchema(4000),
   /** Optional link to an allowed record or an already stored document (S14.R2). */
   attachment: Schema.optionalKey(SubjectRefSchema),
   /** Display names mentioned with @ (optional, informational). */
@@ -132,8 +132,8 @@ export const CommentSchema = Schema.Struct({
 export type CommentRecord = typeof CommentSchema.Type;
 
 export const DocumentsStateSchema = Schema.Struct({
-  documents: Schema.Array(DocumentSchema),
   comments: Schema.optionalKey(Schema.Array(CommentSchema)),
+  documents: Schema.Array(DocumentSchema),
 });
 export type DocumentsState = typeof DocumentsStateSchema.Type;
 export type DocumentsStateEncoded = typeof DocumentsStateSchema.Encoded;
@@ -147,7 +147,7 @@ export const sameSubject = (left: SubjectRef, right: SubjectRef) => left.kind ==
 /** All links of a document, including the scaffold-era `related` property link. */
 export const documentLinks = (document: DocumentRecord): readonly SubjectRef[] => {
   const links = document.links ?? [];
-  const related = document.related;
+  const { related } = document;
   if (related === undefined || links.some((link) => link.kind === related.kind && link.id === related.id)) {
     return links;
   }

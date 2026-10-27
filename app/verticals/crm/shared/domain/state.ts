@@ -1,6 +1,6 @@
 // The whole CRM aggregate: one JSONB document per (tenant, legal entity). Owned by crm-scaffold.
 // Each area owns its slice schema in ./<area>.ts; this file only composes them.
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import type { CrmViewer } from './access.ts';
 import { AiChangesSliceSchema, projectAiChangesSlice } from './ai-changes.ts';
 import { ClientsSliceSchema, initialClientsSlice, projectClientsSlice, visibleClientIds } from './clients.ts';
@@ -20,6 +20,7 @@ export const CrmStateSchema = Schema.Struct({
   visits: VisitsSliceSchema,
 });
 export type CrmState = typeof CrmStateSchema.Type;
+export type CrmStateInput = typeof CrmStateSchema.Encoded;
 
 export const initialCrmState: CrmState = {
   clients: initialClientsSlice,
@@ -28,29 +29,59 @@ export const initialCrmState: CrmState = {
   visits: initialVisitsSlice,
 };
 
+/** The JSON document boundary owns the keys; slice values are checked by CrmStateSchema after defaults. */
+const StoredSlicesSchema = Schema.Struct({
+  aiChanges: Schema.optionalKey(Schema.Unknown),
+  clients: Schema.optionalKey(Schema.Unknown),
+  customerInputs: Schema.optionalKey(Schema.Unknown),
+  imports: Schema.optionalKey(Schema.Unknown),
+  salespeople: Schema.optionalKey(Schema.Unknown),
+  visits: Schema.optionalKey(Schema.Unknown),
+});
+const DefaultedSlicesSchema = Schema.Struct({
+  aiChanges: Schema.optionalKey(Schema.Unknown),
+  clients: Schema.Unknown,
+  customerInputs: Schema.optionalKey(Schema.Unknown),
+  imports: Schema.Unknown,
+  salespeople: Schema.Unknown,
+  visits: Schema.Unknown,
+});
+type DefaultedSlices = typeof DefaultedSlicesSchema.Type;
+
 /** Fill slices missing from older persisted documents before decoding. */
-export const withDefaultSlices = (raw: unknown): unknown => {
-  const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  return {
-    ...(value['aiChanges'] === undefined ? {} : { aiChanges: value['aiChanges'] }),
-    clients: value['clients'] ?? initialClientsSlice,
-    ...(value['customerInputs'] === undefined ? {} : { customerInputs: value['customerInputs'] }),
-    imports: value['imports'] ?? initialImportsSlice,
-    salespeople: value['salespeople'] ?? [],
-    visits: value['visits'] ?? initialVisitsSlice,
+export const withDefaultSlices = (raw: unknown): DefaultedSlices => {
+  const value = Option.getOrElse(
+    Schema.decodeUnknownOption(StoredSlicesSchema)(raw),
+    (): typeof StoredSlicesSchema.Type => ({}),
+  );
+  const result: DefaultedSlices = {
+    clients: value.clients ?? initialClientsSlice,
+    imports: value.imports ?? initialImportsSlice,
+    salespeople: value.salespeople ?? [],
+    visits: value.visits ?? initialVisitsSlice,
   };
+  if (value.aiChanges !== undefined) {
+    Object.assign(result, { aiChanges: value.aiChanges });
+  }
+  if (value.customerInputs !== undefined) {
+    Object.assign(result, { customerInputs: value.customerInputs });
+  }
+  return result;
 };
 
 /** What one viewer may read. The read server returns only this. */
 export const projectCrmState = (state: CrmState, viewer: CrmViewer): CrmState => {
   const visible = visibleClientIds(state.clients, viewer);
-  return {
+  const projected: CrmState = {
     aiChanges: projectAiChangesSlice(state.aiChanges, viewer),
     clients: projectClientsSlice(state.clients, visible),
     // Not client data: every CRM user sees which customer inputs block what (and the report needs R04).
-    ...(state.customerInputs === undefined ? {} : { customerInputs: state.customerInputs }),
     imports: projectImportsSlice(state.imports, visible, viewer),
     salespeople: state.salespeople,
     visits: projectVisitsSlice(state.visits, visible),
   };
+  if (state.customerInputs !== undefined) {
+    Object.assign(projected, { customerInputs: state.customerInputs });
+  }
+  return projected;
 };

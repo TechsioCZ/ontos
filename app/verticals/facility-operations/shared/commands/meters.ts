@@ -16,7 +16,7 @@ import {
   PropertyRefSchema,
   TextSchema,
 } from '../domain/common.ts';
-import type { OpsCommandInput } from '../domain/common.ts';
+import type { OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import {
   MeterIdSchema,
   MeterMediumSchema,
@@ -31,15 +31,15 @@ import type { Meter, MeterReading, MetersState, ReadingProblem } from '../domain
 
 /** Editable meter master data (shared by create and update; omitted optional fields are cleared on update). */
 const meterFields = {
-  serialNumber: TextSchema(64),
-  medium: MeterMediumSchema,
-  unit: TextSchema(16),
-  location: Schema.optionalKey(PropertyRefSchema),
-  note: Schema.optionalKey(NoteSchema),
-  supplyPoint: Schema.optionalKey(TextSchema(120)),
-  supplier: Schema.optionalKey(TextSchema(200)),
   consumer: Schema.optionalKey(TextSchema(200)),
   contract: Schema.optionalKey(TextSchema(200)),
+  location: Schema.optionalKey(PropertyRefSchema),
+  medium: MeterMediumSchema,
+  note: Schema.optionalKey(NoteSchema),
+  serialNumber: TextSchema(64),
+  supplier: Schema.optionalKey(TextSchema(200)),
+  supplyPoint: Schema.optionalKey(TextSchema(120)),
+  unit: TextSchema(16),
 };
 
 export const metersCommandSchemas = [
@@ -50,13 +50,13 @@ export const metersCommandSchemas = [
     status: Schema.optionalKey(Schema.Literals(['ACTIVE', 'RETIRED'])),
   }),
   Schema.TaggedStruct('MeterReadingRecord', {
-    meterId: MeterIdSchema,
-    date: IsoDateSchema,
-    value: MeterValueSchema,
-    readBy: Schema.optionalKey(TextSchema(120)),
-    note: Schema.optionalKey(NoteSchema),
     costMinor: Schema.optionalKey(MinorAmountSchema),
+    date: IsoDateSchema,
+    meterId: MeterIdSchema,
+    note: Schema.optionalKey(NoteSchema),
     photo: Schema.optionalKey(MeterPhotoSchema),
+    readBy: Schema.optionalKey(TextSchema(120)),
+    value: MeterValueSchema,
   }),
   Schema.TaggedStruct('MeterReadingVoid', {
     meterId: MeterIdSchema,
@@ -70,13 +70,13 @@ export type MetersCommand = typeof MetersCommandSchema.Type;
 type CommandOf<Tag extends MetersCommand['_tag']> = Extract<MetersCommand, { readonly _tag: Tag }>;
 
 /** Human-readable (English, logged) reason per validation problem; the UI shows its own Czech text. */
-export const readingProblemReason: Readonly<Record<ReadingProblem, string>> = {
+export const readingProblemReason = {
   duplicateDate: 'The meter already has a valid reading on this date',
   future: 'A reading cannot be dated in the future',
   higherThanNext: 'The value is higher than the next reading of this meter',
   lowerThanPrevious: 'The value is lower than the previous reading of this meter',
   retired: 'The meter is retired',
-};
+} satisfies Readonly<Record<ReadingProblem, string>>;
 
 const pragueDateFormat = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -87,14 +87,16 @@ const pragueDateFormat = new Intl.DateTimeFormat('en-CA', {
 /** Business date (`YYYY-MM-DD`) of `now` in Europe/Prague. */
 export const pragueDate = (now: DateTime.Utc): string => pragueDateFormat.format(DateTime.toDateUtc(now));
 
-const findMeter = (state: MetersState, meterId: string) =>
-  Effect.gen(function* findMeter() {
-    const meter = state.meters.find((entry) => entry.id === meterId);
-    if (meter === undefined) {
-      return yield* opsNotFound('Meter not found');
-    }
-    return meter;
-  });
+const findMeter = Effect.fn('FacilityOperations.Meters.findMeter')(function* findMeter(
+  state: MetersState,
+  meterId: string,
+) {
+  const meter = state.meters.find((entry) => entry.id === meterId);
+  if (meter === undefined) {
+    return yield* opsNotFound('Meter not found');
+  }
+  return meter;
+});
 
 const replaceMeter = (state: MetersState, meter: Meter): MetersState => ({
   ...state,
@@ -102,14 +104,11 @@ const replaceMeter = (state: MetersState, meter: Meter): MetersState => ({
 });
 
 const serialTaken = (state: MetersState, serialNumber: string, except?: string) =>
-  state.meters.some(
-    (entry) => entry.id !== except && entry.serialNumber.toLowerCase() === serialNumber.toLowerCase(),
-  );
+  state.meters.some((entry) => entry.id !== except && entry.serialNumber.toLowerCase() === serialNumber.toLowerCase());
 
 const createMeter = Effect.fn('FacilityOperations.Meters.create')(function* createMeter(
   state: MetersState,
-  value: CommandOf<'MeterCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'MeterCreate'>>,
 ) {
   if (serialTaken(state, value.serialNumber)) {
     return yield* opsConflict('A meter with this serial number already exists');
@@ -197,7 +196,7 @@ const voidReading = Effect.fn('FacilityOperations.Meters.voidReading')(function*
 /** Pure reducer: applies one command to the `meters` state. Persistence decides when it is saved. */
 export const evolveMeters = (state: MetersState, command: MetersCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('MeterCreate', (value) => createMeter(state, value, input)),
+    Match.tag('MeterCreate', (value) => createMeter(state, { input, value })),
     Match.tag('MeterUpdate', (value) => updateMeter(state, value, input)),
     Match.tag('MeterReadingRecord', (value) => recordReading(state, value, input)),
     Match.tag('MeterReadingVoid', (value) => voidReading(state, value, input)),

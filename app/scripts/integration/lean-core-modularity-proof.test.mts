@@ -51,6 +51,7 @@ import { OAuthAuthenticationAuditLive } from '../../packages/core-runtime/src/au
 import { OAuthGrantRegistryLive } from '../../packages/core-runtime/src/auth/oauth-grant-registry-live.ts';
 import { PrincipalResolver, makePrincipalResolver } from '../../packages/core-runtime/src/auth/principal-resolver.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { SHARED_RUNTIME_IDENTITY } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   SupportRecoveryPrincipalContextResolver,
   makeSupportRecoveryPrincipalContextResolver,
@@ -85,7 +86,11 @@ import {
   GatewayContextV2ClaimsSchema,
 } from '../../packages/shared-contracts/src/gateway-context.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
 import { OAuthConnectionHooksLive } from '../../apps/shell-super-app/api/oauth-connections/better-auth-hooks.ts';
@@ -482,7 +487,10 @@ it.live(
     const configuration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
@@ -490,6 +498,7 @@ it.live(
     );
     const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
     const oauthAuthenticationLayer = Layer.mergeAll(
+      BetterAuthNativeAdapterLive,
       betterAuthRuntime,
       OAuthAuthenticationAuditLive,
       OAuthEndpointGuardDataLive,

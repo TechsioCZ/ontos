@@ -61,7 +61,6 @@
     "@techsio/ui-kit": "catalog:",
     "@app/property-portfolio": "workspace:*",
     "@app/legal-agreements": "workspace:*",
-    "@app/workforce": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117",
     "@internationalized/date": "^3.12.4"

@@ -1,0 +1,24 @@
+import { Effect, Predicate, Schema } from 'effect';
+
+interface SharedClient {
+  readonly openTab: () => Promise<string>;
+}
+const SharedClientSchema = Schema.Struct({
+  openTab: Schema.declare<SharedClient['openTab']>((value): value is SharedClient['openTab'] =>
+    Predicate.isFunction(value),
+  ),
+});
+export const open = () => Effect.gen(function* openForeign() {
+  const clientPath = __FOREIGN_MODULE__;
+  const imported = yield* Effect.tryPromise({
+    catch: (cause) => cause,
+    try: async () => Schema.decodeUnknownResult(SharedClientSchema)(await import(clientPath)),
+  });
+  const client = yield* Effect.fromResult(imported);
+  const result = yield* Effect.tryPromise({
+    catch: (cause) => cause,
+    try: async () => await client.openTab(),
+  });
+  // __EXTRA_USE__
+  return result;
+});

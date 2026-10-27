@@ -10,10 +10,12 @@ import { buildCrmHomeSummary } from '../../shared/domain/reports.ts';
 import { crmI18nResources } from '../crm/i18n.ts';
 import { useCrmRecords } from '../crm/records.ts';
 import { CrmStateGate } from '../crm/ui.tsx';
-import { formatDecimalMoney } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
+import { useFormatDecimalMoney } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
+import { CrmMoneyFormatsProvider } from '../crm/number-formats.tsx';
 import '../routes/index.css';
 
 const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
+  const formatDecimalMoney = useFormatDecimalMoney();
   const { language } = useModernI18n();
   const lang = language ?? 'cs';
   const all = canSeeEverything(records.viewer);
@@ -33,25 +35,25 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
       </div>
       <StatRow>
         <StatCard
+          hint="Bez archivovaných klientů"
           label={all ? 'Aktivní klienti firmy' : 'Moji aktivní klienti'}
           value={formatNumber(facts.clients)}
-          hint="Bez archivovaných klientů"
         />
         <StatCard
+          hint={`${formatNumber(facts.overdue)} po termínu · pouze ruční plán`}
           label="K oslovení dnes"
           value={formatNumber(facts.dueToday)}
-          hint={`${formatNumber(facts.overdue)} po termínu · pouze ruční plán`}
         />
         <StatCard
+          hint="Ručně naplánované, dosud nevyřízené"
           label="Otevřené kontakty"
           value={formatNumber(facts.openContacts)}
-          hint="Ručně naplánované, dosud nevyřízené"
         />
         {all && (
           <StatCard
+            hint="Nespárované, sporné vazby a možné duplicity"
             label="Objednávky k dořešení"
             value={formatNumber(facts.toResolve ?? 0)}
-            hint="Nespárované, sporné vazby a možné duplicity"
           />
         )}
       </StatRow>
@@ -63,17 +65,17 @@ const HomeFacts = ({ records }: { readonly records: RecordsResponse }) => {
         <StatRow>
           {facts.month.totals.length === 0 ? (
             <StatCard
+              hint="Tento měsíc nejsou objednávky s poskytnutou částkou a měnou"
               label="Hodnota evidovaných objednávek"
               value="Bez dat"
-              hint="Tento měsíc nejsou objednávky s poskytnutou částkou a měnou"
             />
           ) : (
             facts.month.totals.map((total) => (
               <StatCard
+                hint={`Počet objednávek: ${formatNumber(total.count)} · včetně případných storen`}
                 key={total.currency}
                 label={`Hodnota v ${total.currency}`}
                 value={formatDecimalMoney(total.amount, total.currency)}
-                hint={`Počet objednávek: ${formatNumber(total.count)} · včetně případných storen`}
               />
             ))
           )}
@@ -121,7 +123,9 @@ export const HomeSummary = () => (
     resources={crmI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <HomeSummaryContent />
+    <CrmMoneyFormatsProvider>
+      <HomeSummaryContent />
+    </CrmMoneyFormatsProvider>
   </FederatedI18nBoundary>
 );
 /** The Shell awaits this before it reveals Home, so the summary renders with its facts. */

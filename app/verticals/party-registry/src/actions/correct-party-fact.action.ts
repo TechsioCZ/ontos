@@ -20,6 +20,8 @@ import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolut
 import { correctPartyFactRecord } from '../services/party-correction.service.ts';
 import { createCorrectPartyFactPartyRegistryPartyFactCorrectedV1OutboxMessage } from './correct-party-fact.party-registry-party-fact-corrected-v1.outbox-message.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([PartyCorrectionConflict, PartyPersistenceUnavailable, PartyAliasWriteRejected]);
 const domainEvents = {
   'party.registry.party-fact-corrected.v1': PartyCorrectionResultJsonSchema,
@@ -40,8 +42,8 @@ const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrec
     accessKind: 'read',
     queryHash: `party-correction:${result.retractedAssertionId}`,
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: relationshipRef?.resourceId ?? result.partyRef.resourceId,
     targetResourceType: relationshipRef?.resourceType ?? result.partyRef.resourceType,
   });
@@ -49,8 +51,8 @@ const handle = Effect.fn('CorrectPartyFactAction.handle')(function* handleCorrec
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-fact-corrected.v1',
     payloadJson,
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.correctionRef.resourceId,
     subjectResourceType: result.correctionRef.resourceType,
   });
@@ -80,12 +82,12 @@ export const correctPartyFactAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.correct-party-fact',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CorrectPartyFactPayloadSchema,
     policies: [],
     resultSchema: CorrectPartyFactResultSchema,

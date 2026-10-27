@@ -107,10 +107,10 @@ const installedCatalog: InstalledModuleCatalog = Object.freeze({
   getByModuleId: installedContract,
 });
 
-const withDatabase = <Value, Error>(
+const withDatabase = <Value, Failure>(
   operation: (
     database: DatabaseService,
-  ) => Effect.Effect<Value, Error, InstalledModuleCatalogService | TenantModuleStateService>,
+  ) => Effect.Effect<Value, Failure, InstalledModuleCatalogService | TenantModuleStateService>,
 ) =>
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
@@ -249,10 +249,10 @@ const actionInput = (
   },
 });
 
-const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined => {
+const failureTag = <Failure>(exit: Exit.Exit<unknown, Failure>): string | undefined => {
   const failure = Match.value(exit).pipe(
     Match.tag('Failure', ({ cause }) => Cause.findErrorOption(cause)),
-    Match.tag('Success', () => Option.none<Error>()),
+    Match.tag('Success', () => Option.none<Failure>()),
     Match.exhaustive,
   );
   const tag = Option.match(failure, {
@@ -403,8 +403,8 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
       testOperationalScopeResolver,
       moduleStateRuntimeOptions,
     );
-    const withCatalog = <Value, Error, Requirements>(
-      effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
+    const withCatalog = <Value, Failure, Requirements>(
+      effect: Effect.Effect<Value, Failure, Requirements | InstalledModuleCatalogService>,
     ) =>
       effect.pipe(
         Effect.provideService(InstalledModuleCatalogService, {

@@ -1,3 +1,5 @@
+import type { FinanceCommandDraft } from './finance-ui.tsx';
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { EmptyState, formatDate, formatMoney, matchesSearch, StatusBadge, paginationTranslations } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
@@ -7,7 +9,7 @@ import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
-import type { Row } from '@techsio/ui-kit/organisms/data-table';
+import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import {
@@ -25,6 +27,13 @@ import type { useFinanceRecords } from './use-finance-records.ts';
 
 type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
 type Translate = FinanceViewModel['t'];
+
+const invoiceDirectionLabel = (invoice: Invoice) => {
+  if (invoice.direction === 'INCOMING') {
+    return 'přijatá';
+  }
+  return invoice.documentKind === 'RECURRING' ? 'vydaná · opakovaná' : 'vydaná';
+};
 
 const ns = 'finance-billing.faktury';
 const ALL = 'ALL';
@@ -82,13 +91,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       cell: (info) => (
         <span className="flex min-w-0 flex-col">
           <span className="truncate font-medium whitespace-nowrap">{info.getValue<string>()}</span>
-          <span className="truncate text-fg-secondary text-xs">
-            {info.row.original.direction === 'INCOMING'
-              ? 'přijatá'
-              : info.row.original.documentKind === 'RECURRING'
-                ? 'vydaná · opakovaná'
-                : 'vydaná'}
-          </span>
+          <span className="truncate text-fg-secondary text-xs">{invoiceDirectionLabel(info.row.original)}</span>
         </span>
       ),
       header: t(`${ns}.columns.number`),
@@ -223,7 +226,10 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
 
   const visibleInvoices = invoices.filter((invoice) => {
-    if (status !== ALL && !matchesStatusFilter(invoice, status, referenceDate, snapshot?.state.accountingExports ?? [])) {
+    if (
+      status !== ALL &&
+      !matchesStatusFilter(invoice, status, referenceDate, snapshot?.state.accountingExports ?? [])
+    ) {
       return false;
     }
     if (direction !== ALL && invoice.direction !== direction) {
@@ -306,16 +312,20 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
             if (value === 'confirm') {
               confirmInvoice(invoice);
             } else if (value === 'prepare') {
-              void vm.execute(
-                {
-                  _tag: 'MarkInvoicesPrepared',
-                  ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-                  invoiceRefs: [invoice.ref],
-                },
-                'Doklad připraven ke schválení',
+              const markInvoicesPreparedCommand: FinanceCommandDraft<'MarkInvoicesPrepared'> = {
+                _tag: 'MarkInvoicesPrepared',
+                invoiceRefs: [invoice.ref],
+              };
+              if (vm.actorLabel !== undefined) {
+                markInvoicesPreparedCommand.actorLabel = vm.actorLabel;
+              }
+              void financeBrowserRuntime.runPromise(
+                vm.execute(markInvoicesPreparedCommand, 'Doklad připraven ke schválení'),
               );
             } else if (value === 'return') {
-              void vm.execute({ _tag: 'ReturnInvoiceToDraft', invoiceRef: invoice.ref }, 'Doklad vrácen do návrhu');
+              void financeBrowserRuntime.runPromise(
+                vm.execute({ _tag: 'ReturnInvoiceToDraft', invoiceRef: invoice.ref }, 'Doklad vrácen do návrhu'),
+              );
             } else if (value === 'void') {
               requestVoid(invoice);
             }
@@ -324,6 +334,11 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
         />
       </div>
     ) : null;
+
+  let rowActionsProps: Pick<DataTableProps<Invoice>, 'renderRowActions'> = {};
+  if (canWrite) {
+    rowActionsProps = { renderRowActions: (row) => rowMenu(row.original) };
+  }
 
   return (
     <>
@@ -414,7 +429,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
           }
           return <EmptyState description={t(`${ns}.emptyFirstDescription`)} title={t(`${ns}.emptyFirstTitle`)} />;
         }}
-        {...(canWrite ? { renderRowActions: (row: Row<Invoice>) => rowMenu(row.original) } : {})}
+        {...rowActionsProps}
         size="sm"
         stickyHeader
         tableLayout="fixed"

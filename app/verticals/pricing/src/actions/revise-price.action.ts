@@ -213,6 +213,65 @@ const resolveRevisionSourceTarget = Effect.fn('RevisePriceAction.resolveSourceTa
   } as const;
 });
 
+const rejectPriceRevisionConflict = Effect.fn('RevisePriceAction.rejectConflict')(function* rejectConflict(
+  payload: RevisePricePayload,
+  outcome: Extract<RevisePricePersistenceOutcome, { readonly outcome: 'CONFLICT' }>,
+) {
+  if (outcome.reason === 'SOURCE_FACT_CONFLICT') {
+    if (payload.intent === 'RETIRE_CURRENT') {
+      return yield* new PricePersistenceUnavailable({
+        reason: RETIREMENT_PROVENANCE_FAILURE,
+      });
+    }
+    return yield* new RevisePriceSourceHeld({
+      outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+      reason: 'DUPLICATE_CORRELATION_HELD',
+      sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
+    });
+  }
+  if (outcome.reason === 'IDEMPOTENCY_CONFLICT') {
+    if (payload.intent === 'RETIRE_CURRENT') {
+      return yield* new PricePersistenceUnavailable({
+        reason: RETIREMENT_PROVENANCE_FAILURE,
+      });
+    }
+    return yield* new RevisePriceSourceHeld({
+      outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+      reason: 'CANONICAL_CONFLICT_HELD',
+      sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
+    });
+  }
+  if (
+    outcome.reason === 'CANONICAL_LINK_MISMATCH' ||
+    outcome.reason === 'SOURCE_LINEAGE_INVALID' ||
+    outcome.reason === 'SOURCE_PROVENANCE_INVALID'
+  ) {
+    if (payload.intent === 'RETIRE_CURRENT') {
+      return yield* new PricePersistenceUnavailable({
+        reason: RETIREMENT_PROVENANCE_FAILURE,
+      });
+    }
+    return yield* new RevisePriceSourceInvalid({
+      outcome: 'PRICE_SOURCE_ASSERTION_KNOWN_INVALID',
+      reason: 'MAPPING_REJECTED',
+      sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
+    });
+  }
+  return yield* new RevisePriceConflict({ code: 'revise_price_conflict', reason: outcome.reason });
+});
+
+const revisedPriceProvenanceMatches = (
+  persisted: RevisePricePreparedPersistence,
+  outcome: Extract<RevisePricePersistenceOutcome, { readonly outcome: 'REVISED' | 'UNCHANGED' }>,
+): boolean =>
+  priceSourceProvenanceMatchesDefinition(outcome.provenance, outcome.revision.definition) &&
+  (!('expectedEvidence' in persisted) ||
+    acceptedPriceSourceProvenanceMatches({
+      definition: outcome.revision.definition,
+      expectedEvidence: persisted.expectedEvidence,
+      provenance: outcome.provenance,
+    }));
+
 export const applyPriceRevision = Effect.fn('RevisePriceAction.apply')(function* apply(
   payload: RevisePricePayload,
   trusted: {
@@ -300,47 +359,7 @@ export const applyPriceRevision = Effect.fn('RevisePriceAction.apply')(function*
     });
   }
   if (outcome.outcome === 'CONFLICT') {
-    if (outcome.reason === 'SOURCE_FACT_CONFLICT') {
-      if (payload.intent === 'RETIRE_CURRENT') {
-        return yield* new PricePersistenceUnavailable({
-          reason: RETIREMENT_PROVENANCE_FAILURE,
-        });
-      }
-      return yield* new RevisePriceSourceHeld({
-        outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
-        reason: 'DUPLICATE_CORRELATION_HELD',
-        sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
-      });
-    }
-    if (outcome.reason === 'IDEMPOTENCY_CONFLICT') {
-      if (payload.intent === 'RETIRE_CURRENT') {
-        return yield* new PricePersistenceUnavailable({
-          reason: RETIREMENT_PROVENANCE_FAILURE,
-        });
-      }
-      return yield* new RevisePriceSourceHeld({
-        outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
-        reason: 'CANONICAL_CONFLICT_HELD',
-        sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
-      });
-    }
-    if (
-      outcome.reason === 'CANONICAL_LINK_MISMATCH' ||
-      outcome.reason === 'SOURCE_LINEAGE_INVALID' ||
-      outcome.reason === 'SOURCE_PROVENANCE_INVALID'
-    ) {
-      if (payload.intent === 'RETIRE_CURRENT') {
-        return yield* new PricePersistenceUnavailable({
-          reason: RETIREMENT_PROVENANCE_FAILURE,
-        });
-      }
-      return yield* new RevisePriceSourceInvalid({
-        outcome: 'PRICE_SOURCE_ASSERTION_KNOWN_INVALID',
-        reason: 'MAPPING_REJECTED',
-        sourceAssertionId: payload.sourceAssertion.sourceAssertionId,
-      });
-    }
-    return yield* new RevisePriceConflict({ code: 'revise_price_conflict', reason: outcome.reason });
+    return yield* rejectPriceRevisionConflict(payload, outcome);
   }
   if (outcome.outcome === 'ABSENT') {
     return yield* new RevisePriceRejected({ code: 'price_schedule_absent', reason: 'The exact Price does not exist' });
@@ -357,15 +376,7 @@ export const applyPriceRevision = Effect.fn('RevisePriceAction.apply')(function*
       reason: 'Revised Price evidence must match the trusted Selling Legal Entity scope',
     });
   }
-  if (
-    !priceSourceProvenanceMatchesDefinition(outcome.provenance, outcome.revision.definition) ||
-    ('expectedEvidence' in persisted &&
-      !acceptedPriceSourceProvenanceMatches({
-        definition: outcome.revision.definition,
-        expectedEvidence: persisted.expectedEvidence,
-        provenance: outcome.provenance,
-      }))
-  ) {
+  if (!revisedPriceProvenanceMatches(persisted, outcome)) {
     return yield* new PricePersistenceUnavailable({
       reason: 'Pricing Price storage returned unverifiable source provenance',
     });

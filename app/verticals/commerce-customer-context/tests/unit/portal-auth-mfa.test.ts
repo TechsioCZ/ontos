@@ -40,6 +40,7 @@ import type {
 import {
   CommercePortalAuthMfaFreshnessReaderService,
   commercePortalAuthMfaFreshnessReaderFromApi,
+  commercePortalAuthMfaFreshnessReaderLive,
   portalAuthMfaApiLive,
   portalAuthMfaStandaloneApiLive,
 } from '../../api/portal-auth/provider/mfa/http.ts';
@@ -572,7 +573,10 @@ it.effect('builds the composed MFA group without capturing the request realm', (
       (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
     );
     const realm = yield* Layer.build(commercePortalAuthRealmUnavailableLive([HTTP_ORIGIN]));
-    const services = realm.pipe(
+    const freshnessReader = yield* Layer.build(commercePortalAuthMfaFreshnessReaderLive).pipe(
+      Effect.provideContext(realm),
+    );
+    const services = Context.merge(realm, freshnessReader).pipe(
       Context.add(CommercePortalAuthConfig, HTTP_CONFIG),
       Context.add(CommercePortalAuthMfaService, fixture.service),
       Context.add(CommercePortalAuthRecoveryRateLimitService, fixture.budget),

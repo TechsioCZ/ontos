@@ -1,26 +1,33 @@
-// @effect-diagnostics *:off
 // Delivery ledger for the demo e-mail dispatcher: one row per e-mail (primary key = dedupe_key). RLS scopes every row
 // to its tenant + legal entity: claim/finish/recoverInterrupted run inside inDeliveryScope.
 import { PgClient } from '@effect/sql-pg';
-import { Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
 import type { DeliveryOutcome, EmailDeliverySource, EmailDeliveryView, PlannedEmail } from './contract.ts';
 import { inDeliveryScope } from './scope.ts';
 
-export const readEnabledSince = Effect.gen(function* () {
+class EmailLedgerSettingsMissing extends Schema.TaggedError<EmailLedgerSettingsMissing>()(
+  'EmailLedgerSettingsMissing',
+  { message: Schema.String },
+) {}
+
+export const readEnabledSince = Effect.gen(function* readEnabledSince() {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{
     readonly value: string;
   }>`select value from demo_email.settings where key = 'enabled_since'`;
   const value = rows[0]?.value;
   if (value === undefined) {
-    return yield* Effect.die(new Error('demo_email.settings enabled_since is missing'));
+    return yield* Effect.die(
+      new EmailLedgerSettingsMissing({ message: 'demo_email.settings enabled_since is missing' }),
+    );
   }
+  yield* Schema.decodeEffect(Schema.DateTimeUtcFromString)(value);
   return value;
 });
 
 /** A row of this scope left in SENDING by a crashed process may already have been sent: mark UNKNOWN, never resend. */
-export const recoverInterrupted = Effect.gen(function* () {
+export const recoverInterrupted = Effect.gen(function* recoverInterrupted() {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{ readonly dedupe_key: string }>`
     update demo_email.deliveries set status = 'UNKNOWN', error_tag = 'interrupted', updated_at = now()
@@ -36,39 +43,40 @@ export const RETRY_WINDOW_HOURS = 24;
  * RETRY backs off 10 s, 20 s, 40 s, then every 60 s, so an SMTP outage of any length heals by itself once the
  * server is back; after RETRY_WINDOW_HOURS the row becomes FAILED instead.
  */
-export const claim = (planned: PlannedEmail) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient;
-    const inserted = yield* sql<{ readonly dedupe_key: string }>`
+export const claim = Effect.fn('EmailLedger.claim')(function* claimDelivery(planned: PlannedEmail) {
+  const sql = yield* PgClient.PgClient;
+  const inserted = yield* sql<{ readonly dedupe_key: string }>`
       insert into demo_email.deliveries (dedupe_key, source, event, event_label, tenant_id, legal_entity_id, subject_id, subject_number, recipient, email_subject, status, attempts, event_at)
       values (${planned.dedupeKey}, ${planned.source}, ${planned.event}, ${planned.eventLabel}, ${planned.tenantId}::uuid, ${planned.legalEntityId}::uuid, ${planned.subjectId}, ${planned.subjectNumber}, ${planned.recipient}, ${planned.subject}, 'SENDING', 1, ${planned.eventAt}::timestamptz)
       on conflict (dedupe_key) do nothing
       returning dedupe_key`;
-    if (inserted.length === 1) {
-      return true;
-    }
-    yield* sql`
+  if (inserted.length === 1) {
+    return true;
+  }
+  yield* sql`
       update demo_email.deliveries set status = 'FAILED', error_tag = 'retry_window_expired', updated_at = now()
       where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and created_at < now() - make_interval(hours => ${RETRY_WINDOW_HOURS})`;
-    const retried = yield* sql<{ readonly dedupe_key: string }>`
+  const retried = yield* sql<{ readonly dedupe_key: string }>`
       update demo_email.deliveries set status = 'SENDING', attempts = attempts + 1, updated_at = now()
       where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
         and updated_at < now() - make_interval(secs => least(60, 10 * power(2, least(attempts - 1, 3))))
       returning dedupe_key`;
-    return retried.length === 1;
-  });
+  return retried.length === 1;
+});
 
-export const finish = (dedupeKey: string, outcome: DeliveryOutcome) =>
-  Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient;
-    const messageId = outcome.status === 'SENT' ? outcome.messageId : null;
-    const errorTag = outcome.status === 'SENT' ? null : outcome.errorTag;
-    yield* sql`
+export const finish = Effect.fn('EmailLedger.finish')(function* finishDelivery(
+  dedupeKey: string,
+  outcome: DeliveryOutcome,
+) {
+  const sql = yield* PgClient.PgClient;
+  const messageId = outcome.status === 'SENT' ? outcome.messageId : null;
+  const errorTag = outcome.status === 'SENT' ? null : outcome.errorTag;
+  yield* sql`
       update demo_email.deliveries set status = ${outcome.status}, message_id = ${messageId}, error_tag = ${errorTag},
         sent_at = case when ${outcome.status}::text = 'SENT' then now() else sent_at end, updated_at = now()
       where dedupe_key = ${dedupeKey} and status = 'SENDING'`;
-  });
+});
 
 /**
  * Who may read receipts: staff of one company (verified OntOS session → tenant + selected legal entity), or the
@@ -84,29 +92,32 @@ export type DeliveryReadScope =
   | { readonly kind: 'buyer'; readonly recipient: string };
 
 /** Public receipts only: never selects the e-mail address or the message body. */
-export const listDeliveries = (query: {
+export interface DeliveryReceiptQuery {
   readonly scope: DeliveryReadScope;
   readonly source: EmailDeliverySource;
   readonly subjectIds: readonly string[];
   readonly subjectNumbers: readonly string[];
-}) =>
-  Effect.gen(function* () {
-    if (query.subjectIds.length === 0 && query.subjectNumbers.length === 0) {
-      return [] as readonly EmailDeliveryView[];
-    }
-    const sql = yield* PgClient.PgClient;
-    // A buyer reads the receipts of the storefront company only, matched by the address the order was placed with.
-    const scope =
-      query.scope.kind === 'company'
-        ? { legalEntityId: query.scope.legalEntityId, tenantId: query.scope.tenantId }
-        : { legalEntityId: AKROS_LEGAL_ENTITY_ID, tenantId: DEMO_TENANT_ID };
-    const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
-    // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
-    const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
-    const numbers = query.subjectNumbers.length > 0 ? query.subjectNumbers : [''];
-    const rows = yield* inDeliveryScope(
-      scope,
-      sql<EmailDeliveryView>`
+}
+
+export const listDeliveries = Effect.fn('EmailLedger.listDeliveries')(function* readDeliveryReceipts(
+  query: DeliveryReceiptQuery,
+) {
+  if (query.subjectIds.length === 0 && query.subjectNumbers.length === 0) {
+    return [];
+  }
+  const sql = yield* PgClient.PgClient;
+  // A buyer reads the receipts of the storefront company only, matched by the address the order was placed with.
+  const scope =
+    query.scope.kind === 'company'
+      ? { legalEntityId: query.scope.legalEntityId, tenantId: query.scope.tenantId }
+      : { legalEntityId: AKROS_LEGAL_ENTITY_ID, tenantId: DEMO_TENANT_ID };
+  const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
+  // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
+  const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
+  const numbers = query.subjectNumbers.length > 0 ? query.subjectNumbers : [''];
+  const rows = yield* inDeliveryScope(
+    scope,
+    sql<EmailDeliveryView>`
       select source, event, event_label as "eventLabel", status, subject_id as "subjectId", subject_number as "subjectNumber",
         to_char(event_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "eventAt",
         to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
@@ -116,12 +127,14 @@ export const listDeliveries = (query: {
         and (subject_id in ${sql.in(ids)} or subject_number in ${sql.in(numbers)})
         and tenant_id = ${scope.tenantId}::uuid and legal_entity_id = ${scope.legalEntityId}::uuid
         and (${recipient}::text is null or lower(recipient) = ${recipient}::text)`,
-    );
-    const merged = new Map<string, EmailDeliveryView>();
-    for (const row of rows) {
-      merged.set(`${row.subjectId}:${row.event}`, row);
-    }
-    return [...merged.values()].sort(
-      (a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt),
-    ) as readonly EmailDeliveryView[];
-  });
+  );
+  const merged = new Map<string, EmailDeliveryView>();
+  for (const row of rows) {
+    merged.set(`${row.subjectId}:${row.event}`, row);
+  }
+  return [...merged.values()].toSorted(
+    (left, right) =>
+      DateTime.toEpochMillis(DateTime.makeUnsafe(left.eventAt)) -
+      DateTime.toEpochMillis(DateTime.makeUnsafe(right.eventAt)),
+  );
+});

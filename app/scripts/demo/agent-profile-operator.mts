@@ -47,7 +47,7 @@ import { OAuthEndpointGuardsLive } from '../../apps/shell-super-app/api/auth/oau
 import { ApiKeyServiceLive } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { IdentityLifecycleLive } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import { AuthDatabaseLive, BetterAuthNativeAdapterLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { BetterAuthFrameworkLive } from '../../apps/shell-super-app/api/auth/better-auth-framework.ts';
 import { BetterAuthRuntimeLive } from '../../apps/shell-super-app/api/auth/better-auth-runtime.ts';
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
@@ -70,6 +70,7 @@ const oauthAudit = OAuthAuthenticationAuditLive.pipe(Layer.provide(persistence))
 const authenticationDependencies = Layer.mergeAll(
   authConfig,
   authDatabase,
+  BetterAuthNativeAdapterLive.pipe(Layer.provide(authDatabase)),
   resolver,
   StaffAuthenticationNamespaceRegistryLive,
   BetterAuthRuntimeLive,

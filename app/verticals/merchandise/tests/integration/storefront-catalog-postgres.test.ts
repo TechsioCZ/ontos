@@ -1,11 +1,13 @@
 // Storefront reads (merchandise-queries.ts) against PostgreSQL: the catalog is written with `replaceSnapshot` into
 // a fresh company scope, then the bounded SQL reads are asserted.
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 
-import type { MerchandiseState, RecordsView, StorefrontCatalogQuery } from '../../shared/apis/records.ts';
+import type { MerchandiseState } from '../../shared/apis/records.ts';
+import { RecordsViewSchema, StorefrontCatalogQuerySchema } from '../../shared/apis/records.ts';
+import { VariantSummarySchema } from '../../shared/domain/merchandise-model.ts';
 import {
   categoryTree,
   indicators,
@@ -22,8 +24,23 @@ import { loadHead } from '../../src/services/merchandise-store.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogInput, catalogState, decodeState, withMerchandise } from './support/merchandise-database.ts';
 
+type RecordsView = typeof RecordsViewSchema.Encoded;
+type StorefrontCatalogQuery = typeof StorefrontCatalogQuerySchema.Encoded;
+
+/** A missing fixture value fails the test before its fields are read. */
+const requireFixture = <T>(value: T | null | undefined): T => {
+  if (value === undefined || value === null) {
+    expect.unreachable('The fixture must be present before its fields are read');
+  }
+  return value;
+};
+
+const decodeView = Schema.decodeSync(RecordsViewSchema);
+const decodeCatalogQuery = Schema.decodeSync(StorefrontCatalogQuerySchema);
+const variantSummary = Schema.decodeUnknownSync(VariantSummarySchema);
+
 const catalogPage = ({ db, scope }: MerchandiseFixture, query: StorefrontCatalogQuery) =>
-  storefrontProducts(db, scope, { query });
+  storefrontProducts(db, scope, { query: decodeCatalogQuery(query) });
 
 /** Listing ids (cards: a full page holds at most two products). */
 const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQuery) =>
@@ -31,12 +48,35 @@ const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQuery) =>
     Effect.map((page) => page.products.map((product) => product.id)),
   );
 
+type FixtureReadScope = Pick<MerchandiseFixture, 'db' | 'scope'>;
+
+const variantSummaryOf = (fixture: MerchandiseFixture) =>
+  catalogPage(fixture, { fields: 'card', productIds: ['p1'] }).pipe(
+    Effect.map((page) => page.products[0]?.variantSummary),
+  );
+
+const staffIdsOf = (
+  { db, scope }: FixtureReadScope,
+  { storefront = false, view }: { readonly storefront?: boolean; readonly view: RecordsView },
+) =>
+  staffProducts(db, scope, decodeView(view), storefront).pipe(
+    Effect.map((page) => page.products.map((product) => product.id)),
+  );
+
+const orderIdsOf = ({ db, scope }: FixtureReadScope, view: RecordsView) =>
+  orderPage(db, scope, decodeView(view)).pipe(Effect.map((page) => [page.total, page.orders.map((order) => order.id)]));
+
+const staffPageSummary = ({ db, scope }: FixtureReadScope, view: RecordsView) =>
+  staffProducts(db, scope, decodeView({ summary: true, ...view }), false).pipe(
+    Effect.map((result) => [result.total, result.products.map((product) => product.id)]),
+  );
+
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
 
 it.live('hides unpublished products and returns the storefront category tree without history', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario1() {
       const page = yield* catalogPage(fixture, { fields: 'card' });
       expect(page.total).toBe(3);
       expect(page.products.map((product) => product.id)).toEqual(['p1', 'p2', 'p3']);
@@ -49,7 +89,7 @@ it.live('hides unpublished products and returns the storefront category tree wit
 
 it.live('filters by category slug including descendants through categoryPathIds', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario2() {
       expect(yield* idsOf(fixture, { categorySlug: 'srouby' })).toEqual(['p1', 'p3']);
       expect(yield* idsOf(fixture, { categorySlug: 'metricke' })).toEqual(['p1']);
       expect((yield* catalogPage(fixture, { categorySlug: 'neexistuje' })).total).toBe(0);
@@ -139,7 +179,9 @@ it.live('projects compact category content identically to the full tree and hide
     };
     const full = yield* categoryTree(db, scope, { activeSlug: 'active', storefront: true });
     const compact = yield* categoryTree(db, scope, { activeSlug: 'active', contentOnly: true, storefront: true });
-    expect(compact).toEqual(full.filter((node) => node.id === 'active' || node.parentId === 'active'));
+    expect(compact).toEqual(
+      full.filter((node) => node.id === 'active' || Option.getOrNull(node.parentId) === 'active'),
+    );
     expect(compact.map((node) => node.id)).toEqual(['active', 'child']);
     expect(compact[0]).toMatchObject({
       description: 'Description active',
@@ -185,7 +227,9 @@ it.live('reads compact content with the full tree visibility rules across ancest
         Effect.gen(function* compactStoredBranches() {
           for (const activeId of ['active', 'hidden-active', 'cycle-a', 'orphan', 'missing']) {
             const full = yield* categoryTree(fixture.db, fixture.scope, { activeId, storefront: true });
-            const expected = full.filter((category) => category.id === activeId || category.parentId === activeId);
+            const expected = full.filter(
+              (category) => category.id === activeId || Option.getOrNull(category.parentId) === activeId,
+            );
             for (const selector of [{ activeId }, { activeSlug: activeId }]) {
               expect(
                 yield* categoryTree(fixture.db, fixture.scope, {
@@ -217,7 +261,7 @@ it.live('reads compact content with the full tree visibility rules across ancest
 
 it.live('lists featured products in homepage order followed by recommended ones', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario3() {
       expect(yield* idsOf(fixture, { featured: true })).toEqual(['p3', 'p1']);
     }),
   ),
@@ -225,7 +269,7 @@ it.live('lists featured products in homepage order followed by recommended ones'
 
 it.live('filters by label', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario4() {
       expect(yield* idsOf(fixture, { label: 'sale' })).toEqual(['p2']);
       expect(yield* idsOf(fixture, { label: 'recommended' })).toEqual(['p1']);
       expect(yield* idsOf(fixture, { label: 'new' })).toEqual([]);
@@ -235,7 +279,7 @@ it.live('filters by label', () =>
 
 it.live('searches name, sku and variant text case-insensitively', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario5() {
       expect(yield* idsOf(fixture, { q: 'm8' })).toEqual(['p1']);
       expect(yield* idsOf(fixture, { q: 'p1-m8' })).toEqual(['p1']);
       expect(yield* idsOf(fixture, { q: 'p2' })).toEqual(['p2']);
@@ -245,7 +289,7 @@ it.live('searches name, sku and variant text case-insensitively', () =>
 
 it.live('ignores diacritics and word order and searches parameters', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario6() {
       expect(yield* idsOf(fixture, { q: 'sroub' })).toEqual(['p1']);
       expect(yield* idsOf(fixture, { q: 'ŠROUB' })).toEqual(['p1']);
       expect(yield* idsOf(fixture, { q: 'zinkovany sroub' })).toEqual(['p1']);
@@ -260,7 +304,7 @@ it.live('ignores diacritics and word order and searches parameters', () =>
 
 it.live('sends heading and long description only for the requested category', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario7() {
       const tree = yield* categoryTree(fixture.db, fixture.scope, { activeSlug: 'metricke', storefront: true });
       const active = tree.find((category) => category.id === 'c');
       const root = tree.find((category) => category.id === 'r');
@@ -277,7 +321,7 @@ it.live('sends heading and long description only for the requested category', ()
 
 it.live('pages results while keeping the total', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario8() {
       const result = yield* catalogPage(fixture, { page: 2, pageSize: 2 });
       expect(result.products.map((product) => product.id)).toEqual(['p3']);
       expect(result.total).toBe(3);
@@ -315,7 +359,7 @@ it.live('fails closed when the company has no catalog head', () =>
 
 it.live('returns the full product shape with derived paragraphs, gallery and variant records', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario9() {
       const [product] = (yield* catalogPage(fixture, { categorySlug: 'metricke' })).products;
       expect(product?.descriptionParagraphs).toEqual(['První odstavec', 'Druhý odstavec']);
       expect(product?.gallery).toEqual(['/a.jpg', '/b.jpg']);
@@ -372,7 +416,7 @@ it.live('loads ordered tiers and variant stock without multiplying independent c
 
 it.live('card shape omits variants, description and parameters', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario10() {
       const [card] = (yield* catalogPage(fixture, { categorySlug: 'metricke', fields: 'card' })).products;
       expect(card?.variantRecords).toBeUndefined();
       expect(card?.description).toBeUndefined();
@@ -387,7 +431,7 @@ it.live('card shape omits variants, description and parameters', () =>
 
 it.live('narrows variant records to the requested cart variants', () =>
   onCatalog((fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario11() {
       const cart = yield* catalogPage(fixture, { productIds: ['p3', 'p1'], variantIds: ['v1'] });
       expect(cart.products.map((product) => product.id)).toEqual(['p3', 'p1']);
       expect(cart.products[1]?.variantRecords?.map((variant) => variant.id)).toEqual(['v1']);
@@ -403,7 +447,7 @@ it.live('summarizes active sellable variants on every storefront product', () =>
     movements: [
       ...catalogInput.movements,
       {
-        at: catalogInput.movements[0]!.at,
+        at: catalogInput.movements[0].at,
         delta: 3,
         id: 'receipt-v2',
         productId: 'p1',
@@ -411,7 +455,7 @@ it.live('summarizes active sellable variants on every storefront product', () =>
         variantId: 'v2',
       },
       {
-        at: catalogInput.movements[0]!.at,
+        at: catalogInput.movements[0].at,
         delta: 7,
         id: 'receipt-v3',
         productId: 'p1',
@@ -435,13 +479,13 @@ it.live('summarizes active sellable variants on every storefront product', () =>
     ),
   });
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario12() {
       for (const fields of ['card', 'full'] as const) {
         const page = yield* catalogPage(fixture, { fields, productIds: ['p1', 'p2'] });
         const summaries = Object.fromEntries(page.products.map((product) => [product.id, product.variantSummary]));
         expect(summaries).toEqual({
-          p1: { count: 2, minGrossPriceMinor: 121, stockOnHand: 8, units: ['bal', 'ks'] },
-          p2: { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] },
+          p1: variantSummary({ count: 2, minGrossPriceMinor: 121, stockOnHand: 8, units: ['bal', 'ks'] }),
+          p2: variantSummary({ count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] }),
         });
       }
     }),
@@ -450,20 +494,28 @@ it.live('summarizes active sellable variants on every storefront product', () =>
 
 it.live('projects order status only for matching storefront id and clientRequestId', () =>
   onCatalog(({ db, scope }) =>
-    Effect.gen(function* () {
-      expect(yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-1', orderId: 'o1' })).toEqual({
+    Effect.gen(function* merchandiseScenario13() {
+      expect(
+        Option.getOrNull(
+          yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-1', orderId: 'o1' }),
+        ),
+      ).toEqual({
         id: 'o1',
         number: 'OBJ-2026-0001',
         status: 'NEW',
         statusLabel: 'Nová',
-        updatedAt: DateTime.makeUnsafe(catalogInput.orders[0]!.updatedAt),
+        updatedAt: DateTime.makeUnsafe(catalogInput.orders[0].updatedAt),
       });
       expect(
-        yield* storefrontOrderStatus(db, scope, { clientRequestId: 'wrong-request-id', orderId: 'o1' }),
+        Option.getOrNull(
+          yield* storefrontOrderStatus(db, scope, { clientRequestId: 'wrong-request-id', orderId: 'o1' }),
+        ),
       ).toBeNull();
       // Removed DEMO orders are never shown, even with the right secret.
       expect(
-        yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-2', orderId: 'o2' }),
+        Option.getOrNull(
+          yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-2', orderId: 'o2' }),
+        ),
       ).toBeNull();
     }),
   ),
@@ -474,13 +526,13 @@ it.live('ranks exact/name/SKU matches before descriptions and variant-only match
     ...catalogState,
     products: catalogState.products.slice(0, 3).map((product, index) => ({
       ...product,
-      name: ['BITY', 'Šroub DIN 933/A2', 'DIN 933'][index]!,
+      name: ['BITY', 'Šroub DIN 933/A2', 'DIN 933'][index],
       shortDescription: 'DIN 933',
-      sku: ['BITY', 'SROUB', 'DIN933'][index]!,
+      sku: ['BITY', 'SROUB', 'DIN933'][index],
     })),
   };
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario14() {
       const byName = yield* catalogPage(fixture, { fields: 'card', q: 'din 933', sort: 'name' });
       expect(byName.products.map((product) => product.name)).toEqual(['DIN 933', 'Šroub DIN 933/A2', 'BITY']);
       const byPrice = yield* catalogPage(fixture, { q: 'din 933', sort: 'price-asc' });
@@ -492,7 +544,7 @@ it.live('ranks exact/name/SKU matches before descriptions and variant-only match
 it.live(
   'prefers photography only within the same search relevance tier, not over exact matches or price sorting',
   () => {
-    const template = catalogInput.products[0]!;
+    const [template] = catalogInput.products;
     const state = decodeState({
       ...catalogInput,
       homepageFeaturedProductIds: [],
@@ -513,7 +565,7 @@ it.live(
       })),
     });
     return withMerchandise(state, (fixture) =>
-      Effect.gen(function* () {
+      Effect.gen(function* merchandiseScenario15() {
         const ids = (query: StorefrontCatalogQuery) => idsOf(fixture, query);
         expect(yield* ids({ q: 'DIN 933' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
         expect(yield* ids({ q: 'DIN 933', sort: 'name' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
@@ -537,7 +589,7 @@ it.live('sorts and filters by gross price and availability', () => {
     products: catalogState.products.filter((product) => product.id !== 'p1'),
   };
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario16() {
       expect(yield* idsOf(fixture, { sort: 'price-asc' })).toEqual(['p3', 'p2']);
       expect(yield* idsOf(fixture, { sort: 'price-desc' })).toEqual(['p2', 'p3']);
       expect(yield* idsOf(fixture, { minMinor: 40 })).toEqual(['p2']);
@@ -551,12 +603,12 @@ it.live('sorts and filters by gross price and availability', () => {
 it.live('hides an unpublished category and its descendants from the public navigation only', () => {
   const state: MerchandiseState = {
     ...catalogState,
-    categories: catalogState.categories!.map((category) =>
+    categories: requireFixture(catalogState.categories).map((category) =>
       category.id === 'r' ? { ...category, published: false } : category,
     ),
   };
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* merchandiseScenario17() {
       expect(yield* categoryTree(fixture.db, fixture.scope, { storefront: true })).toEqual([]);
       const staff = yield* categoryTree(fixture.db, fixture.scope, { storefront: false });
       expect(staff.map((category) => [category.id, category.published])).toEqual([
@@ -573,24 +625,30 @@ it.live('never reads another company’s rows', () =>
     withMerchandise(
       {
         ...catalogState,
-        movements: [{ ...catalogState.movements[0]!, delta: 2 }],
+        movements: [{ ...catalogState.movements[0], delta: 2 }],
         orders: [],
         products: catalogState.products.slice(0, 2),
       },
       (other) =>
-        Effect.gen(function* () {
+        Effect.gen(function* merchandiseScenario18() {
           expect(yield* idsOf(fixture, {})).toEqual(['p1', 'p2', 'p3']);
           expect(yield* idsOf(other, {})).toEqual(['p1', 'p2']);
           expect(
-            yield* storefrontOrderStatus(other.db, other.scope, { clientRequestId: 'secret-request-1', orderId: 'o1' }),
+            Option.getOrNull(
+              yield* storefrontOrderStatus(other.db, other.scope, {
+                clientRequestId: 'secret-request-1',
+                orderId: 'o1',
+              }),
+            ),
           ).toBeNull();
           // Same product and variant ids in both companies: each summary aggregates only its own variant rows.
-          const summary = (target: MerchandiseFixture) =>
-            catalogPage(target, { fields: 'card', productIds: ['p1'] }).pipe(
-              Effect.map((page) => page.products[0]?.variantSummary),
-            );
-          expect(yield* summary(fixture)).toEqual({ count: 1, minGrossPriceMinor: 121, stockOnHand: 5, units: ['ks'] });
-          expect(yield* summary(other)).toEqual({ count: 1, minGrossPriceMinor: 121, stockOnHand: 2, units: ['ks'] });
+          const summary = variantSummaryOf;
+          expect(yield* summary(fixture)).toEqual(
+            variantSummary({ count: 1, minGrossPriceMinor: 121, stockOnHand: 5, units: ['ks'] }),
+          );
+          expect(yield* summary(other)).toEqual(
+            variantSummary({ count: 1, minGrossPriceMinor: 121, stockOnHand: 2, units: ['ks'] }),
+          );
         }),
     ),
   ),
@@ -598,11 +656,8 @@ it.live('never reads another company’s rows', () =>
 
 it.live('staff reads page, filter and sort in SQL and indicators cover the whole company', () =>
   onCatalog(({ db, scope }) =>
-    Effect.gen(function* () {
-      const staffIds = (view: RecordsView, storefront = false) =>
-        staffProducts(db, scope, view, storefront).pipe(
-          Effect.map((page) => page.products.map((product) => product.id)),
-        );
+    Effect.gen(function* merchandiseScenario19() {
+      const staffIds = (view: RecordsView, storefront = false) => staffIdsOf({ db, scope }, { storefront, view });
       expect(yield* staffIds({ summary: true })).toEqual(['p1', 'p2', 'p3', 'p4']);
       expect(yield* staffIds({ summary: true }, true)).toEqual(['p1', 'p2', 'p3']);
       expect(yield* staffIds({ search: 'sroub', summary: true })).toEqual(['p1']);
@@ -619,8 +674,7 @@ it.live('staff reads page, filter and sort in SQL and indicators cover the whole
       expect(detail.products.length).toBe(2);
       expect(detail.products[0]?.variantRecords?.map((variant) => variant.stockOnHand)).toEqual([5]);
 
-      const orderIds = (view: RecordsView) =>
-        orderPage(db, scope, view).pipe(Effect.map((page) => [page.total, page.orders.map((order) => order.id)]));
+      const orderIds = (view: RecordsView) => orderIdsOf({ db, scope }, view);
       expect(yield* orderIds({})).toEqual([1, ['o1']]);
       expect(yield* orderIds({ orderSearch: 'OBJ-2026-0001' })).toEqual([1, ['o1']]);
       expect(yield* orderIds({ orderSearch: 'OBJ-2026-0002' })).toEqual([0, []]);
@@ -643,10 +697,7 @@ it.live('staff reads page, filter and sort in SQL and indicators cover the whole
 it.live('staff list filters by tagged ids and product category label across pages, with grouped variant counts', () =>
   onCatalog(({ db, scope }) =>
     Effect.gen(function* staffTagAndCategoryFilters() {
-      const page = (view: RecordsView) =>
-        staffProducts(db, scope, { summary: true, ...view }, false).pipe(
-          Effect.map((result) => [result.total, result.products.map((product) => product.id)]),
-        );
+      const page = (view: RecordsView) => staffPageSummary({ db, scope }, view);
       expect(yield* page({ taggedProductIds: ['p2', 'p4', 'unknown'] })).toEqual([2, ['p2', 'p4']]);
       expect(yield* page({ limit: 1, offset: 1, taggedProductIds: ['p2', 'p4'] })).toEqual([2, ['p4']]);
       expect(yield* page({ taggedProductIds: [] })).toEqual([0, []]);
@@ -670,8 +721,7 @@ it.live('staff list filters by tagged ids and product category label across page
 it.live('order search matches customers resolved from the register and the tag filter narrows the total', () =>
   onCatalog(({ db, scope }) =>
     Effect.gen(function* orderCustomerSearch() {
-      const orderIds = (view: RecordsView) =>
-        orderPage(db, scope, view).pipe(Effect.map((result) => [result.total, result.orders.map((order) => order.id)]));
+      const orderIds = (view: RecordsView) => orderIdsOf({ db, scope }, view);
       expect(yield* orderIds({ orderSearch: 'novák' })).toEqual([0, []]);
       expect(yield* orderIds({ orderCustomerPartyIds: ['storefront-guest'], orderSearch: 'novák' })).toEqual([
         1,
@@ -695,7 +745,7 @@ it.live('in-app AKROS reset writes the bundled baseline part by part and advance
       expect(totals.orderCount).toBe(6);
       const head = yield* loadHead(db, scope);
       expect(head?.homepageFeaturedProductIds.length).toBeGreaterThan(0);
-      expect((yield* staffProducts(db, scope, { productIds: ['p1'], summary: true }, false)).total).toBe(0);
+      expect((yield* staffProducts(db, scope, decodeView({ productIds: ['p1'], summary: true }), false)).total).toBe(0);
     }),
   ),
 );
@@ -703,45 +753,45 @@ it.live('in-app AKROS reset writes the bundled baseline part by part and advance
 it.live(
   'customer orders filter by verified subject in SQL, isolate detail and paginate without exposing guests or removed orders',
   () => {
-    const original = catalogInput.orders[0]!;
+    const [original] = catalogInput.orders;
     const state = decodeState({
       ...catalogInput,
       orders: [
         ...Array.from({ length: 51 }, (_, index) => ({
           ...original,
+          clientRequestId: `customer-submission-${index}`,
+          customerAccountId: 'customer-one',
           id: `customer-order-${index}`,
           number: `OBJ-TEST-${index}`,
-          customerAccountId: 'customer-one',
-          clientRequestId: `customer-submission-${index}`,
         })),
         {
           ...original,
-          id: 'other-customer',
-          number: 'OTHER-CUSTOMER',
           clientRequestId: 'other-submission',
           customerAccountId: 'customer-two',
+          id: 'other-customer',
+          number: 'OTHER-CUSTOMER',
         },
-        { ...original, id: 'guest-order', number: 'GUEST-ORDER', clientRequestId: 'guest-submission' },
+        { ...original, clientRequestId: 'guest-submission', id: 'guest-order', number: 'GUEST-ORDER' },
         {
           ...original,
+          channel: 'STAFF',
+          clientRequestId: 'staff-submission',
+          customerAccountId: 'customer-one',
           id: 'staff-order',
           number: 'STAFF-ORDER',
-          clientRequestId: 'staff-submission',
-          channel: 'STAFF',
-          customerAccountId: 'customer-one',
         },
-        { ...catalogInput.orders[1]!, id: 'removed-order', customerAccountId: 'customer-one' },
+        { ...catalogInput.orders[1], customerAccountId: 'customer-one', id: 'removed-order' },
       ],
     });
     return withMerchandise(state, ({ db, scope }) =>
-      Effect.gen(function* () {
+      Effect.gen(function* merchandiseScenario20() {
         const first = yield* storefrontCustomerOrders(db, scope, { customerAccountId: 'customer-one' });
         expect(first.total).toBe(51);
         expect(first.orders).toHaveLength(50);
         expect(first.orders.every((order) => order.customerAccountId === 'customer-one')).toBe(true);
         const second = yield* storefrontCustomerOrders(db, scope, { customerAccountId: 'customer-one', offset: 50 });
         expect(second.orders).toHaveLength(1);
-        expect(first.orders.some((order) => order.id === second.orders[0]!.id)).toBe(false);
+        expect(first.orders.some((order) => order.id === second.orders[0].id)).toBe(false);
         expect(
           (yield* storefrontCustomerOrders(db, scope, {
             customerAccountId: 'customer-one',
@@ -811,12 +861,14 @@ it.live('counts only independently orderable variant packages in both card and d
     Effect.gen(function* packageStockSummary() {
       for (const fields of ['card', 'full'] as const) {
         const page = yield* catalogPage(fixture, { fields, productIds: ['p1'] });
-        expect(page.products[0]?.variantSummary).toEqual({
-          count: 5,
-          minGrossPriceMinor: 121,
-          stockOnHand: 100,
-          units: ['ks'],
-        });
+        expect(page.products[0]?.variantSummary).toEqual(
+          variantSummary({
+            count: 5,
+            minGrossPriceMinor: 121,
+            stockOnHand: 100,
+            units: ['ks'],
+          }),
+        );
         if (fields === 'full') {
           expect(page.products[0]?.variantRecords?.map((row) => row.stockOnHand)).toEqual([15, 40, 75, 100, 49]);
         }

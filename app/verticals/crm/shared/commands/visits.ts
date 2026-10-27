@@ -1,3 +1,11 @@
+import {
+  CalendarDateSchema,
+  EntityIdSchema,
+  IsoTimeSchema,
+  LongTextSchema,
+  ShortTextSchema,
+} from '../domain/common.ts';
+import type { EntityId } from '../domain/common.ts';
 // AREA: visits (C02, C06) — owned by the crm-visits lane. Command schemas + reducer.
 // To add a command: add a TaggedStruct to visitsCommandSchemas and a Match.tag branch in applyVisitsCommand.
 //
@@ -5,16 +13,17 @@
 // field lands in visit.corrections with author, time, previous and next value (C02-03).
 // C06: PlanContact / UpdatePlanItem / CompletePlanItem keep the manual "K oslovení" plan. Nothing here creates a
 // plan item on its own: an item exists only because a person asked for it (C06-02, C07 is parked).
-import { DateTime, Effect, Match, Option, Schema } from 'effect';
-import { EntityIdSchema, IsoTimeSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import { DateTime, Effect, Match, Schema } from 'effect';
+
 import type { CrmState } from '../domain/state.ts';
-import type { PlanItem, Visit, VisitCorrection } from '../domain/visits.ts';
 import { VisitKindSchema } from '../domain/visits.ts';
-import type { CommandContext, Reducer } from './context.ts';
+import type { PlanItem, Visit, VisitCorrection } from '../domain/visits.ts';
+
 import { conflict, denied, definedOnly, invalid, newId, notFound, requireWritableClient } from './context.ts';
+import type { CommandContext, Reducer } from './context.ts';
 
 /** Calendar day YYYY-MM-DD (plan due dates are days, not instants). */
-const DayDateSchema = Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u));
+const DayDateSchema = CalendarDateSchema;
 
 const VisitInputFields = {
   kind: VisitKindSchema,
@@ -77,66 +86,64 @@ const visitFieldLabels = {
   result: 'Výsledek',
 } as const;
 type CorrectableField = keyof typeof visitFieldLabels;
-const correctableFields = Object.keys(visitFieldLabels) as readonly CorrectableField[];
+const correctableFields = [
+  'kind',
+  'nextStep',
+  'nextStepDate',
+  'note',
+  'occurredAt',
+  'result',
+] as const satisfies readonly CorrectableField[];
 
 /** Calendar dates are validated in the reducer too: callers can bypass native date inputs via the API. */
-const requireDay = (day: string) => {
-  const parsed = DateTime.make(`${day}T12:00:00.000Z`);
-  return /^\d{4}-\d{2}-\d{2}$/u.test(day) && Option.isSome(parsed) && DateTime.formatIsoDate(parsed.value) === day
-    ? Effect.void
-    : invalid('Neplatné kalendářní datum');
-};
+const requireDay = (day: string) =>
+  Schema.is(CalendarDateSchema)(day) ? Effect.void : invalid('Neplatné kalendářní datum');
 
 /** Only contacts that really happened belong in history. Future contacts belong to the manual plan. */
-const requirePast = (context: CommandContext, occurredAt: string) =>
-  Effect.gen(function* checkPast() {
-    yield* requireDay(occurredAt.slice(0, 10));
-    const occurred = DateTime.make(occurredAt);
-    const now = DateTime.make(context.now);
-    if (Option.isNone(occurred)) {
-      return yield* invalid('Neplatné datum a čas návštěvy');
-    }
-    if (Option.isSome(now) && DateTime.isGreaterThan(occurred.value, now.value)) {
-      return yield* invalid('Budoucí kontakt patří do plánu K oslovení, ne do historie návštěv');
-    }
-    return occurredAt;
-  });
+const requirePast = (context: CommandContext, occurredAt: DateTime.Utc) =>
+  DateTime.isGreaterThan(occurredAt, context.now)
+    ? invalid('Budoucí kontakt patří do plánu K oslovení, ne do historie návštěv')
+    : Effect.succeed(occurredAt);
 
 /** Salesperson credited with a visit / plan item. A rep is always self; the lead may pick anyone active. */
-const resolveSalesperson = (
+const resolveSalesperson = Effect.fn('Crm.resolve')(function* resolve(
   state: CrmState,
   context: CommandContext,
-  requested: string | undefined,
-  fallback: string | undefined,
-) =>
-  Effect.gen(function* resolve() {
-    const own = context.viewer.salespersonId;
-    if (!context.viewer.writeAll) {
-      if (requested !== undefined && requested !== own) {
-        return yield* denied('Obchodník zapisuje jen sám za sebe');
-      }
-      return own ?? fallback;
+  requested: EntityId | undefined,
+  fallback: EntityId | undefined,
+) {
+  const own = context.viewer.salespersonId;
+  if (!context.viewer.writeAll) {
+    if (requested !== undefined && requested !== own) {
+      return yield* denied('Obchodník zapisuje jen sám za sebe');
     }
-    const chosen = requested ?? own ?? fallback;
-    if (chosen !== undefined && !state.salespeople.some((person) => person.id === chosen && person.active)) {
-      return yield* invalid('Zvolený obchodník neexistuje nebo není aktivní');
-    }
-    return chosen;
-  });
+    return own ?? fallback;
+  }
+  const chosen = requested ?? own ?? fallback;
+  if (chosen !== undefined && !state.salespeople.some((person) => person.id === chosen && person.active)) {
+    return yield* invalid('Zvolený obchodník neexistuje nebo není aktivní');
+  }
+  return chosen;
+});
+
+interface VisitRecordInput {
+  readonly clientId: EntityId;
+  readonly id: EntityId;
+  readonly input: VisitInput;
+  readonly planItemId?: EntityId;
+  readonly salespersonId: EntityId | undefined;
+}
 
 const buildVisit = (
   context: CommandContext,
-  id: string,
-  clientId: string,
-  input: VisitInput,
-  extra: { readonly salespersonId: string | undefined; readonly planItemId?: string },
+  { clientId, id, input, planItemId, salespersonId }: VisitRecordInput,
 ): Visit => ({
   ...definedOnly({
     nextStep: input.nextStep,
     nextStepDate: input.nextStepDate,
     note: input.note,
-    planItemId: extra.planItemId,
-    salespersonId: extra.salespersonId,
+    planItemId,
+    salespersonId,
   }),
   authorPrincipalId: context.viewer.principalId,
   clientId,
@@ -149,15 +156,18 @@ const buildVisit = (
   updatedAt: context.now,
 });
 
-const findPlanItem = (state: CrmState, context: CommandContext, planItemId: string) =>
-  Effect.gen(function* find() {
-    const item = state.visits.plan.find((entry) => entry.id === planItemId);
-    if (item === undefined) {
-      return yield* notFound('Naplánovaný kontakt neexistuje nebo k němu nemáte přístup');
-    }
-    yield* requireWritableClient(state, context, item.clientId);
-    return item;
-  });
+const findPlanItem = Effect.fn('Crm.find')(function* find(
+  state: CrmState,
+  context: CommandContext,
+  planItemId: string,
+) {
+  const item = state.visits.plan.find((entry) => entry.id === planItemId);
+  if (item === undefined) {
+    return yield* notFound('Naplánovaný kontakt neexistuje nebo k němu nemáte přístup');
+  }
+  yield* requireWritableClient(state, context, item.clientId);
+  return item;
+});
 
 const replacePlanItem = (state: CrmState, next: PlanItem): CrmState => ({
   ...state,
@@ -168,8 +178,11 @@ const stringOf = (value: string | undefined) => (value === undefined || value ==
 
 export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('RecordVisit', (value) =>
-      Effect.gen(function* recordVisit() {
+    Match.tag(
+      'RecordVisit',
+      Effect.fn('Crm.recordVisit')(function* recordVisit(
+        value: Extract<VisitsCommand, { readonly _tag: 'RecordVisit' }>,
+      ) {
         const client = yield* requireWritableClient(state, context, value.clientId);
         yield* requirePast(context, value.occurredAt);
         if (value.nextStepDate !== undefined) {
@@ -177,7 +190,7 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         }
         const salespersonId = yield* resolveSalesperson(state, context, value.salespersonId, client.ownerSalespersonId);
         const id = newId(context, 'visit');
-        const visit = buildVisit(context, id, client.id, value, { salespersonId });
+        const visit = buildVisit(context, { clientId: client.id, id, input: value, salespersonId });
         const wantsPlan = value.addToPlan === true;
         if (wantsPlan && value.nextStepDate === undefined) {
           return yield* invalid('Pro zařazení do plánu vyplňte termín dalšího kroku');
@@ -208,8 +221,11 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         };
       }),
     ),
-    Match.tag('CorrectVisit', (value) =>
-      Effect.gen(function* correctVisit() {
+    Match.tag(
+      'CorrectVisit',
+      Effect.fn('Crm.correctVisit')(function* correctVisit(
+        value: Extract<VisitsCommand, { readonly _tag: 'CorrectVisit' }>,
+      ) {
         const visit = state.visits.items.find((entry) => entry.id === value.visitId);
         if (visit === undefined) {
           return yield* notFound('Záznam návštěvy neexistuje nebo k němu nemáte přístup');
@@ -223,24 +239,26 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         }
         const reason = stringOf(value.reason);
         const corrections: VisitCorrection[] = [];
-        const patch: Record<string, string | undefined> = {};
+        const patch: Partial<Pick<Visit, CorrectableField>> = {};
         for (const field of correctableFields) {
           const requested = value[field];
           if (requested === undefined) {
             continue;
           }
-          const previous = stringOf(visit[field]);
-          const next = stringOf(requested);
-          if (previous === next) {
-            continue;
+          const previousValue = visit[field];
+          const previous = DateTime.isDateTime(previousValue)
+            ? DateTime.formatIso(previousValue)
+            : stringOf(previousValue);
+          const next = DateTime.isDateTime(requested) ? DateTime.formatIso(requested) : stringOf(requested);
+          if (previous !== next) {
+            Reflect.set(patch, field, requested === '' ? undefined : requested);
+            corrections.push({
+              ...definedOnly({ next, previous, reason }),
+              at: context.now,
+              by: context.viewer.principalId,
+              field: visitFieldLabels[field],
+            });
           }
-          patch[field] = next;
-          corrections.push({
-            ...definedOnly({ next, previous, reason }),
-            at: context.now,
-            by: context.viewer.principalId,
-            field: visitFieldLabels[field],
-          });
         }
         if (corrections.length === 0) {
           return yield* invalid('Záznam se nezměnil');
@@ -259,7 +277,7 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
           corrections: [...visit.corrections, ...corrections],
           createdAt: visit.createdAt,
           id: visit.id,
-          kind: (kind ?? visit.kind) as Visit['kind'],
+          kind: kind ?? visit.kind,
           occurredAt: occurredAt ?? visit.occurredAt,
           result: result ?? visit.result,
           updatedAt: context.now,
@@ -276,8 +294,11 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         };
       }),
     ),
-    Match.tag('PlanContact', (value) =>
-      Effect.gen(function* planContact() {
+    Match.tag(
+      'PlanContact',
+      Effect.fn('Crm.planContact')(function* planContact(
+        value: Extract<VisitsCommand, { readonly _tag: 'PlanContact' }>,
+      ) {
         yield* requireDay(value.dueDate);
         const client = yield* requireWritableClient(state, context, value.clientId);
         const salespersonId = yield* resolveSalesperson(state, context, value.salespersonId, client.ownerSalespersonId);
@@ -304,8 +325,11 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         };
       }),
     ),
-    Match.tag('UpdatePlanItem', (value) =>
-      Effect.gen(function* updatePlanItem() {
+    Match.tag(
+      'UpdatePlanItem',
+      Effect.fn('Crm.updatePlanItem')(function* updatePlanItem(
+        value: Extract<VisitsCommand, { readonly _tag: 'UpdatePlanItem' }>,
+      ) {
         const item = yield* findPlanItem(state, context, value.planItemId);
         if (item.status !== 'open') {
           return yield* conflict('Vyřízený kontakt už nelze měnit');
@@ -327,8 +351,11 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
         return { entityIds: [item.id], state: replacePlanItem(state, next) };
       }),
     ),
-    Match.tag('CompletePlanItem', (value) =>
-      Effect.gen(function* completePlanItem() {
+    Match.tag(
+      'CompletePlanItem',
+      Effect.fn('Crm.completePlanItem')(function* completePlanItem(
+        value: Extract<VisitsCommand, { readonly _tag: 'CompletePlanItem' }>,
+      ) {
         const item = yield* findPlanItem(state, context, value.planItemId);
         if (item.status !== 'open') {
           return yield* conflict('Kontakt už je vyřízený');
@@ -342,7 +369,15 @@ export const applyVisitsCommand: Reducer<VisitsCommand> = (state, command, conte
             yield* requireDay(visitInput.nextStepDate);
           }
           const salespersonId = yield* resolveSalesperson(state, context, undefined, item.salespersonId);
-          visits.push(buildVisit(context, visitId, item.clientId, visitInput, { planItemId: item.id, salespersonId }));
+          visits.push(
+            buildVisit(context, {
+              clientId: item.clientId,
+              id: visitId,
+              input: visitInput,
+              planItemId: item.id,
+              salespersonId,
+            }),
+          );
         }
         const done: PlanItem = {
           ...item,

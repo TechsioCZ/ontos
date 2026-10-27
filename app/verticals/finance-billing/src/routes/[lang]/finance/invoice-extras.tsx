@@ -1,7 +1,5 @@
-// @effect-diagnostics asyncFunction:off
-// @effect-diagnostics newPromise:off
-// @effect-diagnostics globalTimers:off
-// @effect-diagnostics globalDate:off
+import type { Schema } from 'effect';
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
   dialogCloseLabel,
   formatDate,
@@ -16,9 +14,9 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { DateTime } from 'effect';
-import { useEffect, useState } from 'react';
-import type { Invoice } from '../../../../shared/apis/records.ts';
+import { Data, DateTime, Effect, Option, Result } from 'effect';
+import { useEffect, useReducer, useState } from 'react';
+import type { Invoice, AccountingExportStatus } from '../../../../shared/apis/records.ts';
 import { isTestReminderRecipient, paymentEvents, reminderText } from '../../../../shared/domain/finance-planning.ts';
 import {
   ACCEPTED_DOCUMENT_TYPES,
@@ -30,27 +28,31 @@ import {
   previewUrl,
   readUpload,
 } from './finance-ui.tsx';
-import type { FinanceViewModel } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { ReminderEmailStatus, useEmailProvider, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
+import type { EmailProviderState } from './reminder-email-receipts.tsx';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 import { confirmedDocumentsLabel } from './invoice-view.ts';
-import type { AccountingExportStatus } from '../../../../shared/apis/records.ts';
 
 /** S08 handover package states as the finance screens show them. */
-export const EXPORT_STATUS: Readonly<
-  Record<
-    AccountingExportStatus,
-    { readonly label: string; readonly variant: 'danger' | 'info' | 'success' | 'warning' }
-  >
-> = {
+export const EXPORT_STATUS = {
   CONFIRMED_BY_ACCOUNTANT: { label: 'Potvrzeno účetní', variant: 'success' },
   FAILED: { label: 'Chyba předání', variant: 'danger' },
   HANDED_OVER: { label: 'Předáno – čeká na potvrzení účetní', variant: 'info' },
   PREPARED: { label: 'Připraveno k předání', variant: 'warning' },
-};
+} satisfies Readonly<
+  Record<
+    AccountingExportStatus,
+    { readonly label: string; readonly variant: 'danger' | 'info' | 'success' | 'warning' }
+  >
+>;
 
 /** Same bound as FinanceLongTextSchema in shared/apis/records.ts (trimmed reminder text, at most 4000 characters). */
 const REMINDER_TEXT_MAX = 4000;
+
+class FinanceClipboardError extends Data.TaggedError('FinanceClipboardError')<{
+  readonly cause: Schema.Defect['Type'];
+}> {}
 
 /** Stored instants are Effect DateTime values; the shared formatter takes ISO strings. */
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -61,7 +63,66 @@ const actorText = (label: string | undefined, principal: string | undefined) =>
   label ?? (principal === undefined ? 'neznámý uživatel' : `uživatel ${principal.slice(0, 8)}…`);
 
 /** Uploaded documents of one invoice: download, inline preview, and upload of another file. */
-export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+const invoiceDocumentsLoadProgram = Effect.fn('Finance.load')(function* invoiceDocumentsLoadProgram(
+  context: Pick<ReturnType<typeof useInvoiceDocuments>, 'setError' | 'setPreview' | 'vm'>,
+  id: string,
+  mode: 'download' | 'preview',
+) {
+  const { setError, setPreview, vm } = context;
+  setError(undefined);
+  const loaded = yield* Effect.result(vm.fetchDocument(id));
+  if (Result.isFailure(loaded) || Option.isNone(loaded.success)) {
+    setError('Obsah dokladu se nepodařilo načíst.');
+    return;
+  }
+  const document = loaded.success.value;
+  if (mode === 'download') {
+    downloadBase64(document.contentBase64, document.mimeType, document.fileName);
+  } else {
+    setPreview({
+      mimeType: document.mimeType,
+      name: document.fileName,
+      url: previewUrl(document.contentBase64, document.mimeType),
+    });
+  }
+});
+
+const invoiceDocumentsUploadProgram = Effect.fn('Finance.upload')(function* invoiceDocumentsUploadProgram(
+  context: Pick<ReturnType<typeof useInvoiceDocuments>, 'invoice' | 'setError' | 'setUploading' | 'vm'>,
+  file: File | undefined,
+) {
+  const { invoice, setError, setUploading, vm } = context;
+  if (file === undefined) {
+    return;
+  }
+  setError(undefined);
+  if (!ACCEPTED_DOCUMENT_TYPES.some((mimeType) => mimeType === file.type) || file.size > MAX_UPLOAD_BYTES) {
+    setError('Nahrajte PDF nebo obrázek do velikosti 3 MB.');
+    return;
+  }
+  setUploading(true);
+  const uploaded = yield* Effect.result(readUpload(file));
+  if (Result.isFailure(uploaded)) {
+    setUploading(false);
+    setError('Obsah dokladu se nepodařilo načíst.');
+    return;
+  }
+  const attachDocumentCommand: FinanceCommandDraft<'AttachDocument'> = {
+    _tag: 'AttachDocument',
+    document: uploaded.success,
+    invoiceRef: invoice.ref,
+  };
+  if (vm.actorLabel !== undefined) {
+    attachDocumentCommand.actorLabel = vm.actorLabel;
+  }
+  const outcome = yield* vm.execute(attachDocumentCommand, 'Doklad nahrán');
+  setUploading(false);
+  if (!outcome.ok) {
+    setError(outcomeMessage(vm, outcome));
+  }
+});
+
+const useInvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const documents = (vm.snapshot?.state.documents ?? []).filter(
     (document) => document.invoiceResourceId === invoice.ref.resourceId,
   );
@@ -70,49 +131,18 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
   const [uploading, setUploading] = useState(false);
   useEffect(() => () => (preview === undefined ? undefined : URL.revokeObjectURL(preview.url)), [preview]);
 
-  const load = async (id: string, mode: 'download' | 'preview') => {
-    setError(undefined);
-    const document = await vm.fetchDocument(id);
-    if (document === undefined) {
-      setError('Obsah dokladu se nepodařilo načíst.');
-      return;
-    }
-    if (mode === 'download') {
-      downloadBase64(document.contentBase64, document.mimeType, document.fileName);
-    } else {
-      setPreview({
-        mimeType: document.mimeType,
-        name: document.fileName,
-        url: previewUrl(document.contentBase64, document.mimeType),
-      });
-    }
+  const load = (id: string, mode: 'download' | 'preview'): void => {
+    void financeBrowserRuntime.runPromise(invoiceDocumentsLoadProgram({ setError, setPreview, vm }, id, mode));
   };
 
-  const upload = async (file: File | undefined) => {
-    if (file === undefined) {
-      return;
-    }
-    setError(undefined);
-    if (!(ACCEPTED_DOCUMENT_TYPES as readonly string[]).includes(file.type) || file.size > MAX_UPLOAD_BYTES) {
-      setError('Nahrajte PDF nebo obrázek do velikosti 3 MB.');
-      return;
-    }
-    setUploading(true);
-    const outcome = await vm.execute(
-      {
-        _tag: 'AttachDocument',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        document: await readUpload(file),
-        invoiceRef: invoice.ref,
-      },
-      'Doklad nahrán',
-    );
-    setUploading(false);
-    if (!outcome.ok) {
-      setError(outcomeMessage(vm, outcome));
-    }
+  const upload = (file: File | undefined): void => {
+    void financeBrowserRuntime.runPromise(invoiceDocumentsUploadProgram({ invoice, setError, setUploading, vm }, file));
   };
+  return { documents, error, invoice, load, preview, setError, setPreview, setUploading, upload, uploading, vm };
+};
 
+export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+  const { documents, error, invoice, load, preview, setPreview, upload, uploading, vm } = useInvoiceDocuments(props);
   return (
     <SectionCard title="Doklady a přílohy">
       <div className="flex flex-col gap-150">
@@ -141,7 +171,9 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
                 </span>
                 <Button
                   icon="icon-[mdi--eye-outline]"
-                  onClick={() => void load(document.id, 'preview')}
+                  onClick={() => {
+                    load(document.id, 'preview');
+                  }}
                   size="sm"
                   theme="borderless"
                   variant="secondary"
@@ -150,7 +182,9 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
                 </Button>
                 <Button
                   icon="icon-[mdi--download]"
-                  onClick={() => void load(document.id, 'download')}
+                  onClick={() => {
+                    load(document.id, 'download');
+                  }}
                   size="sm"
                   theme="borderless"
                   variant="secondary"
@@ -173,7 +207,9 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
               className="sr-only"
               disabled={uploading}
               id={`attach-${invoice.ref.resourceId}`}
-              onChange={(event) => void upload(event.target.files?.[0])}
+              onChange={(event) => {
+                upload(event.target.files?.[0]);
+              }}
               type="file"
             />
           </label>
@@ -197,6 +233,7 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
           (preview.mimeType === 'application/pdf' ? (
             <iframe
               className="h-[70vh] w-full rounded-md border border-border-primary"
+              sandbox="allow-same-origin"
               src={preview.url}
               title={preview.name}
             />
@@ -209,7 +246,81 @@ export const InvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; r
 };
 
 /** Payment history with the user's confirmation step (S07.R5, S07-02). */
-export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+interface PaymentDraft {
+  readonly amount: string;
+  readonly confirming: boolean;
+  readonly note: string;
+  readonly open: boolean;
+  readonly paidOn: string;
+}
+const emptyPaymentDraft: PaymentDraft = { amount: '', confirming: false, note: '', open: false, paidOn: '' };
+const paymentDialogTitle = (confirming: boolean, direction: Invoice['direction']) => {
+  if (!confirming) {
+    return 'Zaznamenat úhradu';
+  }
+  return direction === 'INCOMING' ? 'Potvrdit odeslání platby?' : 'Potvrdit přijetí platby?';
+};
+const PaymentSourceBadge = ({
+  event,
+  invoice,
+}: {
+  readonly event: ReturnType<typeof paymentEvents>[number];
+  readonly invoice: Invoice;
+}) => {
+  if (event.source === 'MANUAL') {
+    return (
+      <Badge size="sm" variant="success">
+        Ručně potvrzeno
+      </Badge>
+    );
+  }
+  if (event.source === 'PRIOR') {
+    return (
+      <Badge
+        size="sm"
+        variant="info"
+      >{`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}</Badge>
+    );
+  }
+  return (
+    <Badge size="sm" variant="outline">
+      Převzato z importu
+    </Badge>
+  );
+};
+
+const invoicePaymentsSaveProgram = Effect.fn('Finance.save')(function* invoicePaymentsSaveProgram(
+  context: Pick<
+    ReturnType<typeof useInvoicePayments>,
+    'amountMinor' | 'invoice' | 'note' | 'paidOn' | 'reset' | 'setConfirming' | 'setError' | 'vm'
+  >,
+) {
+  const { amountMinor, invoice, note, paidOn, reset, setConfirming, setError, vm } = context;
+  if (amountMinor === undefined) {
+    return;
+  }
+  const recordManualPaymentCommand: FinanceCommandDraft<'RecordManualPayment'> = {
+    _tag: 'RecordManualPayment',
+    amountMinor,
+    invoiceRef: invoice.ref,
+    paidOn: paidOn === '' ? vm.referenceDate : paidOn,
+  };
+  if (vm.actorLabel !== undefined) {
+    recordManualPaymentCommand.actorLabel = vm.actorLabel;
+  }
+  if (note.trim() !== '') {
+    recordManualPaymentCommand.note = note.trim();
+  }
+  const outcome = yield* vm.execute(recordManualPaymentCommand, 'Úhrada zaznamenána');
+  if (outcome.ok) {
+    reset();
+  } else {
+    setConfirming(false);
+    setError(outcomeMessage(vm, outcome));
+  }
+});
+
+const useInvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const state = vm.snapshot?.state;
   const events =
     state === undefined
@@ -217,20 +328,22 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
       : paymentEvents(state).filter((event) => event.invoiceResourceId === invoice.ref.resourceId);
   const manual = new Map((state?.manualPayments ?? []).map((payment) => [payment.id, payment]));
   const remaining = remainingOf(invoice);
-  const [open, setOpen] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [amount, setAmount] = useState('');
-  const [paidOn, setPaidOn] = useState(vm.referenceDate);
-  const [note, setNote] = useState('');
+  const [draft, updateDraft] = useReducer(
+    (current: PaymentDraft, patch: Partial<PaymentDraft>) => ({ ...current, ...patch }),
+    emptyPaymentDraft,
+  );
+  const { amount, confirming, note, open, paidOn } = draft;
+  const setOpen = (nextOpen: boolean) => updateDraft({ open: nextOpen });
+  const setConfirming = (nextConfirming: boolean) => updateDraft({ confirming: nextConfirming });
+  const setAmount = (nextAmount: string) => updateDraft({ amount: nextAmount });
+  const setPaidOn = (nextPaidOn: string) => updateDraft({ paidOn: nextPaidOn });
+  const setNote = (nextNote: string) => updateDraft({ note: nextNote });
   const [error, setError] = useState<string>();
   const amountMinor = parseAmountMinor(amount);
   const canRecord = vm.canWrite && invoice.businessState === 'CONFIRMED' && remaining > 0;
 
   const reset = () => {
-    setOpen(false);
-    setConfirming(false);
-    setAmount('');
-    setNote('');
+    updateDraft({ amount: '', confirming: false, note: '', open: false });
     setError(undefined);
   };
   const review = () => {
@@ -245,29 +358,64 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
     setError(undefined);
     setConfirming(true);
   };
-  const save = async () => {
-    if (amountMinor === undefined) {
-      return;
-    }
-    const outcome = await vm.execute(
-      {
-        _tag: 'RecordManualPayment',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        amountMinor,
-        invoiceRef: invoice.ref,
-        ...(note.trim() === '' ? {} : { note: note.trim() }),
-        paidOn: paidOn === '' ? vm.referenceDate : paidOn,
-      },
-      'Úhrada zaznamenána',
+  const save = (): void => {
+    void financeBrowserRuntime.runPromise(
+      invoicePaymentsSaveProgram({ amountMinor, invoice, note, paidOn, reset, setConfirming, setError, vm }),
     );
-    if (outcome.ok) {
-      reset();
-    } else {
-      setConfirming(false);
-      setError(outcomeMessage(vm, outcome));
-    }
   };
+  return {
+    amount,
+    amountMinor,
+    canRecord,
+    confirming,
+    draft,
+    error,
+    events,
+    invoice,
+    manual,
+    note,
+    open,
+    paidOn,
+    remaining,
+    reset,
+    review,
+    save,
+    setAmount,
+    setConfirming,
+    setError,
+    setNote,
+    setOpen,
+    setPaidOn,
+    state,
+    updateDraft,
+    vm,
+  };
+};
 
+export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
+  const {
+    amount,
+    amountMinor,
+    canRecord,
+    confirming,
+    error,
+    events,
+    invoice,
+    manual,
+    note,
+    open,
+    paidOn,
+    remaining,
+    reset,
+    review,
+    save,
+    setAmount,
+    setConfirming,
+    setNote,
+    setOpen,
+    setPaidOn,
+    vm,
+  } = useInvoicePayments(props);
   return (
     <SectionCard
       actions={
@@ -310,19 +458,7 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
                 <li className="flex flex-wrap items-center gap-150 py-100" key={event.id}>
                   <span className="w-24 tabular-nums">{formatDate(event.date)}</span>
                   <span className="font-medium tabular-nums">{formatMoney(event.amountMinor)}</span>
-                  {event.source === 'MANUAL' ? (
-                    <Badge size="sm" variant="success">
-                      Ručně potvrzeno
-                    </Badge>
-                  ) : event.source === 'PRIOR' ? (
-                    <Badge size="sm" variant="info">
-                      {`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}
-                    </Badge>
-                  ) : (
-                    <Badge size="sm" variant="outline">
-                      Převzato z importu
-                    </Badge>
-                  )}
+                  <PaymentSourceBadge event={event} invoice={invoice} />
                   {payment !== undefined && (
                     <span className="text-fg-secondary text-xs">
                       {actorText(payment.actorLabel, payment.actorPrincipalId)} · {at(payment.recordedAt)}
@@ -342,7 +478,14 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
               <Button onClick={() => setConfirming(false)} theme="outlined" variant="secondary">
                 Zpět
               </Button>
-              <Button disabled={vm.busy} isLoading={vm.busy} onClick={() => void save()} variant="primary">
+              <Button
+                disabled={vm.busy}
+                isLoading={vm.busy}
+                onClick={() => {
+                  save();
+                }}
+                variant="primary"
+              >
                 Potvrzuji úhradu
               </Button>
             </>
@@ -373,13 +516,7 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
         placement="center"
         role={confirming ? 'alertdialog' : 'dialog'}
         size="sm"
-        title={
-          confirming
-            ? invoice.direction === 'INCOMING'
-              ? 'Potvrdit odeslání platby?'
-              : 'Potvrdit přijetí platby?'
-            : 'Zaznamenat úhradu'
-        }
+        title={paymentDialogTitle(confirming, invoice.direction)}
       >
         {confirming ? (
           <dl className="grid grid-cols-[auto_1fr] gap-x-300 gap-y-100 text-sm">
@@ -425,7 +562,7 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
               onChange={(event) => setPaidOn(event.target.value)}
               size="sm"
               type="date"
-              value={paidOn}
+              value={paidOn === '' ? vm.referenceDate : paidOn}
             />
             <FormInput
               id="payment-note"
@@ -441,8 +578,95 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
   );
 };
 
+const EmailProviderStatus = ({
+  issuerName,
+  provider,
+}: {
+  readonly issuerName: string | undefined;
+  readonly provider: EmailProviderState;
+}) => {
+  if (provider.kind === 'loading') {
+    return (
+      <StatusText showIcon size="sm" status="default">
+        Zjišťuji, zda je nastaven e-mailový poskytovatel…
+      </StatusText>
+    );
+  }
+  if (provider.kind === 'ready' && provider.provider.configured) {
+    return (
+      <StatusText showIcon size="sm" status="default">
+        Po uložení se upomínka skutečně odešle e-mailem ({provider.provider.label ?? 'SMTP server'}) jménem{' '}
+        {issuerName === undefined ? 'vybrané společnosti' : `společnosti ${issuerName}`}. Stav odeslání se zobrazí v
+        seznamu upomínek.
+      </StatusText>
+    );
+  }
+  return (
+    <StatusText showIcon size="sm" status="warning">
+      {provider.kind === 'unavailable'
+        ? 'Odeslání e-mailem teď není dostupné – e-mailovou službu nelze ověřit.'
+        : 'Odeslání e-mailem není dostupné – e-mailový poskytovatel (SMTP server) není nastaven.'}{' '}
+      Text upomínky zkopírujte nebo stáhněte a pošlete jinou cestou; jako odeslaná se nezaznamená.
+    </StatusText>
+  );
+};
+
 /** S07.R7 / S07-04: reminder text from a template; sent once over real SMTP by the demo e-mail dispatcher after commit. */
-export const InvoiceReminders = ({
+const invoiceRemindersSendProgram = Effect.fn('Finance.send')(function* invoiceRemindersSendProgram(
+  context: Pick<
+    ReturnType<typeof useInvoiceReminders>,
+    | 'canSendEmail'
+    | 'invoice'
+    | 'recipient'
+    | 'setEditing'
+    | 'setMessage'
+    | 'setRecipient'
+    | 'text'
+    | 'textLength'
+    | 'vm'
+  >,
+) {
+  const { canSendEmail, invoice, recipient, setEditing, setMessage, setRecipient, text, textLength, vm } = context;
+  if (!canSendEmail) {
+    setMessage({
+      kind: 'error',
+      text: 'Odeslání e-mailem není dostupné – e-mailový poskytovatel není nastaven. Nic se neodeslalo.',
+    });
+    return;
+  }
+  if (!/^\S+@\S+\.\S+$/u.test(recipient.trim())) {
+    setMessage({ kind: 'error', text: 'Zadejte platnou e-mailovou adresu příjemce.' });
+    return;
+  }
+  if (textLength === 0 || textLength > REMINDER_TEXT_MAX) {
+    setMessage({
+      kind: 'error',
+      text:
+        textLength === 0
+          ? 'Text upomínky nesmí být prázdný.'
+          : `Text upomínky je příliš dlouhý (${textLength} znaků, nejvýše ${REMINDER_TEXT_MAX}). Zkraťte ho.`,
+    });
+    return;
+  }
+  const recordReminderCommand: FinanceCommandDraft<'RecordReminder'> = {
+    _tag: 'RecordReminder',
+    invoiceRef: invoice.ref,
+    recipient: recipient.trim(),
+    text: text.trim(),
+  };
+  if (vm.actorLabel !== undefined) {
+    recordReminderCommand.actorLabel = vm.actorLabel;
+  }
+  const outcome = yield* vm.execute(recordReminderCommand, 'Upomínka uložena a předána k odeslání e-mailem.');
+  if (outcome.ok) {
+    setEditing(false);
+    setRecipient('');
+  } else {
+    setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+  }
+});
+
+const useInvoiceReminders = ({
   counterpartyName,
   invoice,
   vm,
@@ -461,7 +685,7 @@ export const InvoiceReminders = ({
     ? allReminders
     : allReminders.filter((reminder) => !isTestReminderRecipient(reminder.recipient));
   const receipts = useReminderEmailReceipts(
-    reminders.filter((reminder) => reminder.deliveryMode === 'EMAIL').map((reminder) => reminder.id),
+    reminders.flatMap((reminder) => (reminder.deliveryMode === 'EMAIL' ? [reminder.id] : [])),
   );
   const open = invoice.businessState === 'CONFIRMED' && remainingOf(invoice) > 0;
   const [editing, setEditing] = useState(false);
@@ -493,52 +717,89 @@ export const InvoiceReminders = ({
     link.href = url;
     link.download = `upominka-${invoice.number ?? invoice.documentNumber}.txt`;
     link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    void financeBrowserRuntime.runPromise(
+      Effect.sleep('1 second').pipe(Effect.andThen(Effect.sync(() => URL.revokeObjectURL(url)))),
+    );
     setMessage({
       kind: 'success',
       text: 'Návrh upomínky stažen jako textový soubor. Upomínka se jako odeslaná nezaznamenala.',
     });
   };
-  const send = async () => {
-    if (!canSendEmail) {
-      setMessage({
-        kind: 'error',
-        text: 'Odeslání e-mailem není dostupné – e-mailový poskytovatel není nastaven. Nic se neodeslalo.',
-      });
-      return;
-    }
-    if (!/^\S+@\S+\.\S+$/u.test(recipient.trim())) {
-      setMessage({ kind: 'error', text: 'Zadejte platnou e-mailovou adresu příjemce.' });
-      return;
-    }
-    if (textLength === 0 || textLength > REMINDER_TEXT_MAX) {
-      setMessage({
-        kind: 'error',
-        text:
-          textLength === 0
-            ? 'Text upomínky nesmí být prázdný.'
-            : `Text upomínky je příliš dlouhý (${textLength} znaků, nejvýše ${REMINDER_TEXT_MAX}). Zkraťte ho.`,
-      });
-      return;
-    }
-    const outcome = await vm.execute(
-      {
-        _tag: 'RecordReminder',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        invoiceRef: invoice.ref,
-        recipient: recipient.trim(),
-        text: text.trim(),
-      },
-      'Upomínka uložena a předána k odeslání e-mailem.',
+  const send = (): void => {
+    void financeBrowserRuntime.runPromise(
+      invoiceRemindersSendProgram({
+        canSendEmail,
+        invoice,
+        recipient,
+        setEditing,
+        setMessage,
+        setRecipient,
+        text,
+        textLength,
+        vm,
+      }),
     );
-    if (outcome.ok) {
-      setEditing(false);
-      setRecipient('');
-    } else {
-      setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
-    }
   };
+  return {
+    allReminders,
+    canSendEmail,
+    counterpartyName,
+    download,
+    editing,
+    invoice,
+    issuerName,
+    message,
+    open,
+    provider,
+    receipts,
+    recipient,
+    reminders,
+    send,
+    setEditing,
+    setMessage,
+    setRecipient,
+    setShowTests,
+    setText,
+    showTests,
+    start,
+    testCount,
+    text,
+    textLength,
+    textTooLong,
+    vm,
+  };
+};
 
+export const InvoiceReminders = (props: {
+  readonly counterpartyName: string;
+  readonly invoice: Invoice;
+  readonly vm: FinanceViewModel;
+}) => {
+  const {
+    canSendEmail,
+    download,
+    editing,
+    issuerName,
+    message,
+    open,
+    provider,
+    receipts,
+    recipient,
+    reminders,
+    send,
+    setEditing,
+    setMessage,
+    setRecipient,
+    setShowTests,
+    setText,
+    showTests,
+    start,
+    testCount,
+    text,
+    textLength,
+    textTooLong,
+    vm,
+  } = useInvoiceReminders(props);
   return (
     <SectionCard
       actions={
@@ -553,24 +814,7 @@ export const InvoiceReminders = ({
       <div className="flex flex-col gap-150 print:hidden">
         {editing && (
           <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
-            {provider.kind === 'loading' ? (
-              <StatusText showIcon size="sm" status="default">
-                Zjišťuji, zda je nastaven e-mailový poskytovatel…
-              </StatusText>
-            ) : canSendEmail ? (
-              <StatusText showIcon size="sm" status="default">
-                Po uložení se upomínka skutečně odešle e-mailem ({provider.provider.label ?? 'SMTP server'}) jménem{' '}
-                {issuerName === undefined ? 'vybrané společnosti' : `společnosti ${issuerName}`}. Stav odeslání se
-                zobrazí v seznamu upomínek.
-              </StatusText>
-            ) : (
-              <StatusText showIcon size="sm" status="warning">
-                {provider.kind === 'unavailable'
-                  ? 'Odeslání e-mailem teď není dostupné – e-mailovou službu nelze ověřit.'
-                  : 'Odeslání e-mailem není dostupné – e-mailový poskytovatel (SMTP server) není nastaven.'}{' '}
-                Text upomínky zkopírujte nebo stáhněte a pošlete jinou cestou; jako odeslaná se nezaznamená.
-              </StatusText>
-            )}
+            <EmailProviderStatus issuerName={issuerName} provider={provider} />
             {message !== undefined && (
               <StatusText showIcon size="sm" status={message.kind}>
                 {message.text}
@@ -604,11 +848,22 @@ export const InvoiceReminders = ({
               </Button>
               <Button
                 icon="icon-[mdi--content-copy]"
-                onClick={() =>
-                  void navigator.clipboard
-                    .writeText(text)
-                    .then(() => setMessage({ kind: 'success', text: 'Text upomínky zkopírován do schránky.' }))
-                }
+                onClick={() => {
+                  void financeBrowserRuntime.runPromise(
+                    Effect.tryPromise({
+                      catch: (cause) => new FinanceClipboardError({ cause }),
+                      try: navigator.clipboard.writeText.bind(navigator.clipboard, text),
+                    }).pipe(
+                      Effect.timeout('10 seconds'),
+                      Effect.tap(() =>
+                        Effect.sync(() =>
+                          setMessage({ kind: 'success', text: 'Text upomínky zkopírován do schránky.' }),
+                        ),
+                      ),
+                      Effect.result,
+                    ),
+                  );
+                }}
                 size="sm"
                 theme="outlined"
                 variant="secondary"
@@ -621,7 +876,9 @@ export const InvoiceReminders = ({
               <Button
                 disabled={vm.busy || textTooLong || !canSendEmail}
                 icon="icon-[mdi--send-outline]"
-                onClick={() => void send()}
+                onClick={() => {
+                  send();
+                }}
                 size="sm"
                 variant="primary"
               >
@@ -678,7 +935,7 @@ export const InvoiceReminders = ({
 /** S08 status of the invoice: only a handover, never "booked" without the accountant's confirmation. */
 export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const exports = (vm.snapshot?.state.accountingExports ?? []).filter((entry) =>
-    entry.invoiceResourceIds.includes(invoice.ref.resourceId),
+    entry.invoiceResourceIds.some((id) => id === invoice.ref.resourceId),
   );
   const latest = exports.at(-1);
   return (
@@ -708,14 +965,43 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
   );
 };
 
+const counterpartyHistoryKey = (entry: Invoice) =>
+  entry.counterpartyRef.resourceId === '00000000-0000-4000-8000-000000000000'
+    ? `name:${entry.counterpartyName ?? ''}`
+    : entry.counterpartyRef.resourceId;
+
+const HistoryPaymentBadge = ({
+  invoice,
+  referenceDate,
+}: {
+  readonly invoice: Invoice;
+  readonly referenceDate: string;
+}) => {
+  if (invoice.paymentState === 'PAID') {
+    return (
+      <Badge size="sm" variant="success">
+        uhrazeno
+      </Badge>
+    );
+  }
+  const overdue = remainingOf(invoice) > 0 && invoice.dueDate < referenceDate;
+  let label = 'neuhrazeno';
+  if (invoice.paymentState === 'PARTIALLY_PAID') {
+    label = 'částečně';
+  } else if (overdue) {
+    label = 'po splatnosti';
+  }
+  return (
+    <Badge size="sm" variant={overdue ? 'danger' : 'info'}>
+      {label}
+    </Badge>
+  );
+};
+
 /** S09.R6: payment history of the counterparty across its other invoices. */
 export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
-  const key = (entry: Invoice) =>
-    entry.counterpartyRef.resourceId === '00000000-0000-4000-8000-000000000000'
-      ? `name:${entry.counterpartyName ?? ''}`
-      : entry.counterpartyRef.resourceId;
   const related = (vm.snapshot?.state.invoices ?? []).filter(
-    (entry) => entry.businessState === 'CONFIRMED' && key(entry) === key(invoice),
+    (entry) => entry.businessState === 'CONFIRMED' && counterpartyHistoryKey(entry) === counterpartyHistoryKey(invoice),
   );
   if (related.length <= 1) {
     return null;
@@ -738,24 +1024,7 @@ export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice
             <li className="flex items-center justify-between gap-100 py-50 text-xs" key={entry.ref.resourceId}>
               <span>{entry.number ?? entry.documentNumber}</span>
               <span className="tabular-nums">{formatMoney(entry.totalMinor)}</span>
-              <Badge
-                size="sm"
-                variant={
-                  entry.paymentState === 'PAID'
-                    ? 'success'
-                    : remainingOf(entry) > 0 && entry.dueDate < vm.referenceDate
-                      ? 'danger'
-                      : 'info'
-                }
-              >
-                {entry.paymentState === 'PAID'
-                  ? 'uhrazeno'
-                  : entry.paymentState === 'PARTIALLY_PAID'
-                    ? 'částečně'
-                    : remainingOf(entry) > 0 && entry.dueDate < vm.referenceDate
-                      ? 'po splatnosti'
-                      : 'neuhrazeno'}
-              </Badge>
+              <HistoryPaymentBadge invoice={entry} referenceDate={vm.referenceDate} />
             </li>
           ))}
         </ul>

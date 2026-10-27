@@ -1,7 +1,7 @@
-import type { AgentEntity } from '@app/shared-contracts/agent-access';
+import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DateTime, Effect, Redacted } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { AgentApiKeys } from '../../src/routes/people/agent-api-keys.tsx';
@@ -35,7 +35,7 @@ const key = {
   start: 'native-key',
 } as const;
 const row = { displayName: 'Agent', key, kind: 'agent', principalId, principalStatus: 'active' } as const;
-const agent: AgentEntity = {
+const agent = Schema.decodeUnknownSync(AgentEntitySchema)({
   connections: [],
   description: null,
   displayName: 'Agent',
@@ -46,7 +46,7 @@ const agent: AgentEntity = {
   principalId,
   status: 'active',
   writePolicy: 'approval',
-};
+});
 
 afterEach(() => {
   cleanup();

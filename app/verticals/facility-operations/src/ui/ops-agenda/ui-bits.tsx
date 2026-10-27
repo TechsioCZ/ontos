@@ -1,7 +1,9 @@
-// @effect-diagnostics asyncFunction:off globalDate:off globalTimers:off
+import { optionalField } from '../../../shared/domain/common.ts';
+import { DateTime, Effect, Option, Schema } from 'effect';
 // Small visual building blocks of the calendar / overview pages (ops-agenda lane). Colours come from the ui-kit
 // theme variables with neutral fallbacks, applied inline so they never depend on class scanning.
 import type { CSSProperties, ReactNode } from 'react';
+import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import type { Tone } from './model.ts';
 import { runCommand } from '../use-agenda.ts';
 import { toCsv } from './deadlines.ts';
@@ -9,7 +11,7 @@ import type { Urgency } from './deadlines.ts';
 import type { DeadlineCategory } from '../../../shared/domain/ops-overview.ts';
 import type { SourceStatus } from './sources.ts';
 
-const palette: Record<Tone, { readonly bg: string; readonly fg: string; readonly accent: string; readonly ring: string }> = {
+const palette = {
   danger: {
     accent: 'var(--color-danger-500, #dc2626)',
     bg: 'var(--color-danger-100, #fee2e2)',
@@ -41,11 +43,11 @@ const palette: Record<Tone, { readonly bg: string; readonly fg: string; readonly
     fg: 'var(--color-warning-800, #9a3412)',
     ring: 'var(--color-warning-300, #fdba74)',
   },
-};
+} satisfies Record<Tone, { readonly accent: string; readonly bg: string; readonly fg: string; readonly ring: string }>;
 
 export const toneColors = (tone: Tone) => palette[tone];
 
-export const categoryTone: Record<DeadlineCategory, Tone> = {
+export const categoryTone = {
   assetService: 'neutral',
   contractEnd: 'warning',
   contractNotice: 'warning',
@@ -60,22 +62,22 @@ export const categoryTone: Record<DeadlineCategory, Tone> = {
   opsDeadline: 'neutral',
   task: 'primary',
   validity: 'warning',
-};
+} satisfies Record<DeadlineCategory, Tone>;
 
-export const urgencyTone: Record<Urgency, Tone> = {
+export const urgencyTone = {
   done: 'neutral',
   later: 'neutral',
   overdue: 'danger',
   soon: 'warning',
   today: 'primary',
-};
+} satisfies Record<Urgency, Tone>;
 
-export const statusTone: Record<SourceStatus, Tone> = {
+export const statusTone = {
   forbidden: 'neutral',
   loading: 'neutral',
   ready: 'success',
   unavailable: 'danger',
-};
+} satisfies Record<SourceStatus, Tone>;
 
 /** Rounded label in a tone; `solid` for strong emphasis. */
 export const Pill = ({
@@ -93,18 +95,26 @@ export const Pill = ({
   const style: CSSProperties = solid
     ? { background: colors.accent, color: '#fff' }
     : { background: colors.bg, color: colors.fg };
-  return (
+  const label = (
     <span
       className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:whitespace-nowrap facilityoperations:rounded-full facilityoperations:px-2 facilityoperations:py-0.5 facilityoperations:text-xs facilityoperations:font-medium"
       style={style}
-      title={title}
     >
       {children}
     </span>
   );
+  return title === undefined ? (
+    label
+  ) : (
+    <Tooltip content={title}>
+      <button className="facilityoperations:inline-flex facilityoperations:rounded-full" type="button">
+        {label}
+      </button>
+    </Tooltip>
+  );
 };
 
-export const Dot = ({ tone, size = 8 }: { readonly tone: Tone; readonly size?: number }) => (
+export const Dot = ({ size = 8, tone }: { readonly size?: number; readonly tone: Tone }) => (
   <span
     aria-hidden
     className="facilityoperations:inline-block facilityoperations:shrink-0 facilityoperations:rounded-full"
@@ -131,8 +141,7 @@ const paths = {
     'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6m4 18H6V4h7v5h5v11m-3.5-6.5c0 1.38-1.12 2.5-2.5 2.5S9.5 14.88 9.5 13.5 10.62 11 12 11s2.5 1.12 2.5 2.5M16 19H8v-1c0-1.33 2.67-2 4-2s4 .67 4 2v1Z',
   download: 'M5 20h14v-2H5m14-9h-4V3H9v6H5l7 7 7-7Z',
   info: 'M13 9h-2V7h2m0 10h-2v-6h2m-1-9A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2Z',
-  invoice:
-    'M3 22V3h18v19l-3-2-3 2-3-2-3 2-3-2-3 2M17 9V7H7v2h10m-2 4v-2H7v2h8Z',
+  invoice: 'M3 22V3h18v19l-3-2-3 2-3-2-3 2-3-2-3 2M17 9V7H7v2h10m-2 4v-2H7v2h8Z',
   key: 'M7 14a2 2 0 0 1-2-2 2 2 0 0 1 2-2 2 2 0 0 1 2 2 2 2 0 0 1-2 2m5.65-4A5.99 5.99 0 0 0 7 6a6 6 0 0 0-6 6 6 6 0 0 0 6 6 5.99 5.99 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65Z',
   lock: 'M12 17a2 2 0 0 0 2-2 2 2 0 0 0-2-2 2 2 0 0 0-2 2 2 2 0 0 0 2 2m6-9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h1V6a5 5 0 0 1 5-5 5 5 0 0 1 5 5v2h1m-6-5a3 3 0 0 0-3 3v2h6V6a3 3 0 0 0-3-3Z',
   magnify:
@@ -140,23 +149,39 @@ const paths = {
   mail: 'M20 8l-8 5-8-5V6l8 5 8-5m0-2H4c-1.11 0-2 .89-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z',
   refresh:
     'M17.65 6.35A7.958 7.958 0 0 0 12 4a8 8 0 0 0-8 8 8 8 0 0 0 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18a6 6 0 0 1-6-6 6 6 0 0 1 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35Z',
-  shield: 'M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4m0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8Z',
-  tasks:
-    'M3 5h6v6H3V5m2 2v2h2V7H5m6 0h10v2H11V7m0 8h10v2H11v-2m-6 5-3.5-3.5 1.41-1.41L5 17.17l4.59-4.58L11 14l-6 6Z',
+  shield:
+    'M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4m0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8Z',
+  tasks: 'M3 5h6v6H3V5m2 2v2h2V7H5m6 0h10v2H11V7m0 8h10v2H11v-2m-6 5-3.5-3.5 1.41-1.41L5 17.17l4.59-4.58L11 14l-6 6Z',
   timer:
     'M12 20a7 7 0 0 1-7-7 7 7 0 0 1 7-7 7 7 0 0 1 7 7 7 7 0 0 1-7 7m7.03-12.61 1.42-1.42c-.45-.51-.9-.97-1.41-1.41L17.62 6c-1.55-1.26-3.5-2-5.62-2a9 9 0 0 0-9 9 9 9 0 0 0 9 9c5 0 9-4.03 9-9 0-2.12-.74-4.07-1.97-5.61M11 14h2V8h-2m4-7H9v2h6V1Z',
 } as const;
 
 export type IconName = keyof typeof paths;
 
-export const Icon = ({ name, size = 20, color }: { readonly name: IconName; readonly size?: number; readonly color?: string }) => (
+export const Icon = ({
+  color,
+  name,
+  size = 20,
+}: {
+  readonly color?: string;
+  readonly name: IconName;
+  readonly size?: number;
+}) => (
   <svg aria-hidden height={size} style={{ color, flexShrink: 0 }} viewBox="0 0 24 24" width={size}>
     <path d={paths[name]} fill="currentColor" />
   </svg>
 );
 
 /** Tinted circle with an icon (KPI tiles, empty states). */
-export const IconBadge = ({ name, tone, size = 40 }: { readonly name: IconName; readonly tone: Tone; readonly size?: number }) => (
+export const IconBadge = ({
+  name,
+  size = 40,
+  tone,
+}: {
+  readonly name: IconName;
+  readonly size?: number;
+  readonly tone: Tone;
+}) => (
   <span
     aria-hidden
     className="facilityoperations:inline-flex facilityoperations:shrink-0 facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-xl"
@@ -168,9 +193,22 @@ export const IconBadge = ({ name, tone, size = 40 }: { readonly name: IconName; 
 
 // ---- Dates ---------------------------------------------------------------------------------------------------------
 
+const BUSINESS_TIME_ZONE = 'Europe/Prague';
 const longDate = {
-  cs: new Intl.DateTimeFormat('cs-CZ', { day: 'numeric', month: 'long', timeZone: 'UTC', weekday: 'long', year: 'numeric' }),
-  en: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC', weekday: 'long', year: 'numeric' }),
+  cs: new Intl.DateTimeFormat('cs-CZ', {
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+    weekday: 'long',
+    year: 'numeric',
+  }),
+  en: new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+    weekday: 'long',
+    year: 'numeric',
+  }),
 };
 const shortDate = {
   cs: new Intl.DateTimeFormat('cs-CZ', { day: 'numeric', month: 'numeric', timeZone: 'UTC', year: 'numeric' }),
@@ -189,25 +227,31 @@ const monthYear = {
   en: new Intl.DateTimeFormat('en-GB', { month: 'long', timeZone: 'UTC', year: 'numeric' }),
 };
 const clock = {
-  cs: new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Prague' }),
-  en: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Prague' }),
+  cs: new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIME_ZONE }),
+  en: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIME_ZONE }),
 };
 const stamp = {
-  cs: new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Prague' }),
-  en: new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Prague' }),
+  cs: new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: BUSINESS_TIME_ZONE }),
+  en: new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: BUSINESS_TIME_ZONE }),
 };
 
-type Lang = 'cs' | 'en';
+const LangSchema = Schema.Literals(['cs', 'en']);
+type Lang = typeof LangSchema.Type;
 export const langOf = (language: string | undefined): Lang => (language === 'en' ? 'en' : 'cs');
-const utc = (date: string) => Date.parse(`${date.slice(0, 10)}T00:00:00Z`);
+const epochMillis = (iso: string) =>
+  DateTime.make(iso).pipe(
+    Option.map(DateTime.toEpochMillis),
+    Option.getOrElse(() => Number.NaN),
+  );
+const utc = (date: string) => epochMillis(`${date.slice(0, 10)}T00:00:00Z`);
 
 export const fmt = {
-  clock: (lang: Lang, iso: string) => clock[lang].format(Date.parse(iso)),
+  clock: (lang: Lang, iso: string) => clock[lang].format(epochMillis(iso)),
   dayMonth: (lang: Lang, date: string) => dayMonth[lang].format(utc(date)),
   long: (lang: Lang, date: string) => longDate[lang].format(utc(date)),
   monthYear: (lang: Lang, date: string) => monthYear[lang].format(utc(date)),
   short: (lang: Lang, date: string) => shortDate[lang].format(utc(date)),
-  stamp: (lang: Lang, iso: string) => stamp[lang].format(Date.parse(iso)),
+  stamp: (lang: Lang, iso: string) => stamp[lang].format(epochMillis(iso)),
   weekday: (lang: Lang, date: string) => weekdayShort[lang].format(utc(date)),
 };
 
@@ -217,34 +261,57 @@ export const fmt = {
  * Downloads a CSV of exactly the given (already permission-filtered, currently filtered) rows and logs the export
  * in the agenda export log when the person may write the agenda. Logging never blocks the download.
  */
-export const exportCsv = async (input: {
+export class CsvExportFailed extends Schema.TaggedError<CsvExportFailed>()('CsvExportFailed', {
+  cause: Schema.Defect(),
+}) {}
+
+export const exportCsv = Effect.fn('FacilityOperations.exportCsv')(function* exportCsv(input: {
   readonly fileName: string;
-  readonly list: string;
   readonly filter?: string;
   readonly header: readonly string[];
-  readonly rows: readonly (readonly (string | number | undefined)[])[];
+  readonly list: string;
   readonly log: boolean;
   /** Current revision of the agenda state (export log). */
   readonly revision: number;
-}) => {
-  const blob = new Blob([toCsv(input.header, input.rows)], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = input.fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  readonly rows: readonly (readonly (string | number | undefined)[])[];
+}) {
+  const url = yield* Effect.try({
+    catch: (cause) => new CsvExportFailed({ cause }),
+    try: () => {
+      const blob = new Blob([toCsv(input.header, input.rows)], { type: 'text/csv;charset=utf-8' });
+      const objectUrl = URL.createObjectURL(blob);
+      let downloaded = false;
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = input.fileName;
+        anchor.click();
+        downloaded = true;
+        return objectUrl;
+      } finally {
+        if (!downloaded) {
+          URL.revokeObjectURL(objectUrl);
+        }
+      }
+    },
+  });
+  yield* Effect.forkDetach(
+    Effect.sleep('10 seconds').pipe(Effect.ensuring(Effect.sync(() => URL.revokeObjectURL(url)))),
+  );
   if (input.log) {
-    await runCommand(
+    yield* runCommand(
       {
         _tag: 'AgendaExportRecord',
         list: input.list,
         rowCount: input.rows.length,
-        ...(input.filter === undefined || input.filter === '' ? {} : { filter: input.filter.slice(0, 500) }),
+        ...optionalField(
+          'filter',
+          input.filter === undefined || input.filter === '' ? undefined : input.filter.slice(0, 500),
+        ),
       },
       input.revision,
       // An export log entry is a new record: it never conflicts with other people's changes.
-      new Date().toISOString(),
+      DateTime.formatIso(yield* DateTime.now),
     );
   }
-};
+});

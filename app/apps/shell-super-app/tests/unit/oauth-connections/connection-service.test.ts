@@ -1,10 +1,7 @@
 import { expect, test } from 'effect-rstest';
 
-import {
-  type LiveFacts,
-  evaluateLiveChecks,
-  revokedStatusFor,
-} from '../../../api/oauth-connections/connection-service.ts';
+import { evaluateLiveChecks, revokedStatusFor } from '../../../api/oauth-connections/connection-service.ts';
+import type { LiveFacts } from '../../../api/oauth-connections/connection-service.ts';
 
 const human: LiveFacts = {
   actingKind: 'human',

@@ -1,17 +1,26 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Command, Flag } from 'effect/unstable/cli';
-import { Config, ConfigProvider, Console, Effect, Layer, Schema } from 'effect';
+import { Clock, Config, ConfigProvider, Console, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { MerchandiseStateSchema } from '../shared/apis/records.ts';
+import type { MerchandiseState } from '../shared/apis/records.ts';
 import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
 
 import { buildAkrosEncoded } from './akros-catalog.mts';
 import { mergeSeed, restoreCatalog } from './akros-merge.ts';
 import { refreshAkrosOrderPresentation } from './order-presentation.ts';
+
+class AkrosSeedInputError extends Schema.TaggedError<AkrosSeedInputError>()('AkrosSeedInputError', {
+  reason: Schema.String,
+}) {}
+
+const sameEncodedState = Schema.toEquivalence(Schema.toEncoded(MerchandiseStateSchema));
+
 export const akrosLegalEntityId = '71000000-0000-4000-8000-000000000024';
-export const buildAkrosState = () => Schema.decodeUnknownEffect(MerchandiseStateSchema)(buildAkrosEncoded());
+export const buildAkrosState = () =>
+  buildAkrosEncoded().pipe(Effect.flatMap(Schema.decodeEffect(MerchandiseStateSchema)));
 
 const AdminDatabaseLive = Layer.effect(
   PgClient.PgClient,
@@ -26,43 +35,51 @@ const AdminDatabaseLive = Layer.effect(
 
 const akrosScope = { legalEntityId: akrosLegalEntityId, tenantId: demoTenantId };
 
-export { mergeSeed, restoreCatalog };
+export { mergeSeed, restoreCatalog } from './akros-merge.ts';
+
+const akrosSeedSummary = (seed: MerchandiseState) =>
+  `AKROS seed: ${seed.products.length} groups; ${seed.products.reduce((sum, product) => sum + (product.variants?.length ?? 0), 0)} variants; ${seed.categories?.length ?? 0} categories; ${seed.movements.length} movements`;
 
 const writeState = Effect.fn('Merchandise.writeAkrosState')(function* writeAkrosState(
   reset: boolean,
   restore: boolean,
   repairPresentation: boolean,
 ) {
-  if (repairPresentation && (reset || restore))
-    return yield* Effect.fail(new Error('Presentation repair cannot reset or restore the catalog'));
+  if (repairPresentation && (reset || restore)) {
+    return yield* Effect.fail(
+      new AkrosSeedInputError({ reason: 'Presentation repair cannot reset or restore the catalog' }),
+    );
+  }
   const seed = yield* buildAkrosState();
-  yield* Console.log(
-    `AKROS seed: ${seed.products.length} groups; ${seed.products.reduce((sum, product) => sum + (product.variants?.length ?? 0), 0)} variants; ${seed.categories?.length ?? 0} categories; ${seed.movements.length} movements`,
-  );
+  yield* Console.log(akrosSeedSummary(seed));
   const stored = reset ? undefined : yield* readCompanySnapshot(akrosScope);
   if (repairPresentation) {
-    if (stored === undefined) return yield* Effect.fail(new Error('AKROS merchandise must already exist'));
+    if (stored === undefined) {
+      return yield* Effect.fail(new AkrosSeedInputError({ reason: 'AKROS merchandise must already exist' }));
+    }
     const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(stored.state);
     const repaired = refreshAkrosOrderPresentation(encoded);
-    if (JSON.stringify(repaired) === JSON.stringify(encoded))
+    if (sameEncodedState(repaired, encoded)) {
       return yield* Console.log('AKROS contacts already presentable; nothing changed');
+    }
     yield* writeCompanySnapshot(akrosScope, yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired));
     return yield* Console.log(
       'AKROS fixture contacts refreshed; orders, statuses, replay identities and catalog preserved',
     );
   }
   if (stored === undefined) {
-    const started = Date.now();
+    const started = yield* Clock.currentTimeMillis;
     yield* writeCompanySnapshot(akrosScope, seed);
+    const elapsed = (yield* Clock.currentTimeMillis) - started;
     return yield* Console.log(
-      `AKROS merchandise (AKROS) ${reset ? 'reset' : 'created'} in ${Date.now() - started} ms: ${seed.products.length} products, ${seed.movements.length} movements, ${seed.orders.length} orders`,
+      `AKROS merchandise (AKROS) ${reset ? 'reset' : 'created'} in ${elapsed} ms: ${seed.products.length} products, ${seed.movements.length} movements, ${seed.orders.length} orders`,
     );
   }
   const current = stored.state;
   const merged = restore ? restoreCatalog(current, seed) : mergeSeed(current, seed);
   const encodedCurrent = yield* Schema.encodeEffect(MerchandiseStateSchema)(current);
   const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(merged);
-  if (!restore && JSON.stringify(encoded) === JSON.stringify(encodedCurrent)) {
+  if (!restore && sameEncodedState(encoded, encodedCurrent)) {
     return yield* Console.log(
       `AKROS merchandise (AKROS) already seeded: ${current.products.length} products, ${current.categories?.length ?? 0} categories, ${current.orders.length} orders; nothing changed`,
     );

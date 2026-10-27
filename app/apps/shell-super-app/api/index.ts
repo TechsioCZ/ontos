@@ -26,6 +26,7 @@ import {
   IdentityAdministrationDeniedAuditLive,
   ContextAccessLive,
   CorePersistenceLive,
+  DatabaseConfig,
   DatabaseConfigLive,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
@@ -89,7 +90,12 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
-import { EmailTransportLive } from './email/transport.ts';
+import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import { listDeliveries } from '@app/email-delivery/deliveries';
+import { PgClient } from '@effect/sql-pg';
+
+import { EmailDeliveryRequests, EmailReceiptHandlersLive, EmailTransportLive } from './email/transport.ts';
+import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
 import {
@@ -3197,7 +3203,27 @@ export const makeShellAuthenticationApiRuntime = (
         Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
       )
     : Layer.empty;
+  // These factories are installed with request services, but open a pool only after the email route has authorized its work.
+  // Each operation owns a fresh scope, retaining the per-operation pool lifetime on both Node and Workers.
+  const emailDatabaseLive = Layer.effect(
+    PgClient.PgClient,
+    Effect.gen(function* makeEmailRequestDatabase() {
+      const config = yield* DatabaseConfig;
+      return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
+  const emailDeliveryRequestsLive = Layer.succeed(EmailDeliveryRequests, {
+    dispatch: Effect.gen(function* dispatchRequestEmailBatch() {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* dispatchEmailBatch.pipe(Effect.provideContext(database));
+    }).pipe(Effect.scoped),
+    list: Effect.fn('Shell.emailDeliveries')(function* listEmailDeliveries(query: EmailDeliveryQuery) {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* listDeliveries(query).pipe(Effect.provideContext(database));
+    }, Effect.scoped),
+  });
   const handlerDependenciesLive = Layer.mergeAll(
+    emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
     authenticationLayer,
@@ -3270,7 +3296,7 @@ export const makeShellAuthenticationApiRuntime = (
     services: requestServicesLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive,
-      EmailTransportLive,
+      EmailTransportLive.pipe(Layer.provide(EmailReceiptHandlersLive)),
       // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
       OAuthServerTransportLive,
       InvitationTransportLive,

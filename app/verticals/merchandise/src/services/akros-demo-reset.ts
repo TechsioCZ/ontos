@@ -2,7 +2,7 @@
 // baseline ships inside the server bundle (akros-baseline.generated.ts), so the reset needs no filesystem and runs
 // the same on Node and Cloudflare Workers; parts are decoded and inserted one at a time to keep memory bounded. The
 // parts are loaded only when a reset runs, so they cost nothing on a cold isolate's first request.
-import { Effect, Encoding, Result, Schema } from 'effect';
+import { Effect, Encoding, Result, Schema, Stream } from 'effect';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandisePersistenceUnavailable } from '../../shared/errors/merchandise-persistence-unavailable.ts';
@@ -27,11 +27,10 @@ export const decodeAkrosBaselinePart = Effect.fn('Merchandise.decodeAkrosBaselin
     onFailure: (cause) => Effect.fail(baselineUnavailable('AKROS baseline part is not base64', cause)),
     onSuccess: Effect.succeed,
   });
-  const json = yield* Effect.tryPromise({
-    catch: (cause) => baselineUnavailable('AKROS baseline part does not decompress', cause),
-    try: () =>
-      new Response(new Blob([new Uint8Array(bytes)]).stream().pipeThrough(new DecompressionStream('gzip'))).text(),
-  });
+  const json = yield* Stream.fromReadableStream({
+    evaluate: () => new Blob([new Uint8Array(bytes)]).stream().pipeThrough(new DecompressionStream('gzip')),
+    onError: (cause) => baselineUnavailable('AKROS baseline part does not decompress', cause),
+  }).pipe(Stream.decodeText, Stream.mkString);
   return yield* decodeState(json).pipe(
     Effect.mapError((cause) => baselineUnavailable('AKROS baseline does not match the model', cause)),
   );
@@ -52,8 +51,10 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
   const head = yield* decodeAkrosBaselinePart(first);
   yield* deleteScope(db, scope);
   yield* insertSnapshotPart(db, scope, head);
-  for (const part of rest) {
-    yield* insertSnapshotPart(db, scope, yield* decodeAkrosBaselinePart(part));
-  }
+  yield* Effect.forEach(
+    rest,
+    (part) => decodeAkrosBaselinePart(part).pipe(Effect.flatMap((state) => insertSnapshotPart(db, scope, state))),
+    { concurrency: 1, discard: true },
+  );
   return yield* writeSnapshotHead(db, scope, head);
 });

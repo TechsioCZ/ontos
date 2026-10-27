@@ -72,8 +72,8 @@ export const RecordsResponseSchema = Schema.Struct({
     meters: Schema.optionalKey(
       Schema.Struct({
         ...envelope(MetersStateSchema).fields,
-        canReadFinancial: Schema.Boolean,
         canManage: Schema.Boolean,
+        canReadFinancial: Schema.Boolean,
       }),
     ),
     purchasing: Schema.optionalKey(envelope(PurchasingStateSchema)),

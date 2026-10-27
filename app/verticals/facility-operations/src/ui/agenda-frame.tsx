@@ -41,7 +41,7 @@ export const AgendaGate = ({
   /** `false` when the server returned no state for this agenda (no read permission). */
   readonly readable: boolean;
   readonly status: LoadStatus;
-}) => {
+}): ReactNode => {
   const { t } = useModernI18n();
   if (status === 'loading') {
     return <LoadingSkeleton rows={5} />;
@@ -67,5 +67,5 @@ export const AgendaGate = ({
       />
     );
   }
-  return <>{children}</>;
+  return children;
 };

@@ -193,7 +193,9 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       ]
     }
   ],
-  "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "moduleKey": "<module>", "principalIds": ["<uuid>"] }],
+  "retiredTenants": [
+    { "tenantId": "<uuid>", "legalEntityId": "<uuid>", "moduleKey": "<module>", "principalIds": ["<uuid>"] }
+  ],
   "retiredAccountEmails": ["<email>"]
 }
 ```

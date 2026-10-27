@@ -219,7 +219,7 @@ const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
   PricingApiGroups,
   PricingHandlerRequirements,
   Layer.Success<typeof requestServicesLive>
->['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive), Layer.orDie);
+>['handlers'] = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
 
 export const makePricingApiRuntime = (): EffectBffDefinition<typeof pricingApi> & EffectBffRuntime<typeof pricingApi> =>
   assembleEffectBffRuntime({

@@ -49,13 +49,17 @@ const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApp
   );
   const revision = result.changed ? yield* context.services.save(result.state, current.revision) : current.revision;
   if (result.changed) {
-    for (const write of result.documentWrites ?? []) {
-      yield* context.services.writeDocument({
-        contentBase64: write.contentBase64,
-        documentId: write.id,
-        mimeType: write.mimeType,
-      });
-    }
+    // Writes share one transaction and retain their original order and first-failure behavior.
+    yield* Effect.forEach(
+      result.documentWrites ?? [],
+      (write) =>
+        context.services.writeDocument({
+          contentBase64: write.contentBase64,
+          documentId: write.id,
+          mimeType: write.mimeType,
+        }),
+      { concurrency: 1, discard: true },
+    );
   }
   return result.invoice === undefined
     ? { changed: result.changed, revision }

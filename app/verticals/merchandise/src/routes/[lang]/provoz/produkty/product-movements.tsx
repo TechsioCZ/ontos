@@ -9,6 +9,7 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
+import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
 import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
@@ -25,6 +26,7 @@ import {
 
 type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
 type VariantRow = NonNullable<ProductRecord['variantRecords']>[number];
+const NO_VARIANTS: readonly VariantRow[] = [];
 const variantLabel = (variant: VariantRow) => `${variant.name} (${variant.sku})`;
 const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT'];
 
@@ -50,7 +52,7 @@ const signedDelta = (reason: ManualReason, quantity: number): number => {
 /** Stock ledger rows for one product, newest first. Products with variants show which variant moved. */
 export const MovementsTable = ({
   movements,
-  variants = [],
+  variants = NO_VARIANTS,
 }: {
   readonly movements: readonly StockMovement[];
   readonly variants?: readonly VariantRow[] | undefined;
@@ -148,7 +150,7 @@ export const MovementForm = ({
   productId,
   revision,
   stockOnHand,
-  variants = [],
+  variants = NO_VARIANTS,
 }: {
   readonly draft: MovementDraft;
   readonly onCommitted: (message: string) => void;
@@ -198,13 +200,20 @@ export const MovementForm = ({
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const movement = {
+    const movement: {
+      -readonly [Key in keyof Extract<MerchandiseCommand, { readonly _tag: 'RecordStockMovement' }>]: Extract<
+        MerchandiseCommand,
+        { readonly _tag: 'RecordStockMovement' }
+      >[Key];
+    } = {
       _tag: 'RecordStockMovement' as const,
       delta: signedDelta(reason, quantity),
       productId,
       reason,
-      ...(variant === undefined ? {} : { variantId: variant.id }),
     };
+    if (variant !== undefined) {
+      movement.variantId = variant.id;
+    }
     const expected = Math.max(revision, savedRevision.current);
     runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);

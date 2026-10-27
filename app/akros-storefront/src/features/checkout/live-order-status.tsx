@@ -62,7 +62,9 @@ export function LiveOrderStatus({
       busy = false;
       if (!stopped && !final) timer = window.setTimeout(load, LIVE_ORDER_STATUS_POLL_MS);
     };
-    const onFocus = () => void load();
+    const onFocus = () => {
+      void load();
+    };
     void load();
     window.addEventListener("focus", onFocus);
     return () => {

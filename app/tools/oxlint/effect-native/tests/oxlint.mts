@@ -92,7 +92,7 @@ export function runOxlint(configPath: string, paths: readonly string[], cwd: str
     selectedRule ?? (basename(dirname(dirname(configPath))) === 'fixtures' ? basename(dirname(configPath)) : undefined);
   const result = spawnSync(
     process.execPath,
-    [oxlintEntryPoint, '-c', configPath, '--format=json', '--disable-nested-config', ...paths],
+    [oxlintEntryPoint, '--threads=2', '-c', configPath, '--format=json', '--disable-nested-config', ...paths],
     {
       cwd,
       encoding: 'utf8',

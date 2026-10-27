@@ -1,3 +1,6 @@
+import { optionalField } from '../../../shared/domain/common.ts';
+import { CalendarDateSchema } from '@app/shared-contracts/calendar-date';
+import { Schema } from 'effect';
 // Derived views over the loaded sources: calendar deadlines, overview KPIs (each with its exact drill-down rows),
 // and the permission-filtered search index. Pure; owned by the ops-agenda lane.
 import { foldSearchText, formatMoney } from '@app/admin-ui';
@@ -16,7 +19,7 @@ import {
   sortDeadlines,
   taskDeadlines,
 } from './deadlines.ts';
-import { opsSegments } from '../../../shared/domain/ops-overview.ts';
+import { opsSegmentOf } from '../../../shared/domain/ops-overview.ts';
 import type { Deadline } from '../../../shared/domain/ops-overview.ts';
 import { isOpenSalesCase } from './sales-source.ts';
 import { sourceKeys } from './sources.ts';
@@ -32,27 +35,37 @@ export const currentAgendaState = (
   today: string,
 ): AgendaState | undefined => {
   const state = agendaStateOf(sources);
-  if (state === undefined) return undefined;
+  if (state === undefined) {
+    return undefined;
+  }
   const currentKeys = new Set(
-    deadlines.filter((row) => !row.done).map((row) => `${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`),
+    deadlines.flatMap((row) => (row.done ? [] : [`${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`])),
   );
   const assignments = new Set(
-    (sources.work.data?.items ?? [])
-      .filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED')
-      .map((task) => `task-assigned:${task.ref.resourceId}:${task.ownerPrincipalRef?.principalId ?? ''}`),
+    (sources.work.data?.items ?? []).flatMap((task) =>
+      task.state === 'DONE' || task.state === 'CANCELLED'
+        ? []
+        : [`task-assigned:${task.ref.resourceId}:${task.ownerPrincipalRef?.principalId ?? ''}`],
+    ),
   );
   return {
     ...state,
     notifications: (state.notifications ?? []).filter((entry) => {
       const source = sourceKeys.find((key) => key === entry.source);
-      if (source !== undefined && sources[source].status === 'forbidden') return false;
-      if (entry.eventKey.startsWith('task-assigned:') && sources.work.status === 'ready')
+      if (source !== undefined && sources[source].status === 'forbidden') {
+        return false;
+      }
+      if (entry.eventKey.startsWith('task-assigned:') && sources.work.status === 'ready') {
         return assignments.has(entry.eventKey);
-      if (entry.category !== 'DEADLINE' && entry.category !== 'OVERDUE') return true;
-      if (
-        !/^(contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)
-      )
+      }
+      if (entry.category !== 'DEADLINE' && entry.category !== 'OVERDUE') {
         return true;
+      }
+      if (
+        !/^(?:contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)
+      ) {
+        return true;
+      }
       return source === undefined || sources[source].status !== 'ready' || currentKeys.has(entry.eventKey);
     }),
   };
@@ -68,8 +81,7 @@ export const buildDeadlines = (sources: RentalOverviewSources, names: ReadonlyMa
     rows.push(...occupancyDeadlines(sources.occupancy.data.occupancies, names));
   }
   if (sources.work.data !== undefined) {
-    rows.push(...taskDeadlines(sources.work.data.items, names));
-    rows.push(...projectDeadlines(sources.work.data.projects ?? []));
+    rows.push(...taskDeadlines(sources.work.data.items, names), ...projectDeadlines(sources.work.data.projects ?? []));
   }
   if (sources.finance.data !== undefined) {
     rows.push(...invoiceDeadlines(sources.finance.data.state.invoices, names));
@@ -85,55 +97,58 @@ export const buildDeadlines = (sources: RentalOverviewSources, names: ReadonlyMa
 // ---- KPIs --------------------------------------------------------------------------------------------------------
 
 export interface DrillRow {
-  readonly id: string;
-  readonly title: string;
-  readonly subtitle?: string | undefined;
+  readonly amountMinor?: number;
   readonly date?: string;
+  readonly href: string;
+  readonly id: string;
   /** i18n key suffix under `facility-operations.agenda.status.*` or a raw value. */
   readonly status?: string;
+  readonly subtitle?: string | undefined;
+  readonly title: string;
   readonly tone?: Tone;
-  readonly amountMinor?: number;
-  readonly href: string;
 }
 
-export type Tone = 'primary' | 'success' | 'warning' | 'danger' | 'neutral' | 'info';
+export const ToneSchema = Schema.Literals(['primary', 'success', 'warning', 'danger', 'neutral', 'info']);
+export type Tone = typeof ToneSchema.Type;
 
-export type KpiId =
-  | 'occupancy'
-  | 'properties'
-  | 'leases'
-  | 'overdueInvoices'
-  | 'openTasks'
-  | 'incidents'
-  | 'deadlines'
-  | 'contracts'
-  | 'salesCases'
-  | 'planActual';
+export const KpiIdSchema = Schema.Literals([
+  'occupancy',
+  'properties',
+  'leases',
+  'overdueInvoices',
+  'openTasks',
+  'incidents',
+  'deadlines',
+  'contracts',
+  'salesCases',
+  'planActual',
+]);
+export type KpiId = typeof KpiIdSchema.Type;
 
-export interface Kpi {
+/** Latest successful read among the KPI's sources, retaining the ISO wire string. */
+const KpiTimestampSchema = Schema.Struct({ loadedAt: Schema.optionalKey(Schema.DateTimeUtcFromString) });
+export type Kpi = typeof KpiTimestampSchema.Encoded & {
   readonly id: KpiId;
-  readonly status: SourceStatus;
-  /** Main number; `undefined` = „bez dat“ (never a fake zero). */
-  readonly value?: number;
   readonly kind: 'count' | 'percent';
+  readonly rows: readonly DrillRow[];
   /** Second line values (interpolated into `facility-operations.agenda.kpi.<id>.secondary`). */
   readonly secondary?: Readonly<Record<string, string | number>>;
-  readonly tone: Tone;
   readonly sources: readonly SourceKey[];
-  readonly rows: readonly DrillRow[];
-  /** Latest successful read among the KPI's sources. */
-  readonly loadedAt?: string;
-}
+  readonly status: SourceStatus;
+  readonly tone: Tone;
+  /** Main number; `undefined` = „bez dat“ (never a fake zero). */
+  readonly value?: number;
+};
 
 const combinedStatus = (sources: RentalOverviewSources, keys: readonly SourceKey[]): SourceStatus => {
-  const statuses = keys.map((key) => sources[key].status);
-  if (statuses.includes('loading')) {
+  const statuses = new Set(keys.map((key) => sources[key].status));
+  if (statuses.has('loading')) {
     return 'loading';
   }
-  if (statuses.includes('forbidden')) {
+  if (statuses.has('forbidden')) {
     return 'forbidden';
   }
-  return statuses.includes('unavailable') ? 'unavailable' : 'ready';
+  return statuses.has('unavailable') ? 'unavailable' : 'ready';
 };
 
 const loadedAtOf = (sources: RentalOverviewSources, keys: readonly SourceKey[]) =>
@@ -145,7 +160,7 @@ const loadedAtOf = (sources: RentalOverviewSources, keys: readonly SourceKey[]) 
 
 const kpiBase = (sources: RentalOverviewSources, id: KpiId, keys: readonly SourceKey[]) => {
   const loadedAt = loadedAtOf(sources, keys);
-  return { id, sources: keys, status: combinedStatus(sources, keys), ...(loadedAt === undefined ? {} : { loadedAt }) };
+  return { id, sources: keys, status: combinedStatus(sources, keys), ...optionalField('loadedAt', loadedAt) };
 };
 
 const unavailable = (
@@ -160,16 +175,20 @@ const unavailable = (
   tone: 'neutral',
 });
 
-type UnitAvailability = 'OCCUPIED' | 'RESERVED' | 'AVAILABLE';
+const UnitAvailabilitySchema = Schema.Literals(['OCCUPIED', 'RESERVED', 'AVAILABLE']);
+type UnitAvailability = typeof UnitAvailabilitySchema.Type;
+
+const AvailabilityOccupancySchema = Schema.Struct({
+  endDate: Schema.OptionFromNullOr(CalendarDateSchema),
+  startDate: CalendarDateSchema,
+  state: Schema.String,
+  unitRef: Schema.Struct({ resourceId: Schema.String.pipe(Schema.brand('ResourceId')) }),
+});
+type AvailabilityOccupancy = typeof AvailabilityOccupancySchema.Encoded;
 
 export const unitAvailability = (
   unitId: string,
-  occupancies: readonly {
-    readonly unitRef: { readonly resourceId: string };
-    readonly startDate: string;
-    readonly endDate: string | null;
-    readonly state: string;
-  }[],
+  occupancies: readonly AvailabilityOccupancy[],
   today: string,
 ): UnitAvailability => {
   const current = occupancies.filter(
@@ -182,24 +201,36 @@ export const unitAvailability = (
   return current.some((item) => item.state === 'CONFIRMED') ? 'RESERVED' : 'AVAILABLE';
 };
 
-const availabilityTone: Record<UnitAvailability, Tone> = {
+const availabilityTone = {
   AVAILABLE: 'success',
   OCCUPIED: 'primary',
   RESERVED: 'warning',
+} satisfies Record<UnitAvailability, Tone>;
+
+const taskTone = (dueDate: string | undefined, priority: string, today: string): Tone => {
+  if (dueDate !== undefined && dueDate < today) {
+    return 'danger';
+  }
+  return priority === 'HIGH' ? 'warning' : 'neutral';
 };
 
-export const buildKpis = (
-  sources: RentalOverviewSources,
-  names: ReadonlyMap<string, string>,
-  deadlines: readonly Deadline[],
-  today: string,
-): Kpi[] => {
+const budgetTone = (kind: string, difference: number): Tone => {
+  if (kind === 'COST') {
+    return difference > 0 ? 'danger' : 'success';
+  }
+  return difference < 0 ? 'warning' : 'success';
+};
+
+export interface KpiInput {
+  readonly deadlines: readonly Deadline[];
+  readonly names: ReadonlyMap<string, string>;
+  readonly sources: RentalOverviewSources;
+  readonly today: string;
+}
+
+const propertyKpis = ({ names, sources, today }: KpiInput): Kpi[] => {
   const property = sources.property.data;
   const occupancy = sources.occupancy.data;
-  const work = sources.work.data;
-  const finance = sources.finance.data;
-  const agreements = sources.agreements.data;
-  const ops = sources.ops.data;
   const kpis: Kpi[] = [];
 
   // Occupancy: occupied ACTIVE units / ACTIVE units today (property + occupancy).
@@ -226,14 +257,16 @@ export const buildKpis = (
       ),
       secondary: { free: units.length - occupied - reserved, occupied, reserved, total: units.length },
       tone: 'primary',
-      ...(units.length === 0 ? {} : { value: occupied / units.length }),
+      ...optionalField('value', units.length === 0 ? undefined : occupied / units.length),
     });
   } else {
     kpis.push(unavailable(sources, 'occupancy', ['property', 'occupancy'], 'percent'));
   }
 
   // Active properties (S15-01: the drill-down lists exactly the counted records).
-  if (property !== undefined) {
+  if (property === undefined) {
+    kpis.push(unavailable(sources, 'properties', ['property']));
+  } else {
     const active = property.properties.filter((entry) => entry.lifecycleState === 'ACTIVE');
     kpis.push({
       ...kpiBase(sources, 'properties', ['property']),
@@ -255,12 +288,12 @@ export const buildKpis = (
       tone: 'success',
       value: active.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'properties', ['property']));
   }
 
   // Active leases: occupancies in state ACTIVE today; CONFIRMED (future) shown separately.
-  if (occupancy !== undefined) {
+  if (occupancy === undefined) {
+    kpis.push(unavailable(sources, 'leases', ['occupancy']));
+  } else {
     const active = occupancy.occupancies.filter(
       (entry) =>
         entry.state === 'ACTIVE' && entry.startDate <= today && (entry.endDate === null || today < entry.endDate),
@@ -283,12 +316,23 @@ export const buildKpis = (
       tone: 'success',
       value: active.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'leases', ['occupancy']));
   }
 
+  return kpis;
+};
+
+export const buildKpis = (input: KpiInput): Kpi[] => {
+  const { deadlines, names, sources, today } = input;
+  const work = sources.work.data;
+  const finance = sources.finance.data;
+  const agreements = sources.agreements.data;
+  const ops = sources.ops.data;
+  const kpis = propertyKpis(input);
+
   // Overdue invoices: confirmed, unpaid, due before today (both directions).
-  if (finance !== undefined) {
+  if (finance === undefined) {
+    kpis.push(unavailable(sources, 'overdueInvoices', ['finance']));
+  } else {
     const overdue = finance.state.invoices.filter((invoice) => isOpenInvoice(invoice) && invoice.dueDate < today);
     kpis.push({
       ...kpiBase(sources, 'overdueInvoices', ['finance']),
@@ -309,12 +353,12 @@ export const buildKpis = (
       tone: overdue.length === 0 ? 'success' : 'danger',
       value: overdue.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'overdueInvoices', ['finance']));
   }
 
   // Open tasks: NEW / IN_PROGRESS / WAITING; overdue = due before today.
-  if (work !== undefined) {
+  if (work === undefined) {
+    kpis.push(unavailable(sources, 'openTasks', ['work']));
+  } else {
     const open = work.items.filter((task) => !['DONE', 'CANCELLED'].includes(task.state));
     const overdue = open.filter((task) => task.dueDate !== undefined && task.dueDate < today);
     kpis.push({
@@ -323,47 +367,40 @@ export const buildKpis = (
       rows: open
         .toSorted((left, right) => (left.dueDate ?? '9999').localeCompare(right.dueDate ?? '9999'))
         .map((task) => ({
-          ...(task.dueDate === undefined ? {} : { date: task.dueDate }),
+          ...optionalField('date', task.dueDate),
           href: `/ukoly?resourceId=${encodeURIComponent(task.ref.resourceId)}`,
           id: task.ref.resourceId,
           status: `task.${task.state}`,
           subtitle: task.contextRefs.map((ref) => names.get(ref.resourceId)).find((label) => label !== undefined),
           title: task.title,
-          tone:
-            task.dueDate !== undefined && task.dueDate < today
-              ? 'danger'
-              : task.priority === 'HIGH'
-                ? 'warning'
-                : 'neutral',
+          tone: taskTone(task.dueDate, task.priority, today),
         })),
       secondary: { overdue: overdue.length },
       tone: overdue.length > 0 ? 'warning' : 'primary',
       value: open.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'openTasks', ['work']));
   }
 
   // Open incidents: unresolved incidents/faults of the provoz agendas (security needs read_all).
-  if (ops?.incidents !== undefined) {
+  if (ops?.incidents === undefined) {
+    const base = unavailable(sources, 'incidents', ['ops']);
+    kpis.push(ops === undefined ? base : { ...base, status: 'forbidden' });
+  } else {
     const { incidents } = ops;
     kpis.push({
       ...kpiBase(sources, 'incidents', ['ops']),
       kind: 'count',
       rows: incidents.map((incident) => ({
-        href: `/provoz/${opsSegments[incident.agenda] ?? incident.agenda}`,
+        href: `/provoz/${opsSegmentOf(incident.agenda)}`,
         id: incident.id,
         status: 'incident.OPEN',
-        ...(incident.location === undefined ? {} : { subtitle: incident.location }),
+        ...optionalField('subtitle', incident.location),
         title: incident.title,
         tone: 'danger',
       })),
       tone: incidents.length === 0 ? 'success' : 'danger',
       value: incidents.length,
     });
-  } else {
-    const base = unavailable(sources, 'incidents', ['ops']);
-    kpis.push(ops !== undefined ? { ...base, status: 'forbidden' } : base);
   }
 
   // Upcoming deadlines (next 30 days, open) from every readable source.
@@ -378,18 +415,20 @@ export const buildKpis = (
       href: row.href,
       id: row.key,
       status: `category.${row.category}`,
-      ...(row.location === undefined ? {} : { subtitle: row.location }),
+      ...optionalField('subtitle', row.location),
       title: row.title,
       tone: daysUntil(row.date, today) <= 7 ? 'warning' : 'info',
     })),
     secondary: { week: upcoming.filter((row) => daysUntil(row.date, today) <= 7).length },
     status: readable.length === 0 ? combinedStatus(sources, sourceKeys) : 'ready',
     tone: 'info',
-    ...(readable.length === 0 ? {} : { value: upcoming.length }),
+    ...optionalField('value', readable.length === 0 ? undefined : upcoming.length),
   });
 
   // Contracts ending within 60 days (ACTIVE with an end date).
-  if (agreements !== undefined) {
+  if (agreements === undefined) {
+    kpis.push(unavailable(sources, 'contracts', ['agreements']));
+  } else {
     const limit = addDays(today, 60);
     const ending = agreements.contracts.filter(
       (contract) => contract.lifecycleState === 'ACTIVE' && contract.endDate !== null && contract.endDate <= limit,
@@ -398,7 +437,7 @@ export const buildKpis = (
       ...kpiBase(sources, 'contracts', ['agreements']),
       kind: 'count',
       rows: ending.map((contract) => ({
-        ...(contract.endDate === null ? {} : { date: contract.endDate }),
+        ...optionalField('date', contract.endDate ?? undefined),
         href: `/smlouvy?resourceId=${encodeURIComponent(contract.contractRef.resourceId)}`,
         id: contract.contractRef.resourceId,
         status: contract.endDate !== null && contract.endDate < today ? 'contract.EXPIRED' : 'contract.ENDING',
@@ -415,13 +454,13 @@ export const buildKpis = (
       tone: ending.length === 0 ? 'success' : 'warning',
       value: ending.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'contracts', ['agreements']));
   }
 
   // Open sales cases: opportunities not won, lost or archived (sales pipeline, filtered to what the person may read).
   const sales = sources.sales.data;
-  if (sales !== undefined) {
+  if (sales === undefined) {
+    kpis.push(unavailable(sources, 'salesCases', ['sales']));
+  } else {
     const open = sales.items
       .filter(isOpenSalesCase)
       .toSorted((left, right) => left.expectedCloseDate.localeCompare(right.expectedCloseDate));
@@ -444,16 +483,16 @@ export const buildKpis = (
       tone: 'info',
       value: open.length,
     });
-  } else {
-    kpis.push(unavailable(sources, 'salesCases', ['sales']));
   }
 
   // Plan vs actual (year to date): budget lines of finance; the actual is the manually confirmed amount, otherwise
   // the confirmed invoices of that month, category, direction and object (same rule as Finance › Rozpočet).
-  if (finance !== undefined) {
+  if (finance === undefined) {
+    kpis.push(unavailable(sources, 'planActual', ['finance'], 'percent'));
+  } else {
     const year = today.slice(0, 4);
     const month = today.slice(0, 7);
-    const invoices = finance.state.invoices;
+    const { invoices } = finance.state;
     const lines = (finance.state.budgets ?? []).filter((line) => line.period.startsWith(year) && line.period <= month);
     const actualOf = (line: (typeof lines)[number]) =>
       line.actualManualMinor ??
@@ -498,8 +537,7 @@ export const buildKpis = (
             title: [line.category, line.propertyRef === undefined ? undefined : names.get(line.propertyRef.resourceId)]
               .filter((part) => part !== undefined)
               .join(' · '),
-            tone:
-              line.kind === 'COST' ? (difference > 0 ? 'danger' : 'success') : difference < 0 ? 'warning' : 'success',
+            tone: budgetTone(line.kind, difference),
           };
         }),
       secondary: {
@@ -509,51 +547,53 @@ export const buildKpis = (
         revenuePlan: formatMoney(revenue.plan),
       },
       tone: cost.actual > cost.plan ? 'warning' : 'success',
-      ...(cost.plan === 0 ? {} : { value: cost.actual / cost.plan }),
+      ...optionalField('value', cost.plan === 0 ? undefined : cost.actual / cost.plan),
     });
-  } else {
-    kpis.push(unavailable(sources, 'planActual', ['finance'], 'percent'));
   }
   return kpis;
 };
 
 // ---- Search ------------------------------------------------------------------------------------------------------
 
-export type SearchKind =
-  | 'property'
-  | 'unit'
-  | 'asset'
-  | 'contract'
-  | 'lease'
-  | 'task'
-  | 'invoice'
-  | 'party'
-  | 'event'
-  | 'ops';
+export const SearchKindSchema = Schema.Literals([
+  'property',
+  'unit',
+  'asset',
+  'contract',
+  'lease',
+  'task',
+  'invoice',
+  'party',
+  'event',
+  'ops',
+]);
+export type SearchKind = typeof SearchKindSchema.Type;
 
 export interface SearchRow {
-  readonly kind: SearchKind;
-  readonly id: string;
-  readonly title: string;
-  readonly subtitle?: string;
   readonly href: string;
+  readonly id: string;
+  readonly kind: SearchKind;
   readonly source: SourceKey;
+  readonly subtitle?: string;
   /** Folded text (no diacritics, lower case) the query is matched against. */
   readonly text: string;
+  readonly title: string;
 }
 
 const row = (entry: Omit<SearchRow, 'text'>, ...extra: readonly (string | null | undefined)[]): SearchRow => ({
   ...entry,
   text: foldSearchText(
-    [entry.title, entry.subtitle, entry.id, ...extra].filter((part) => typeof part === 'string').join(' '),
+    [entry.title, entry.subtitle, entry.id, ...extra].filter((part) => part !== undefined && part !== null).join(' '),
   ),
 });
 
 const opt = (key: 'subtitle', value: string | null | undefined) =>
   value === null || value === undefined || value === '' ? {} : { [key]: value };
 
-/** Index of every record the person can read. Unreadable sources contribute nothing (and are reported). */
-export const buildSearchIndex = (sources: RentalOverviewSources, names: ReadonlyMap<string, string>): SearchRow[] => {
+const propertyAndContractSearchRows = (
+  sources: RentalOverviewSources,
+  names: ReadonlyMap<string, string>,
+): SearchRow[] => {
   const rows: SearchRow[] = [];
   const property = sources.property.data;
   if (property !== undefined) {
@@ -606,14 +646,15 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
   }
   for (const contract of sources.agreements.data?.contracts ?? []) {
     const party = names.get(contract.counterpartyRef.resourceId);
+    const contractId = contract.contractRef.resourceId;
     rows.push(
       row(
         {
-          href: `/smlouvy?resourceId=${contract.contractRef.resourceId}`,
-          id: contract.contractRef.resourceId,
+          href: `/smlouvy?resourceId=${contractId}`,
+          id: contractId,
           kind: 'contract',
           source: 'agreements',
-          title: party ?? contract.subject ?? contract.contractRef.resourceId,
+          title: party ?? contract.subject ?? contractId,
           ...opt(
             'subtitle',
             [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.subject]
@@ -626,6 +667,11 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
       ),
     );
   }
+  return rows;
+};
+
+const occupancySearchRows = (sources: RentalOverviewSources, names: ReadonlyMap<string, string>): SearchRow[] => {
+  const rows: SearchRow[] = [];
   for (const entry of sources.occupancy.data?.occupancies ?? []) {
     rows.push(
       row(
@@ -649,6 +695,13 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
       ),
     );
   }
+  return rows;
+};
+
+/** Index of every record the person can read. Unreadable sources contribute nothing (and are reported). */
+export const buildSearchIndex = (sources: RentalOverviewSources, names: ReadonlyMap<string, string>): SearchRow[] => {
+  const rows = propertyAndContractSearchRows(sources, names);
+  rows.push(...occupancySearchRows(sources, names));
   for (const task of sources.work.data?.items ?? []) {
     rows.push(
       row(
@@ -731,12 +784,14 @@ export const personalGreetingName = (displayName: string | undefined): string | 
 };
 
 /** Names and references already visible to this actor, never a role/fixture directory or an authorization grant. */
-export const agendaPeople = (state: AgendaState | undefined, context: ModulePageContext | undefined) => {
+export const agendaPeople = (state: AgendaState | undefined, context?: ModulePageContext) => {
   const people = new Map<
     string,
     { readonly displayName: string; readonly principalId: string; readonly tenantId: string }
   >();
-  if (context === undefined) return [];
+  if (context === undefined) {
+    return [];
+  }
   for (const event of state?.events ?? []) {
     if (
       event.assignee?.tenantId === context.tenantId &&

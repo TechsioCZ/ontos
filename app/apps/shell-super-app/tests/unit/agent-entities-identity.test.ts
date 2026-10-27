@@ -1,9 +1,10 @@
-import { Effect, Layer, Option } from 'effect' with { rstest: 'importActual' };
+import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import { Effect, Layer, Option, Schema } from 'effect' with { rstest: 'importActual' };
 import { ActionRuntime, configureAgentAction, ContextAccess } from '@app/core-runtime';
 import type { ActionRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
-import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
+import { ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
 import { expect, it, rs } from 'effect-rstest';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -87,7 +88,7 @@ const principal: DemoAccountCaller['principal'] = {
   tenantId: '00000000-0000-4000-8000-000000000001',
 };
 const caller: DemoAccountCaller = { legalName: 'Company', principal };
-const create: ManageAgentEntityRequest = {
+const create = Schema.decodeUnknownSync(ManageAgentEntityRequestSchema)({
   description: null,
   displayName: 'Agent',
   modules: [{ access: 'write', moduleId: 'fixture.notes' }],
@@ -95,7 +96,7 @@ const create: ManageAgentEntityRequest = {
   operatorPrincipalIds: [principal.principalId],
   ownerPrincipalId: principal.principalId,
   writePolicy: 'approval',
-};
+});
 const transport = { correlationId: 'original-action-correlation', idempotencyKey: 'original-client-key' };
 const expectedId = derivedUuid(`${principal.tenantId}:${principal.legalEntityId}:${transport.idempotencyKey}:agent`);
 
@@ -188,7 +189,9 @@ const fixture = (selected: DemoAccountCaller, principalId: string) =>
           return {
             agents: [],
             members: [selected.principal.principalId],
-            people: [{ displayName: 'Person', principalId: selected.principal.principalId }],
+            people: [
+              { displayName: 'Person', principalId: AgentPrincipalIdSchema.make(selected.principal.principalId) },
+            ],
           };
         }),
       },

@@ -19,14 +19,21 @@ const isSafeReturnPath = (path: string, language: string): boolean =>
 export const signInReasons = ['account_forbidden', 'session_ended'] as const;
 export type SignInReason = (typeof signInReasons)[number];
 const SignInReasonSchema = Schema.Literals(signInReasons);
+const SignInLinkSearchSchema = Schema.Struct({
+  reason: Schema.optionalKey(SignInReasonSchema),
+  returnTo: Schema.optionalKey(Schema.String),
+});
 
 /** Login page URL that returns to `path` after sign-in, or the plain login page when `path` is not returnable. */
 export const signInHref = (language: string, path: string, reason?: SignInReason): string => {
   const login = `/${language}/login`;
-  const params = {
-    ...(isSafeReturnPath(path, language) ? { returnTo: path } : {}),
-    ...(reason === undefined ? {} : { reason }),
-  };
+  let params: typeof SignInLinkSearchSchema.Type = {};
+  if (isSafeReturnPath(path, language)) {
+    params = { ...params, returnTo: path };
+  }
+  if (reason !== undefined) {
+    params = { ...params, reason };
+  }
   return Object.keys(params).length === 0 ? login : `${login}?${UrlParams.toString(params)}`;
 };
 

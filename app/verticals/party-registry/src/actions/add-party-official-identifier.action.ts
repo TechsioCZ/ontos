@@ -47,6 +47,9 @@ import {
 import { createAddPartyOfficialIdentifierPartyRegistryOfficialIdentifierAddedV1OutboxMessage } from './add-party-official-identifier.party-registry-official-identifier-added-v1.outbox-message.ts';
 
 export type { AddPartyOfficialIdentifierPayload } from '../../shared/actions/add-party-official-identifier.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   OfficialIdentifierClaimConflict,
@@ -96,16 +99,16 @@ const handle = Effect.fn('AddPartyOfficialIdentifierAction.handle')(function* ad
       .update(`identifier-add-invariants:${result.officialIdentifierRef.resourceId}`)
       .digest('hex'),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.officialIdentifierRef.resourceId,
     targetResourceType: result.officialIdentifierRef.resourceType,
   });
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.official-identifier-added.v1',
     payloadJson: result,
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.officialIdentifierRef.resourceId,
     subjectResourceType: result.officialIdentifierRef.resourceType,
   });
@@ -132,12 +135,12 @@ export const addPartyOfficialIdentifierAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.add-party-official-identifier',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: AddPartyOfficialIdentifierPayloadSchema,
     policies: [],
     resultSchema: AddPartyOfficialIdentifierResultSchema,
@@ -215,13 +218,13 @@ export const addPartyOfficialIdentifierAction = defineAction(
         );
         return {
           officialIdentifierRef: PartyOfficialIdentifierRefSchema.make({
-            moduleId: 'party.registry',
+            moduleId: PARTY_REGISTRY_MODULE_ID,
             resourceId: record.officialIdentifierId,
             resourceType: 'party.registry.party-official-identifier',
             tenantId: scope.tenantId,
           }),
           partyRef: PartyRefSchema.make({
-            moduleId: 'party.registry',
+            moduleId: PARTY_REGISTRY_MODULE_ID,
             resourceId: record.partyId,
             resourceType: 'party.registry.party',
             tenantId: scope.tenantId,

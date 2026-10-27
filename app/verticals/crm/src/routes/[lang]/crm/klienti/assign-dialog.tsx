@@ -1,3 +1,6 @@
+import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect } from 'effect';
 // (Re)assign a client to a salesperson — Správce / Vedoucí only (demo.crm.assign, enforced by the reducer).
 // The reason is stored in the assignment history; past visits keep their author (C00-03).
 import { dialogCloseLabel } from '@app/admin-ui';
@@ -7,10 +10,9 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
-import { assignableSalespeople, salespersonName } from '../../../../crm/records.ts';
 
 const NONE = 'none';
 
@@ -25,7 +27,7 @@ export const AssignDialog = ({
   readonly client: Client;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  readonly run: (command: CrmCommand, success: string) => Promise<boolean>;
+  readonly run: (command: CrmCommandInput, success: string) => Effect.Effect<boolean>;
 }) => {
   const current = client.ownerSalespersonId ?? NONE;
   const [target, setTarget] = useState(current);
@@ -41,19 +43,27 @@ export const AssignDialog = ({
     if (unchanged || reasonMissing) {
       return;
     }
-    void run(
-      {
-        _tag: 'AssignClient',
-        clientId: client.id,
-        ...(target === NONE ? {} : { toSalespersonId: target }),
-        ...(reason.trim() === '' ? {} : { reason: reason.trim() }),
-      },
-      target === NONE ? 'Klient je nyní bez obchodníka' : `Klient přidělen: ${targetName}`,
-    ).then((ok) => {
-      if (ok) {
-        onClose();
-      }
-    });
+    const command: Extract<CrmCommandInput, { readonly _tag: 'AssignClient' }> = {
+      _tag: 'AssignClient',
+      clientId: client.id,
+    };
+    if (target !== NONE) {
+      Object.assign(command, { toSalespersonId: target });
+    }
+    if (reason.trim() !== '') {
+      Object.assign(command, { reason: reason.trim() });
+    }
+    browserRuntime.runFork(
+      run(command, target === NONE ? 'Klient je nyní bez obchodníka' : `Klient přidělen: ${targetName}`).pipe(
+        Effect.tap((ok) =>
+          Effect.sync(() => {
+            if (ok) {
+              onClose();
+            }
+          }),
+        ),
+      ),
+    );
   };
 
   return (

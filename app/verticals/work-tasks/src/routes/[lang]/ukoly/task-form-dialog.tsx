@@ -18,10 +18,16 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { DateTime, Option, Schema } from 'effect';
+import { DateTime, Match, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent, KeyboardEvent } from 'react';
-import { OpportunityIdSchema, PartyIdSchema, TaskPrioritySchema } from '../../../../shared/apis/records.ts';
+import {
+  ContextRefSchema,
+  OpportunityIdSchema,
+  PartyIdSchema,
+  ProjectIdSchema,
+  TaskPrioritySchema,
+} from '../../../../shared/apis/records.ts';
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import { ChangeHistory } from './change-history.tsx';
 import type {
@@ -42,13 +48,38 @@ import {
 } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
+const key = 'work-tasks.pages.records';
+
+const contextFallback = (type: string): string =>
+  Match.value(type).pipe(
+    Match.when('legal.agreements.contract', () => 'smlouva'),
+    Match.when('property.portfolio.unit', () => 'jednotka'),
+    Match.when('property.portfolio.asset', () => 'majetek'),
+    Match.orElse(() => 'nemovitost'),
+  );
+
+const contextLinkLabel = (ref: ContextRef): string => {
+  if (ref.moduleId === 'legal.agreements') {
+    return `${key}.openContract`;
+  }
+  if (ref.resourceType === 'property.portfolio.unit') {
+    return `${key}.openUnit`;
+  }
+  if (ref.resourceType === 'property.portfolio.asset') {
+    return `${key}.openAsset`;
+  }
+  return `${key}.openProperty`;
+};
+
 const emptyContextLabels: ReadonlyMap<string, string> = new Map();
 const emptyProjects: readonly WorkProject[] = [];
+const equivalentContextRefs = Schema.toEquivalence(Schema.Array(ContextRefSchema));
+const hoursFormatter = new Intl.NumberFormat('cs-CZ');
+const commentTimestampFormatter = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' });
 const NONE = 'none';
 const titleMaxLength = 200;
 // Select labels take the dialog's label size, the same size FormInput, Combobox and DatePicker labels use.
 const dialogLabelProps = { className: 'font-label text-label-md' };
-const key = 'work-tasks.pages.records';
 
 type TaskDueDate = NonNullable<Task['dueDate']>;
 type Priority = Task['priority'];
@@ -64,7 +95,7 @@ export interface TaskFormSubmission {
   readonly partyId: PartyId | undefined;
   readonly plannedHours: number | undefined;
   readonly priority: Priority;
-  readonly projectId: string | undefined;
+  readonly projectId: WorkProject['id'] | undefined;
   readonly title: string;
 }
 
@@ -209,7 +240,7 @@ const invalidProps = (message: string | undefined) =>
 const hasUnsavedInput = (values: FormValues, task: Task | undefined) => {
   const initial = initialValues(task);
   return (
-    JSON.stringify(values.contextRefs) !== JSON.stringify(initial.contextRefs) ||
+    !equivalentContextRefs(values.contextRefs, initial.contextRefs) ||
     values.assigneeId !== initial.assigneeId ||
     values.description !== initial.description ||
     values.plannedHours !== initial.plannedHours ||
@@ -397,27 +428,7 @@ const ReferencePickers = ({
   );
 };
 
-export const TaskFormDialog = ({
-  actorName,
-  assignmentAvailable,
-  busy,
-  contextLabels = emptyContextLabels,
-  customers,
-  customersLoading,
-  error,
-  lookupAccess,
-  onArchive,
-  onClose,
-  onComment,
-  onSubmit,
-  opportunities,
-  opportunitiesLoading,
-  principalNames,
-  principals,
-  projects = emptyProjects,
-  readOnly = false,
-  task,
-}: {
+interface TaskFormDialogProps {
   readonly actorName: (principalId: string, displayName?: string) => string;
   readonly assignmentAvailable: boolean;
   readonly busy: boolean;
@@ -440,11 +451,453 @@ export const TaskFormDialog = ({
   readonly readOnly?: boolean;
   /** `undefined` creates a task. Mount this component only while it is open. */
   readonly task: Task | undefined;
+}
+
+type TaskInputProps = Pick<
+  TaskFormDialogProps,
+  | 'assignmentAvailable'
+  | 'customers'
+  | 'customersLoading'
+  | 'lookupAccess'
+  | 'opportunities'
+  | 'opportunitiesLoading'
+  | 'principalNames'
+  | 'principals'
+  | 'task'
+> & {
+  readonly fieldsDisabled: boolean;
+  readonly isEdit: boolean;
+  readonly message: (field: FieldName) => string | undefined;
+  readonly onChange: (patch: Partial<FormValues>) => void;
+  readonly onFieldFocus: (event: FocusEvent<HTMLElement>) => void;
+  readonly onListOpenChange: (details: { readonly open: boolean }) => void;
+  readonly onSubmit: () => void;
+  readonly projects: readonly WorkProject[];
+  readonly readOnly: boolean;
+  readonly values: FormValues;
+};
+
+const TaskReferenceFields = ({
+  assignmentAvailable,
+  customers,
+  customersLoading,
+  fieldsDisabled,
+  isEdit,
+  lookupAccess,
+  message,
+  onChange,
+  onFieldFocus,
+  onListOpenChange,
+  opportunities,
+  opportunitiesLoading,
+  principalNames,
+  principals,
+  readOnly,
+  task,
+  values,
+}: TaskInputProps) => {
+  const { t } = useModernI18n();
+  const assigneeItems = [selectOption(t(`${key}.unassigned`), NONE), ...assignmentOptions(principals)];
+  const assigneeMessage = message('assigneeId');
+  return (
+    <>
+      {task?.partyId !== undefined && !readOnly && lookupAccess?.customers === 'allowed' && (
+        <a className="underline" href={`/cs/finance?partyId=${encodeURIComponent(task.partyId)}`}>
+          Faktury klienta
+        </a>
+      )}
+      {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
+          over Řešitel, Termín and Priorita. */}
+      <ReferencePickers
+        customers={customers}
+        customersLoading={customersLoading}
+        disabled={fieldsDisabled}
+        isEdit={isEdit}
+        lookupAccess={lookupAccess}
+        onChange={onChange}
+        opportunities={opportunities}
+        opportunitiesLoading={opportunitiesLoading}
+        opportunityId={values.opportunityId}
+        opportunityMessage={message('opportunityId')}
+        partyId={values.partyId}
+        partyMessage={message('partyId')}
+      />
+      {task !== undefined &&
+        (task.ownerPrincipalRef !== undefined ||
+          task.assignmentNeedsReassignment === true ||
+          task.assignmentWithoutLogin === true) && (
+          <p className="text-sm text-fg-secondary">
+            {assignmentLabel(
+              task.ownerPrincipalRef,
+              principalNames,
+              task.assignmentNeedsReassignment,
+              task.assignmentWithoutLogin,
+            )}
+          </p>
+        )}
+      {assignmentAvailable && (
+        <div className="flex flex-col gap-50" onFocus={onFieldFocus}>
+          <Select
+            disabled={fieldsDisabled}
+            items={assigneeItems}
+            label={t(`${key}.assignee`)}
+            labelProps={dialogLabelProps}
+            name="assignee"
+            onOpenChange={onListOpenChange}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              onChange({ assigneeId: next === undefined || next === NONE ? '' : next });
+            }}
+            placeholder={t(`${key}.unassigned`)}
+            size="md"
+            value={[values.assigneeId === '' ? NONE : values.assigneeId]}
+          />
+          {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
+        </div>
+      )}
+    </>
+  );
+};
+
+const TaskContextFields = ({ fieldsDisabled, lookupAccess, onChange, readOnly, task, values }: TaskInputProps) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      {!readOnly && (
+        <TaskContextPickers
+          disabled={fieldsDisabled}
+          lookupAccess={lookupAccess}
+          onChange={(contextRefs) => onChange({ contextRefs })}
+          refs={values.contextRefs}
+        />
+      )}
+      {task !== undefined && task.contextRefs.length > 0 && (
+        <div className="flex flex-col gap-100">
+          <h3 className="font-semibold">{t(`${key}.sourceRecords`)}</h3>
+          {task.contextRefs.map((ref) => (
+            <a className="underline" href={taskContextHref(ref)} key={ref.resourceId}>
+              {t(contextLinkLabel(ref))}
+            </a>
+          ))}
+        </div>
+      )}
+    </>
+  );
+};
+
+const TaskInputFields = (props: TaskInputProps) => {
+  const { fieldsDisabled, message, onChange, onFieldFocus, onListOpenChange, onSubmit, projects, values } = props;
+  const { t } = useModernI18n();
+  const priorityItems = (['LOW', 'NORMAL', 'HIGH'] as const).map((value) =>
+    selectOption(t(`${key}.priorities.${value}`), value),
+  );
+  const dueDateMessage = message('dueDate');
+  const titleMessage = message('title');
+  return (
+    <>
+      <FormInput
+        autoComplete="off"
+        disabled={fieldsDisabled}
+        // The length hint sits where the error would go; a field error replaces it, as invalidProps does.
+        helpText={titleMessage ?? t(`${key}.titleLength`, { length: values.title.length, max: titleMaxLength })}
+        id="task-title"
+        label={t(`${key}.taskTitle`)}
+        maxLength={titleMaxLength}
+        onChange={(event) => onChange({ title: event.target.value })}
+        // Enter submits, so an empty title gets the same field message as the button.
+        onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+          if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            onSubmit();
+          }
+        }}
+        required
+        validateStatus={titleMessage === undefined ? 'default' : 'error'}
+        value={values.title}
+      />
+      <FormTextarea
+        autoComplete="off"
+        disabled={fieldsDisabled}
+        id="task-description"
+        label={t(`${key}.description`)}
+        maxLength={2000}
+        onChange={(event) => onChange({ description: event.target.value })}
+        value={values.description}
+      />
+      <TaskReferenceFields {...props} />
+      <FormInput
+        disabled={fieldsDisabled}
+        helpText={t(`${key}.plannedHoursHint`)}
+        id="task-planned-hours"
+        label={t(`${key}.plannedHours`)}
+        max={10_000}
+        min={0}
+        onChange={(event) => onChange({ plannedHours: event.target.value })}
+        step={0.5}
+        type="number"
+        value={values.plannedHours}
+      />
+      <Select
+        disabled={fieldsDisabled}
+        items={[
+          selectOption(t(`${key}.noProject`), NONE),
+          ...projects.map((project) => selectOption(project.title, project.id)),
+        ]}
+        label={t(`${key}.project`)}
+        labelProps={dialogLabelProps}
+        onValueChange={({ value }) => onChange({ projectId: value[0] === NONE ? '' : (value[0] ?? '') })}
+        value={[values.projectId === '' ? NONE : values.projectId]}
+      />
+      <TaskContextFields {...props} />
+      {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
+      <div onFocus={onFieldFocus}>
+        <DatePicker.Root
+          defaultValue={toCalendarDate(values.dueDate)}
+          disabled={fieldsDisabled}
+          invalid={dueDateMessage !== undefined}
+          locale="cs-CZ"
+          // No min/max here: the picker would show a clamped year (2000) while keeping the typed 0026, so the
+          // field shows what was typed and the form explains the allowed years instead.
+          onOpenChange={onListOpenChange}
+          onValueChange={(details) => onChange({ dueDate: details.value === null ? undefined : details.valueAsString })}
+          shouldForceLeadingZeros
+          size="md"
+          translations={datePickerTranslations}
+        >
+          <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
+          <DatePicker.Control>
+            <DatePicker.Segments className={dateSegmentsClass} />
+            <DatePicker.IndicatorGroup>
+              {/* An edit can remove the due date too, so the clear control shows in both modes. */}
+              <DatePicker.ClearTrigger />
+              <DatePicker.Trigger />
+            </DatePicker.IndicatorGroup>
+          </DatePicker.Control>
+          <DatePicker.Positioner>
+            <DatePicker.Content className={datePickerContentClass}>
+              <DatePicker.Calendar />
+            </DatePicker.Content>
+          </DatePicker.Positioner>
+        </DatePicker.Root>
+        {dueDateMessage !== undefined && <StatusText status="error">{dueDateMessage}</StatusText>}
+      </div>
+      <div onFocus={onFieldFocus}>
+        <Select
+          disabled={fieldsDisabled}
+          items={priorityItems}
+          label={t(`${key}.priority`)}
+          labelProps={dialogLabelProps}
+          name="priority"
+          onOpenChange={onListOpenChange}
+          onValueChange={({ value }) => {
+            const [next] = value;
+            if (Schema.is(TaskPrioritySchema)(next)) {
+              onChange({ priority: next });
+            }
+          }}
+          placeholder={t('work-tasks.selectPlaceholder')}
+          size="md"
+          value={[values.priority]}
+        />
+      </div>
+    </>
+  );
+};
+
+type TaskSavedDetailsProps = Pick<
+  TaskFormDialogProps,
+  'actorName' | 'busy' | 'customers' | 'opportunities' | 'principalNames'
+> & {
+  readonly contextLabels: ReadonlyMap<string, string>;
+  readonly onComment: TaskFormDialogProps['onComment'];
+  readonly projects: readonly WorkProject[];
+  readonly readOnly: boolean;
+  readonly task: Task;
+};
+
+const TaskSavedDetails = ({
+  actorName,
+  busy,
+  contextLabels,
+  customers,
+  onComment,
+  opportunities,
+  principalNames,
+  projects,
+  readOnly,
+  task,
+}: TaskSavedDetailsProps) => {
+  const { t } = useModernI18n();
+  const [comment, setComment] = useState('');
+  const fieldLabels = {
+    contextRefs: 'Objekt a smlouva',
+    description: t(`${key}.description`),
+    dueDate: t(`${key}.dueDate`),
+    opportunityId: t(`${key}.opportunity`),
+    ownerPrincipalRef: t(`${key}.assignee`),
+    partyId: t(`${key}.party`),
+    plannedHours: t(`${key}.plannedHours`),
+    priority: t(`${key}.priority`),
+    projectId: t(`${key}.project`),
+    state: 'Stav',
+    title: t(`${key}.taskTitle`),
+  };
+  const historyValue = (field: string, value: string | undefined): string => {
+    if (value === undefined) {
+      return '—';
+    }
+    return Match.value(field).pipe(
+      Match.when('state', () => t(`${key}.states.${value}`)),
+      Match.when('priority', () => t(`${key}.priorities.${value}`)),
+      Match.when('dueDate', () => formatDueDate(value)),
+      Match.when('ownerPrincipalRef', () => principalNames.get(value) ?? 'Účet mimo seznam'),
+      Match.when(
+        'partyId',
+        () => customers.find((customer) => customer.partyId === value)?.displayName ?? 'zákazník bez přístupu',
+      ),
+      Match.when(
+        'opportunityId',
+        () => opportunities.find((opportunity) => opportunity.id === value)?.title ?? 'příležitost bez přístupu',
+      ),
+      Match.when('projectId', () => projects.find((project) => project.id === value)?.title ?? 'projekt'),
+      Match.when('plannedHours', () => `${hoursFormatter.format(Number(value))} h`),
+      Match.when('contextRefs', () =>
+        value
+          .split(',')
+          .map((entry) => {
+            const [type = '', id = ''] = entry.split(':');
+            return contextLabels.get(id) ?? contextFallback(type);
+          })
+          .join(', '),
+      ),
+      Match.when('description', () => (value.length > 140 ? `${value.slice(0, 140)}…` : value)),
+      Match.orElse(() => value),
+    );
+  };
+  return (
+    <>
+      <a className="text-sm underline" href={`/cs/provoz/dokumenty?taskId=${encodeURIComponent(task.ref.resourceId)}`}>
+        {t(`${key}.taskDocuments`)}
+      </a>
+      <section className="flex flex-col gap-100 border-t border-border-primary pt-200">
+        <h3 className="font-semibold">{t(`${key}.comments`)}</h3>
+        {(task.comments ?? []).length === 0 && <p className="text-sm text-fg-secondary">{t(`${key}.noComments`)}</p>}
+        {(task.comments ?? []).map((entry) => (
+          <div className={`${surfaceTileClassName} p-150`} key={entry.id}>
+            <p className="text-sm text-fg-secondary">
+              {entry.authorDisplayName ??
+                principalNames.get(principalKey(entry.authorPrincipalRef)) ??
+                t(`${key}.teamMember`)}{' '}
+              · {commentTimestampFormatter.format(DateTime.toDateUtc(entry.createdAt))}
+            </p>
+            <p className="whitespace-pre-wrap">{entry.text}</p>
+          </div>
+        ))}
+        {!readOnly && onComment !== undefined && (
+          <>
+            <FormTextarea
+              disabled={busy}
+              id="task-comment"
+              label={t(`${key}.newComment`)}
+              maxLength={2000}
+              onChange={(event) => setComment(event.target.value)}
+              value={comment}
+            />
+            <Button
+              disabled={busy || comment.trim() === ''}
+              onClick={() => {
+                onComment(comment.trim());
+                setComment('');
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              {t(`${key}.addComment`)}
+            </Button>
+          </>
+        )}
+      </section>
+      <ChangeHistory
+        actorName={actorName}
+        createdAt={task.createdAt}
+        entries={task.history}
+        fieldLabel={(field) => Object.entries(fieldLabels).find(([name]) => name === field)?.[1] ?? field}
+        formatValue={historyValue}
+        updatedAt={task.updatedAt}
+      />
+    </>
+  );
+};
+
+const TaskStatusNotices = ({
+  busy,
+  error,
+  locked,
+  onArchive,
+  readOnly,
+  task,
+}: {
+  readonly busy: boolean;
+  readonly error: TaskFormDialogProps['error'];
+  readonly locked: boolean;
+  readonly onArchive: TaskFormDialogProps['onArchive'];
+  readonly readOnly: boolean;
+  readonly task: Task | undefined;
 }) => {
+  const { t } = useModernI18n();
+  return (
+    <>
+      {error !== undefined && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      {locked && <StatusText status="warning">{t(readOnly ? `${key}.readOnly` : `${key}.closedTask`)}</StatusText>}
+      {task?.archivedAt !== undefined && <StatusText status="default">{t(`${key}.archivedNotice`)}</StatusText>}
+      {task !== undefined && isClosedTaskState(task.state) && onArchive !== undefined && (
+        <div className="flex flex-wrap items-center gap-150">
+          <Button
+            disabled={busy}
+            onClick={() => onArchive(task.archivedAt === undefined)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {t(task.archivedAt === undefined ? `${key}.archive` : `${key}.unarchive`)}
+          </Button>
+          {task.archivedAt === undefined && (
+            <span className="text-sm text-fg-secondary">{t(`${key}.archiveHint`)}</span>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
+
+export const TaskFormDialog = ({
+  actorName,
+  assignmentAvailable,
+  busy,
+  contextLabels = emptyContextLabels,
+  customers,
+  customersLoading,
+  error,
+  lookupAccess,
+  onArchive,
+  onClose,
+  onComment,
+  onSubmit,
+  opportunities,
+  opportunitiesLoading,
+  principalNames,
+  principals,
+  projects = emptyProjects,
+  readOnly = false,
+  task,
+}: TaskFormDialogProps) => {
   const { t } = useModernI18n();
   const [values, setValues] = useState(() => initialValues(task));
   const [submitted, setSubmitted] = useState(false);
-  const [comment, setComment] = useState('');
   const [submitAttempts, setSubmitAttempts] = useState(0);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   // A done or cancelled task cannot change, so its panel shows the values read-only.
@@ -527,86 +980,12 @@ export const TaskFormDialog = ({
       partyId: decoded.partyId,
       plannedHours: values.plannedHours === '' ? undefined : Number(values.plannedHours),
       priority: values.priority,
-      projectId: values.projectId === '' ? undefined : values.projectId,
+      projectId: Option.getOrUndefined(Schema.decodeOption(ProjectIdSchema)(values.projectId)),
       title: values.title.trim(),
     });
   };
 
-  const priorityItems = (['LOW', 'NORMAL', 'HIGH'] as const).map((value) =>
-    selectOption(t(`${key}.priorities.${value}`), value),
-  );
-  const assigneeItems = [selectOption(t(`${key}.unassigned`), NONE), ...assignmentOptions(principals)];
   const isEdit = task !== undefined;
-  const contextFallback = (type: string) =>
-    type === 'legal.agreements.contract'
-      ? 'smlouva'
-      : type === 'property.portfolio.unit'
-        ? 'jednotka'
-        : type === 'property.portfolio.asset'
-          ? 'majetek'
-          : 'nemovitost';
-  const fieldLabels: Record<string, string> = {
-    contextRefs: 'Objekt a smlouva',
-    description: t(`${key}.description`),
-    dueDate: t(`${key}.dueDate`),
-    opportunityId: t(`${key}.opportunity`),
-    ownerPrincipalRef: t(`${key}.assignee`),
-    partyId: t(`${key}.party`),
-    plannedHours: t(`${key}.plannedHours`),
-    priority: t(`${key}.priority`),
-    projectId: t(`${key}.project`),
-    state: 'Stav',
-    title: t(`${key}.taskTitle`),
-  };
-  const historyValue = (field: string, value: string | undefined): string => {
-    if (value === undefined) {
-      return '—';
-    }
-    switch (field) {
-      case 'state': {
-        return t(`${key}.states.${value}`);
-      }
-      case 'priority': {
-        return t(`${key}.priorities.${value}`);
-      }
-      case 'dueDate': {
-        return formatDueDate(value);
-      }
-      case 'ownerPrincipalRef': {
-        return principalNames.get(value) ?? 'Účet mimo seznam';
-      }
-      case 'partyId': {
-        return customers.find((customer) => customer.partyId === value)?.displayName ?? 'zákazník bez přístupu';
-      }
-      case 'opportunityId': {
-        return opportunities.find((opportunity) => opportunity.id === value)?.title ?? 'příležitost bez přístupu';
-      }
-      case 'projectId': {
-        return projects.find((project) => project.id === value)?.title ?? 'projekt';
-      }
-      case 'plannedHours': {
-        return `${new Intl.NumberFormat('cs-CZ').format(Number(value))} h`;
-      }
-      case 'contextRefs': {
-        return value
-          .split(',')
-          .map((entry) => {
-            const [type = '', id = ''] = entry.split(':');
-            return contextLabels.get(id) ?? contextFallback(type);
-          })
-          .join(', ');
-      }
-      case 'description': {
-        return value.length > 140 ? `${value.slice(0, 140)}…` : value;
-      }
-      default: {
-        return value;
-      }
-    }
-  };
-  const assigneeMessage = message('assigneeId');
-  const dueDateMessage = message('dueDate');
-  const titleMessage = message('title');
 
   return (
     <>
@@ -644,267 +1023,47 @@ export const TaskFormDialog = ({
         title={readOnly ? 'Detail úkolu' : t(isEdit ? `${key}.edit` : `${key}.create`)}
       >
         <div className="flex flex-col gap-200 py-200" ref={formRef}>
-          {error !== undefined && (
-            <StatusText showIcon status="error">
-              {error}
-            </StatusText>
-          )}
-          {locked && <StatusText status="warning">{t(readOnly ? `${key}.readOnly` : `${key}.closedTask`)}</StatusText>}
-          {task?.archivedAt !== undefined && <StatusText status="default">{t(`${key}.archivedNotice`)}</StatusText>}
-          {task !== undefined && isClosedTaskState(task.state) && onArchive !== undefined && (
-            <div className="flex flex-wrap items-center gap-150">
-              <Button
-                disabled={busy}
-                onClick={() => onArchive(task.archivedAt === undefined)}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {t(task.archivedAt === undefined ? `${key}.archive` : `${key}.unarchive`)}
-              </Button>
-              {task.archivedAt === undefined && (
-                <span className="text-sm text-fg-secondary">{t(`${key}.archiveHint`)}</span>
-              )}
-            </div>
-          )}
-          <FormInput
-            autoComplete="off"
-            disabled={fieldsDisabled}
-            // The length hint sits where the error would go; a field error replaces it, as invalidProps does.
-            helpText={titleMessage ?? t(`${key}.titleLength`, { length: values.title.length, max: titleMaxLength })}
-            id="task-title"
-            label={t(`${key}.taskTitle`)}
-            maxLength={titleMaxLength}
-            onChange={(event) => set({ title: event.target.value })}
-            // Enter submits, so an empty title gets the same field message as the button.
-            onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            required
-            validateStatus={titleMessage === undefined ? 'default' : 'error'}
-            value={values.title}
+          <TaskStatusNotices
+            busy={busy}
+            error={error}
+            locked={locked}
+            onArchive={onArchive}
+            readOnly={readOnly}
+            task={task}
           />
-          <FormTextarea
-            autoComplete="off"
-            disabled={fieldsDisabled}
-            id="task-description"
-            label={t(`${key}.description`)}
-            maxLength={2000}
-            onChange={(event) => set({ description: event.target.value })}
-            value={values.description}
-          />
-          {task?.partyId !== undefined && !readOnly && lookupAccess?.customers === 'allowed' && (
-            <a className="underline" href={`/cs/finance?partyId=${encodeURIComponent(task.partyId)}`}>
-              Faktury klienta
-            </a>
-          )}
-          {/* The pickers sit high in the panel so their long lists open downward. Placed last, the list flipped up
-              over Řešitel, Termín and Priorita. */}
-          <ReferencePickers
+          <TaskInputFields
+            assignmentAvailable={assignmentAvailable}
             customers={customers}
             customersLoading={customersLoading}
-            disabled={fieldsDisabled}
+            fieldsDisabled={fieldsDisabled}
             isEdit={isEdit}
             lookupAccess={lookupAccess}
+            message={message}
             onChange={set}
+            onFieldFocus={rememberListField}
+            onListOpenChange={onListOpenChange}
+            onSubmit={submit}
             opportunities={opportunities}
             opportunitiesLoading={opportunitiesLoading}
-            opportunityId={values.opportunityId}
-            opportunityMessage={message('opportunityId')}
-            partyId={values.partyId}
-            partyMessage={message('partyId')}
+            principalNames={principalNames}
+            principals={principals}
+            projects={projects}
+            readOnly={readOnly}
+            task={task}
+            values={values}
           />
-          {task !== undefined &&
-            (task.ownerPrincipalRef !== undefined ||
-              task.assignmentNeedsReassignment === true ||
-              task.assignmentWithoutLogin === true) && (
-              <p className="text-sm text-fg-secondary">
-                {assignmentLabel(
-                  task.ownerPrincipalRef,
-                  principalNames,
-                  task.assignmentNeedsReassignment,
-                  task.assignmentWithoutLogin,
-                )}
-              </p>
-            )}
-          {assignmentAvailable && (
-            <div className="flex flex-col gap-50" onFocus={rememberListField}>
-              <Select
-                disabled={fieldsDisabled}
-                items={assigneeItems}
-                label={t(`${key}.assignee`)}
-                labelProps={dialogLabelProps}
-                name="assignee"
-                onOpenChange={onListOpenChange}
-                onValueChange={({ value }) => {
-                  const [next] = value;
-                  set({ assigneeId: next === undefined || next === NONE ? '' : next });
-                }}
-                placeholder={t(`${key}.unassigned`)}
-                size="md"
-                value={[values.assigneeId === '' ? NONE : values.assigneeId]}
-              />
-              {assigneeMessage !== undefined && <StatusText status="error">{assigneeMessage}</StatusText>}
-            </div>
-          )}
-          <FormInput
-            disabled={fieldsDisabled}
-            helpText={t(`${key}.plannedHoursHint`)}
-            id="task-planned-hours"
-            label={t(`${key}.plannedHours`)}
-            max={10000}
-            min={0}
-            onChange={(event) => set({ plannedHours: event.target.value })}
-            step={0.5}
-            type="number"
-            value={values.plannedHours}
-          />
-          <Select
-            disabled={fieldsDisabled}
-            items={[
-              selectOption(t(`${key}.noProject`), NONE),
-              ...projects.map((project) => selectOption(project.title, project.id)),
-            ]}
-            label={t(`${key}.project`)}
-            labelProps={dialogLabelProps}
-            onValueChange={({ value }) => set({ projectId: value[0] === NONE ? '' : (value[0] ?? '') })}
-            value={[values.projectId === '' ? NONE : values.projectId]}
-          />
-          {!readOnly && (
-            <TaskContextPickers
-              disabled={fieldsDisabled}
-              lookupAccess={lookupAccess}
-              onChange={(contextRefs) => set({ contextRefs })}
-              refs={values.contextRefs}
-            />
-          )}
-          {task !== undefined && task.contextRefs.length > 0 && (
-            <div className="flex flex-col gap-100">
-              <h3 className="font-semibold">{t(`${key}.sourceRecords`)}</h3>
-              {task.contextRefs.map((ref) => (
-                <a className="underline" href={taskContextHref(ref)} key={ref.resourceId}>
-                  {t(
-                    `${key}.${ref.moduleId === 'legal.agreements' ? 'openContract' : ref.resourceType === 'property.portfolio.unit' ? 'openUnit' : ref.resourceType === 'property.portfolio.asset' ? 'openAsset' : 'openProperty'}`,
-                  )}
-                </a>
-              ))}
-            </div>
-          )}
-          {/* Termín takes the full width: beside Priorita its year segment was clipped. */}
-          <div onFocus={rememberListField}>
-            <DatePicker.Root
-              defaultValue={toCalendarDate(values.dueDate)}
-              disabled={fieldsDisabled}
-              invalid={dueDateMessage !== undefined}
-              locale="cs-CZ"
-              // No min/max here: the picker would show a clamped year (2000) while keeping the typed 0026, so the
-              // field shows what was typed and the form explains the allowed years instead.
-              onOpenChange={onListOpenChange}
-              onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
-              shouldForceLeadingZeros
-              size="md"
-              translations={datePickerTranslations}
-            >
-              <DatePicker.Label>{t(`${key}.dueDate`)}</DatePicker.Label>
-              <DatePicker.Control>
-                <DatePicker.Segments className={dateSegmentsClass} />
-                <DatePicker.IndicatorGroup>
-                  {/* An edit can remove the due date too, so the clear control shows in both modes. */}
-                  <DatePicker.ClearTrigger />
-                  <DatePicker.Trigger />
-                </DatePicker.IndicatorGroup>
-              </DatePicker.Control>
-              <DatePicker.Positioner>
-                <DatePicker.Content className={datePickerContentClass}>
-                  <DatePicker.Calendar />
-                </DatePicker.Content>
-              </DatePicker.Positioner>
-            </DatePicker.Root>
-            {dueDateMessage !== undefined && <StatusText status="error">{dueDateMessage}</StatusText>}
-          </div>
-          <div onFocus={rememberListField}>
-            <Select
-              disabled={fieldsDisabled}
-              items={priorityItems}
-              label={t(`${key}.priority`)}
-              labelProps={dialogLabelProps}
-              name="priority"
-              onOpenChange={onListOpenChange}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (Schema.is(TaskPrioritySchema)(next)) {
-                  set({ priority: next });
-                }
-              }}
-              placeholder={t('work-tasks.selectPlaceholder')}
-              size="md"
-              value={[values.priority]}
-            />
-          </div>
           {task !== undefined && (
-            <a
-              className="text-sm underline"
-              href={`/cs/provoz/dokumenty?taskId=${encodeURIComponent(task.ref.resourceId)}`}
-            >
-              {t(`${key}.taskDocuments`)}
-            </a>
-          )}
-          {task !== undefined && (
-            <section className="flex flex-col gap-100 border-t border-border-primary pt-200">
-              <h3 className="font-semibold">{t(`${key}.comments`)}</h3>
-              {(task.comments ?? []).length === 0 && (
-                <p className="text-sm text-fg-secondary">{t(`${key}.noComments`)}</p>
-              )}
-              {(task.comments ?? []).map((entry) => (
-                <div className={`${surfaceTileClassName} p-150`} key={entry.id}>
-                  <p className="text-sm text-fg-secondary">
-                    {entry.authorDisplayName ??
-                      principalNames.get(principalKey(entry.authorPrincipalRef)) ??
-                      t(`${key}.teamMember`)}{' '}
-                    ·{' '}
-                    {new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' }).format(
-                      DateTime.toDateUtc(entry.createdAt),
-                    )}
-                  </p>
-                  <p className="whitespace-pre-wrap">{entry.text}</p>
-                </div>
-              ))}
-              {!readOnly && onComment !== undefined && (
-                <>
-                  <FormTextarea
-                    disabled={busy}
-                    id="task-comment"
-                    label={t(`${key}.newComment`)}
-                    maxLength={2000}
-                    onChange={(event) => setComment(event.target.value)}
-                    value={comment}
-                  />
-                  <Button
-                    disabled={busy || comment.trim() === ''}
-                    onClick={() => {
-                      onComment(comment.trim());
-                      setComment('');
-                    }}
-                    size="sm"
-                    variant="secondary"
-                  >
-                    {t(`${key}.addComment`)}
-                  </Button>
-                </>
-              )}
-            </section>
-          )}
-          {task !== undefined && (
-            <ChangeHistory
+            <TaskSavedDetails
               actorName={actorName}
-              createdAt={task.createdAt}
-              entries={task.history}
-              fieldLabel={(field) => fieldLabels[field] ?? field}
-              formatValue={historyValue}
-              updatedAt={task.updatedAt}
+              busy={busy}
+              contextLabels={contextLabels}
+              customers={customers}
+              onComment={onComment}
+              opportunities={opportunities}
+              principalNames={principalNames}
+              projects={projects}
+              readOnly={readOnly}
+              task={task}
             />
           )}
         </div>

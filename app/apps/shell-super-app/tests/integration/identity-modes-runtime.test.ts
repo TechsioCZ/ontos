@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -106,7 +107,10 @@ it.live.each([
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
-    const authPersistence = yield* makeAuthDatabase(baseConfiguration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: baseConfiguration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(

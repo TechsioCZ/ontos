@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema, pipe } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
 
@@ -73,6 +73,9 @@ import {
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
+
+const isPrincipalLifecycleWorker = (worker: (typeof coreSystemOutboxWorkers)[number]) =>
+  worker.descriptor.workerKey === corePrincipalLifecycleSubscription.workerKey;
 
 const relationship = (
   type: string,
@@ -307,8 +310,9 @@ it.layer(Reactivity.layer, { excludeTestServices: true })('native agent profile 
               eq(auditEvents.outcome, 'succeeded'),
             ),
           );
-        const evidence = yield* Effect.forEach(events, (row) =>
-          Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(row.evidence),
+        const evidence = yield* pipe(
+          events,
+          Effect.forEach((row) => Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(row.evidence)),
         );
         expect(evidence).toHaveLength(2);
         const second = evidence.find((row) => row.revision === 2);
@@ -372,9 +376,7 @@ it.layer(Reactivity.layer, { excludeTestServices: true })('native agent profile 
                 compositionRevision: composition.revision,
                 maxDeliveries: 20,
                 now: clock.now,
-                registrations: coreSystemOutboxWorkers.filter(
-                  (worker) => worker.descriptor.workerKey === corePrincipalLifecycleSubscription.workerKey,
-                ),
+                registrations: coreSystemOutboxWorkers.filter(isPrincipalLifecycleWorker),
                 subscriptions: [corePrincipalLifecycleSubscription],
               })
               .pipe(Effect.provideService(ActionAuthorizationLifecycle, service));

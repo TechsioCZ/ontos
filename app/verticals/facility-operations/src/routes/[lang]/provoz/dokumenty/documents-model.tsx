@@ -5,12 +5,12 @@ import { foldSearchText } from '@app/admin-ui';
 import type { ContractStatus, DocumentRecord } from '../../../../../shared/domain/documents.ts';
 import { documentLinks } from '../../../../../shared/domain/documents.ts';
 
-const statusVariant: Readonly<Record<ContractStatus, 'outline' | 'success' | 'warning' | 'danger'>> = {
+const statusVariant = {
   active: 'success',
   draft: 'outline',
   expired: 'danger',
   terminated: 'warning',
-};
+} as const satisfies Readonly<Record<ContractStatus, 'outline' | 'success' | 'warning' | 'danger'>>;
 
 export const ContractStatusBadge = ({ status }: { readonly status: ContractStatus }) => {
   const { t } = useModernI18n();
@@ -21,14 +21,18 @@ export const ContractStatusBadge = ({ status }: { readonly status: ContractStatu
   );
 };
 
-export { contractRegister, isContractDocument, upcomingDeadlines } from '../../../../../shared/domain/documents-deadlines.ts';
+export {
+  contractRegister,
+  isContractDocument,
+  upcomingDeadlines,
+} from '../../../../../shared/domain/documents-deadlines.ts';
 export type { Deadline } from '../../../../../shared/domain/documents-deadlines.ts';
 
 export interface DocumentFilter {
-  readonly query: string;
   readonly category: string;
   /** `<kind>:<id>` of a linked record, or '' for all. */
   readonly link: string;
+  readonly query: string;
 }
 
 export const matchesFilter = (document: DocumentRecord, filter: DocumentFilter) => {

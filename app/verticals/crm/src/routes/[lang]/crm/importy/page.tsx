@@ -1,3 +1,6 @@
+import { pipe, DateTime, Schema } from 'effect';
+import { orderDateText, needsReview } from '../../../../../shared/domain/imports.ts';
+import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
 // AREA: imports — owned by the crm-imports lane. C03 Import objednávek: imported orders with their source state,
 // CSV import with preview, import history with per-row results, the documented template and sample files.
 import {
@@ -14,31 +17,39 @@ import {
   surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
+import type { ComponentProps } from 'react';
+
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
-import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
-import { needsReview } from '../../../../../shared/domain/imports.ts';
+
 import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../../../../shared/imports/csv.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
-import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import {
+  CrmScopeNote,
+  CrmStateGate,
+  useCrmRouteSelection,
+  crmPaginationProps,
+  crmTableTranslations,
+} from '../../../../crm/ui.tsx';
 import { ImportPanel, RowResults } from './import-panel.tsx';
 import type { ImportDraft } from './import-panel.tsx';
+
 import {
   RESIZE_LABEL,
   batchStatusMeta,
   clientLabel,
   downloadText,
-  formatAmount,
+  useFormatAmount,
   lastChange,
   orderDate,
   orderSearchText,
@@ -50,9 +61,14 @@ import {
 import { OrderDetailPanel, PairingStateBadge, RawStatusBadge } from './order-panels.tsx';
 
 const ALL = '__all__';
-type OrderFilter = 'all' | 'paired' | 'queue' | 'review';
+const OrderFilterSchema = Schema.Literals(['all', 'paired', 'queue', 'review']);
+type OrderFilter = typeof OrderFilterSchema.Type;
+const isOrderFilter = Schema.is(OrderFilterSchema);
 
-const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
+const orderColumns = (
+  records: RecordsResponse,
+  formatAmount: ReturnType<typeof useFormatAmount>,
+): ColumnDef<ImportedOrder>[] => [
   {
     accessorFn: (order) => orderTitle(order),
     cell: (info) => (
@@ -67,7 +83,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
   },
   { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 115 } },
   {
-    accessorFn: (order) => order.orderedAt ?? '',
+    accessorFn: (order) => orderDateText(order.orderedAt) ?? '',
     cell: (info) => orderDate(info.row.original),
     header: 'Datum',
     id: 'orderedAt',
@@ -110,7 +126,7 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     meta: { type: 'string', width: 130 },
   },
   {
-    accessorFn: (order) => order.lastEventAt ?? order.receivedAt,
+    accessorFn: (order) => DateTime.formatIso(order.lastEventAt ?? order.receivedAt),
     cell: (info) => <span className="text-sm">{lastChange(info.row.original)}</span>,
     header: 'Poslední změna',
     id: 'lastEventAt',
@@ -120,11 +136,14 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
     accessorFn: (order) => (needsReview(order) ? 1 : 0),
     cell: (info) => {
       const order = info.row.original;
-      return needsReview(order) ? (
-        <Badge size="sm" variant="warning">
-          Ke kontrole
-        </Badge>
-      ) : order.duplicateOf === undefined ? null : (
+      if (needsReview(order)) {
+        return (
+          <Badge size="sm" variant="warning">
+            Ke kontrole
+          </Badge>
+        );
+      }
+      return order.duplicateOf === undefined ? null : (
         <Badge size="sm" variant="outline">
           Duplicita
         </Badge>
@@ -138,18 +157,15 @@ const orderColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
 
 const batchColumns = (records: RecordsResponse): ColumnDef<ImportBatch>[] => [
   {
-    accessorKey: 'importedAt',
-    cell: (info) => formatDateTime(info.row.original.importedAt),
+    accessorFn: (batch) => DateTime.formatIso(batch.importedAt),
+    cell: (info) => pipe(info.row.original.importedAt, orderDateText, formatDateTime),
     header: 'Importováno',
+    id: 'importedAt',
     meta: { type: 'string', width: 150 },
   },
   {
     accessorKey: 'fileName',
-    cell: (info) => (
-      <span className="block truncate font-medium" title={info.row.original.fileName}>
-        {info.row.original.fileName}
-      </span>
-    ),
+    cell: (info) => <span className="block truncate font-medium">{info.row.original.fileName}</span>,
     header: 'Soubor',
     meta: { type: 'string', width: 300 },
   },
@@ -216,7 +232,7 @@ const BatchPanel = ({
           Zavřít
         </Button>
       }
-      description={`${formatDateTime(batch.importedAt)} · ${principalLabel(records, batch.importedBy)}`}
+      description={`${pipe(batch.importedAt, orderDateText, formatDateTime)} · ${principalLabel(records, batch.importedBy)}`}
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -248,7 +264,7 @@ const BatchPanel = ({
             { label: 'Vyžaduje kontrolu', value: formatNumber(batch.review ?? 0) },
             { label: 'Nové bez klienta', value: formatNumber(batch.unpaired ?? 0) },
             { label: 'Soubor dávky', value: batch.fileName },
-            { label: 'Importováno', value: formatDateTime(batch.importedAt) },
+            { label: 'Importováno', value: pipe(batch.importedAt, orderDateText, formatDateTime) },
           ]}
         />
         {batch.errors.length > 0 && (
@@ -395,24 +411,18 @@ const TemplateTab = ({
   </div>
 );
 
-const useQueryParam = (key: string) => {
-  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-  return useMemo(() => new URLSearchParams(searchStr).get(key) ?? undefined, [key, searchStr]);
-};
-
 const ImportsContent = () => {
+  const formatAmount = useFormatAmount();
   const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
-  const orderParam = useQueryParam('objednavka');
+  const [orderId, setOrderId] = useCrmRouteSelection('objednavka');
   const [tab, setTab] = useState('orders');
   const [filter, setFilter] = useState<OrderFilter>('all');
   const [source, setSource] = useState(ALL);
   const [search, setSearch] = useState('');
-  const [orderId, setOrderId] = useState<string | undefined>(orderParam);
   const [batchId, setBatchId] = useState<string | undefined>();
   const [importDraft, setImportDraft] = useState<ImportDraft | undefined>();
   const [importOpen, setImportOpen] = useState(false);
-  useEffect(() => setOrderId(orderParam), [orderParam]);
 
   const openImport = (draft?: ImportDraft) => {
     setImportDraft(draft);
@@ -428,22 +438,30 @@ const ImportsContent = () => {
         const queue = orders.filter((order) => order.pairing !== 'paired');
         const sources = sourcesOf(orders);
         const visible = orders
-          .filter((order) =>
-            filter === 'paired'
-              ? order.pairing === 'paired'
-              : filter === 'queue'
-                ? order.pairing !== 'paired'
-                : filter === 'review'
-                  ? needsReview(order)
-                  : true,
-          )
-          .filter((order) => source === ALL || order.source === source)
-          .filter((order) => matchesSearch(orderSearchText(records, order), search))
+          .filter((order) => {
+            let matchesFilter = true;
+            if (filter === 'paired') {
+              matchesFilter = order.pairing === 'paired';
+            } else if (filter === 'queue') {
+              matchesFilter = order.pairing !== 'paired';
+            } else if (filter === 'review') {
+              matchesFilter = needsReview(order);
+            }
+            return (
+              matchesFilter &&
+              (source === ALL || order.source === source) &&
+              matchesSearch(orderSearchText(records, order), search)
+            );
+          })
           .toSorted((left, right) =>
-            (right.lastEventAt ?? right.receivedAt).localeCompare(left.lastEventAt ?? left.receivedAt),
+            DateTime.Order(right.lastEventAt ?? right.receivedAt, left.lastEventAt ?? left.receivedAt),
           );
-        const lastBatch = batches[0];
+        const [lastBatch] = batches;
         const detail = orders.find((order) => order.id === orderId);
+        const initialImport: Pick<ComponentProps<typeof ImportPanel>, 'initial'> = {};
+        if (importDraft !== undefined) {
+          Object.assign(initialImport, { initial: importDraft });
+        }
         return (
           <>
             <PageHeader
@@ -482,7 +500,9 @@ const ImportsContent = () => {
               {lead && (
                 <StatCard
                   hint={
-                    lastBatch === undefined ? 'zatím žádný import' : `Poslední ${formatDateTime(lastBatch.importedAt)}`
+                    lastBatch === undefined
+                      ? 'zatím žádný import'
+                      : `Poslední ${pipe(lastBatch.importedAt, orderDateText, formatDateTime)}`
                   }
                   label="Importní dávky"
                   value={formatNumber(batches.length)}
@@ -536,7 +556,12 @@ const ImportsContent = () => {
                       ]}
                       label="Zobrazit"
                       name="orderFilter"
-                      onValueChange={(details) => setFilter((details.value[0] ?? 'all') as OrderFilter)}
+                      onValueChange={(details) => {
+                        const selected = details.value[0] ?? 'all';
+                        if (isOrderFilter(selected)) {
+                          setFilter(selected);
+                        }
+                      }}
                       size="sm"
                       value={[filter]}
                     />
@@ -575,7 +600,7 @@ const ImportsContent = () => {
                   </SectionCard>
                 ) : (
                   <DataTable
-                    columns={orderColumns(records)}
+                    columns={orderColumns(records, formatAmount)}
                     data={visible}
                     enablePagination
                     enableSorting
@@ -638,7 +663,7 @@ const ImportsContent = () => {
             {canImport && importOpen && (
               <ImportPanel
                 busy={busy}
-                {...(importDraft === undefined ? {} : { initial: importDraft })}
+                {...initialImport}
                 onClose={() => setImportOpen(false)}
                 onImported={(id) => {
                   setImportOpen(false);

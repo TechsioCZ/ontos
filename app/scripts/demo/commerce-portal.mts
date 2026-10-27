@@ -382,7 +382,7 @@ const adminDatabaseConfigLive = Layer.effect(
     Effect.flatMap((url) => parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) })),
   ),
 );
-const servicesLive = Layer.mergeAll(
+export const commercePortalServicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
   ActiveApplicationCompositionConfigLive.pipe(
@@ -391,19 +391,14 @@ const servicesLive = Layer.mergeAll(
   ),
 );
 
-/** Provision the native service principals, grants and managed keys without reading or writing dotenv. */
+/** Provision within the host's services and ConfigProvider; this operation never reads or writes dotenv. */
 export const provisionCommercePortal = (
   environment: Readonly<Record<string, string>>,
   existing: ReadonlyMap<string, string> = new Map(),
-) =>
-  main(existing, environment).pipe(
-    Effect.provide(servicesLive),
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
-    Effect.scoped,
-  );
+) => main(existing, environment).pipe(Effect.scoped);
 
 const persistConfiguration = (envFileOption: string | undefined) =>
-  Effect.gen(function* persistConfiguration() {
+  Effect.gen(function* persistOperatorConfiguration() {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const root = yield* path.fromFileUrl(workspaceRoot);
@@ -421,7 +416,7 @@ const command = Command.make(
   ({ envFile }) =>
     Layer.build(
       Layer.effectDiscard(persistConfiguration(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(
-        Layer.provide(servicesLive),
+        Layer.provide(commercePortalServicesLive),
       ),
     ).pipe(
       Effect.scoped,

@@ -47,8 +47,6 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   });
 });
 
-export const applyCommandActionApiLive = HttpApiBuilder.group(
-  financeBillingApi,
-  'applyCommandAction',
-  (handlers) => handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
+export const applyCommandActionApiLive = HttpApiBuilder.group(financeBillingApi, 'applyCommandAction', (handlers) =>
+  handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
 ).pipe(Layer.provide(applyCommandActionSchemaErrorLive));

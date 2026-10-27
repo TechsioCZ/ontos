@@ -22,8 +22,4 @@ export const backendFederationContract = {
 } as const;
 
 export { default, default as runtime } from './index.ts';
-export {
-  crmApi as api,
-  crmApiContract as contract,
-  crmOperationContexts as operationContexts,
-} from '../shared/api.ts';
+export { crmApi as api, crmApiContract as contract, crmOperationContexts as operationContexts } from '../shared/api.ts';

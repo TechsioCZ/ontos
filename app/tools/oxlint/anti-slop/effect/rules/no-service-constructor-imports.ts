@@ -8,7 +8,10 @@ import type { ESTree } from "@oxlint/plugins";
 
 import { provesDataFactoryImport } from "./data-factory-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
-import { isInsideNativeServiceFactoryCallback } from "../../../effect-native/shared/native-service-factory.ts";
+import {
+  isInsideNativeServiceFactoryCallback,
+  isNativeServiceFactoryArgument,
+} from "../../../effect-native/shared/native-service-factory.ts";
 
 const SERVICE_CONSTRUCTOR_NAME = /^make[A-Z]/u;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
@@ -621,11 +624,14 @@ export const noServiceConstructorImportsRule = defineRule({
           const importedName = getImportedName(specifier);
           if (!SERVICE_CONSTRUCTOR_NAME.test(importedName)) continue;
           const variable = lookupVariable(context, specifier.local);
+          // Core invokes this exact argument with its transaction/scope/revision. Passing the
+          // factory is not eager construction; every other reference must still prove its owner.
           if (variable !== null && variable.references.length > 0 && variable.references.every((reference) => {
             const identifier = reference.identifier;
             const parent = identifier.parent;
-            return parent?.type === "CallExpression" && parent.callee === identifier &&
-              isInsideNativeServiceFactoryCallback(context, identifier);
+            return isNativeServiceFactoryArgument(context, identifier) ||
+              (parent?.type === "CallExpression" && parent.callee === identifier &&
+                isInsideNativeServiceFactoryCallback(context, identifier));
           })) continue;
           // DTO and native migration-metadata construction share the binding-aware proof;
           // Drizzle imports alone never exempt a constructor or one of its runtime operations.

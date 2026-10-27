@@ -17,6 +17,7 @@
  * Environment (defaults = local Hanák demo): ONTOS_DEMO_SEED_URL (http://localhost:3020), ONTOS_DEMO_SEED_TENANT_ID,
  * ONTOS_DEMO_SEED_LEGAL_ENTITY_ID, ONTOS_DEMO_SEED_EMAIL (spravce@hanak.demo), ONTOS_DEMO_SEED_PASSWORD.
  */
+import { EntityIdSchema, IcoSchema, RegistryCompanyIdSchema } from '../shared/domain/common.ts';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   CounterpartyCustomerOnboardPayloadSchema,
@@ -30,49 +31,49 @@ import {
   ResolveDuplicateCandidateCreatePayloadSchema,
   ResolveDuplicateCandidateCreateResultSchema,
 } from '@app/party-registry/api';
-import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
-import { connectSeedClient, DemoSeedError } from '../../../scripts/demo/seed-client.mts';
-import type { SeedClient } from '../../../scripts/demo/seed-client.mts';
+import { connectSeedClient } from '../../../scripts/demo/seed-client.mts';
+import type { SeedClient, DemoSeedError } from '../../../scripts/demo/seed-client.mts';
 
 const partyAudience = 'party-registry';
 const crmAudience = 'crm';
 const source = 'demo.crm.party-link-v1';
 
-const CrmClient = Schema.Struct({
+const CrmClientSchema = Schema.Struct({
   address: Schema.optionalKey(Schema.String),
   email: Schema.optionalKey(Schema.String),
-  id: Schema.String,
+  id: EntityIdSchema,
   kind: Schema.Literals(['organization', 'person']),
   name: Schema.String,
-  partyRef: Schema.optionalKey(Schema.Struct({ counterpartyId: Schema.optionalKey(Schema.String) })),
+  partyRef: Schema.optionalKey(Schema.Struct({ counterpartyId: Schema.optionalKey(EntityIdSchema) })),
   phone: Schema.optionalKey(Schema.String),
   regNo: Schema.optionalKey(Schema.String),
   status: Schema.String,
   vatNo: Schema.optionalKey(Schema.String),
 });
-type CrmClient = typeof CrmClient.Type;
+type CrmClient = typeof CrmClientSchema.Type;
 const CrmRecords = Schema.Struct({
   revision: Schema.Int,
-  state: Schema.Struct({ clients: Schema.Struct({ items: Schema.Array(CrmClient) }) }),
+  state: Schema.Struct({ clients: Schema.Struct({ items: Schema.Array(CrmClientSchema) }) }),
 });
 const Empty = Schema.Struct({});
-const Customer = Schema.Struct({
-  companyId: Schema.NullOr(Schema.String),
-  counterpartyId: Schema.String,
-  displayName: Schema.NullOr(Schema.String),
-  partyId: Schema.String,
+const CustomerSchema = Schema.Struct({
+  companyId: Schema.OptionFromNullOr(RegistryCompanyIdSchema),
+  counterpartyId: EntityIdSchema,
+  displayName: Schema.OptionFromNullOr(Schema.String),
+  partyId: EntityIdSchema,
   status: Schema.String,
 });
-type Customer = typeof Customer.Type;
-const Customers = Schema.Struct({ items: Schema.Array(Customer) });
+type Customer = typeof CustomerSchema.Type;
+const Customers = Schema.Struct({ items: Schema.Array(CustomerSchema) });
 const ListRequest = Schema.Struct({ includeArchived: Schema.Boolean, limit: Schema.Int });
-const PartyLink = Schema.Struct({ counterpartyId: Schema.String, partyId: Schema.String });
+const PartyLink = Schema.Struct({ counterpartyId: EntityIdSchema, partyId: EntityIdSchema });
 const LinkCommand = Schema.Struct({
   _tag: Schema.Literal('LinkClientParty'),
-  clientId: Schema.String,
+  clientId: EntityIdSchema,
   partyRef: PartyLink,
 });
 
@@ -84,36 +85,24 @@ const fold = (value: string) =>
     .trim();
 
 /** Czech IČO checksum (the registry rejects an invalid one). */
-export const validIco = (value: string | undefined): value is string => {
-  if (value === undefined || !/^\d{8}$/u.test(value)) {
-    return false;
-  }
-  const digits = [...value].map(Number);
-  const sum = digits.slice(0, 7).reduce((total, digit, index) => total + digit * (8 - index), 0);
-  const check = (11 - (sum % 11)) % 10;
-  return check === digits[7];
-};
+export const validIco = Schema.is(IcoSchema);
 
 export const addressContactPoint = (address: string | undefined) => {
-  if (address === undefined) {
-    return undefined;
-  }
-  const parts = address.split(',').map((part) => part.trim());
+  const parts = (address ?? '').split(',').map((part) => part.trim());
   const last = parts.at(-1) ?? '';
-  const zip = /^(\d{3}\s?\d{2})\s+(.+)$/u.exec(last);
-  if (zip === null || parts.length < 2) {
-    return undefined;
-  }
-  return {
-    address: {
-      addressLine1: parts.slice(0, -1).join(', '),
-      city: zip[2] ?? '',
-      countryCode: 'CZ',
-      postalCode: zip[1] ?? '',
-    },
-    purposes: [{ preferred: true, purpose: 'CORRESPONDENCE' as const }],
-    type: 'ADDRESS' as const,
-  };
+  const zip = /^(?<postalCode>\d{3}\s?\d{2})\s+(?<city>.+)$/u.exec(last);
+  return zip === null || parts.length < 2
+    ? undefined
+    : {
+        address: {
+          addressLine1: parts.slice(0, -1).join(', '),
+          city: zip[2] ?? '',
+          countryCode: 'CZ',
+          postalCode: zip[1] ?? '',
+        },
+        purposes: [{ preferred: true, purpose: 'CORRESPONDENCE' as const }],
+        type: 'ADDRESS' as const,
+      };
 };
 
 /** The registry customer this client already is: same IČO, or (no IČO) the same exact name. */
@@ -122,120 +111,121 @@ export const matchingCustomer = (client: CrmClient, customers: readonly Customer
     (customer) =>
       customer.status === 'ACTIVE' &&
       (client.regNo === undefined
-        ? customer.displayName !== null && fold(customer.displayName) === fold(client.name)
-        : customer.companyId === client.regNo),
+        ? Option.isSome(customer.displayName) && fold(customer.displayName.value) === fold(client.name)
+        : Option.isSome(customer.companyId) && customer.companyId.value === client.regNo),
   );
 
-const createCustomer = (
+const createCustomer = Effect.fn('Crm.linkRegistry.createCustomer')(function* createCustomerInRegistry(
   client: SeedClient & { readonly target: { readonly tenantId: string } },
   crmClient: CrmClient,
   now: string,
-) =>
-  Effect.gen(function* createCustomerInRegistry() {
-    const evidenceReference = `demo:crm-party-link:${crmClient.id}`.slice(0, 200);
-    const organization = crmClient.kind === 'organization';
-    const created = yield* client.call(
-      partyAudience,
-      '/party-registry/actions/create-party',
-      CreatePartyPayloadJsonSchema,
-      {
-        candidate: {
-          displayName: crmClient.name,
-          evidenceRefs: [evidenceReference],
-          officialIdentifiers: [
-            ...(organization && validIco(crmClient.regNo)
-              ? [{ identifierType: 'ICO' as const, value: crmClient.regNo, verification: 'UNVERIFIED' as const }]
-              : []),
-            ...(organization && crmClient.vatNo !== undefined && /^CZ\d{8,10}$/u.test(crmClient.vatNo)
-              ? [{ identifierType: 'CZ_DIC' as const, value: crmClient.vatNo, verification: 'UNVERIFIED' as const }]
-              : []),
-          ],
-          partyType: organization ? 'ORGANIZATION' : 'PERSON',
-          provenance: { method: 'MANUAL_ENTRY', source },
-          subjectEvidence: [
-            {
-              basis: 'DIRECT_INTERACTION',
-              evidenceRef: evidenceReference,
-              kind: 'ACTOR_ATTESTATION',
-              observedSubject: organization ? 'ORGANIZATION' : 'PERSON',
-              statement: `Demo CRM client ${crmClient.name} entered by the company administrator`,
-              subjectKey: evidenceReference,
-            },
-          ],
-          validFrom: now,
-        },
-      },
-      Schema.toEncoded(CreatePartyResultSchema),
-      true,
-    );
-    let partyId: string;
-    if (created.outcome === 'AMBIGUOUS') {
-      const detail = yield* client.call(
-        partyAudience,
-        '/reads/duplicate-candidate-detail',
-        Schema.toEncoded(DuplicateCandidateDetailRequestSchema),
-        { caseRef: created.caseRef },
-        Schema.toEncoded(DuplicateCandidateDetailResponseSchema),
-      );
-      if (detail.candidateParties.length !== 0 || detail.lifecycleState !== 'OPEN') {
-        return { needsReview: true as const };
-      }
-      const resolved = yield* client.call(
-        partyAudience,
-        '/party-registry/actions/resolve-duplicate-candidate-create',
-        Schema.toEncoded(ResolveDuplicateCandidateCreatePayloadSchema),
-        {
-          caseRef: created.caseRef,
-          expectedRevision: detail.revision,
-          reason: 'CRM client explicitly linked by the administrator; the case lists no candidate Party.',
-        },
-        Schema.toEncoded(ResolveDuplicateCandidateCreateResultSchema),
-        true,
-      );
-      if (resolved.partyRef === null) {
-        return { needsReview: true as const };
-      }
-      partyId = resolved.partyRef.resourceId;
-    } else {
-      partyId = created.partyRef.resourceId;
-    }
-    const partyRef = {
-      moduleId: 'party.registry' as const,
-      resourceId: partyId,
-      resourceType: 'party.registry.party' as const,
-      tenantId: client.target.tenantId,
-    };
-    const onboarded = yield* client.call(
-      partyAudience,
-      '/party-registry/actions/counterparty-customer-onboard',
-      Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
-      {
-        counterpartyProvenance: {
-          evidenceReference,
-          method: 'APPROVED_COMMERCIAL_RELATIONSHIP',
-          reason: 'Existing CRM client of the company',
-          source,
-        },
-        customerEvidence: {
-          evidenceReference,
-          method: 'APPROVED_PURCHASING_RELATIONSHIP',
-          reason: 'Existing CRM client of the company',
-          source,
-        },
-        partyRef,
+) {
+  const evidenceReference = `demo:crm-party-link:${crmClient.id}`.slice(0, 200);
+  const organization = crmClient.kind === 'organization';
+  const created = yield* client.call(
+    partyAudience,
+    '/party-registry/actions/create-party',
+    CreatePartyPayloadJsonSchema,
+    {
+      candidate: {
+        displayName: crmClient.name,
+        evidenceRefs: [evidenceReference],
+        officialIdentifiers: [
+          ...(organization && validIco(crmClient.regNo)
+            ? [{ identifierType: 'ICO' as const, value: crmClient.regNo, verification: 'UNVERIFIED' as const }]
+            : []),
+          ...(organization && crmClient.vatNo !== undefined && /^CZ\d{8,10}$/u.test(crmClient.vatNo)
+            ? [{ identifierType: 'CZ_DIC' as const, value: crmClient.vatNo, verification: 'UNVERIFIED' as const }]
+            : []),
+        ],
+        partyType: organization ? 'ORGANIZATION' : 'PERSON',
+        provenance: { method: 'MANUAL_ENTRY', source },
+        subjectEvidence: [
+          {
+            basis: 'DIRECT_INTERACTION',
+            evidenceRef: evidenceReference,
+            kind: 'ACTOR_ATTESTATION',
+            observedSubject: organization ? 'ORGANIZATION' : 'PERSON',
+            statement: `Demo CRM client ${crmClient.name} entered by the company administrator`,
+            subjectKey: evidenceReference,
+          },
+        ],
         validFrom: now,
       },
-      Schema.toEncoded(CounterpartyCustomerOnboardResultSchema),
+    },
+    Schema.toEncoded(CreatePartyResultSchema),
+    true,
+  );
+  let partyId: string;
+  if (created.outcome === 'AMBIGUOUS') {
+    const detail = yield* client.call(
+      partyAudience,
+      '/reads/duplicate-candidate-detail',
+      Schema.toEncoded(DuplicateCandidateDetailRequestSchema),
+      { caseRef: created.caseRef },
+      Schema.toEncoded(DuplicateCandidateDetailResponseSchema),
+    );
+    if (detail.candidateParties.length !== 0 || detail.lifecycleState !== 'OPEN') {
+      return { needsReview: true as const };
+    }
+    const resolved = yield* client.call(
+      partyAudience,
+      '/party-registry/actions/resolve-duplicate-candidate-create',
+      Schema.toEncoded(ResolveDuplicateCandidateCreatePayloadSchema),
+      {
+        caseRef: created.caseRef,
+        expectedRevision: detail.revision,
+        reason: 'CRM client explicitly linked by the administrator; the case lists no candidate Party.',
+      },
+      Schema.toEncoded(ResolveDuplicateCandidateCreateResultSchema),
       true,
     );
-    const address = addressContactPoint(crmClient.address);
-    const contactPoints = [
-      ...(crmClient.email === undefined ? [] : [{ preferred: true, type: 'EMAIL' as const, value: crmClient.email }]),
-      ...(crmClient.phone === undefined ? [] : [{ preferred: true, type: 'PHONE' as const, value: crmClient.phone }]),
-      ...(address === undefined ? [] : [address]),
-    ];
-    for (const contactPoint of contactPoints) {
-      yield* client
+    if (resolved.partyRef === null) {
+      return { needsReview: true as const };
+    }
+    partyId = resolved.partyRef.resourceId;
+  } else {
+    partyId = created.partyRef.resourceId;
+  }
+  const partyRef = {
+    moduleId: 'party.registry' as const,
+    resourceId: partyId,
+    resourceType: 'party.registry.party' as const,
+    tenantId: client.target.tenantId,
+  };
+  const onboarded = yield* client.call(
+    partyAudience,
+    '/party-registry/actions/counterparty-customer-onboard',
+    Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
+    {
+      counterpartyProvenance: {
+        evidenceReference,
+        method: 'APPROVED_COMMERCIAL_RELATIONSHIP',
+        reason: 'Existing CRM client of the company',
+        source,
+      },
+      customerEvidence: {
+        evidenceReference,
+        method: 'APPROVED_PURCHASING_RELATIONSHIP',
+        reason: 'Existing CRM client of the company',
+        source,
+      },
+      partyRef,
+      validFrom: now,
+    },
+    Schema.toEncoded(CounterpartyCustomerOnboardResultSchema),
+    true,
+  );
+  const address = addressContactPoint(crmClient.address);
+  const contactPoints = [
+    ...(crmClient.email === undefined ? [] : [{ preferred: true, type: 'EMAIL' as const, value: crmClient.email }]),
+    ...(crmClient.phone === undefined ? [] : [{ preferred: true, type: 'PHONE' as const, value: crmClient.phone }]),
+    ...(address === undefined ? [] : [address]),
+  ];
+  yield* Effect.forEach(
+    contactPoints,
+    (contactPoint) =>
+      client
         .call(
           partyAudience,
           '/party-registry/actions/add-contact-point',
@@ -261,10 +251,11 @@ const createCustomer = (
           Effect.catchTag('DemoSeedError', (error) =>
             Console.log(`  ! ${crmClient.name}: kontaktní bod ${contactPoint.type} nepřijat (${error.reason})`),
           ),
-        );
-    }
-    return { link: { counterpartyId: onboarded.counterpartyRef.resourceId, partyId }, needsReview: false as const };
-  });
+        ),
+    { concurrency: 1, discard: true },
+  );
+  return { link: { counterpartyId: onboarded.counterpartyRef.resourceId, partyId }, needsReview: false as const };
+});
 
 const configuration = Config.all({
   email: Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('spravce@hanak.demo')),
@@ -276,52 +267,67 @@ const configuration = Config.all({
   tenantId: Config.String('ONTOS_DEMO_SEED_TENANT_ID').pipe(Config.withDefault('70000000-0000-4000-8000-000000000020')),
 });
 
-const main = (apply: boolean) =>
-  Effect.gen(function* linkParties() {
-    const { email, password, ...target } = yield* configuration;
-    const seed = yield* connectSeedClient(target, email, password);
-    const client = { ...seed, target };
-    const records = yield* client.call(crmAudience, '/reads/records', Empty, {}, CrmRecords);
-    const customers = (yield* client.call(
-      partyAudience,
-      '/reads/customer-list',
-      ListRequest,
-      { includeArchived: true, limit: 500 },
-      Customers,
-    )).items;
-    const linked = new Set(
-      records.state.clients.items.flatMap((entry) =>
-        entry.partyRef?.counterpartyId === undefined ? [] : [entry.partyRef.counterpartyId],
-      ),
-    );
-    // Archived clients stay as they are (history only); restoring one offers the link on its card.
-    const pending = records.state.clients.items.filter(
-      (entry) => entry.status === 'active' && entry.partyRef?.counterpartyId === undefined,
-    );
-    yield* Console.log(
-      `CRM ${target.legalEntityId}: ${records.state.clients.items.length} klientů, ${pending.length} aktivních bez PartyRef; registr: ${customers.length} zákazníků.`,
-    );
-    let revision = records.revision;
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const summary = { created: 0, linked: 0, reused: 0, review: 0 };
-    for (const crmClient of pending) {
+const main = Effect.fn('Crm.linkRegistry.main')(function* linkParties(apply: boolean) {
+  const { email, password, ...target } = yield* configuration;
+  const seed = yield* connectSeedClient(target, email, password);
+  const client = { ...seed, target };
+  const records = yield* client.call(crmAudience, '/reads/records', Empty, {}, CrmRecords);
+  const customers = (yield* client.call(
+    partyAudience,
+    '/reads/customer-list',
+    ListRequest,
+    { includeArchived: true, limit: 500 },
+    Customers,
+  )).items;
+  const linked = new Set(
+    records.state.clients.items.flatMap((entry) =>
+      entry.partyRef?.counterpartyId === undefined ? [] : [entry.partyRef.counterpartyId],
+    ),
+  );
+  // Archived clients stay as they are (history only); restoring one offers the link on its card.
+  const pending = records.state.clients.items.filter(
+    (entry) => entry.status === 'active' && entry.partyRef?.counterpartyId === undefined,
+  );
+  yield* Console.log(
+    `CRM ${target.legalEntityId}: ${records.state.clients.items.length} klientů, ${pending.length} aktivních bez PartyRef; registr: ${customers.length} zákazníků.`,
+  );
+  const now = DateTime.formatIso(yield* DateTime.now);
+  interface Progress {
+    readonly linked: ReadonlySet<string>;
+    readonly revision: number;
+    readonly summary: {
+      readonly created: number;
+      readonly linked: number;
+      readonly reused: number;
+      readonly review: number;
+    };
+  }
+  const progress = yield* Effect.reduce(
+    pending,
+    (): Progress => ({ linked, revision: records.revision, summary: { created: 0, linked: 0, reused: 0, review: 0 } }),
+    Effect.fn('Crm.linkRegistry.client')(function* linkRegistryClient(prior: Progress, crmClient: CrmClient) {
       const existing = matchingCustomer(
         crmClient,
-        customers.filter((customer) => !linked.has(customer.counterpartyId)),
+        customers.filter((customer) => !prior.linked.has(customer.counterpartyId)),
       );
-      yield* Console.log(
-        `- ${crmClient.name}${crmClient.regNo === undefined ? '' : ` (IČO ${crmClient.regNo}${validIco(crmClient.regNo) ? '' : ', neplatný kontrolní součet'})`}: ${existing === undefined ? 'založit v registru' : `existující zákazník ${existing.displayName ?? ''}`}`,
-      );
+      const checksumNote = validIco(crmClient.regNo) ? '' : ', neplatný kontrolní součet';
+      const companyNote = crmClient.regNo === undefined ? '' : ` (IČO ${crmClient.regNo}${checksumNote})`;
+      const customerNote =
+        existing === undefined
+          ? 'založit v registru'
+          : `existující zákazník ${Option.getOrElse(existing.displayName, () => '')}`;
+      yield* Console.log(`- ${crmClient.name}${companyNote}: ${customerNote}`);
       if (!apply) {
-        continue;
+        return prior;
       }
-      let link: { readonly counterpartyId: string; readonly partyId: string };
+      let link: typeof PartyLink.Encoded;
+      const summary = { ...prior.summary };
       if (existing === undefined) {
         const created = yield* createCustomer(client, crmClient, now);
         if (created.needsReview) {
           summary.review += 1;
           yield* Console.log('  ! shoda s jinou Party čeká na rozhodnutí v Zákaznících; nepropojeno');
-          continue;
+          return { ...prior, summary };
         }
         summary.created += 1;
         ({ link } = created);
@@ -331,29 +337,30 @@ const main = (apply: boolean) =>
       }
       const result = yield* client.apply(
         crmAudience,
-        LinkCommand,
+        Schema.toEncoded(LinkCommand),
         { _tag: 'LinkClientParty', clientId: crmClient.id, partyRef: link },
-        revision,
+        prior.revision,
         [partyAudience],
       );
-      revision = result.revision;
-      linked.add(link.counterpartyId);
+      const nextLinked = new Set([...prior.linked, link.counterpartyId]);
       summary.linked += 1;
-    }
-    yield* Console.log(
-      apply
-        ? `Hotovo: propojeno ${summary.linked} (nově založeno ${summary.created}, existující ${summary.reused}), k rozhodnutí ${summary.review}.`
-        : 'Jen náhled (bez --apply se nic nezapsalo).',
-    );
-  });
+      return { linked: nextLinked, revision: result.revision, summary };
+    }),
+  );
+  const { summary } = progress;
+  yield* Console.log(
+    apply
+      ? `Hotovo: propojeno ${summary.linked} (nově založeno ${summary.created}, existující ${summary.reused}), k rozhodnutí ${summary.review}.`
+      : 'Jen náhled (bez --apply se nic nezapsalo).',
+  );
+});
+
+const logSeedError = (error: DemoSeedError) => Console.error(`Chyba: ${error.reason}`);
 
 const command = Command.make(
   'link-party-registry',
   { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
-  ({ apply }) =>
-    main(apply).pipe(
-      Effect.catchTag('DemoSeedError', (error: DemoSeedError) => Console.error(`Chyba: ${error.reason}`)),
-    ),
+  ({ apply }) => main(apply).pipe(Effect.catchTag('DemoSeedError', logSeedError)),
 );
 
 const mainLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(

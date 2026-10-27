@@ -39,6 +39,7 @@ import { setSupportedCurrenciesAction } from './src/actions/set-supported-curren
 import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
 // </generated-module-manifest-imports>
 import { pricingMcpContribution } from './shared/mcp/contribution.ts';
+
 export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
     defaultState: 'inactive',

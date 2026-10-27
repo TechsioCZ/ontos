@@ -1,5 +1,5 @@
 import { DateTime, Option, Schema } from 'effect';
-import type { InvoiceLine, VatRate } from '../apis/records.ts';
+import type { InvoiceLine, InvoiceLineSchema, VatRate } from '../apis/records.ts';
 import { computeInvoiceTotals } from './invoice-totals.ts';
 
 /** Payment terms offered on a new invoice, in calendar days after the issue date. */
@@ -15,21 +15,22 @@ export type DraftLineKind = typeof DraftLineKindSchema.Type;
  * One line on the create form. A product line carries a snapshot of the catalog product taken when it is
  * picked; a free line is typed by hand. Both end up as the same stored `InvoiceLine`.
  */
-export type DraftDiscountKind = 'AMOUNT' | 'NONE' | 'PERCENT';
+export const DraftDiscountKindSchema = Schema.Literals(['AMOUNT', 'NONE', 'PERCENT']);
+export type DraftDiscountKind = typeof DraftDiscountKindSchema.Type;
 
 export interface DraftLine {
   readonly description: string;
-  /** Approved discount: NONE, a whole percentage, or a fixed amount in CZK; the reason is required with it. */
-  readonly discountKind?: DraftDiscountKind;
   /** Raw typed discount text, so a half-typed "10," stays visible. */
   readonly discountInput?: string;
+  /** Approved discount: NONE, a whole percentage, or a fixed amount in CZK; the reason is required with it. */
+  readonly discountKind?: DraftDiscountKind;
   readonly discountReason?: string;
   /** PERCENT: whole percent 1–100; AMOUNT: CZK (two decimals). */
   readonly discountValue?: number;
-  /** Price-list item the free line was filled from. */
-  readonly priceListItemId?: string | null;
   readonly key: string;
   readonly kind: DraftLineKind;
+  /** Price-list item the free line was filled from. */
+  readonly priceListItemId?: string | null;
   readonly productId: string | null;
   readonly quantity: number;
   readonly unitPriceMinor: number;
@@ -90,18 +91,23 @@ export const draftLineDiscount = (line: DraftLine): InvoiceLine['discount'] => {
   return { kind, reason, value: kind === 'PERCENT' ? Math.round(value) : czkToMinor(value) };
 };
 
-export const toInvoiceLine = (line: DraftLine): InvoiceLine => {
+type EncodedInvoiceLine = typeof InvoiceLineSchema.Encoded;
+type MutableInvoiceLine = { -readonly [Key in keyof EncodedInvoiceLine]: EncodedInvoiceLine[Key] };
+
+export const toInvoiceLine = (line: DraftLine): EncodedInvoiceLine => {
   const discount = draftLineDiscount(line);
-  const invoiceLine: InvoiceLine = {
+  const invoiceLine: MutableInvoiceLine = {
     description: line.description.trim(),
-    ...(discount === undefined ? {} : { discount }),
-    ...(line.kind === 'free' && line.priceListItemId !== undefined && line.priceListItemId !== null
-      ? { priceListItemId: line.priceListItemId }
-      : {}),
     quantity: line.quantity,
     unitPriceMinor: line.unitPriceMinor,
     vatRate: line.vatRate,
   };
+  if (discount !== undefined) {
+    invoiceLine.discount = discount;
+  }
+  if (line.kind === 'free' && line.priceListItemId !== undefined && line.priceListItemId !== null) {
+    invoiceLine.priceListItemId = line.priceListItemId;
+  }
   if (line.kind === 'product' && line.productId !== null) {
     return { ...invoiceLine, productId: line.productId };
   }

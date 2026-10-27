@@ -2,10 +2,10 @@ import { DetailList, SectionCard, formatDate } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, type PlatformError } from 'effect';
-import { useState } from 'react';
+import { Effect, Option, PlatformError } from 'effect';
+import { useRef, useState } from 'react';
+import type { SubmitEvent } from 'react';
 import type {
-  Occupancy,
   OccupancyHistoryEntry,
   PreparedNotice,
   RegistrationOccupant,
@@ -17,18 +17,24 @@ import { smsSegments, templatesFor } from './notice-templates.ts';
 import type { NoticeChannel, NoticeContext } from './notice-templates.ts';
 import { formatInstant, principalLabel } from './principal-labels.ts';
 import './tenant-dossier.css';
+import { timelineEntries } from './timeline-entries.ts';
+import {
+  NoticeTemplateKeySchema,
+  PreparedNoticeIdSchema,
+  RegistrationSheetIdSchema,
+} from '../../../../shared/apis/records.ts';
 
 const historyLabels = {
-  CREATED: 'Založení',
-  UPDATED: 'Úprava',
-  RENT_TERMS: 'Nájemné',
-  CONFIRMED: 'Potvrzení',
   ACTIVATED: 'Zahájení',
-  COMPLETED: 'Ukončení',
   CANCELLED: 'Zrušení',
+  COMPLETED: 'Ukončení',
+  CONFIRMED: 'Potvrzení',
+  CREATED: 'Založení',
   IMPORTED: 'Import',
-  REGISTRATION_SHEET: 'Evidenční list',
   NOTICE: 'Oznámení',
+  REGISTRATION_SHEET: 'Evidenční list',
+  RENT_TERMS: 'Nájemné',
+  UPDATED: 'Úprava',
 } as const;
 
 /** S10-02: every state change of the stay or lease with its author and time; cancelled records keep it. */
@@ -40,8 +46,8 @@ export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly O
           Záznam vznikl před zavedením historie změn. Další změny stavu se zde zobrazí s autorem a časem.
         </p>
       ) : (
-        entries.toReversed().map((entry, index) => (
-          <article className="sp-tenant-event" key={`${entry.occurredAt}:${index}`}>
+        timelineEntries(entries).map(({ entry, key }) => (
+          <article className="sp-tenant-event" key={key}>
             <div className="sp-tenant-heading">
               <Badge size="sm" variant={entry.kind === 'CANCELLED' ? 'danger' : 'outline'}>
                 {historyLabels[entry.kind]}
@@ -60,11 +66,21 @@ export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly O
 
 const purposes = ['Rekreace', 'Služební cesta', 'Bydlení – nájem', 'Podnikání – nájem', 'Jiný účel'] as const;
 const emptyOccupant = (name = ''): RegistrationOccupant => ({
-  name,
-  birthDate: null,
-  nationality: 'Česká republika',
-  identityDocument: '',
   address: '',
+  birthDate: Option.none(),
+  identityDocument: '',
+  name,
+  nationality: 'Česká republika',
+});
+interface OccupantDraft extends RegistrationOccupant {
+  readonly localKey: string;
+}
+const storedOccupant = (occupant: OccupantDraft): RegistrationOccupant => ({
+  address: occupant.address.trim(),
+  birthDate: occupant.birthDate,
+  identityDocument: occupant.identityDocument.trim(),
+  name: occupant.name.trim(),
+  nationality: occupant.nationality.trim(),
 });
 const escapeHtml = (value: string) =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -74,9 +90,10 @@ const printSheet = (sheet: RegistrationSheet, context: NoticeContext) => {
   const rows = sheet.occupants
     .map(
       (occupant, index) =>
-        `<tr><td>${index + 1}</td><td>${escapeHtml(occupant.name)}</td><td>${
-          occupant.birthDate === null ? '' : escapeHtml(formatDate(occupant.birthDate))
-        }</td><td>${escapeHtml(occupant.nationality)}</td><td>${escapeHtml(occupant.identityDocument)}</td><td>${escapeHtml(
+        `<tr><td>${index + 1}</td><td>${escapeHtml(occupant.name)}</td><td>${Option.match(occupant.birthDate, {
+          onNone: () => '',
+          onSome: (date) => escapeHtml(formatDate(date)),
+        })}</td><td>${escapeHtml(occupant.nationality)}</td><td>${escapeHtml(occupant.identityDocument)}</td><td>${escapeHtml(
           occupant.address,
         )}</td></tr>`,
     )
@@ -88,7 +105,7 @@ const printSheet = (sheet: RegistrationSheet, context: NoticeContext) => {
   )}</h1><dl><dt>Ubytovatel</dt><dd>Siampark</dd><dt>Jednotka</dt><dd>${escapeHtml(
     [context.unitLabel, context.propertyLabel, context.propertyAddress].filter((part) => part !== '').join(', '),
   )}</dd><dt>Rezervace / nájem</dt><dd>${escapeHtml(context.partyName)}</dd><dt>Období</dt><dd>${escapeHtml(
-    `${formatDate(sheet.startDate)} – ${day(sheet.endDate)}`,
+    `${formatDate(sheet.startDate)} – ${day(Option.getOrNull(sheet.endDate))}`,
   )}</dd><dt>Účel pobytu</dt><dd>${escapeHtml(sheet.purpose)}</dd><dt>Založil</dt><dd>${escapeHtml(
     `${principalLabel(sheet.authorPrincipalId)}, ${formatInstant(sheet.createdAt)}`,
   )}</dd></dl><table><thead><tr><th>#</th><th>Jméno a příjmení</th><th>Datum narození</th><th>Státní občanství</th><th>Číslo dokladu</th><th>Adresa trvalého pobytu</th></tr></thead><tbody>${rows}</tbody></table>${
@@ -123,13 +140,22 @@ export const RegistrationSheetCard = ({
   const initialCount = Math.min(Math.max(record.peopleCount ?? 1, 1), 20);
   const [open, setOpen] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [occupants, setOccupants] = useState<readonly RegistrationOccupant[]>(() =>
-    Array.from({ length: initialCount }, (_, index) =>
-      emptyOccupant(index === 0 && record.kind === 'SHORT_STAY' ? context.partyName : ''),
-    ),
+  const [occupants, setOccupants] = useState<readonly OccupantDraft[]>(() =>
+    Array.from({ length: initialCount }, (_, index) => ({
+      ...emptyOccupant(index === 0 && record.kind === 'SHORT_STAY' ? context.partyName : ''),
+      localKey: `initial-${index}`,
+    })),
   );
+  const occupantSequence = useRef(initialCount);
+  const addOccupant = () => {
+    const localKey = `added-${occupantSequence.current}`;
+    occupantSequence.current += 1;
+    setOccupants((previous) => [...previous, { ...emptyOccupant(), localKey }]);
+  };
   const [purpose, setPurpose] = useState<string>(() => {
-    if (record.kind === 'SHORT_STAY') return 'Rekreace';
+    if (record.kind === 'SHORT_STAY') {
+      return 'Rekreace';
+    }
     return context.unitLabel.startsWith('Byt') ? 'Bydlení – nájem' : 'Podnikání – nájem';
   });
   const [note, setNote] = useState('');
@@ -138,12 +164,39 @@ export const RegistrationSheetCard = ({
     submitted && occupant.name.trim().length === 0 ? 'Vyplňte jméno a příjmení ubytovaného.' : undefined;
   const update = (index: number, field: keyof RegistrationOccupant, value: string) =>
     setOccupants(
-      occupants.map((occupant, position) =>
-        position === index
-          ? { ...occupant, [field]: field === 'birthDate' ? (value === '' ? null : value) : value }
-          : occupant,
+      occupants.map((occupant, position) => {
+        if (position !== index) {
+          return occupant;
+        }
+        if (field === 'birthDate') {
+          return { ...occupant, birthDate: value === '' ? Option.none() : Option.some(value) };
+        }
+        return { ...occupant, [field]: value };
+      }),
+    );
+  const handleSheetSubmit = (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitted(true);
+    if (occupants.some((occupant) => occupant.name.trim().length === 0)) {
+      return;
+    }
+    void browserRuntime.runPromiseExit(
+      newId.pipe(
+        Effect.tap((sheetId) =>
+          Effect.sync(() =>
+            onCommand({
+              _tag: 'CreateRegistrationSheet',
+              note: note.trim(),
+              occupancyRef: record.occupancyRef,
+              occupants: occupants.map(storedOccupant),
+              purpose,
+              sheetId: RegistrationSheetIdSchema.make(sheetId),
+            }),
+          ),
+        ),
       ),
     );
+  };
   return (
     <div className="sp-tenant">
       <SectionCard
@@ -179,7 +232,7 @@ export const RegistrationSheetCard = ({
             </div>
             <DetailList
               items={[
-                { label: 'Období', value: `${formatDate(sheet.startDate)} – ${day(sheet.endDate)}` },
+                { label: 'Období', value: `${formatDate(sheet.startDate)} – ${day(Option.getOrNull(sheet.endDate))}` },
                 { label: 'Účel pobytu', value: sheet.purpose || 'Neuvedeno' },
                 { label: 'Ubytovaní', value: sheet.occupants.map((occupant) => occupant.name).join(', ') },
                 {
@@ -191,37 +244,7 @@ export const RegistrationSheetCard = ({
           </article>
         ))}
         {open && canWrite && (
-          <form
-            className="sp-tenant-stack"
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSubmitted(true);
-              if (occupants.some((occupant) => occupant.name.trim().length === 0)) return;
-              void browserRuntime.runPromiseExit(
-                newId.pipe(
-                  Effect.tap((sheetId) =>
-                    Effect.sync(() =>
-                      onCommand({
-                        _tag: 'CreateRegistrationSheet',
-                        occupancyRef: record.occupancyRef,
-                        sheetId,
-                        occupants: occupants.map((occupant) => ({
-                          ...occupant,
-                          name: occupant.name.trim(),
-                          nationality: occupant.nationality.trim(),
-                          identityDocument: occupant.identityDocument.trim(),
-                          address: occupant.address.trim(),
-                        })),
-                        purpose,
-                        note: note.trim(),
-                      }),
-                    ),
-                  ),
-                ),
-              );
-            }}
-          >
+          <form className="sp-tenant-stack" noValidate onSubmit={handleSheetSubmit}>
             <DetailList
               items={[
                 { label: 'Jednotka', value: [context.unitLabel, context.propertyLabel].join(', ') },
@@ -233,7 +256,7 @@ export const RegistrationSheetCard = ({
               ]}
             />
             {occupants.map((occupant, index) => (
-              <fieldset className="sp-tenant-contact" key={index}>
+              <fieldset className="sp-tenant-contact" key={occupant.localKey}>
                 <legend>Ubytovaná osoba {index + 1}</legend>
                 <div className="sp-tenant-fields">
                   <FormInput
@@ -244,13 +267,13 @@ export const RegistrationSheetCard = ({
                     value={occupant.name}
                     {...(nameError(occupant) === undefined
                       ? {}
-                      : { validateStatus: 'error' as const, helpText: nameError(occupant) })}
+                      : { helpText: nameError(occupant), validateStatus: 'error' as const })}
                   />
                   <FormInput
                     label="Datum narození"
                     onChange={(event) => update(index, 'birthDate', event.target.value)}
                     type="date"
-                    value={occupant.birthDate ?? ''}
+                    value={Option.getOrElse(occupant.birthDate, () => '')}
                   />
                   <FormInput
                     label="Státní občanství"
@@ -286,7 +309,7 @@ export const RegistrationSheetCard = ({
             <div className="sp-tenant-actions">
               <Button
                 disabled={occupants.length >= 20}
-                onClick={() => setOccupants([...occupants, emptyOccupant()])}
+                onClick={() => addOccupant()}
                 size="sm"
                 theme="outlined"
                 variant="secondary"
@@ -334,6 +357,253 @@ const channelLabels = { EMAIL: 'E-mail', SMS: 'SMS' } as const;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const phonePattern = /^\+?[0-9 ]{9,20}$/u;
 
+const noticeRecipientError = (recipient: string, channel: NoticeChannel): string | undefined => {
+  if (recipient.trim() === '' || (channel === 'EMAIL' ? emailPattern : phonePattern).test(recipient.trim())) {
+    return undefined;
+  }
+  return channel === 'EMAIL'
+    ? 'Zadejte e-mail ve tvaru jmeno@firma.cz.'
+    : 'Zadejte telefon, například +420 777 123 456.';
+};
+const noticeBodyError = (body: string, channel: NoticeChannel): string | undefined => {
+  if (body.trim().length === 0) {
+    return 'Text oznámení nesmí být prázdný.';
+  }
+  if (channel === 'SMS' && body.length > 480) {
+    return 'Text SMS může mít nejvýše 480 znaků.';
+  }
+  return undefined;
+};
+const useNoticeEditor = (context: NoticeContext, defaultEmail: string, defaultPhone: string) => {
+  const templates = templatesFor(context.record.kind);
+  const [templateKey, setTemplateKey] = useState(templates[0]?.key ?? '');
+  const [channel, setChannel] = useState<NoticeChannel>('EMAIL');
+  const template = templates.find((item) => item.key === templateKey) ?? templates[0];
+  // The text stays derived from the template until the user edits it, so names, contacts and the unit that
+  // finish loading after the card mounted replace the interim placeholder instead of freezing it in the draft.
+  const rendered = template?.render(context, channel) ?? { body: '', subject: '' };
+  const [draft, setDraft] = useState<{ readonly body: string; readonly subject: string }>();
+  const subject = draft?.subject ?? rendered.subject;
+  const body = draft?.body ?? rendered.body;
+  const [recipientDraft, setRecipientDraft] = useState<string>();
+  const recipient = recipientDraft ?? (channel === 'SMS' ? defaultPhone : defaultEmail);
+  const setSubject = (value: string) => setDraft({ body, subject: value });
+  const setBody = (value: string) => setDraft({ body: value, subject });
+  const [copied, setCopied] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const applyTemplate = (key: string, nextChannel: NoticeChannel) => {
+    setTemplateKey(key);
+    setChannel(nextChannel);
+    setDraft(undefined);
+    setCopied(false);
+  };
+  const recipientError = noticeRecipientError(recipient, channel);
+  const bodyError = noticeBodyError(body, channel);
+  const mailto = `mailto:${encodeURIComponent(recipient.trim())}?subject=${encodeURIComponent(
+    subject,
+  )}&body=${encodeURIComponent(body)}`;
+  return {
+    applyTemplate,
+    body,
+    bodyError,
+    channel,
+    copied,
+    mailto,
+    recipient,
+    recipientError,
+    setBody,
+    setCopied,
+    setRecipientDraft,
+    setSubject,
+    setSubmitted,
+    subject,
+    submitted,
+    template,
+    templates,
+  };
+};
+const NoticeEditor = ({
+  busy,
+  context,
+  editor,
+  newId,
+  onCommand,
+}: {
+  readonly busy: boolean;
+  readonly context: NoticeContext;
+  readonly editor: ReturnType<typeof useNoticeEditor>;
+  readonly newId: Effect.Effect<string, PlatformError.PlatformError>;
+  readonly onCommand: (command: OccupancyCommand) => void;
+}) => {
+  const {
+    applyTemplate,
+    body,
+    bodyError,
+    channel,
+    copied,
+    mailto,
+    recipient,
+    recipientError,
+    setBody,
+    setCopied,
+    setRecipientDraft,
+    setSubject,
+    setSubmitted,
+    subject,
+    submitted,
+    template,
+    templates,
+  } = editor;
+  if (template === undefined) {
+    return null;
+  }
+  return (
+    <form
+      className="sp-tenant-stack"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitted(true);
+        if (recipientError !== undefined || bodyError !== undefined) {
+          return;
+        }
+        void browserRuntime.runPromiseExit(
+          newId.pipe(
+            Effect.tap((noticeId) =>
+              Effect.sync(() =>
+                onCommand({
+                  _tag: 'PrepareNotice',
+                  body: body.trim(),
+                  channel,
+                  noticeId: PreparedNoticeIdSchema.make(noticeId),
+                  occupancyRef: context.record.occupancyRef,
+                  recipient: recipient.trim(),
+                  subject: channel === 'SMS' ? '' : subject.trim(),
+                  templateKey: NoticeTemplateKeySchema.make(template.key),
+                }),
+              ),
+            ),
+          ),
+        );
+      }}
+    >
+      <div className="sp-tenant-fields">
+        <label className="sp-tenant-stack">
+          <span>Šablona</span>
+          <select
+            aria-label="Šablona oznámení"
+            onChange={(event) => applyTemplate(event.target.value, channel)}
+            value={template.key}
+          >
+            {templates.map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sp-tenant-stack">
+          <span>Kanál</span>
+          <select
+            aria-label="Kanál oznámení"
+            onChange={(event) => {
+              const next = event.target.value === 'SMS' ? 'SMS' : 'EMAIL';
+              setRecipientDraft(undefined);
+              applyTemplate(template.key, next);
+            }}
+            value={channel}
+          >
+            <option value="EMAIL">E-mail</option>
+            <option value="SMS">SMS</option>
+          </select>
+        </label>
+      </div>
+      <FormInput
+        label={channel === 'EMAIL' ? 'E-mail příjemce' : 'Telefon příjemce'}
+        onChange={(event) => setRecipientDraft(event.target.value)}
+        type={channel === 'EMAIL' ? 'email' : 'tel'}
+        value={recipient}
+        {...(submitted && recipientError !== undefined
+          ? { helpText: recipientError, validateStatus: 'error' as const }
+          : {})}
+      />
+      {channel === 'EMAIL' && (
+        <FormInput
+          label="Předmět"
+          maxLength={200}
+          onChange={(event) => setSubject(event.target.value)}
+          value={subject}
+        />
+      )}
+      <label className="sp-tenant-stack">
+        <span>Text oznámení</span>
+        <textarea
+          aria-invalid={submitted && bodyError !== undefined}
+          aria-label="Text oznámení"
+          className="sp-notice-text"
+          maxLength={2000}
+          onChange={(event) => {
+            setBody(event.target.value);
+            setCopied(false);
+          }}
+          rows={channel === 'SMS' ? 4 : 10}
+          value={body}
+        />
+      </label>
+      <span className="sp-tenant-muted">
+        {channel === 'SMS'
+          ? `${body.length} znaků · ${smsSegments(body)} SMS (text s diakritikou se počítá po 70 znacích)`
+          : `${body.length} znaků`}
+      </span>
+      {submitted && bodyError !== undefined && (
+        <p className="sp-tenant-muted" role="alert">
+          {bodyError}
+        </p>
+      )}
+      <div className="sp-tenant-actions">
+        <Button disabled={busy} size="sm" type="submit" variant="primary">
+          Uložit připravený text
+        </Button>
+        <Button
+          onClick={() => {
+            const { clipboard } = globalThis.navigator;
+            if (clipboard === undefined) {
+              return;
+            }
+            const copiedText = channel === 'EMAIL' ? `${subject}\n\n${body}` : body;
+            void browserRuntime.runPromiseExit(
+              Effect.tryPromise({
+                catch: (cause) =>
+                  PlatformError.systemError({ _tag: 'Unknown', cause, method: 'writeText', module: 'Clipboard' }),
+                try: clipboard.writeText.bind(clipboard, copiedText),
+              }).pipe(
+                Effect.timeoutOrElse({
+                  duration: '5 seconds',
+                  orElse: () =>
+                    Effect.fail(
+                      PlatformError.systemError({ _tag: 'TimedOut', method: 'writeText', module: 'Clipboard' }),
+                    ),
+                }),
+                Effect.tap(() => Effect.sync(() => setCopied(true))),
+              ),
+            );
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          {copied ? 'Zkopírováno' : 'Zkopírovat text'}
+        </Button>
+        {channel === 'EMAIL' && (
+          <a className="sp-tenant-muted" href={mailto}>
+            Otevřít v poštovním programu →
+          </a>
+        )}
+      </div>
+    </form>
+  );
+};
+
 /** S10: notification text prepared from a template and stored with the record. Nothing is sent from here. */
 export const NoticeCard = ({
   busy,
@@ -354,43 +624,8 @@ export const NoticeCard = ({
   readonly notices: readonly PreparedNotice[];
   readonly onCommand: (command: OccupancyCommand) => void;
 }) => {
-  const templates = templatesFor(context.record.kind);
-  const [templateKey, setTemplateKey] = useState(templates[0]?.key ?? '');
-  const [channel, setChannel] = useState<NoticeChannel>('EMAIL');
-  const template = templates.find((item) => item.key === templateKey) ?? templates[0];
-  // The text stays derived from the template until the user edits it, so names, contacts and the unit that
-  // finish loading after the card mounted replace the interim placeholder instead of freezing it in the draft.
-  const rendered = template?.render(context, channel) ?? { subject: '', body: '' };
-  const [draft, setDraft] = useState<{ readonly subject: string; readonly body: string }>();
-  const subject = draft?.subject ?? rendered.subject;
-  const body = draft?.body ?? rendered.body;
-  const [recipientDraft, setRecipientDraft] = useState<string>();
-  const recipient = recipientDraft ?? (channel === 'SMS' ? defaultPhone : defaultEmail);
-  const setSubject = (value: string) => setDraft({ subject: value, body });
-  const setBody = (value: string) => setDraft({ subject, body: value });
-  const [copied, setCopied] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const applyTemplate = (key: string, nextChannel: NoticeChannel) => {
-    setTemplateKey(key);
-    setChannel(nextChannel);
-    setDraft(undefined);
-    setCopied(false);
-  };
-  const recipientError =
-    recipient.trim() !== '' && !(channel === 'EMAIL' ? emailPattern : phonePattern).test(recipient.trim())
-      ? channel === 'EMAIL'
-        ? 'Zadejte e-mail ve tvaru jmeno@firma.cz.'
-        : 'Zadejte telefon, například +420 777 123 456.'
-      : undefined;
-  const bodyError =
-    body.trim().length === 0
-      ? 'Text oznámení nesmí být prázdný.'
-      : channel === 'SMS' && body.length > 480
-        ? 'Text SMS může mít nejvýše 480 znaků.'
-        : undefined;
-  const mailto = `mailto:${encodeURIComponent(recipient.trim())}?subject=${encodeURIComponent(
-    subject,
-  )}&body=${encodeURIComponent(body)}`;
+  const editor = useNoticeEditor(context, defaultEmail, defaultPhone);
+  const { templates } = editor;
   return (
     <div className="sp-tenant">
       <SectionCard title="Oznámení e-mailem nebo SMS">
@@ -398,131 +633,7 @@ export const NoticeCard = ({
           Text připravíte ze šablony a upravíte. Uložený text zůstane u záznamu s autorem a časem. Nic se odsud
           automaticky neodesílá; SMS lze odesílat až po napojení potvrzeného poskytovatele.
         </p>
-        {canWrite && template !== undefined && (
-          <form
-            className="sp-tenant-stack"
-            noValidate
-            onSubmit={(event) => {
-              event.preventDefault();
-              setSubmitted(true);
-              if (recipientError !== undefined || bodyError !== undefined) return;
-              void browserRuntime.runPromiseExit(
-                newId.pipe(
-                  Effect.tap((noticeId) =>
-                    Effect.sync(() =>
-                      onCommand({
-                        _tag: 'PrepareNotice',
-                        occupancyRef: context.record.occupancyRef,
-                        noticeId,
-                        channel,
-                        templateKey: template.key,
-                        recipient: recipient.trim(),
-                        subject: channel === 'SMS' ? '' : subject.trim(),
-                        body: body.trim(),
-                      }),
-                    ),
-                  ),
-                ),
-              );
-            }}
-          >
-            <div className="sp-tenant-fields">
-              <label className="sp-tenant-stack">
-                <span>Šablona</span>
-                <select
-                  aria-label="Šablona oznámení"
-                  onChange={(event) => applyTemplate(event.target.value, channel)}
-                  value={template.key}
-                >
-                  {templates.map((item) => (
-                    <option key={item.key} value={item.key}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="sp-tenant-stack">
-                <span>Kanál</span>
-                <select
-                  aria-label="Kanál oznámení"
-                  onChange={(event) => {
-                    const next = event.target.value === 'SMS' ? 'SMS' : 'EMAIL';
-                    setRecipientDraft(undefined);
-                    applyTemplate(template.key, next);
-                  }}
-                  value={channel}
-                >
-                  <option value="EMAIL">E-mail</option>
-                  <option value="SMS">SMS</option>
-                </select>
-              </label>
-            </div>
-            <FormInput
-              label={channel === 'EMAIL' ? 'E-mail příjemce' : 'Telefon příjemce'}
-              onChange={(event) => setRecipientDraft(event.target.value)}
-              type={channel === 'EMAIL' ? 'email' : 'tel'}
-              value={recipient}
-              {...(submitted && recipientError !== undefined
-                ? { validateStatus: 'error' as const, helpText: recipientError }
-                : {})}
-            />
-            {channel === 'EMAIL' && (
-              <FormInput
-                label="Předmět"
-                maxLength={200}
-                onChange={(event) => setSubject(event.target.value)}
-                value={subject}
-              />
-            )}
-            <label className="sp-tenant-stack">
-              <span>Text oznámení</span>
-              <textarea
-                aria-invalid={submitted && bodyError !== undefined}
-                aria-label="Text oznámení"
-                className="sp-notice-text"
-                maxLength={2000}
-                onChange={(event) => {
-                  setBody(event.target.value);
-                  setCopied(false);
-                }}
-                rows={channel === 'SMS' ? 4 : 10}
-                value={body}
-              />
-            </label>
-            <span className="sp-tenant-muted">
-              {channel === 'SMS'
-                ? `${body.length} znaků · ${smsSegments(body)} SMS (text s diakritikou se počítá po 70 znacích)`
-                : `${body.length} znaků`}
-            </span>
-            {submitted && bodyError !== undefined && (
-              <p className="sp-tenant-muted" role="alert">
-                {bodyError}
-              </p>
-            )}
-            <div className="sp-tenant-actions">
-              <Button disabled={busy} size="sm" type="submit" variant="primary">
-                Uložit připravený text
-              </Button>
-              <Button
-                onClick={() => {
-                  void globalThis.navigator.clipboard
-                    ?.writeText(channel === 'EMAIL' ? `${subject}\n\n${body}` : body)
-                    .then(() => setCopied(true));
-                }}
-                size="sm"
-                theme="outlined"
-                variant="secondary"
-              >
-                {copied ? 'Zkopírováno' : 'Zkopírovat text'}
-              </Button>
-              {channel === 'EMAIL' && (
-                <a className="sp-tenant-muted" href={mailto}>
-                  Otevřít v poštovním programu →
-                </a>
-              )}
-            </div>
-          </form>
-        )}
+        {canWrite && <NoticeEditor busy={busy} context={context} editor={editor} newId={newId} onCommand={onCommand} />}
         <h3>Připravená oznámení</h3>
         {notices.length === 0 && <p className="sp-tenant-muted">Zatím nebylo připraveno žádné oznámení.</p>}
         {notices.toReversed().map((notice) => (

@@ -31,10 +31,10 @@ it.effect(
         const failure = yield* Effect.flip(
           makeLiveOperationFixture({
             actionKeys,
-            legalEntityOnlyActionKeys: ['example.records.create', 'example.records.update'],
             audience: 'example-records',
             authenticationNamespaceId: 'fixture-release-unit',
             compositionRevision: 'a'.repeat(64),
+            legalEntityOnlyActionKeys: ['example.records.create', 'example.records.update'],
             moduleKey: 'example.records',
             runtimeConnectionString: Redacted.make('postgresql://unit:unit@127.0.0.1/unit'),
           }),

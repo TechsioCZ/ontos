@@ -1959,7 +1959,11 @@ const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedS
       v1.Relationship.create({
         relation: 'executor',
         resource: v1.ObjectReference.create({
-          objectId: toSpiceDbActionObjectId(actionKey),
+          objectId: toSpiceDbActionObjectId({
+            actionKey,
+            legalEntityId: subject.legalEntityId,
+            tenantId: subject.tenantId,
+          }),
           objectType: 'action',
         }),
         subject: principalSubject,

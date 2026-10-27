@@ -5,11 +5,16 @@
 export const foldText = (text: string): string =>
   text
     .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
+    .replaceAll(/\p{Diacritic}/gu, '')
     .toLowerCase();
 
 /** Drops the Czech case ending of longer words: faktura -> faktu, pronajem -> pronaj, udrzba -> udrz. */
-const stem = (word: string): string => (word.length >= 6 ? word.slice(0, word.length - 2) : word.length === 5 ? word.slice(0, 4) : word);
+const stem = (word: string): string => {
+  if (word.length >= 6) {
+    return word.slice(0, -2);
+  }
+  return word.length === 5 ? word.slice(0, 4) : word;
+};
 
 /** Search tokens of a query; empty when the query is blank. */
 export const queryTokens = (query: string): readonly string[] =>

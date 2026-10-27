@@ -1568,14 +1568,6 @@ const objectHasExactString = (
     [SyntaxKind.StringLiteral, value],
   ]);
 
-const objectHasExactStrings = (
-  tokens: readonly GovernedClientToken[],
-  open: number,
-  close: number,
-  expected: Readonly<Record<string, string>>,
-): boolean =>
-  Object.entries(expected).every(([property, value]) => objectHasExactString(tokens, open, close, property, value));
-
 const objectHasExactStringsOrConstAliases = (
   tokens: readonly GovernedClientToken[],
   open: number,
@@ -1686,6 +1678,7 @@ const permissionContainerIsBinding = (
 ): boolean => {
   const after = tokenKind(tokens, closing + 1);
   const before = tokenKind(tokens, opening - 1);
+  const conditionalObject = delimiter === '{' && before === SyntaxKind.QuestionToken;
   // Targets may be arbitrarily nested arrays, objects or groups. Typed targets
   // and assertion/non-null suffixes remain unproven rather than bypassing validation.
   if (
@@ -1693,11 +1686,11 @@ const permissionContainerIsBinding = (
       SyntaxKind.EqualsToken,
       SyntaxKind.InKeyword,
       SyntaxKind.OfKeyword,
-      SyntaxKind.ColonToken,
       SyntaxKind.AsKeyword,
       SyntaxKind.SatisfiesKeyword,
       SyntaxKind.ExclamationToken,
     ].includes(after ?? SyntaxKind.Unknown) ||
+    (after === SyntaxKind.ColonToken && !conditionalObject) ||
     [SyntaxKind.ConstKeyword, SyntaxKind.LetKeyword, SyntaxKind.VarKeyword].includes(before ?? SyntaxKind.Unknown)
   ) {
     return true;
@@ -1764,13 +1757,16 @@ const permissionAliasIsObjectRead = (tokens: readonly GovernedClientToken[], ind
   return containers.length === 0;
 };
 
-/** Permission aliases are closed literal bindings, never executable expressions or ambient names. */
-const immutablePermissionAlias = (
+/** Resolve a closed literal binding used only in the permitted direct object properties. */
+const immutablePropertyAlias = (
   tokens: readonly GovernedClientToken[],
   open: number,
   close: number,
+  property: string,
+  declarations: readonly GovernedClientToken[] = tokens,
+  allowedProperties: ReadonlySet<string> = new Set([property]),
 ): string | undefined => {
-  const valueStart = findObjectPropertyValue(tokens, open, close, 'permission');
+  const valueStart = findObjectPropertyValue(tokens, open, close, property);
   const alias = valueStart === undefined ? undefined : tokenValue(tokens, valueStart);
   if (
     alias === undefined ||
@@ -1786,13 +1782,13 @@ const immutablePermissionAlias = (
     [SyntaxKind.EqualsToken],
     [SyntaxKind.StringLiteral],
   ] satisfies readonly ExpectedToken[];
-  const start = findSequenceAtBraceDepth(tokens, declaration, 0, tokens.length, 0);
+  const start = findSequenceAtBraceDepth(declarations, declaration, 0, declarations.length, 0);
   if (
     start === undefined ||
-    sequenceOccurrencesAtBraceDepth(tokens, declaration, 0) !== 1 ||
+    sequenceOccurrencesAtBraceDepth(declarations, declaration, 0) !== 1 ||
     !(
-      tokenKind(tokens, start + 4) === SyntaxKind.SemicolonToken ||
-      matchesSequence(tokens, start + 4, [
+      tokenKind(declarations, start + 4) === SyntaxKind.SemicolonToken ||
+      matchesSequence(declarations, start + 4, [
         [SyntaxKind.AsKeyword],
         [SyntaxKind.ConstKeyword],
         [SyntaxKind.SemicolonToken],
@@ -1803,28 +1799,43 @@ const immutablePermissionAlias = (
   }
   const declarationDepth = new DelimiterDepth();
   for (let index = 0; index < start; index += 1) {
-    const kind = tokenKind(tokens, index);
+    const kind = tokenKind(declarations, index);
     declarationDepth.update(kind === undefined ? undefined : tokenDelimiter.get(kind));
   }
   if (!declarationDepth.isTopLevel() || declarationDepth.hasUnmatchedClose()) {
     return undefined;
   }
-  // Admit only the one declaration and direct permission property reads. Any rebinding,
+  // Admit only the one declaration and direct property reads. Any rebinding,
   // shadowing, shorthand, mutation, or use inside an expression remains unproven.
-  const safeUses = tokens.every(
+  const safeUses = declarations.every(
     (token, index) =>
       token.kind !== SyntaxKind.Identifier ||
       token.value !== alias ||
       index === start + 1 ||
-      (permissionAliasIsObjectRead(tokens, index) &&
-        tokenValue(tokens, index - 2) === 'permission' &&
-        tokenKind(tokens, index - 1) === SyntaxKind.ColonToken &&
+      (permissionAliasIsObjectRead(declarations, index) &&
+        allowedProperties.has(tokenValue(declarations, index - 2) ?? '') &&
+        tokenKind(declarations, index - 1) === SyntaxKind.ColonToken &&
         [SyntaxKind.CommaToken, SyntaxKind.CloseBraceToken].includes(
-          tokenKind(tokens, index + 1) ?? SyntaxKind.Unknown,
+          tokenKind(declarations, index + 1) ?? SyntaxKind.Unknown,
         )),
   );
-  return safeUses ? tokenValue(tokens, start + 3) : undefined;
+  return safeUses ? tokenValue(declarations, start + 3) : undefined;
 };
+
+const objectHasIdentity = (
+  tokens: readonly GovernedClientToken[],
+  range: readonly [number, number],
+  expected: Readonly<Record<string, string>>,
+  declarations: readonly GovernedClientToken[],
+  allowedProperties: ReadonlySet<string>,
+): boolean =>
+  Object.entries(expected).every(
+    ([property, value]) =>
+      objectHasExactString(tokens, ...range, property, value) ||
+      (allowedProperties.has(property) &&
+        directObjectPropertyOccurrences(tokens, ...range, property) === 1 &&
+        immutablePropertyAlias(tokens, ...range, property, declarations, allowedProperties) === value),
+  );
 
 const authorizationObject = (
   tokens: readonly GovernedClientToken[],
@@ -1835,7 +1846,8 @@ const authorizationObject = (
   const properties = directObjectPropertyNames(tokens, open, close);
   if (kind === 'context_permission') {
     const permission =
-      objectStringProperty(tokens, open, close, 'permission') ?? immutablePermissionAlias(tokens, open, close);
+      objectStringProperty(tokens, open, close, 'permission') ??
+      immutablePropertyAlias(tokens, open, close, 'permission');
     return permission !== undefined &&
       /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(permission) &&
       hasExactProperties(properties, new Set(['kind', 'permission']))
@@ -1883,6 +1895,8 @@ const matchesGeneratedReadAuthorization = (
   actual !== undefined &&
   (expected === undefined || (actual.kind === expected.kind && actual.permission === expected.permission));
 
+const PROVIDER_MODULE_ID_PROPERTIES = new Set(['moduleId', 'moduleKey', 'owningModuleKey']);
+
 const hasGeneratedReadContract = (
   source: string,
   moduleId: string,
@@ -1909,18 +1923,30 @@ const hasGeneratedReadContract = (
     ) &&
     matchesSequence(tokens, entrypointClose + 1, [[SyntaxKind.CloseParenToken], [SyntaxKind.SemicolonToken]]) &&
     entrypointClose + 2 === entrypointEnd &&
-    objectHasExactStrings(tokens, entrypointOpen, entrypointClose, {
-      access: 'read',
-      entrypointKey: `${moduleId}.${role}.${name}`,
-      moduleKey: moduleId,
-      role,
-    }) &&
+    objectHasIdentity(
+      tokens,
+      [entrypointOpen, entrypointClose],
+      {
+        access: 'read',
+        entrypointKey: `${moduleId}.${role}.${name}`,
+        moduleKey: moduleId,
+        role,
+      },
+      tokens,
+      PROVIDER_MODULE_ID_PROPERTIES,
+    ) &&
     objectReferencesEntrypoint(tokens, readOpen, readClose, entrypointName) &&
-    objectHasExactStrings(tokens, readOpen, readClose, {
-      owningModuleKey: moduleId,
-      readKey: `${moduleId}.${role}.${name}`,
-      schemaVersion: '1',
-    })
+    objectHasIdentity(
+      tokens,
+      [readOpen, readClose],
+      {
+        owningModuleKey: moduleId,
+        readKey: `${moduleId}.${role}.${name}`,
+        schemaVersion: '1',
+      },
+      tokens,
+      PROVIDER_MODULE_ID_PROPERTIES,
+    )
   );
 };
 
@@ -2539,16 +2565,19 @@ export const hasGeneratedProviderRegistration = (
   );
 };
 
+const MANIFEST_MODULE_ID_PROPERTIES = new Set(['id', 'moduleKey', 'owningModuleId']);
+
 const hasProviderShellEntrypoint = (
   tokens: readonly GovernedClientToken[],
   contribution: readonly [number, number],
   identity: Readonly<Record<string, string>>,
+  manifestTokens: readonly GovernedClientToken[],
 ): boolean => {
   const range = nestedObjectRange(tokens, ...contribution, 'entrypoint');
   return (
     range !== undefined &&
     directObjectHasNoSpread(tokens, ...range) &&
-    objectHasExactStrings(tokens, ...range, identity)
+    objectHasIdentity(tokens, range, identity, manifestTokens, MANIFEST_MODULE_ID_PROPERTIES)
   );
 };
 
@@ -2559,13 +2588,16 @@ const hasOwnedProviderDescriptor = (
   tokens: readonly GovernedClientToken[],
   identity: readonly ExpectedToken[],
   moduleId: string,
-): boolean =>
-  sequenceOccurrencesAtBraceDepth(tokens, identity, 1) === 1 &&
-  hasRelatedSequenceInObject(tokens, identity, [
-    [SyntaxKind.Identifier, 'owningModuleId'],
-    [SyntaxKind.ColonToken],
-    [SyntaxKind.StringLiteral, moduleId],
-  ]);
+  manifestTokens: readonly GovernedClientToken[],
+): boolean => {
+  const anchor = findSequenceAtBraceDepth(tokens, identity, 0, tokens.length, 1);
+  const range = anchor === undefined ? undefined : enclosingBraceRange(tokens, anchor);
+  return (
+    sequenceOccurrencesAtBraceDepth(tokens, identity, 1) === 1 &&
+    range !== undefined &&
+    objectHasIdentity(tokens, range, { owningModuleId: moduleId }, manifestTokens, MANIFEST_MODULE_ID_PROPERTIES)
+  );
+};
 
 const hasOwnedProviderShellContribution = (
   shellTokens: readonly GovernedClientToken[],
@@ -2575,16 +2607,22 @@ const hasOwnedProviderShellContribution = (
   moduleId: string,
   kind: 'report' | 'search',
   descriptorKey: string,
+  manifestTokens: readonly GovernedClientToken[],
 ): boolean =>
   sequenceOccurrencesAtBraceDepth(shellTokens, shellIdentity, 1) === 1 &&
   shellContribution !== undefined &&
-  hasProviderShellEntrypoint(shellTokens, shellContribution, {
-    access: 'read',
-    entrypointKey: shellContributionKey,
-    moduleKey: moduleId,
-    role: kind,
-    scope: 'tenant',
-  }) &&
+  hasProviderShellEntrypoint(
+    shellTokens,
+    shellContribution,
+    {
+      access: 'read',
+      entrypointKey: shellContributionKey,
+      moduleKey: moduleId,
+      role: kind,
+      scope: 'tenant',
+    },
+    manifestTokens,
+  ) &&
   hasRelatedSequenceInObject(shellTokens, shellIdentity, [
     [SyntaxKind.Identifier, kind === 'report' ? 'reportKey' : 'searchKey'],
     [SyntaxKind.ColonToken],
@@ -2606,6 +2644,7 @@ export const hasGeneratedProviderManifest = (
   if (descriptorSlot === undefined || shellSlot === undefined) {
     return false;
   }
+  const manifestTokens = tokenizeGovernedClient(manifest);
   const descriptorTokens = tokenizeGovernedClient(descriptorSlot);
   const shellTokens = tokenizeGovernedClient(shellSlot);
   const descriptorKey = `${moduleId}.${name}`;
@@ -2626,7 +2665,7 @@ export const hasGeneratedProviderManifest = (
   const shellContribution =
     shellIdentityIndex === undefined ? undefined : enclosingBraceRange(shellTokens, shellIdentityIndex);
   return (
-    hasOwnedProviderDescriptor(descriptorTokens, descriptorIdentity, moduleId) &&
+    hasOwnedProviderDescriptor(descriptorTokens, descriptorIdentity, moduleId, manifestTokens) &&
     hasOwnedProviderShellContribution(
       shellTokens,
       shellIdentity,
@@ -2635,6 +2674,7 @@ export const hasGeneratedProviderManifest = (
       moduleId,
       kind,
       descriptorKey,
+      manifestTokens,
     ) &&
     slotOmitsIdentity(otherDescriptorSlot, descriptorIdentity) &&
     slotOmitsIdentity(otherShellSlot, shellIdentity)

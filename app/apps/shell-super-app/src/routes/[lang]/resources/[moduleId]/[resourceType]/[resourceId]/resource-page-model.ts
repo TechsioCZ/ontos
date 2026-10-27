@@ -31,68 +31,67 @@ export type ResourcePageModel =
     };
 
 export const loader = ({ params, request }: ResourceLoaderArguments): Promise<ResourcePageModel> =>
-  browserRuntime
-    .runPromise(
-      loadHomePageModel(request).pipe(
-        Effect.timeout('30 seconds'),
-        Effect.flatMap((shell) => {
-          if (shell.state !== 'authenticated') {
-            return Effect.succeed<ResourcePageModel>({
-              shell,
-              state: shell.state === 'anonymous' ? 'selection_required' : shell.state,
-            });
-          }
-          if (shell.compositionRevision === undefined) {
-            return Effect.succeed<ResourcePageModel>({ shell, state: 'selection_required' });
-          }
-          const { compositionRevision } = shell;
-          return shellAuthenticationClientOptionsFromRequest(request).pipe(
-            Effect.flatMap((options) =>
-              Schema.decodeEffect(ShellResourceRequestSchema)({
-                ...params,
-                compositionRevision,
-              }).pipe(Effect.flatMap((resourceRef) => resourceDetail(resourceRef, options))),
-            ),
-            Effect.map((resource): ResourcePageModel => ({
-              resource,
-              shell,
-              state: 'ready',
-            })),
-            Effect.matchEffect({
-              onFailure: (error) =>
-                Effect.succeed<ResourcePageModel>({
-                  // The resource read itself saying "sign in again" means the session died meanwhile.
-                  shell: Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ? sessionEndedModel : shell,
-                  state: Match.value(error).pipe(
-                    Match.tag('ShellReloadRequiredProblem', () => 'reload_required' as const),
-                    Match.tag(
-                      'ShellAuthenticationRequiredProblem',
-                      'ShellSelectionRequiredProblem',
-                      () => 'selection_required' as const,
-                    ),
-                    Match.tag('ShellTargetForbiddenProblem', () => 'forbidden' as const),
-                    Match.tag('ShellTargetNotFoundProblem', () => 'not_found' as const),
-                    Match.tag(
-                      'ConfigError',
-                      'HttpClientError',
-                      'SchemaError',
-                      'ShellCapabilityUnavailableProblem',
-                      'ShellInternalProblem',
-                      'ShellInvalidRequestProblem',
-                      'ShellPolicyConflictProblem',
-                      'ShellPolicyUnprocessableProblem',
-                      'ShellPreconditionRequiredProblem',
-                      'ShellRateLimitedProblem',
-                      () => 'unavailable' as const,
-                    ),
-                    Match.exhaustive,
+  browserRuntime.runPromise(
+    loadHomePageModel(request).pipe(
+      Effect.timeout('30 seconds'),
+      Effect.flatMap((shell) => {
+        if (shell.state !== 'authenticated') {
+          return Effect.succeed<ResourcePageModel>({
+            shell,
+            state: shell.state === 'anonymous' ? 'selection_required' : shell.state,
+          });
+        }
+        if (shell.compositionRevision === undefined) {
+          return Effect.succeed<ResourcePageModel>({ shell, state: 'selection_required' });
+        }
+        const { compositionRevision } = shell;
+        return shellAuthenticationClientOptionsFromRequest(request).pipe(
+          Effect.flatMap((options) =>
+            Schema.decodeEffect(ShellResourceRequestSchema)({
+              ...params,
+              compositionRevision,
+            }).pipe(Effect.flatMap((resourceRef) => resourceDetail(resourceRef, options))),
+          ),
+          Effect.map((resource): ResourcePageModel => ({
+            resource,
+            shell,
+            state: 'ready',
+          })),
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.succeed<ResourcePageModel>({
+                // The resource read itself saying "sign in again" means the session died meanwhile.
+                shell: Predicate.isTagged(error, 'ShellAuthenticationRequiredProblem') ? sessionEndedModel : shell,
+                state: Match.value(error).pipe(
+                  Match.tag('ShellReloadRequiredProblem', () => 'reload_required' as const),
+                  Match.tag(
+                    'ShellAuthenticationRequiredProblem',
+                    'ShellSelectionRequiredProblem',
+                    () => 'selection_required' as const,
                   ),
-                }),
-              onSuccess: Effect.succeed,
-            }),
-          );
-        }),
-      ),
-      { signal: request.signal },
-    )
-    .then((model) => requireSignedIn(request, model));
+                  Match.tag('ShellTargetForbiddenProblem', () => 'forbidden' as const),
+                  Match.tag('ShellTargetNotFoundProblem', () => 'not_found' as const),
+                  Match.tag(
+                    'ConfigError',
+                    'HttpClientError',
+                    'SchemaError',
+                    'ShellCapabilityUnavailableProblem',
+                    'ShellInternalProblem',
+                    'ShellInvalidRequestProblem',
+                    'ShellPolicyConflictProblem',
+                    'ShellPolicyUnprocessableProblem',
+                    'ShellPreconditionRequiredProblem',
+                    'ShellRateLimitedProblem',
+                    () => 'unavailable' as const,
+                  ),
+                  Match.exhaustive,
+                ),
+              }),
+            onSuccess: Effect.succeed,
+          }),
+        );
+      }),
+      Effect.map((model) => requireSignedIn(request, model)),
+    ),
+    { signal: request.signal },
+  );

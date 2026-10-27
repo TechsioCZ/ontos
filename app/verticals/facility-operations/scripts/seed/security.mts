@@ -2,7 +2,18 @@
 // Returns the ENCODED state with fixed ids/timestamps so reseeds are deterministic.
 // Property/unit references are display snapshots of the rental seed (Rezidence Parková, Riverside Office Park);
 // the ids are the ones the live rental seed produced, the labels keep the card readable if ids ever change.
+import { Array as EffectArray, Order } from 'effect';
 import type { SecurityStateEncoded } from '../../shared/domain/security.ts';
+
+const seedText = {
+  accessproCzAS: 'AccessPro CZ a.s.',
+  date20260811152000000: '2026-08-11T15:20:00.000Z',
+  date20260904131000000: '2026-09-04T13:10:00.000Z',
+  date20261018055500000: '2026-10-18T05:55:00.000Z',
+  janaMalaRecepce: 'Jana Malá (recepce)',
+  petrDvorakSpravceArealu: 'Petr Dvořák (správce areálu)',
+  securitechPrahaSRO: 'SecuriTech Praha s.r.o.',
+} as const;
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -45,46 +56,48 @@ const created = (at: string, name: string, by = management) => ({
   summary: `Karta založena: ${name}`,
 });
 
+type EncodedDevice = SecurityStateEncoded['devices'][number];
+
 interface SeedDevice {
-  readonly n: number;
-  readonly name: string;
-  readonly deviceType: 'camera' | 'access' | 'alarm' | 'other';
-  readonly state: 'in_operation' | 'fault' | 'in_service' | 'decommissioned';
-  readonly location: typeof riverside | typeof parkova | typeof r201 | typeof s01;
-  readonly locationDetail: string;
   readonly administrator: string;
-  readonly supplier: string;
-  readonly serialNumber: string;
-  readonly lastInspectionDate?: string;
-  readonly nextInspectionDate?: string;
-  readonly note?: string;
-  readonly createdAt: string;
+  readonly createdAt: EncodedDevice['createdAt'];
+  readonly deviceType: 'camera' | 'access' | 'alarm' | 'other';
   readonly extraHistory?: readonly {
     at: string;
+    by?: typeof management;
     event: 'inspection' | 'incident_reported' | 'incident_state' | 'state_changed';
     summary: string;
-    by?: typeof management;
   }[];
+  readonly lastInspectionDate?: EncodedDevice['lastInspectionDate'];
+  readonly location: typeof riverside | typeof parkova | typeof r201 | typeof s01;
+  readonly locationDetail: string;
+  readonly n: number;
+  readonly name: string;
+  readonly nextInspectionDate?: EncodedDevice['nextInspectionDate'];
+  readonly note?: string;
+  readonly serialNumber: string;
+  readonly state: 'in_operation' | 'fault' | 'in_service' | 'decommissioned';
+  readonly supplier: string;
 }
 
 const devices: readonly SeedDevice[] = [
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-02T08:15:00.000Z',
     deviceType: 'camera',
     extraHistory: [
       { at: '2026-04-14T09:00:00.000Z', event: 'inspection', summary: 'Kontrola provedena 2026-04-14: bez závad' },
       {
         at: '2026-09-02T07:40:00.000Z',
+        by: operations,
         event: 'incident_reported',
         summary: 'Nahlášena porucha: Zamlžený kryt objektivu',
-        by: operations,
       },
       {
-        at: '2026-09-04T13:10:00.000Z',
+        at: seedText.date20260904131000000,
+        by: operations,
         event: 'incident_state',
         summary: 'Porucha „Zamlžený kryt objektivu“: vyřešeno',
-        by: operations,
       },
     ],
     lastInspectionDate: '2026-04-14',
@@ -95,18 +108,18 @@ const devices: readonly SeedDevice[] = [
     nextInspectionDate: '2027-04-14',
     serialNumber: 'HIK-DS2CD-7731',
     state: 'in_operation',
-    supplier: 'SecuriTech Praha s.r.o.',
+    supplier: seedText.securitechPrahaSRO,
   },
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-02T08:20:00.000Z',
     deviceType: 'camera',
     extraHistory: [
       {
         at: '2026-10-17T06:45:00.000Z',
+        by: operations,
         event: 'incident_reported',
         summary: 'Nahlášena porucha: Kamera nezobrazuje obraz',
-        by: operations,
       },
       {
         at: '2026-10-17T10:05:00.000Z',
@@ -122,10 +135,10 @@ const devices: readonly SeedDevice[] = [
     nextInspectionDate: '2027-04-14',
     serialNumber: 'HIK-DS2CD-7732',
     state: 'fault',
-    supplier: 'SecuriTech Praha s.r.o.',
+    supplier: seedText.securitechPrahaSRO,
   },
   {
-    administrator: 'Jana Malá (recepce)',
+    administrator: seedText.janaMalaRecepce,
     createdAt: '2026-03-05T10:00:00.000Z',
     deviceType: 'access',
     extraHistory: [
@@ -135,7 +148,7 @@ const devices: readonly SeedDevice[] = [
         summary: 'Nahlášena porucha: Čtečka nereaguje na karty',
       },
       {
-        at: '2026-08-11T15:20:00.000Z',
+        at: seedText.date20260811152000000,
         event: 'incident_state',
         summary: 'Porucha „Čtečka nereaguje na karty“: vyřešeno',
       },
@@ -149,10 +162,10 @@ const devices: readonly SeedDevice[] = [
     note: 'Roční revize je po termínu, objednat u dodavatele.',
     serialNumber: 'ACS-T5-00418',
     state: 'in_operation',
-    supplier: 'AccessPro CZ a.s.',
+    supplier: seedText.accessproCzAS,
   },
   {
-    administrator: 'Jana Malá (recepce)',
+    administrator: seedText.janaMalaRecepce,
     createdAt: '2026-03-05T10:20:00.000Z',
     deviceType: 'access',
     lastInspectionDate: '2026-05-20',
@@ -163,10 +176,10 @@ const devices: readonly SeedDevice[] = [
     nextInspectionDate: '2027-05-20',
     serialNumber: 'ACS-L2-01193',
     state: 'in_operation',
-    supplier: 'AccessPro CZ a.s.',
+    supplier: seedText.accessproCzAS,
   },
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-10T09:00:00.000Z',
     deviceType: 'alarm',
     extraHistory: [
@@ -184,15 +197,15 @@ const devices: readonly SeedDevice[] = [
     supplier: 'Alarmservis Novák s.r.o.',
   },
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-10T09:30:00.000Z',
     deviceType: 'alarm',
     extraHistory: [
       {
-        at: '2026-10-18T05:55:00.000Z',
+        at: seedText.date20261018055500000,
+        by: operations,
         event: 'incident_reported',
         summary: 'Nahlášena porucha: Opakované falešné poplachy v noci',
-        by: operations,
       },
     ],
     lastInspectionDate: '2025-11-03',
@@ -206,7 +219,7 @@ const devices: readonly SeedDevice[] = [
     supplier: 'Alarmservis Novák s.r.o.',
   },
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-12T11:00:00.000Z',
     deviceType: 'camera',
     lastInspectionDate: '2026-06-09',
@@ -217,10 +230,10 @@ const devices: readonly SeedDevice[] = [
     nextInspectionDate: '2027-06-09',
     serialNumber: 'AXIS-P3265-1120',
     state: 'in_operation',
-    supplier: 'SecuriTech Praha s.r.o.',
+    supplier: seedText.securitechPrahaSRO,
   },
   {
-    administrator: 'Jana Malá (recepce)',
+    administrator: seedText.janaMalaRecepce,
     createdAt: '2026-03-12T11:30:00.000Z',
     deviceType: 'other',
     lastInspectionDate: '2026-06-09',
@@ -231,10 +244,10 @@ const devices: readonly SeedDevice[] = [
     nextInspectionDate: '2027-06-09',
     serialNumber: '2N-IPV-88310',
     state: 'in_operation',
-    supplier: 'AccessPro CZ a.s.',
+    supplier: seedText.accessproCzAS,
   },
   {
-    administrator: 'Petr Dvořák (správce areálu)',
+    administrator: seedText.petrDvorakSpravceArealu,
     createdAt: '2026-03-02T08:30:00.000Z',
     deviceType: 'camera',
     extraHistory: [
@@ -247,15 +260,15 @@ const devices: readonly SeedDevice[] = [
     note: 'Nahrazena kamerou K-02, uchováno pro historii.',
     serialNumber: 'AN-CAM-0007',
     state: 'decommissioned',
-    supplier: 'SecuriTech Praha s.r.o.',
+    supplier: seedText.securitechPrahaSRO,
   },
 ];
 
 const lastChange = (createdAt: string, history: SeedDevice['extraHistory']) =>
-  [createdAt, ...(history ?? []).map((entry) => entry.at)].sort().at(-1) ?? createdAt;
+  EffectArray.sort([createdAt, ...(history ?? []).map((entry) => entry.at)], Order.String).at(-1) ?? createdAt;
 
 export const seedSecurityState = (): SecurityStateEncoded => ({
-  devices: devices.map(({ n, createdAt, extraHistory, ...device }) => ({
+  devices: devices.map(({ createdAt, extraHistory, n, ...device }) => ({
     ...device,
     ...audit(createdAt, lastChange(createdAt, extraHistory)),
     attachments: [],
@@ -277,7 +290,7 @@ export const seedSecurityState = (): SecurityStateEncoded => ({
       title: 'Kamera nezobrazuje obraz',
     },
     {
-      ...audit('2026-10-18T05:55:00.000Z', '2026-10-18T05:55:00.000Z', operations),
+      ...audit(seedText.date20261018055500000, seedText.date20261018055500000, operations),
       description: 'Tři poplachy mezi 1:00 a 4:00, ostraha na místě nic nezjistila. Podezření na průvan od rampy.',
       deviceId: deviceId(6),
       id: incidentId(2),
@@ -287,24 +300,24 @@ export const seedSecurityState = (): SecurityStateEncoded => ({
       title: 'Opakované falešné poplachy v noci',
     },
     {
-      ...audit('2026-09-02T07:40:00.000Z', '2026-09-04T13:10:00.000Z', operations),
+      ...audit('2026-09-02T07:40:00.000Z', seedText.date20260904131000000, operations),
       deviceId: deviceId(1),
       id: incidentId(3),
       occurredOn: '2026-09-02',
       resolution: 'Kryt vyčištěn a utěsněn, obraz ověřen servisním technikem.',
-      resolvedAt: '2026-09-04T13:10:00.000Z',
+      resolvedAt: seedText.date20260904131000000,
       severity: 'low',
       state: 'resolved',
       title: 'Zamlžený kryt objektivu',
     },
     {
-      ...audit('2026-08-11T07:30:00.000Z', '2026-08-11T15:20:00.000Z'),
+      ...audit('2026-08-11T07:30:00.000Z', seedText.date20260811152000000),
       description: 'Ráno nešlo projít turniketem A, zaměstnanci procházeli přes recepci.',
       deviceId: deviceId(3),
       id: incidentId(4),
       occurredOn: '2026-08-11',
       resolution: 'Vyměněn napájecí zdroj čtečky, dodavatel AccessPro CZ.',
-      resolvedAt: '2026-08-11T15:20:00.000Z',
+      resolvedAt: seedText.date20260811152000000,
       severity: 'critical',
       state: 'resolved',
       title: 'Čtečka nereaguje na karty',

@@ -23,6 +23,7 @@ const ROLE_EXISTS_QUERY_PREFIX = 'select exists(select 1 from pg_catalog.pg_role
 const connectionFor = (role: string) => ({
   connectionString: `postgresql://${role}:${TEST_CREDENTIAL}@127.0.0.1/unit_test`,
   database: 'unit_test',
+  expectedRole: role,
   host: '127.0.0.1',
   port: 5432,
   user: role,

@@ -263,6 +263,32 @@ it('accepts policy entries that still act on the resolved graph', () => {
   expect(findDeadDependencyPolicy(liveWorkspace, lockFixture, { '.': { zod: '4.6.5' } })).toEqual([]);
 });
 
+it('finds patched exact versions across native pnpm lock documents and optional dependency edges', () => {
+  const lock = `lockfileVersion: '9.0'
+---
+packages:
+  oxlint@1.81.0:
+    resolution: {integrity: sha512-x}
+  '@oxlint/darwin-arm64@1.81.0':
+    resolution: {integrity: sha512-y}
+---
+snapshots:
+  oxlint@1.81.0(patch_hash=local):
+    optionalDependencies:
+      '@oxlint/darwin-arm64': 1.81.0
+`;
+  const workspace = `overrides:
+  'oxlint@1.81.0>@oxlint/darwin-arm64': 1.81.0
+patchedDependencies:
+  # upstream: https://github.com/oxc-project/oxc/tree/main/npm/oxlint
+  oxlint@1.81.0: patches/oxlint@1.81.0.patch
+`;
+  expect(findDeadDependencyPolicy(workspace, lock, {})).toEqual([]);
+  expect(findDeadDependencyPolicy(workspace.replace('  oxlint@1.81.0:', '  oxlint@1.80.0:'), lock, {})).toEqual([
+    'patchedDependencies.oxlint@1.80.0 matches nothing in pnpm-lock.yaml; delete the patch',
+  ]);
+});
+
 it('flags overrides that match nothing, name a parent without that edge, or restate every importer range', () => {
   const workspace = `overrides:
   optional-peer: 0.1.0

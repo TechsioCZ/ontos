@@ -25,7 +25,13 @@ export const PlannedHoursSchema = Schema.Finite.check(
   Schema.isGreaterThanOrEqualTo(0),
   Schema.isLessThanOrEqualTo(10_000),
 );
-export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('ProjectId'),
+);
+export const StorefrontProductIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('StorefrontProductId'),
+);
+export const StorefrontRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('StorefrontRequestId'));
 export const ProjectStateSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'PAUSED', 'DONE']);
 /** One changed field of a task or project: raw saved values, so the editor can name ids with its own lookups. */
 export const ChangeSchema = Schema.Struct({
@@ -53,9 +59,9 @@ export const ProjectSchema = Schema.Struct({
   id: ProjectIdSchema,
   milestones: Schema.Array(
     Schema.Struct({
-      title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-      dueDate: CalendarDateSchema,
       completed: Schema.Boolean,
+      dueDate: CalendarDateSchema,
+      title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
     }),
   ).check(Schema.isMaxLength(50)),
   plannedEnd: CalendarDateSchema,
@@ -79,10 +85,10 @@ export const StorefrontInquirySchema = Schema.Struct({
   kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
   message: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1500)),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
-  productId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  productId: Schema.optionalKey(StorefrontProductIdSchema),
   productName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
-  requestId: Schema.String.check(Schema.isUUID()),
+  requestId: StorefrontRequestIdSchema,
   subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
 });
 export type StorefrontInquiry = typeof StorefrontInquirySchema.Type;
@@ -144,11 +150,12 @@ export const RecordsRequestSchema = Schema.Struct({
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
+const LookupDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export const LookupAccessSchema = Schema.Struct({
-  contracts: Schema.Literals(['allowed', 'denied', 'unavailable']),
-  customers: Schema.Literals(['allowed', 'denied', 'unavailable']),
-  opportunities: Schema.Literals(['allowed', 'denied', 'unavailable']),
-  properties: Schema.Literals(['allowed', 'denied', 'unavailable']),
+  contracts: LookupDecisionSchema,
+  customers: LookupDecisionSchema,
+  opportunities: LookupDecisionSchema,
+  properties: LookupDecisionSchema,
 });
 export type LookupAccess = typeof LookupAccessSchema.Type;
 
@@ -162,21 +169,21 @@ export type AssignmentPrincipal = typeof AssignmentPrincipalSchema.Type;
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
   assignablePrincipals: Schema.Array(AssignmentPrincipalSchema),
-  principalNames: Schema.Array(AssignmentPrincipalSchema),
   canWrite: Schema.Boolean,
   collection: TaskCollectionSchema,
   indicators: Schema.Struct({
     open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     openByAssignee: Schema.Array(
       Schema.Struct({
-        ownerPrincipalRef: PrincipalRefSchema,
         open: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        ownerPrincipalRef: PrincipalRefSchema,
       }),
     ),
     overdue: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   items: Schema.Array(TaskSchema),
   lookupAccess: Schema.optionalKey(LookupAccessSchema),
+  principalNames: Schema.Array(AssignmentPrincipalSchema),
   projects: Schema.optionalKey(Schema.Array(ProjectSchema)),
   referenceDate: CalendarDateSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

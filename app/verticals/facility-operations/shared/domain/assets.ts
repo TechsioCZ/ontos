@@ -5,6 +5,7 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
 import {
+  optionalField,
   AuditFieldsSchema,
   IsoDateSchema,
   MinorAmountSchema,
@@ -104,7 +105,7 @@ export const PlanStatusSchema = Schema.Literals(['draft', 'confirmed']);
 export type PlanStatus = typeof PlanStatusSchema.Type;
 export const YearsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100));
 /** `YYYY` (yearly) or `YYYY-MM` (monthly). */
-export const PeriodSchema = Schema.String.check(Schema.isPattern(/^\d{4}(-(0[1-9]|1[0-2]))?$/));
+export const PeriodSchema = Schema.String.check(Schema.isPattern(/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/u));
 
 /** One manually approved depreciation amount (S03: „ručně potvrzené částky“). */
 export const DepreciationEntrySchema = Schema.Struct({
@@ -170,16 +171,16 @@ export type AssetArchive = typeof AssetArchiveSchema.Type;
 
 export const AssetSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  archive: Schema.optionalKey(AssetArchiveSchema),
   acquisitionDate: Schema.optionalKey(IsoDateSchema),
   acquisitionMethod: Schema.optionalKey(AcquisitionMethodSchema),
   acquisitionValueMinor: Schema.optionalKey(MinorAmountSchema),
+  archive: Schema.optionalKey(AssetArchiveSchema),
   /** Identifier of the external accounting product card; absent = „nenapojeno“. */
   accountingProduct: Schema.optionalKey(TextSchema(200)),
   category: TextSchema(120),
   /** Last confirmed current value (S02-02); history in `events` (value_change). */
-  currentValueMinor: Schema.optionalKey(MinorAmountSchema),
   currentValueDate: Schema.optionalKey(IsoDateSchema),
+  currentValueMinor: Schema.optionalKey(MinorAmountSchema),
   depreciationPlans: Schema.optionalKey(Schema.Array(DepreciationPlanSchema)),
   disposal: Schema.optionalKey(DisposalSchema),
   events: Schema.optionalKey(Schema.Array(AssetEventSchema)),
@@ -208,9 +209,9 @@ export const FollowUpSchema = Schema.Struct({
   createdBy: PrincipalRefSchema,
   dueDate: IsoDateSchema,
   id: TextSchema(300),
+  resolution: Schema.optionalKey(NoteSchema),
   resolvedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   resolvedBy: Schema.optionalKey(PrincipalRefSchema),
-  resolution: Schema.optionalKey(NoteSchema),
   status: Schema.Literals(['open', 'done']),
   title: TextSchema(200),
 });
@@ -263,20 +264,26 @@ export type InvestmentPriority = typeof InvestmentPrioritySchema.Type;
 export const investmentPriorities: readonly InvestmentPriority[] = ['high', 'medium', 'low'];
 export const InvestmentStatusSchema = Schema.Literals(['planned', 'approved', 'in_progress', 'done', 'cancelled']);
 export type InvestmentStatus = typeof InvestmentStatusSchema.Type;
-export const investmentStatuses: readonly InvestmentStatus[] = ['planned', 'approved', 'in_progress', 'done', 'cancelled'];
+export const investmentStatuses: readonly InvestmentStatus[] = [
+  'planned',
+  'approved',
+  'in_progress',
+  'done',
+  'cancelled',
+];
 
 export const InvestmentSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: TextSchema(300),
-  title: TextSchema(200),
+  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
+  actualDate: Schema.optionalKey(IsoDateSchema),
   description: Schema.optionalKey(NoteSchema),
+  id: TextSchema(300),
+  location: Schema.optionalKey(PropertyRefSchema),
   plannedAmountMinor: MinorAmountSchema,
   plannedDate: IsoDateSchema,
   priority: InvestmentPrioritySchema,
   status: InvestmentStatusSchema,
-  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
-  actualDate: Schema.optionalKey(IsoDateSchema),
-  location: Schema.optionalKey(PropertyRefSchema),
+  title: TextSchema(200),
   /** property-portfolio property id (also when `location` is a unit), for filtering and summaries. */
   propertyId: Schema.optionalKey(TextSchema(300)),
   /** Optional asset the investment improves or replaces. */
@@ -292,8 +299,8 @@ export const investmentDifference = (investment: Investment): number | undefined
 export const AssetsStateSchema = Schema.Struct({
   assets: Schema.Array(AssetSchema),
   inventories: Schema.optionalKey(Schema.Array(InventorySchema)),
-  templates: Schema.optionalKey(Schema.Array(DepreciationTemplateSchema)),
   investments: Schema.optionalKey(Schema.Array(InvestmentSchema)),
+  templates: Schema.optionalKey(Schema.Array(DepreciationTemplateSchema)),
 });
 export type AssetsState = typeof AssetsStateSchema.Type;
 export type AssetsStateEncoded = typeof AssetsStateSchema.Encoded;
@@ -323,13 +330,14 @@ export interface ServiceDue {
   readonly title: string;
 }
 
+const serviceRecordRank = (entry: ServiceRecord) => entry.performedOn ?? entry.nextDueOn ?? '';
+
 export const currentServiceRecords = (asset: Asset): readonly ServiceRecord[] => {
   const newest = new Map<string, ServiceRecord>();
   for (const record of asset.services ?? []) {
     const key = `${record.kind}:${record.title.toLowerCase()}`;
     const previous = newest.get(key);
-    const rank = (entry: ServiceRecord) => entry.performedOn ?? entry.nextDueOn ?? '';
-    if (previous === undefined || rank(record) >= rank(previous)) {
+    if (previous === undefined || serviceRecordRank(record) >= serviceRecordRank(previous)) {
       newest.set(key, record);
     }
   }
@@ -338,9 +346,8 @@ export const currentServiceRecords = (asset: Asset): readonly ServiceRecord[] =>
 
 export const upcomingServiceDue = (state: AssetsState): readonly ServiceDue[] =>
   state.assets
-    .filter(isActiveAsset)
     .flatMap((asset) =>
-      currentServiceRecords(asset).flatMap((record): ServiceDue[] =>
+      (isActiveAsset(asset) ? currentServiceRecords(asset) : []).flatMap((record): ServiceDue[] =>
         record.nextDueOn === undefined
           ? []
           : [
@@ -352,8 +359,8 @@ export const upcomingServiceDue = (state: AssetsState): readonly ServiceDue[] =>
                 nextDueOn: record.nextDueOn,
                 recordId: record.id,
                 title: record.title,
-                ...(asset.location === undefined ? {} : { location: asset.location }),
-                ...(record.responsible === undefined ? {} : { responsible: record.responsible }),
+                ...optionalField('location', asset.location),
+                ...optionalField('responsible', record.responsible),
               },
             ],
       ),

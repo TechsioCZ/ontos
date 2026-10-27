@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 
 import { ApplicationCompositionModuleSchema } from '@app/core-runtime';
+import { ConnectionDescriptionSchema } from '@app/shared-contracts/oauth-connections';
 import type { ConnectionDescription } from '@app/shared-contracts/oauth-connections';
 import { Schema } from 'effect';
 
@@ -117,24 +118,27 @@ export const fixtureCatalog = () =>
     toolCatalogs: new Map([[FIXTURE_MODULE_ID, fixtureToolCatalog]]),
   });
 
-export const connectionDescription = (overrides: Partial<ConnectionDescription> = {}): ConnectionDescription => ({
-  acting: { displayName: 'Jana Testerová', kind: 'human', principalId: 'principal-1' },
-  client: {
-    clientId: 'https://claude.ai/oauth/client',
-    host: 'claude.ai',
-    kind: 'cimd',
-    logoUri: null,
-    name: 'Claude',
-  },
-  compositionRevision: 'f'.repeat(64),
-  delegatedBy: null,
-  grantId: 'grant-1',
-  legalEntityId: '71000000-0000-4000-8000-000000000020',
-  legalName: 'Obchodní firma',
-  modules: [{ label: FIXTURE_MODULE_ID, moduleId: FIXTURE_MODULE_ID, read: true, write: true }],
-  profileId: 'profile-1',
-  status: 'active',
-  tenantId: 'tenant-1',
-  writePolicy: 'direct',
-  ...overrides,
-});
+export const connectionDescription = (
+  overrides: Partial<typeof ConnectionDescriptionSchema.Encoded> = {},
+): ConnectionDescription =>
+  Schema.decodeUnknownSync(ConnectionDescriptionSchema)({
+    acting: { displayName: 'Jana Testerová', kind: 'human', principalId: 'principal-1' },
+    client: {
+      clientId: 'https://claude.ai/oauth/client',
+      host: 'claude.ai',
+      kind: 'cimd',
+      logoUri: null,
+      name: 'Claude',
+    },
+    compositionRevision: 'f'.repeat(64),
+    delegatedBy: null,
+    grantId: 'grant-1',
+    legalEntityId: '71000000-0000-4000-8000-000000000020',
+    legalName: 'Obchodní firma',
+    modules: [{ label: FIXTURE_MODULE_ID, moduleId: FIXTURE_MODULE_ID, read: true, write: true }],
+    profileId: 'profile-1',
+    status: 'active',
+    tenantId: 'tenant-1',
+    writePolicy: 'direct',
+    ...overrides,
+  });

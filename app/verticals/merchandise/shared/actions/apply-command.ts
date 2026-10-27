@@ -1,4 +1,9 @@
 import { Schema } from 'effect';
+import {
+  AiBatchIdSchema,
+  AiChangeIdSchema,
+  AiRunIdSchema as OwnerAiRunIdSchema,
+} from '@app/shared-contracts/ai-approvals';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { MerchandiseScopeMismatch } from '../errors/merchandise-scope-mismatch.ts';
@@ -12,6 +17,11 @@ import { MerchandisePermissionDenied } from '../errors/merchandise-permission-de
 import { MerchandiseNotImplemented } from '../errors/merchandise-not-implemented.ts';
 import {
   AvailabilitySchema,
+  CategoryIdSchema,
+  CustomerAccountIdSchema,
+  ProductReferenceSchema,
+  VariantReferenceSchema,
+  OrderReferenceSchema,
   EntityIdSchema,
   MinorAmountSchema,
   OpportunityIdSchema,
@@ -50,14 +60,14 @@ export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
 /** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
 export const CategoryPatchSchema = Schema.Struct({
-  published: Schema.optionalKey(Schema.Boolean),
-  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-  heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
-  longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
-  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   imageAlt: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
+  imageSrc: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  longDescription: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(50_000))),
+  name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  position: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  published: Schema.optionalKey(Schema.Boolean),
 });
 export type CategoryPatch = typeof CategoryPatchSchema.Type;
 
@@ -67,7 +77,7 @@ export const OrderLineRequestSchema = Schema.Struct({
   variantId: Schema.optionalKey(VariantIdSchema),
 });
 
-const QuantitySchema = Schema.Finite.check(Schema.isBetween({ maximum: 1000000, minimum: 0.001 }));
+const QuantitySchema = Schema.Finite.check(Schema.isBetween({ maximum: 1_000_000, minimum: 0.001 }));
 
 /** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
 export const StorefrontOrderLineRequestSchema = Schema.Struct({
@@ -89,6 +99,17 @@ export const EditOrderLineSchema = Schema.Struct({
   variantId: Schema.optionalKey(VariantIdSchema),
 });
 
+/** Owner schema for order edits, shared by ingress and optimistic version checks. */
+export const EditOrderCommandSchema = Schema.TaggedStruct('EditOrder', {
+  contact: Schema.optionalKey(OrderContactSchema),
+  deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+  id: OrderIdSchema,
+  lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+  reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+  shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
+});
+
 /**
  * Commands. Server-assigned identities: CreateProduct and RecordStockMovement take the invocation id.
  * CreateOrder carries a caller-supplied id so seeds and retries can reference it deterministically.
@@ -102,20 +123,14 @@ export const MerchandiseAiOperationSchema = Schema.Union([
     reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
     status: OrderStatusSchema,
   }),
-  Schema.TaggedStruct('EditOrder', {
-    contact: Schema.optionalKey(OrderContactSchema),
-    deliveryAddress: Schema.optionalKey(OrderAddressSchema),
-    id: OrderIdSchema,
-    lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
-    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
-    shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
-  }),
+  EditOrderCommandSchema,
 ]);
 export type MerchandiseAiOperation = typeof MerchandiseAiOperationSchema.Type;
 
 const AiReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
-const AiIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const AiRunIdSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.decodeTo(OwnerAiRunIdSchema),
+);
 
 /** AI approval commands (shared engine `@app/shared-contracts/ai-approvals`). Decide and revert are human-only. */
 export const merchandiseAiCommandSchemas = [
@@ -126,18 +141,27 @@ export const merchandiseAiCommandSchemas = [
       Schema.isMaxLength(20),
     ),
     instruction: AiReasonSchema,
-    runId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    runId: Schema.optionalKey(AiRunIdSchema),
   }),
   Schema.TaggedStruct('AiDecideChanges', {
-    changeIds: Schema.Array(AiIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    changeIds: Schema.Array(AiChangeIdSchema.check(Schema.isMinLength(1))).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(50),
+    ),
     decision: Schema.Literals(['approve', 'reject']),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   }),
   Schema.TaggedStruct('AiRevertBatch', {
-    batchId: AiIdSchema,
+    batchId: AiBatchIdSchema.check(Schema.isMinLength(1)),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   }),
 ] as const;
+
+export const VersionedEditOrderCommandSchema = Schema.Struct({
+  ...EditOrderCommandSchema.fields,
+  expectedUpdatedAt: Schema.DateTimeUtcFromString,
+});
+export type VersionedEditOrderCommand = typeof VersionedEditOrderCommandSchema.Type;
 
 export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProduct', {
@@ -153,7 +177,7 @@ export const MerchandiseCommandSchema = Schema.Union([
   }),
   /** Edits one storefront category; appends a history entry. A renamed category also renames its products' `category`. */
   Schema.TaggedStruct('UpdateCategory', {
-    id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    id: CategoryIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
     patch: CategoryPatchSchema,
   }),
   Schema.TaggedStruct('UpdateProduct', {
@@ -198,8 +222,8 @@ export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('RemoveDemoOrder', {
     id: OrderIdSchema,
     /** Explicit legacy repair only; ordinary cleanup replay never credits previously compensated records. */
-    repairStock: Schema.optionalKey(Schema.Boolean),
     reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+    repairStock: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.TaggedStruct('ChangeOrderStatus', {
     id: OrderIdSchema,
@@ -214,16 +238,20 @@ export const MerchandiseCommandSchema = Schema.Union([
    */
   Schema.TaggedStruct('PlaceStorefrontOrder', {
     billingAddress: Schema.optionalKey(OrderAddressSchema),
-    partyId: Schema.optionalKey(PartyIdSchema),
-    customerAccountId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
-    clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
+    clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)).pipe(
+      Schema.brand('ClientRequestId'),
+    ),
     contact: Schema.optionalKey(OrderContactSchema),
+    customerAccountId: Schema.optionalKey(
+      CustomerAccountIdSchema.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    ),
     deliveryAddress: Schema.optionalKey(OrderAddressSchema),
     deliveryRecipient: Schema.optionalKey(OrderDeliveryRecipientSchema),
     dryRun: Schema.optionalKey(Schema.Boolean),
     expectedShippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
     lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+    partyId: Schema.optionalKey(PartyIdSchema),
     shippingMethod: ShippingMethodSchema,
   }),
   /** Staff-confirmed customer conversion; the server re-reads the native CUSTOMER before linking. */
@@ -256,6 +284,7 @@ export const ApplyCommandPayloadSchema = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export type ApplyCommandPayloadEncoded = typeof ApplyCommandPayloadSchema.Encoded;
 export const StorefrontIssueCodeSchema = Schema.Literals([
   'NOT_FOUND',
   'NOT_AVAILABLE',
@@ -278,26 +307,26 @@ export const StorefrontIssueSchema = Schema.Struct({
   currentUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
   expectedUnitPriceMinor: Schema.optionalKey(MinorAmountSchema),
   message: Schema.String,
-  productId: Schema.optionalKey(Schema.String),
-  variantId: Schema.optionalKey(Schema.String),
+  productId: Schema.optionalKey(ProductReferenceSchema),
+  variantId: Schema.optionalKey(VariantReferenceSchema),
 });
 export type StorefrontIssue = typeof StorefrontIssueSchema.Type;
 
 export const StorefrontOrderLineResultSchema = Schema.Struct({
   lineTotalMinor: MinorAmountSchema,
   name: Schema.String,
-  productId: Schema.String,
+  productId: ProductReferenceSchema,
   quantity: Schema.Finite,
   sku: Schema.String,
   unitPriceMinor: MinorAmountSchema,
-  variantId: Schema.optionalKey(Schema.String),
+  variantId: Schema.optionalKey(VariantReferenceSchema),
   variantName: Schema.optionalKey(Schema.String),
 });
 
 export const StorefrontOrderResultSchema = Schema.Struct({
   issues: Schema.Array(StorefrontIssueSchema),
   lines: Schema.Array(StorefrontOrderLineResultSchema),
-  orderId: Schema.optionalKey(Schema.String),
+  orderId: Schema.optionalKey(OrderReferenceSchema),
   orderNumber: Schema.optionalKey(Schema.String),
   outcome: Schema.Literals(['PLACED', 'REPLAYED', 'REJECTED', 'VALID']),
   shippingPriceMinor: Schema.optionalKey(MinorAmountSchema),

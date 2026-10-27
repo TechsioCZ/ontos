@@ -5,8 +5,8 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SidePanel, formatDateTime } from '@app/admin-ui';
-import { DateTime } from 'effect';
-import { useMemo, useState } from 'react';
+import { DateTime, Option } from 'effect';
+import { useState } from 'react';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
@@ -21,12 +21,12 @@ type Selected =
   | { readonly category: CategoryNode; readonly id: string; readonly revision: number; readonly status: 'ready' };
 
 interface CategoryDraft {
-  readonly published: boolean;
-  readonly name: string;
-  readonly heading: string;
   readonly description: string;
+  readonly heading: string;
   readonly longDescription: string;
+  readonly name: string;
   readonly positionText: string;
+  readonly published: boolean;
 }
 
 const NO_CATEGORIES: readonly CategoryNode[] = [];
@@ -58,7 +58,15 @@ interface CategoryAdminButtonProps {
 }
 
 /** Side panel for the storefront category tree: rename, heading, descriptions and sibling order. */
-export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) => {
+const categoryDraftValidity = (draft: CategoryDraft | null) => {
+  const position = Number(draft?.positionText ?? '');
+  const positionInvalid =
+    draft !== null && (draft.positionText.trim() === '' || !Number.isInteger(position) || position < 0);
+  const nameInvalid = draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200);
+  return { nameInvalid, position, positionInvalid };
+};
+
+const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [open, setOpen] = useState(false);
@@ -71,16 +79,15 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
 
   const categories = loaded.status === 'ready' ? loaded.categories : NO_CATEGORIES;
   const selected = selection?.status === 'ready' ? selection.category : undefined;
-  const parentId = selected?.parentId ?? null;
+  const parentId = selected === undefined ? null : Option.getOrNull(selected.parentId);
   const parentName = parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
   // Siblings in storefront order, so the editor can see where a position puts the category.
-  const siblings = useMemo(
-    () =>
-      selected === undefined
-        ? NO_CATEGORIES
-        : categories.filter((c) => c.parentId === parentId && c.id !== selected.id).toSorted(byStorefrontOrder),
-    [categories, parentId, selected],
-  );
+  const siblings =
+    selected === undefined
+      ? NO_CATEGORIES
+      : categories
+          .filter((c) => Option.getOrNull(c.parentId) === parentId && c.id !== selected.id)
+          .toSorted(byStorefrontOrder);
 
   const reload = () => {
     setLoaded({ status: 'loading' });
@@ -110,24 +117,22 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     reload();
   };
 
-  const list = useMemo(() => {
+  const categoryList = () => {
     const needle = search.trim().toLocaleLowerCase('cs');
     const matches =
       needle === ''
-        ? categories.filter((c) => c.parentId === null).toSorted(byStorefrontOrder)
+        ? categories.filter((c) => Option.isNone(c.parentId)).toSorted(byStorefrontOrder)
         : categories
             .filter((c) => c.name.toLocaleLowerCase('cs').includes(needle) || c.slug.includes(needle))
             .toSorted(byStorefrontOrder);
     return matches.slice(0, 40);
-  }, [categories, search]);
+  };
+  const list = categoryList();
 
   const patchDraft = (patch: Partial<CategoryDraft>) =>
     setDraft((current) => (current === null ? current : { ...current, ...patch }));
 
-  const position = Number(draft?.positionText ?? '');
-  const positionInvalid =
-    draft !== null && (draft.positionText.trim() === '' || !Number.isInteger(position) || position < 0);
-  const nameInvalid = draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200);
+  const { nameInvalid, position, positionInvalid } = categoryDraftValidity(draft);
 
   const save = () => {
     if (selection?.status !== 'ready' || draft === null || busy || positionInvalid || nameInvalid) {
@@ -141,10 +146,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         _tag: 'UpdateCategory',
         id: category.id,
         patch: {
-          name: draft.name.trim(),
-          heading: draft.heading.trim(),
           description: draft.description.trim(),
+          heading: draft.heading.trim(),
           longDescription: draft.longDescription.trim(),
+          name: draft.name.trim(),
           position,
           published: draft.published,
         },
@@ -168,6 +173,86 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     setDraft(null);
     setServerError(null);
   };
+
+  const parentDescription = parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`;
+
+  return {
+    backToList,
+    busy,
+    categories,
+    draft,
+    list,
+    loaded,
+    nameInvalid,
+    open,
+    openPanel,
+    parentDescription,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  };
+};
+
+const categoryListState = ({ categories, loaded, selection }: ReturnType<typeof useCategoryAdmin>) => ({
+  empty: loaded.status === 'ready' && categories.length === 0,
+  failed: loaded.status === 'error',
+  loading: loaded.status === 'idle' || loaded.status === 'loading',
+  visible: loaded.status === 'ready' && categories.length > 0 && selection === null,
+});
+
+const renderCategoryHistory = (selected: CategoryNode) => {
+  if ((selected.history ?? []).length === 0) {
+    return <p className="text-fg-secondary text-sm">Zatím žádné změny kategorie.</p>;
+  }
+  return (
+    <ul className="flex flex-col gap-100 text-sm">
+      {[...(selected.history ?? [])]
+        .toSorted((a, b) => DateTime.toEpochMillis(b.at) - DateTime.toEpochMillis(a.at))
+        .map((entry) => (
+          <li key={`${DateTime.formatIso(entry.at)}-${entry.fields.join(',')}`}>
+            {`${formatDateTime(DateTime.formatIso(entry.at))} — ${entry.fields.join(', ')}: ${entry.before} → ${entry.after}`}
+          </li>
+        ))}
+    </ul>
+  );
+};
+
+export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
+  const model = useCategoryAdmin(props);
+  const {
+    backToList,
+    busy,
+    draft,
+    list,
+    nameInvalid,
+    open,
+    openPanel,
+    parentDescription,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  } = model;
+  const listState = categoryListState(model);
 
   return (
     <>
@@ -198,8 +283,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         title="Kategorie e-shopu"
       >
         <div className="flex flex-col gap-200 py-200">
-          {(loaded.status === 'idle' || loaded.status === 'loading') && <StatusText>Načítám kategorie…</StatusText>}
-          {loaded.status === 'error' && (
+          {listState.loading && <StatusText>Načítám kategorie…</StatusText>}
+          {listState.failed && (
             <>
               <StatusText showIcon status="error">
                 Kategorie se nepodařilo načíst.
@@ -209,10 +294,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               </Button>
             </>
           )}
-          {loaded.status === 'ready' && categories.length === 0 && (
-            <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>
-          )}
-          {loaded.status === 'ready' && categories.length > 0 && selection === null && (
+          {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
+          {listState.visible && (
             <>
               <FormInput
                 id="category-admin-search"
@@ -232,8 +315,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                 {list.map((c) => (
                   <li key={c.id}>
                     <Button
-                      onClick={() => select(c.id)}
                       className="h-auto w-full justify-start whitespace-normal text-left"
+                      onClick={() => select(c.id)}
                       size="sm"
                       theme="borderless"
                       type="button"
@@ -262,12 +345,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
           )}
           {selected !== undefined && draft !== null && (
             <>
-              <p className="text-fg-secondary text-sm">
-                {`Adresa v e-shopu: /${selected.slug}${parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`}`}
-              </p>
+              <p className="text-fg-secondary text-sm">{`Adresa v e-shopu: /${selected.slug}${parentDescription}`}</p>
               <Switch
-                name="categoryPublished"
                 checked={draft.published}
+                name="categoryPublished"
                 onCheckedChange={(published) => patchDraft({ published })}
               >
                 Zobrazit v navigaci e-shopu
@@ -357,19 +438,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                 </StatusText>
               )}
               <h3 className="font-semibold text-sm">Historie změn</h3>
-              {(selected.history ?? []).length === 0 ? (
-                <p className="text-fg-secondary text-sm">Zatím žádné změny kategorie.</p>
-              ) : (
-                <ul className="flex flex-col gap-100 text-sm">
-                  {[...(selected.history ?? [])]
-                    .toSorted((a, b) => DateTime.toEpochMillis(b.at) - DateTime.toEpochMillis(a.at))
-                    .map((entry) => (
-                      <li key={`${DateTime.formatIso(entry.at)}-${entry.fields.join(',')}`}>
-                        {`${formatDateTime(DateTime.formatIso(entry.at))} — ${entry.fields.join(', ')}: ${entry.before} → ${entry.after}`}
-                      </li>
-                    ))}
-                </ul>
-              )}
+              {renderCategoryHistory(selected)}
             </>
           )}
         </div>

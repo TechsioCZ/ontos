@@ -1,15 +1,22 @@
 // Pure contract-register and deadline computations of the documents agenda (S12-01). OWNED BY THE documents LANE.
+import { DateTime, Option } from 'effect';
 import type { DocumentRecord } from './documents.ts';
 
 export const isContractDocument = (document: DocumentRecord) =>
   document.category === 'contract' || document.category === 'amendment' || document.contract !== undefined;
 
 /** Whole days from `today` to an ISO date (`YYYY-MM-DD`); negative when in the past. */
-export const daysUntil = (isoDate: string, today: string) => {
-  const target = Date.UTC(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)) - 1, Number(isoDate.slice(8, 10)));
-  const base = Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 1, Number(today.slice(8, 10)));
-  return Math.round((target - base) / 86_400_000);
+const calendarMillis = (value: string): number => {
+  const sourceYear = Number(value.slice(0, 4));
+  // Retain the original UTC constructor's treatment of two-digit year values.
+  const year = sourceYear >= 0 && sourceYear < 100 ? sourceYear + 1900 : sourceYear;
+  return Option.match(DateTime.make({ day: Number(value.slice(8, 10)), month: Number(value.slice(5, 7)), year }), {
+    onNone: () => Number.NaN,
+    onSome: DateTime.toEpochMillis,
+  });
 };
+export const daysUntil = (isoDate: string, today: string) =>
+  Math.round((calendarMillis(isoDate) - calendarMillis(today)) / 86_400_000);
 
 /** Contracts first by end date (soonest first), each followed by its amendments. */
 export const contractRegister = (documents: readonly DocumentRecord[]) => {
@@ -18,7 +25,7 @@ export const contractRegister = (documents: readonly DocumentRecord[]) => {
     .toSorted((left, right) =>
       (left.contract?.validTo ?? '9999-12-31').localeCompare(right.contract?.validTo ?? '9999-12-31'),
     );
-  const rows: { readonly document: DocumentRecord; readonly depth: 0 | 1 }[] = [];
+  const rows: { readonly depth: 0 | 1; readonly document: DocumentRecord }[] = [];
   for (const original of originals) {
     rows.push({ depth: 0, document: original });
     for (const amendment of documents.filter((entry) => entry.amendsDocumentId === original.id)) {
@@ -33,17 +40,17 @@ export const contractRegister = (documents: readonly DocumentRecord[]) => {
 };
 
 export interface Deadline {
-  readonly document: DocumentRecord;
-  readonly kind: 'end' | 'notice';
   readonly date: string;
   readonly days: number;
+  readonly document: DocumentRecord;
+  readonly kind: 'end' | 'notice';
 }
 
 /** Contract ends and notice deadlines from `today - 7` to `today + horizon` days, nearest first. */
 export const upcomingDeadlines = (documents: readonly DocumentRecord[], today: string, horizon = 90): Deadline[] =>
   documents
     .flatMap((document): Deadline[] => {
-      const contract = document.contract;
+      const { contract } = document;
       if (contract === undefined || contract.status === 'terminated' || contract.status === 'expired') {
         return [];
       }
@@ -52,10 +59,13 @@ export const upcomingDeadlines = (documents: readonly DocumentRecord[], today: s
         entries.push({ date: contract.validTo, days: daysUntil(contract.validTo, today), document, kind: 'end' });
       }
       if (contract.noticeDate !== undefined) {
-        entries.push({ date: contract.noticeDate, days: daysUntil(contract.noticeDate, today), document, kind: 'notice' });
+        entries.push({
+          date: contract.noticeDate,
+          days: daysUntil(contract.noticeDate, today),
+          document,
+          kind: 'notice',
+        });
       }
-      return entries;
+      return entries.filter((entry) => entry.days >= -7 && entry.days <= horizon);
     })
-    .filter((entry) => entry.days >= -7 && entry.days <= horizon)
     .toSorted((left, right) => left.days - right.days);
-

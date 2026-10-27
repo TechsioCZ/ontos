@@ -1,4 +1,6 @@
-// @effect-diagnostics globalDate:off
+import { CalendarDateSchema } from '@app/shared-contracts/calendar-date';
+import { DateTime, Option, Schema } from 'effect';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 // S13 calendar: deadlines DERIVED from their source records (never copied, never edited here).
 // Pure functions over minimal structural shapes of the public reads, so they are unit-testable without the
 // other verticals. Owned by the ops-agenda lane. Each deadline has a stable `key` (source + record + field + date):
@@ -6,68 +8,90 @@
 // and a notification is offered again exactly once (S13-03 dedup is enforced by the agenda reducer).
 
 import type { Deadline } from '../../../shared/domain/ops-overview.ts';
+import { deadlineOwnerPrincipalId } from '../../../shared/domain/ops-overview.ts';
+import { EventKeySchema } from '../../../shared/domain/agenda.ts';
 
-interface Ref {
-  readonly resourceId: string;
-}
+const RefSchema = Schema.Struct({ resourceId: Schema.String.pipe(Schema.brand('ResourceId')) });
+type Ref = typeof RefSchema.Encoded;
+const NullableRefSchema = Schema.OptionFromNullOr(RefSchema);
+const NullableDateSchema = Schema.OptionFromNullOr(CalendarDateSchema);
 
-export interface ContractSource {
-  readonly contractRef: Ref;
-  readonly counterpartyRef: Ref;
-  readonly startDate: string;
-  readonly endDate: string | null;
-  readonly renewalNoticeDate: string | null;
-  readonly lifecycleState: string;
-  readonly unitRef: Ref | null;
-  readonly propertyRef: Ref | null;
-  readonly subject?: string;
-}
+export const ContractSourceSchema = Schema.Struct({
+  contractRef: RefSchema,
+  counterpartyRef: RefSchema,
+  endDate: NullableDateSchema,
+  lifecycleState: Schema.String,
+  propertyRef: NullableRefSchema,
+  renewalNoticeDate: NullableDateSchema,
+  startDate: CalendarDateSchema,
+  subject: Schema.optionalKey(Schema.String),
+  unitRef: NullableRefSchema,
+});
+export type ContractSource = typeof ContractSourceSchema.Encoded;
 
-export interface OccupancySource {
-  readonly occupancyRef: Ref;
-  readonly unitRef: Ref;
-  readonly startDate: string;
-  readonly endDate: string | null;
-  readonly state: string;
-  readonly kind: string;
-  readonly customerCounterpartyRef: Ref | null;
-}
+export const OccupancySourceSchema = Schema.Struct({
+  customerCounterpartyRef: NullableRefSchema,
+  endDate: NullableDateSchema,
+  kind: Schema.String,
+  occupancyRef: RefSchema,
+  startDate: CalendarDateSchema,
+  state: Schema.String,
+  unitRef: RefSchema,
+});
+export type OccupancySource = typeof OccupancySourceSchema.Encoded;
 
-export interface TaskSource {
-  readonly ref: Ref;
-  readonly title: string;
-  readonly dueDate?: string;
-  readonly state: string;
-  readonly priority: string;
-  readonly ownerPrincipalRef?: { readonly principalId: string };
-  readonly contextRefs: readonly Ref[];
-}
+export const TaskSourceSchema = Schema.Struct({
+  contextRefs: Schema.Array(RefSchema),
+  dueDate: Schema.optionalKey(CalendarDateSchema),
+  ownerPrincipalRef: Schema.optionalKey(
+    Schema.Struct({ principalId: Schema.String.pipe(Schema.brand('PrincipalId')) }),
+  ),
+  priority: Schema.String,
+  ref: RefSchema,
+  state: Schema.String,
+  title: Schema.String,
+});
+export type TaskSource = typeof TaskSourceSchema.Encoded;
 
-export interface InvoiceSource {
-  readonly ref: Ref;
-  readonly dueDate: string;
-  readonly direction: string;
-  readonly businessState: string;
-  readonly paymentState: string;
-  readonly totalMinor: number;
-  readonly paidMinor: number;
-  readonly documentNumber: string;
-  readonly number?: string;
-  readonly counterpartyName?: string;
-  readonly counterpartyRef: Ref;
-  readonly unitRef?: Ref;
-  readonly propertyRef?: Ref;
-}
+export const InvoiceSourceSchema = Schema.Struct({
+  businessState: Schema.String,
+  counterpartyName: Schema.optionalKey(Schema.String),
+  counterpartyRef: RefSchema,
+  direction: Schema.String,
+  documentNumber: Schema.String,
+  dueDate: CalendarDateSchema,
+  number: Schema.optionalKey(Schema.String),
+  paidMinor: Schema.Finite,
+  paymentState: Schema.String,
+  propertyRef: Schema.optionalKey(RefSchema),
+  ref: RefSchema,
+  totalMinor: Schema.Finite,
+  unitRef: Schema.optionalKey(RefSchema),
+});
+export type InvoiceSource = typeof InvoiceSourceSchema.Encoded;
 
-export interface AssetSource {
-  readonly assetRef: Ref;
-  readonly name: string;
-  readonly code: string;
-  readonly nextServiceAt: string | null;
-  readonly lifecycleState: string;
-  readonly propertyRef: Ref;
-  readonly unitRef: Ref | null;
-}
+export const AssetSourceSchema = Schema.Struct({
+  assetRef: RefSchema,
+  code: Schema.String,
+  lifecycleState: Schema.String,
+  name: Schema.String,
+  nextServiceAt: NullableDateSchema,
+  propertyRef: RefSchema,
+  unitRef: NullableRefSchema,
+});
+export type AssetSource = typeof AssetSourceSchema.Encoded;
+
+export const ProjectSourceSchema = Schema.Struct({
+  id: Schema.String.pipe(Schema.brand('ProjectId')),
+  milestones: Schema.Array(
+    Schema.Struct({ completed: Schema.Boolean, dueDate: CalendarDateSchema, title: Schema.String }),
+  ),
+  plannedEnd: CalendarDateSchema,
+  plannedStart: CalendarDateSchema,
+  state: Schema.String,
+  title: Schema.String,
+});
+export type ProjectSource = typeof ProjectSourceSchema.Encoded;
 
 /** Display names of referenced records (units, properties, counterparties) keyed by resource id. */
 export type NameLookup = ReadonlyMap<string, string>;
@@ -75,8 +99,15 @@ export type NameLookup = ReadonlyMap<string, string>;
 const nameOf = (names: NameLookup, ref: Ref | null | undefined) =>
   ref === null || ref === undefined ? undefined : names.get(ref.resourceId);
 
-const withOptional = <Key extends string, Value>(key: Key, value: Value | undefined) =>
-  (value === undefined ? {} : { [key]: value }) as Partial<Record<Key, Value>>;
+type OptionalField<Key extends string, Value> = Partial<Record<Key, Value>>;
+
+const withOptional = <Key extends string, Value>(key: Key, value: Value | undefined) => {
+  const fields: OptionalField<Key, Value> = {};
+  if (value !== undefined) {
+    fields[key] = value;
+  }
+  return fields;
+};
 
 const day = (value: string) => value.slice(0, 10);
 
@@ -91,16 +122,21 @@ export const contractDeadlines = (contracts: readonly ContractSource[], names: N
     const location = nameOf(names, contract.unitRef) ?? nameOf(names, contract.propertyRef);
     const title = [party ?? contract.subject, location].filter((part) => part !== undefined).join(' · ') || id;
     const base = {
+      detail: contract.lifecycleState,
       done: false,
       href: `/smlouvy?resourceId=${encodeURIComponent(id)}`,
       source: 'agreements' as const,
-      detail: contract.lifecycleState,
       title,
       ...withOptional('location', location),
     };
     const rows: Deadline[] = [];
     if (contract.endDate !== null) {
-      rows.push({ ...base, category: 'contractEnd', date: day(contract.endDate), key: `contract-end:${id}:${day(contract.endDate)}` });
+      rows.push({
+        ...base,
+        category: 'contractEnd',
+        date: day(contract.endDate),
+        key: `contract-end:${id}:${day(contract.endDate)}`,
+      });
     }
     if (contract.renewalNoticeDate !== null) {
       rows.push({
@@ -177,36 +213,48 @@ export const taskDeadlines = (tasks: readonly TaskSource[], names: NameLookup): 
         source: 'work',
         title: task.title,
         ...withOptional('location', location),
-        ...withOptional('ownerPrincipalId', task.ownerPrincipalRef?.principalId),
+        ...withOptional(
+          'ownerPrincipalId',
+          task.ownerPrincipalRef === undefined
+            ? undefined
+            : deadlineOwnerPrincipalId(task.ownerPrincipalRef.principalId),
+        ),
       },
     ];
   });
 
 /** Project dates and milestones are read directly from the work owner's public records. */
-export const projectDeadlines = (projects: readonly {
-  readonly id: string;
-  readonly title: string;
-  readonly plannedStart: string;
-  readonly plannedEnd: string;
-  readonly state: string;
-  readonly milestones: readonly { readonly title: string; readonly dueDate: string; readonly completed: boolean }[];
-}[]): Deadline[] => projects.flatMap((project) => {
-  const base = {
-    category: 'opsDeadline' as const,
-    source: 'work' as const,
-    href: `/ukoly?tab=projects&project=${encodeURIComponent(project.id)}`,
-    done: project.state === 'DONE',
-  };
-  return [
-    { ...base, date: project.plannedStart, done: project.state !== 'PLANNED', title: project.title, key: `project-start:${project.id}:${project.plannedStart}` },
-    { ...base, date: project.plannedEnd, title: project.title, key: `project-end:${project.id}:${project.plannedEnd}` },
-    ...project.milestones.map((milestone, index) => ({
-      ...base, date: milestone.dueDate, done: base.done || milestone.completed,
-      title: `${project.title} · ${milestone.title}`,
-      key: `project-milestone:${project.id}:${index}:${milestone.dueDate}`,
-    })),
-  ];
-});
+export const projectDeadlines = (projects: readonly ProjectSource[]): Deadline[] =>
+  projects.flatMap((project) => {
+    const base = {
+      category: 'opsDeadline' as const,
+      done: project.state === 'DONE',
+      href: `/ukoly?tab=projects&project=${encodeURIComponent(project.id)}`,
+      source: 'work' as const,
+    };
+    return [
+      {
+        ...base,
+        date: project.plannedStart,
+        done: project.state !== 'PLANNED',
+        key: `project-start:${project.id}:${project.plannedStart}`,
+        title: project.title,
+      },
+      {
+        ...base,
+        date: project.plannedEnd,
+        key: `project-end:${project.id}:${project.plannedEnd}`,
+        title: project.title,
+      },
+      ...project.milestones.map((milestone, index) => ({
+        ...base,
+        date: milestone.dueDate,
+        done: base.done || milestone.completed,
+        key: `project-milestone:${project.id}:${index}:${milestone.dueDate}`,
+        title: `${project.title} · ${milestone.title}`,
+      })),
+    ];
+  });
 
 /** Outstanding amount of an invoice in minor units (never negative). */
 export const outstandingMinor = (invoice: InvoiceSource) => Math.max(0, invoice.totalMinor - invoice.paidMinor);
@@ -271,18 +319,24 @@ const pragueFormat = new Intl.DateTimeFormat('en-CA', {
 });
 
 /** Today in Europe/Prague as `YYYY-MM-DD`. */
-export const pragueToday = (now: Date = new Date()) => pragueFormat.format(now);
+export const pragueToday = (now: Date = browserRuntime.runSync(DateTime.nowAsDate)) => pragueFormat.format(now);
 
 const DAY_MS = 86_400_000;
-const dayNumber = (date: string) => Math.round(Date.parse(`${date}T00:00:00Z`) / DAY_MS);
+const epochMillis = (date: string) =>
+  DateTime.make(`${date}T00:00:00Z`).pipe(
+    Option.map(DateTime.toEpochMillis),
+    Option.getOrElse(() => Number.NaN),
+  );
+const dayNumber = (date: string) => Math.round(epochMillis(date) / DAY_MS);
 
 /** Whole days from `today` to `date` (negative = past). */
 export const daysUntil = (date: string, today: string) => dayNumber(date) - dayNumber(today);
 
 export const addDays = (date: string, days: number) =>
-  new Date((dayNumber(date) + days) * DAY_MS).toISOString().slice(0, 10);
+  DateTime.formatIsoDateUtc(DateTime.makeUnsafe((dayNumber(date) + days) * DAY_MS));
 
-export type Urgency = 'done' | 'overdue' | 'today' | 'soon' | 'later';
+export const UrgencySchema = Schema.Literals(['done', 'overdue', 'today', 'soon', 'later']);
+export type Urgency = typeof UrgencySchema.Type;
 
 /** done → overdue (past) → today → soon (≤ 7 days) → later. */
 export const urgencyOf = (deadline: Pick<Deadline, 'date' | 'done'>, today: string): Urgency => {
@@ -304,15 +358,16 @@ export const sortDeadlines = (rows: readonly Deadline[]) =>
 
 // ---- Notifications ---------------------------------------------------------------------------------------------
 
-export interface DeliveryCandidate {
-  readonly eventKey: string;
-  readonly category: 'DEADLINE' | 'OVERDUE';
-  readonly title: string;
-  readonly detail?: string;
-  readonly source: string;
-  readonly href: string;
-  readonly dueDate: string;
-}
+export const DeliveryCandidateSchema = Schema.Struct({
+  category: Schema.Literals(['DEADLINE', 'OVERDUE']),
+  detail: Schema.optionalKey(Schema.String),
+  dueDate: CalendarDateSchema,
+  eventKey: EventKeySchema.pipe(Schema.brand('EventKey')),
+  href: Schema.String,
+  source: Schema.String,
+  title: Schema.String,
+});
+export type DeliveryCandidate = typeof DeliveryCandidateSchema.Encoded;
 
 /** Overdue horizon: older overdue items are not re-announced (they are visible in the calendar). */
 const OVERDUE_HORIZON_DAYS = 60;
@@ -347,7 +402,7 @@ export const notificationCandidates = (
         eventKey: `${deadline.key}:${category}`.slice(0, 400),
         href: deadline.href,
         source: deadline.source,
-        title: `${deadline.title}`.slice(0, 300) || deadline.key.slice(0, 300),
+        title: deadline.title.slice(0, 300) || deadline.key.slice(0, 300),
         ...withOptional('detail', deadline.category),
       },
     ];
@@ -355,23 +410,30 @@ export const notificationCandidates = (
 
 /** Native assignments are independent of due dates. Repeated visits deduplicate by task + recipient. */
 export const taskAssignmentCandidates = (tasks: readonly TaskSource[], me: string | undefined) =>
-  tasks.flatMap((task) => me === undefined || task.ownerPrincipalRef?.principalId !== me || task.state === 'DONE' || task.state === 'CANCELLED'
-    ? []
-    : [{
-        category: 'ASSIGNED' as const,
-        eventKey: `task-assigned:${task.ref.resourceId}:${me}`,
-        href: `/ukoly?resourceId=${encodeURIComponent(task.ref.resourceId)}`,
-        source: 'work',
-        title: task.title.slice(0, 300),
-        ...withOptional('dueDate', task.dueDate),
-      }]);
+  tasks.flatMap((task) =>
+    me === undefined ||
+    task.ownerPrincipalRef?.principalId !== me ||
+    task.state === 'DONE' ||
+    task.state === 'CANCELLED'
+      ? []
+      : [
+          {
+            category: 'ASSIGNED' as const,
+            eventKey: `task-assigned:${task.ref.resourceId}:${me}`,
+            href: `/ukoly?resourceId=${encodeURIComponent(task.ref.resourceId)}`,
+            source: 'work',
+            title: task.title.slice(0, 300),
+            ...withOptional('dueDate', task.dueDate),
+          },
+        ],
+  );
 
 // ---- CSV -------------------------------------------------------------------------------------------------------
 
 const csvCell = (value: string | number | undefined) => {
   const raw = value === undefined ? '' : String(value);
   // Names and notes must not execute as spreadsheet formulas when a CSV is opened in Excel.
-  const text = typeof value === 'string' && /^[\s]*[=+@-]/u.test(raw) ? `'${raw}` : raw;
+  const text = Schema.is(Schema.String)(value) && /^[\s]*[=+@-]/u.test(raw) ? `'${raw}` : raw;
   return /[";\n\r]/u.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 };
 

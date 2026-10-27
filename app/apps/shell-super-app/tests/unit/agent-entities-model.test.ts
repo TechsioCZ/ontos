@@ -1,15 +1,19 @@
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
 import { expect, test } from 'effect-rstest';
 
 import { agentDraftProblem, agentModuleOptions } from '../../api/auth/agent-entities-model.ts';
 
 /** Labels the composed modules declare in their contributions. */
-const LABELS: Readonly<Record<string, string>> = { 'facility.operations': 'Provoz', 'work.tasks': 'Úkoly a projekty' };
-const labelOf = (moduleId: string): string => LABELS[moduleId] ?? moduleId;
+const LABELS = new Map([
+  ['facility.operations', 'Provoz'],
+  ['work.tasks', 'Úkoly a projekty'],
+]);
+const labelOf = (moduleId: string): string => LABELS.get(moduleId) ?? moduleId;
 
 const options = agentModuleOptions(
   [
-    { access: 'write', moduleId: 'work.tasks' },
-    { access: 'read', moduleId: 'facility.operations' },
+    { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
+    { access: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
   ],
   labelOf,
 );
@@ -19,7 +23,7 @@ const valid = {
   existingNames: [],
   labelOf,
   memberIds: ['p1', 'p2'],
-  modules: [{ access: 'write', moduleId: 'work.tasks' }],
+  modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
   operatorPrincipalIds: ['p1'],
   options,
   ownerPrincipalId: 'p2',
@@ -27,8 +31,8 @@ const valid = {
 
 test('module options carry the highest access and are sorted by Czech label', () => {
   expect(options).toEqual([
-    { label: 'Provoz', maxAccess: 'read', moduleId: 'facility.operations' },
-    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: 'work.tasks' },
+    { label: 'Provoz', maxAccess: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
+    { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
   ]);
 });
 
@@ -55,17 +59,20 @@ test('a module listed twice is rejected', () => {
     agentDraftProblem({
       ...valid,
       modules: [
-        { access: 'read', moduleId: 'work.tasks' },
-        { access: 'write', moduleId: 'work.tasks' },
+        { access: 'read', moduleId: AgentModuleKeySchema.make('work.tasks') },
+        { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
       ],
     }),
   ).toBe('Každý modul vyberte jen jednou.');
 });
 
 test('write on a module the company offers only read for is rejected', () => {
-  expect(agentDraftProblem({ ...valid, modules: [{ access: 'write', moduleId: 'facility.operations' }] })).toBe(
-    'Provoz: zápis tu nemá žádná role, agent ho dostat nemůže.',
-  );
+  expect(
+    agentDraftProblem({
+      ...valid,
+      modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('facility.operations') }],
+    }),
+  ).toBe('Provoz: zápis tu nemá žádná role, agent ho dostat nemůže.');
 });
 
 test('an owner who is not an active person of the company is rejected', () => {

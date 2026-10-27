@@ -10,42 +10,34 @@
  * `demo.crm.read_assigned` (scripts/demo/permissions.mts), so the crm owner returns just the three entrusted
  * clients with their contacts, calls/meetings and planned contacts. The Hanák CRM row (0022) is never touched.
  */
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, DateTime, Effect, Layer, Schema } from 'effect';
+import { Config, Console, DateTime, Effect, Option, Schema } from 'effect';
 
-import { CrmStateSchema } from '../../verticals/crm/shared/apis/records.ts';
+import { Command, Flag } from 'effect/unstable/cli';
+import { Reactivity } from 'effect/unstable/reactivity';
+import { CrmStateSchema } from '@app/crm/contracts/records';
 import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
 import { siamparkRentalPersonas } from './permissions.mts';
 
-const principalOf = (email: string) => {
-  const persona = siamparkRentalPersonas.find((entry) => entry.email === email);
-  if (persona === undefined) {
-    throw new Error(`Siampark persona ${email} is missing`);
+class CrmSeedFailure extends Schema.TaggedError<CrmSeedFailure>()('CrmSeedFailure', { message: Schema.String }) {}
+const principalOf = (email: string) =>
+  Effect.gen(function* fixturePrincipal() {
+    const persona = siamparkRentalPersonas.find((entry) => entry.email === email);
+    if (persona === undefined) {
+      return yield* new CrmSeedFailure({ message: `Siampark persona ${email} is missing` });
+    }
+    return persona.principalId;
+  });
+const optionalFields = (fields: Readonly<Record<string, string | boolean | undefined>>) => {
+  const present: Record<string, string | boolean> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined) {
+      present[key] = value;
+    }
   }
-  return persona.principalId;
+  return present;
 };
-const managementPrincipal = principalOf('management@siampark.demo');
-const externalPrincipal = principalOf('external@siampark.demo');
-
-const salespeople = [
-  {
-    active: true,
-    email: 'management@siampark.demo',
-    id: demoId('crm.salesperson', 'siampark-vedeni'),
-    name: 'Vedení Siampark',
-    phone: '+420 515 900 100',
-    principalId: managementPrincipal,
-  },
-  {
-    active: true,
-    email: 'external@siampark.demo',
-    id: demoId('crm.salesperson', 'siampark-externi'),
-    name: 'Martin Krejčí',
-    phone: '+420 724 518 330',
-    principalId: externalPrincipal,
-  },
-] as const;
-const [vedeni, externi] = salespeople;
 
 interface ContactSeed {
   readonly email?: string;
@@ -249,11 +241,40 @@ const clients: readonly ClientSeed[] = [
   },
 ];
 
-const ownerOf = (seed: ClientSeed) =>
-  seed.owner === 'externi' ? externi.id : seed.owner === 'vedeni' ? vedeni.id : undefined;
-const authorOf = (seed: ClientSeed) => (seed.owner === 'externi' ? externalPrincipal : managementPrincipal);
+const salespersonNamespace = 'crm.salesperson';
+const managementEmail = 'management@siampark.demo';
+const clientId = (seed: ClientSeed) => demoId('crm.client', seed.key);
+const seedState = (now: DateTime.Utc, managementPrincipal: string, externalPrincipal: string) => {
+  const salespeople = [
+    {
+      active: true,
+      email: managementEmail,
+      id: demoId(salespersonNamespace, 'siampark-vedeni'),
+      name: 'Vedení Siampark',
+      phone: '+420 515 900 100',
+      principalId: managementPrincipal,
+    },
+    {
+      active: true,
+      email: 'external@siampark.demo',
+      id: demoId(salespersonNamespace, 'siampark-externi'),
+      name: 'Martin Krejčí',
+      phone: '+420 724 518 330',
+      principalId: externalPrincipal,
+    },
+  ] as const;
+  const [vedeni, externi] = salespeople;
+  const ownerOf = (seed: ClientSeed) => {
+    if (seed.owner === 'externi') {
+      return Option.some(externi.id);
+    }
+    if (seed.owner === 'vedeni') {
+      return Option.some(vedeni.id);
+    }
+    return Option.none();
+  };
+  const authorOf = (seed: ClientSeed) => (seed.owner === 'externi' ? externalPrincipal : managementPrincipal);
 
-const seedState = (now: DateTime.Utc) => {
   const today = DateTime.startOf(now, 'day');
   // Prague is UTC+1/UTC+2; one hour offset keeps every seeded time inside working hours.
   const at = (daysAgo: number, hour = 9) =>
@@ -261,22 +282,21 @@ const seedState = (now: DateTime.Utc) => {
   const day = (inDays: number) => DateTime.formatIso(DateTime.add(today, { days: inDays })).slice(0, 10);
   const created = at(21, 9);
   const entrusted = at(14, 10);
-  const clientId = (seed: ClientSeed) => demoId('crm.client', seed.key);
   const items = clients.map((seed) => {
-    const owner = ownerOf(seed);
+    const owner = Option.getOrUndefined(ownerOf(seed));
     return {
-      ...(seed.address === undefined ? {} : { address: seed.address }),
+      ...optionalFields({ address: seed.address }),
       createdAt: created,
       createdBy: managementPrincipal,
-      ...(seed.email === undefined ? {} : { email: seed.email }),
+      ...optionalFields({ email: seed.email }),
       id: clientId(seed),
       kind: seed.kind ?? 'organization',
       name: seed.name,
       note: seed.note,
-      ...(owner === undefined ? {} : { ownerSalespersonId: owner }),
-      ...(seed.phone === undefined ? {} : { phone: seed.phone }),
-      ...(seed.regNo === undefined ? {} : { regNo: seed.regNo }),
-      ...(seed.segment === undefined ? {} : { segment: seed.segment }),
+      ...optionalFields({ ownerSalespersonId: owner }),
+      ...optionalFields({ phone: seed.phone }),
+      ...optionalFields({ regNo: seed.regNo }),
+      ...optionalFields({ segment: seed.segment }),
       status: 'active' as const,
       updatedAt: owner === undefined ? created : entrusted,
     };
@@ -286,19 +306,19 @@ const seedState = (now: DateTime.Utc) => {
       clientId: clientId(seed),
       createdAt: created,
       createdBy: managementPrincipal,
-      ...(contact.email === undefined ? {} : { email: contact.email }),
+      ...optionalFields({ email: contact.email }),
       id: demoId('crm.contact', `${seed.key}-${index + 1}`),
       name: contact.name,
-      ...(contact.note === undefined ? {} : { note: contact.note }),
-      ...(contact.phone === undefined ? {} : { phone: contact.phone }),
-      ...(contact.primary === undefined ? {} : { primary: contact.primary }),
-      ...(contact.role === undefined ? {} : { role: contact.role }),
+      ...optionalFields({ note: contact.note }),
+      ...optionalFields({ phone: contact.phone }),
+      ...optionalFields({ primary: contact.primary }),
+      ...optionalFields({ role: contact.role }),
       status: 'active' as const,
       updatedAt: created,
     })),
   );
   const assignmentHistory = clients.flatMap((seed) => {
-    const owner = ownerOf(seed);
+    const owner = Option.getOrUndefined(ownerOf(seed));
     return owner === undefined
       ? []
       : [
@@ -351,12 +371,12 @@ const seedState = (now: DateTime.Utc) => {
       createdAt: at(visit.daysAgo, visit.hour + 1),
       id: demoId('crm.visit', visit.key),
       kind: visit.kind,
-      ...(visit.nextStep === undefined ? {} : { nextStep: visit.nextStep }),
-      ...(visit.nextStepInDays === undefined ? {} : { nextStepDate: day(visit.nextStepInDays) }),
-      ...(visit.note === undefined ? {} : { note: visit.note }),
+      ...optionalFields({ nextStep: visit.nextStep }),
+      ...optionalFields({ nextStepDate: visit.nextStepInDays === undefined ? undefined : day(visit.nextStepInDays) }),
+      ...optionalFields({ note: visit.note }),
       occurredAt: at(visit.daysAgo, visit.hour),
       result: visit.result,
-      ...(ownerOf(seed) === undefined ? {} : { salespersonId: ownerOf(seed) }),
+      ...optionalFields({ salespersonId: Option.getOrUndefined(ownerOf(seed)) }),
       updatedAt: at(visit.daysAgo, visit.hour + 1),
     })),
   );
@@ -371,7 +391,7 @@ const seedState = (now: DateTime.Utc) => {
             dueDate: day(seed.plan.dueInDays),
             id: demoId('crm.plan', seed.plan.key),
             note: seed.plan.note,
-            ...(ownerOf(seed) === undefined ? {} : { salespersonId: ownerOf(seed) }),
+            ...optionalFields({ salespersonId: Option.getOrUndefined(ownerOf(seed)) }),
             status: 'open' as const,
           },
         ],
@@ -384,33 +404,47 @@ const seedState = (now: DateTime.Utc) => {
   };
 };
 
-const program = Effect.gen(function* seedSiamparkCrm() {
-  const reset = process.argv.includes('--reset');
-  const now = yield* DateTime.now;
-  const decoded = yield* Schema.decodeUnknownEffect(CrmStateSchema)(seedState(now));
-  const encoded = yield* Schema.encodeEffect(CrmStateSchema)(decoded);
-  const sql = yield* PgClient.PgClient;
-  const json = JSON.stringify(encoded);
-  const rows = reset
-    ? yield* sql`
+const program = (reset: boolean) =>
+  Effect.gen(function* seedSiamparkCrm() {
+    const managementPrincipal = yield* principalOf(managementEmail);
+    const externalPrincipal = yield* principalOf('external@siampark.demo');
+    const now = yield* DateTime.now;
+    const decoded = yield* Schema.decodeUnknownEffect(CrmStateSchema)(
+      seedState(now, managementPrincipal, externalPrincipal),
+    );
+    const encoded = yield* Schema.encodeEffect(CrmStateSchema)(decoded);
+    const sql = yield* PgClient.PgClient;
+    const json = yield* Schema.encodeEffect(Schema.fromJsonString(CrmStateSchema))(decoded);
+    const rows = reset
+      ? yield* sql`
         insert into demo_crm.crm_states (tenant_id, legal_entity_id, revision, state, updated_at)
         values (${demoTenantId}, ${rentalDemoLegalEntityId}, 1, ${json}::jsonb, now())
         on conflict (tenant_id, legal_entity_id)
         do update set state = excluded.state, revision = demo_crm.crm_states.revision + 1, updated_at = now()
         returning revision`
-    : yield* sql`
+      : yield* sql`
         insert into demo_crm.crm_states (tenant_id, legal_entity_id, revision, state, updated_at)
         values (${demoTenantId}, ${rentalDemoLegalEntityId}, 1, ${json}::jsonb, now())
         on conflict (tenant_id, legal_entity_id) do nothing
         returning revision`;
-  const entrustedCount = encoded.clients.items.filter((client) => client.ownerSalespersonId === externi.id).length;
-  console.log(
-    rows.length === 0
-      ? 'Siampark CRM state already exists; nothing changed (use --reset to replace it).'
-      : `Siampark CRM state written: ${encoded.clients.items.length} clients, ${entrustedCount} entrusted to external@siampark.demo, ${encoded.visits.items.length} visits, ${encoded.visits.plan.length} planned contacts.`,
-  );
-});
+    const entrustedCount = encoded.clients.items.filter(
+      (client) => client.ownerSalespersonId === demoId(salespersonNamespace, 'siampark-externi'),
+    ).length;
+    yield* Console.log(
+      rows.length === 0
+        ? 'Siampark CRM state already exists; nothing changed (use --reset to replace it).'
+        : `Siampark CRM state written: ${encoded.clients.items.length} clients, ${entrustedCount} entrusted to external@siampark.demo, ${encoded.visits.items.length} visits, ${encoded.visits.plan.length} planned contacts.`,
+    );
+  });
 
 const pgLive = PgClient.layerConfig({ url: Config.Redacted('DATABASE_ADMIN_URL') });
 
-await Effect.runPromise(program.pipe(Effect.provide(Layer.orDie(pgLive)), Effect.scoped));
+const command = Command.make('seed-siampark-crm', { reset: Flag.Boolean('reset') }, ({ reset }) => program(reset));
+NodeRuntime.runMain(
+  Command.run(command, { version: '1.0.0' }).pipe(
+    Effect.provide(pgLive),
+    Effect.provide(Reactivity.layer),
+    Effect.provide(NodeServices.layer),
+    Effect.scoped,
+  ),
+);

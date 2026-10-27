@@ -36,7 +36,10 @@ export const catalogHeads = merchandiseSchema.table.withRLS(
   {
     ...scopeColumns,
     aiChanges: jsonb('ai_changes'),
-    homepageFeaturedProductIds: text('homepage_featured_product_ids').array().default(sql`'{}'::text[]`).notNull(),
+    homepageFeaturedProductIds: text('homepage_featured_product_ids')
+      .array()
+      .default(sql`'{}'::text[]`)
+      .notNull(),
     revision: integer('revision').default(0).notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
@@ -56,7 +59,10 @@ export const products = merchandiseSchema.table.withRLS(
     availability: text('availability').notNull(),
     category: text('category').notNull(),
     categoryId: text('category_id'),
-    categoryPathIds: text('category_path_ids').array().default(sql`'{}'::text[]`).notNull(),
+    categoryPathIds: text('category_path_ids')
+      .array()
+      .default(sql`'{}'::text[]`)
+      .notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
     currentPriceMinor: minor('current_price_minor').notNull(),
     document: jsonb('document').notNull(),
@@ -187,12 +193,7 @@ export const stockMovements = merchandiseSchema.table.withRLS(
   },
   (table) => [
     primaryKey({ columns: [table.tenantId, table.legalEntityId, table.id] }),
-    index('demo_merchandise_movements_product').on(
-      table.tenantId,
-      table.legalEntityId,
-      table.productId,
-      table.ordinal,
-    ),
+    index('demo_merchandise_movements_product').on(table.tenantId, table.legalEntityId, table.productId, table.ordinal),
     index('demo_merchandise_movements_reference').on(table.tenantId, table.legalEntityId, table.reference),
     ...tenantLegalEntityRlsPolicies('demo_merchandise_movement_scope', table.tenantId, table.legalEntityId),
   ],
@@ -250,7 +251,7 @@ export const merchandiseRelations = defineRelations({
   gatewayAssertionRedemptions,
   orders,
   priceTiers,
-  productVariants,
   products,
+  productVariants,
   stockMovements,
 });

@@ -1,12 +1,13 @@
-import { Effect } from 'effect' with { rstest: 'importActual' };
-import type { AgentEntity, ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
+import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
+import { Effect, Schema } from 'effect' with { rstest: 'importActual' };
+import type { ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, rs } from 'effect-rstest';
 
 import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
 
 interface StatusDialogFixture {
-  agent: AgentEntity;
+  agent: typeof AgentEntitySchema.Encoded;
   missing: boolean;
   requests: { readonly key: string; readonly request: ManageAgentEntityRequest }[];
   sequence: number;
@@ -40,7 +41,7 @@ rs.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
     refreshing: false,
     state: 'ready',
     value: {
-      agents: fixture.missing ? [] : [fixture.agent],
+      agents: fixture.missing ? [] : [Schema.decodeUnknownSync(AgentEntitySchema)(fixture.agent)],
       audit: [],
       company: { legalEntityId: 'company', legalName: 'Firma' },
       members: [],

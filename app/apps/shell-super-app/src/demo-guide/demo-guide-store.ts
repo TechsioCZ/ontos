@@ -1,5 +1,5 @@
-import { Option, Schema } from 'effect';
-import { useMemo, useSyncExternalStore } from 'react';
+import { Option, Result, Schema } from 'effect';
+import { useSyncExternalStore } from 'react';
 
 import type { DemoGuide, DemoGuideId } from './demo-guide-types.ts';
 
@@ -124,11 +124,12 @@ export const readDemoGuideProgress = (guideId: DemoGuideId): readonly string[] =
 /** The snapshot is the raw stored string, so React compares a stable primitive. */
 export const useDemoGuideProgress = (guideId: DemoGuideId): readonly string[] => {
   const raw = useSyncExternalStore(subscribe, () => readKey(demoGuideProgressKey(guideId)), serverProgress);
-  return useMemo(() => parseGuideProgress(raw), [raw]);
+  return parseGuideProgress(raw);
 };
-export const setDemoGuideProgress = (guideId: DemoGuideId, doneIds: readonly string[]): void => {
-  writeKey(demoGuideProgressKey(guideId), JSON.stringify(doneIds));
-};
+export const setDemoGuideProgress = (guideId: DemoGuideId, doneIds: readonly string[]) =>
+  Schema.encodeResult(progressSchema)(doneIds).pipe(
+    Result.map((encoded) => writeKey(demoGuideProgressKey(guideId), encoded)),
+  );
 export const resetDemoGuideProgress = (guideId: DemoGuideId): void => {
   writeKey(demoGuideProgressKey(guideId), null);
 };

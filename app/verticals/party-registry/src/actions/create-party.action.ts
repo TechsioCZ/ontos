@@ -21,6 +21,9 @@ import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './cre
 import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
 
 export type { CreatePartyPayload } from '../../shared/actions/create-party.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const CreatePartyErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -55,8 +58,8 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     accessKind: 'read',
     queryHash: candidateFingerprint(payload.candidate),
     resultCount: result.outcome === 'CREATED' ? 0 : 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: target.resourceId,
     targetResourceType: target.resourceType,
   });
@@ -64,8 +67,8 @@ const handleCreateParty = Effect.fn('CreatePartyAction.handleCreateParty')(funct
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.party-created.v1',
       payloadJson: { partyRef: result.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.partyRef.resourceId,
       subjectResourceType: result.partyRef.resourceType,
     });
@@ -106,12 +109,12 @@ export const createPartyAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.create-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: CreatePartyPayloadSchema,
     // No pre-handler Policy: no-strong eligibility belongs to the canonical transaction so an
     // eligible review-required Candidate can commit AMBIGUOUS decision/case state atomically.

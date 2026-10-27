@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
-import { Effect, Exit, FileSystem, ManagedRuntime, Path, Predicate, Schema, Stream } from 'effect';
+import { Effect, Exit, FileSystem, ManagedRuntime, Option, Path, Predicate, Schema, Stream } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { HttpApi } from 'effect/unstable/httpapi';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
@@ -436,17 +436,13 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           workspaceRoot,
         }),
     });
-    const mcp = yield* Effect.try({
-      catch: (cause) => failure(Predicate.isError(cause) ? cause.message : 'MCP contribution is invalid', cause),
-      try: () =>
-        deriveOntosMcpContribution({
-          actions: owner.manifest.publicSurface.actions,
-          api: owner.manifest.publicSurface.api,
-          appId,
-          authored: owner.manifest.publicSurface.mcp,
-          moduleId: owner.manifest.module.id,
-        }),
-    });
+    const mcp = yield* deriveOntosMcpContribution({
+      actions: owner.manifest.publicSurface.actions,
+      api: owner.manifest.publicSurface.api,
+      appId,
+      authored: owner.manifest.publicSurface.mcp,
+      moduleId: owner.manifest.module.id,
+    }).pipe(Effect.mapError((cause) => failure(cause.message, cause)));
     const contract = {
       deployment: {
         appId,
@@ -480,13 +476,19 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders,
       });
     }
-    if (mcp !== undefined) {
-      Object.assign(contract.manifest.publicSurface, { mcp: mcp.contribution });
+    if (Option.isSome(mcp)) {
+      Object.assign(contract.manifest.publicSurface, { mcp: mcp.value.contribution });
     }
     const decoded = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
       onExcessProperty: 'error',
     })(contract).pipe(Effect.mapError((cause) => failure('derived OntOS module contract is invalid', cause)));
-    return { contract: decoded, mcpToolCatalog: mcp?.toolCatalog };
+    return {
+      contract: decoded,
+      mcpToolCatalog: mcp.pipe(
+        Option.map((derived) => derived.toolCatalog),
+        Option.getOrUndefined,
+      ),
+    };
   });
 
 /** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */

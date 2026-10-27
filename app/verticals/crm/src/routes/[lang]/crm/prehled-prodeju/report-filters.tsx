@@ -1,11 +1,14 @@
+import type { CrmRouteSearch } from '../../../../../shared/route-search.ts';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Filter bar of the sales report (crm-reports lane): období, obchodník, klient, stav (mapped meaning or raw).
 // Filters live in the URL (?obdobi=&obchodnik=&klient=&stav=&seskupit=) so a drill-down and back keeps them.
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { ReportFilters, StatusMeaningOrUnmapped } from '../../../../../shared/domain/reports.ts';
+import { Schema } from 'effect';
 import {
   UNASSIGNED,
+  StatusMeaningOrUnmappedSchema,
   normalizeStatus,
   orderDate,
   rawStatusesInUse,
@@ -13,11 +16,15 @@ import {
   statusMeaningLabels,
   statusMeanings,
 } from '../../../../../shared/domain/reports.ts';
+import type { ReportFilters } from '../../../../../shared/domain/reports.ts';
+
 import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
-import type { PeriodOption } from './report-format.ts';
 import { periodOptions } from './report-format.ts';
+import type { PeriodOption } from './report-format.ts';
+
+import { GroupingKeySchema } from './report-tables.tsx';
 import type { GroupingKey } from './report-tables.tsx';
-import { groupingLabels } from './report-tables.tsx';
+
 import { surfaceTileClassName } from '@app/admin-ui';
 
 export interface ReportQuery {
@@ -38,24 +45,19 @@ const PARAMS = {
   status: 'stav',
 } as const satisfies Record<keyof ReportQuery, string>;
 
-const isGrouping = (value: string | null): value is GroupingKey =>
-  value !== null && Object.hasOwn(groupingLabels, value);
+const isGrouping = Schema.is(GroupingKeySchema);
 
-export const readQuery = (): ReportQuery => {
-  const params = typeof window === 'undefined' ? new URLSearchParams() : new URL(window.location.href).searchParams;
-  const grouping = params.get(PARAMS.grouping);
-  return {
-    client: params.get(PARAMS.client) ?? ALL,
-    grouping: isGrouping(grouping) ? grouping : 'salesperson',
-    period: params.get(PARAMS.period) ?? ALL,
-    salesperson: params.get(PARAMS.salesperson) ?? ALL,
-    status: params.get(PARAMS.status) ?? ALL,
-  };
-};
+export const readQuery = (search: CrmRouteSearch): ReportQuery => ({
+  client: search.klient ?? ALL,
+  grouping: isGrouping(search.seskupit) ? search.seskupit : 'salesperson',
+  period: search.obdobi ?? ALL,
+  salesperson: search.obchodnik ?? ALL,
+  status: search.stav ?? ALL,
+});
 
 export const writeQuery = (query: ReportQuery) => {
   const url = new URL(window.location.href);
-  for (const key of Object.keys(PARAMS) as (keyof ReportQuery)[]) {
+  for (const key of ['client', 'grouping', 'period', 'salesperson', 'status'] as const) {
     const value = query[key];
     if ((key === 'grouping' && value === 'salesperson') || value === ALL) {
       url.searchParams.delete(PARAMS[key]);
@@ -69,7 +71,7 @@ export const writeQuery = (query: ReportQuery) => {
 export const reportPeriodOptions = (records: RecordsResponse) =>
   periodOptions(
     records.now,
-    records.state.imports.orders.map((order) => orderDate(order).slice(0, 7)),
+    records.state.imports.orders.map((order) => orderDateText(orderDate(order)).slice(0, 7)),
   );
 
 /** Query -> domain filters. Unknown values fall back to "all" (e.g. a client the viewer may not see). */
@@ -77,17 +79,25 @@ export const filtersOf = (query: ReportQuery, periods: readonly PeriodOption[]):
   const period = periods.find((option) => option.value === query.period)?.period;
   let status: ReportFilters['status'];
   if (query.status.startsWith('m:')) {
-    const meaning = query.status.slice(2) as StatusMeaningOrUnmapped;
-    status = statusMeanings.includes(meaning) ? { kind: 'meaning', meaning } : undefined;
+    const meaning = query.status.slice(2);
+    status = Schema.is(StatusMeaningOrUnmappedSchema)(meaning) ? { kind: 'meaning', meaning } : undefined;
   } else if (query.status.startsWith('r:')) {
     status = { kind: 'raw', raw: query.status.slice(2) };
   }
-  return {
-    ...(period === undefined ? {} : { period }),
-    ...(query.salesperson === ALL ? {} : { salespersonId: query.salesperson }),
-    ...(query.client === ALL ? {} : { clientId: query.client }),
-    ...(status === undefined ? {} : { status }),
-  };
+  const filters: ReportFilters = {};
+  if (period !== undefined) {
+    Object.assign(filters, { period });
+  }
+  if (query.salesperson !== ALL) {
+    Object.assign(filters, { salespersonId: query.salesperson });
+  }
+  if (query.client !== ALL) {
+    Object.assign(filters, { clientId: query.client });
+  }
+  if (status !== undefined) {
+    Object.assign(filters, { status });
+  }
+  return filters;
 };
 
 /** "Filtry: …" sentence for the source line and the CSV file name. */
@@ -96,8 +106,7 @@ export const describeFilters = (
   records: RecordsResponse,
   periods: readonly PeriodOption[],
 ): string[] => {
-  const parts: string[] = [];
-  parts.push(`období ${periods.find((option) => option.value === query.period)?.label.toLowerCase() ?? 'celé'}`);
+  const parts = [`období ${periods.find((option) => option.value === query.period)?.label.toLowerCase() ?? 'celé'}`];
   if (query.salesperson !== ALL) {
     parts.push(
       `obchodník ${
@@ -111,7 +120,8 @@ export const describeFilters = (
     parts.push(`klient ${records.state.clients.items.find((client) => client.id === query.client)?.name ?? '—'}`);
   }
   if (query.status.startsWith('m:')) {
-    parts.push(`stav ${statusMeaningLabels[query.status.slice(2) as StatusMeaningOrUnmapped] ?? '—'}`);
+    const meaning = query.status.slice(2);
+    parts.push(`stav ${Schema.is(StatusMeaningOrUnmappedSchema)(meaning) ? statusMeaningLabels[meaning] : '—'}`);
   } else if (query.status.startsWith('r:')) {
     parts.push(`stav ze zdroje „${orderStatusLabel(query.status.slice(2))}“`);
   }

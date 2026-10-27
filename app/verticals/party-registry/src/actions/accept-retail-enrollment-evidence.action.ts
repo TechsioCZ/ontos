@@ -15,6 +15,8 @@ import { PartyRefSchema } from '../../shared/resources/party.ts';
 import { acceptRetailEnrollmentEvidence } from '../services/party-matching-persistence.service.ts';
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const AcceptRetailEnrollmentEvidenceErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -39,8 +41,8 @@ const handleAcceptRetailEnrollmentEvidence = Effect.fn('AcceptRetailEnrollmentEv
     accessKind: 'read',
     queryHash: payload.originalInvocationId,
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: target.resourceId,
     targetResourceType: target.resourceType,
   });
@@ -48,8 +50,8 @@ const handleAcceptRetailEnrollmentEvidence = Effect.fn('AcceptRetailEnrollmentEv
     const event = yield* context.addDomainEvent({
       eventType: 'party.registry.party-created.v1',
       payloadJson: { partyRef: result.partyRef },
-      producerModuleKey: 'party.registry',
-      subjectModuleKey: 'party.registry',
+      producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+      subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
       subjectResourceId: result.partyRef.resourceId,
       subjectResourceType: result.partyRef.resourceType,
     });
@@ -76,12 +78,12 @@ export const acceptRetailEnrollmentEvidenceAction = defineAction(
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'party.registry.accept-retail-enrollment-evidence',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'required',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: AcceptRetailEnrollmentEvidencePayloadSchema,
     policies: [],
     resultSchema: AcceptRetailEnrollmentEvidenceResultSchema,

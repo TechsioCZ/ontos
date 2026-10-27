@@ -740,6 +740,11 @@ const topBarOffsetStyle: SidebarOffsetStyle = {
   '--spacing-sidebar-offset': 'var(--spacing-700)',
 };
 
+const usePendingNavigationHref = (language: string): string | undefined => {
+  const pendingPath = usePendingNavigationPath();
+  return pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language);
+};
+
 /**
  * Akros admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
  * grouped navigation Sidebar. Below the Sidebar breakpoint the same panel opens as a drawer from the top bar.
@@ -748,9 +753,8 @@ const topBarOffsetStyle: SidebarOffsetStyle = {
 export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayoutProps) => {
   const { language, t } = useModernI18n();
   const { tenantSwitchFailed } = props;
-  const pendingPath = usePendingNavigationPath();
   const pageLanguage = language ?? '';
-  const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, pageLanguage);
+  const pendingHref = usePendingNavigationHref(pageLanguage);
   const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
   useIdleRoutePreload(props.navigation, props.compositionRevision);
 

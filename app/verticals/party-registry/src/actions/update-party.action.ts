@@ -32,6 +32,9 @@ import { recordPartyInvariantAccess, resolvePartyLifecycle } from './party-lifec
 import { createUpdatePartyPartyRegistryPartyUpdatedV1OutboxMessage } from './update-party.party-registry-party-updated-v1.outbox-message.ts';
 
 export type { UpdatePartyPayload } from '../../shared/actions/update-party.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   PartyNotFound,
   PartyLifecycleConflict,
@@ -80,8 +83,8 @@ const handle = Effect.fn('UpdatePartyAction.handle')(function* updateParty(
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-updated.v1',
     payloadJson: { partyRef: result.partyRef },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.partyRef.resourceId,
     subjectResourceType: result.partyRef.resourceType,
   });
@@ -110,12 +113,12 @@ export const updatePartyAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.update-party',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: UpdatePartyPayloadSchema,
     policies: [],
     resultSchema: UpdatePartyResultSchema,

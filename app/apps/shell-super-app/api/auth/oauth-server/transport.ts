@@ -17,14 +17,18 @@ export const OAuthServerTransportLive = HttpRouter.add('*', '/oauth/*', (request
         ),
       ),
     ),
-    Effect.match({
-      onFailure: () =>
-        HttpServerResponse.text('OAuth server is unavailable', {
-          headers: { 'cache-control': 'no-store' },
-          status: 503,
-        }),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        Effect.logError('OAuth transport unavailable', error).pipe(
+          Effect.as(
+            HttpServerResponse.text('OAuth server is unavailable', {
+              headers: { 'cache-control': 'no-store' },
+              status: 503,
+            }),
+          ),
+        ),
       onSuccess: (response) =>
-        HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
+        Effect.succeed(HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText })),
     }),
   ),
 );

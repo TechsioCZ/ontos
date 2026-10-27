@@ -36,6 +36,8 @@ import {
 import type { PartyTransaction } from '../db/types.ts';
 import { requireCanonicalPartyWriteTarget, resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 type CounterpartyTransaction = Pick<PartyTransaction, 'insert' | 'select' | 'update'>;
 type CounterpartyRow = typeof counterparties.$inferSelect;
 type RolePeriodRow = typeof counterpartyRolePeriods.$inferSelect;
@@ -190,21 +192,21 @@ const dieInvariant = (reason: string): never => {
 };
 
 const partyRef = (tenantId: string, resourceId: string): PartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.party',
   tenantId,
 });
 
 const counterpartyRef = (tenantId: string, resourceId: string): CounterpartyRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.counterparty',
   tenantId,
 });
 
 const rolePeriodRef = (tenantId: string, resourceId: string): CounterpartyRolePeriodRef => ({
-  moduleId: 'party.registry',
+  moduleId: PARTY_REGISTRY_MODULE_ID,
   resourceId,
   resourceType: 'party.registry.counterparty-role-period',
   tenantId,

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -352,7 +353,10 @@ it.live(
     const configuration = { ...(yield* loadAuthConfig({ envPath: '/dev/null' })), secureCookies: true };
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
@@ -1751,7 +1755,10 @@ it.live(
     const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const authPersistence = yield* makeAuthDatabase(configuration);
+    const authPersistence = yield* makeAuthDatabase({
+      connectionString: configuration.connectionString,
+      expectedRole: SHARED_RUNTIME_IDENTITY.role,
+    });
     const authDatabase = authPersistence.executor;
     const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(

@@ -204,11 +204,7 @@ export const TaskFilterBar = ({
           </Button>
         )}
       </div>
-      {rangeInverted && (
-        <p className="text-sm text-fg-error" role="status">
-          {t(`${key}.filters.rangeInverted`)}
-        </p>
-      )}
+      {rangeInverted && <output className="text-sm text-fg-error">{t(`${key}.filters.rangeInverted`)}</output>}
     </>
   );
 };

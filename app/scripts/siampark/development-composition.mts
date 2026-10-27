@@ -32,6 +32,7 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
+import type { DemoResetChildEnvironment } from './reset-configuration.mts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
@@ -75,6 +76,7 @@ const topologySchema = Schema.fromJsonString(
     ),
   }),
 );
+const federationManifestPath = '/mf-manifest.json';
 const moduleJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const shellJson = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 
@@ -82,7 +84,7 @@ const shellJson = Schema.fromJsonString(OntosShellRuntimeContractSchema);
 export const validateDevelopmentDatabase = Effect.fn('SiamparkComposition.validateDatabase')(function* validateDatabase(
   environment: string,
   urls: { readonly DATABASE_ADMIN_URL: string; readonly DATABASE_URL: string },
-  databaseName = 'siampark_demo',
+  databaseName: DemoResetChildEnvironment['ONTOS_DEMO_DATABASE_NAME'] = 'siampark_demo',
 ) {
   if (environment !== 'development') {
     return yield* fail('An explicit development environment is required');
@@ -248,19 +250,30 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
       return topology.verticals.filter((owner) => ids.has(owner.id));
     },
   });
-  const owners = yield* Effect.forEach(selectedOwners, (owner) =>
-    Effect.gen(function* configuredOwner() {
-      if (configuration.ownerOrigins === undefined) return owner;
-      const origin = configuration.ownerOrigins[owner.id];
-      if (origin === undefined) return yield* fail(`Missing explicit origin for ${owner.id}`);
-      const url = yield* Effect.try({ try: () => new URL(origin), catch: () => fail('Invalid explicit owner origin') });
-      yield* validateDevelopmentArtifactUrl(url);
-      if (url.origin !== origin) return yield* fail('Explicit owner origins must not contain a path');
-      return {
-        ...owner,
-        moduleFederation: { ...owner.moduleFederation, manifestUrl: new URL('/mf-manifest.json', url) },
-      };
-    }),
+  const owners = yield* Effect.all(
+    selectedOwners.map((owner) =>
+      Effect.gen(function* configuredOwner() {
+        if (configuration.ownerOrigins === undefined) {
+          return owner;
+        }
+        const origin = configuration.ownerOrigins[owner.id];
+        if (origin === undefined) {
+          return yield* fail(`Missing explicit origin for ${owner.id}`);
+        }
+        const url = yield* Effect.try({
+          catch: () => fail('Invalid explicit owner origin'),
+          try: () => new URL(origin),
+        });
+        yield* validateDevelopmentArtifactUrl(url);
+        if (url.origin !== origin) {
+          return yield* fail('Explicit owner origins must not contain a path');
+        }
+        return {
+          ...owner,
+          moduleFederation: { ...owner.moduleFederation, manifestUrl: new URL(federationManifestPath, url) },
+        };
+      }),
+    ),
   );
   const shellPort = yield* Config.schema(portSchema, topology.shell.portEnv).pipe(Config.withDefault(3020));
   const shellOrigin = `http://127.0.0.1:${shellPort}`;
@@ -324,7 +337,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
           };
           return owner.surfaceProfile === 'api-only'
             ? module
-            : { ...module, federationManifest: yield* observe(new URL('/mf-manifest.json', base)) };
+            : { ...module, federationManifest: yield* observe(new URL(federationManifestPath, base)) };
         }),
       { concurrency: 1 },
     );
@@ -346,7 +359,7 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
       environment,
       modules,
       observedAt: yield* DateTime.now,
-      shell: { federationManifest: yield* observe(new URL('/mf-manifest.json', shellOrigin)), runtimeContract },
+      shell: { federationManifest: yield* observe(new URL(federationManifestPath, shellOrigin)), runtimeContract },
       validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
     });
   });

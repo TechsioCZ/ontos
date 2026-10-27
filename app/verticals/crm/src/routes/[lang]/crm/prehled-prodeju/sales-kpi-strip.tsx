@@ -1,11 +1,14 @@
+import { pipe } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Compact sales KPI strip (crm-reports lane) for the CRM home and the report page. Facts over the ACL-projected
 // records only: confirmed order count, value per currency (never summed across currencies), excluded orders.
 import { StatCard, StatRow, formatDate, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { SalesReport } from '../../../../../shared/domain/reports.ts';
 import { buildSalesReport, exclusionReasonLabels } from '../../../../../shared/domain/reports.ts';
-import { formatDecimalMoney } from './report-format.ts';
+import type { SalesReport } from '../../../../../shared/domain/reports.ts';
+
+import { useFormatDecimalMoney } from './report-format.ts';
 
 const ordersWord = (count: number) => {
   if (count === 1) {
@@ -21,7 +24,12 @@ export const excludedSummary = (report: SalesReport) =>
  * "21 objednávek · z toho stornované 1 240 Kč · není to tržba" — the cancelled share only with an approved mapping;
  * otherwise the sum is explicitly "včetně všech stavů ze zdroje".
  */
-const valueHint = (report: SalesReport, currency: string, count: number) => {
+const valueHint = (
+  report: SalesReport,
+  currency: string,
+  count: number,
+  formatDecimalMoney: ReturnType<typeof useFormatDecimalMoney>,
+) => {
   const cancelled = report.byStatus
     .find((group) => group.key === 'cancelled')
     ?.totals.find((total) => total.currency === currency);
@@ -39,12 +47,17 @@ const valueHint = (report: SalesReport, currency: string, count: number) => {
 
 /** KPI tiles for a computed report. */
 export const SalesKpiTiles = ({ report, scopeAll }: { readonly report: SalesReport; readonly scopeAll: boolean }) => {
+  const formatDecimalMoney = useFormatDecimalMoney();
   const { t } = useModernI18n();
   const noData = t('crm.common.noData');
   return (
     <StatRow>
       <StatCard
-        hint={report.count === 0 ? noData : `Poslední ${formatDate(report.lastOrderAt)} · spárované, bez duplicit`}
+        hint={
+          report.count === 0
+            ? noData
+            : `Poslední ${pipe(report.lastOrderAt, orderDateText, formatDate)} · spárované, bez duplicit`
+        }
         label="Evidované objednávky"
         value={formatNumber(report.count)}
       />
@@ -53,7 +66,7 @@ export const SalesKpiTiles = ({ report, scopeAll }: { readonly report: SalesRepo
       ) : (
         report.totals.map((total) => (
           <StatCard
-            hint={valueHint(report, total.currency, total.count)}
+            hint={valueHint(report, total.currency, total.count, formatDecimalMoney)}
             key={total.currency}
             label={`Hodnota objednávek v ${total.currency}`}
             value={formatDecimalMoney(total.amount, total.currency)}

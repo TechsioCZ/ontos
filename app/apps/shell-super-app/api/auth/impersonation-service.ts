@@ -18,7 +18,20 @@ import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { asc, eq } from 'drizzle-orm';
 import type { Duration } from 'effect';
-import { Clock, Context, Data, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import {
+  Clock,
+  Context,
+  Data,
+  DateTime,
+  Effect,
+  Exit,
+  Function as Fn,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Cookies } from 'effect/unstable/http';
 
 import { AuthConfig } from './config.ts';
@@ -46,7 +59,7 @@ const SupportImpersonationDeniedErrorSchema = Schema.TaggedStruct('SupportImpers
 });
 type SupportImpersonationDeniedError = typeof SupportImpersonationDeniedErrorSchema.Type;
 const SupportImpersonationDeniedFailure = Data.TaggedError('SupportImpersonationDeniedError');
-const SupportImpersonationUnavailableErrorSchema = Schema.TaggedStruct('SupportImpersonationUnavailableError', {
+export const SupportImpersonationUnavailableErrorSchema = Schema.TaggedStruct('SupportImpersonationUnavailableError', {
   code: Schema.Literal('support_impersonation_unavailable'),
   reason: Schema.String,
 });
@@ -113,33 +126,42 @@ interface SupportProviderUser {
 
 export interface SupportAuthProvider {
   readonly api: {
-    readonly getSession: (input: { readonly headers: Headers; readonly returnHeaders: true }) => Promise<{
-      readonly headers: Headers;
-      readonly response: null | {
-        readonly session: SupportProviderSession;
-        readonly user: SupportProviderUser;
-      };
-    }>;
+    readonly getSession: (input: { readonly headers: Headers; readonly returnHeaders: true }) => Effect.Effect<
+      {
+        readonly headers: Headers;
+        readonly response: null | {
+          readonly session: SupportProviderSession;
+          readonly user: SupportProviderUser;
+        };
+      },
+      SupportImpersonationError
+    >;
     readonly impersonateUser: (input: {
       readonly body: { readonly userId: string };
       readonly headers: Headers;
       readonly returnHeaders: true;
-    }) => Promise<{
-      readonly headers: Headers;
-      readonly response: { readonly session: SupportProviderSession };
-    }>;
-    readonly stopImpersonating: (input: { readonly headers: Headers; readonly returnHeaders: true }) => Promise<{
-      readonly headers: Headers;
-      readonly response: { readonly session: SupportProviderSession };
-    }>;
+    }) => Effect.Effect<
+      {
+        readonly headers: Headers;
+        readonly response: { readonly session: SupportProviderSession };
+      },
+      SupportImpersonationError
+    >;
+    readonly stopImpersonating: (input: { readonly headers: Headers; readonly returnHeaders: true }) => Effect.Effect<
+      {
+        readonly headers: Headers;
+        readonly response: { readonly session: SupportProviderSession };
+      },
+      SupportImpersonationError
+    >;
   };
 }
 
 export const makeSupportAuthProvider = (
   configuration: AuthConfigValue,
   databaseAdapter: BetterAuthDatabaseAdapter,
-): SupportAuthProvider =>
-  betterAuth({
+): SupportAuthProvider => {
+  const native = betterAuth({
     advanced: {
       defaultCookieAttributes: {
         httpOnly: true,
@@ -192,7 +214,33 @@ export const makeSupportAuthProvider = (
       },
     },
     trustedOrigins: [...configuration.trustedOrigins],
-  }) satisfies SupportAuthProvider;
+  });
+  return {
+    api: {
+      getSession: (input) =>
+        providerOperation(
+          Fn.flow(() => {
+            const pending = native.api.getSession(input);
+            return (Promise.resolve<Awaited<typeof pending>>).bind(Promise, pending);
+          }, Fn.apply({})),
+        ),
+      impersonateUser: (input) =>
+        providerOperation(
+          Fn.flow(() => {
+            const pending = native.api.impersonateUser(input);
+            return (Promise.resolve<Awaited<typeof pending>>).bind(Promise, pending);
+          }, Fn.apply({})),
+        ),
+      stopImpersonating: (input) =>
+        providerOperation(
+          Fn.flow(() => {
+            const pending = native.api.stopImpersonating(input);
+            return (Promise.resolve<Awaited<typeof pending>>).bind(Promise, pending);
+          }, Fn.apply({})),
+        ),
+    },
+  };
+};
 
 export const makeSupportImpersonationStore = (database: AuthDatabaseExecutor): SupportImpersonationStore => ({
   deleteRecovery: (impersonationSessionId) =>
@@ -677,13 +725,11 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
         },
         principal: shell.principal,
       });
-      const created = yield* providerOperation(
-        auth.api.impersonateUser.bind(auth.api, {
-          body: { userId: targetUserId },
-          headers: input.requestHeaders,
-          returnHeaders: true,
-        }),
-      );
+      const created = yield* auth.api.impersonateUser({
+        body: { userId: targetUserId },
+        headers: input.requestHeaders,
+        returnHeaders: true,
+      });
       yield* store
         .updateImpersonationSession(created.response.session.id, {
           actionId: input.idempotencyKey,
@@ -750,12 +796,10 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
     stop: Effect.fn('makeSupportImpersonationService.stop')(function* stopSupportImpersonationEffect(
       input: StopSupportImpersonationInput,
     ) {
-      const current = yield* providerOperation(
-        auth.api.getSession.bind(auth.api, {
-          headers: input.requestHeaders,
-          returnHeaders: true,
-        }),
-      );
+      const current = yield* auth.api.getSession({
+        headers: input.requestHeaders,
+        returnHeaders: true,
+      });
       if (current.response === null) {
         return yield* stopAbsentSession(input.requestHeaders, current.headers);
       }
@@ -790,12 +834,10 @@ export const makeSupportImpersonationService = (context: Context.Context<Support
       const { originalSessionId } = recovery;
       yield* store.insertRecovery(recovery);
       const stoppedExit = yield* Effect.exit(
-        providerOperation(
-          auth.api.stopImpersonating.bind(auth.api, {
-            headers: input.requestHeaders,
-            returnHeaders: true,
-          }),
-        ),
+        auth.api.stopImpersonating({
+          headers: input.requestHeaders,
+          returnHeaders: true,
+        }),
       );
       if (Exit.isFailure(stoppedExit)) {
         yield* terminateImpersonationSession(currentSessionId);

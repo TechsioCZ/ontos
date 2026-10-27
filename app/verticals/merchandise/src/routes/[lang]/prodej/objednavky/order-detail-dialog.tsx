@@ -40,9 +40,9 @@ import { actionLabelKey, transitionsFrom } from './orders-model.ts';
 
 interface OrderDetailDialogProps {
   readonly busy: boolean;
-  readonly canWrite: boolean;
-  readonly canEditOrders?: boolean;
   readonly canCleanupDemo?: boolean;
+  readonly canEditOrders?: boolean;
+  readonly canWrite: boolean;
   readonly currentPrincipalId: string | undefined;
   readonly customers: CustomerDirectory;
   /** The open order with its line products and whether it took goods from stock (quantity edits then move stock). */
@@ -61,6 +61,30 @@ const pendingDetailKeys = {
 } as const satisfies Record<Exclude<OrderDetailState['status'], 'idle' | 'ready'>, string>;
 
 const DEMO_NOTICE = 'E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.';
+
+const workflowColor = (active: boolean, done: boolean) => {
+  if (active) {
+    return 'border-transparent bg-bg-primary-base text-fg-reverse';
+  }
+  return done ? 'border-transparent bg-bg-success text-fg-reverse' : 'border-border-primary text-fg-secondary';
+};
+
+const orderSourceValue = (
+  storefront: boolean,
+  akros: boolean,
+  opportunityId: string | undefined,
+  opportunityHref: string,
+  t: ReturnType<typeof useModernI18n>['t'],
+) => {
+  if (storefront) {
+    return akros ? 'E-shop AKROS (DEMO)' : 'E-shop Kavárna Doma (DEMO)';
+  }
+  return opportunityId === undefined ? (
+    t('merchandise.pages.orders.source.manual')
+  ) : (
+    <Link href={opportunityHref}>{t('merchandise.pages.orders.source.opportunity')}</Link>
+  );
+};
 
 /** Horizontal workflow: Nová → Zpracovává se → Připravená k předání → Předáno dopravci → Dokončená. */
 const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
@@ -90,15 +114,11 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
             <li className="flex min-w-0 flex-col items-center gap-50 text-center" key={step.status}>
               <span
                 aria-current={active ? 'step' : undefined}
-                style={{ height: 28, width: 28 }}
                 className={[
                   'flex items-center justify-center rounded-full border font-semibold text-xs',
-                  active
-                    ? 'border-transparent bg-bg-primary-base text-fg-reverse'
-                    : done
-                      ? 'border-transparent bg-bg-success text-fg-reverse'
-                      : 'border-border-primary text-fg-secondary',
+                  workflowColor(active, done),
                 ].join(' ')}
+                style={{ height: 28, width: 28 }}
               >
                 {done ? '✓' : index + 1}
               </span>
@@ -123,7 +143,7 @@ const OrderHistory = ({
   readonly currentPrincipalId: string | undefined;
   readonly order: Order;
 }) => {
-  const entries = [...(order.history ?? [])].reverse();
+  const entries = (order.history ?? []).toReversed();
   if (entries.length === 0) {
     return <p className="text-fg-secondary text-sm">Historie změn není u této starší objednávky k dispozici.</p>;
   }
@@ -157,12 +177,198 @@ const OrderHistory = ({
   );
 };
 
+/** Demo-only soft removal, with an explicit reason and separate destructive confirmation. */
+const DemoOrderCleanup = ({
+  onRemoved,
+  order,
+  revision,
+}: {
+  readonly onRemoved: () => void;
+  readonly order: Order;
+  readonly revision: number;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('Úklid prezentační DEMO objednávky');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<Effect.Error<ReturnType<typeof removeDemoOrder>> | null>(null);
+  const remove = () => {
+    if (busy || reason.trim().length < 5) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    void browserRuntime.runPromise(
+      removeDemoOrder(order.id, reason.trim(), revision).pipe(
+        Effect.match({
+          onFailure: (cause) => {
+            setBusy(false);
+            setError(cause);
+          },
+          onSuccess: () => {
+            setBusy(false);
+            setOpen(false);
+            onRemoved();
+          },
+        }),
+      ),
+    );
+  };
+  return (
+    <>
+      <div>
+        <Button onClick={() => setOpen(true)} size="sm" theme="outlined" variant="danger">
+          Odstranit DEMO objednávku
+        </Button>
+      </div>
+      <Dialog
+        actions={
+          <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+            <Button disabled={busy} onClick={() => setOpen(false)} size="sm" theme="outlined" variant="secondary">
+              Zachovat objednávku
+            </Button>
+            <Button
+              disabled={reason.trim().length < 5}
+              isLoading={busy}
+              loadingText="Odstraňuji…"
+              onClick={remove}
+              size="sm"
+              variant="danger"
+            >
+              Potvrdit odstranění DEMO
+            </Button>
+          </div>
+        }
+        closeLabel="Zavřít"
+        customTrigger
+        description="Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit."
+        onOpenChange={({ open: next }) => {
+          if (!busy) {
+            setOpen(next);
+          }
+        }}
+        open={open}
+        title={`Odstranit DEMO objednávku ${order.number}?`}
+      >
+        <FormInput
+          id="demo-cleanup-reason"
+          label="Důvod odstranění (audit)"
+          maxLength={500}
+          name="reason"
+          onChange={(event) => setReason(event.target.value)}
+          value={reason}
+        />
+        {error && (
+          <StatusText status="error">Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.</StatusText>
+        )}
+      </Dialog>
+    </>
+  );
+};
+
+const orderDetailAffordances = (
+  order: Order,
+  customers: CustomerDirectory,
+  canWrite: boolean,
+  canEditOrders: boolean,
+  canCleanupDemo: boolean,
+  editing: boolean,
+) => {
+  const storefront = isStorefrontOrder(order);
+  const transitions = canWrite && !editing ? transitionsFrom(order.status) : [];
+  const forward = transitions.filter((status) => status !== 'CANCELLED').slice(0, 1);
+  const cancel =
+    transitions.includes('CANCELLED') ||
+    (canWrite &&
+      !editing &&
+      order.demo === true &&
+      storefront &&
+      (order.status === 'SHIPPED' || order.status === 'DELIVERED'));
+  return {
+    cancel,
+    forward,
+    showCleanup: canCleanupDemo && order.demo === true && storefront,
+    showCustomerConversion:
+      canEditOrders &&
+      storefront &&
+      order.contact !== undefined &&
+      customers.status === 'ready' &&
+      !customers.entries.some((customer) => customer.partyId === order.partyId),
+    showEdit: canEditOrders && isOrderEditable(order),
+    storefront,
+  };
+};
+
+const renderOrderFields = ({
+  akros,
+  customers,
+  opportunityHref,
+  order,
+  storefront,
+  t,
+}: {
+  readonly akros: boolean;
+  readonly customers: CustomerDirectory;
+  readonly opportunityHref: string;
+  readonly order: Order;
+  readonly storefront: boolean;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+}) => (
+  <DetailList
+    items={[
+      {
+        label: t('merchandise.pages.orders.detail.customer'),
+        value: orderCustomerName(order, customers) ?? t('merchandise.pages.orders.customers.unknown'),
+      },
+      ...(order.contact === undefined
+        ? []
+        : [
+            {
+              label: 'Kontakt',
+              value: [order.contact.email, order.contact.phone].filter((part) => part !== undefined).join(' · '),
+            },
+          ]),
+      ...(order.deliveryAddress === undefined
+        ? []
+        : [
+            {
+              label: 'Doručovací adresa',
+              value: `${order.deliveryAddress.street}, ${order.deliveryAddress.postalCode} ${order.deliveryAddress.city}${
+                order.deliveryAddress.country === undefined ? '' : `, ${order.deliveryAddress.country}`
+              }`,
+            },
+          ]),
+      ...(order.shipping === undefined
+        ? []
+        : [
+            {
+              label: 'Doprava',
+              value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}`,
+            },
+          ]),
+      ...(storefront ? [{ label: 'Platba', value: 'Nic neplatíte (DEMO)' }] : []),
+      ...(order.note === undefined || order.note === '' ? [] : [{ label: 'Poznámka', value: order.note }]),
+      {
+        label: t('merchandise.pages.orders.detail.source'),
+        value: orderSourceValue(storefront, akros, order.opportunityId, opportunityHref, t),
+      },
+      {
+        label: t('merchandise.pages.orders.detail.createdAt'),
+        value: formatDateTime(DateTime.formatIso(order.createdAt)),
+      },
+      {
+        label: t('merchandise.pages.orders.detail.updatedAt'),
+        value: formatDateTime(DateTime.formatIso(order.updatedAt)),
+      },
+    ]}
+  />
+);
+
 /** One order: workflow, customer, delivery, lines, totals and audited history; editable until the hand-over. */
 export const OrderDetailDialog = ({
   busy,
+  canCleanupDemo = false,
   canWrite,
   canEditOrders = canWrite,
-  canCleanupDemo = false,
   currentPrincipalId,
   customers,
   detail,
@@ -204,23 +410,22 @@ export const OrderDetailDialog = ({
   }
   const { movesStock: orderMovesStock, order, products } = detail;
   const editing = editingId === order.id;
-  const storefront = isStorefrontOrder(order);
   const akros = products.some((product) => product.sourceGroupId !== undefined);
-  const transitions = canWrite && !editing ? transitionsFrom(order.status) : [];
-  // One forward step at a time keeps the footer short; the stepper shows the whole path.
-  const forward = transitions.filter((status) => status !== 'CANCELLED').slice(0, 1);
-  const cancel =
-    transitions.includes('CANCELLED') ||
-    (canWrite &&
-      !editing &&
-      order.demo === true &&
-      storefront &&
-      (order.status === 'SHIPPED' || order.status === 'DELIVERED'));
+  const { cancel, forward, showCleanup, showCustomerConversion, showEdit, storefront } = orderDetailAffordances(
+    order,
+    customers,
+    canWrite,
+    canEditOrders,
+    canCleanupDemo,
+    editing,
+  );
   const label = (status: OrderStatus) => {
     const labelKey = actionLabelKey(status);
     return labelKey === null ? status : t(labelKey);
   };
-  const opportunityHref = `/${language}/prodej/prilezitosti${order.opportunityId === undefined ? '' : `?opportunityId=${encodeURIComponent(order.opportunityId)}`}`;
+  const opportunitySearch =
+    order.opportunityId === undefined ? '' : `?opportunityId=${encodeURIComponent(order.opportunityId)}`;
+  const opportunityHref = `/${language}/prodej/prilezitosti${opportunitySearch}`;
   const gross = order.pricesIncludeVat === true;
   const linesGross = order.lines.reduce((total, line) => total + lineGrossMinor(line, order.pricesIncludeVat), 0);
 
@@ -235,9 +440,9 @@ export const OrderDetailDialog = ({
       </Button>
       {cancel && (
         <Button
+          className="shrink-0 whitespace-nowrap"
           disabled={busy}
           onClick={() => onStatus(order, 'CANCELLED')}
-          className="shrink-0 whitespace-nowrap"
           size="sm"
           theme="outlined"
           variant="danger"
@@ -247,12 +452,12 @@ export const OrderDetailDialog = ({
       )}
       {forward.map((status, index) => (
         <Button
+          className="whitespace-nowrap"
           isLoading={busy && index === 0}
           key={status}
           loadingText={t('merchandise.pages.orders.create.submitting')}
           onClick={() => onStatus(order, status)}
           size="sm"
-          className="whitespace-nowrap"
           {...(index === 0
             ? { variant: 'primary' as const }
             : { theme: 'outlined' as const, variant: 'secondary' as const })}
@@ -310,7 +515,7 @@ export const OrderDetailDialog = ({
                 DEMO
               </Badge>
             )}
-            {canEditOrders && isOrderEditable(order) && (
+            {showEdit && (
               <span className="ml-auto">
                 <Button
                   disabled={busy}
@@ -331,92 +536,29 @@ export const OrderDetailDialog = ({
               {DEMO_NOTICE} Změny stavu neodesílají zásilku ani výzvu k platbě.
             </p>
           )}
-          {canCleanupDemo && order.demo === true && storefront && (
+          {showCleanup && (
             <DemoOrderCleanup
-              order={order}
-              revision={revision}
               onRemoved={() => {
                 onClose();
                 onEdited('DEMO objednávka odstraněna; audit zůstal zachován');
               }}
+              order={order}
+              revision={revision}
             />
           )}
-          {canEditOrders &&
-            storefront &&
-            order.contact !== undefined &&
-            customers.status === 'ready' &&
-            !customers.entries.some((customer) => customer.partyId === order.partyId) && (
-              <OrderCustomerButton
-                key={order.id}
-                onConverted={() => {
-                  customers.reload();
-                  onEdited('Kontakt byl převeden na zákazníka');
-                }}
-                order={order}
-                revision={revision}
-              />
-            )}
+          {showCustomerConversion && (
+            <OrderCustomerButton
+              key={order.id}
+              onConverted={() => {
+                customers.reload();
+                onEdited('Kontakt byl převeden na zákazníka');
+              }}
+              order={order}
+              revision={revision}
+            />
+          )}
           <WorkflowSteps status={order.status} />
-          <DetailList
-            items={[
-              {
-                label: t('merchandise.pages.orders.detail.customer'),
-                value: orderCustomerName(order, customers) ?? t('merchandise.pages.orders.customers.unknown'),
-              },
-              ...(order.contact === undefined
-                ? []
-                : [
-                    {
-                      label: 'Kontakt',
-                      value: [order.contact.email, order.contact.phone]
-                        .filter((part) => part !== undefined)
-                        .join(' · '),
-                    },
-                  ]),
-              ...(order.deliveryAddress === undefined
-                ? []
-                : [
-                    {
-                      label: 'Doručovací adresa',
-                      value: `${order.deliveryAddress.street}, ${order.deliveryAddress.postalCode} ${order.deliveryAddress.city}${
-                        order.deliveryAddress.country === undefined ? '' : `, ${order.deliveryAddress.country}`
-                      }`,
-                    },
-                  ]),
-              ...(order.shipping === undefined
-                ? []
-                : [
-                    {
-                      label: 'Doprava',
-                      value: `${akros ? order.shipping.label.replace('Kavárna Doma, Brno', 'AKROS') : order.shipping.label} · ${formatMoney(order.shipping.priceMinor)}`,
-                    },
-                  ]),
-              ...(storefront ? [{ label: 'Platba', value: 'Nic neplatíte (DEMO)' }] : []),
-              ...(order.note === undefined || order.note === '' ? [] : [{ label: 'Poznámka', value: order.note }]),
-              {
-                label: t('merchandise.pages.orders.detail.source'),
-                value: storefront ? (
-                  akros ? (
-                    'E-shop AKROS (DEMO)'
-                  ) : (
-                    'E-shop Kavárna Doma (DEMO)'
-                  )
-                ) : order.opportunityId === undefined ? (
-                  t('merchandise.pages.orders.source.manual')
-                ) : (
-                  <Link href={opportunityHref}>{t('merchandise.pages.orders.source.opportunity')}</Link>
-                ),
-              },
-              {
-                label: t('merchandise.pages.orders.detail.createdAt'),
-                value: formatDateTime(DateTime.formatIso(order.createdAt)),
-              },
-              {
-                label: t('merchandise.pages.orders.detail.updatedAt'),
-                value: formatDateTime(DateTime.formatIso(order.updatedAt)),
-              },
-            ]}
-          />
+          {renderOrderFields({ akros, customers, opportunityHref, order, storefront, t })}
           <SectionCard flush title={t('merchandise.pages.orders.detail.lines')}>
             <Table size="sm" variant="line">
               <Table.Header>
@@ -492,89 +634,5 @@ export const OrderDetailDialog = ({
         </div>
       )}
     </SidePanel>
-  );
-};
-
-/** Demo-only soft removal, with an explicit reason and separate destructive confirmation. */
-const DemoOrderCleanup = ({
-  order,
-  revision,
-  onRemoved,
-}: {
-  readonly order: Order;
-  readonly revision: number;
-  readonly onRemoved: () => void;
-}) => {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState('Úklid prezentační DEMO objednávky');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
-  const remove = () => {
-    if (busy || reason.trim().length < 5) return;
-    setBusy(true);
-    setError(false);
-    void browserRuntime.runPromise(
-      removeDemoOrder(order.id, reason.trim(), revision).pipe(
-        Effect.match({
-          onFailure: () => {
-            setBusy(false);
-            setError(true);
-          },
-          onSuccess: () => {
-            setBusy(false);
-            setOpen(false);
-            onRemoved();
-          },
-        }),
-      ),
-    );
-  };
-  return (
-    <>
-      <div>
-        <Button theme="outlined" variant="danger" size="sm" onClick={() => setOpen(true)}>
-          Odstranit DEMO objednávku
-        </Button>
-      </div>
-      <Dialog
-        customTrigger
-        open={open}
-        onOpenChange={({ open: next }) => {
-          if (!busy) setOpen(next);
-        }}
-        closeLabel="Zavřít"
-        title={`Odstranit DEMO objednávku ${order.number}?`}
-        description="Pouze pro správce. Objednávka zmizí z prezentačního seznamu v libovolném stavu. Historie i identita původního podání zůstanou v auditu. Skutečné objednávky nelze odstranit."
-        actions={
-          <div style={{ display: 'grid', gap: 8, width: '100%' }}>
-            <Button disabled={busy} size="sm" theme="outlined" variant="secondary" onClick={() => setOpen(false)}>
-              Zachovat objednávku
-            </Button>
-            <Button
-              disabled={reason.trim().length < 5}
-              isLoading={busy}
-              loadingText="Odstraňuji…"
-              size="sm"
-              variant="danger"
-              onClick={remove}
-            >
-              Potvrdit odstranění DEMO
-            </Button>
-          </div>
-        }
-      >
-        <FormInput
-          id="demo-cleanup-reason"
-          label="Důvod odstranění (audit)"
-          name="reason"
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          maxLength={500}
-        />
-        {error && (
-          <StatusText status="error">Objednávku se nepodařilo odstranit. Obnovte data a zkuste to znovu.</StatusText>
-        )}
-      </Dialog>
-    </>
   );
 };

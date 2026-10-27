@@ -21,6 +21,8 @@ import {
 
 const expectedDeployment = { appId: 'worker-fixture', buildMarker: 'worker-fixture-build' };
 
+class HostStartupRejected extends Schema.TaggedError<HostStartupRejected>()('HostStartupRejected', {}) {}
+
 const emptyResult: OutboxCycleResult = {
   claimed: 0,
   dead: 0,
@@ -200,6 +202,60 @@ const freeHealthPort = Effect.scoped(
   ),
 );
 
+it.effect('acquires process services before polling and releases their resources and fibers on interruption', () =>
+  Effect.gen(function* startupLifecycle() {
+    const loop = yield* observedLoop;
+    const events = yield* Ref.make<readonly string[]>([]);
+    const backgroundStopped = yield* Ref.make(false);
+    const startupReleased = yield* Ref.make(false);
+    const entry = observedEntry('ledger-outbox-worker', loop);
+    const host = yield* runOutboxWorkerHost({
+      entries: [
+        {
+          ...entry,
+          runLoop: (input) =>
+            Ref.update(events, (seen) => [...seen, 'loop']).pipe(Effect.andThen(entry.runLoop(input))),
+        },
+      ],
+      startup: () =>
+        Effect.gen(function* acquireProcessServices() {
+          yield* Ref.update(events, (seen) => [...seen, 'startup']);
+          yield* Effect.addFinalizer(() => Ref.set(startupReleased, true));
+          yield* Effect.never.pipe(
+            Effect.ensuring(Ref.set(backgroundStopped, true)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        }),
+    }).pipe(hostEnvironment({}), Effect.forkChild);
+
+    yield* driveCycles(loop, 1);
+    expect(yield* Ref.get(events)).toEqual(['startup', 'loop']);
+    expect(yield* Ref.get(startupReleased)).toBe(false);
+    yield* Fiber.interrupt(host);
+    expect(yield* Ref.get(loop.disposed)).toBe(true);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+    expect(yield* Ref.get(backgroundStopped)).toBe(true);
+  }),
+);
+
+it.effect('retains a typed startup failure and releases partial startup before any polling begins', () =>
+  Effect.gen(function* rejectedStartup() {
+    const loop = yield* observedLoop;
+    const startupReleased = yield* Ref.make(false);
+    const failure = new HostStartupRejected({});
+    const rejected = yield* runOutboxWorkerHost({
+      entries: [observedEntry('ledger-outbox-worker', loop)],
+      startup: () =>
+        Effect.addFinalizer(() => Ref.set(startupReleased, true)).pipe(Effect.andThen(Effect.fail(failure))),
+    }).pipe(hostEnvironment({}), Effect.flip);
+
+    expect(rejected).toBe(failure);
+    expect(yield* cyclesOf(loop)).toBe(0);
+    expect(yield* Ref.get(loop.disposed)).toBe(false);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+  }),
+);
+
 it.effect('hosts two workers with distinct claim owners and independent polling loops', () =>
   Effect.gen(function* twoIndependentLoops() {
     const billing = yield* observedLoop;
@@ -252,8 +308,18 @@ it.effect('fails fast when one loop dies and disposes every hosted runtime befor
   Effect.gen(function* failFast() {
     const billing = yield* observedLoop;
     const ledger = yield* observedLoop;
+    const startupReleased = yield* Ref.make(false);
+    const backgroundStopped = yield* Ref.make(false);
     const host = yield* runOutboxWorkerHost({
       entries: [observedEntry('billing-outbox-worker', billing), observedEntry('ledger-outbox-worker', ledger)],
+      startup: () =>
+        Effect.gen(function* releaseServicesOnHostFailure() {
+          yield* Effect.addFinalizer(() => Ref.set(startupReleased, true));
+          yield* Effect.never.pipe(
+            Effect.ensuring(Ref.set(backgroundStopped, true)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        }),
     }).pipe(hostEnvironment({}), Effect.forkChild);
 
     yield* driveCycles(ledger, 2);
@@ -264,6 +330,8 @@ it.effect('fails fast when one loop dies and disposes every hosted runtime befor
     expect(Exit.isFailure(exit)).toBe(true);
     expect(yield* Ref.get(billing.disposed)).toBe(true);
     expect(yield* Ref.get(ledger.disposed)).toBe(true);
+    expect(yield* Ref.get(startupReleased)).toBe(true);
+    expect(yield* Ref.get(backgroundStopped)).toBe(true);
   }),
 );
 

@@ -1,4 +1,3 @@
-// @effect-diagnostics globalFetch:off preferSchemaOverJson:off -- Browser boundary: before sign-in the login page asks Better Auth for the public name of the OAuth client that requests access. expires: 2027-03-31.
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -7,13 +6,15 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Fiber, Function as Fn, Match, Option, Predicate, Schema } from 'effect';
+import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import type { Cause } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
+import { useBrowserLocationHref } from '../../browser-location.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { signInReason, signInReturnPath } from '../../sign-in-return.ts';
@@ -50,6 +51,89 @@ const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
     Match.exhaustive,
   );
 
+const PreloginRequest = Schema.Struct({ client_id: Schema.String, oauth_query: Schema.String });
+
+const loadOAuthClientName = Effect.fn('OAuthLogin.loadClientName')(
+  function* loadOAuthClientNameEffect(request: OAuthLoginRequest) {
+    const client = yield* HttpClient.HttpClient;
+    const httpRequest = yield* HttpClientRequest.schemaBodyJson(PreloginRequest)(
+      HttpClientRequest.post(OAUTH_PRELOGIN_PATH),
+      { client_id: request.clientId, oauth_query: request.signedQuery },
+    );
+    const response = yield* client.execute(httpRequest);
+    if (response.status < 200 || response.status >= 300) {
+      return Option.none<string>();
+    }
+    const body = yield* HttpClientResponse.schemaBodyJson(Schema.Json)(response);
+    return Option.fromUndefinedOr(clientNameFrom(body));
+  },
+  Effect.timeout('10 seconds'),
+  Effect.tapError(() => Effect.logDebug('OAuth client display name is unavailable')),
+  Effect.orElseSucceed(() => Option.none<string>()),
+);
+
+interface LoginLocation {
+  readonly oauthError?: OAuthLoginErrorCode;
+  readonly oauthRequest?: OAuthLoginRequest;
+  readonly reason?: SignInReason | 'sign_in_required';
+}
+const loginLocation = (href: string | undefined, language: string): LoginLocation => {
+  if (href === undefined) {
+    return {};
+  }
+  const reason =
+    signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required');
+  const oauthRequest = readOAuthLoginRequest(href);
+  const oauthError = readOAuthLoginError(href);
+  let location: LoginLocation = {};
+  if (reason !== undefined) {
+    location = { ...location, reason };
+  }
+  if (oauthRequest !== undefined) {
+    location = { ...location, oauthRequest };
+  }
+  return oauthError === undefined ? location : { ...location, oauthError };
+};
+
+const OAuthLoginBanner = ({
+  oauthClientName,
+  oauthError,
+  oauthRequest,
+}: {
+  readonly oauthClientName: string | undefined;
+  readonly oauthError: OAuthLoginErrorCode | undefined;
+  readonly oauthRequest: OAuthLoginRequest | undefined;
+}) => {
+  const { t } = useModernI18n();
+  if (oauthRequest === undefined || oauthError !== undefined) {
+    return null;
+  }
+  return (
+    <div
+      aria-atomic="true"
+      aria-live="polite"
+      className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm"
+      data-testid="oauth-login-banner"
+    >
+      <p>
+        <strong>
+          {oauthClientName ??
+            (oauthRequest.clientHost === '' ? t('shell.login.oauth.unknownClient') : oauthRequest.clientHost)}
+        </strong>{' '}
+        {oauthClientName !== undefined && oauthRequest.clientHost !== ''
+          ? t('shell.login.oauth.request', { host: oauthRequest.clientHost })
+          : t('shell.login.oauth.requestNoHost')}
+      </p>
+      <p>{t('shell.login.oauth.continue')}</p>
+      {oauthRequest.knownClient ? null : (
+        <p className="text-fg-secondary">
+          {t('shell.login.oauth.unverified', { client: oauthClientName ?? oauthRequest.clientId })}
+        </p>
+      )}
+    </div>
+  );
+};
+
 const LoginPage = () => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
@@ -65,43 +149,31 @@ const LoginPage = () => {
   const [attemptedLogin, setAttemptedLogin] = useState('');
   // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
   const [submissionError, setSubmissionError] = useState<string>();
-  // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
-  // A protected page opened without signing in arrives with only the page to return to: "not signed in".
-  // Read after mount: the server render has no browser URL, so both renders start without the notice.
-  const [reason, setReason] = useState<SignInReason | 'sign_in_required'>();
-  const [oauthRequest, setOAuthRequest] = useState<OAuthLoginRequest>();
-  const [oauthClientName, setOAuthClientName] = useState<string>();
-  const [oauthError, setOAuthError] = useState<OAuthLoginErrorCode>();
+  const href = useBrowserLocationHref();
+  const { oauthError, oauthRequest, reason } = loginLocation(href, language);
+  const [clientNameResult, setClientNameResult] = useState<{
+    readonly href: string;
+    readonly name: Option.Option<string>;
+  }>();
+  const oauthClientName =
+    clientNameResult !== undefined && clientNameResult.href === href
+      ? Option.getOrUndefined(clientNameResult.name)
+      : undefined;
   useEffect(() => {
-    const { href } = window.location;
-    setReason(
-      signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'),
-    );
-    setOAuthRequest(readOAuthLoginRequest(href));
-    setOAuthError(readOAuthLoginError(href));
-  }, [language]);
-  useEffect(() => {
-    if (oauthRequest === undefined) {
-      return;
+    if (href === undefined) {
+      return Fn.constVoid;
     }
-    let active = true;
-    void fetch(OAUTH_PRELOGIN_PATH, {
-      body: JSON.stringify({ client_id: oauthRequest.clientId, oauth_query: oauthRequest.signedQuery }),
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      method: 'POST',
-    })
-      .then((response): Promise<unknown> | undefined => (response.ok ? response.json() : undefined))
-      .then((body: unknown) => {
-        if (active) {
-          setOAuthClientName(clientNameFrom(body));
-        }
-      })
-      .catch(() => undefined);
+    const request = readOAuthLoginRequest(href);
+    if (request === undefined) {
+      return Fn.constVoid;
+    }
+    const fiber = browserRuntime.runFork(
+      loadOAuthClientName(request).pipe(Effect.tap((name) => Effect.sync(() => setClientNameResult({ href, name })))),
+    );
     return () => {
-      active = false;
+      browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, [oauthRequest]);
+  }, [href]);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -193,8 +265,8 @@ const LoginPage = () => {
                     }),
                   ),
                 )
-              : // OAuth connect flow: back to the authorization server; no company picker and no shell page in between.
-                Effect.sync(() => {
+              : Effect.sync(() => {
+                  // OAuth connect returns to authorization without a company picker or Shell page.
                   setAttempt('opening');
                   globalThis.location.assign(oauthRequest.authorizeUrl);
                 }),
@@ -220,30 +292,17 @@ const LoginPage = () => {
           </div>
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
           {oauthError === undefined ? null : (
-            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm" data-testid="oauth-login-error" role="alert">
+            <div
+              className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm"
+              data-testid="oauth-login-error"
+              role="alert"
+            >
               <h1 className="font-semibold text-lg">{t('shell.login.oauth.error.title')}</h1>
               <p>{t(`shell.login.oauth.error.${oauthError}`)}</p>
               <p className="text-fg-secondary">{t('shell.login.oauth.error.next')}</p>
             </div>
           )}
-          {oauthRequest === undefined || oauthError !== undefined ? null : (
-            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" data-testid="oauth-login-banner" role="status">
-              <p>
-                <strong>
-                  {oauthClientName ?? (oauthRequest.clientHost === '' ? t('shell.login.oauth.unknownClient') : oauthRequest.clientHost)}
-                </strong>{' '}
-                {oauthClientName !== undefined && oauthRequest.clientHost !== ''
-                  ? t('shell.login.oauth.request', { host: oauthRequest.clientHost })
-                  : t('shell.login.oauth.requestNoHost')}
-              </p>
-              <p>{t('shell.login.oauth.continue')}</p>
-              {oauthRequest.knownClient ? null : (
-                <p className="text-fg-secondary">
-                  {t('shell.login.oauth.unverified', { client: oauthClientName ?? oauthRequest.clientId })}
-                </p>
-              )}
-            </div>
-          )}
+          <OAuthLoginBanner oauthClientName={oauthClientName} oauthError={oauthError} oauthRequest={oauthRequest} />
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
           <div hidden={oauthError !== undefined}>
@@ -281,7 +340,11 @@ const LoginPage = () => {
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
-                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="status">
+                <div
+                  aria-atomic="true"
+                  aria-live="polite"
+                  className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm"
+                >
                   <p className="font-semibold">{t(`shell.login.notice.${reason}.title`)}</p>
                   <p>{t(`shell.login.notice.${reason}.body`)}</p>
                 </div>

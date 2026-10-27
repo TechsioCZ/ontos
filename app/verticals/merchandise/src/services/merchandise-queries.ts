@@ -4,7 +4,8 @@ import { and, asc, desc, eq, inArray, like, mapColumnsInSQLToAlias, or, sql } fr
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Option, Result, Schema } from 'effect';
+import { CategoryTrailSchema } from '../../shared/apis/records.ts';
 import type {
   CategoryTrail,
   RecordsView,
@@ -17,7 +18,12 @@ import {
   normalizeCategoryName,
   rankCategories,
 } from '../../shared/domain/category-search.ts';
-import { CatalogChangeSchema } from '../../shared/domain/merchandise-model.ts';
+import {
+  AvailabilitySchema,
+  CategoryNodeSchema,
+  ProductReferenceSchema,
+  VariantSummarySchema,
+} from '../../shared/domain/merchandise-model.ts';
 import type {
   CategoryNode,
   Order,
@@ -50,6 +56,18 @@ import {
   storefrontStatusOf,
   toStorefrontProduct,
 } from './storefront-catalog.ts';
+
+/** Adds optional fields lazily, preserving absence and the caller's spread order. */
+const optionalFields = <Fields extends object>(fields: () => Fields | undefined): Partial<Fields> => {
+  const result: Partial<Fields> = {};
+  const present = fields();
+  if (present !== undefined) {
+    Object.assign(result, present);
+  }
+  return result;
+};
+
+const storedRowsReason = 'Stored rows do not decode';
 
 export const DEFAULT_PRODUCT_LIMIT = 50;
 /** Products per page that carry their variants (one AKROS product can hold ~400 variants, ~400 kB). */
@@ -92,7 +110,7 @@ const productSelection = {
 
 const outerProductId = sql.raw('"products"."id"');
 
-type VariantSummary = NonNullable<ProductRecord['variantSummary']>;
+type VariantSummaryEncoded = typeof VariantSummarySchema.Encoded;
 
 /**
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
@@ -107,7 +125,7 @@ const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric
 const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
   then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
   else ${variantMinimumSql} end`;
-const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select json_build_object(
+const variantSummarySql = (scope: StoreScope) => sql<VariantSummaryEncoded>`(select json_build_object(
     'count', count(*)::int,
     'minGrossPriceMinor', min(v.gross_price_minor),
     'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
@@ -118,10 +136,12 @@ const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select jso
     and v.product_id = ${outerProductId} and v.variant_id is not null and v.price_minor is not null
     and v.active)`;
 
-interface StorefrontHead {
-  readonly homepageFeaturedProductIds: readonly string[];
-  readonly revision: number;
-}
+const StorefrontHeadSchema = Schema.Struct({
+  homepageFeaturedProductIds: Schema.Array(ProductReferenceSchema),
+  revision: Schema.Int,
+});
+type StorefrontHead = typeof StorefrontHeadSchema.Type;
+type StorefrontHeadEncoded = typeof StorefrontHeadSchema.Encoded;
 
 interface ProductPage {
   readonly head: StorefrontHead | null;
@@ -154,10 +174,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     .select({
       head:
         input.catalogHead === true
-          ? sql<StorefrontHead | null>`(select json_build_object(
+          ? sql<StorefrontHeadEncoded | null>`(select json_build_object(
             'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${catalogHeads.homepageFeaturedProductIds})
           from ${catalogHeads} where ${whereScope(catalogHeads, scope)})`.as('head')
-          : sql<StorefrontHead | null>`null::json`.as('head'),
+          : sql<StorefrontHeadEncoded | null>`null::json`.as('head'),
       total: sql<number>`count(*)::int`.as('total'),
     })
     .from(products)
@@ -199,7 +219,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       variantSummary:
         input.variantSummary === true
           ? variantSummarySql(scope).as('variant_summary')
-          : sql<VariantSummary | null>`null::json`.as('variant_summary'),
+          : sql<VariantSummaryEncoded | null>`null::json`.as('variant_summary'),
     })
     .from(products)
     .where(where)
@@ -236,21 +256,32 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   const variantRows = rows.flatMap((row) => row.variantRows);
   const tierRows = rows.flatMap((row) => row.tierRows);
   const records = yield* Effect.try({
-    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
     try: () =>
       hydrateProducts(rows, variantRows, tierRows).map(({ product, stock }, index): ProductRecord => {
-        const row = rows[index]!;
+        const row = rows[index];
+        if (row === undefined) {
+          return toProductRecord(product, stock);
+        }
         const summary = {
-          ...(row.variantSummary === null ? {} : { variantSummary: row.variantSummary }),
-          ...(row.variantCount === null ? {} : { variantCount: row.variantCount }),
+          ...optionalFields(() =>
+            row.variantSummary === null
+              ? undefined
+              : { variantSummary: Result.getOrThrow(Schema.decodeResult(VariantSummarySchema)(row.variantSummary)) },
+          ),
+          ...optionalFields(() => (row.variantCount === null ? undefined : { variantCount: row.variantCount })),
         };
-        if (input.variants) return { ...toProductRecord(product, stock), ...summary };
+        if (input.variants) {
+          return { ...toProductRecord(product, stock), ...summary };
+        }
         const { variants: _variants, ...rest } = product;
         void _variants;
         return {
           ...rest,
-          availability: row.availability as NonNullable<ProductRecord['availability']>,
-          ...(row.grossPriceMinor === null ? {} : { grossPriceMinor: row.grossPriceMinor }),
+          availability: Result.getOrThrow(Schema.decodeUnknownResult(AvailabilitySchema)(row.availability)),
+          ...optionalFields(() =>
+            row.grossPriceMinor === null ? undefined : { grossPriceMinor: row.grossPriceMinor },
+          ),
           lowStock: row.lowStock,
           stockOnHand: row.stockOnHand,
           stockValueMinor: row.stockValueMinor,
@@ -258,7 +289,14 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
         };
       }),
   });
-  return { head: result[0]?.head ?? null, products: records, total } satisfies ProductPage;
+  const rawHead = result[0]?.head;
+  const head =
+    rawHead === undefined || rawHead === null
+      ? null
+      : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(
+          Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason })),
+        );
+  return { head, products: records, total } satisfies ProductPage;
 });
 
 const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | undefined)[] => [
@@ -277,34 +315,17 @@ const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | und
   view.lowStockOnly === true ? eq(products.lowStock, true) : undefined,
 ];
 
-const staffProductOrder = (sort: RecordsView['productSort']): SQL[] => {
-  switch (sort) {
-    case 'name': {
-      return [asc(products.nameKey), asc(products.ordinal)];
-    }
-    case 'sku': {
-      return [asc(products.skuKey)];
-    }
-    case 'price-asc': {
-      return [sql`${products.grossPriceMinor} asc nulls last`, asc(products.ordinal)];
-    }
-    case 'price-desc': {
-      return [sql`${products.grossPriceMinor} desc nulls last`, asc(products.ordinal)];
-    }
-    case 'stock-asc': {
-      return [asc(products.stockOnHand), asc(products.ordinal)];
-    }
-    case 'stock-desc': {
-      return [desc(products.stockOnHand), asc(products.ordinal)];
-    }
-    case 'updated-desc': {
-      return [desc(products.updatedAt), asc(products.ordinal)];
-    }
-    case undefined: {
-      return [asc(products.ordinal)];
-    }
-  }
-};
+const staffProductOrder = (sort: RecordsView['productSort']): SQL[] =>
+  Match.value(sort).pipe(
+    Match.when('name', () => [asc(products.nameKey), asc(products.ordinal)]),
+    Match.when('sku', () => [asc(products.skuKey)]),
+    Match.when('price-asc', () => [sql`${products.grossPriceMinor} asc nulls last`, asc(products.ordinal)]),
+    Match.when('price-desc', () => [sql`${products.grossPriceMinor} desc nulls last`, asc(products.ordinal)]),
+    Match.when('stock-asc', () => [asc(products.stockOnHand), asc(products.ordinal)]),
+    Match.when('stock-desc', () => [desc(products.stockOnHand), asc(products.ordinal)]),
+    Match.when('updated-desc', () => [desc(products.updatedAt), asc(products.ordinal)]),
+    Match.orElse(() => [asc(products.ordinal)]),
+  );
 
 /** Staff (and plain storefront) product page; customers never see price or content history. */
 export const staffProducts = (
@@ -323,8 +344,8 @@ export const staffProducts = (
     offset: view.offset ?? 0,
     orderBy: staffProductOrder(view.productSort),
     variantCount: view.summary === true,
-    variantSummary: view.summary === true,
     variants: view.summary !== true,
+    variantSummary: view.summary === true,
   }).pipe(
     Effect.map((page) => ({
       ...page,
@@ -334,16 +355,22 @@ export const staffProducts = (
           void _history;
           return { ...summary, priceHistory: [] };
         }
-        if (!storefront) return record;
-        const { variants: _raw, contentHistory: _content, ...publicProduct } = record;
+        if (!storefront) {
+          return record;
+        }
+        const { contentHistory: _content, variants: _raw, ...publicProduct } = record;
         void _raw;
         void _content;
-        return {
+        const publicRecord = {
           ...publicProduct,
           priceHistory: [],
-          ...(record.variantRecords === undefined
-            ? {}
-            : { variantRecords: record.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })) }),
+        };
+        if (record.variantRecords === undefined) {
+          return publicRecord;
+        }
+        return {
+          ...publicRecord,
+          variantRecords: record.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })),
         };
       }),
     })),
@@ -380,16 +407,50 @@ const categoryIdBySlug = (db: MerchandiseDb, scope: StoreScope, slug: string) =>
     .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
     .limit(1);
 
-const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) =>
-  label === 'action'
-    ? eq(products.isAction, true)
-    : label === 'recommended'
-      ? eq(products.isRecommended, true)
-      : label === 'sale'
-        ? eq(products.isSale, true)
-        : eq(products.isNew, true);
+const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) => {
+  if (label === 'action') {
+    return eq(products.isAction, true);
+  }
+  if (label === 'recommended') {
+    return eq(products.isRecommended, true);
+  }
+  if (label === 'sale') {
+    return eq(products.isSale, true);
+  }
+  return eq(products.isNew, true);
+};
 
 const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
+
+const storefrontFilters = (
+  db: MerchandiseDb,
+  scope: StoreScope,
+  catalog: StorefrontCatalogQuery,
+  featuredIds: SQL,
+): (SQL | undefined)[] => {
+  const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
+  return [
+    eq(products.archived, false),
+    eq(products.active, true),
+    eq(products.published, true),
+    catalog.featured === true
+      ? or(sql`${products.id} = any(${featuredIds})`, eq(products.isRecommended, true))
+      : undefined,
+    catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
+    catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
+    categoryId === undefined
+      ? undefined
+      : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
+    catalog.label === undefined ? undefined : labelFilter(catalog.label),
+    ...containsAll(products.searchText, wordsOf(catalog.q)),
+    catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
+    catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
+    catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
+    catalog.availability === 'out-of-stock'
+      ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')`
+      : undefined,
+  ];
+};
 
 /**
  * Storefront catalog page: visible products (active, published, not archived), filters AND-ed, relevance or price
@@ -403,30 +464,9 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const catalog = input.query;
   const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
     where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
-  const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
-  const filters: (SQL | undefined)[] = [
-    eq(products.archived, false),
-    eq(products.active, true),
-    eq(products.published, true),
-    catalog.featured === true
-      ? or(sql`${products.id} = any(${featuredIds})`, eq(products.isRecommended, true))
-      : undefined,
-    catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
-    catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
-    categoryId === undefined
-      ? undefined
-      : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
-    catalog.label === undefined ? undefined : labelFilter(catalog.label),
-    ...containsAll(products.searchText, words),
-    catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
-    catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
-    catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
-    catalog.availability === 'out-of-stock'
-      ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')`
-      : undefined,
-  ];
+  const filters = storefrontFilters(db, scope, catalog, featuredIds);
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
   const relevance =
     words.length === 0
@@ -439,20 +479,22 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
             else 3 end`,
           desc(products.hasPhoto),
         ];
-  const base: SQL[] =
-    catalog.productIds !== undefined
-      ? [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`]
-      : catalog.featured === true
-        ? [sql`array_position(${featuredIds}, ${products.id}) asc nulls last`, asc(products.ordinal)]
-        : [asc(products.ordinal)];
+  let base: SQL[];
+  if (catalog.productIds !== undefined) {
+    base = [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`];
+  } else if (catalog.featured === true) {
+    base = [sql`array_position(${featuredIds}, ${products.id}) asc nulls last`, asc(products.ordinal)];
+  } else {
+    base = [asc(products.ordinal)];
+  }
   const named = catalog.sort === 'name' || (catalog.sort === undefined && words.length > 0);
   const ranked = named ? [...relevance, asc(products.nameKey), asc(products.ordinal)] : base;
-  const orderBy =
-    catalog.sort === 'price-asc'
-      ? [sql`${products.grossPriceMinor} asc nulls last`, ...ranked]
-      : catalog.sort === 'price-desc'
-        ? [sql`${products.grossPriceMinor} desc nulls last`, ...ranked]
-        : ranked;
+  let orderBy = ranked;
+  if (catalog.sort === 'price-asc') {
+    orderBy = [sql`${products.grossPriceMinor} asc nulls last`, ...ranked];
+  } else if (catalog.sort === 'price-desc') {
+    orderBy = [sql`${products.grossPriceMinor} desc nulls last`, ...ranked];
+  }
   const fields = catalog.fields ?? 'full';
   const requested = catalog.pageSize ?? DEFAULT_STOREFRONT_PAGE_SIZE;
   const pageSize =
@@ -502,7 +544,7 @@ const ancestors = Array.from({ length: TRAIL_DEPTH }, (_, index) =>
 );
 /** Root-first path label built in PostgreSQL, so a search never ships the whole tree to the Worker. */
 const trailExpression = sql<string>`concat_ws(' › ', ${sql.join(
-  [...ancestors].reverse().map((ancestor) => ancestor.name),
+  ancestors.toReversed().map((ancestor) => ancestor.name),
   sql`, `,
 )}, ${categories.name})`;
 // Lower case without diacritics, as `foldCategoryText` folds the query (PostgreSQL here has no unaccent).
@@ -567,7 +609,10 @@ export const searchCategoryTrails = Effect.fn('MerchandiseQueries.searchCategory
         .limit(limit),
       'Categories could not be searched',
     );
-    return { matches: roots.map(({ id, trail }): CategoryTrail => ({ id, trail })), total: roots[0]?.total ?? 0 };
+    const matches = yield* Effect.forEach(roots, (row) => Schema.decodeEffect(CategoryTrailSchema)(row), {
+      concurrency: 1,
+    }).pipe(Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason })));
+    return { matches, total: roots[0]?.total ?? 0 };
   }
   const haystack = folded(sql`${trailExpression} || ' ' || ${categories.slug}`);
   const lastWord = words.at(-1) ?? '';
@@ -582,7 +627,10 @@ export const searchCategoryTrails = Effect.fn('MerchandiseQueries.searchCategory
     'Categories could not be searched',
   );
   const ranked = rankCategories(rows, input.text).slice(0, limit);
-  return { matches: ranked.map(({ id, trail }): CategoryTrail => ({ id, trail })), total: rows[0]?.total ?? 0 };
+  const matches = yield* Effect.forEach(ranked, (row) => Schema.decodeEffect(CategoryTrailSchema)(row), {
+    concurrency: 1,
+  }).pipe(Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason })));
+  return { matches, total: rows[0]?.total ?? 0 };
 });
 
 /** Path labels of these tree categories (unknown ids are left out). */
@@ -593,13 +641,16 @@ export const categoryTrailsOf = Effect.fn('MerchandiseQueries.categoryTrailsOf')
 ) {
   const unique = [...new Set(ids)];
   if (unique.length === 0) {
-    return [] as readonly CategoryTrail[];
+    const empty: readonly CategoryTrail[] = [];
+    return empty;
   }
   const rows = yield* query(
     withAncestors(db, scope, inArray(categories.id, unique)),
     'Category paths could not be read',
   );
-  return rows.map(({ id, trail }): CategoryTrail => ({ id, trail }));
+  return yield* Effect.forEach(rows, (row) => Schema.decodeEffect(CategoryTrailSchema)(row), {
+    concurrency: 1,
+  }).pipe(Effect.mapError((cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason })));
 });
 
 /** Whether the company has a storefront category tree. */
@@ -701,39 +752,49 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     const seen = new Set<string>();
     let current = byId.get(id);
     while (current !== undefined && !seen.has(current.id)) {
-      if (current.published === false) return false;
+      if (current.published === false) {
+        return false;
+      }
       seen.add(current.id);
       current = current.parentId === null ? undefined : byId.get(current.parentId);
     }
     return true;
   };
   return yield* Effect.try({
-    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
     try: () =>
-      rows
-        .filter(
-          (row) =>
-            (!input.storefront || visible(row.id)) &&
-            (input.contentOnly !== true || row.id === contentId || row.parentId === contentId),
-        )
-        .map((row): CategoryNode => ({
-          hasChildren: row.hasChildren,
-          id: row.id,
-          name: normalizeCategoryName(row.name),
-          parentId: row.parentId,
-          position: row.position,
-          slug: row.slug,
-          ...(row.published === null ? {} : { published: row.published }),
-          ...categoryDisplayLabels(row),
-          ...(row.description === null ? {} : { description: row.description }),
-          ...(row.longDescription === null ? {} : { longDescription: row.longDescription }),
-          ...(row.imageSrc === null ? {} : { imageSrc: row.imageSrc }),
-          ...(row.history === null || row.history === undefined ? {} : { history: decodeHistory(row.history) }),
-        })),
+      rows.flatMap((row): CategoryNode[] => {
+        if (
+          (input.storefront && !visible(row.id)) ||
+          (input.contentOnly === true && row.id !== contentId && row.parentId !== contentId)
+        ) {
+          return [];
+        }
+        return [
+          Result.getOrThrow(
+            Schema.decodeUnknownResult(CategoryNodeSchema)({
+              hasChildren: row.hasChildren,
+              id: row.id,
+              name: normalizeCategoryName(row.name),
+              parentId: row.parentId,
+              position: row.position,
+              slug: row.slug,
+              ...optionalFields(() => (row.published === null ? undefined : { published: row.published })),
+              ...categoryDisplayLabels(row),
+              ...optionalFields(() => (row.description === null ? undefined : { description: row.description })),
+              ...optionalFields(() =>
+                row.longDescription === null ? undefined : { longDescription: row.longDescription },
+              ),
+              ...optionalFields(() => (row.imageSrc === null ? undefined : { imageSrc: row.imageSrc })),
+              ...optionalFields(() =>
+                row.history === null || row.history === undefined ? undefined : { history: row.history },
+              ),
+            }),
+          ),
+        ];
+      }),
   });
 });
-
-const decodeHistory = Schema.decodeUnknownSync(Schema.Array(CatalogChangeSchema));
 
 // ------------------------------------------------------------------------------------------------ orders, movements
 
@@ -774,7 +835,10 @@ export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* ord
       .where(where),
   );
   const total = counted?.total ?? 0;
-  if (limit === 0 || total === 0) return { orders: [] as readonly Order[], total };
+  if (limit === 0 || total === 0) {
+    const empty: readonly Order[] = [];
+    return { orders: empty, total };
+  }
   const rows = yield* query(
     db
       .select({ document: orders.document })
@@ -786,10 +850,10 @@ export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* ord
     'Orders could not be read',
   );
   const decoded = yield* Effect.try({
-    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
     try: () => rows.map((row) => decodeOrderDocument(row.document)),
   });
-  return { orders: decoded as readonly Order[], total };
+  return { orders: decoded, total };
 });
 
 /** Guest orders of one storefront submission (replay lookup); never removed ones. */
@@ -803,7 +867,7 @@ export const ordersByClientRequest = Effect.fn('MerchandiseQueries.ordersByClien
         .limit(5),
     );
     return yield* Effect.try({
-      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
       try: () => rows.map((row) => decodeOrderDocument(row.document)),
     });
   },
@@ -832,12 +896,14 @@ export const storefrontOrderStatus = Effect.fn('MerchandiseQueries.storefrontOrd
         .limit(1),
     );
     const [row] = rows;
-    if (row === undefined) return null;
+    if (row === undefined) {
+      return Option.none();
+    }
     const order = yield* Effect.try({
-      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
       try: () => decodeOrderDocument(row.document),
     });
-    return storefrontStatusOf(order) satisfies StorefrontOrderStatus;
+    return Option.some(storefrontStatusOf(order) satisfies StorefrontOrderStatus);
   },
 );
 
@@ -846,7 +912,7 @@ export const storefrontCustomerOrders = Effect.fn('MerchandiseQueries.storefront
   function* storefrontCustomerOrders(
     db: MerchandiseDb,
     scope: StoreScope,
-    lookup: { readonly customerAccountId: string; readonly orderId?: string; readonly offset?: number },
+    lookup: { readonly customerAccountId: string; readonly offset?: number; readonly orderId?: string },
   ) {
     const predicate = and(
       whereScope(orders, scope),
@@ -855,23 +921,28 @@ export const storefrontCustomerOrders = Effect.fn('MerchandiseQueries.storefront
       sql`${orders.document}->>'customerAccountId' = ${lookup.customerAccountId}`,
       ...(lookup.orderId === undefined ? [] : [eq(orders.id, lookup.orderId)]),
     );
-    const rows = yield* query(
-      db
-        .select({ document: orders.document })
-        .from(orders)
-        .where(predicate)
-        .orderBy(desc(orders.createdAt), desc(orders.id))
-        .limit(50)
-        .offset(lookup.offset ?? 0),
-    );
-    const counts = yield* query(
-      db
-        .select({ total: sql<number>`count(*)::int` })
-        .from(orders)
-        .where(predicate),
+    const [rows, counts] = yield* Effect.all(
+      [
+        query(
+          db
+            .select({ document: orders.document })
+            .from(orders)
+            .where(predicate)
+            .orderBy(desc(orders.createdAt), desc(orders.id))
+            .limit(50)
+            .offset(lookup.offset ?? 0),
+        ),
+        query(
+          db
+            .select({ total: sql<number>`count(*)::int` })
+            .from(orders)
+            .where(predicate),
+        ),
+      ],
+      { concurrency: 1 },
     );
     const result = yield* Effect.try({
-      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
       try: () => rows.map((row) => decodeOrderDocument(row.document)),
     });
     return { orders: result, total: counts[0]?.total ?? 0 };
@@ -893,7 +964,7 @@ export const productMovements = Effect.fn('MerchandiseQueries.productMovements')
       .limit(MOVEMENT_LIMIT),
   );
   return yield* Effect.try({
-    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: storedRowsReason }),
     try: (): readonly StockMovement[] => rows.toReversed().map(decodeMovementRow),
   });
 });
@@ -903,24 +974,31 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
   db: MerchandiseDb,
   scope: StoreScope,
 ) {
-  const [catalog] = yield* query(
-    db
-      .select({
-        lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
-        productCount: sql<number>`count(*)::int`,
-        stockValueMinor: sql<number>`coalesce(sum(${products.stockValueMinor}), 0)::bigint`,
-      })
-      .from(products)
-      .where(and(whereScope(products, scope), eq(products.archived, false))),
-  );
-  const [sales] = yield* query(
-    db
-      .select({
-        openOrderValueMinor: sql<number>`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`,
-        orderCount: sql<number>`count(*)::int`,
-      })
-      .from(orders)
-      .where(and(whereScope(orders, scope), eq(orders.removed, false))),
+  const [[catalog], [sales]] = yield* Effect.all(
+    [
+      query(
+        db
+          .select({
+            lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
+            productCount: sql<number>`count(*)::int`,
+            stockValueMinor: sql<number | string>`coalesce(sum(${products.stockValueMinor}), 0)::bigint`,
+          })
+          .from(products)
+          .where(and(whereScope(products, scope), eq(products.archived, false))),
+      ),
+      query(
+        db
+          .select({
+            openOrderValueMinor: sql<
+              number | string
+            >`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`,
+            orderCount: sql<number>`count(*)::int`,
+          })
+          .from(orders)
+          .where(and(whereScope(orders, scope), eq(orders.removed, false))),
+      ),
+    ],
+    { concurrency: 1 },
   );
   return {
     lowStockCount: catalog?.lowStockCount ?? 0,

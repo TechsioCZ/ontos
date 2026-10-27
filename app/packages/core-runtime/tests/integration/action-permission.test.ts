@@ -2,7 +2,18 @@ import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
+import {
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Function as EffectFunction,
+  Layer,
+  Exit,
+  Option,
+  Schema,
+  Predicate,
+} from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
@@ -165,8 +176,8 @@ const transport = (idempotencyKey: string, targetResourceId: string) => ({
 
 type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
-const withDatabase = <Value, Error, Requirements>(
-  operation: (database: ContextServiceContract) => Effect.Effect<Value, Error, Requirements>,
+const withDatabase = <Value, Failure, Requirements>(
+  operation: (database: ContextServiceContract) => Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
@@ -485,11 +496,11 @@ const incrementExecution = (counter: ExecutionCounter): void => {
   counter.value += 1;
 };
 
-const runWithLivePermission = <Value, Error>(
+const runWithLivePermission = <Value, Failure>(
   database: ContextServiceContract,
-  operation: (runtime: ReturnType<typeof makeActionRuntime>) => Effect.Effect<Value, Error>,
+  operation: (runtime: ReturnType<typeof makeActionRuntime>) => Effect.Effect<Value, Failure>,
   configuration?: SpiceDbConfigValue,
-  onStage: NonNullable<ActionRuntimeOptions['onStage']> = Function.constVoid,
+  onStage: NonNullable<ActionRuntimeOptions['onStage']> = EffectFunction.constVoid,
 ) =>
   (configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration)).pipe(
     Effect.flatMap((config) =>

@@ -14,6 +14,10 @@ import {
   opsIdOf,
 } from './common.ts';
 
+export const SupplierIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u)).pipe(
+  Schema.brand('FacilitySupplierIco'),
+);
+
 export const StockWarehouseIdSchema = opsIdOf('FacilityStockWarehouseId');
 export type StockWarehouseId = typeof StockWarehouseIdSchema.Type;
 export const StockItemIdSchema = opsIdOf('FacilityStockItemId');
@@ -49,39 +53,39 @@ export type StockTracking = typeof StockTrackingSchema.Type;
 
 export const StockWarehouseSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: StockWarehouseIdSchema,
   code: TextSchema(32),
-  name: TextSchema(200),
+  id: StockWarehouseIdSchema,
   location: Schema.optionalKey(PropertyRefSchema),
+  name: TextSchema(200),
 });
 export type StockWarehouse = typeof StockWarehouseSchema.Type;
 
 export const SupplierSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: SupplierIdSchema,
-  name: TextSchema(200),
-  ico: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\d{8}$/))),
   contact: Schema.optionalKey(TextSchema(200)),
   email: Schema.optionalKey(TextSchema(200)),
-  phone: Schema.optionalKey(TextSchema(64)),
+  ico: Schema.optionalKey(SupplierIcoSchema),
+  id: SupplierIdSchema,
   leadTimeDays: Schema.optionalKey(LeadTimeDaysSchema),
+  name: TextSchema(200),
   note: Schema.optionalKey(NoteSchema),
+  phone: Schema.optionalKey(TextSchema(64)),
 });
 export type Supplier = typeof SupplierSchema.Type;
 
 export const StockItemSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: StockItemIdSchema,
-  sku: TextSchema(64),
-  name: TextSchema(200),
   category: StockItemCategorySchema,
-  warehouseId: StockWarehouseIdSchema,
-  unit: TextSchema(16),
-  tracking: StockTrackingSchema,
-  minimum: LevelSchema,
-  maximum: LevelSchema,
+  id: StockItemIdSchema,
   leadTimeDays: LeadTimeDaysSchema,
+  maximum: LevelSchema,
+  minimum: LevelSchema,
+  name: TextSchema(200),
+  sku: TextSchema(64),
   supplierId: Schema.optionalKey(SupplierIdSchema),
+  tracking: StockTrackingSchema,
+  unit: TextSchema(16),
+  warehouseId: StockWarehouseIdSchema,
   /** Last purchase unit price (from a received purchase order line), CZK minor units. */
   lastPriceMinor: Schema.optionalKey(MinorAmountSchema),
   location: Schema.optionalKey(PropertyRefSchema),
@@ -93,8 +97,8 @@ export type StockItem = typeof StockItemSchema.Type;
 export const StockRefKindSchema = Schema.Literals(['purchase_order', 'task', 'unit', 'property', 'asset', 'document']);
 export type StockRefKind = typeof StockRefKindSchema.Type;
 export const StockRefSchema = Schema.Struct({
-  kind: StockRefKindSchema,
   id: TextSchema(300),
+  kind: StockRefKindSchema,
   label: TextSchema(300),
 });
 export type StockRef = typeof StockRefSchema.Type;
@@ -107,21 +111,21 @@ export type StockMovementKind = typeof StockMovementKindSchema.Type;
  * A transfer moves `quantity` (+) from `fromWarehouseId` to `warehouseId` and does not change the total.
  */
 export const StockMovementSchema = Schema.Struct({
+  batch: Schema.optionalKey(BatchSchema),
+  createdAt: Schema.DateTimeUtcFromString,
+  createdBy: PrincipalRefSchema,
+  date: IsoDateSchema,
+  fromWarehouseId: Schema.optionalKey(StockWarehouseIdSchema),
   id: StockMovementIdSchema,
   itemId: StockItemIdSchema,
   kind: StockMovementKindSchema,
-  quantity: Schema.Int,
-  warehouseId: StockWarehouseIdSchema,
-  fromWarehouseId: Schema.optionalKey(StockWarehouseIdSchema),
-  date: IsoDateSchema,
-  reason: TextSchema(500),
-  batch: Schema.optionalKey(BatchSchema),
-  serialNumbers: Schema.optionalKey(Schema.Array(SerialNumberSchema)),
-  refs: Schema.Array(StockRefSchema),
-  purchaseOrderId: Schema.optionalKey(PurchaseOrderIdSchema),
   plannedIssueId: Schema.optionalKey(StockPlannedIssueIdSchema),
-  createdAt: Schema.DateTimeUtcFromString,
-  createdBy: PrincipalRefSchema,
+  purchaseOrderId: Schema.optionalKey(PurchaseOrderIdSchema),
+  quantity: Schema.Int,
+  reason: TextSchema(500),
+  refs: Schema.Array(StockRefSchema),
+  serialNumbers: Schema.optionalKey(Schema.Array(SerialNumberSchema)),
+  warehouseId: StockWarehouseIdSchema,
 });
 export type StockMovement = typeof StockMovementSchema.Type;
 
@@ -129,10 +133,10 @@ export const PlannedIssueStatusSchema = Schema.Literals(['planned', 'issued', 'c
 export type PlannedIssueStatus = typeof PlannedIssueStatusSchema.Type;
 export const StockPlannedIssueSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
+  date: IsoDateSchema,
   id: StockPlannedIssueIdSchema,
   itemId: StockItemIdSchema,
   quantity: QuantitySchema,
-  date: IsoDateSchema,
   reason: TextSchema(500),
   refs: Schema.Array(StockRefSchema),
   status: PlannedIssueStatusSchema,
@@ -140,9 +144,9 @@ export const StockPlannedIssueSchema = Schema.Struct({
 export type StockPlannedIssue = typeof StockPlannedIssueSchema.Type;
 
 export const QuoteLineSchema = Schema.Struct({
+  description: TextSchema(300),
   id: PurchaseLineIdSchema,
   itemId: Schema.optionalKey(StockItemIdSchema),
-  description: TextSchema(300),
   quantity: QuantitySchema,
   unitPriceMinor: MinorAmountSchema,
 });
@@ -152,16 +156,16 @@ export const SupplierQuoteStatusSchema = Schema.Literals(['received', 'accepted'
 export type SupplierQuoteStatus = typeof SupplierQuoteStatusSchema.Type;
 export const SupplierQuoteSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: SupplierQuoteIdSchema,
-  number: TextSchema(64),
-  supplierId: SupplierIdSchema,
-  date: IsoDateSchema,
-  validUntil: Schema.optionalKey(IsoDateSchema),
   currency: CurrencySchema,
+  date: IsoDateSchema,
+  id: SupplierQuoteIdSchema,
   lines: Schema.Array(QuoteLineSchema),
-  status: SupplierQuoteStatusSchema,
-  purchaseOrderId: Schema.optionalKey(PurchaseOrderIdSchema),
   note: Schema.optionalKey(NoteSchema),
+  number: TextSchema(64),
+  purchaseOrderId: Schema.optionalKey(PurchaseOrderIdSchema),
+  status: SupplierQuoteStatusSchema,
+  supplierId: SupplierIdSchema,
+  validUntil: Schema.optionalKey(IsoDateSchema),
 });
 export type SupplierQuote = typeof SupplierQuoteSchema.Type;
 
@@ -177,29 +181,29 @@ export const PurchaseOrderStatusSchema = Schema.Literals([
 export type PurchaseOrderStatus = typeof PurchaseOrderStatusSchema.Type;
 
 export const PurchaseOrderLineSchema = Schema.Struct({
+  description: TextSchema(300),
   id: PurchaseLineIdSchema,
   itemId: Schema.optionalKey(StockItemIdSchema),
-  description: TextSchema(300),
   quantity: QuantitySchema,
   /** Price kept from the quote (or typed for a direct order); never re-read from the item. */
-  unitPriceMinor: MinorAmountSchema,
-  receivedQuantity: LevelSchema,
   quoteLineId: Schema.optionalKey(PurchaseLineIdSchema),
+  receivedQuantity: LevelSchema,
+  unitPriceMinor: MinorAmountSchema,
 });
 export type PurchaseOrderLine = typeof PurchaseOrderLineSchema.Type;
 
 export const DeliveryLineSchema = Schema.Struct({
+  batch: Schema.optionalKey(BatchSchema),
   lineId: PurchaseLineIdSchema,
   quantity: QuantitySchema,
-  batch: Schema.optionalKey(BatchSchema),
   serialNumbers: Schema.optionalKey(Schema.Array(SerialNumberSchema)),
 });
 export type DeliveryLine = typeof DeliveryLineSchema.Type;
 
 export const PurchaseDeliverySchema = Schema.Struct({
-  id: TextSchema(300),
   date: IsoDateSchema,
   deliveryNote: Schema.optionalKey(TextSchema(64)),
+  id: TextSchema(300),
   lines: Schema.Array(DeliveryLineSchema),
   movementIds: Schema.Array(StockMovementIdSchema),
   receivedAt: Schema.DateTimeUtcFromString,
@@ -209,40 +213,40 @@ export type PurchaseDelivery = typeof PurchaseDeliverySchema.Type;
 
 /** Reference to the received (supplier) invoice. Finance owns the invoice itself (finance-billing). */
 export const PurchaseInvoiceRefSchema = Schema.Struct({
-  number: TextSchema(64),
-  invoiceDate: Schema.optionalKey(IsoDateSchema),
   amountMinor: Schema.optionalKey(MinorAmountSchema),
-  note: Schema.optionalKey(NoteSchema),
+  invoiceDate: Schema.optionalKey(IsoDateSchema),
   linkedAt: Schema.DateTimeUtcFromString,
   linkedBy: PrincipalRefSchema,
+  note: Schema.optionalKey(NoteSchema),
+  number: TextSchema(64),
 });
 export type PurchaseInvoiceRef = typeof PurchaseInvoiceRefSchema.Type;
 
 export const PurchaseOrderHistorySchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,
   by: PrincipalRefSchema,
-  status: PurchaseOrderStatusSchema,
   event: Schema.Literals(['created', 'approved', 'ordered', 'delivery', 'invoice', 'cancelled', 'completed']),
   note: Schema.optionalKey(NoteSchema),
+  status: PurchaseOrderStatusSchema,
 });
 export type PurchaseOrderHistory = typeof PurchaseOrderHistorySchema.Type;
 
 export const PurchaseOrderSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
+  currency: CurrencySchema,
   id: PurchaseOrderIdSchema,
   number: TextSchema(64),
-  supplierId: SupplierIdSchema,
   quoteId: Schema.optionalKey(SupplierQuoteIdSchema),
   status: PurchaseOrderStatusSchema,
-  currency: CurrencySchema,
+  supplierId: SupplierIdSchema,
   /** Goods are received into this warehouse; lines without a stock item are services (no movement). */
-  warehouseId: StockWarehouseIdSchema,
-  expectedDate: Schema.optionalKey(IsoDateSchema),
-  lines: Schema.Array(PurchaseOrderLineSchema),
   deliveries: Schema.Array(PurchaseDeliverySchema),
-  invoices: Schema.Array(PurchaseInvoiceRefSchema),
+  expectedDate: Schema.optionalKey(IsoDateSchema),
   history: Schema.Array(PurchaseOrderHistorySchema),
+  invoices: Schema.Array(PurchaseInvoiceRefSchema),
+  lines: Schema.Array(PurchaseOrderLineSchema),
   note: Schema.optionalKey(NoteSchema),
+  warehouseId: StockWarehouseIdSchema,
 });
 export type PurchaseOrder = typeof PurchaseOrderSchema.Type;
 
@@ -256,9 +260,9 @@ export type SalesOrderId = typeof SalesOrderIdSchema.Type;
 /** Customer = a party-registry counterparty; snapshot of its identity and name taken when the quote was made. */
 export const SalesCustomerSchema = Schema.Struct({
   counterpartyId: TextSchema(300),
+  name: TextSchema(300),
   partyId: Schema.optionalKey(TextSchema(300)),
   tenantId: TextSchema(300),
-  name: TextSchema(300),
 });
 export type SalesCustomer = typeof SalesCustomerSchema.Type;
 
@@ -266,9 +270,9 @@ export const SalesVatRateSchema = Schema.Literals([0, 10, 12, 21]);
 export type SalesVatRate = typeof SalesVatRateSchema.Type;
 
 export const SalesLineSchema = Schema.Struct({
+  description: TextSchema(300),
   id: PurchaseLineIdSchema,
   itemId: Schema.optionalKey(StockItemIdSchema),
-  description: TextSchema(300),
   quantity: QuantitySchema,
   /** Unit price without VAT, CZK minor units; kept from the quote, never re-read. */
   unitPriceMinor: MinorAmountSchema,
@@ -280,17 +284,17 @@ export const SalesQuoteStatusSchema = Schema.Literals(['draft', 'sent', 'accepte
 export type SalesQuoteStatus = typeof SalesQuoteStatusSchema.Type;
 export const SalesQuoteSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: SalesQuoteIdSchema,
-  number: TextSchema(64),
+  currency: CurrencySchema,
   customer: SalesCustomerSchema,
   date: IsoDateSchema,
-  validUntil: Schema.optionalKey(IsoDateSchema),
-  currency: CurrencySchema,
+  id: SalesQuoteIdSchema,
   lines: Schema.Array(SalesLineSchema),
-  status: SalesQuoteStatusSchema,
-  salesOrderId: Schema.optionalKey(SalesOrderIdSchema),
-  related: Schema.optionalKey(PropertyRefSchema),
   note: Schema.optionalKey(NoteSchema),
+  number: TextSchema(64),
+  related: Schema.optionalKey(PropertyRefSchema),
+  salesOrderId: Schema.optionalKey(SalesOrderIdSchema),
+  status: SalesQuoteStatusSchema,
+  validUntil: Schema.optionalKey(IsoDateSchema),
 });
 export type SalesQuote = typeof SalesQuoteSchema.Type;
 
@@ -302,8 +306,8 @@ export const SalesOrderLineSchema = Schema.Struct({
 export type SalesOrderLine = typeof SalesOrderLineSchema.Type;
 
 export const SalesDeliverySchema = Schema.Struct({
-  id: TextSchema(300),
   date: IsoDateSchema,
+  id: TextSchema(300),
   lines: Schema.Array(Schema.Struct({ lineId: PurchaseLineIdSchema, quantity: QuantitySchema })),
   note: Schema.optionalKey(NoteSchema),
   recordedAt: Schema.DateTimeUtcFromString,
@@ -314,64 +318,67 @@ export type SalesDelivery = typeof SalesDeliverySchema.Type;
 /** Issued invoice (draft) that Finance created from this order; Finance owns the invoice itself. */
 export const SalesInvoiceLinkSchema = Schema.Struct({
   invoiceId: TextSchema(300),
-  number: TextSchema(64),
-  totalMinor: Schema.optionalKey(MinorAmountSchema),
   linkedAt: Schema.DateTimeUtcFromString,
   linkedBy: PrincipalRefSchema,
+  number: TextSchema(64),
+  totalMinor: Schema.optionalKey(MinorAmountSchema),
 });
 export type SalesInvoiceLink = typeof SalesInvoiceLinkSchema.Type;
 
 export const SalesOrderHistorySchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,
   by: PrincipalRefSchema,
-  status: PurchaseOrderStatusSchema,
-  event: Schema.Literals(['created', 'approved', 'ordered', 'delivery', 'invoice', 'cancelled', 'completed']),
+  event: PurchaseOrderHistorySchema.fields.event,
   note: Schema.optionalKey(NoteSchema),
+  status: PurchaseOrderStatusSchema,
 });
 export type SalesOrderHistory = typeof SalesOrderHistorySchema.Type;
 
 /** Same lifecycle as purchase orders: návrh → schváleno → objednáno → částečně dodáno → dokončeno; zrušeno. */
 export const SalesOrderSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
-  id: SalesOrderIdSchema,
-  number: TextSchema(64),
+  currency: CurrencySchema,
   customer: SalesCustomerSchema,
+  deliveries: Schema.Array(SalesDeliverySchema),
+  expectedDate: Schema.optionalKey(IsoDateSchema),
+  history: Schema.Array(SalesOrderHistorySchema),
+  id: SalesOrderIdSchema,
+  invoices: Schema.Array(SalesInvoiceLinkSchema),
+  lines: Schema.Array(SalesOrderLineSchema),
+  note: Schema.optionalKey(NoteSchema),
+  number: TextSchema(64),
   quoteId: Schema.optionalKey(SalesQuoteIdSchema),
   quoteNumber: Schema.optionalKey(TextSchema(64)),
-  status: PurchaseOrderStatusSchema,
-  currency: CurrencySchema,
-  expectedDate: Schema.optionalKey(IsoDateSchema),
-  lines: Schema.Array(SalesOrderLineSchema),
-  deliveries: Schema.Array(SalesDeliverySchema),
-  invoices: Schema.Array(SalesInvoiceLinkSchema),
-  history: Schema.Array(SalesOrderHistorySchema),
   related: Schema.optionalKey(PropertyRefSchema),
-  note: Schema.optionalKey(NoteSchema),
+  status: PurchaseOrderStatusSchema,
 });
 export type SalesOrder = typeof SalesOrderSchema.Type;
 
 /** Base (without VAT) and total with VAT of sales lines; VAT rounded per line to whole haléře. */
-export const salesTotals = (lines: readonly Pick<SalesLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>[]) =>
-  lines.reduce(
-    (sum, line) => {
-      const base = line.quantity * line.unitPriceMinor;
-      const vat = Math.floor((base * line.vatRate + 50) / 100);
-      return { baseMinor: sum.baseMinor + base, totalMinor: sum.totalMinor + base + vat };
-    },
-    { baseMinor: 0, totalMinor: 0 },
-  );
+export const salesTotals = (lines: readonly Pick<SalesLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>[]) => {
+  let baseMinor = 0;
+  let totalMinor = 0;
+  for (const line of lines) {
+    const base = line.quantity * line.unitPriceMinor;
+    const vat = Math.floor((base * line.vatRate + 50) / 100);
+    baseMinor += base;
+    totalMinor += base;
+    totalMinor += vat;
+  }
+  return { baseMinor, totalMinor };
+};
 
 /** `items` first: the overview counts the first array of each agenda state as its record count. */
 export const PurchasingStateSchema = Schema.Struct({
   items: Schema.Array(StockItemSchema),
-  warehouses: Schema.Array(StockWarehouseSchema),
-  suppliers: Schema.Array(SupplierSchema),
   movements: Schema.Array(StockMovementSchema),
+  orders: Schema.Array(PurchaseOrderSchema),
   plannedIssues: Schema.Array(StockPlannedIssueSchema),
   quotes: Schema.Array(SupplierQuoteSchema),
-  orders: Schema.Array(PurchaseOrderSchema),
-  salesQuotes: Schema.optionalKey(Schema.Array(SalesQuoteSchema)),
   salesOrders: Schema.optionalKey(Schema.Array(SalesOrderSchema)),
+  salesQuotes: Schema.optionalKey(Schema.Array(SalesQuoteSchema)),
+  suppliers: Schema.Array(SupplierSchema),
+  warehouses: Schema.Array(StockWarehouseSchema),
 });
 export type PurchasingState = typeof PurchasingStateSchema.Type;
 export type PurchasingStateEncoded = typeof PurchasingStateSchema.Encoded;

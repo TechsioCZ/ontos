@@ -28,12 +28,12 @@ it.effect('links to the configured stage storefront without localhost destinatio
 );
 
 /** Demo accounts of each company; a guide may only send the presenter to its own company's accounts. */
-const personaDomains: Readonly<Record<string, string>> = {
-  akros: '@akros.demo',
-  hanak: '@hanak.demo',
-  obchod: '@demo.ontos',
-  siampark: '@siampark.demo',
-};
+const personaDomains = new Map([
+  ['akros', '@akros.demo'],
+  ['hanak', '@hanak.demo'],
+  ['obchod', '@demo.ontos'],
+  ['siampark', '@siampark.demo'],
+]);
 
 const legalEntities = {
   akros: '71000000-0000-4000-8000-000000000024',
@@ -65,7 +65,7 @@ it.each(demoGuides.map((guide) => [guide.id, guide] as const))('guide %s is comp
     expect(step.say.length).toBeGreaterThan(0);
     expect(step.say.length).toBeLessThanOrEqual(260);
     if (step.persona !== null) {
-      expect(step.persona.email.endsWith(personaDomains[id] ?? '-')).toBe(true);
+      expect(step.persona.email.endsWith(personaDomains.get(id) ?? '-')).toBe(true);
     }
     if (step.target.kind === 'app') {
       expect(step.target.path.startsWith('/')).toBe(true);

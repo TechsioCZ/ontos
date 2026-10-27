@@ -17,10 +17,14 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import { demoId, demoTenantId } from '../../../scripts/demo/fixture-ids.mts';
 import { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import type { MerchandiseState } from '../shared/apis/records.ts';
-import { grossUnitPriceMinor, shippingMethods } from '../shared/domain/merchandise-model.ts';
+import { grossUnitPriceMinor, OrderLineSchema, shippingMethods } from '../shared/domain/merchandise-model.ts';
 import type { OrderStatus, ShippingMethod } from '../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, ORDER_NUMBER_PREFIX } from '../shared/domain/order-totals.ts';
 import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
+
+class EshopSeedInputError extends Schema.TaggedError<EshopSeedInputError>()('EshopSeedInputError', {
+  reason: Schema.String,
+}) {}
 
 export const eshopLegalEntityId = '71000000-0000-4000-8000-000000000023' as const;
 
@@ -28,6 +32,12 @@ type Encoded = typeof MerchandiseStateSchema.Encoded;
 type EncodedProduct = Encoded['products'][number];
 type EncodedMovement = Encoded['movements'][number];
 type EncodedOrder = Encoded['orders'][number];
+type Mutable<Value> = { -readonly [Key in keyof Value]: Value[Key] };
+
+const FILTER_GRIND_ATTRIBUTES = 'Hmotnost: 250 g; Mletí: střední';
+const FILTER_GRIND_NAME = '250 g / mletá na filtr';
+const TEA_50G_ATTRIBUTES = 'Hmotnost: 50 g';
+const TEA_100G_ATTRIBUTES = 'Hmotnost: 100 g';
 
 const SEED_INSTANT = DateTime.makeUnsafe('2026-10-19T08:00:00Z');
 const daysAgo = (days: number, hours = 0): string =>
@@ -221,10 +231,10 @@ export const eshopCatalog: readonly SeedProduct[] = [
         stock: 34,
       },
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND_ATTRIBUTES,
         gross: 25_900,
         key: 'filtr',
-        name: '250 g / mletá na filtr',
+        name: FILTER_GRIND_NAME,
         stock: 21,
       },
     ],
@@ -241,10 +251,10 @@ export const eshopCatalog: readonly SeedProduct[] = [
     slug: 'kolumbie-decaf-mleta',
     variants: [
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND_ATTRIBUTES,
         gross: 27_900,
         key: 'filtr',
-        name: '250 g / mletá na filtr',
+        name: FILTER_GRIND_NAME,
         stock: 16,
       },
       {
@@ -282,10 +292,10 @@ export const eshopCatalog: readonly SeedProduct[] = [
     slug: 'snidanova-smes',
     variants: [
       {
-        attributes: 'Hmotnost: 250 g; Mletí: střední',
+        attributes: FILTER_GRIND_ATTRIBUTES,
         gross: 22_900,
         key: '250g',
-        name: '250 g / mletá na filtr',
+        name: FILTER_GRIND_NAME,
         stock: 38,
       },
       {
@@ -308,8 +318,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-SEN',
     slug: 'sencha-kagoshima',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 18_900, key: '50g', name: '50 g', stock: 30 },
-      { attributes: 'Hmotnost: 100 g', gross: 34_900, key: '100g', name: '100 g', stock: 12 },
+      { attributes: TEA_50G_ATTRIBUTES, gross: 18_900, key: '50g', name: '50 g', stock: 30 },
+      { attributes: TEA_100G_ATTRIBUTES, gross: 34_900, key: '100g', name: '100 g', stock: 12 },
     ],
     vatRate: 12,
   },
@@ -323,8 +333,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-EGR',
     slug: 'earl-grey',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 12_900, key: '50g', name: '50 g', stock: 45 },
-      { attributes: 'Hmotnost: 100 g', gross: 22_900, key: '100g', name: '100 g', stock: 22 },
+      { attributes: TEA_50G_ATTRIBUTES, gross: 12_900, key: '50g', name: '50 g', stock: 45 },
+      { attributes: TEA_100G_ATTRIBUTES, gross: 22_900, key: '100g', name: '100 g', stock: 22 },
     ],
     vatRate: 12,
   },
@@ -338,8 +348,8 @@ export const eshopCatalog: readonly SeedProduct[] = [
     sku: 'KD-TEA-DAR',
     slug: 'darjeeling-first-flush',
     variants: [
-      { attributes: 'Hmotnost: 50 g', gross: 21_900, key: '50g', name: '50 g', stock: 0 },
-      { attributes: 'Hmotnost: 100 g', gross: 39_900, key: '100g', name: '100 g', stock: 0 },
+      { attributes: TEA_50G_ATTRIBUTES, gross: 21_900, key: '50g', name: '50 g', stock: 0 },
+      { attributes: TEA_100G_ATTRIBUTES, gross: 39_900, key: '100g', name: '100 g', stock: 0 },
     ],
     vatRate: 12,
   },
@@ -519,7 +529,7 @@ const productState = (product: SeedProduct): EncodedProduct => {
   });
   const firstGross = product.gross ?? product.variants?.[0]?.gross ?? 0;
   const priceMinor = netForGross(firstGross, product.vatRate);
-  return {
+  const record: Mutable<EncodedProduct> = {
     active: true,
     category: product.category,
     createdAt,
@@ -539,13 +549,20 @@ const productState = (product: SeedProduct): EncodedProduct => {
     shortDescription: product.shortDescription,
     sku: product.sku,
     slug: product.slug,
-    ...(product.stockTracked === false ? { stockTracked: false } : {}),
     unit: 'ks',
     updatedAt: createdAt,
-    ...(variants.length === 0 ? {} : { variants }),
     vatRate: product.vatRate,
-    ...(product.weightGrams === undefined ? {} : { weightGrams: product.weightGrams }),
   };
+  if (product.stockTracked === false) {
+    record.stockTracked = false;
+  }
+  if (variants.length > 0) {
+    record.variants = variants;
+  }
+  if (product.weightGrams !== undefined) {
+    record.weightGrams = product.weightGrams;
+  }
+  return record;
 };
 
 const openingMovements = (product: SeedProduct): EncodedMovement[] => {
@@ -579,14 +596,14 @@ const openingMovements = (product: SeedProduct): EncodedMovement[] => {
   ];
 };
 
-const statusLabels: Readonly<Record<OrderStatus, string>> = {
+const statusLabels = {
   CANCELLED: 'Stornovaná',
   CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
   PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
-};
+} satisfies Readonly<Record<OrderStatus, string>>;
 
 interface SeedOrder {
   readonly address: { readonly city: string; readonly postalCode: string; readonly street: string };
@@ -674,24 +691,37 @@ const sampleOrders: readonly SeedOrder[] = [
   },
 ];
 
-const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedProduct[]): EncodedOrder => {
-  const lines = order.lines.map((line) => {
-    const product = products.find((entry) => entry.slug === line.slug);
-    if (product === undefined) {
-      throw new Error(`Unknown seed product ${line.slug}`);
-    }
-    const variant = product.variants?.find((entry) => entry.id === variantIdOf(line.slug, line.variant ?? ''));
-    const net = variant?.priceMinor ?? product.currentPriceMinor;
-    return {
-      productId: product.id,
-      productName: product.name,
-      quantity: line.quantity,
-      sku: variant?.sku ?? product.sku,
-      unitPriceMinor: grossUnitPriceMinor(net, product.vatRate),
-      ...(variant === undefined ? {} : { variantId: variant.id ?? '', variantName: variant.name }),
-      vatRate: product.vatRate,
-    };
-  });
+const buildOrder = Effect.fn('Merchandise.buildEshopOrder')(function* buildEshopOrder(
+  order: SeedOrder,
+  index: number,
+  products: readonly EncodedProduct[],
+) {
+  const lines = yield* Effect.forEach(
+    order.lines,
+    (line) =>
+      Effect.gen(function* buildLine() {
+        const product = products.find((entry) => entry.slug === line.slug);
+        if (product === undefined) {
+          return yield* new EshopSeedInputError({ reason: `Unknown seed product ${line.slug}` });
+        }
+        const variant = product.variants?.find((entry) => entry.id === variantIdOf(line.slug, line.variant ?? ''));
+        const net = variant?.priceMinor ?? product.currentPriceMinor;
+        const record: Mutable<EncodedOrder['lines'][number]> = {
+          productId: product.id,
+          productName: product.name,
+          quantity: line.quantity,
+          sku: variant?.sku ?? product.sku,
+          unitPriceMinor: grossUnitPriceMinor(net, product.vatRate),
+          vatRate: product.vatRate,
+        };
+        if (variant !== undefined) {
+          record.variantId = variant.id ?? '';
+          record.variantName = variant.name;
+        }
+        return record;
+      }),
+    { concurrency: 1 },
+  );
   const method = shippingMethods[order.shipping];
   const shipping = {
     label: method.label,
@@ -699,15 +729,19 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     priceMinor: method.grossPriceMinor,
     vatRate: 21 as const,
   };
-  const totals = fullOrderTotals({ lines, pricesIncludeVat: true, shipping });
+  const totals = fullOrderTotals({
+    lines: yield* Schema.decodeUnknownEffect(Schema.Array(OrderLineSchema))(lines),
+    pricesIncludeVat: true,
+    shipping,
+  });
   const createdAt = daysAgo(order.createdDaysAgo, 3);
-  const history: EncodedOrder['history'] = [
+  const history: NonNullable<EncodedOrder['history']>[number][] = [
     { actorLabel: 'Zákazník – e-shop (DEMO)', after: statusLabels.NEW, at: createdAt, kind: 'CREATED' },
   ];
   let previous: OrderStatus = 'NEW';
   for (const [step, status] of order.path.slice(1).entries()) {
     const actor = status === 'PACKING' || status === 'SHIPPED' ? eshopDispatch : eshopAdmin;
-    history.push({
+    const entry: Mutable<NonNullable<EncodedOrder['history']>[number]> = {
       actor,
       after: statusLabels[status],
       at: DateTime.formatIso(
@@ -717,13 +751,16 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
       ),
       before: statusLabels[previous],
       kind: 'STATUS',
-      ...(status === 'CANCELLED' ? { reason: 'Storno na žádost zákazníka' } : {}),
-    });
+    };
+    if (status === 'CANCELLED') {
+      entry.reason = 'Storno na žádost zákazníka';
+    }
+    history.push(entry);
     previous = status;
   }
   const status = order.path.at(-1) ?? 'NEW';
   const last = history.at(-1)?.at ?? createdAt;
-  return {
+  const record: Mutable<EncodedOrder> = {
     channel: 'STOREFRONT',
     clientRequestId: `seed-${order.key}-0000-0000`,
     contact: order.contact,
@@ -733,7 +770,6 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     history,
     id: demoId('eshop.order', order.key),
     lines,
-    ...(order.note === undefined ? {} : { note: order.note }),
     number: `${ORDER_NUMBER_PREFIX}${String(index + 1).padStart(4, '0')}`,
     partyId: 'storefront-guest',
     pricesIncludeVat: true,
@@ -743,13 +779,19 @@ const buildOrder = (order: SeedOrder, index: number, products: readonly EncodedP
     totalVatMinor: totals.totalVatMinor,
     updatedAt: last,
   };
-};
+  if (order.note !== undefined) {
+    record.note = order.note;
+  }
+  return record;
+});
 
 export const buildEshopState = Effect.fn('Merchandise.buildEshopState')(function* buildEshopState() {
   const products = eshopCatalog.map(productState);
   const encoded: Encoded = {
     movements: eshopCatalog.flatMap(openingMovements),
-    orders: sampleOrders.map((order, index) => buildOrder(order, index, products)),
+    orders: yield* Effect.forEach(sampleOrders, (order, index) => buildOrder(order, index, products), {
+      concurrency: 1,
+    }),
     products,
   };
   return yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(encoded);
@@ -845,7 +887,9 @@ const command = Command.make(
             ),
           ),
         )
-      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(Effect.scoped),
+      : Layer.build(Layer.effectDiscard(writeState(reset, restore)).pipe(Layer.provide(AdminDatabaseLive))).pipe(
+          Effect.scoped,
+        ),
 );
 
 const appRoot = new URL('../../..', import.meta.url).pathname;

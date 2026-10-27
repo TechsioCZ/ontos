@@ -25,15 +25,13 @@ const cli = Command.make(
     }
     const fs = yield* FileSystem.FileSystem;
     const input = yield* Schema.decodeEffect(Schema.fromJsonString(PayloadSchema))(yield* fs.readFileString(fixture));
-    const refs: readonly ({ readonly tenantId: string } | null)[] = [
-      ...input.state.occupancies.flatMap((row) => [
-        row.occupancyRef,
-        row.unitRef,
-        row.contractRef,
-        row.customerCounterpartyRef,
-        row.guestPartyRef,
-      ]),
-    ];
+    const refs: readonly ({ readonly tenantId: string } | null)[] = input.state.occupancies.flatMap((row) => [
+      row.occupancyRef,
+      row.unitRef,
+      row.contractRef,
+      row.customerCounterpartyRef,
+      row.guestPartyRef,
+    ]);
     if (refs.some((ref) => ref !== null && ref.tenantId !== input.tenantId)) {
       return yield* new ResetInputError({ reason: 'All fixture references must match the fixed demo tenant' });
     }

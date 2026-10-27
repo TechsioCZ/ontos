@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import type { AgentQueueBatch, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
+import type { AgentCommand, AgentQueueBatch, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
 import { Effect, Result } from 'effect';
 
 import { applyModuleCommand, callModuleAs, recordsReadOf } from './module-call.ts';
@@ -13,13 +13,10 @@ export type LegacyBatchesResult =
   | { readonly state: 'unavailable' }
   | { readonly batches: AgentQueueBatch[]; readonly state: 'ok' };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const ABSENT: LegacyBatchesResult = { state: 'absent' };
 const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
 
-const readLegacyOnce = (
+const readLegacyOnce = Effect.fn('AgentPlatform.readLegacyOnce')(function* readLegacyOnceEffect(
   principal: TrustedPrincipalContext,
   module: LegacyEngineModule,
   options: {
@@ -27,33 +24,32 @@ const readLegacyOnce = (
     readonly names: ReadonlyMap<string, string>;
     readonly request: AgentQueueRequest;
   },
-) =>
-  Effect.gen(function* readLegacyOnce() {
-    const result = yield* recordsReadOf(module.appId).pipe(
-      Effect.flatMap((read) =>
-        callModuleAs(principal, module.appId, read.path, {
-          ...read.query,
-          agentHistory: { ...options.request, mode: 'queue' },
-        }),
-      ),
-      Effect.result,
-    );
-    if (Result.isFailure(result)) {
-      return result.failure.stage === 'assertion' ? ABSENT : UNAVAILABLE;
-    }
-    const response = result.success;
-    if (response.status === 403 || response.status === 404) {
-      return ABSENT;
-    }
-    if (response.status !== 200) {
-      return UNAVAILABLE;
-    }
-    const ok: LegacyBatchesResult = {
-      batches: normalizeLegacySlice(module, sliceFromRecords(response.body), options),
-      state: 'ok',
-    };
-    return ok;
-  });
+) {
+  const result = yield* recordsReadOf(module.appId).pipe(
+    Effect.flatMap((read) =>
+      callModuleAs(principal, module.appId, read.path, {
+        ...read.query,
+        agentHistory: { ...options.request, mode: 'queue' },
+      }),
+    ),
+    Effect.result,
+  );
+  if (Result.isFailure(result)) {
+    return result.failure.stage === 'assertion' ? ABSENT : UNAVAILABLE;
+  }
+  const response = result.success;
+  if (response.status === 403 || response.status === 404) {
+    return ABSENT;
+  }
+  if (response.status !== 200) {
+    return UNAVAILABLE;
+  }
+  const ok: LegacyBatchesResult = {
+    batches: normalizeLegacySlice(module, sliceFromRecords(response.body), options),
+    state: 'ok',
+  };
+  return ok;
+});
 
 /**
  * Reads one legacy module's `aiChanges` queue. A module that is not installed or not visible counts as absent. A
@@ -82,27 +78,22 @@ export const decideLegacy = (
   changeIds: readonly string[],
   decision: 'approve' | 'reject',
   note?: string,
-) =>
-  applyModuleCommand(
-    principal,
-    appId,
-    {
-      _tag: 'AiDecideChanges',
-      changeIds: [...changeIds],
-      decision,
-      ...(note === undefined || note.trim() === '' ? {} : { note: note.trim() }),
-    },
-    { idempotencyKey: randomUUID() },
-  );
+) => {
+  let command: AgentCommand = {
+    _tag: 'AiDecideChanges',
+    changeIds: [...changeIds],
+    decision,
+  };
+  if (note !== undefined && note.trim() !== '') {
+    command = { ...command, note: note.trim() };
+  }
+  return applyModuleCommand(principal, appId, command, { idempotencyKey: randomUUID() });
+};
 
-export const revertLegacy = (principal: TrustedPrincipalContext, appId: string, batchId: string, note?: string) =>
-  applyModuleCommand(
-    principal,
-    appId,
-    {
-      _tag: 'AiRevertBatch',
-      batchId,
-      ...(note === undefined || note.trim().length < 3 ? {} : { note: note.trim() }),
-    },
-    { idempotencyKey: randomUUID() },
-  );
+export const revertLegacy = (principal: TrustedPrincipalContext, appId: string, batchId: string, note?: string) => {
+  let command: AgentCommand = { _tag: 'AiRevertBatch', batchId };
+  if (note !== undefined && note.trim().length >= 3) {
+    command = { ...command, note: note.trim() };
+  }
+  return applyModuleCommand(principal, appId, command, { idempotencyKey: randomUUID() });
+};

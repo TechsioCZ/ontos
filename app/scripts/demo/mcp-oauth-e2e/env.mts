@@ -1,13 +1,34 @@
-const env = process.env;
+import { Config, Context, Effect, Redacted } from 'effect';
 
-export const E2E = {
-  shellUrl: env.ONTOS_SHELL_URL ?? 'http://localhost:3020',
-  mcpUrl: `${(env.ONTOS_SHELL_URL ?? 'http://localhost:3020').replace(/\/+$/u, '')}/mcp`,
-  issuer: env.ONTOS_OAUTH_ISSUER ?? 'http://localhost:3020/shell-super-app-api/oauth',
-  password: env.E2E_PASSWORD ?? 'password1234',
-  outDir: env.E2E_OUT_DIR ?? '/Volumes/TraceDecayKingston/techsio-demo/v2/qa',
-  shotsDir: env.E2E_SHOTS_DIR ?? '/Volumes/TraceDecayKingston/techsio-demo/v2/shots/mcp-oauth-e2e',
-} as const;
+interface E2eConfiguration {
+  readonly issuer: string;
+  readonly mcpUrl: string;
+  readonly outDir: string;
+  readonly password: Redacted.Redacted;
+  readonly shellUrl: string;
+  readonly shotsDir: string;
+}
+
+export class E2eSettings extends Context.Service<E2eSettings, E2eConfiguration>()('OAuthProof/E2eSettings') {}
+
+/** Loaded once at the executable edge, with ConfigProvider supplied by the runtime. */
+export const loadE2eSettings = Effect.gen(function* loadSettings() {
+  const shellUrl = yield* Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020'));
+  return {
+    issuer: yield* Config.String('ONTOS_OAUTH_ISSUER').pipe(
+      Config.withDefault('http://localhost:3020/shell-super-app-api/oauth'),
+    ),
+    mcpUrl: `${shellUrl.replace(/\/+$/u, '')}/mcp`,
+    outDir: yield* Config.String('E2E_OUT_DIR').pipe(
+      Config.withDefault('/Volumes/TraceDecayKingston/techsio-demo/v2/qa'),
+    ),
+    password: yield* Config.Redacted('E2E_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234'))),
+    shellUrl,
+    shotsDir: yield* Config.String('E2E_SHOTS_DIR').pipe(
+      Config.withDefault('/Volumes/TraceDecayKingston/techsio-demo/v2/shots/mcp-oauth-e2e'),
+    ),
+  } satisfies E2eConfiguration;
+});
 
 export const VERIFICATION_PERSONA = 'verification@ci.ontos';
 
@@ -22,9 +43,3 @@ export const CIMD_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metada
 export const OAUTH_SCOPES = 'openid profile email offline_access ontos';
 
 export const GRANT_CLAIM = 'https://ontos.cz/grant';
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}

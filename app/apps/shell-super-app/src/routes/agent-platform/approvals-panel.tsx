@@ -5,7 +5,13 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { agentItemStatusLabel, agentRiskLabel } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentBatchKeySchema,
+  AgentItemKeySchema,
+  AgentModuleKeySchema,
+  agentItemStatusLabel,
+  agentRiskLabel,
+} from '@app/shared-contracts/agent-proposals';
 import type {
   AgentQueueBatch,
   AgentQueueItem,
@@ -18,7 +24,8 @@ import type {
 } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Effect, Match, Result, Schema } from 'effect';
+import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Url } from 'effect/unstable/http';
 import type { HttpClient } from 'effect/unstable/http';
 import type { ComponentProps } from 'react';
 
@@ -33,7 +40,7 @@ import {
 } from './agent-platform-client.ts';
 import type { AgentMutationIntent } from './agent-platform-client.ts';
 import { agentQueueData } from './platform-page-data.ts';
-import { batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
+import { AgentReviewSearchQuerySchema, batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
 
 type Decision = AgentDecideRequest['decision'];
 type ReviewIntent =
@@ -391,13 +398,13 @@ const queueRequest = (
 ): AgentQueueRequest => {
   let request: AgentQueueRequest = { pendingOnly: filter === 'pending' };
   if (moduleKey !== '') {
-    request = { ...request, moduleKey };
+    request = { ...request, moduleKey: AgentModuleKeySchema.make(moduleKey) };
   }
   if (cursor !== undefined) {
     request = { ...request, cursor };
   }
   if (batchKey !== undefined) {
-    request = { ...request, batchKey };
+    request = { ...request, batchKey: AgentBatchKeySchema.make(batchKey) };
   }
   return request;
 };
@@ -480,7 +487,11 @@ const useReviewActions = (refresh: () => void) => {
     );
   };
   const handleDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
-    let payload: AgentDecideRequest = { batchKey: batch.key, decision, itemKeys: [...keys].toSorted() };
+    let payload: AgentDecideRequest = {
+      batchKey: batch.key,
+      decision,
+      itemKeys: [...keys].toSorted().map((key) => AgentItemKeySchema.make(key)),
+    };
     if (note !== '') {
       payload = { ...payload, note };
     }
@@ -778,6 +789,10 @@ const ApprovalsQueue = ({
 };
 
 export const ApprovalsPanel = () => {
-  const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const searchStr = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const search = Option.getOrElse(
+    Schema.decodeOption(AgentReviewSearchQuerySchema)(Url.urlParams(new URL(searchStr, 'https://shell.invalid/'))),
+    () => ({}),
+  );
   return <ApprovalsQueue targetItemKey={itemKeyFromSearch(search)} targetKey={batchKeyFromSearch(search)} />;
 };

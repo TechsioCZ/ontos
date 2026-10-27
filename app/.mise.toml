@@ -1,3 +1,9 @@
 [tools]
 node = "26.7.0"
 pnpm = { version = "12.4.2", allow_builds = ["pnpm"] }
+
+# Limit APFS clone contention to this installer task; lint and builds retain their own concurrency.
+[tasks.deps]
+description = "Install the pinned workspace dependencies"
+run = "pnpm install --frozen-lockfile --reporter append-only"
+env = { RAYON_NUM_THREADS = "2" }

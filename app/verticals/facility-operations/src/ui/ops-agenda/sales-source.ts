@@ -2,6 +2,7 @@
 // with the person's own gateway credential (audience `sales-pipeline`). The schema below names only the fields the
 // overview uses, so newer producer fields never break this read.
 import { issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
+import { CalendarDateWireSchema } from '@app/shared-contracts/calendar-date';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Effect, Redacted, Schema } from 'effect';
@@ -11,15 +12,15 @@ const SalesStageSchema = Schema.String;
 
 export const SalesCaseSchema = Schema.Struct({
   amountMinor: Schema.Int,
-  archivedAt: Schema.optionalKey(Schema.String),
-  expectedCloseDate: Schema.String,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  expectedCloseDate: CalendarDateWireSchema,
   id: Schema.String,
-  partyId: Schema.String,
+  partyId: Schema.String.pipe(Schema.brand('PartyId')),
   probability: Schema.Int,
   stage: SalesStageSchema,
   title: Schema.String,
 });
-export type SalesCase = typeof SalesCaseSchema.Type;
+export type SalesCase = typeof SalesCaseSchema.Encoded;
 
 const SalesRecordsSchema = Schema.Struct({ items: Schema.Array(SalesCaseSchema) });
 
@@ -55,7 +56,10 @@ export const loadSalesCases = (requestCorrelation: string) =>
         requestCorrelation,
       },
       { baseUrl: apiBaseUrl, compositionRevision },
-    ).pipe(Effect.flatMap((client) => client.records.execute({ payload: {} }))),
+    ).pipe(
+      Effect.flatMap((client) => client.records.execute({ payload: {} })),
+      Effect.flatMap(Schema.encodeEffect(SalesRecordsSchema)),
+    ),
   );
 
 export const isOpenSalesCase = (entry: SalesCase) =>

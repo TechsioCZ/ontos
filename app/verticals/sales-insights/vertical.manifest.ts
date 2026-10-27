@@ -136,7 +136,7 @@ export const salesInsightsManifest = defineOntosModuleManifest({
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.sales_insights.read_all' },
             entrypointKey: 'demo.sales-insights.component.crm-dashboard',
-            moduleKey: 'demo.sales-insights',
+            moduleKey,
             role: 'public_component',
             scope: 'tenant',
           },
@@ -144,7 +144,7 @@ export const salesInsightsManifest = defineOntosModuleManifest({
           // Sales dashboard on Home; it reads opportunities, tasks and invoices, so it needs those modules too.
           home: {
             order: 200,
-            requiresModules: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
+            requiresModules: [moduleKey, 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
           },
         }),
         // </generated-module-shell-components>

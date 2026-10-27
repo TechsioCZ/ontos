@@ -26,6 +26,8 @@ import { MetricRefSchema } from '../../shared/resources/metric.ts';
 import { salesInsightsStates } from '../database/schema.ts';
 import { emptySalesInsightsState } from './initial-state.ts';
 
+const salesInsightsModuleId = 'demo.sales-insights';
+
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
     new SalesInsightsPersistenceUnavailable({
@@ -123,7 +125,7 @@ export const evolveWorkState = Effect.fn('SalesInsights.evolveState')(function* 
         value: Extract<SalesInsightsCommand, { readonly _tag: 'CreateMetric' }>,
       ) {
         const ref = yield* Schema.decodeEffect(MetricRefSchema)({
-          moduleId: 'demo.sales-insights',
+          moduleId: salesInsightsModuleId,
           resourceId: input.resourceId,
           resourceType: 'demo.sales-insights.metric',
           tenantId,
@@ -218,6 +220,7 @@ export const evolveWorkState = Effect.fn('SalesInsights.evolveState')(function* 
 });
 
 const ContextGrantSchema = Schema.Literals(['read_all', 'write_all']);
+
 type ContextGrant = typeof ContextGrantSchema.Type;
 
 /** One bulk SpiceDB check for the given context permissions of the scope's company. */
@@ -233,7 +236,7 @@ const contextGrants = Effect.fn('SalesInsights.contextGrants')(function* context
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
     targets: permissions.map((permission) => ({
-      moduleId: 'demo.sales-insights',
+      moduleId: salesInsightsModuleId,
       permission: `demo.sales_insights.${permission}`,
     })),
     tenantId: scope.tenantId,
@@ -344,7 +347,7 @@ export const finishSalesInsightsRecords = Effect.fn('SalesInsights.finishRecords
   );
   return {
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.sales-insights'),
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, salesInsightsModuleId),
     collection: snapshot.state.collection,
     indicators: {
       open: items.filter((metric) => metricStatusGroup(metric.state) !== 'DONE').length,

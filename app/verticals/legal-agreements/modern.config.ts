@@ -40,7 +40,6 @@ const buildEnvironment = getOrThrow(
   decodeUnknownResult(
     Struct({
       assetPrefix: optional(Trim.check(isNonEmpty())),
-      disableTsChecker: optional(Literals(['0', '1'])),
       failBuild: optional(Literals(['true', 'false'])),
       modernAssetPrefix: optional(Trim.check(isNonEmpty())),
       port: NumberFromString.check(isInt(), isBetween({ maximum: 65_535, minimum: 1 })),
@@ -56,7 +55,6 @@ const buildEnvironment = getOrThrow(
     ),
   )({
     assetPrefix: getBuildConfigEnvironment('ULTRAMODERN_ASSET_PREFIX'),
-    disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER'),
     failBuild: getBuildConfigEnvironment('ZE_FAIL_BUILD'),
     modernAssetPrefix: getBuildConfigEnvironment('MODERN_ASSET_PREFIX'),
     port: getBuildConfigEnvironment('VERTICAL_LEGAL_AGREEMENTS_PORT') ?? String(developmentOverlay.ports[appId]),
@@ -173,7 +171,7 @@ const applicationConfig: Parameters<typeof presetUltramodern>[0] = {
   },
   output: {
     assetPrefix,
-    disableTsChecker: buildEnvironment.disableTsChecker === '1',
+    disableTsChecker: true,
     distPath: {
       html: './',
       root: buildOutputRoot,

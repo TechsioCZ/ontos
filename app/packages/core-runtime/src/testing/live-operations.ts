@@ -203,8 +203,8 @@ const fixtureAuthorizationRelationships = (input: {
   readonly entityObject: string;
   readonly legalEntityId: string;
   readonly legalEntityManagerRelations: readonly string[];
-  readonly legalEntityOnlyActionKeys: readonly string[];
   readonly legalEntityOnly: FixtureActor;
+  readonly legalEntityOnlyActionKeys: readonly string[];
   readonly manager: FixtureActor;
   readonly moduleKey: string;
   readonly moduleObject: string;
@@ -278,8 +278,8 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly executor: FixtureExecutor;
     readonly legalEntityId: string;
     readonly legalEntityManagerRelations: readonly string[];
-    readonly legalEntityOnlyActionKeys: readonly string[];
     readonly legalEntityOnly: FixtureActor;
+    readonly legalEntityOnlyActionKeys: readonly string[];
     readonly manager: FixtureActor;
     readonly moduleKey: string;
     readonly spice: FixtureSpiceClient;
@@ -334,8 +334,8 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       entityObject,
       legalEntityId: input.legalEntityId,
       legalEntityManagerRelations: input.legalEntityManagerRelations,
-      legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
       legalEntityOnly: input.legalEntityOnly,
+      legalEntityOnlyActionKeys: input.legalEntityOnlyActionKeys,
       manager: input.manager,
       moduleKey: input.moduleKey,
       moduleObject,
@@ -536,8 +536,8 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           executor: admin.executor,
           legalEntityId,
           legalEntityManagerRelations: configuration.legalEntityManagerRelations ?? [],
-          legalEntityOnlyActionKeys,
           legalEntityOnly,
+          legalEntityOnlyActionKeys,
           manager,
           moduleKey: configuration.moduleKey,
           spice,

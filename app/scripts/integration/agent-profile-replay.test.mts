@@ -58,7 +58,10 @@ import {
 import { staffAuthenticationNamespaceRegistration } from '../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { DatabaseConfig, loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
-import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
+import {
+  DatabaseIdentityEnrollmentContext,
+  SHARED_RUNTIME_IDENTITY,
+} from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   applicationCompositionAuthority,
   auditEvents,
@@ -102,7 +105,11 @@ import {
   makeOutboxWorkerComposition,
 } from '../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { AuthConfig, loadAuthConfig } from '../../apps/shell-super-app/api/auth/config.ts';
-import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/auth/db/client.ts';
+import {
+  AuthDatabase,
+  BetterAuthNativeAdapterLive,
+  makeAuthDatabase,
+} from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { makeApiKeyService } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
@@ -246,11 +253,15 @@ it.live(
         })),
       ]);
       const authConfig = yield* loadAuthConfig({ envPath: '/dev/null' });
-      const authDatabase = yield* makeAuthDatabase(authConfig);
+      const authDatabase = yield* makeAuthDatabase({
+        connectionString: authConfig.connectionString,
+        expectedRole: SHARED_RUNTIME_IDENTITY.role,
+      });
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: registration.authenticationNamespaceId,
       });
       const oauthAuthenticationLayer = Layer.mergeAll(
+        BetterAuthNativeAdapterLive,
         BetterAuthRuntimeLive,
         OAuthAuthenticationAuditLive,
         OAuthEndpointGuardDataLive,

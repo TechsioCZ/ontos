@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { AKROS_LEGAL_ENTITY_ID, storefrontReadRequest } from '../../shared/actions/command-guard.ts';

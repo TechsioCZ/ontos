@@ -25,10 +25,8 @@ export const ArchiveMarkSchema = Schema.Struct({
 });
 export type ArchiveMark = typeof ArchiveMarkSchema.Type;
 export const PropertyRecordSchema = Schema.Struct({
-  archive: Schema.optionalKey(ArchiveMarkSchema),
-  propertyType: Schema.optionalKey(PropertyTextSchema),
-  responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   address: PropertyTextSchema,
+  archive: Schema.optionalKey(ArchiveMarkSchema),
   code: PropertyTextSchema,
   createdAt: PropertyInstantSchema,
   legalEntityRef: LegalEntityRefSchema,
@@ -36,6 +34,8 @@ export const PropertyRecordSchema = Schema.Struct({
   name: PropertyTextSchema,
   note: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   propertyRef: PropertyRefSchema,
+  propertyType: Schema.optionalKey(PropertyTextSchema),
+  responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   updatedAt: PropertyInstantSchema,
 });
 export const UnitRecordSchema = Schema.Struct({

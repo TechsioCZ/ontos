@@ -1,23 +1,33 @@
+import { pipe, DateTime } from 'effect';
 // AREA: visits — owned by the crm-visits lane. C02 Návštěvy: timeline + table of visits / calls / e-mails with
 // filters, record and correct (with history). `?klient=<id>` focuses one client (timeline per client).
 import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber, matchesSearch } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+
 import { useState } from 'react';
+import type { ComponentProps } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
-import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
 import { lastVisitOf, nextPlanItemOf, visitKinds } from '../../../../../shared/domain/visits.ts';
+import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
+
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
-import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import {
+  CrmScopeNote,
+  CrmStateGate,
+  useCrmRouteSearch,
+  crmPaginationProps,
+  crmTableTranslations,
+} from '../../../../crm/ui.tsx';
 import { CorrectVisitPanel, RecordVisitPanel, VisitDetailPanel } from './visit-panels.tsx';
 import { VisitKindBadge, VisitTimeline } from './visit-timeline.tsx';
 import {
@@ -44,9 +54,10 @@ const periods = [
 
 const columns = (records: RecordsResponse): ColumnDef<Visit>[] => [
   {
-    accessorKey: 'occurredAt',
-    cell: (info) => <span className="tabular-nums">{formatVisitTime(info.getValue<string>())}</span>,
+    accessorFn: (visit) => DateTime.formatIso(visit.occurredAt),
+    cell: (info) => <span className="tabular-nums">{formatVisitTime(info.row.original.occurredAt)}</span>,
     header: 'Kdy',
+    id: 'occurredAt',
     meta: { type: 'string', width: 150 },
   },
   {
@@ -161,7 +172,7 @@ const ClientFocus = ({
             <span className="text-fg-secondary text-sm">bez záznamu</span>
           ) : (
             <span className="text-sm">
-              <span className="font-medium">{formatDay(localDay(last.occurredAt))}</span>
+              <span className="font-medium">{pipe(last.occurredAt, localDay, formatDay)}</span>
               {` · ${relativeDay(localDay(last.occurredAt), today)} · ${visitKindMeta[last.kind].label}`}
             </span>
           )}
@@ -190,14 +201,91 @@ const ClientFocus = ({
   );
 };
 
+const renderVisitResults = ({
+  canWrite,
+  clientFilter,
+  filtered,
+  handleClear,
+  handleOpen,
+  handleRecord,
+  records,
+  view,
+  visible,
+}: {
+  readonly canWrite: boolean;
+  readonly clientFilter: string;
+  readonly filtered: boolean;
+  readonly handleClear: () => void;
+  readonly handleOpen: (visit: Visit) => void;
+  readonly handleRecord: () => void;
+  readonly records: RecordsResponse;
+  readonly view: string;
+  readonly visible: Visit[];
+}) => {
+  if (view !== 'timeline') {
+    return (
+      <DataTable
+        columns={columns(records)}
+        data={visible}
+        enablePagination
+        enableSorting
+        getRowId={(row) => row.id}
+        getRowLabel={(row) => `${clientLabel(records, row.original.clientId)} – ${row.original.result}`}
+        maxHeight="calc(100dvh - 20rem)"
+        onRowClick={(row) => handleOpen(row.original)}
+        pageSizeOptions={[50, 100]}
+        paginationProps={crmPaginationProps}
+        size="sm"
+        stickyHeader
+        tableLayout="fixed"
+        translations={crmTableTranslations}
+      />
+    );
+  }
+  if (visible.length > 0) {
+    return (
+      <SectionCard>
+        <VisitTimeline onOpen={handleOpen} records={records} showClient={clientFilter === ALL} visits={visible} />
+      </SectionCard>
+    );
+  }
+  let emptyAction;
+  if (filtered) {
+    emptyAction = (
+      <Button onClick={handleClear} size="sm" theme="outlined" variant="secondary">
+        Zrušit filtry
+      </Button>
+    );
+  } else if (canWrite) {
+    emptyAction = (
+      <Button onClick={handleRecord} size="sm" theme="outlined" variant="secondary">
+        Zapsat návštěvu
+      </Button>
+    );
+  }
+  return (
+    <SectionCard>
+      <EmptyState
+        action={emptyAction}
+        description={filtered ? 'Upravte filtry nebo období.' : 'Zatím tu nejsou žádné zapsané kontakty.'}
+        title={filtered ? 'Filtrům neodpovídá žádný záznam' : 'Bez záznamů'}
+      />
+    </SectionCard>
+  );
+};
+
 const VisitsContent = ({ initialClient }: { readonly initialClient: string | null }) => {
   const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
-  const [search, setSearch] = useState('');
-  const [clientFilter, setClientFilter] = useState(initialClient ?? ALL);
-  const [salespersonFilter, setSalespersonFilter] = useState(ALL);
-  const [kindFilter, setKindFilter] = useState(ALL);
-  const [period, setPeriod] = useState<string>('90');
+  const [filters, setFilters] = useState(() => ({
+    clientFilter: initialClient ?? ALL,
+    kindFilter: ALL,
+    period: '90',
+    salespersonFilter: ALL,
+    search: '',
+  }));
+  const { clientFilter, kindFilter, period, salespersonFilter, search } = filters;
+  const patchForm = (patch: Partial<typeof filters>) => setFilters((current) => ({ ...current, ...patch }));
   const [view, setView] = useState('timeline');
   const [recordOpen, setRecordOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | undefined>();
@@ -232,13 +320,13 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
           period !== '90';
         const detail = all.find((visit) => visit.id === detailId);
         const correcting = all.find((visit) => visit.id === correctId);
-        const writableIds = new Set(writableClients(records).map((client) => client.id));
+        const writableIds = new Set<string>(writableClients(records).map((client) => client.id));
+        const recordClient: Pick<ComponentProps<typeof RecordVisitPanel>, 'clientId'> = {};
+        if (clientFilter !== ALL && writableIds.has(clientFilter)) {
+          Object.assign(recordClient, { clientId: clientFilter });
+        }
         const clearFilters = () => {
-          setSearch('');
-          setClientFilter(ALL);
-          setSalespersonFilter(ALL);
-          setKindFilter(ALL);
-          setPeriod('90');
+          setFilters({ clientFilter: ALL, kindFilter: ALL, period: '90', salespersonFilter: ALL, search: '' });
         };
         return (
           <>
@@ -284,7 +372,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               <Input
                 aria-label="Hledat v návštěvách"
                 className="w-64"
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => patchForm({ search: event.target.value })}
                 placeholder="Hledat v záznamech"
                 size="sm"
                 type="search"
@@ -300,7 +388,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   ]}
                   label="Klient"
                   name="clientFilter"
-                  onValueChange={(details) => setClientFilter(details.value[0] ?? ALL)}
+                  onValueChange={(details) => patchForm({ clientFilter: details.value[0] ?? ALL })}
                   size="sm"
                   value={[clientFilter]}
                 />
@@ -317,7 +405,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                     ]}
                     label="Obchodník"
                     name="salespersonFilter"
-                    onValueChange={(details) => setSalespersonFilter(details.value[0] ?? ALL)}
+                    onValueChange={(details) => patchForm({ salespersonFilter: details.value[0] ?? ALL })}
                     size="sm"
                     value={[salespersonFilter]}
                   />
@@ -331,7 +419,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   ]}
                   label="Typ"
                   name="kindFilter"
-                  onValueChange={(details) => setKindFilter(details.value[0] ?? ALL)}
+                  onValueChange={(details) => patchForm({ kindFilter: details.value[0] ?? ALL })}
                   size="sm"
                   value={[kindFilter]}
                 />
@@ -341,7 +429,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   items={periods.map((entry) => ({ label: entry.label, value: entry.value }))}
                   label="Období"
                   name="period"
-                  onValueChange={(details) => setPeriod(details.value[0] ?? '90')}
+                  onValueChange={(details) => patchForm({ period: details.value[0] ?? '90' })}
                   size="sm"
                   value={[period]}
                 />
@@ -361,58 +449,22 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               </Tabs.List>
             </Tabs>
 
-            {view === 'timeline' ? (
-              visible.length === 0 ? (
-                <SectionCard>
-                  <EmptyState
-                    action={
-                      filtered ? (
-                        <Button onClick={clearFilters} size="sm" theme="outlined" variant="secondary">
-                          Zrušit filtry
-                        </Button>
-                      ) : canWrite ? (
-                        <Button onClick={() => setRecordOpen(true)} size="sm" theme="outlined" variant="secondary">
-                          Zapsat návštěvu
-                        </Button>
-                      ) : undefined
-                    }
-                    description={filtered ? 'Upravte filtry nebo období.' : 'Zatím tu nejsou žádné zapsané kontakty.'}
-                    title={filtered ? 'Filtrům neodpovídá žádný záznam' : 'Bez záznamů'}
-                  />
-                </SectionCard>
-              ) : (
-                <SectionCard>
-                  <VisitTimeline
-                    onOpen={(visit) => setDetailId(visit.id)}
-                    records={records}
-                    showClient={clientFilter === ALL}
-                    visits={visible}
-                  />
-                </SectionCard>
-              )
-            ) : (
-              <DataTable
-                columns={columns(records)}
-                data={visible}
-                enablePagination
-                enableSorting
-                getRowId={(row) => row.id}
-                getRowLabel={(row) => `${clientLabel(records, row.original.clientId)} – ${row.original.result}`}
-                maxHeight="calc(100dvh - 20rem)"
-                onRowClick={(row) => setDetailId(row.original.id)}
-                pageSizeOptions={[50, 100]}
-                paginationProps={crmPaginationProps}
-                size="sm"
-                stickyHeader
-                tableLayout="fixed"
-                translations={crmTableTranslations}
-              />
-            )}
+            {renderVisitResults({
+              canWrite,
+              clientFilter,
+              filtered,
+              handleClear: clearFilters,
+              handleOpen: (visit) => setDetailId(visit.id),
+              handleRecord: () => setRecordOpen(true),
+              records,
+              view,
+              visible,
+            })}
 
             {recordOpen && (
               <RecordVisitPanel
                 busy={busy}
-                {...(clientFilter !== ALL && writableIds.has(clientFilter) ? { clientId: clientFilter } : {})}
+                {...recordClient}
                 onOpenChange={setRecordOpen}
                 open={recordOpen}
                 records={records}
@@ -428,7 +480,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               }}
               onOpenClient={(clientId) => {
                 setDetailId(undefined);
-                setClientFilter(clientId);
+                patchForm({ clientFilter: clientId });
               }}
               records={records}
               visit={detail}
@@ -447,15 +499,9 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
   );
 };
 
-const clientParam = (href: string) => {
-  const query = href.includes('?') ? href.slice(href.indexOf('?') + 1) : '';
-  const value = new URLSearchParams(query).get('klient');
-  return value === null || value === '' ? null : value;
-};
-
 export const VisitsPage = () => {
-  const href = useRouterState({ select: (router) => router.location.href });
-  const initialClient = clientParam(href);
+  const { klient } = useCrmRouteSearch();
+  const initialClient = klient === undefined || klient === '' ? null : klient;
   return (
     <CrmPage titleKey="crm.pages.visits.title">
       <VisitsContent initialClient={initialClient} key={initialClient ?? 'all'} />

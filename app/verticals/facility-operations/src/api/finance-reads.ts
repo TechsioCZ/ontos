@@ -3,18 +3,26 @@
 // permission server-side. The schemas below name only the fields provoz uses and decode enumerations as plain
 // strings, so additive Finance contract changes (new optional fields, new states or document kinds) never break
 // provoz screens. Commands are still encoded with Finance's own command schema.
+import { optionalField } from '../../shared/domain/common.ts';
 import { ApplyCommandPayloadSchema } from '@app/finance-billing/contracts/apply-command';
 import type { ApplyCommandPayload } from '@app/finance-billing/contracts/apply-command';
-import { issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
+import { CalendarDateWireSchema, issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { Effect, Redacted, Schema } from 'effect';
+import { Brand, Effect, Redacted, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 const FINANCE_AUDIENCE = 'finance-billing' as const;
 const FINANCE_API_PREFIX = '/finance-billing-api';
 
-const RefSchema = Schema.Struct({ resourceId: Schema.String });
+export const FinanceResourceIdSchema = Schema.String.pipe(Schema.brand('FacilityFinanceResourceId'));
+export const FinanceActorPrincipalIdSchema = Schema.String.pipe(Schema.brand('FacilityFinanceActorPrincipalId'));
+export const FinanceInvoiceResourceIdSchema = FinanceResourceIdSchema.pipe(
+  Schema.brand('FacilityFinanceInvoiceResourceId'),
+);
+export const FinanceDocumentIdSchema = Schema.String.pipe(Schema.brand('FacilityFinanceDocumentId'));
+const financeDocumentId = Brand.nominal<typeof FinanceDocumentIdSchema.Type>();
+const RefSchema = Schema.Struct({ resourceId: FinanceResourceIdSchema });
 const optionalText = Schema.optionalKey(Schema.String);
 
 /** The invoice fields provoz reads (deadlines, overview, purchase/sales links, document options). */
@@ -26,8 +34,8 @@ export const FinanceInvoiceViewSchema = Schema.Struct({
   counterpartyRef: RefSchema,
   direction: Schema.String,
   documentNumber: Schema.String,
-  dueDate: Schema.String,
-  issueDate: Schema.String,
+  dueDate: CalendarDateWireSchema,
+  issueDate: CalendarDateWireSchema,
   note: optionalText,
   number: optionalText,
   paidMinor: Schema.Finite,
@@ -39,6 +47,7 @@ export const FinanceInvoiceViewSchema = Schema.Struct({
   unitRef: Schema.optionalKey(RefSchema),
 });
 export type FinanceInvoiceView = typeof FinanceInvoiceViewSchema.Type;
+export type FinanceInvoiceViewEncoded = typeof FinanceInvoiceViewSchema.Encoded;
 
 export const FinanceBudgetLineViewSchema = Schema.Struct({
   actualManualMinor: Schema.optionalKey(Schema.Finite),
@@ -56,18 +65,19 @@ export type FinanceBudgetLineView = typeof FinanceBudgetLineViewSchema.Type;
 /** A file uploaded in Finance (e.g. the supplier's invoice PDF); its bytes are read on demand. */
 export const FinanceFileViewSchema = Schema.Struct({
   actorLabel: optionalText,
-  actorPrincipalId: optionalText,
+  actorPrincipalId: Schema.optionalKey(FinanceActorPrincipalIdSchema),
   fileName: Schema.String,
   id: Schema.String,
-  invoiceResourceId: optionalText,
+  invoiceResourceId: Schema.optionalKey(FinanceInvoiceResourceIdSchema),
   mimeType: Schema.String,
   sizeBytes: Schema.Finite,
-  uploadedAt: Schema.String,
+  uploadedAt: Schema.DateTimeUtcFromString,
 });
 export type FinanceFileView = typeof FinanceFileViewSchema.Type;
+export type FinanceFileViewEncoded = typeof FinanceFileViewSchema.Encoded;
 
 export const FinanceRecordsViewSchema = Schema.Struct({
-  businessDate: optionalText,
+  businessDate: Schema.optionalKey(CalendarDateWireSchema),
   /** Whether the person may change Finance records (create invoice drafts etc.); Finance decides. */
   canWrite: Schema.Boolean,
   document: Schema.optionalKey(
@@ -86,8 +96,9 @@ export const FinanceRecordsViewSchema = Schema.Struct({
   }),
 });
 export type FinanceRecordsView = typeof FinanceRecordsViewSchema.Type;
+export type FinanceRecordsViewEncoded = typeof FinanceRecordsViewSchema.Encoded;
 
-const FinanceRecordsRequestSchema = Schema.Struct({ documentId: optionalText });
+const FinanceRecordsRequestSchema = Schema.Struct({ documentId: Schema.optionalKey(FinanceDocumentIdSchema) });
 
 const problemCode = { code: Schema.optionalKey(Schema.String) };
 
@@ -162,7 +173,7 @@ export const readFinance = (requestCorrelation: string, request: { readonly docu
     ).pipe(
       Effect.flatMap((client) =>
         client.records.execute({
-          payload: request.documentId === undefined ? {} : { documentId: request.documentId },
+          payload: request.documentId === undefined ? {} : { documentId: financeDocumentId(request.documentId) },
         }),
       ),
     ),
@@ -188,9 +199,7 @@ export const applyFinanceCommand = (
           {
             baseUrl: apiBaseUrl,
             compositionRevision,
-            ...(options.referenceCredentials === undefined
-              ? {}
-              : { referenceCredentials: options.referenceCredentials }),
+            ...optionalField('referenceCredentials', options.referenceCredentials),
           },
         ).pipe(Effect.flatMap((client) => client.applyCommand.execute({ payload: encoded }))),
       ),

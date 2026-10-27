@@ -37,13 +37,16 @@ const SignedDocumentReference = ({
   readonly fallback: string;
   readonly reference: string | null;
 }) => {
-  if (reference === null) return <span>{fallback}</span>;
-  if (/^https?:\/\//u.test(reference))
+  if (reference === null) {
+    return <span>{fallback}</span>;
+  }
+  if (/^https?:\/\//u.test(reference)) {
     return (
       <a className="legalagreements:underline" href={reference} rel="noreferrer" target="_blank">
         Otevřít podepsaný dokument
       </a>
     );
+  }
   return <span>Podepsaný originál evidovaný ve spisu smlouvy (elektronická kopie není nahraná)</span>;
 };
 
@@ -140,8 +143,8 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           <ContractTermsCard state={state} />
           <RecordDiscussion
             subject={{
-              kind: 'contract',
               id: selected.contractRef.resourceId,
+              kind: 'contract',
               label: selected.subject ?? unitName(selected.unitRef?.resourceId),
             }}
           />
@@ -164,8 +167,8 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                   {t(`legal-agreements.demo.documentLabels.${record.lifecycleState}`)}
                 </Badge>{' '}
                 <SignedDocumentReference
-                  reference={record.signedDocumentReference}
                   fallback={t('legal-agreements.demo.metadataOnly')}
+                  reference={record.signedDocumentReference}
                 />
                 {record.signedBy === undefined ? '' : ` · podepsal(a) ${record.signedBy}`}
                 {record.signedOn === undefined ? '' : ` · ${formatDate(record.signedOn)}`}

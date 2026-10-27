@@ -1,3 +1,6 @@
+import { HttpClient, FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+import { PartyIntake, PartyIntakeSteps, partyIntakeServices } from '../src/services/party-intake.ts';
+import { NodeFileSystem } from '@effect/platform-node';
 import {
   defineDatabaseIdentityEnrollment,
   makeDatabaseIdentityEnrollmentLive,
@@ -19,7 +22,7 @@ import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/module
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
+
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import {
   GatewayAssertionRedemptionDatabaseLive,
@@ -88,6 +91,28 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // </generated-governed-http-handler-layers>
 );
 
+/** Capture transport at the application root; build company/correlation state for each reconciliation. */
+const partyIntakeLive = GovernedReadLayer.effect(
+  PartyIntake,
+  Effect.gen(function* partyIntakeRoot() {
+    const http = yield* HttpClient.HttpClient;
+    return {
+      reconcile: Effect.fn('Crm.reconcileRequest')(function* reconcileRequest(clientIds: readonly string[]) {
+        const services = yield* partyIntakeServices;
+        const steps: typeof PartyIntakeSteps.Service = {
+          identify: (client, taken, crmClients) =>
+            services.identify(client, taken, crmClients).pipe(Effect.provideService(HttpClient.HttpClient, http)),
+          link: (clientId, party, revision) =>
+            services.link(clientId, party, revision).pipe(Effect.provideService(HttpClient.HttpClient, http)),
+        };
+        return yield* services
+          .reconcile(clientIds)
+          .pipe(Effect.provideService(PartyIntakeSteps, steps), Effect.provideService(HttpClient.HttpClient, http));
+      }),
+    };
+  }),
+);
+
 /** What the handlers resolve when they run: built for each request on Workers, once on Node. */
 const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
   // <generated-governed-http-handler-support-layers>
@@ -99,6 +124,8 @@ const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRunti
   ),
   // </generated-governed-http-handler-support-layers>
   GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provideMerge(partyIntakeLive),
+  GovernedReadLayer.provideMerge(GovernedReadLayer.mergeAll(NodeFileSystem.layer, GovernedFetchHttpClient.layer)),
 );
 
 const operationAttributes = (operationContext: OperationContext) => ({

@@ -1461,6 +1461,94 @@ it.live(
 
 layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
   testing.effect(
+    'Core module action aliases require the published outbox contract and runtime creator import',
+    Effect.fn(function* coreModuleOutboxAliases() {
+      const root = yield* fixture();
+      const owner = 'packages/core-runtime';
+      const slug = 'change-tenant-module-state';
+      const topic = 'core-modules-tenant-module-state-changed-v1';
+      const action = `${owner}/src/modules/actions/${slug}.action.ts`;
+      const message = `${owner}/src/modules/actions/${slug}-${topic}.outbox-message.ts`;
+      const contract = `${owner}/src/outbox/${topic}.ts`;
+      const manifest = {
+        exports: { [`./outbox/${topic}`]: `./src/outbox/${topic}.ts` },
+        name: '@app/core-runtime',
+        type: 'module',
+      };
+      write(root, `${owner}/package.json`, yield* stringify(manifest));
+      const actionSource = readFileSync(path.join(appRoot, action), 'utf-8');
+      write(
+        root,
+        action,
+        `${actionSource}\nexport const unusedActionNeighbor = 1; export type UnusedActionNeighbor = string;`,
+      );
+      write(
+        root,
+        message,
+        `${readFileSync(path.join(appRoot, message), 'utf-8')}\nexport const unusedMessageNeighbor = 1; export type UnusedMessageNeighbor = string;`,
+      );
+      write(root, contract, readFileSync(path.join(appRoot, contract), 'utf-8'));
+      write(
+        root,
+        `${owner}/src/index.ts`,
+        `import { changeTenantModuleStateAction } from './modules/actions/${slug}.action.ts'; console.log(changeTenantModuleStateAction);`,
+      );
+      const config = {
+        workspaces: {
+          '.': { entry: [], node: false, project: [] },
+          'packages/*': { entry: ['src/index.ts'], node: false, project: ['src/**/*.ts'] },
+        },
+      };
+      const consumerPath = path.join(root, auditConsumersFile);
+      const model = yield* buildKnipModel(root, config, consumerPath);
+      const aliases = model.evidence.filter(
+        (fact) =>
+          (fact.source === action || fact.source === message) && fact.reason.startsWith('Generated Outbox Message'),
+      );
+      expect(aliases).toHaveLength(9);
+      const run = yield* runPinnedKnip(root, consumerPath, model);
+      const report = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+      const names = report.issues.flatMap((issue) =>
+        [...issue.exports, ...issue.types].map((item) => `${issue.file}#${item.name}`),
+      );
+      for (const alias of aliases) {
+        expect(names).not.toContain(alias.target);
+      }
+      for (const { bindings, file } of [
+        { bindings: ['unusedActionNeighbor', 'UnusedActionNeighbor'], file: action },
+        { bindings: ['unusedMessageNeighbor', 'UnusedMessageNeighbor'], file: message },
+      ]) {
+        for (const binding of bindings) {
+          expect(names).toContain(`${file}#${binding}`);
+        }
+      }
+      write(root, `${owner}/package.json`, yield* stringify({ ...manifest, exports: {} }));
+      const unpublished = yield* buildKnipModel(root, config, consumerPath);
+      expect(unpublished.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+      write(root, `${owner}/package.json`, yield* stringify(manifest));
+      write(
+        root,
+        action,
+        actionSource.replace(
+          `import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './${slug}-${topic}.outbox-message.ts';`,
+          '',
+        ),
+      );
+      const disconnected = yield* buildKnipModel(root, config, consumerPath);
+      expect(disconnected.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+      const invalidRun = yield* runPinnedKnip(root, consumerPath, disconnected);
+      const invalid = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(invalidRun.stdout);
+      expect(invalid.issues.find((issue) => issue.file === action)?.exports.map((item) => item.name)).toContain(
+        'ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayloadSchema',
+      );
+      write(root, action, actionSource);
+      write(root, `${owner}/package.json`, yield* stringify({ ...manifest, name: '@fixture/not-core' }));
+      const foreignOwner = yield* buildKnipModel(root, config, consumerPath);
+      expect(foreignOwner.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+    }),
+  );
+
+  testing.effect(
     'named Effect generator subprocess helpers require finite calls and native file URL conversion',
     Effect.fn(function* namedGeneratorSubprocessConsumers() {
       const effectImportSource = "import { Effect } from 'effect';";
@@ -1582,6 +1670,8 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
           'property-leasing',
           'property-portfolio',
           'crm-activities',
+          // The second legal entity has its own fixture invocation of the same owner script.
+          'crm-activities',
           'work-tasks',
         ].map((owner) => `verticals/${owner}/scripts/reset-demo.mts`),
       ];
@@ -1619,6 +1709,7 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       const model = yield* buildKnipModel(root, config, consumerPath);
       const ports = model.evidence.filter((fact) => fact.reason.startsWith('Literal owner port'));
       expect(ports).toHaveLength(valid.length);
+      expect(ports.filter((fact) => fact.target === 'verticals/crm-activities/scripts/reset-demo.mts')).toHaveLength(2);
       expect(new Set(ports.map((fact) => fact.target))).toEqual(new Set(valid));
       expect(ports.some((fact) => fact.target === dead)).toBe(false);
       for (const target of checked) {
@@ -1673,7 +1764,8 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
     Effect.fn(function* manifestPageAliases() {
       const root = yield* fixture();
       const owner = 'verticals/page-controls';
-      const page = `${owner}/src/routes/page.tsx`;
+      const page = `${owner}/src/routes/[lang]/page.tsx`;
+      const pagePattern = String.raw`src/routes/\[lang\]/page.tsx`;
       write(
         root,
         `${owner}/package.json`,
@@ -1682,12 +1774,12 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage } from './src/routes/[lang]/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       write(
         root,
         `${owner}/module-federation.config.ts`,
-        "export default { exposes: { './Page': './src/routes/page.tsx' } };",
+        "import { createModuleFederationConfig } from '@module-federation/modern-js-v3'; const config: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({ exposes: { './Page': './src/routes/[lang]/page.tsx' } }); export default config;",
       );
       write(root, page, 'export const RecordsPage = () => null; export default RecordsPage;');
       const config = {
@@ -1733,14 +1825,14 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage, projectAgenda } from './src/routes/page.tsx'; projectAgenda(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage, projectAgenda } from './src/routes/[lang]/page.tsx'; projectAgenda(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       const helperModel = yield* buildKnipModel(root, config, consumerPath);
       expect(helperModel.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(helperModel.evidence.some((fact) => fact.target === `${page}#projectAgenda`)).toBe(false);
-      expect(
-        helperModel.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
-      ).toContain('duplicates');
+      expect(helperModel.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).toContain(
+        'duplicates',
+      );
       yield* runPinnedKnip(root, consumerPath, helperModel);
       const helperRun = yield* readKnipReport();
       const helperReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(helperRun.stdout);
@@ -1748,8 +1840,38 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage } from './src/routes/[lang]/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
+      write(root, `${owner}/src/preload.ts`, 'export const load = () => undefined;');
+      const verifyLoaderAliasControls = Effect.fn(function* verifyLoaderAliasControls() {
+        for (const loader of [
+          'const modulePagePreload = (load: () => void) => load; export const preloadPage = modulePagePreload(() => undefined);',
+          "export { load as preloadPage } from '../../preload.ts';",
+        ]) {
+          write(root, page, `export const RecordsPage = () => null; export default RecordsPage; ${loader}`);
+          const withLoader = yield* buildKnipModel(root, config, consumerPath);
+          expect(withLoader.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).toContain(
+            'duplicates',
+          );
+          yield* runPinnedKnip(root, consumerPath, withLoader);
+          const loaderRun = yield* readKnipReport();
+          const loaderReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(loaderRun.stdout);
+          expect(loaderReport.issues.find((issue) => issue.file === page)?.duplicates ?? []).toEqual([]);
+          write(
+            root,
+            page,
+            `export const RecordsPage = () => null; export default RecordsPage; ${loader} export { RecordsPage as HiddenAlias };`,
+          );
+          const extraLoaderAlias = yield* buildKnipModel(root, config, consumerPath);
+          expect(
+            extraLoaderAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
+          ).not.toContain('duplicates');
+          yield* runPinnedKnip(root, consumerPath, extraLoaderAlias);
+          const aliasRun = yield* readKnipReport();
+          expect(aliasRun.stdout).toContain('HiddenAlias');
+        }
+      });
+      yield* verifyLoaderAliasControls();
       write(
         root,
         page,
@@ -1757,9 +1879,9 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       );
       const neighbor = yield* buildKnipModel(root, config, consumerPath);
       expect(neighbor.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
-      expect(
-        neighbor.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
-      ).not.toContain('duplicates');
+      expect(neighbor.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).not.toContain(
+        'duplicates',
+      );
       yield* runPinnedKnip(root, consumerPath, neighbor);
       const invalidRun = yield* readKnipReport();
       expect(invalidRun.status).toBe(1);
@@ -1774,7 +1896,7 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#OtherPage=RecordsPage`)).toBe(false);
       expect(
-        extraPageAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+        extraPageAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
       ).not.toContain('duplicates');
       yield* runPinnedKnip(root, consumerPath, extraPageAlias);
       const extraAliasRun = yield* readKnipReport();
@@ -1783,12 +1905,12 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage, OtherPage } from './src/routes/page.tsx'; OtherPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage, OtherPage } from './src/routes/[lang]/page.tsx'; OtherPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       const usedExtraAlias = yield* buildKnipModel(root, config, consumerPath);
       expect(usedExtraAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(
-        usedExtraAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+        usedExtraAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
       ).not.toContain('duplicates');
       yield* runPinnedKnip(root, consumerPath, usedExtraAlias);
       const usedExtraAliasRun = yield* readKnipReport();

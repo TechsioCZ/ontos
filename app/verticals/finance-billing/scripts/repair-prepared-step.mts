@@ -1,4 +1,3 @@
-// @effect-diagnostics *:off
 // S07.R5 data repair: approval now requires "Připraveno ke schválení" first. Issued invoices that were imported
 // already approved (seed fixtures, rental corrections) carry no preparation or approval record, so their history
 // shows the "Připraveno" step as missing. This records both steps at the time the document entered OntOS, labelled
@@ -8,19 +7,25 @@
 //
 // Idempotent: invoices that already have `preparedAt` are skipped. Without --apply it only lists what would change.
 import { PgClient } from '@effect/sql-pg';
-import { NodeRuntime } from '@effect/platform-node';
-import { Config, Effect, Layer, Schema } from 'effect';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { Config, Console, Effect, Layer, Schema } from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 import type { FinanceState, Invoice } from '../shared/apis/records.ts';
 
 const TENANT = '70000000-0000-4000-8000-000000000020';
 const IMPORT_LABEL = 'Úvodní import dokladů';
-const APPLY = process.argv.includes('--apply');
+class PreparedStepRepairRejected extends Schema.TaggedError<PreparedStepRepairRejected>()(
+  'PreparedStepRepairRejected',
+  {
+    reason: Schema.String,
+  },
+) {}
 
 const admin = Layer.effect(
   PgClient.PgClient,
-  Effect.gen(function* () {
+  Effect.gen(function* adminClient() {
     return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_ADMIN_URL') });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
@@ -32,7 +37,9 @@ const needsPreparedStep = (invoice: Invoice) =>
 const withPreparedStep = (state: FinanceState): FinanceState => ({
   ...state,
   invoices: state.invoices.map((invoice) => {
-    if (!needsPreparedStep(invoice)) return invoice;
+    if (!needsPreparedStep(invoice)) {
+      return invoice;
+    }
     const approvedAt = invoice.approvedAt ?? invoice.createdAt;
     const approvedByLabel = invoice.approvedByLabel ?? IMPORT_LABEL;
     return {
@@ -45,7 +52,7 @@ const withPreparedStep = (state: FinanceState): FinanceState => ({
   }),
 });
 
-const program = Effect.gen(function* () {
+const program = Effect.fn('Finance.repairPreparedStep')(function* repairPreparedStep(apply: boolean) {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{
     legal_entity_id: string;
@@ -55,18 +62,44 @@ const program = Effect.gen(function* () {
   for (const row of rows) {
     const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
     const targets = state.invoices.filter(needsPreparedStep);
-    console.log(
-      `${row.legal_entity_id} rev ${row.revision}: ${targets.length} issued invoices without the preparation step` +
-        (targets.length === 0 ? '' : ` (${targets.map((invoice) => invoice.number ?? invoice.documentNumber).join(', ')})`),
+    yield* Console.log(
+      `${row.legal_entity_id} rev ${row.revision}: ${targets.length} issued invoices without the preparation step${
+        targets.length === 0
+          ? ''
+          : ` (${targets.map((invoice) => invoice.number ?? invoice.documentNumber).join(', ')})`
+      }`,
     );
-    if (!APPLY || targets.length === 0) continue;
-    const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(withPreparedStep(state));
+    if (!apply || targets.length === 0) {
+      continue;
+    }
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(FinanceStateSchema))(withPreparedStep(state));
     const updated =
-      yield* sql`update finance_billing.finance_states set state=${JSON.stringify(encoded)}::jsonb,revision=revision+1,updated_at=now() where tenant_id=${TENANT} and legal_entity_id=${row.legal_entity_id} and revision=${row.revision} returning revision`;
-    if (updated.length !== 1) return yield* Effect.die(`Finance ${row.legal_entity_id} changed concurrently; rerun`);
-    console.log(`  applied -> rev ${row.revision + 1}`);
+      yield* sql`update finance_billing.finance_states set state=${encoded}::jsonb,revision=revision+1,updated_at=now() where tenant_id=${TENANT} and legal_entity_id=${row.legal_entity_id} and revision=${row.revision} returning revision`;
+    if (updated.length !== 1) {
+      return yield* new PreparedStepRepairRejected({
+        reason: `Finance ${row.legal_entity_id} changed concurrently; rerun`,
+      });
+    }
+    yield* Console.log(`  applied -> rev ${row.revision + 1}`);
   }
-  if (!APPLY) console.log('Dry run; pass --apply to write.');
+  if (!apply) {
+    yield* Console.log('Dry run; pass --apply to write.');
+  }
+  return yield* Effect.void;
 });
 
-NodeRuntime.runMain(program.pipe(Effect.provide(admin)));
+const cli = Command.make(
+  'repair-prepared-step',
+  {
+    apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
+  },
+  ({ apply }) => program(apply),
+);
+
+const mainLive = Layer.effectDiscard(Command.run(cli, { version: '1.0.0' })).pipe(
+  Layer.provide(Layer.merge(admin, NodeServices.layer)),
+);
+
+if (import.meta.main) {
+  NodeRuntime.runMain(Layer.build(mainLive).pipe(Effect.scoped));
+}

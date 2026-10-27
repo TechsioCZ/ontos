@@ -1,4 +1,3 @@
-// @effect-diagnostics *:off
 /**
  * Removes rehearsal leftovers from the demo task lists, so a presenter never scrolls past them. LOCAL DEMO ONLY.
  *
@@ -14,12 +13,19 @@
  * Each company row is rewritten in one UPDATE that bumps its revision, so open clients get a revision conflict and
  * reload instead of writing the old list back. Core audit events of the removed tasks stay untouched.
  */
-import { NodeRuntime } from '@effect/platform-node';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Console, Effect, Layer } from 'effect';
+import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
+import { Command, Flag } from 'effect/unstable/cli';
 
-const apply = process.argv.includes('--apply');
+// This SQL wire projection retains invalid legacy date text; null covers an absent or JSON-null date value.
+// The decoded contract uses Option, while SQL reads its Encoded side without parsing or normalizing dates.
+const LeftoverRowSchema = Schema.Struct({
+  dueDate: Schema.OptionFromNullOr(Schema.String),
+  legalEntityId: Schema.String.pipe(Schema.brand('LegalEntityId')),
+  title: Schema.String,
+});
 
 const admin = Layer.effect(
   PgClient.PgClient,
@@ -31,7 +37,7 @@ const admin = Layer.effect(
 const proofTitle = 'AI: zavolat zákazníkovi kvůli nabídce (%';
 const proofDescription = 'Vytvořil AI agent úrovně B (%';
 
-const program = Effect.gen(function* prune() {
+const prune = Effect.fn('Work.pruneDemoLeftovers')(function* prune(apply: boolean) {
   const sql = yield* PgClient.PgClient;
   // `t` is one task of row `ws`; `newest` is the createdAt of that row's newest proof task.
   const isLeftover = sql.unsafe(`(
@@ -45,7 +51,7 @@ const program = Effect.gen(function* prune() {
       or coalesce(t->>'dueDate', '9999-12-31') < '2000-01-01'
     )
   )`);
-  const matches = yield* sql<{ legalEntityId: string; title: string; dueDate: string | null }>`
+  const matches = yield* sql<typeof LeftoverRowSchema.Encoded>`
     select ws.legal_entity_id as "legalEntityId", t->>'title' as title, t->>'dueDate' as "dueDate"
     from work_tasks.work_states ws, jsonb_array_elements(ws.state->'tasks') t
     where ${isLeftover}
@@ -73,4 +79,10 @@ const program = Effect.gen(function* prune() {
   return yield* Console.log(`${matches.length} leftover task(s) removed.`);
 });
 
-NodeRuntime.runMain(program.pipe(Effect.provide(admin)));
+const command = Command.make(
+  'prune-demo-leftovers',
+  { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
+  ({ apply }) => prune(apply).pipe(Effect.provide(admin)),
+);
+
+NodeRuntime.runMain(Command.run(command, { version: '0.1.0' }).pipe(Effect.provide(NodeServices.layer)));

@@ -6,17 +6,26 @@
 import { PrincipalResolver } from '@app/core-runtime';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Match } from 'effect';
+import type { Headers as HttpHeaders } from 'effect/unstable/http';
 
 import { ShellAuthenticationApi } from '../../shared/api.ts';
+import {
+  OAuthConnectForbiddenProblemSchema,
+  OAuthConnectInvalidProblemSchema,
+  OAuthConnectNotFoundProblemSchema,
+  OAuthConnectUnauthorizedProblemSchema,
+  OAuthConnectUnavailableProblemSchema,
+} from '../../shared/oauth-connect-api.ts';
 import type { OAuthConnectProblem } from '../../shared/oauth-connect-api.ts';
 import { AuthenticationService } from '../auth/service.ts';
-import { type ConnectSession, approve, connectOptions, createDraft, deny, draftSummary } from './connect-service.ts';
+import { approve, connectOptions, createDraft, deny, draftSummary } from './connect-service.ts';
+import type { ConnectSession } from './connect-service.ts';
 import { ConnectionForbidden, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
 import type { ConnectionInvalid } from './errors.ts';
 import { isSameOriginRequest } from './request-origin.ts';
 import { loadOAuthServerConfig } from './server-config.ts';
 
-type RequestHeaders = Readonly<Record<string, string | undefined>>;
+type RequestHeaders = HttpHeaders.Headers;
 interface RequestWithHeaders {
   readonly headers: RequestHeaders;
 }
@@ -51,60 +60,61 @@ const toProblem = (error: ConnectError): Effect.Effect<OAuthConnectProblem> =>
     Match.tag('ConnectionInvalid', (invalid) =>
       Effect.succeed<OAuthConnectProblem>(
         invalid.code === 'draft_not_found' || invalid.code === 'grant_not_found' || invalid.code === 'connection_active'
-          ? {
-              _tag: 'OAuthConnectNotFoundProblem',
+          ? OAuthConnectNotFoundProblemSchema.make({
               code: invalid.code,
               detail:
                 invalid.code === 'connection_active'
                   ? 'Připojení je hotové. Toto okno můžete zavřít.'
                   : 'Žádost o připojení vypršela nebo neexistuje. Spusťte připojení znovu z aplikace.',
-              status: 404,
+              status: OAuthConnectNotFoundProblemSchema.fields.status.literal,
               title: 'OAuth connect draft not found',
               type: 'https://ontos.dev/problems/oauth-connect-not-found',
-            }
-          : {
-              _tag: 'OAuthConnectInvalidProblem',
+            })
+          : OAuthConnectInvalidProblemSchema.make({
               code: invalid.code,
               detail:
                 invalid.code === 'modules_invalid'
                   ? 'Vybrané moduly nejsou dostupné.'
                   : 'Odkaz pro připojení je neplatný nebo vypršel. Spusťte připojení znovu z aplikace.',
-              status: 400,
+              status: OAuthConnectInvalidProblemSchema.fields.status.literal,
               title: 'OAuth connect request invalid',
               type: 'https://ontos.dev/problems/oauth-connect-invalid',
-            },
+            }),
       ),
     ),
     Match.tag('ConnectionUnauthorized', (unauthorized) =>
-      Effect.succeed<OAuthConnectProblem>({
-        _tag: 'OAuthConnectUnauthorizedProblem',
-        code: unauthorized.code,
-        detail: 'Přihlaste se prosím do OntOS.',
-        status: 401,
-        title: 'OAuth connect requires a session',
-        type: 'https://ontos.dev/problems/oauth-connect-unauthorized',
-      }),
+      Effect.succeed<OAuthConnectProblem>(
+        OAuthConnectUnauthorizedProblemSchema.make({
+          code: unauthorized.code,
+          detail: 'Přihlaste se prosím do OntOS.',
+          status: OAuthConnectUnauthorizedProblemSchema.fields.status.literal,
+          title: 'OAuth connect requires a session',
+          type: 'https://ontos.dev/problems/oauth-connect-unauthorized',
+        }),
+      ),
     ),
     Match.tag('ConnectionForbidden', (forbidden) =>
-      Effect.succeed<OAuthConnectProblem>({
-        _tag: 'OAuthConnectForbiddenProblem',
-        code: forbidden.code,
-        detail: forbidden.reason,
-        status: 403,
-        title: 'OAuth connect forbidden',
-        type: 'https://ontos.dev/problems/oauth-connect-forbidden',
-      }),
+      Effect.succeed<OAuthConnectProblem>(
+        OAuthConnectForbiddenProblemSchema.make({
+          code: forbidden.code,
+          detail: forbidden.reason,
+          status: OAuthConnectForbiddenProblemSchema.fields.status.literal,
+          title: 'OAuth connect forbidden',
+          type: 'https://ontos.dev/problems/oauth-connect-forbidden',
+        }),
+      ),
     ),
     Match.tag('ConnectionUnavailable', (unavailable) =>
       Effect.logError('OAuth connect unavailable', unavailable.cause).pipe(
-        Effect.as<OAuthConnectProblem>({
-          _tag: 'OAuthConnectUnavailableProblem',
-          detail: 'Připojení je dočasně nedostupné. Zkuste to prosím znovu.',
-          retryable: true,
-          status: 503,
-          title: 'OAuth connect unavailable',
-          type: 'https://ontos.dev/problems/oauth-connect-unavailable',
-        }),
+        Effect.as<OAuthConnectProblem>(
+          OAuthConnectUnavailableProblemSchema.make({
+            detail: 'Připojení je dočasně nedostupné. Zkuste to prosím znovu.',
+            retryable: true,
+            status: OAuthConnectUnavailableProblemSchema.fields.status.literal,
+            title: 'OAuth connect unavailable',
+            type: 'https://ontos.dev/problems/oauth-connect-unavailable',
+          }),
+        ),
       ),
     ),
     Match.exhaustive,
@@ -149,23 +159,41 @@ const connectSession = Effect.fn('shell.oauthConnect.session')(function* connect
   } satisfies ConnectSession;
 });
 
-const run = <Value, Requirements>(
-  request: RequestWithHeaders,
-  handler: (session: ConnectSession) => Effect.Effect<Value, ConnectError, Requirements>,
-) =>
-  Effect.gen(function* runConnect() {
-    yield* noStore;
-    const config = yield* loadOAuthServerConfig;
-    const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
-    if (!isSameOriginRequest(request.headers, issuerOrigin)) {
-      return yield* new ConnectionForbidden({
-        code: 'access_blocked',
-        reason: 'Žádost nepřišla z OntOS. Spusťte připojení znovu z aplikace.',
-      });
-    }
-    const session = yield* connectSession(request);
-    return yield* handler(session);
-  }).pipe(Effect.catch((error) => Effect.flatMap(toProblem(error), Effect.fail)));
+const run = Effect.fn('OAuthConnect.run')(
+  <Value, Requirements>(
+    request: RequestWithHeaders,
+    handler: (session: ConnectSession) => Effect.Effect<Value, ConnectError, Requirements>,
+  ) =>
+    Effect.gen(function* runConnect() {
+      yield* noStore;
+      const config = yield* loadOAuthServerConfig;
+      const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
+      const { host } = request.headers;
+      if (
+        !isSameOriginRequest(
+          {
+            host,
+            origin: request.headers['origin'],
+            'sec-fetch-site': request.headers['sec-fetch-site'],
+            'x-forwarded-host': request.headers['x-forwarded-host'],
+          },
+          issuerOrigin,
+        )
+      ) {
+        return yield* new ConnectionForbidden({
+          code: 'access_blocked',
+          reason: 'Žádost nepřišla z OntOS. Spusťte připojení znovu z aplikace.',
+        });
+      }
+      const session = yield* connectSession(request);
+      return yield* handler(session);
+    }).pipe(
+      Effect.matchEffect({
+        onFailure: (error) => Effect.flatMap(toProblem(error), Effect.fail),
+        onSuccess: Effect.succeed,
+      }),
+    ),
+);
 
 export const oauthConnectGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'oauthConnect', (handlers) =>
   handlers

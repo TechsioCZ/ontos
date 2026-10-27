@@ -476,17 +476,15 @@ const resolveConditionalPermissionPlan = <Input>(
       ),
     try: () => {
       const plan = getReadConditionalPermissionPlan(declaration);
-      const selected = plan.select(input);
-      const branch = plan.branches[selected.kind];
-      if (branch === undefined || !declaration.branchTags.includes(selected.kind)) {
+      const { kind, requiredKinds, requirements } = plan.resolve(input, scope);
+      if (!declaration.branchTags.includes(kind)) {
         throw new Error('Unknown conditional Read permission branch');
       }
-      const requirements = branch.resolve(input, selected, scope);
       if (
-        requirements.length !== branch.requiredKinds.length ||
+        requirements.length !== requiredKinds.length ||
         requirements.length === 0 ||
         requirements.some((requirement, index) => {
-          const declaredKind = branch.requiredKinds[index];
+          const declaredKind = requiredKinds[index];
           if (declaredKind !== requirement.kind) {
             return true;
           }

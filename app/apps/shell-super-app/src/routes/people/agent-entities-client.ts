@@ -13,6 +13,9 @@ import {
   CONNECTION_MANAGEMENT_PATHS,
   ConnectionMutationResponseSchema,
   ManageAgentEntityResponseSchema,
+  ManageAgentEntityRequestSchema,
+  AgentOperatorsRequestSchema,
+  ConnectionRevokeRequestSchema,
 } from '@app/shared-contracts/agent-access';
 import type {
   AgentEntityOverview,
@@ -50,7 +53,7 @@ const failureOf = (status: number): AgentFailure => {
 /** POSTs one JSON body to a full shell path; a 200 answer is returned as raw JSON for the caller's schema. */
 const post = Effect.fn('AgentEntitiesClient.post')(function* post(
   path: string,
-  body: ManageAgentEntityRequest | AgentOperatorsRequest | ConnectionRevokeRequest | Readonly<Record<string, never>>,
+  body: Schema.JsonObject,
   idempotencyKey?: string,
 ) {
   const client = yield* HttpClient.HttpClient;
@@ -102,7 +105,8 @@ export const runAgentCommand = (
   idempotencyKey: string,
 ): Effect.Effect<AgentOutcome<ManageAgentEntityResponse>, never, HttpClient.HttpClient> =>
   Effect.gen(function* runAgentManage() {
-    const answer = yield* post(AGENT_ACCESS_PATHS.manage, command, idempotencyKey);
+    const encoded = yield* Schema.encodeEffect(ManageAgentEntityRequestSchema)(command);
+    const answer = yield* post(AGENT_ACCESS_PATHS.manage, encoded, idempotencyKey);
     if (answer.status === 'failed') {
       return failed(answer.reason, answer.detail);
     }
@@ -115,7 +119,8 @@ export const saveAgentOperators = (
   request: AgentOperatorsRequest,
 ): Effect.Effect<AgentOutcome<AgentOperatorsResponse>, never, HttpClient.HttpClient> =>
   Effect.gen(function* saveAgentOperatorsCall() {
-    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.operators, request);
+    const encoded = yield* Schema.encodeEffect(AgentOperatorsRequestSchema)(request);
+    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.operators, encoded);
     if (answer.status === 'failed') {
       return failed(answer.reason, answer.detail);
     }
@@ -128,7 +133,8 @@ export const revokeAgentConnection = (
   request: ConnectionRevokeRequest,
 ): Effect.Effect<AgentOutcome<ConnectionMutationResponse>, never, HttpClient.HttpClient> =>
   Effect.gen(function* revokeAgentConnectionCall() {
-    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.revoke, request);
+    const encoded = yield* Schema.encodeEffect(ConnectionRevokeRequestSchema)(request);
+    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.revoke, encoded);
     if (answer.status === 'failed') {
       return failed(answer.reason, answer.detail);
     }

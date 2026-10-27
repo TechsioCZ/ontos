@@ -1064,6 +1064,7 @@ for (const changedPath of [
   'module-federation.shared.ts',
   'tsconfig.base.json',
   'scripts/generate-ontos-module-contract.mts',
+  'scripts/ontos-mcp-contribution.mts',
 ]) {
   it.live(`conservatively deploys every phase for ${changedPath}`, () =>
     Effect.gen(function* testEffect24() {

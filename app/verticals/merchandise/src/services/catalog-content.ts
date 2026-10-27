@@ -1,68 +1,115 @@
 // Catalog content editing: content history, category assignment and the UpdateCategory command.
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { EntityIdSchema } from '../../shared/domain/merchandise-model.ts';
-import type { CatalogCategory, CatalogChange, Product } from '../../shared/domain/merchandise-model.ts';
+import type { CatalogCategory, CatalogChange, CategoryId, Product } from '../../shared/domain/merchandise-model.ts';
 import type { MerchandiseChange, MerchandiseCommandError, MerchandiseCommandInput } from './persistence.service.ts';
 
 type UpdateCategoryCommand = Extract<MerchandiseCommand, { readonly _tag: 'UpdateCategory' }>;
 
 /** Catalog-content fields tracked in product history, with Czech labels. */
 const CONTENT_FIELDS = {
-  name: 'Název',
-  shortDescription: 'Krátký popis',
+  category: 'Kategorie',
   description: 'Popis',
+  imageAlt: 'Popis obrázku',
   images: 'Obrázky',
   imageSrc: 'Hlavní obrázek',
-  imageAlt: 'Popis obrázku',
-  category: 'Kategorie',
-  parameters: 'Parametry',
   isAction: 'Akce',
+  isNew: 'Novinka',
   isRecommended: 'Doporučujeme',
   isSale: 'Výprodej',
-  isNew: 'Novinka',
-  unit: 'Jednotka',
   minimumQuantity: 'Minimální množství',
+  name: 'Název',
   packageQuantity: 'Balení',
+  parameters: 'Parametry',
   priceTiers: 'Množstevní ceny',
   published: 'Zveřejnění v e-shopu',
+  shortDescription: 'Krátký popis',
   slug: 'Adresa v e-shopu',
+  unit: 'Jednotka',
 } as const satisfies Partial<Record<keyof Product, string>>;
 type ContentField = keyof typeof CONTENT_FIELDS;
-const contentFields = Object.keys(CONTENT_FIELDS) as ContentField[];
+// Audit text keeps the presentation order used before object-key sorting.
+const contentFields: readonly ContentField[] = [
+  'name',
+  'shortDescription',
+  'description',
+  'images',
+  'imageSrc',
+  'imageAlt',
+  'category',
+  'parameters',
+  'isAction',
+  'isRecommended',
+  'isSale',
+  'isNew',
+  'unit',
+  'minimumQuantity',
+  'packageQuantity',
+  'priceTiers',
+  'published',
+  'slug',
+];
 
 const CATEGORY_FIELDS = {
-  published: 'Zveřejnění v navigaci',
-  name: 'Název',
-  heading: 'Nadpis',
   description: 'Krátký popis',
-  longDescription: 'Popis',
-  position: 'Pořadí',
-  imageSrc: 'Obrázek',
+  heading: 'Nadpis',
   imageAlt: 'Popis obrázku',
+  imageSrc: 'Obrázek',
+  longDescription: 'Popis',
+  name: 'Název',
+  position: 'Pořadí',
+  published: 'Zveřejnění v navigaci',
 } as const;
 type CategoryField = keyof typeof CATEGORY_FIELDS;
+const categoryFields: readonly CategoryField[] = [
+  'published',
+  'name',
+  'heading',
+  'description',
+  'longDescription',
+  'position',
+  'imageSrc',
+  'imageAlt',
+];
+type ContentValue = Product[ContentField] | CatalogCategory[CategoryField];
+const encodeHistoryValue = Schema.encodeResult(Schema.fromJsonString(Schema.Json));
+const equivalentContent = Schema.toEquivalence(Schema.Json);
+const sameContentValue = (before: ContentValue, after: ContentValue) =>
+  before === undefined || after === undefined ? before === after : equivalentContent(before, after);
 
 const MAX_HISTORY = 50;
 
 /** Short Czech rendering of one value for history before/after text. */
-export const summarizeContentValue = (value: unknown): string => {
-  if (value === undefined || value === null || value === '') return '—';
-  if (typeof value === 'boolean') return value ? 'ano' : 'ne';
-  const text = typeof value === 'string' ? value : typeof value === 'number' ? String(value) : JSON.stringify(value);
+export const summarizeContentValue = (value: ContentValue): string => {
+  if (value === undefined || value === null || value === '') {
+    return '—';
+  }
+  if (Schema.is(Schema.Boolean)(value)) {
+    return value === true ? 'ano' : 'ne';
+  }
+  let text: string;
+  if (Schema.is(Schema.String)(value)) {
+    text = value;
+  } else if (Schema.is(Schema.Finite)(value)) {
+    text = String(value);
+  } else {
+    text = Result.getOrThrow(encodeHistoryValue(value));
+  }
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 };
 
 /** Ids from the category itself up to its root (same order as the seed's `categoryPathIds`). */
-export const categoryPathOf = (categories: readonly CatalogCategory[], id: string): readonly string[] => {
+export const categoryPathOf = (categories: readonly CatalogCategory[], id: CategoryId): readonly CategoryId[] => {
   const byId = new Map(categories.map((category) => [category.id, category] as const));
-  const path: string[] = [];
-  let next: string | null = id;
+  const path: CategoryId[] = [];
+  let next: CategoryId | null = id;
   while (next !== null && !path.includes(next)) {
     path.push(next);
-    next = byId.get(next)?.parentId ?? null;
+    const parent: CatalogCategory['parentId'] | undefined = byId.get(next)?.parentId;
+    next = parent === undefined ? null : Option.getOrNull(parent);
   }
   return path;
 };
@@ -73,14 +120,16 @@ export const contentChangeOf = (
   after: Product,
   input: Pick<MerchandiseCommandInput, 'actor' | 'now'>,
 ): CatalogChange | undefined => {
-  const changed = contentFields.filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
-  if (changed.length === 0) return undefined;
+  const changed = contentFields.filter((field) => !sameContentValue(before[field], after[field]));
+  if (changed.length === 0) {
+    return undefined;
+  }
   return {
     actor: input.actor,
-    at: input.now,
-    fields: changed.map((field) => CONTENT_FIELDS[field]),
-    before: changed.map((field) => `${CONTENT_FIELDS[field]}: ${summarizeContentValue(before[field])}`).join('; '),
     after: changed.map((field) => `${CONTENT_FIELDS[field]}: ${summarizeContentValue(after[field])}`).join('; '),
+    at: input.now,
+    before: changed.map((field) => `${CONTENT_FIELDS[field]}: ${summarizeContentValue(before[field])}`).join('; '),
+    fields: changed.map((field) => CONTENT_FIELDS[field]),
   };
 };
 
@@ -91,7 +140,9 @@ export const withContentHistory = (
   input: Pick<MerchandiseCommandInput, 'actor' | 'now'>,
 ): Product => {
   const change = contentChangeOf(before, after, input);
-  if (change === undefined) return after;
+  if (change === undefined) {
+    return after;
+  }
   return { ...after, contentHistory: [...(before.contentHistory ?? []), change].slice(-MAX_HISTORY) };
 };
 
@@ -113,18 +164,18 @@ export const assignCategory = (
   }
   return Effect.succeed({
     ...product,
+    category: category.name.slice(0, 120),
     categoryId: category.id,
     categoryPathIds: [...categoryPathOf(all, category.id)],
-    category: category.name.slice(0, 120),
   });
 };
 
-export const updateCategoryCommand = (
-  state: MerchandiseState,
-  value: UpdateCategoryCommand,
-  input: MerchandiseCommandInput,
-): Effect.Effect<MerchandiseChange, MerchandiseCommandError> =>
-  Effect.gen(function* () {
+export const updateCategoryCommand = Effect.fn('CatalogContent.updateCategoryCommand')(
+  function* updateCategoryCommandProgram(
+    state: MerchandiseState,
+    value: UpdateCategoryCommand,
+    input: MerchandiseCommandInput,
+  ): Effect.fn.Return<MerchandiseChange, MerchandiseCommandError> {
     const categories = state.categories ?? [];
     const current = categories.find((category) => category.id === value.id);
     if (current === undefined) {
@@ -132,14 +183,16 @@ export const updateCategoryCommand = (
     }
     const entity = yield* Schema.decodeEffect(EntityIdSchema)(current.id).pipe(Effect.orDie);
     const next: CatalogCategory = { ...current, ...value.patch };
-    const changed = (Object.keys(CATEGORY_FIELDS) as CategoryField[]).filter((field) => current[field] !== next[field]);
-    if (changed.length === 0) return { entityIds: [entity], state };
+    const changed = categoryFields.filter((field) => current[field] !== next[field]);
+    if (changed.length === 0) {
+      return { entityIds: [entity], state };
+    }
     const change: CatalogChange = {
       actor: input.actor,
-      at: input.now,
-      fields: changed.map((field) => CATEGORY_FIELDS[field]),
-      before: changed.map((field) => `${CATEGORY_FIELDS[field]}: ${summarizeContentValue(current[field])}`).join('; '),
       after: changed.map((field) => `${CATEGORY_FIELDS[field]}: ${summarizeContentValue(next[field])}`).join('; '),
+      at: input.now,
+      before: changed.map((field) => `${CATEGORY_FIELDS[field]}: ${summarizeContentValue(current[field])}`).join('; '),
+      fields: changed.map((field) => CATEGORY_FIELDS[field]),
     };
     const updated: CatalogCategory = { ...next, history: [...(current.history ?? []), change].slice(-MAX_HISTORY) };
     const renamed = updated.name !== current.name;
@@ -157,4 +210,5 @@ export const updateCategoryCommand = (
           : state.products,
       },
     };
-  });
+  },
+);

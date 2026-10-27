@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '../../../../packages/core-runtime/src/db/database-identity-manifest.ts';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
@@ -89,7 +90,7 @@ import {
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { dispatchEmailBatchWith } from '../../../../packages/email-delivery/src/dispatcher/dispatch.ts';
-import { makeSmtpEmailDelivery } from '../../../../packages/email-delivery/src/smtp.ts';
+import { SmtpEmailDeliveryLive } from '../../../../packages/email-delivery/src/smtp.ts';
 import type { EmailTransportRuntime } from '../../../../packages/email-delivery/src/transport-runtime.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
@@ -337,7 +338,10 @@ it.live(
             Effect.provide(BetterAuthPersonInvitationIdentityProviderLive),
           );
       const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
-      const authDatabase = yield* makeAuthDatabase(configuration);
+      const authDatabase = yield* makeAuthDatabase({
+        connectionString: configuration.connectionString,
+        expectedRole: SHARED_RUNTIME_IDENTITY.role,
+      });
       const resolver = makePrincipalResolver(database, {
         authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
       });
@@ -361,8 +365,8 @@ it.live(
       );
       const emailSql = yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) });
       const transport: EmailTransportRuntime = {
+        deliveryLayer: (from) => SmtpEmailDeliveryLive({ from, host: '127.0.0.1', port: smtpPort }),
         kind: 'smtp',
-        makeDelivery: (from) => makeSmtpEmailDelivery({ from, host: '127.0.0.1', port: smtpPort }),
         provider: { configured: true, label: 'Owned Mailpit test capture' },
       };
       const dispatch = dispatchEmailBatchWith(transport, { ONTOS_PUBLIC_URL: 'http://localhost:3020' }).pipe(

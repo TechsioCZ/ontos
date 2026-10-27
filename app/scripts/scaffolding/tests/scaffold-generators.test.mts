@@ -6378,7 +6378,6 @@ it.live(
             json({
               // Use the same strictness as Core and the owning verticals, including
               // exact optional-property semantics for schema-decoded union inputs.
-              extends: path.join(appRoot, 'tsconfig.base.json'),
               compilerOptions: {
                 paths: {
                   ...coreRuntimePaths,
@@ -6400,6 +6399,7 @@ it.live(
                 skipLibCheck: true,
                 types: ['node', 'react'],
               },
+              extends: path.join(appRoot, 'tsconfig.base.json'),
               include: [
                 modernAppEnvironmentTypes,
                 'packages/core-runtime/src/modules/actions/**/*.ts',

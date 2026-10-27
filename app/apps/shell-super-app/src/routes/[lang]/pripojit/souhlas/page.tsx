@@ -1,3 +1,4 @@
+import { Effect, Fiber, Function as Fn, Option } from 'effect';
 import type { ConnectDraftSummary } from '@app/shared-contracts/oauth-connections';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -6,80 +7,135 @@ import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useEffect, useState } from 'react';
 
+import { useBrowserLocationHref } from '../../../browser-location.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { approveDraftAndConsent, denyConnection, loadDraftSummary } from '../connect-client.ts';
-import { failureKey, readOAuthQuery, summaryModuleLabels } from '../connect-view-model.ts';
+import { failureKey, loadFailure, readOAuthQuery, summaryModuleLabels } from '../connect-view-model.ts';
+import type { ConnectOutcome } from '../connect-client.ts';
 import type { ConnectFailure } from '../connect-view-model.ts';
+
+const ConsentFacts = ({ summary }: { readonly summary: ConnectDraftSummary }) => {
+  const { t } = useModernI18n();
+  const isAgent = summary.acting.kind === 'agent';
+  const labels = summaryModuleLabels(summary.modules);
+  return (
+    <ul className="grid gap-150 rounded-lg bg-surface p-200 text-sm">
+      <li>
+        {t('shell.connect.consent.companyLabel')}: <strong>{summary.legalName}</strong>
+      </li>
+      <li>
+        {t('shell.connect.consent.actingLabel')}: <strong>{summary.acting.displayName}</strong>{' '}
+        {isAgent
+          ? t('shell.connect.consent.actingAgent', {
+              name: Option.getOrUndefined(summary.delegatedBy)?.displayName ?? '',
+            })
+          : t('shell.connect.consent.actingMe')}
+      </li>
+      {labels === 'all' ? (
+        <li>
+          {t('shell.connect.consent.readLabel')}:{' '}
+          {isAgent ? t('shell.connect.consent.allAgent') : t('shell.connect.consent.allMe')}
+        </li>
+      ) : (
+        <li>
+          {t('shell.connect.consent.readLabel')}: {labels.read.join(', ')}
+        </li>
+      )}
+      {labels === 'all' || labels.write.length === 0 || summary.writePolicy === 'read_only' ? null : (
+        <li>
+          {t('shell.connect.consent.writeModulesLabel')}: {labels.write.join(', ')}
+        </li>
+      )}
+      <li>
+        {t('shell.connect.consent.policyLabel')}:{' '}
+        <strong>{t(`shell.connect.consent.policyValue.${summary.writePolicy}`)}</strong> —{' '}
+        {t(`shell.connect.consent.policyHint.${summary.writePolicy}`)}
+      </li>
+    </ul>
+  );
+};
 
 const ConsentPage = () => {
   const { t } = useModernI18n();
-  const [loaded, setLoaded] = useState(false);
-  const [oauthQuery, setOAuthQuery] = useState<string>();
-  const [summary, setSummary] = useState<ConnectDraftSummary>();
-  const [loadNotice, setLoadNotice] = useState<ConnectFailure>();
+  const href = useBrowserLocationHref();
+  const oauthQuery = href === undefined ? undefined : readOAuthQuery(new URL(href).search);
+  const loaded = href !== undefined;
+  const [loadedResult, setLoadedResult] = useState<{
+    readonly outcome: ConnectOutcome<ConnectDraftSummary>;
+    readonly query: string;
+  }>();
+  const loadResult = loadedResult !== undefined && loadedResult.query === oauthQuery ? loadedResult.outcome : undefined;
+  const summary = loadResult?.status === 'ok' ? loadResult.value : undefined;
+  const loadNotice = loadFailure(oauthQuery, loadResult);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<ConnectFailure>();
-
   useEffect(() => {
-    const query = readOAuthQuery(window.location.search);
-    setLoaded(true);
-    if (query === '') {
-      setLoadNotice('expired');
-      return undefined;
+    if (oauthQuery === undefined || oauthQuery === '') {
+      return Fn.constVoid;
     }
-    setOAuthQuery(query);
     let active = true;
-    void browserRuntime.runPromise(loadDraftSummary(query)).then((outcome) => {
-      if (!active) {
-        return;
-      }
-      if (outcome.status === 'failed') {
-        setLoadNotice(outcome.reason);
-        return;
-      }
-      setSummary(outcome.value);
-    });
+    const fiber = browserRuntime.runFork(
+      loadDraftSummary(oauthQuery).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (active) {
+              setLoadedResult({ outcome, query: oauthQuery });
+            }
+          }),
+        ),
+      ),
+    );
     return () => {
       active = false;
+      browserRuntime.runFork(Fiber.interrupt(fiber));
     };
-  }, []);
+  }, [oauthQuery]);
 
   const clientName = summary?.client.name ?? t('shell.connect.clientFallback');
+  const clientLogoUri = summary === undefined ? undefined : Option.getOrUndefined(summary.client.logoUri);
   const approve = () => {
     if (summary === undefined || oauthQuery === undefined) {
       return;
     }
     setBusy(true);
     setNotice(undefined);
-    void browserRuntime.runPromise(approveDraftAndConsent(summary.grantId, oauthQuery)).then((outcome) => {
-      if (outcome.status === 'failed') {
-        setBusy(false);
-        setNotice(outcome.reason);
-        return;
-      }
-      globalThis.location.assign(outcome.value);
-    });
+    browserRuntime.runFork(
+      approveDraftAndConsent(summary.grantId, oauthQuery).pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            if (outcome.status === 'failed') {
+              setBusy(false);
+              setNotice(outcome.reason);
+              return;
+            }
+            globalThis.location.assign(outcome.value);
+          }),
+        ),
+      ),
+    );
   };
-
   const deny = () => {
     if (summary === undefined || oauthQuery === undefined) {
       return;
     }
     setBusy(true);
     setNotice(undefined);
-    void browserRuntime.runPromise(denyConnection(summary.grantId, oauthQuery)).then((outcome) => {
-      if (outcome.status === 'failed') {
-        setBusy(false);
-        setNotice(outcome.reason);
-        return;
-      }
-      globalThis.location.assign(outcome.value.redirectTo);
-    });
+    browserRuntime.runFork(
+      denyConnection(Option.some(summary.grantId), oauthQuery).pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            if (outcome.status === 'failed') {
+              setBusy(false);
+              setNotice(outcome.reason);
+              return;
+            }
+            globalThis.location.assign(outcome.value.redirectTo);
+          }),
+        ),
+      ),
+    );
   };
-
-  const isAgent = summary?.acting.kind === 'agent';
-  const labels = summary === undefined ? undefined : summaryModuleLabels(summary.modules);
 
   return (
     <>
@@ -94,14 +150,14 @@ const ConsentPage = () => {
               {t(failureKey(loadNotice), { client: clientName })}
             </StatusText>
           )}
-          {summary === undefined || labels === undefined ? null : (
+          {summary === undefined ? null : (
             <>
               <h1 className="font-semibold text-xl">{t('shell.connect.consent.title', { client: clientName })}</h1>
               <div className="flex flex-wrap items-center gap-150 rounded-lg bg-surface p-200">
-                {summary.client.logoUri === null || summary.client.logoUri === '' ? (
+                {clientLogoUri === undefined || clientLogoUri === '' ? (
                   <Icon icon="icon-[mdi--application-outline]" size="md" />
                 ) : (
-                  <img alt="" className="size-icon-control-lg rounded-md" src={summary.client.logoUri} />
+                  <img alt="" className="size-icon-control-lg rounded-md" src={clientLogoUri} />
                 )}
                 <div className="grid min-w-0 flex-1 gap-100">
                   <span className="break-words font-semibold">{summary.client.name}</span>
@@ -120,37 +176,7 @@ const ConsentPage = () => {
                 </div>
               </div>
 
-              <ul className="grid gap-150 rounded-lg bg-surface p-200 text-sm">
-                <li>
-                  {t('shell.connect.consent.companyLabel')}: <strong>{summary.legalName}</strong>
-                </li>
-                <li>
-                  {t('shell.connect.consent.actingLabel')}: <strong>{summary.acting.displayName}</strong>{' '}
-                  {isAgent
-                    ? t('shell.connect.consent.actingAgent', { name: summary.delegatedBy?.displayName ?? '' })
-                    : t('shell.connect.consent.actingMe')}
-                </li>
-                {labels === 'all' ? (
-                  <li>
-                    {t('shell.connect.consent.readLabel')}:{' '}
-                    {isAgent ? t('shell.connect.consent.allAgent') : t('shell.connect.consent.allMe')}
-                  </li>
-                ) : (
-                  <li>
-                    {t('shell.connect.consent.readLabel')}: {labels.read.join(', ')}
-                  </li>
-                )}
-                {labels === 'all' || labels.write.length === 0 || summary.writePolicy === 'read_only' ? null : (
-                  <li>
-                    {t('shell.connect.consent.writeModulesLabel')}: {labels.write.join(', ')}
-                  </li>
-                )}
-                <li>
-                  {t('shell.connect.consent.policyLabel')}:{' '}
-                  <strong>{t(`shell.connect.consent.policyValue.${summary.writePolicy}`)}</strong> —{' '}
-                  {t(`shell.connect.consent.policyHint.${summary.writePolicy}`)}
-                </li>
-              </ul>
+              <ConsentFacts summary={summary} />
 
               <p className="text-fg-secondary text-sm">{t('shell.connect.consent.validity')}</p>
               <p className="text-sm">

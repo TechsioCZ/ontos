@@ -15,6 +15,13 @@ import { FinancialPlanEntryRefSchema } from '../resources/financial-plan-entry.t
 export const DEMO_BUSINESS_DATE = '2026-10-05';
 export const CalendarDateSchema = CalendarDateWireSchema;
 export const FinanceTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+export const FinancePriceListItemIdSchema = FinanceTextSchema.pipe(Schema.brand('FinancePriceListItemId'));
+export const FinanceInvoiceResourceIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceInvoiceResourceId'));
+export const FinancePrincipalIdSchema = FinanceTextSchema.pipe(Schema.brand('FinancePrincipalId'));
+export const FinanceCompanyIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceCompanyId'));
+export const FinanceRecurringTemplateIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceRecurringTemplateId'));
+export const FinanceDocumentIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceDocumentId'));
+
 const FinancePropertyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePropertyId')));
 const FinanceResourceIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResourceId')));
 /** Opaque customer identity owned by the party registry; never dereferenced by billing state. */
@@ -53,7 +60,7 @@ export const InvoiceLineSchema = Schema.Struct({
   description: FinanceTextSchema,
   discount: Schema.optionalKey(LineDiscountSchema),
   /** Finance price-list item the line was filled from (snapshot; later price-list changes do not reach it). */
-  priceListItemId: Schema.optionalKey(FinanceTextSchema),
+  priceListItemId: Schema.optionalKey(FinancePriceListItemIdSchema),
   productId: Schema.optionalKey(FinanceProductIdSchema),
   quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1_000_000)),
   unitPriceMinor: MoneyMinorSchema,
@@ -99,21 +106,21 @@ export const InvoiceDraftCommandFields = {
 export const InvoiceDocumentKindSchema = Schema.Literals(['STANDARD', 'ADVANCE', 'PARTIAL', 'FINAL', 'RECURRING']);
 export type InvoiceDocumentKind = typeof InvoiceDocumentKindSchema.Type;
 /** Calendar month `YYYY-MM`. */
-export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(0[1-9]|1[0-2])$/u));
+export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(?<month>0[1-9]|1[0-2])$/u));
 export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 /** Purchase-order identity in the same tenant/legal-entity finance aggregate. */
 export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
 /** Earlier advance/partial invoice whose amount a final or partial invoice takes into account (S07.R2). */
 export const PriorSettlementEntrySchema = Schema.Struct({
   amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
-  invoiceResourceId: FinanceTextSchema,
+  invoiceResourceId: FinanceInvoiceResourceIdSchema,
   number: FinanceTextSchema,
 });
 /** Amounts of earlier documents a user confirmed by hand; OntOS performs no automatic tax settlement. */
 export const PriorSettlementSchema = Schema.Struct({
   confirmedAt: Schema.DateTimeUtcFromString,
   confirmedByLabel: Schema.optionalKey(FinanceTextSchema),
-  confirmedByPrincipalId: Schema.optionalKey(FinanceTextSchema),
+  confirmedByPrincipalId: Schema.optionalKey(FinancePrincipalIdSchema),
   entries: Schema.Array(PriorSettlementEntrySchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
   note: Schema.optionalKey(FinanceTextSchema),
 });
@@ -126,7 +133,7 @@ export const PaymentTermsSchema = Schema.Struct({
   skontoText: Schema.optionalKey(FinanceTextSchema),
   updatedAt: Schema.DateTimeUtcFromString,
   updatedByLabel: Schema.optionalKey(FinanceTextSchema),
-  updatedByPrincipalId: Schema.optionalKey(FinanceTextSchema),
+  updatedByPrincipalId: Schema.optionalKey(FinancePrincipalIdSchema),
 });
 export type PaymentTerms = typeof PaymentTermsSchema.Type;
 /** Optional invoice fields added for the sales demo v2; all optional so stored states keep decoding. */
@@ -143,15 +150,15 @@ export const InvoiceDemoFields = {
   /** S07.R5 "připraveno": a draft moved to approval (k odsouhlasení). Absent on a plain draft. */
   reviewState: Schema.optionalKey(Schema.Literal('PREPARED')),
   /** Auditable replacement: the original issued document keeps its identity and customer snapshot. */
-  correctsInvoiceRef: Schema.optionalKey(InvoiceRefSchema),
-  sourceOrder: Schema.optionalKey(SourceOrderSchema),
   budgetCategory: Schema.optionalKey(FinanceTextSchema),
-  counterpartyCompanyId: Schema.optionalKey(FinanceTextSchema),
+  correctsInvoiceRef: Schema.optionalKey(InvoiceRefSchema),
+  counterpartyCompanyId: Schema.optionalKey(FinanceCompanyIdSchema),
+  sourceOrder: Schema.optionalKey(SourceOrderSchema),
   /** Name snapshot shown when the counterparty is not (or no longer) in the party registry. */
   counterpartyName: Schema.optionalKey(FinanceTextSchema),
   documentKind: Schema.optionalKey(InvoiceDocumentKindSchema),
   recurringPeriod: Schema.optionalKey(CalendarMonthSchema),
-  recurringTemplateId: Schema.optionalKey(FinanceTextSchema),
+  recurringTemplateId: Schema.optionalKey(FinanceRecurringTemplateIdSchema),
 };
 export const InvoiceSchema = Schema.Struct({
   ...InvoiceDraftFields,
@@ -172,10 +179,11 @@ export const InvoiceSchema = Schema.Struct({
   vatRecap: Schema.optionalKey(Schema.Array(VatRecapEntrySchema).check(Schema.isMaxLength(4))),
 });
 export type Invoice = typeof InvoiceSchema.Type;
+export const BudgetKindSchema = Schema.Literals(['COST', 'REVENUE']);
 export const FinancialPlanEntrySchema = Schema.Struct({
   category: FinanceTextSchema,
   currency: Schema.Literal('CZK'),
-  kind: Schema.Literals(['COST', 'REVENUE']),
+  kind: BudgetKindSchema,
   periodEndExclusive: CalendarDateSchema,
   periodStart: CalendarDateSchema,
   plannedMinor: MoneyMinorSchema,
@@ -186,14 +194,14 @@ export const FinancialPlanEntrySchema = Schema.Struct({
 export type FinancialPlanEntry = typeof FinancialPlanEntrySchema.Type;
 const ActorFields = {
   actorLabel: Schema.optionalKey(FinanceTextSchema),
-  actorPrincipalId: Schema.optionalKey(FinanceTextSchema),
+  actorPrincipalId: Schema.optionalKey(FinancePrincipalIdSchema),
 };
 /** An uploaded file; its bytes live in `finance_document_contents`, only metadata is in the state. */
 export const FinanceDocumentSchema = Schema.Struct({
   ...ActorFields,
   fileName: FinanceTextSchema,
-  id: FinanceTextSchema,
-  invoiceResourceId: Schema.optionalKey(FinanceTextSchema),
+  id: FinanceDocumentIdSchema,
+  invoiceResourceId: Schema.optionalKey(FinanceInvoiceResourceIdSchema),
   mimeType: FinanceTextSchema,
   sha256: FinanceTextSchema,
   sizeBytes: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -205,7 +213,7 @@ export const ManualPaymentSchema = Schema.Struct({
   ...ActorFields,
   amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
   id: FinanceTextSchema,
-  invoiceResourceId: FinanceTextSchema,
+  invoiceResourceId: FinanceInvoiceResourceIdSchema,
   note: Schema.optionalKey(FinanceTextSchema),
   paidOn: CalendarDateSchema,
   recordedAt: Schema.DateTimeUtcFromString,
@@ -218,7 +226,7 @@ export const RecurringTemplateSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   createdAt: Schema.DateTimeUtcFromString,
   dueDays: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(90)),
-  id: FinanceTextSchema,
+  id: FinanceRecurringTemplateIdSchema,
   issueDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(28)),
   lines: InvoiceLinesSchema,
   name: FinanceTextSchema,
@@ -234,16 +242,18 @@ export const InvoiceReminderSchema = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   deliveryMode: Schema.Literal('EMAIL'),
   id: FinanceTextSchema,
-  invoiceResourceId: FinanceTextSchema,
+  invoiceResourceId: FinanceInvoiceResourceIdSchema,
   recipient: FinanceTextSchema,
   status: Schema.Literal('QUEUED'),
   text: FinanceLongTextSchema,
 });
 export type InvoiceReminder = typeof InvoiceReminderSchema.Type;
 /** Czech company registration number (IČO), exactly 8 digits. */
-export const IssuerIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u));
+export const IssuerIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u)).pipe(Schema.brand('FinanceIssuerIco'));
 /** Czech VAT id (DIČ): `CZ` followed by 8–10 digits. */
-export const IssuerVatIdSchema = Schema.String.check(Schema.isPattern(/^CZ\d{8,10}$/u));
+export const IssuerVatIdSchema = Schema.String.check(Schema.isPattern(/^CZ\d{8,10}$/u)).pipe(
+  Schema.brand('FinanceIssuerVatId'),
+);
 /** Accounting-unit identity of the selected legal entity; entered by an administrator, never invented. */
 export const AccountingIssuerFields = {
   issuerCity: Schema.optionalKey(FinanceTextSchema),
@@ -288,36 +298,38 @@ export const AccountingExportSchema = Schema.Struct({
   fileName: FinanceTextSchema,
   format: AccountingExportFormatSchema,
   id: FinanceTextSchema,
-  invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
+  invoiceResourceIds: Schema.Array(FinanceInvoiceResourceIdSchema).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(1000),
+  ),
   /** Issuer snapshot at export time: the selected company's name and the IČO from the accounting setup. */
   issuerIco: Schema.optionalKey(IssuerIcoSchema),
   issuerName: Schema.optionalKey(FinanceTextSchema),
   schemaVersion: Schema.Literal(ACCOUNTING_EXPORT_SCHEMA_VERSION),
   sha256: FinanceTextSchema,
   /** S08: PREPARED (file built) → HANDED_OVER → CONFIRMED_BY_ACCOUNTANT, or FAILED with a reason. */
-  status: AccountingExportStatusSchema,
   failedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   failedByLabel: Schema.optionalKey(FinanceTextSchema),
   failureReason: Schema.optionalKey(FinanceTextSchema),
   handedOverAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   handedOverByLabel: Schema.optionalKey(FinanceTextSchema),
+  status: AccountingExportStatusSchema,
   version: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type AccountingExport = typeof AccountingExportSchema.Type;
-export const BudgetKindSchema = Schema.Literals(['COST', 'REVENUE']);
 /** User-editable monthly budget line per category, optionally for one property/unit or středisko (S09.R2). */
 export const BudgetLineSchema = Schema.Struct({
   ...ActorFields,
   actualManualMinor: Schema.optionalKey(MoneyMinorSchema),
   category: FinanceTextSchema,
   costCenter: Schema.optionalKey(FinanceTextSchema),
-  propertyRef: Schema.optionalKey(PropertyRefSchema),
-  unitRef: Schema.optionalKey(UnitRefSchema),
   explanation: Schema.optionalKey(FinanceTextSchema),
   id: FinanceTextSchema,
   kind: BudgetKindSchema,
   period: CalendarMonthSchema,
   plannedMinor: MoneyMinorSchema,
+  propertyRef: Schema.optionalKey(PropertyRefSchema),
+  unitRef: Schema.optionalKey(UnitRefSchema),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type BudgetLine = typeof BudgetLineSchema.Type;
@@ -348,7 +360,7 @@ export const PriceListItemSchema = Schema.Struct({
   ...ActorFields,
   active: Schema.Boolean,
   code: Schema.optionalKey(FinanceTextSchema),
-  id: FinanceTextSchema,
+  id: FinancePriceListItemIdSchema,
   name: FinanceTextSchema,
   unit: Schema.optionalKey(FinanceTextSchema),
   unitPriceMinor: MoneyMinorSchema,
@@ -385,7 +397,7 @@ export type FinanceState = typeof FinanceStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
   counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
   /** Returns the stored file content of this uploaded document in `document`. */
-  documentId: Schema.optionalKey(FinanceTextSchema),
+  documentId: Schema.optionalKey(FinanceDocumentIdSchema),
   opportunityId: Schema.optionalKey(FinanceOpportunityIdSchema),
   partyId: Schema.optionalKey(FinancePartyIdSchema),
   propertyId: Schema.optionalKey(FinancePropertyIdSchema),
@@ -420,7 +432,7 @@ export const RecordsResponseSchema = Schema.Struct({
     Schema.Struct({
       contentBase64: Schema.String,
       fileName: FinanceTextSchema,
-      id: FinanceTextSchema,
+      id: FinanceDocumentIdSchema,
       mimeType: FinanceTextSchema,
     }),
   ),

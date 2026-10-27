@@ -58,8 +58,8 @@ export const createSpiceDbPermissionClient = (
   };
 };
 
-export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClient, Error>(
+export const acquireSpiceDbClientResource = <Client extends CloseableSpiceDbClient, Failure>(
   acquire: () => Client,
-  onFailure: (cause: unknown) => Error,
-): Effect.Effect<Client, Error, Scope.Scope> =>
+  onFailure: (cause: unknown) => Failure,
+): Effect.Effect<Client, Failure, Scope.Scope> =>
   Effect.acquireRelease(Effect.try({ catch: onFailure, try: acquire }), (client) => Effect.sync(() => client.close()));

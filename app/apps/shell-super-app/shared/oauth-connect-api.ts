@@ -27,7 +27,10 @@ export const OAuthConnectForbiddenProblemSchema = makeProblemDetailsSchema('OAut
 export const OAuthConnectNotFoundProblemSchema = makeProblemDetailsSchema('OAuthConnectNotFoundProblem', 404, {
   code: Schema.String,
 });
-export const OAuthConnectUnavailableProblemSchema = makeRetryableProblemDetailsSchema('OAuthConnectUnavailableProblem', 503);
+export const OAuthConnectUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
+  'OAuthConnectUnavailableProblem',
+  503,
+);
 
 export type OAuthConnectInvalidProblem = typeof OAuthConnectInvalidProblemSchema.Type;
 export type OAuthConnectUnauthorizedProblem = typeof OAuthConnectUnauthorizedProblemSchema.Type;

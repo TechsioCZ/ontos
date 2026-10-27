@@ -19,6 +19,9 @@ import { resolveDuplicateCandidateCreate } from '../services/party-matching-pers
 import { createCreatePartyPartyRegistryPartyCreatedV1OutboxMessage } from './create-party.party-registry-party-created-v1.outbox-message.ts';
 
 export type { ResolveDuplicateCandidateCreatePayload } from '../../shared/actions/resolve-duplicate-candidate-create.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -45,8 +48,8 @@ const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(functio
     accessKind: 'read',
     queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.caseRef.resourceId,
     targetResourceType: result.caseRef.resourceType,
   });
@@ -59,8 +62,8 @@ const handle = Effect.fn('ResolveDuplicateCandidateCreateAction.handle')(functio
   const event = yield* context.addDomainEvent({
     eventType: 'party.registry.party-created.v1',
     payloadJson: { partyRef: result.partyRef },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.partyRef.resourceId,
     subjectResourceType: result.partyRef.resourceType,
   });
@@ -89,12 +92,12 @@ export const resolveDuplicateCandidateCreateAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-create',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: ResolveDuplicateCandidateCreatePayloadSchema,
     policies: [],
     resultSchema: ResolveDuplicateCandidateCreateResultSchema,

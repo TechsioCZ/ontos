@@ -225,7 +225,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
   return ports;
 });
 export const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
-  Effect.gen(function* resetSiamparkDemo() {
+  Effect.gen(function* resetDemo() {
     yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
       Config.withDefault('development'),
     );

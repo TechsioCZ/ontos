@@ -151,9 +151,7 @@ it.effect('the registered production factory fails closed without authoritative 
 it('declares finite Guest, Retail, and Counterparty authorization targets', () => {
   const plan = getReadConditionalPermissionPlan(commerceQuantityResolutionPermission);
   expect(commerceQuantityResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'GUEST', 'RETAIL']);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.RETAIL.requiredKinds).toEqual(['module', 'resource_read']);
-  expect(plan.branches.COUNTERPARTY.requiredKinds).toEqual(['module', 'resource_read']);
+  expect(plan.resolve(request, scope).requiredKinds).toEqual(['module']);
   expect(commerceQuantityGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
 
   const retailSubject = {
@@ -165,6 +163,23 @@ it('declares finite Guest, Retail, and Counterparty authorization targets', () =
       tenantId,
     },
   };
+  const retailRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+    ...request,
+    subject: retailSubject,
+  });
+  const counterpartyRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+    ...request,
+    subject: {
+      ...retailSubject,
+      kind: 'COUNTERPARTY',
+      profileRef: {
+        ...retailSubject.profileRef,
+        resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+      },
+    },
+  });
+  expect(plan.resolve(retailRequest, scope).requiredKinds).toEqual(['module', 'resource_read']);
+  expect(plan.resolve(counterpartyRequest, scope).requiredKinds).toEqual(['module', 'resource_read']);
   expect(
     commerceQuantityProfilePermissionTargets(
       Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({ ...request, subject: retailSubject }),

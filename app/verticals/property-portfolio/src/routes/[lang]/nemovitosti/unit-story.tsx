@@ -3,19 +3,20 @@ import type { executeRecords as readOccupancy } from '@app/property-leasing/clie
 import type { Task } from '@app/work-tasks/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
 import type { Effect } from 'effect';
 
 import type { RecordsResponse } from '../../../../shared/apis/records';
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
+type Translate = (key: string, options?: { readonly amount?: string; readonly date?: string }) => string;
 type Occupancies = Effect.Success<ReturnType<typeof readOccupancy>>;
 type Agreements = Effect.Success<ReturnType<typeof readAgreements>>;
 type Unit = RecordsResponse['units'][number];
 
 const K = 'property-portfolio.pages.records.unitStory';
 
-export type LeaseBlock = 'building' | 'outOfService' | 'retired';
+const LeaseBlockSchema = Schema.Literals(['building', 'outOfService', 'retired']);
+export type LeaseBlock = typeof LeaseBlockSchema.Type;
 const cardClass =
   'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
 const rowClass =
@@ -44,31 +45,31 @@ const formatDay = (value: string | null | undefined) =>
     : date.format(DateTime.toEpochMillis(DateTime.makeUnsafe(`${value}T00:00:00Z`)));
 
 /** Today's calendar date in Prague, used for unit availability instead of a fixed demo date. */
-export const pragueToday = () =>
-  new Intl.DateTimeFormat('sv-SE', {
-    day: '2-digit',
-    month: '2-digit',
-    timeZone: 'Europe/Prague',
-    year: 'numeric',
-  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+const pragueDate = new Intl.DateTimeFormat('sv-SE', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+export const pragueToday = () => pragueDate.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 
 /** Leases, contracts and service tasks of one unit, each linking to its owner's detail. */
 export const UnitStory = ({
   agreements,
-  leaseBlock,
   language,
+  leaseBlock,
   occupancy,
   t,
   tasks,
   unit,
 }: {
   readonly agreements: Agreements | undefined;
+  readonly language: string;
   /**
    * Why the unit cannot be let, or undefined when it can: retired or archived units, units out of service and units
    * of a building out of operation get no lease-creation link and never claim to be free to let.
    */
   readonly leaseBlock: LeaseBlock | undefined;
-  readonly language: string;
   readonly occupancy: Occupancies | undefined;
   readonly t: Translate;
   readonly tasks: readonly Task[] | undefined;

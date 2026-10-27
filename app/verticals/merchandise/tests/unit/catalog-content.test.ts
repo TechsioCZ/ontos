@@ -2,7 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
-import { CatalogCategorySchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
+import { CatalogCategorySchema, CategoryIdSchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
 import {
   assignCategory,
   categoryPathOf,
@@ -17,63 +17,64 @@ const input = { actor, now, resourceId: 'resource-1' };
 const at = '2026-10-19T08:00:00.000Z';
 
 const rootCategory = Schema.decodeUnknownSync(CatalogCategorySchema)({
-  id: 'r',
-  parentId: null,
-  name: 'Šrouby',
-  slug: 'srouby',
-  heading: 'Šrouby',
   description: '',
-  longDescription: '',
-  position: 1,
-  imageSrc: '',
-  imageAlt: '',
   hasChildren: true,
+  heading: 'Šrouby',
+  id: 'r',
+  imageAlt: '',
+  imageSrc: '',
+  longDescription: '',
+  name: 'Šrouby',
+  parentId: null,
+  position: 1,
+  slug: 'srouby',
 });
 const childCategory = Schema.decodeUnknownSync(CatalogCategorySchema)({
-  id: 'c',
-  parentId: 'r',
-  name: 'Metrické',
-  slug: 'metricke',
-  heading: 'Metrické',
   description: '',
-  longDescription: '',
-  position: 2,
-  imageSrc: '',
-  imageAlt: '',
   hasChildren: false,
+  heading: 'Metrické',
+  id: 'c',
+  imageAlt: '',
+  imageSrc: '',
+  longDescription: '',
+  name: 'Metrické',
+  parentId: 'r',
+  position: 2,
+  slug: 'metricke',
 });
 const categories = [rootCategory, childCategory];
+const categoryId = Schema.decodeSync(CategoryIdSchema);
 
 const rawP1 = {
-  id: 'p1',
-  categoryId: 'c',
-  category: 'Metrické',
-  name: 'Šroub',
-  sku: 'S1',
   active: true,
-  unit: 'ks',
-  vatRate: 21,
-  currentPriceMinor: 100,
-  lowStockThreshold: 0,
+  category: 'Metrické',
+  categoryId: 'c',
   createdAt: at,
-  updatedAt: at,
+  currentPriceMinor: 100,
+  id: 'p1',
+  lowStockThreshold: 0,
+  name: 'Šroub',
   priceHistory: [],
+  sku: 'S1',
+  unit: 'ks',
+  updatedAt: at,
+  vatRate: 21,
 };
 const p1 = Schema.decodeUnknownSync(ProductSchema)(rawP1);
 
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
-  orders: [],
+  categories: categories.map((category) => Schema.encodeSync(CatalogCategorySchema)(category)),
   movements: [],
-  categories,
+  orders: [],
   products: [rawP1],
 });
 
 it('categoryPathOf starts at the id and walks up to the root', () => {
-  expect(categoryPathOf(categories, 'c')).toEqual(['c', 'r']);
+  expect(categoryPathOf(categories, categoryId('c'))).toEqual(['c', 'r']);
 });
 
 it('contentChangeOf lists changed content fields with Czech labels', () => {
-  const change = contentChangeOf(p1, { ...p1, name: 'Šroub M8', isAction: true }, input);
+  const change = contentChangeOf(p1, { ...p1, isAction: true, name: 'Šroub M8' }, input);
   expect(change?.fields).toEqual(['Název', 'Akce']);
   expect(change?.before).toContain('Název: Šroub');
   expect(change?.after).toContain('Akce: ano');
@@ -85,11 +86,11 @@ it('contentChangeOf ignores non-content changes', () => {
 
 it('withContentHistory keeps at most 50 entries', () => {
   const history = Array.from({ length: 50 }, (_, index) => ({
-    at: now,
     actor,
-    fields: ['Název'],
-    before: `Název: ${index}`,
     after: `Název: ${index + 1}`,
+    at: now,
+    before: `Název: ${index}`,
+    fields: ['Název'],
   }));
   const before = { ...p1, contentHistory: history };
   const result = withContentHistory(before, { ...before, name: 'Nový šroub' }, input);
@@ -99,7 +100,7 @@ it('withContentHistory keeps at most 50 entries', () => {
 });
 
 it.effect('assignCategory moves the product to an existing category', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario1() {
     const moved = yield* assignCategory(p1, 'r', categories);
     expect(moved.categoryId).toBe('r');
     expect(moved.categoryPathIds).toEqual(['r']);
@@ -108,17 +109,17 @@ it.effect('assignCategory moves the product to an existing category', () =>
 );
 
 it.effect('assignCategory fails with a lifecycle conflict for an unknown category', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario2() {
     const error = yield* Effect.flip(assignCategory(p1, 'missing', categories));
     expect(Schema.is(MerchandiseLifecycleConflict)(error)).toBe(true);
   }),
 );
 
 it.effect('updateCategoryCommand updates the category, records history and renames products', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario3() {
     const change = yield* updateCategoryCommand(
       state,
-      { _tag: 'UpdateCategory', id: 'c', patch: { name: 'Metrické šrouby', position: 5 } },
+      { _tag: 'UpdateCategory', id: categoryId('c'), patch: { name: 'Metrické šrouby', position: 5 } },
       input,
     );
     const updated = change.state.categories?.find((category) => category.id === 'c');
@@ -132,10 +133,10 @@ it.effect('updateCategoryCommand updates the category, records history and renam
 );
 
 it.effect('updateCategoryCommand returns the state unchanged when nothing differs', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario4() {
     const change = yield* updateCategoryCommand(
       state,
-      { _tag: 'UpdateCategory', id: 'c', patch: { name: 'Metrické', position: 2 } },
+      { _tag: 'UpdateCategory', id: categoryId('c'), patch: { name: 'Metrické', position: 2 } },
       input,
     );
     expect(change.state).toBe(state);
@@ -143,9 +144,9 @@ it.effect('updateCategoryCommand returns the state unchanged when nothing differ
 );
 
 it.effect('updateCategoryCommand fails with not found for an unknown category', () =>
-  Effect.gen(function* () {
+  Effect.gen(function* merchandiseScenario5() {
     const error = yield* Effect.flip(
-      updateCategoryCommand(state, { _tag: 'UpdateCategory', id: 'missing', patch: { name: 'X' } }, input),
+      updateCategoryCommand(state, { _tag: 'UpdateCategory', id: categoryId('missing'), patch: { name: 'X' } }, input),
     );
     expect(Schema.is(MerchandiseNotFound)(error)).toBe(true);
   }),

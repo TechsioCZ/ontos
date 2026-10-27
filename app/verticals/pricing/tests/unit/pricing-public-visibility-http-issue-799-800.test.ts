@@ -67,10 +67,10 @@ const withPrivateCause = <Problem extends PublicProblem>(problem: Problem): Prob
 const makeRuntime = (response: Effect.Effect<CurrentPricingDecisionResponse, PublicProblem>) =>
   assembleEffectBffRuntime({
     api: CurrentPricingDecisionApi,
-    services: Layer.empty,
     handlers: HttpApiBuilder.group(CurrentPricingDecisionApi, 'currentPricingDecision', (handlers) =>
       handlers.handle('execute', () => response),
     ),
+    services: Layer.empty,
   });
 
 const requestFor = (payload: CurrentPricingDecisionRequest) =>

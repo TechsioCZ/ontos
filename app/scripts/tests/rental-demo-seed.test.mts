@@ -10,6 +10,7 @@ import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-cat
 import { seedAkrosStock } from '../demo/seed-akros-stock.mts';
 import { applyImportsCommand, ImportsCommandSchema } from '../../verticals/crm/shared/commands/imports.ts';
 import { CrmStateSchema, initialCrmState } from '../../verticals/crm/shared/domain/state.ts';
+import { orderDateText } from '../../verticals/crm/shared/domain/imports.ts';
 import { CrmViewerSchema } from '../../verticals/crm/shared/domain/access.ts';
 import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
 import { WorkforceStateSchema } from '../../verticals/workforce/shared/apis/records.ts';
@@ -725,7 +726,7 @@ it.effect('imports current-month orders through the native CRM reducer and creat
           expect(payload.expectedRevision).toBe(revision);
           const result = yield* applyImportsCommand(state, payload.command, {
             invocationId: `crm-seed-${revision}`,
-            now,
+            now: DateTime.makeUnsafe(now),
             viewer,
           });
           ({ state } = result);
@@ -744,7 +745,9 @@ it.effect('imports current-month orders through the native CRM reducer and creat
     expect(state.imports.customerLinks).toHaveLength(3);
     expect(state.imports.batches).toHaveLength(1);
     expect(state.imports.orders.every((order) => order.pairing === 'paired')).toBe(true);
-    expect(state.imports.orders.filter((order) => order.orderedAt?.startsWith('2026-10') === true)).toHaveLength(3);
+    expect(
+      state.imports.orders.filter((order) => orderDateText(order.orderedAt)?.startsWith('2026-10') === true),
+    ).toHaveLength(3);
     expect(state.imports.batches[0]?.rejected).toBe(0);
   }),
 );
@@ -807,7 +810,7 @@ it.effect('links four Hanák organizational employees through native workforce c
 
 it.effect('repairs every stock page through native updates and reruns without moving stock or writing again', () =>
   Effect.gen(function* paginatedStockRepair() {
-    const baseline = buildAkrosEncoded();
+    const baseline = yield* buildAkrosEncoded();
     const products = baseline.products.slice(0, 260).map((product) => ({ ...product, lowStockThreshold: 5 }));
     const ids = new Set(products.map((product) => product.id));
     let state = Schema.decodeUnknownSync(MerchandiseStateSchema)({

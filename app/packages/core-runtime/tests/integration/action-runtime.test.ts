@@ -181,8 +181,8 @@ const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
 };
 
-const withDatabase = <Value, Error, Requirements>(
-  execute: (database: ContextServiceContract) => Effect.Effect<Value, Error, Requirements>,
+const withDatabase = <Value, Failure, Requirements>(
+  execute: (database: ContextServiceContract) => Effect.Effect<Value, Failure, Requirements>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
@@ -540,7 +540,7 @@ const makeRegistration = ({
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const hasFailure = <Error>(exit: Exit.Exit<unknown, Error>, tag: string): boolean =>
+const hasFailure = <Failure>(exit: Exit.Exit<unknown, Failure>, tag: string): boolean =>
   Exit.isFailure(exit) && Option.exists(Cause.findErrorOption(exit.cause), Predicate.isTagged(tag));
 
 const testProgram1 = () =>

@@ -7,14 +7,14 @@ import type { PropertyRef } from '../../shared/domain/common.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 export interface PropertyOption {
+  readonly ref: PropertyRef;
   /** Select value: `<kind>:<id>`. */
   readonly value: string;
-  readonly ref: PropertyRef;
 }
 
 export type PropertyOptionsState =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
+  | { readonly error: Effect.Error<ReturnType<typeof executePropertyRecords>>; readonly status: 'failed' }
   | { readonly options: readonly PropertyOption[]; readonly status: 'ready' };
 
 const option = (kind: PropertyRef['kind'], id: string, label: string): PropertyOption => ({
@@ -30,7 +30,7 @@ export const usePropertyOptions = (): PropertyOptionsState => {
     void browserRuntime.runPromise(
       executePropertyRecords({}, 'facility-operations.property-options').pipe(
         Effect.match({
-          onFailure: (): PropertyOptionsState => ({ status: 'failed' }),
+          onFailure: (error): PropertyOptionsState => ({ error, status: 'failed' }),
           onSuccess: (response): PropertyOptionsState => {
             const names = new Map(response.properties.map((entry) => [entry.propertyRef.resourceId, entry.name]));
             return {
@@ -50,11 +50,13 @@ export const usePropertyOptions = (): PropertyOptionsState => {
             };
           },
         }),
-        Effect.map((next) => {
-          if (alive) {
-            setState(next);
-          }
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {

@@ -3,52 +3,59 @@
  * changes, the undo plan, whether the change is still in place and whether the person may write. Pronájmy has no
  * before -> after lines of its own. Pure; the read handler supplies the lease read as the person.
  */
-import { Function as EffectFunction, Match } from 'effect';
+import { Function as EffectFunction, Match, Option, Schema } from 'effect';
+import type { Types } from 'effect';
 import { agentRecordHolds } from '@app/shared-contracts/agent-diff';
 import type { AgentCommand, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
 import type { AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
 import { AGENT_REVERT_MISSING_BEFORE, agentRevertCommands, agentRevertNone } from '@app/shared-contracts/agent-revert';
 
-type Rec = Readonly<Record<string, unknown>>;
+type Rec = Schema.JsonObject;
+type CommandDraft = Partial<Types.Mutable<AgentCommand>>;
+type ReviewItemDraft = { -readonly [Key in keyof AgentReviewItem]: AgentReviewItem[Key] };
 
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(Schema.JsonObject);
 
 export const RENT_STATE_UNAVAILABLE = 'Změnu stavu nájmu nelze automaticky vrátit.';
 
 /** Resource id of the lease the command changes when it is one that is read live, undefined otherwise. */
 export const targetOccupancyId = (command: AgentCommand): string | undefined =>
-  Match.value(String(command['_tag'])).pipe(
+  Match.value(command['_tag']).pipe(
     Match.whenOr('SetRentTerms', 'UpdateDraft', () => {
       const ref = command['occupancyRef'];
-      return isRecord(ref) && typeof ref['resourceId'] === 'string' ? ref['resourceId'] : undefined;
+      return isRecord(ref)
+        ? Option.getOrUndefined(Schema.decodeUnknownOption(Schema.String)(ref['resourceId']))
+        : undefined;
     }),
     Match.orElse(EffectFunction.constUndefined),
   );
 
 export const occupancyRevert = (command: AgentCommand, before: Rec | undefined, tenantId: string): AgentRevertPlan => {
-  const occupancyRef = command['occupancyRef'];
+  const { occupancyRef } = command;
   return Match.value(command).pipe(
     Match.when({ _tag: 'SetRentTerms' }, () => {
-      const rentTerms = before?.['rentTerms'];
+      const { rentTerms } = before ?? {};
       return isRecord(rentTerms)
         ? agentRevertCommands([{ _tag: 'SetRentTerms', occupancyRef, rentTerms }])
         : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
     }),
     Match.when({ _tag: 'UpdateDraft' }, () => {
-      if (before === undefined || typeof before['startDate'] !== 'string') {
+      const startDate = Schema.decodeUnknownOption(Schema.String)(before?.['startDate']);
+      if (before === undefined || Option.isNone(startDate)) {
         return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       }
-      const rentTerms = before['rentTerms'];
-      return agentRevertCommands([
-        {
-          _tag: 'UpdateDraft',
-          endDate: before['endDate'] ?? null,
-          occupancyRef,
-          startDate: before['startDate'],
-          ...(isRecord(rentTerms) ? { rentTerms } : {}),
-        },
-      ]);
+      const { rentTerms } = before;
+      const restored: CommandDraft = {
+        _tag: 'UpdateDraft',
+        endDate: before['endDate'] ?? null,
+        occupancyRef,
+        startDate: startDate.value,
+      };
+      if (isRecord(rentTerms)) {
+        restored['rentTerms'] = rentTerms;
+      }
+      return agentRevertCommands([restored]);
     }),
     Match.when({ _tag: 'CreateDraft' }, () =>
       agentRevertCommands(
@@ -75,7 +82,7 @@ export const occupancyRevert = (command: AgentCommand, before: Rec | undefined, 
 
 /** Why „Vrátit vše“ will not undo the command once approved; undefined when Pronájmy declares an undo for it. */
 export const revertUnavailableReasonOf = (command: AgentCommand): string | undefined =>
-  Match.value(String(command['_tag'])).pipe(
+  Match.value(command['_tag']).pipe(
     Match.whenOr('SetRentTerms', 'UpdateDraft', 'CreateDraft', EffectFunction.constUndefined),
     Match.whenOr('Confirm', 'Activate', 'Complete', 'Cancel', () => RENT_STATE_UNAVAILABLE),
     Match.orElse(() => AGENT_REVERT_UNAVAILABLE),
@@ -117,19 +124,24 @@ export const reviewOccupancyProposal = ({
   if (stage === 'undo') {
     // Undo only over a lease read just now; a failed read leaves the change alone.
     const inPlace = occupancyStillInPlace(command, occupancy);
-    return {
-      key,
-      visible: !targeted || occupancy !== undefined,
-      ...(inPlace === undefined ? {} : { stillInPlace: inPlace }),
-    };
+    const review: ReviewItemDraft = { key, visible: !targeted || occupancy !== undefined };
+    if (inPlace !== undefined) {
+      review.stillInPlace = inPlace;
+    }
+    return review;
   }
   const missing = targeted && read !== undefined && occupancy === undefined;
   const reason = revertUnavailableReasonOf(command);
-  return {
+  const review: ReviewItemDraft = {
     key,
     revert: occupancyRevert(command, occupancy, tenantId),
     visible: !missing,
-    ...(read?.canWrite === false ? { blockedReason: 'V tomto modulu nemáte oprávnění k zápisu.' } : {}),
-    ...(reason === undefined ? {} : { revertUnavailableReason: reason }),
   };
+  if (read?.canWrite === false) {
+    review.blockedReason = 'V tomto modulu nemáte oprávnění k zápisu.';
+  }
+  if (reason !== undefined) {
+    review.revertUnavailableReason = reason;
+  }
+  return review;
 };

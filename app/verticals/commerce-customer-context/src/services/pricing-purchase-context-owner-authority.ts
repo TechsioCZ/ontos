@@ -89,12 +89,13 @@ export interface PricingPurchaseContextVerificationServices {
   ) => Effect.Effect<PricingPurchaseContextVerificationResponse>;
 }
 
+const pricingPurchaseContextVerificationServiceKey =
+  '@app/commerce-customer-context/services/pricing-purchase-context-owner-authority/PricingPurchaseContextVerification';
+
 export class PricingPurchaseContextVerification extends Context.Service<
   PricingPurchaseContextVerification,
   PricingPurchaseContextVerificationServices
->()(
-  '@app/commerce-customer-context/services/pricing-purchase-context-owner-authority/PricingPurchaseContextVerification',
-) {}
+>()(pricingPurchaseContextVerificationServiceKey) {}
 
 const sameSubject = Schema.toEquivalence(PurchaseCurrencySubjectSchema);
 const sameActor = Schema.toEquivalence(PricingPurchaseContextActorSchema);
@@ -254,16 +255,15 @@ export const makePricingPurchaseContextVerificationServices = (
               );
             }
             return Schema.decodeEffect(observationSchema, { onExcessProperty: 'error' })(observationOption.value).pipe(
-              Effect.matchEffect({
-                onFailure: () =>
-                  checkedResponse({
-                    outcome: 'PURCHASE_CONTEXT_UNVERIFIABLE',
-                    reason: 'Owner returned malformed Purchase Context authority evidence',
-                    request,
-                    retryable: true,
-                  }),
-                onSuccess: (observation) => classifyObservation(request, scope, observation),
-              }),
+              Effect.flatMap((observation) => classifyObservation(request, scope, observation)),
+              Effect.catchTag('SchemaError', () =>
+                checkedResponse({
+                  outcome: 'PURCHASE_CONTEXT_UNVERIFIABLE',
+                  reason: 'Owner returned malformed Purchase Context authority evidence',
+                  request,
+                  retryable: true,
+                }),
+              ),
             );
           },
         }),

@@ -1,11 +1,12 @@
-/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed view states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
+import { Effect, Option } from 'effect';
 // @effect-diagnostics globalDate:off -- Browser UI boundary: formats server timestamps for display. expires: 2027-03-31.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import type { ConnectionListResponse, ConnectionSummary } from '@app/shared-contracts/agent-access';
-import { type ReactNode, useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadMyConnections, revokeConnection } from './connected-apps-client.ts';
@@ -29,10 +30,10 @@ type ListView =
 
 const AppIdentity = ({ connection: c }: { readonly connection: ConnectionSummary }) => (
   <div className="flex min-w-0 items-center gap-150">
-    {c.client.logoUri === null ? (
+    {Option.isNone(c.client.logoUri) ? (
       <span aria-hidden className="icon-[mdi--application-outline] size-400 shrink-0 text-fg-secondary" />
     ) : (
-      <img alt="" className="size-400 shrink-0 rounded" src={c.client.logoUri} />
+      <img alt="" className="size-400 shrink-0 rounded" src={c.client.logoUri.value} />
     )}
     <div className="grid min-w-0 gap-50">
       <span className="font-medium">{c.client.name}</span>
@@ -52,7 +53,7 @@ const ActingText = ({ connection: c }: { readonly connection: ConnectionSummary 
   <div className="grid gap-50">
     <span>{actingLabel(c)}</span>
     {c.acting.kind === 'agent' ? (
-      <span className="text-fg-secondary text-xs">{`připojil(a) ${c.delegatedBy?.displayName ?? c.user.displayName}`}</span>
+      <span className="text-fg-secondary text-xs">{`připojil(a) ${Option.match(c.delegatedBy, { onNone: () => c.user.displayName, onSome: (person) => person.displayName })}`}</span>
     ) : null}
   </div>
 );
@@ -95,24 +96,30 @@ const RevokeDialog = ({
   readonly onStale: (notice: string) => void;
 }) => {
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | undefined>(undefined);
-  const name = connection.client.name;
+  const [failure, setFailure] = useState<string | undefined>();
+  const { name } = connection.client;
 
   const revoke = () => {
     setBusy(true);
     setFailure(undefined);
-    void browserRuntime.runPromise(revokeConnection({ grantId: connection.grantId })).then((outcome) => {
-      if (outcome.status === 'ok') {
-        onRevoked(name);
-        return;
-      }
-      if (isStale(outcome.reason)) {
-        onStale(failureText(outcome.reason, outcome.detail));
-        return;
-      }
-      setBusy(false);
-      setFailure(failureText(outcome.reason, outcome.detail));
-    });
+    browserRuntime.runFork(
+      revokeConnection({ grantId: connection.grantId }).pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            if (outcome.status === 'ok') {
+              onRevoked(name);
+              return;
+            }
+            if (isStale(outcome.reason)) {
+              onStale(failureText(outcome.reason, outcome.detail));
+              return;
+            }
+            setBusy(false);
+            setFailure(failureText(outcome.reason, outcome.detail));
+          }),
+        ),
+      ),
+    );
   };
 
   return (
@@ -152,22 +159,27 @@ const RevokeDialog = ({
 /** "Připojené aplikace" of the signed-in person: their AI connections, narrowing access, and disconnecting. */
 export const ConnectedAppsSection = () => {
   const [view, setView] = useState<ListView>({ status: 'loading' });
-  const [notice, setNotice] = useState<{ readonly text: string; readonly tone: 'success' | 'warning' } | undefined>(
-    undefined,
-  );
-  const [editing, setEditing] = useState<ConnectionSummary | undefined>(undefined);
-  const [revoking, setRevoking] = useState<ConnectionSummary | undefined>(undefined);
+  const [notice, setNotice] = useState<{ readonly text: string; readonly tone: 'success' | 'warning' } | undefined>();
+  const [editing, setEditing] = useState<ConnectionSummary | undefined>();
+  const [revoking, setRevoking] = useState<ConnectionSummary | undefined>();
 
-  const reload = (): Promise<void> =>
-    browserRuntime.runPromise(loadMyConnections).then((outcome) => {
-      setView(
-        outcome.status === 'ok'
-          ? { status: 'ready', value: outcome.value }
-          : { status: 'failed', text: failureText(outcome.reason, outcome.detail) },
-      );
-    });
+  const reload = () => {
+    browserRuntime.runFork(
+      loadMyConnections.pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() =>
+            setView(
+              outcome.status === 'ok'
+                ? { status: 'ready', value: outcome.value }
+                : { status: 'failed', text: failureText(outcome.reason, outcome.detail) },
+            ),
+          ),
+        ),
+      ),
+    );
+  };
   const loadOnMount = useEffectEvent(() => {
-    void reload();
+    reload();
   });
   useEffect(() => {
     loadOnMount();
@@ -240,7 +252,7 @@ export const ConnectedAppsSection = () => {
               </thead>
               <tbody>
                 {connections.map((c) => (
-                  <tr key={c.grantId} className="border-border-primary/60 border-b align-top">
+                  <tr className="border-border-primary/60 border-b align-top" key={c.grantId}>
                     <td className="py-150 pr-150">
                       <AppIdentity connection={c} />
                     </td>
@@ -267,7 +279,7 @@ export const ConnectedAppsSection = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li key={c.grantId} className="ontos-tile grid min-w-0 gap-150 rounded-md bg-surface p-200">
+              <li className="ontos-tile grid min-w-0 gap-150 rounded-md bg-surface p-200" key={c.grantId}>
                 <AppIdentity connection={c} />
                 <Field label="Firma">{c.legalName}</Field>
                 <Field label="Jako">
@@ -296,11 +308,11 @@ export const ConnectedAppsSection = () => {
           onClose={() => setEditing(undefined)}
           onSaved={(name) => {
             setNotice({ text: `Přístup pro ${name} je upravený.`, tone: 'success' });
-            void reload();
+            reload();
           }}
           onStale={(text) => {
             setNotice({ text: `${text} Seznam je znovu načtený.`, tone: 'warning' });
-            void reload();
+            reload();
           }}
         />
       )}
@@ -312,12 +324,12 @@ export const ConnectedAppsSection = () => {
           onRevoked={(name) => {
             setRevoking(undefined);
             setNotice({ text: `Aplikace ${name} je odpojená.`, tone: 'success' });
-            void reload();
+            reload();
           }}
           onStale={(text) => {
             setRevoking(undefined);
             setNotice({ text: `${text} Seznam je znovu načtený.`, tone: 'warning' });
-            void reload();
+            reload();
           }}
         />
       )}

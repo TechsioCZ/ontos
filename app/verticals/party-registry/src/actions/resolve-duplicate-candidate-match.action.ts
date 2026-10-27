@@ -30,6 +30,9 @@ import {
 import { OfficialIdentifierUpdatedEventSchema } from './update-party-official-identifier.action.ts';
 
 export type { ResolveDuplicateCandidateMatchPayload } from '../../shared/actions/resolve-duplicate-candidate-match.ts';
+
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const ErrorSchema = Schema.Union([
   ClaimOwnedByDifferentParty,
   DuplicateCandidateConflict,
@@ -63,8 +66,8 @@ const handle = Effect.fn('ResolveDuplicateCandidateMatchAction.handle')(function
     accessKind: 'read',
     queryHash: createHash('sha256').update(`duplicate-case-invariants:${payload.caseRef.resourceId}`).digest('hex'),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.caseRef.resourceId,
     targetResourceType: result.caseRef.resourceType,
   });
@@ -91,12 +94,12 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.resolve-duplicate-candidate-match',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: ResolveDuplicateCandidateMatchPayloadSchema,
     policies: [],
     resultSchema: ResolveDuplicateCandidateMatchResultSchema,

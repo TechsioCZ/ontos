@@ -1,97 +1,148 @@
-// @effect-diagnostics *:off
-import { describe, expect, it } from '@rstest/core';
-import { Effect, Redacted, Schema } from 'effect';
-import { makeCloudflareEmailDelivery } from '../../src/cloudflare.ts';
+import type { EmailMessage, EmailMessageBuilder } from '@cloudflare/workers-types';
+import { Context, Effect, Layer, Redacted, Schema } from 'effect';
+import { flow } from 'effect/Function';
+import { describe, expect, it, rs } from 'effect-rstest';
+import { CloudflareEmailDeliveryLive } from '../../src/cloudflare.ts';
+import type { CloudflareEmailBinding } from '../../src/cloudflare.ts';
 import {
   EmailDeliveryAcceptanceIndeterminate,
   EmailDeliveryInvalidMessage,
+  EmailDeliveryService,
   EmailDeliveryUnavailable,
 } from '../../src/server.ts';
-import type { CloudflareEmailBinding } from '../../src/cloudflare.ts';
+import type { EmailDeliveryServiceContract } from '../../src/server.ts';
 import { submitEmail } from '../../src/dispatcher/dispatch.ts';
 import type { PlannedEmail } from '../../src/dispatcher/contract.ts';
 import { AKROS_LEGAL_ENTITY_ID, SIAMPARK_LEGAL_ENTITY_ID } from '../../src/dispatcher/contract.ts';
 import { isUndeliverableRecipient } from '../../src/dispatcher/recipients.ts';
 import { agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
 
+type BindingRequest = EmailMessage | EmailMessageBuilder;
+type BindingReceipt = Awaited<ReturnType<CloudflareEmailBinding['send']>>;
 const from = 'AKROS e-shop <noreply@ontos-stage.bleeding.dev>';
 const message = {
-  to: 'customer@bleeding.dev',
+  html: Redacted.make('<p>Text</p>'),
   subject: 'Objednávka',
   text: Redacted.make('Text'),
-  html: Redacted.make('<p>Text</p>'),
+  to: 'customer@bleeding.dev',
 };
 const planned: PlannedEmail & { readonly from: string } = {
-  from,
   dedupeKey: 'order:1',
   event: 'ORDER_CREATED',
   eventAt: '2026-10-21T12:00:00Z',
   eventLabel: 'Přijetí objednávky',
+  from,
   html: '<p>Text</p>',
-  text: 'Text',
+  legalEntityId: AKROS_LEGAL_ENTITY_ID,
   recipient: message.to,
-  subject: message.subject,
   source: 'akros-order',
+  subject: message.subject,
   subjectId: 'order1',
   subjectNumber: 'OBJ-1',
   tenantId: 'tenant1',
-  legalEntityId: AKROS_LEGAL_ENTITY_ID,
+  text: 'Text',
 };
 
-it('submits exactly the Email Service payload and maps its messageId', async () => {
-  const requests: Parameters<CloudflareEmailBinding['send']>[0][] = [];
-  const service = makeCloudflareEmailDelivery(
+const requests: BindingRequest[] = [];
+it.layer(
+  CloudflareEmailDeliveryLive(
     {
-      send: async (request) => {
-        requests.push(request);
-        return { messageId: 'cf-123' };
-      },
+      send: flow(
+        (request: BindingRequest) => {
+          requests.push(request);
+        },
+        rs.fn<() => Promise<BindingReceipt>>().mockResolvedValue({ messageId: 'cf-123' }),
+      ),
     },
     from,
+  ),
+)((test) => {
+  test.effect('submits exactly the Email Service payload and maps its messageId', () =>
+    Effect.gen(function* bindingPayload() {
+      const service = yield* EmailDeliveryService;
+      expect(yield* service.send(message)).toEqual({ accepted: true, id: 'cf-123' });
+      expect(requests).toEqual([{ from, html: '<p>Text</p>', subject: message.subject, text: 'Text', to: message.to }]);
+    }),
   );
-  expect(await Effect.runPromise(service.send(message))).toEqual({ accepted: true, id: 'cf-123' });
-  expect(requests).toEqual([{ from, to: message.to, subject: message.subject, text: 'Text', html: '<p>Text</p>' }]);
 });
 
-it('does not claim success or retry when the binding throws', async () => {
-  let calls = 0;
-  const service = makeCloudflareEmailDelivery(
+let failingCalls = 0;
+it.layer(
+  CloudflareEmailDeliveryLive(
     {
-      send: async () => {
-        calls++;
-        throw new Error('private provider diagnostics');
-      },
+      send: flow(
+        () => {
+          failingCalls += 1;
+        },
+        rs.fn<() => Promise<BindingReceipt>>().mockRejectedValue(new Error('private provider diagnostics')),
+      ),
     },
     from,
+  ),
+)((test) => {
+  test.effect('does not claim success or retry when the binding throws', () =>
+    Effect.gen(function* bindingFailure() {
+      const service = yield* EmailDeliveryService;
+      const error = yield* Effect.flip(service.send(message));
+      expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
+      const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(error);
+      expect(encoded).not.toContain('private provider diagnostics');
+      expect(failingCalls).toBe(1);
+    }),
   );
-  const error = await Effect.runPromise(Effect.flip(service.send(message)));
-  expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
-  expect(JSON.stringify(error)).not.toContain('private provider diagnostics');
-  expect(calls).toBe(1);
 });
 
-it('treats a malformed receipt as ambiguous, never as acceptance', async () => {
-  const service = makeCloudflareEmailDelivery({ send: async () => ({ messageId: '' }) }, from);
-  const error = await Effect.runPromise(Effect.flip(service.send(message)));
-  expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
-});
-
-it('fails before submission for a missing binding or header injection', async () => {
-  const unavailable = await Effect.runPromise(Effect.flip(makeCloudflareEmailDelivery(undefined, from).send(message)));
-  expect(Schema.is(EmailDeliveryUnavailable)(unavailable)).toBe(true);
-  let calls = 0;
-  const service = makeCloudflareEmailDelivery(
+it.layer(
+  CloudflareEmailDeliveryLive(
     {
-      send: async () => {
-        calls++;
-        return { messageId: 'unexpected' };
-      },
+      send: rs.fn<() => Promise<BindingReceipt>>().mockResolvedValue({ messageId: '' }),
     },
     from,
+  ),
+)((test) => {
+  test.effect('treats a malformed receipt as ambiguous, never as acceptance', () =>
+    Effect.gen(function* malformedReceipt() {
+      const service = yield* EmailDeliveryService;
+      const error = yield* Effect.flip(service.send(message));
+      expect(Schema.is(EmailDeliveryAcceptanceIndeterminate)(error)).toBe(true);
+    }),
   );
-  const invalid = await Effect.runPromise(Effect.flip(service.send({ ...message, subject: 'bad\r\nSubject' })));
-  expect(Schema.is(EmailDeliveryInvalidMessage)(invalid)).toBe(true);
-  expect(calls).toBe(0);
+});
+
+class MissingBindingDelivery extends Context.Service<MissingBindingDelivery, EmailDeliveryServiceContract>()(
+  '@app/email-delivery/tests/unit/cloudflare.test/MissingBindingDelivery',
+) {}
+const missingBindingLayer = Layer.effect(MissingBindingDelivery, EmailDeliveryService).pipe(
+  Layer.provide(CloudflareEmailDeliveryLive(undefined, from)),
+);
+let invalidCalls = 0;
+it.layer(
+  Layer.merge(
+    missingBindingLayer,
+    CloudflareEmailDeliveryLive(
+      {
+        send: flow(
+          () => {
+            invalidCalls += 1;
+          },
+          rs.fn<() => Promise<BindingReceipt>>().mockResolvedValue({ messageId: 'unexpected' }),
+        ),
+      },
+      from,
+    ),
+  ),
+)((test) => {
+  test.effect('fails before submission for a missing binding or header injection', () =>
+    Effect.gen(function* preflightValidation() {
+      const unavailableService = yield* MissingBindingDelivery;
+      const unavailable = yield* Effect.flip(unavailableService.send(message));
+      expect(Schema.is(EmailDeliveryUnavailable)(unavailable)).toBe(true);
+      const service = yield* EmailDeliveryService;
+      const invalid = yield* Effect.flip(service.send({ ...message, subject: 'bad\r\nSubject' }));
+      expect(Schema.is(EmailDeliveryInvalidMessage)(invalid)).toBe(true);
+      expect(invalidCalls).toBe(0);
+    }),
+  );
 });
 
 describe('undeliverable recipients', () => {
@@ -108,39 +159,39 @@ describe('undeliverable recipients', () => {
     'a.local',
     'example.com',
   ]) {
-    it(`skips ${domain} without constructing or calling a transport`, async () => {
-      const outcome = await Effect.runPromise(
-        submitEmail(
+    it.effect(`skips ${domain} without constructing or calling a transport`, () =>
+      Effect.gen(function* skipFakeDomain() {
+        const outcome = yield* submitEmail(
           { ...planned, recipient: `person@${domain}` },
           {
-            kind: 'cloudflare',
-            provider: { configured: true, label: 'Cloudflare' },
-            makeDelivery: () => {
+            deliveryLayer: () => {
               throw new Error('must not submit fake recipients');
             },
+            kind: 'cloudflare',
+            provider: { configured: true, label: 'Cloudflare' },
           },
           {},
-        ),
-      );
-      expect(outcome).toEqual({ status: 'SKIPPED', errorTag: 'undeliverable_recipient' });
-    });
+        );
+        expect(outcome).toEqual({ errorTag: 'undeliverable_recipient', status: 'SKIPPED' });
+      }),
+    );
   }
-  it('skips seeded fake recipients on the local SMTP transport too', async () => {
-    const outcome = await Effect.runPromise(
-      submitEmail(
+  it.effect('skips seeded fake recipients on the local SMTP transport too', () =>
+    Effect.gen(function* skipFakeSmtp() {
+      const outcome = yield* submitEmail(
         { ...planned, recipient: 'person@demo.ontos' },
         {
-          kind: 'smtp',
-          provider: { configured: true, label: 'Mailpit' },
-          makeDelivery: () => {
+          deliveryLayer: () => {
             throw new Error('must not submit fake recipients');
           },
+          kind: 'smtp',
+          provider: { configured: true, label: 'Mailpit' },
         },
         {},
-      ),
-    );
-    expect(outcome).toEqual({ status: 'SKIPPED', errorTag: 'undeliverable_recipient' });
-  });
+      );
+      expect(outcome).toEqual({ errorTag: 'undeliverable_recipient', status: 'SKIPPED' });
+    }),
+  );
   it('normalizes suffixes without matching lookalike real domains or local-part test markers', () => {
     expect(isUndeliverableRecipient('PERSON@AKROS.DEMO')).toBe(true);
     expect(isUndeliverableRecipient('tester@notdemo.cz')).toBe(false);
@@ -148,43 +199,51 @@ describe('undeliverable recipients', () => {
     expect(isUndeliverableRecipient('real@extra.company', '.extra.company')).toBe(true);
     expect(isUndeliverableRecipient('real@bleeding.dev', '.extra.company')).toBe(false);
   });
-  it('sends documentation-domain recipients to the local SMTP capture, and real stage recipients to the binding', async () => {
-    for (const [kind, recipient] of [
-      ['smtp', 'person@example.com'],
-      ['cloudflare', message.to],
-    ] as const) {
-      let calls = 0;
-      const outcome = await Effect.runPromise(
-        submitEmail(
-          { ...planned, recipient },
-          {
-            kind,
-            provider: { configured: true, label: kind },
-            makeDelivery: () => ({
-              send: () => {
-                calls++;
-                return Effect.succeed({ accepted: true, id: 'accepted' });
+  it.effect(
+    'sends documentation-domain recipients to the local SMTP capture, and real stage recipients to the binding',
+    () =>
+      Effect.forEach(
+        [
+          ['smtp', 'person@example.com'],
+          ['cloudflare', message.to],
+        ] as const,
+        ([kind, recipient]) =>
+          Effect.gen(function* sendOneRuntime() {
+            let calls = 0;
+            const outcome = yield* submitEmail(
+              { ...planned, recipient },
+              {
+                deliveryLayer: () =>
+                  Layer.succeed(EmailDeliveryService, {
+                    send: () => {
+                      calls += 1;
+                      return Effect.succeed({ accepted: true, id: 'accepted' });
+                    },
+                  }),
+                kind,
+                provider: { configured: true, label: kind },
               },
-            }),
-          },
-          {},
-        ),
-      );
-      expect(outcome).toEqual({ status: 'SENT', messageId: 'accepted' });
-      expect(calls).toBe(1);
-    }
-  });
+              {},
+            );
+            expect(outcome).toEqual({ messageId: 'accepted', status: 'SENT' });
+            expect(calls).toBe(1);
+          }),
+        { concurrency: 1 },
+      ),
+  );
 });
 
-it('uses the single onboarded stage address even when company SMTP overrides exist', () => {
-  const env = {
-    ONTOS_EMAIL_FROM: 'noreply@ontos-stage.bleeding.dev',
-    AKROS_EMAIL_FROM: 'eshop@akros.demo',
-    SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@siampark.demo',
-  };
-  expect(senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'cloudflare')).toBe(from);
-  expect(agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Siampark' }, env, 'cloudflare')).toBe(
-    'Siampark – upozornění <noreply@ontos-stage.bleeding.dev>',
-  );
-  expect(senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'smtp')).toBe('eshop@akros.demo');
-});
+it.effect('uses the single onboarded stage address even when company SMTP overrides exist', () =>
+  Effect.gen(function* stageSender() {
+    const env = {
+      AKROS_EMAIL_FROM: 'eshop@akros.demo',
+      ONTOS_EMAIL_FROM: 'noreply@ontos-stage.bleeding.dev',
+      SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@siampark.demo',
+    };
+    expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'cloudflare')).toBe(from);
+    expect(
+      yield* agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Siampark' }, env, 'cloudflare'),
+    ).toBe('Siampark – upozornění <noreply@ontos-stage.bleeding.dev>');
+    expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'smtp')).toBe('eshop@akros.demo');
+  }),
+);

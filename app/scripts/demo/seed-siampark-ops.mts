@@ -4,7 +4,7 @@
  * Runs verticals/facility-operations/scripts/reset-demo.mts with the validated local environment. Local only.
  */
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Console, Effect, Exit, Layer, Path, Schema } from 'effect';
+import { ConfigProvider, Console, Effect, Exit, Path, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';

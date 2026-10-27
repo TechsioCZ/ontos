@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 
-import { Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
+import { loadModernConfigEvidence } from './modern-config-evidence-fixture.mts';
 
 // The development overlay's `ports` is the one local port map. Every other place that names a delivery
 // unit's local port (its dev server default, the Shell's federation remotes, the browser-test web servers,
@@ -90,14 +92,19 @@ it('names each unit only by its own port in the overlay and the reference topolo
   expect(mismatches).toEqual([]);
 });
 
-it('starts each vertical dev server on its overlay port', () => {
-  for (const vertical of verticals) {
-    const defaults = [...readText(`${vertical.path}/modern.config.ts`).matchAll(/defaultPort: (?<port>\d+),/gu)].map(
-      (match) => match.groups?.port,
-    );
-    expect(`${vertical.id} ${defaults.join(',')}`).toBe(`${vertical.id} ${portOf(vertical.id)}`);
-  }
-});
+it.live(
+  'starts each vertical dev server on its overlay port',
+  Effect.fn(function* checkVerticalDevPorts() {
+    const evidence = yield* loadModernConfigEvidence(
+      verticals.map((vertical) => `${vertical.path}/modern.config.ts`),
+      'dev',
+    ).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+    for (const vertical of verticals) {
+      const port = evidence[`${vertical.path}/modern.config.ts`]?.port;
+      expect(`${vertical.id} ${port}`).toBe(`${vertical.id} ${portOf(vertical.id)}`);
+    }
+  }),
+);
 
 it('starts the Shell and its browser tests on the Shell overlay port', () => {
   const shellPort = portOf(topology.shell.id);

@@ -49,6 +49,8 @@ import { createUpdatePartyOfficialIdentifierPartyRegistryOfficialIdentifierUpdat
 export { UpdatePartyOfficialIdentifierPayloadSchema } from '../../shared/actions/update-party-official-identifier.ts';
 export type { UpdatePartyOfficialIdentifierPayload } from '../../shared/actions/update-party-official-identifier.ts';
 
+const PARTY_REGISTRY_MODULE_ID = 'party.registry' as const;
+
 const PartyOfficialIdentifierNotFoundContract = Schema.TaggedStruct('PartyOfficialIdentifierNotFound', {
   code: Schema.Literal('party_official_identifier_not_found'),
   reason: Schema.String,
@@ -131,8 +133,8 @@ const handleUpdatePartyOfficialIdentifier = Effect.fn(
       .update(`identifier-update-invariants:${result.officialIdentifierRef.resourceId}`)
       .digest('hex'),
     resultCount: 1,
-    servingModuleKey: 'party.registry',
-    targetModuleKey: 'party.registry',
+    servingModuleKey: PARTY_REGISTRY_MODULE_ID,
+    targetModuleKey: PARTY_REGISTRY_MODULE_ID,
     targetResourceId: result.officialIdentifierRef.resourceId,
     targetResourceType: result.officialIdentifierRef.resourceType,
   });
@@ -147,8 +149,8 @@ const handleUpdatePartyOfficialIdentifier = Effect.fn(
       partyRef: result.partyRef,
       reason: payload.reason,
     },
-    producerModuleKey: 'party.registry',
-    subjectModuleKey: 'party.registry',
+    producerModuleKey: PARTY_REGISTRY_MODULE_ID,
+    subjectModuleKey: PARTY_REGISTRY_MODULE_ID,
     subjectResourceId: result.officialIdentifierRef.resourceId,
     subjectResourceType: result.officialIdentifierRef.resourceType,
   });
@@ -179,12 +181,12 @@ export const updatePartyOfficialIdentifierAction = defineAction(
         provisioning: 'tenant_membership_default',
       },
       entrypointKey: 'party.registry.update-party-official-identifier',
-      moduleKey: 'party.registry',
+      moduleKey: PARTY_REGISTRY_MODULE_ID,
       role: 'action',
     }),
     idempotency: 'required',
     legalEntityScope: 'optional',
-    owningModuleKey: 'party.registry',
+    owningModuleKey: PARTY_REGISTRY_MODULE_ID,
     payloadSchema: UpdatePartyOfficialIdentifierPayloadSchema,
     policies: [],
     resultSchema: UpdatePartyOfficialIdentifierResultSchema,

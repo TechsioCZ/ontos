@@ -110,7 +110,6 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
-  '@techsio/ui-kit': 'catalog:'
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.0-rc.117
@@ -129,6 +128,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # upstream: https://github.com/authzed/authzed-node (public generated v1 subpath exports)
   '@authzed/authzed-node@1.6.1': patches/@authzed__authzed-node@1.6.1.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/pull/210 (+ one Effect BFF dispatcher per Worker isolate)
   '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.0-ultramodern.28.patch
@@ -148,8 +148,15 @@ patchedDependencies:
   '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-ultramodern-create@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
+  # upstream: https://github.com/TechsioCZ/new-engine/tree/main/libs/ui
   # local until upstreamed to @techsio/ui-kit: label/translations props (Toaster, Combobox, DatePicker, Dialog,
   # DataTable row labels, Switch role), DatePicker label/aria-controls ids and Czech segment announcements
   '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
+  # upstream: https://github.com/oxc-project/oxc/tree/main/npm/oxlint
+  # Handle omitted optional AST children in the upstream CFG traverser.
+  oxlint@1.81.0: patches/oxlint@1.81.0.patch
+  # upstream: https://github.com/millionco/react-doctor/tree/main/packages/oxlint-plugin-react-doctor
+  # Require array evidence before suggesting Set membership; strings use substring matching.
+  oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch

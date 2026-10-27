@@ -11,6 +11,7 @@ import type { CustomerDirectory, CustomerEntry } from './customers-directory.ts'
 import { lineAmounts, sumAmounts } from './orders-model.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
+import type { NewOrderLine } from './orders-records.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
 import { OrderLineEditor, activeVariants, lineProduct } from './order-line-editor.tsx';
 import type { DraftLine, DraftLinePatch } from './order-line-editor.tsx';
@@ -116,17 +117,19 @@ export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, re
     if (!valid) {
       return;
     }
-    const lines = draft.lines.flatMap((line) =>
-      line.picked === null
-        ? []
-        : [
-            {
-              productId: line.picked.id,
-              quantity: line.quantity,
-              ...(line.variantId === null ? {} : { variantId: line.variantId }),
-            },
-          ],
-    );
+    const lines = draft.lines.flatMap((line) => {
+      if (line.picked === null) {
+        return [];
+      }
+      const next: { -readonly [Key in keyof NewOrderLine]: NewOrderLine[Key] } = {
+        productId: line.picked.id,
+        quantity: line.quantity,
+      };
+      if (line.variantId !== null) {
+        next.variantId = line.variantId;
+      }
+      return [next];
+    });
     setBusy(true);
     setServerError(null);
     void browserRuntime.runPromise(

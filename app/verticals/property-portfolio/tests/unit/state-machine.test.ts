@@ -76,38 +76,38 @@ it.effect('persists property operational metadata on creation and updates withou
       empty,
       {
         ...create,
+        lifecycleState: 'ACTIVE',
+        note: 'Areál u parku',
         propertyType: 'Administrativní budova',
         responsiblePerson: 'Jana Novotná',
-        note: 'Areál u parku',
-        lifecycleState: 'ACTIVE',
       },
       context,
     );
     const property = yield* Effect.fromNullishOr(created.state.properties[0]);
     expect(property).toMatchObject({
+      lifecycleState: 'ACTIVE',
+      note: 'Areál u parku',
       propertyType: 'Administrativní budova',
       responsiblePerson: 'Jana Novotná',
-      note: 'Areál u parku',
-      lifecycleState: 'ACTIVE',
     });
     const updated = yield* applyPropertyCommand(
       created.state,
       {
         _tag: 'UpdateProperty',
-        propertyRef: property.propertyRef,
-        name: property.name,
         address: property.address,
+        name: property.name,
         note: 'Nový správce areálu',
+        propertyRef: property.propertyRef,
         responsiblePerson: 'Petr Dvořák',
       },
       context,
     );
     expect(updated.state.properties[0]).toMatchObject({
+      lifecycleState: 'ACTIVE',
+      note: 'Nový správce areálu',
+      propertyRef: property.propertyRef,
       propertyType: 'Administrativní budova',
       responsiblePerson: 'Petr Dvořák',
-      note: 'Nový správce areálu',
-      lifecycleState: 'ACTIVE',
-      propertyRef: property.propertyRef,
     });
   }),
 );

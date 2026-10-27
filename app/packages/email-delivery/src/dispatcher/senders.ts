@@ -1,77 +1,99 @@
-// @effect-diagnostics *:off
-// Sender (From) of each e-mail: always the company the e-mail is about, configurable per company via env.
+// The company owns the sender identity; deployment settings may override its address.
+import { Config, ConfigProvider, Effect, Option, Schema } from 'effect';
+
+import type { EmailEnvironment } from '../transport-runtime.ts';
 import type { AgendaRecipientInput, PlannedEmail } from './contract.ts';
 import { AKROS_LEGAL_ENTITY_ID, OBCHODNI_FIRMA_LEGAL_ENTITY_ID, SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 import { companyDisplayName } from './templates.ts';
 
+const SenderOverrideKeySchema = Schema.Literals([
+  'AKROS_EMAIL_FROM',
+  'OBCHODNI_FIRMA_EMAIL_FROM',
+  'SIAMPARK_EMAIL_FROM',
+]);
 interface KnownSender {
   readonly defaultAddress: string;
   readonly displayName: string;
-  readonly envKey: string;
+  readonly envKey: typeof SenderOverrideKeySchema.Type;
 }
-
-/** Demo companies with their own sender. Any other company sends as „<legal name> – finanční oddělení“. */
-const knownSenders: Readonly<Record<string, KnownSender>> = {
-  [AKROS_LEGAL_ENTITY_ID]: {
-    defaultAddress: 'eshop@akros.demo',
-    displayName: 'AKROS e-shop',
-    envKey: 'AKROS_EMAIL_FROM',
-  },
-  [OBCHODNI_FIRMA_LEGAL_ENTITY_ID]: {
-    defaultAddress: 'ucetni@demo.ontos',
-    displayName: 'Obchodní firma – účtárna',
-    envKey: 'OBCHODNI_FIRMA_EMAIL_FROM',
-  },
-  [SIAMPARK_LEGAL_ENTITY_ID]: {
-    defaultAddress: 'finance@siampark.demo',
-    displayName: 'Siampark – finanční oddělení',
-    envKey: 'SIAMPARK_EMAIL_FROM',
-  },
-};
-
+const knownSenders = new Map<string, KnownSender>([
+  [
+    AKROS_LEGAL_ENTITY_ID,
+    { defaultAddress: 'eshop@akros.demo', displayName: 'AKROS e-shop', envKey: 'AKROS_EMAIL_FROM' },
+  ],
+  [
+    OBCHODNI_FIRMA_LEGAL_ENTITY_ID,
+    {
+      defaultAddress: 'ucetni@demo.ontos',
+      displayName: 'Obchodní firma – účtárna',
+      envKey: 'OBCHODNI_FIRMA_EMAIL_FROM',
+    },
+  ],
+  [
+    SIAMPARK_LEGAL_ENTITY_ID,
+    {
+      defaultAddress: 'finance@siampark.demo',
+      displayName: 'Siampark – finanční oddělení',
+      envKey: 'SIAMPARK_EMAIL_FROM',
+    },
+  ],
+]);
 const DEFAULT_FALLBACK_ADDRESS = 'oznameni@ontos.demo';
 
-/** `Name <a@b.cz>` or `a@b.cz` → `a@b.cz`; null when no address is present. */
+/** Extract a mailbox from a display-name address, retaining the original fallback behavior. */
 export const addressOf = (value: string): string | null => {
-  const match = /<([^<>\s]+@[^<>\s]+)>\s*$/u.exec(value) ?? /^\s*([^<>\s]+@[^<>\s]+)\s*$/u.exec(value);
-  return match?.[1] ?? null;
+  const match =
+    /<(?<address>[^<>\s]+@[^<>\s]+)>\s*$/u.exec(value) ?? /^\s*(?<address>[^<>\s]+@[^<>\s]+)\s*$/u.exec(value);
+  return match?.groups?.['address'] ?? null;
 };
 
-/**
- * Precedence: the company's own variable (AKROS_EMAIL_FROM, SIAMPARK_EMAIL_FROM, OBCHODNI_FIRMA_EMAIL_FROM) →
- * SMTP_FROM's address with the company's display name → the built-in demo address of the company.
- */
-export const senderFor = (
+/** Company override, then SMTP address with company display name, then the company's demo address. */
+export const senderFor = Effect.fn('EmailSender.senderFor')(function* companySender(
   planned: Pick<PlannedEmail, 'legalEntityId'>,
   legalName: string | null,
-  env: Readonly<Record<string, string | undefined>>,
+  environment: EmailEnvironment,
   transport: 'cloudflare' | 'smtp' = 'smtp',
-): string => {
-  const known = knownSenders[planned.legalEntityId];
-  if (transport === 'cloudflare') {
-    const name = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
-    return `${name} <${env['ONTOS_EMAIL_FROM'] ?? ''}>`;
-  }
-  const explicit = known === undefined ? undefined : env[known.envKey]?.trim();
-  if (explicit !== undefined && explicit !== '') return explicit;
+) {
+  const known = knownSenders.get(planned.legalEntityId);
   const displayName = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
-  const fallback = env['SMTP_FROM'] === undefined ? null : addressOf(env['SMTP_FROM']);
+  const provider = ConfigProvider.fromUnknown(environment);
+  if (transport === 'cloudflare') {
+    const from = yield* Config.String('ONTOS_EMAIL_FROM').pipe(Config.withDefault('')).parse(provider);
+    return `${displayName} <${from}>`;
+  }
+  if (known !== undefined) {
+    const explicit = yield* Config.schema(Schema.Trim, known.envKey).pipe(Config.option).parse(provider);
+    if (Option.isSome(explicit) && explicit.value !== '') {
+      return explicit.value;
+    }
+  }
+  const smtpFrom = yield* Config.String('SMTP_FROM').pipe(Config.option).parse(provider);
+  const fallback = Option.isSome(smtpFrom) ? addressOf(smtpFrom.value) : null;
   return `${displayName} <${fallback ?? known?.defaultAddress ?? DEFAULT_FALLBACK_ADDRESS}>`;
-};
+});
 
-/** Agenda notifications: „<company> – upozornění <address>“; SIAMPARK_AGENDA_EMAIL_FROM overrides it for Siampark. */
-export const agendaSenderFor = (
+/** Agenda notifications have a distinct company sender, with a Siampark-specific override. */
+export const agendaSenderFor = Effect.fn('EmailSender.agendaSenderFor')(function* agendaSender(
   person: Pick<AgendaRecipientInput, 'legalEntityId' | 'legalName'>,
-  env: Readonly<Record<string, string | undefined>>,
+  environment: EmailEnvironment,
   transport: 'cloudflare' | 'smtp' = 'smtp',
-): string => {
-  if (transport === 'cloudflare')
-    return `${companyDisplayName(person.legalName)} – upozornění <${env['ONTOS_EMAIL_FROM'] ?? ''}>`;
-  const explicit =
-    person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? env['SIAMPARK_AGENDA_EMAIL_FROM']?.trim() : undefined;
-  if (explicit !== undefined && explicit !== '') return explicit;
-  const fallback = env['SMTP_FROM'] === undefined ? null : addressOf(env['SMTP_FROM']);
+) {
+  const provider = ConfigProvider.fromUnknown(environment);
+  if (transport === 'cloudflare') {
+    const from = yield* Config.String('ONTOS_EMAIL_FROM').pipe(Config.withDefault('')).parse(provider);
+    return `${companyDisplayName(person.legalName)} – upozornění <${from}>`;
+  }
+  if (person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID) {
+    const explicit = yield* Config.schema(Schema.Trim, 'SIAMPARK_AGENDA_EMAIL_FROM')
+      .pipe(Config.option)
+      .parse(provider);
+    if (Option.isSome(explicit) && explicit.value !== '') {
+      return explicit.value;
+    }
+  }
+  const smtpFrom = yield* Config.String('SMTP_FROM').pipe(Config.option).parse(provider);
+  const fallback = Option.isSome(smtpFrom) ? addressOf(smtpFrom.value) : null;
   const defaultAddress =
     person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@siampark.demo' : DEFAULT_FALLBACK_ADDRESS;
   return `${companyDisplayName(person.legalName)} – upozornění <${fallback ?? defaultAddress}>`;
-};
+});

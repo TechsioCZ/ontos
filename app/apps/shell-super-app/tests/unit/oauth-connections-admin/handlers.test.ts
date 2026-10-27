@@ -1,5 +1,11 @@
+import {
+  AgentAccessClientIdSchema,
+  AgentAccessGrantIdSchema,
+  ConnectionSummarySchema,
+} from '@app/shared-contracts/agent-access';
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import type { ConnectionLimits, ConnectionSummary, PrincipalRef } from '@app/shared-contracts/agent-access';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { CompanyDirectoryPort } from '../../../api/oauth-connections-admin/company-directory.ts';
@@ -25,40 +31,47 @@ const companyB = { legalEntityId: 'company-b', legalName: 'Firma B' };
 const limits: ConnectionLimits = {
   maxWritePolicy: 'approval',
   modules: [
-    { label: 'Sklad', moduleId: 'warehouse', read: true, write: true },
-    { label: 'Účetnictví', moduleId: 'finance', read: true, write: false },
+    { label: 'Sklad', moduleId: AgentModuleKeySchema.make('warehouse'), read: true, write: true },
+    { label: 'Účetnictví', moduleId: AgentModuleKeySchema.make('finance'), read: true, write: false },
   ],
 };
 
-const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary => ({
-  acting: { displayName: 'Agent Sklad', kind: 'agent', principalId: 'agent-1' },
-  allModules: false,
-  client: { clientId: 'client-a', host: 'claude.ai', kind: 'cimd', logoUri: null, name: 'Claude' },
-  createdAt: '2026-10-01T10:00:00.000Z',
-  delegatedBy: { displayName: 'Jana Nováková', principalId: 'person-1' },
-  granted: {
-    modules: [
-      { access: 'write', moduleId: 'warehouse' },
-      { access: 'read', moduleId: 'finance' },
-    ],
+const summary = (overrides: Partial<typeof ConnectionSummarySchema.Encoded> = {}): ConnectionSummary =>
+  Schema.decodeUnknownSync(ConnectionSummarySchema)({
+    acting: { displayName: 'Agent Sklad', kind: 'agent', principalId: AgentPrincipalIdSchema.make('agent-1') },
+    allModules: false,
+    client: {
+      clientId: AgentAccessClientIdSchema.make('client-a'),
+      host: 'claude.ai',
+      kind: 'cimd',
+      logoUri: null,
+      name: 'Claude',
+    },
+    createdAt: '2026-10-01T10:00:00.000Z',
+    delegatedBy: { displayName: 'Jana Nováková', principalId: AgentPrincipalIdSchema.make('person-1') },
+    granted: {
+      modules: [
+        { access: 'write', moduleId: AgentModuleKeySchema.make('warehouse') },
+        { access: 'read', moduleId: AgentModuleKeySchema.make('finance') },
+      ],
+      writePolicy: 'approval',
+    },
+    grantId: AgentAccessGrantIdSchema.make('g1'),
+    lastUsedAt: null,
+    legalEntityId: companyA.legalEntityId,
+    legalName: companyA.legalName,
+    limits,
+    modules: [],
+    profileId: 'profile-1',
+    revokedAt: null,
+    revokeNote: null,
+    revokeReason: null,
+    status: 'active',
+    tenantId,
+    user: { displayName: 'Jana Nováková', principalId: AgentPrincipalIdSchema.make('person-1') },
     writePolicy: 'approval',
-  },
-  grantId: 'g1',
-  lastUsedAt: null,
-  legalEntityId: companyA.legalEntityId,
-  legalName: companyA.legalName,
-  limits,
-  modules: [],
-  profileId: 'profile-1',
-  revokedAt: null,
-  revokeNote: null,
-  revokeReason: null,
-  status: 'active',
-  tenantId,
-  user: { displayName: 'Jana Nováková', principalId: 'person-1' },
-  writePolicy: 'approval',
-  ...overrides,
-});
+    ...overrides,
+  });
 
 type Person = PrincipalRef & { readonly legalEntityId: string };
 type Agent = CompanyAgent & { readonly legalEntityId: string };
@@ -74,8 +87,13 @@ const caller = (overrides: Partial<ConnectionsCaller>): ConnectionsCaller => ({
   isCompanyAdmin: false,
   legalEntityId: companyA.legalEntityId,
   legalName: companyA.legalName,
-  principal: { authMethod: 'session', legalEntityId: companyA.legalEntityId, principalId: 'person-1', tenantId },
-  principalId: 'person-1',
+  principal: {
+    authMethod: 'session',
+    legalEntityId: companyA.legalEntityId,
+    principalId: AgentPrincipalIdSchema.make('person-1'),
+    tenantId,
+  },
+  principalId: AgentPrincipalIdSchema.make('person-1'),
   tenantId,
   ...overrides,
 });
@@ -87,9 +105,9 @@ const fixture = (): Fixture => ({
       displayName: 'Agent Sklad',
       hasProfile: false,
       legalEntityId: companyA.legalEntityId,
-      modules: [{ access: 'read', moduleId: 'warehouse' }],
+      modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('warehouse') }],
       ownerPrincipalId: null,
-      principalId: 'agent-1',
+      principalId: AgentPrincipalIdSchema.make('agent-1'),
       status: 'active',
       writePolicy: 'approval',
     },
@@ -98,9 +116,9 @@ const fixture = (): Fixture => ({
       displayName: 'Agent Účet',
       hasProfile: false,
       legalEntityId: companyA.legalEntityId,
-      modules: [{ access: 'read', moduleId: 'finance' }],
+      modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('finance') }],
       ownerPrincipalId: null,
-      principalId: 'agent-2',
+      principalId: AgentPrincipalIdSchema.make('agent-2'),
       status: 'active',
       writePolicy: 'direct',
     },
@@ -111,33 +129,45 @@ const fixture = (): Fixture => ({
       legalEntityId: companyB.legalEntityId,
       modules: [],
       ownerPrincipalId: null,
-      principalId: 'agent-b',
+      principalId: AgentPrincipalIdSchema.make('agent-b'),
       status: 'active',
       writePolicy: 'read_only',
     },
   ],
   connections: [
-    summary({ grantId: 'g1' }),
-    summary({ grantId: 'g2', revokedAt: '2026-10-02T10:00:00.000Z', status: 'revoked' }),
+    summary({ grantId: AgentAccessGrantIdSchema.make('g1') }),
+    summary({ grantId: AgentAccessGrantIdSchema.make('g2'), revokedAt: '2026-10-02T10:00:00.000Z', status: 'revoked' }),
     summary({
-      acting: { displayName: 'Agent Účet', kind: 'agent', principalId: 'agent-2' },
-      delegatedBy: { displayName: 'Petr Svoboda', principalId: 'person-2' },
-      grantId: 'g3',
-      user: { displayName: 'Petr Svoboda', principalId: 'person-2' },
+      acting: { displayName: 'Agent Účet', kind: 'agent', principalId: AgentPrincipalIdSchema.make('agent-2') },
+      delegatedBy: { displayName: 'Petr Svoboda', principalId: AgentPrincipalIdSchema.make('person-2') },
+      grantId: AgentAccessGrantIdSchema.make('g3'),
+      user: { displayName: 'Petr Svoboda', principalId: AgentPrincipalIdSchema.make('person-2') },
       writePolicy: 'direct',
     }),
     summary({
-      grantId: 'g4',
+      grantId: AgentAccessGrantIdSchema.make('g4'),
       legalEntityId: companyB.legalEntityId,
       legalName: companyB.legalName,
-      user: { displayName: 'Karel Černý', principalId: 'person-3' },
+      user: { displayName: 'Karel Černý', principalId: AgentPrincipalIdSchema.make('person-3') },
     }),
   ],
   operators: { 'agent-1': ['person-1'], 'agent-2': [] },
   people: [
-    { displayName: 'Jana Nováková', legalEntityId: companyA.legalEntityId, principalId: 'person-1' },
-    { displayName: 'Petr Svoboda', legalEntityId: companyA.legalEntityId, principalId: 'person-2' },
-    { displayName: 'Karel Černý', legalEntityId: companyB.legalEntityId, principalId: 'person-3' },
+    {
+      displayName: 'Jana Nováková',
+      legalEntityId: companyA.legalEntityId,
+      principalId: AgentPrincipalIdSchema.make('person-1'),
+    },
+    {
+      displayName: 'Petr Svoboda',
+      legalEntityId: companyA.legalEntityId,
+      principalId: AgentPrincipalIdSchema.make('person-2'),
+    },
+    {
+      displayName: 'Karel Černý',
+      legalEntityId: companyB.legalEntityId,
+      principalId: AgentPrincipalIdSchema.make('person-3'),
+    },
   ],
 });
 
@@ -211,8 +241,8 @@ const narrowing = (
   overrides: Partial<Parameters<typeof updateConnection>[2]> = {},
 ): Parameters<typeof updateConnection>[2] => ({
   allModules: false,
-  grantId: 'g1',
-  modules: [{ access: 'read', moduleId: 'warehouse' }],
+  grantId: AgentAccessGrantIdSchema.make('g1'),
+  modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('warehouse') }],
   writePolicy: 'read_only',
   ...overrides,
 });
@@ -251,7 +281,11 @@ it.effect('rejects a write on a module the connection may only read', () =>
     const state = fixture();
     const { calls, deps } = makeDeps(state);
     const error = yield* Effect.flip(
-      updateConnection(caller({}), deps, narrowing({ modules: [{ access: 'write', moduleId: 'finance' }] })),
+      updateConnection(
+        caller({}),
+        deps,
+        narrowing({ modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('finance') }] }),
+      ),
     );
     expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     expect(calls.updates.length).toBe(0);
@@ -270,7 +304,9 @@ it.effect('rejects a write policy above the connection maximum', () =>
 it.effect('refuses to update a connection of another person', () =>
   Effect.gen(function* otherPersonUpdateTest() {
     const { calls, deps } = makeDeps(fixture());
-    const error = yield* Effect.flip(updateConnection(caller({ principalId: 'person-2' }), deps, narrowing()));
+    const error = yield* Effect.flip(
+      updateConnection(caller({ principalId: AgentPrincipalIdSchema.make('person-2') }), deps, narrowing()),
+    );
     expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
     expect(calls.updates.length).toBe(0);
   }),
@@ -286,7 +322,7 @@ it.effect('keeps "Vše" when the connection was approved for everything', () =>
       deps,
       narrowing({ allModules: true, modules: [], writePolicy: 'read_only' }),
     );
-    expect(response).toEqual({ grantId: 'g1', status: 'active' });
+    expect(response).toEqual({ grantId: AgentAccessGrantIdSchema.make('g1'), status: 'active' });
     expect(calls.updates.length).toBe(1);
     expect(calls.updates[0]?.modules).toBe('all');
     expect(calls.updates[0]?.writePolicy).toBe('read_only');
@@ -297,14 +333,17 @@ it.effect('refuses to widen a connection beyond what was approved, even within l
   Effect.gen(function* wideningTest() {
     const state = fixture();
     state.connections[0] = summary({
-      granted: { modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'read_only' },
+      granted: {
+        modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('warehouse') }],
+        writePolicy: 'read_only',
+      },
     });
     const { calls, deps } = makeDeps(state);
     const attempts = [
       narrowing({ writePolicy: 'approval' }),
       narrowing({ allModules: true, modules: [] }),
-      narrowing({ modules: [{ access: 'write', moduleId: 'warehouse' }] }),
-      narrowing({ modules: [{ access: 'read', moduleId: 'finance' }] }),
+      narrowing({ modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('warehouse') }] }),
+      narrowing({ modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('finance') }] }),
     ];
     for (const attempt of attempts) {
       const error = yield* Effect.flip(updateConnection(caller({}), deps, attempt));
@@ -319,8 +358,12 @@ it.effect('refuses to widen a connection beyond what was approved, even within l
 it.effect('answers an absent Option with ConnectionsNotFound without updating or revoking', () =>
   Effect.gen(function* absentConnectionTest() {
     const { calls, deps } = makeDeps(fixture());
-    const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ grantId: 'missing' })));
-    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'missing' }));
+    const update = yield* Effect.flip(
+      updateConnection(caller({}), deps, narrowing({ grantId: AgentAccessGrantIdSchema.make('missing') })),
+    );
+    const revoke = yield* Effect.flip(
+      revokeConnection(caller({}), deps, { grantId: AgentAccessGrantIdSchema.make('missing') }),
+    );
     expect(Predicate.isTagged(update, 'ConnectionsNotFound')).toBe(true);
     expect(Predicate.isTagged(revoke, 'ConnectionsNotFound')).toBe(true);
     expect(calls.updates).toEqual([]);
@@ -334,7 +377,9 @@ it.effect('hides a present connection belonging to another tenant', () =>
     state.connections[0] = summary({ tenantId: 'another-tenant' });
     const { calls, deps } = makeDeps(state);
     const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing()));
-    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g1' }));
+    const revoke = yield* Effect.flip(
+      revokeConnection(caller({}), deps, { grantId: AgentAccessGrantIdSchema.make('g1') }),
+    );
     expect(Predicate.isTagged(update, 'ConnectionsNotFound')).toBe(true);
     expect(Predicate.isTagged(revoke, 'ConnectionsNotFound')).toBe(true);
     expect(calls.updates).toEqual([]);
@@ -345,9 +390,13 @@ it.effect('hides a present connection belonging to another tenant', () =>
 it.effect('answers a stale update or revoke with ConnectionsGone', () =>
   Effect.gen(function* staleTest() {
     const { calls, deps } = makeDeps(fixture());
-    const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ grantId: 'g2' })));
+    const update = yield* Effect.flip(
+      updateConnection(caller({}), deps, narrowing({ grantId: AgentAccessGrantIdSchema.make('g2') })),
+    );
     expect(Predicate.isTagged(update, 'ConnectionsGone')).toBe(true);
-    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g2' }));
+    const revoke = yield* Effect.flip(
+      revokeConnection(caller({}), deps, { grantId: AgentAccessGrantIdSchema.make('g2') }),
+    );
     expect(Predicate.isTagged(revoke, 'ConnectionsGone')).toBe(true);
     expect(calls.updates.length + calls.revokes.length).toBe(0);
   }),
@@ -356,7 +405,9 @@ it.effect('answers a stale update or revoke with ConnectionsGone', () =>
 it.effect('rejects an over-long revoke reason and an unknown status filter with Czech messages', () =>
   Effect.gen(function* validationTest() {
     const { calls, deps } = makeDeps(fixture());
-    const long = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g1', reason: 'x'.repeat(501) }));
+    const long = yield* Effect.flip(
+      revokeConnection(caller({}), deps, { grantId: AgentAccessGrantIdSchema.make('g1'), reason: 'x'.repeat(501) }),
+    );
     expect(Predicate.isTagged(long, 'ConnectionsInvalid')).toBe(true);
     expect(calls.revokes.length).toBe(0);
     const status = yield* Effect.flip(
@@ -375,10 +426,10 @@ it.effect('keeps a company B admin from revoking a company A connection', () =>
           isCompanyAdmin: true,
           legalEntityId: companyB.legalEntityId,
           legalName: companyB.legalName,
-          principalId: 'person-3',
+          principalId: AgentPrincipalIdSchema.make('person-3'),
         }),
         deps,
-        { grantId: 'g1', reason: 'Odebrání přístupu' },
+        { grantId: AgentAccessGrantIdSchema.make('g1'), reason: 'Odebrání přístupu' },
       ),
     );
     expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
@@ -391,16 +442,22 @@ it.effect('requires a reason when an admin revokes someone else connection', () 
     const state = fixture();
     const { calls, deps } = makeDeps(state);
     const error = yield* Effect.flip(
-      revokeConnection(caller({ isCompanyAdmin: true, principalId: 'person-4' }), deps, { grantId: 'g3' }),
+      revokeConnection(caller({ isCompanyAdmin: true, principalId: AgentPrincipalIdSchema.make('person-4') }), deps, {
+        grantId: AgentAccessGrantIdSchema.make('g3'),
+      }),
     );
     expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
     expect(calls.revokes.length).toBe(0);
 
-    const response = yield* revokeConnection(caller({ isCompanyAdmin: true, principalId: 'person-4' }), deps, {
-      grantId: 'g3',
-      reason: '  Odchod z firmy  ',
-    });
-    expect(response).toEqual({ grantId: 'g3', status: 'revoked' });
+    const response = yield* revokeConnection(
+      caller({ isCompanyAdmin: true, principalId: AgentPrincipalIdSchema.make('person-4') }),
+      deps,
+      {
+        grantId: AgentAccessGrantIdSchema.make('g3'),
+        reason: '  Odchod z firmy  ',
+      },
+    );
+    expect(response).toEqual({ grantId: AgentAccessGrantIdSchema.make('g3'), status: 'revoked' });
     expect(calls.revokes[0]?.reasonCode).toBe('admin');
     expect(calls.revokes[0]?.reasonText).toBe('Odchod z firmy');
   }),
@@ -409,8 +466,11 @@ it.effect('requires a reason when an admin revokes someone else connection', () 
 it.effect('records a self-service revoke as reason user', () =>
   Effect.gen(function* ownerRevokeTest() {
     const { calls, deps } = makeDeps(fixture());
-    const response = yield* revokeConnection(caller({}), deps, { grantId: 'g1', reason: 'user' });
-    expect(response).toEqual({ grantId: 'g1', status: 'revoked' });
+    const response = yield* revokeConnection(caller({}), deps, {
+      grantId: AgentAccessGrantIdSchema.make('g1'),
+      reason: 'user',
+    });
+    expect(response).toEqual({ grantId: AgentAccessGrantIdSchema.make('g1'), status: 'revoked' });
     expect(calls.revokes[0]?.reasonCode).toBe('user');
     expect(calls.revokes[0]?.reasonText).toBe(null);
   }),
@@ -420,7 +480,10 @@ it.effect('refuses operator changes to a person who is not a company admin', () 
   Effect.gen(function* operatorForbiddenTest() {
     const { deps } = makeDeps(fixture());
     const error = yield* Effect.flip(
-      replaceAgentOperators(caller({}), deps, { agentPrincipalId: 'agent-1', operatorPrincipalIds: [] }),
+      replaceAgentOperators(caller({}), deps, {
+        agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
+        operatorPrincipalIds: [],
+      }),
     );
     expect(Predicate.isTagged(error, 'ConnectionsForbidden')).toBe(true);
   }),
@@ -431,7 +494,7 @@ it.effect('does not find an agent of another company', () =>
     const { deps } = makeDeps(fixture());
     const error = yield* Effect.flip(
       replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
-        agentPrincipalId: 'agent-b',
+        agentPrincipalId: AgentPrincipalIdSchema.make('agent-b'),
         operatorPrincipalIds: [],
       }),
     );
@@ -444,8 +507,8 @@ it.effect('rejects an operator from another company', () =>
     const { deps } = makeDeps(fixture());
     const error = yield* Effect.flip(
       replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
-        agentPrincipalId: 'agent-1',
-        operatorPrincipalIds: ['person-3'],
+        agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
+        operatorPrincipalIds: ['person-3'].map((id) => AgentPrincipalIdSchema.make(id)),
       }),
     );
     expect(Predicate.isTagged(error, 'ConnectionsInvalid')).toBe(true);
@@ -456,8 +519,8 @@ it.effect('revokes the delegated connection of a removed operator', () =>
   Effect.gen(function* removedOperatorTest() {
     const { calls, deps } = makeDeps(fixture());
     const response = yield* replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
-      agentPrincipalId: 'agent-1',
-      operatorPrincipalIds: ['person-2', 'person-2'],
+      agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
+      operatorPrincipalIds: ['person-2', 'person-2'].map((id) => AgentPrincipalIdSchema.make(id)),
     });
     expect(response.operators.map((person) => person.principalId)).toEqual(['person-2']);
     expect(response.revokedConnections).toBe(1);
@@ -477,8 +540,8 @@ it.effect('finishes removed-delegator revocation after a previously committed op
     state.operators['agent-1'] = ['person-2'];
     const { calls, deps } = makeDeps(state);
     yield* replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
-      agentPrincipalId: 'agent-1',
-      operatorPrincipalIds: ['person-2'],
+      agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
+      operatorPrincipalIds: ['person-2'].map((id) => AgentPrincipalIdSchema.make(id)),
     });
     expect(calls.revokes.map(({ grantId }) => grantId)).toEqual(['g1']);
     expect(calls.snapshots).toBe(1);
@@ -496,7 +559,7 @@ it.effect('rejects inactive agents before operator changes or connection revocat
     const { calls, deps } = makeDeps(state);
     const error = yield* Effect.flip(
       replaceAgentOperators(caller({ isCompanyAdmin: true }), deps, {
-        agentPrincipalId: 'agent-1',
+        agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
         operatorPrincipalIds: [],
       }),
     );
@@ -518,7 +581,7 @@ it.effect('does not revoke connections or report success before operator project
     };
     const error = yield* Effect.flip(
       replaceAgentOperators(caller({ isCompanyAdmin: true }), failing, {
-        agentPrincipalId: 'agent-1',
+        agentPrincipalId: AgentPrincipalIdSchema.make('agent-1'),
         operatorPrincipalIds: [],
       }),
     );

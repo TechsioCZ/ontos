@@ -21,7 +21,6 @@ import { RecordsForbiddenProblemSchema as InvoiceForbiddenSchema } from '@app/fi
 import { executeApplyCommandWithAuthorization as executeOccupancyCommand } from '@app/property-leasing/api/client';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
 import { ApplyCommandPayloadSchema as OccupancyPayloadSchema } from '@app/property-leasing/contracts/apply-command';
-import type { OccupancyCommand } from '@app/property-leasing/contracts/apply-command';
 import { OccupancySchema } from '@app/property-leasing/contracts/records';
 import { executeRecordsWithAuthorization as readProperties } from '@app/property-portfolio/clients/records';
 import { executeApplyCommandWithAuthorization as executeActivityCommand } from '@app/crm-activities/clients/apply-command';
@@ -118,6 +117,8 @@ type LiveHttpFailure = Effect.Error<
     | typeof readProperties
     | typeof readCounterparty
     | typeof searchCounterparties
+    | typeof prepareGoldenLease
+    | typeof executeGoldenInvoice
   >
 >;
 // Native transport errors carry request headers; failure output must never expose assertions or cookies.
@@ -185,7 +186,7 @@ const applyAgreementCommand = Effect.fn('SiamparkLiveHttp.applyAgreementCommand'
 const applyOccupancyCommand = Effect.fn('SiamparkLiveHttp.applyOccupancyCommand')(function* occupancyAction(
   session: LiveSession,
   expectedRevision: number,
-  command: OccupancyCommand,
+  command: (typeof OccupancyPayloadSchema.Encoded)['command'],
 ) {
   const payload = yield* Schema.decodeEffect(OccupancyPayloadSchema)({ command, expectedRevision });
   const providers = yield* referenceCredentials(session, [

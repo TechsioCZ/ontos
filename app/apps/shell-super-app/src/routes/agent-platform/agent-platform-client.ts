@@ -3,7 +3,7 @@
  * the shell origin, so the session cookie authenticates every call; the shell resolves the company and the module
  * permissions of the approving person.
  */
-import { DateTime, Effect, Option, Random, Result, Schema } from 'effect';
+import { DateTime, Effect, Random, Result, Schema } from 'effect';
 import { HttpBody, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import {
@@ -65,10 +65,10 @@ const failureMessage = (text: string): string =>
     onSuccess: (body) => body.detail,
   });
 
-const post = Effect.fn('AgentPlatform.post')(function* post<Request, ResponseBody>(
+const post = Effect.fn('AgentPlatform.post')(function* post<Request, RequestEncoded, ResponseBody>(
   path: string,
   body: Request,
-  requestSchema: Schema.Codec<Request>,
+  requestSchema: Schema.Codec<Request, RequestEncoded>,
   responseSchema: Schema.Codec<ResponseBody, unknown>,
   idempotencyKey?: string,
 ): Effect.fn.Return<AgentPlatformResult<ResponseBody>, never, HttpClient.HttpClient> {
@@ -118,8 +118,4 @@ export const loadAgentActivity = (request: AgentActivityRequest) =>
   browserRuntime.runPromise(post('/activity', request, AgentActivityRequestSchema, AgentActivityResponseSchema));
 
 const agentTimeFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' });
-export const formatAgentTime = (iso: string): string =>
-  Option.match(DateTime.make(iso), {
-    onNone: () => iso,
-    onSome: (time) => agentTimeFormat.format(DateTime.toEpochMillis(time)),
-  });
+export const formatAgentTime = (time: DateTime.Utc): string => agentTimeFormat.format(DateTime.toEpochMillis(time));

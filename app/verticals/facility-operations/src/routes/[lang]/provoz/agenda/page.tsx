@@ -1,8 +1,11 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
 // Facility operations — Moje agenda (S13). OWNED BY THE `agenda` LANE (ops-agenda).
 // Tabs: shared calendar (month/week/list, read from source modules), Moje agenda (per person), notification centre
 // (deduplicated in-app notices), settings + export log.
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
+import { Effect, Option, Schema, SchemaGetter } from 'effect';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import type { Notification } from '../../../../../shared/domain/agenda.ts';
 import { AgendaPeopleContext } from '../../../../ui/ops-agenda/agenda-people.tsx';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -10,174 +13,289 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { DEFAULT_LEAD_DAYS } from '../../../../../shared/domain/agenda.ts';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { notificationCandidates, taskAssignmentCandidates, pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { currentAgendaState, buildDeadlines, agendaPeople } from '../../../../ui/ops-agenda/model.ts';
-import {
-  allSettled,
-  preloadRentalOverviewSources,
-  useRentalOverviewSources,
-} from '../../../../ui/ops-agenda/sources.ts';
+import { allSettled, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { SourceHealth } from '../prehled/dashboard-parts.tsx';
 import { useAgendaCommands } from '../../../../ui/ops-agenda/use-agenda-commands.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import { CalendarView } from './calendar.tsx';
+import { CalendarModeSchema, CalendarView } from './calendar.tsx';
 import type { CalendarMode } from './calendar.tsx';
 import { CreateEventPanel, DeadlinePanel } from './event-panel.tsx';
 import { MyAgenda, NotificationCenter, SettingsPanel, myNotifications, myPreference } from './inbox.tsx';
 
-type Tab = 'kalendar' | 'moje' | 'notifikace' | 'nastaveni';
-const tabs: readonly Tab[] = ['kalendar', 'moje', 'notifikace', 'nastaveni'];
+const tabs = ['kalendar', 'moje', 'notifikace', 'nastaveni'] as const;
+const TabSchema = Schema.Literals(tabs);
+type Tab = typeof TabSchema.Type;
 const k = 'facility-operations.agenda';
 
-const params = () =>
-  typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
+const AgendaSearchSchema = Schema.Struct({
+  event: Schema.optionalKey(Schema.String.pipe(Schema.brand('AgendaRouteEventId'))),
+  filtr: Schema.optionalKey(Schema.String),
+  tab: Schema.optionalKey(Schema.String),
+  view: Schema.optionalKey(Schema.String),
+});
+const queryString = Schema.toCodecJson(Schema.URLSearchParams);
+const AgendaQuerySchema = queryString.pipe(
+  Schema.decodeTo<typeof AgendaSearchSchema, typeof queryString>(AgendaSearchSchema, {
+    decode: SchemaGetter.transform((params) => {
+      const search: {
+        -readonly [Key in keyof typeof AgendaSearchSchema.Encoded]: (typeof AgendaSearchSchema.Encoded)[Key];
+      } = {};
+      for (const key of ['event', 'filtr', 'tab', 'view'] as const) {
+        const value = params.get(key);
+        if (value !== null) {
+          search[key] = value;
+        }
+      }
+      return search;
+    }),
+    encode: SchemaGetter.encodeURLSearchParams(),
+  }),
+);
 
-const AgendaView = ({ context }: { readonly context: ModulePageContext | undefined }) => {
+const initialAgendaLocation = (search: string) => {
+  const input = Option.match(Schema.decodeOption(AgendaQuerySchema)(search), {
+    onNone: (): typeof AgendaSearchSchema.Type => ({}),
+    onSome: (value) => value,
+  });
+  const tab: Tab = Schema.is(TabSchema)(input.tab) ? input.tab : 'kalendar';
+  const overdue = input.filtr === 'po-terminu';
+  let mode: CalendarMode = 'mesic';
+  if (Schema.is(CalendarModeSchema)(input.view)) {
+    mode = input.view;
+  }
+  if (overdue) {
+    mode = 'seznam';
+  }
+  return { event: input.event === '' ? undefined : input.event, mode, overdue, tab };
+};
+
+interface DeliveryContext {
+  readonly deadlines: readonly Deadline[];
+  readonly leadDays: number;
+  readonly me: string | undefined;
+  readonly run: ReturnType<typeof useAgendaCommands>['run'];
+  readonly state: ReturnType<typeof currentAgendaState>;
+  readonly today: string;
+  readonly workItems: Parameters<typeof taskAssignmentCandidates>[0];
+}
+
+const deliverNotifications = Effect.fn('FacilityOperations.AgendaPage.deliver')(function* deliverNotifications(
+  all: boolean,
+  context: DeliveryContext,
+) {
+  const candidates = [
+    ...taskAssignmentCandidates(context.workItems, context.me),
+    ...notificationCandidates(context.deadlines, context.today, context.leadDays, context.me),
+  ];
+  const known = new Set(myNotifications(context.state, context.me).map((entry) => entry.eventKey));
+  const items = (all ? candidates : candidates.filter((entry) => !known.has(entry.eventKey))).slice(0, 200);
+  if (items.length === 0) {
+    return { delivered: 0, duplicates: 0, offered: 0 };
+  }
+  const outcome = yield* context.run({ _tag: 'AgendaNotificationsDeliver', items });
+  const delivered = outcome.ok ? outcome.result.entityIds.length : 0;
+  return {
+    delivered,
+    duplicates: outcome.ok ? items.length - delivered : 0,
+    failed: !outcome.ok,
+    offered: items.length,
+  };
+});
+
+const useAgendaView = ({ context }: { readonly context: ModulePageContext | undefined }) => {
   const { t } = useModernI18n();
   const toast = useToast();
   const { names, reload, sources } = useRentalOverviewSources();
   const commands = useAgendaCommands(sources, reload);
-  const [today] = useState(() => pragueToday());
-  const [tab, setTab] = useState<Tab>('kalendar');
-  const [mode, setMode] = useState<CalendarMode>('mesic');
-  const [overdueFilter, setOverdueFilter] = useState(false);
-  const [openKey, setOpenKey] = useState<string | undefined>(undefined);
-  const [requestedEvent, setRequestedEvent] = useState<string | undefined>(undefined);
+  const search = useRouterState({ select: (router) => router.location.searchStr });
+  const [view, setView] = useState(() => ({ ...initialAgendaLocation(search), today: pragueToday() }));
+  const { mode, overdue: overdueFilter, tab, today } = view;
+  const [openKey, setOpenKey] = useState<string | undefined>();
+  const [requestedEvent, setRequestedEvent] = useState<string | undefined>(() => view.event);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const synced = useRef(false);
 
-  useEffect(() => {
-    const search = params();
-    const requested = tabs.find((value) => value === search.get('tab'));
-    if (requested !== undefined) {
-      setTab(requested);
-    }
-    const view = search.get('view');
-    if (view === 'tyden' || view === 'seznam' || view === 'mesic') {
-      setMode(view);
-    }
-    if (search.get('filtr') === 'po-terminu') {
-      setOverdueFilter(true);
-      setMode('seznam');
-    }
-    const event = search.get('event');
-    if (event !== null && event !== '') {
-      setRequestedEvent(event);
-    }
-  }, []);
-
-  const deadlines = useMemo(() => buildDeadlines(sources, names), [sources, names]);
-  const state = useMemo(() => currentAgendaState(sources, deadlines, today), [sources, deadlines, today]);
+  const deadlines = buildDeadlines(sources, names);
+  // Consume a deep link once its event arrives, before committing a stale selection to the screen.
+  if (requestedEvent !== undefined && deadlines.some((row) => row.eventId === requestedEvent)) {
+    setOpenKey(`event:${requestedEvent}`);
+    setRequestedEvent(undefined);
+  }
+  const state = currentAgendaState(sources, deadlines, today);
   const me = sources.ops.data?.actorPrincipalRef.principalId;
   const settled = allSettled(sources);
   const unread = myNotifications(state, me).filter((entry) => entry.readAt === undefined).length;
   const leadDays = myPreference(state, me)?.leadDays ?? DEFAULT_LEAD_DAYS;
 
-  useEffect(() => {
-    if (requestedEvent === undefined) {
-      return;
-    }
-    const match = deadlines.find((row) => row.eventId === requestedEvent);
-    if (match !== undefined) {
-      setOpenKey(`event:${requestedEvent}`);
-      setRequestedEvent(undefined);
-    }
-  }, [requestedEvent, deadlines]);
-
   const openRow = (row: Deadline) => setOpenKey(row.eventId === undefined ? row.key : `event:${row.eventId}`);
 
   const changeTab = (next: Tab) => {
-    setTab(next);
-    if (typeof window !== 'undefined') {
+    setView((current) => ({ ...current, tab: next }));
+    if (globalThis.window !== undefined) {
       const url = new URL(window.location.href);
       url.searchParams.set('tab', next);
       window.history.replaceState(window.history.state, '', url);
     }
   };
 
-  /** Sync readable native assignments as well as deadlines; the reducer persists and deduplicates both. */
-  const deliver = async (all: boolean) => {
-    const candidates = [
-      ...taskAssignmentCandidates(sources.work.data?.items ?? [], me),
-      ...notificationCandidates(deadlines, today, leadDays, me),
-    ];
-    const known = new Set(myNotifications(state, me).map((entry) => entry.eventKey));
-    const items = (all ? candidates : candidates.filter((entry) => !known.has(entry.eventKey))).slice(0, 200);
-    if (items.length === 0) {
-      return { duplicates: 0, offered: 0, delivered: 0 };
-    }
-    const outcome = await commands.run({ _tag: 'AgendaNotificationsDeliver', items });
-    const delivered = outcome.ok ? outcome.result.entityIds.length : 0;
-    return {
-      delivered,
-      duplicates: outcome.ok ? items.length - delivered : 0,
-      offered: items.length,
-      failed: !outcome.ok,
-    };
+  const deliveryContext: DeliveryContext = {
+    deadlines,
+    leadDays,
+    me,
+    run: commands.run,
+    state,
+    today,
+    workItems: sources.work.data?.items ?? [],
   };
-
+  const deliverAutomatically = useEffectEvent(() => {
+    browserRuntime.runFork(
+      deliverNotifications(false, deliveryContext).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (result.delivered > 0) {
+              toast.create({ title: t(`${k}.notifications.newToast`, { count: result.delivered }), type: 'info' });
+            }
+          }),
+        ),
+      ),
+    );
+  });
   useEffect(() => {
     if (!settled || synced.current || !commands.canWrite || me === undefined) {
       return;
     }
     synced.current = true;
-    void deliver(false).then((result) => {
-      if (result.delivered > 0) {
-        toast.create({ title: t(`${k}.notifications.newToast`, { count: result.delivered }), type: 'info' });
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    deliverAutomatically();
   }, [settled, commands.canWrite, me]);
 
-  const check = async () => {
+  const check = () => {
     setBusy(true);
-    const result = await deliver(true);
-    setBusy(false);
-    if (result.failed === true) {
-      toast.create({ title: t('facility-operations.common.errors.unavailable'), type: 'error' });
-      return;
-    }
-    toast.create({
-      description: t(`${k}.notifications.checkDescription`),
-      title: t(`${k}.notifications.checkResult`, { delivered: result.delivered, duplicates: result.duplicates }),
-      type: result.delivered > 0 ? 'success' : 'info',
-    });
+    browserRuntime.runFork(
+      deliverNotifications(true, deliveryContext).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            setBusy(false);
+            if (result.failed === true) {
+              toast.create({ title: t('facility-operations.common.errors.unavailable'), type: 'error' });
+              return;
+            }
+            toast.create({
+              description: t(`${k}.notifications.checkDescription`),
+              title: t(`${k}.notifications.checkResult`, {
+                delivered: result.delivered,
+                duplicates: result.duplicates,
+              }),
+              type: result.delivered > 0 ? 'success' : 'info',
+            });
+          }),
+        ),
+      ),
+    );
   };
-
-  const markRead = async (id: string) => {
-    await commands.run({ _tag: 'AgendaNotificationsMarkRead', notificationIds: [id] } as never);
+  const markRead = (id: Notification['id']) => {
+    browserRuntime.runFork(commands.run({ _tag: 'AgendaNotificationsMarkRead', notificationIds: [id] }));
   };
-  const markAll = async () => {
+  const markAll = () => {
     setBusy(true);
-    await commands.run({ _tag: 'AgendaNotificationsMarkAllRead' });
-    setBusy(false);
+    browserRuntime.runFork(
+      commands.run({ _tag: 'AgendaNotificationsMarkAllRead' }).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            setBusy(false);
+          }),
+        ),
+      ),
+    );
   };
-  const savePreferences = async (
-    days: number,
-    emailOptIn: boolean,
-    emailCategories: readonly ('DEADLINE' | 'CHANGE')[],
-  ) => {
+  const savePreferences = (days: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => {
     setSaving(true);
-    const outcome = await commands.run({ _tag: 'AgendaPreferencesSet', emailCategories, emailOptIn, leadDays: days });
-    setSaving(false);
-    toast.create({
-      title: outcome.ok
-        ? t('facility-operations.common.saved')
-        : t(`facility-operations.common.errors.${outcome.reason}`),
-      type: outcome.ok ? 'success' : 'error',
-    });
+    browserRuntime.runFork(
+      commands.run({ _tag: 'AgendaPreferencesSet', emailCategories, emailOptIn, leadDays: days }).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            setSaving(false);
+            toast.create({
+              title: outcome.ok
+                ? t('facility-operations.common.saved')
+                : t(`facility-operations.common.errors.${outcome.reason}`),
+              type: outcome.ok ? 'success' : 'error',
+            });
+          }),
+        ),
+      ),
+    );
   };
 
   const opened: Deadline | undefined = deadlines.find((row) =>
     openKey?.startsWith('event:') === true ? `event:${row.eventId ?? ''}` === openKey : row.key === openKey,
   );
   const agendaReadable = sources.ops.status === 'ready' && sources.ops.data?.agenda !== undefined;
+
+  return {
+    agendaReadable,
+    busy,
+    changeTab,
+    check,
+    commands,
+    context,
+    creating,
+    deadlines,
+    markAll,
+    markRead,
+    me,
+    mode,
+    opened,
+    openRow,
+    overdueFilter,
+    savePreferences,
+    saving,
+    setCreating,
+    setOpenKey,
+    sources,
+    state,
+    t,
+    tab,
+    today,
+    unread,
+  };
+};
+
+const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
+  const {
+    agendaReadable,
+    busy,
+    changeTab,
+    check,
+    commands,
+    context,
+    creating,
+    deadlines,
+    markAll,
+    markRead,
+    me,
+    mode,
+    opened,
+    openRow,
+    overdueFilter,
+    savePreferences,
+    saving,
+    setCreating,
+    setOpenKey,
+    sources,
+    state,
+    t,
+    tab,
+    today,
+    unread,
+  } = useAgendaView(props);
 
   return (
     <AgendaPeopleContext value={agendaPeople(state, context)}>
@@ -216,12 +334,21 @@ const AgendaView = ({ context }: { readonly context: ModulePageContext | undefin
           {t(`${k}.state.agendaUnavailable`)}
         </p>
       )}
-      <Tabs onValueChange={(value) => changeTab(value as Tab)} size="sm" value={tab} variant="line">
+      <Tabs
+        onValueChange={(value) => {
+          if (Schema.is(TabSchema)(value)) {
+            changeTab(value);
+          }
+        }}
+        size="sm"
+        value={tab}
+        variant="line"
+      >
         <Tabs.List>
           <Tabs.Trigger value="kalendar">{t(`${k}.tabs.kalendar`)}</Tabs.Trigger>
           <Tabs.Trigger value="moje">{t(`${k}.tabs.moje`)}</Tabs.Trigger>
           <Tabs.Trigger value="notifikace">
-            {unread > 0 ? `${t(`${k}.tabs.notifikace`)} (${unread})` : t(`${k}.tabs.notifikace`)}
+            {unread > 0 ? [t(`${k}.tabs.notifikace`), `(${unread})`].join(' ') : t(`${k}.tabs.notifikace`)}
           </Tabs.Trigger>
           <Tabs.Trigger value="nastaveni">{t(`${k}.tabs.nastaveni`)}</Tabs.Trigger>
         </Tabs.List>
@@ -255,9 +382,15 @@ const AgendaView = ({ context }: { readonly context: ModulePageContext | undefin
           busy={busy}
           canWrite={commands.canWrite}
           me={me}
-          onCheck={() => void check()}
-          onMarkAll={() => void markAll()}
-          onMarkRead={(id) => void markRead(id)}
+          onCheck={() => {
+            check();
+          }}
+          onMarkAll={() => {
+            markAll();
+          }}
+          onMarkRead={(id) => {
+            markRead(id);
+          }}
           state={state}
         />
       )}
@@ -266,7 +399,9 @@ const AgendaView = ({ context }: { readonly context: ModulePageContext | undefin
           canWrite={commands.canWrite}
           key={`${me ?? ''}:${myPreference(state, me)?.leadDays ?? ''}:${myPreference(state, me)?.emailOptIn ?? ''}:${(myPreference(state, me)?.emailCategories ?? []).join(',')}`}
           me={me}
-          onSave={(days, email, categories) => void savePreferences(days, email, categories)}
+          onSave={(days, email, categories) => {
+            savePreferences(days, email, categories);
+          }}
           saving={saving}
           state={state}
         />
@@ -297,5 +432,5 @@ export const AgendaPage = ({ context }: Partial<ModulePageProps>) => (
 );
 
 /** The Shell awaits this before it reveals the page, so the calendar opens with its sources loaded. */
-export const preloadPage = preloadRentalOverviewSources;
+export { preloadRentalOverviewSources as preloadPage } from '../../../../ui/ops-agenda/sources.ts';
 export default AgendaPage;

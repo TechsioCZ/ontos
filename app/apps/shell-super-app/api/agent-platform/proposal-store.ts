@@ -5,6 +5,7 @@ import {
   ActionRuntime,
   AGENT_PROPOSAL_WITHDRAWAL_BATCH_LIMIT,
   AgentProposalCommandPayloadSchema,
+  AgentProposalQueueInputSchema,
   agentActivityActorsRead,
   agentActivityRead,
   agentProposalQueueRead,
@@ -20,7 +21,13 @@ import type {
   OperationalScopeRequest,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { AGENT_PAGE_SIZE } from '@app/shared-contracts/agent-proposals';
+import {
+  AGENT_PAGE_SIZE,
+  AgentActivityRequestSchema,
+  AgentCommandValueSchema,
+  AgentPageCursorSchema,
+  AgentQueueRequestSchema,
+} from '@app/shared-contracts/agent-proposals';
 import type { AgentActivityRequest, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
 import { Data, Effect, Match, Option, Schema, Stream, Tuple } from 'effect';
 
@@ -32,20 +39,26 @@ import type { AgentProposalRow, ModuleTexts } from './mappers.ts';
 export class AgentStoreUnavailable extends Data.TaggedError('AgentStoreUnavailable')<{ readonly cause: unknown }> {}
 const unavailable = (cause: unknown) => new AgentStoreUnavailable({ cause });
 
-const toRow = (row: AgentProposalQueueRow): AgentProposalRow => ({
-  ...row,
-  appliedAt: Option.getOrNull(row.appliedAt),
-  batchRevertedAt: Option.getOrNull(row.batchRevertedAt),
-  batchRevertedByPrincipalId: Option.getOrNull(row.batchRevertedByPrincipalId),
-  batchRevertNote: Option.getOrNull(row.batchRevertNote),
-  decidedAt: Option.getOrNull(row.decidedAt),
-  decidedByPrincipalId: Option.getOrNull(row.decidedByPrincipalId),
-  decisionNote: Option.getOrNull(row.decisionNote),
-  failure: Option.getOrNull(row.failure),
-  revert: Option.getOrNull(row.revert),
-  revertedAt: Option.getOrNull(row.revertedAt),
-  revertedByPrincipalId: Option.getOrNull(row.revertedByPrincipalId),
-  runId: Option.getOrNull(row.runId),
+const toRow = Effect.fn('AgentStore.toRow')(function* toRow(row: AgentProposalQueueRow) {
+  const applyResult = yield* Schema.decodeUnknownEffect(AgentCommandValueSchema)(row.applyResult).pipe(
+    Effect.mapError(unavailable),
+  );
+  return {
+    ...row,
+    appliedAt: Option.getOrNull(row.appliedAt),
+    applyResult,
+    batchRevertedAt: Option.getOrNull(row.batchRevertedAt),
+    batchRevertedByPrincipalId: Option.getOrNull(row.batchRevertedByPrincipalId),
+    batchRevertNote: Option.getOrNull(row.batchRevertNote),
+    decidedAt: Option.getOrNull(row.decidedAt),
+    decidedByPrincipalId: Option.getOrNull(row.decidedByPrincipalId),
+    decisionNote: Option.getOrNull(row.decisionNote),
+    failure: Option.getOrNull(row.failure),
+    revert: Option.getOrNull(row.revert),
+    revertedAt: Option.getOrNull(row.revertedAt),
+    revertedByPrincipalId: Option.getOrNull(row.revertedByPrincipalId),
+    runId: Option.getOrNull(row.runId),
+  } satisfies AgentProposalRow;
 });
 
 const readProposals = Effect.fn('AgentStore.readProposals')(function* readProposals(
@@ -60,20 +73,38 @@ export const findRunProposals = Effect.fn('AgentStore.findRunProposals')(functio
   principal: TrustedPrincipalContext,
   runId: string,
 ) {
-  return (yield* readProposals(principal, { mode: 'own-run', runId })).proposals.map(toRow);
+  return yield* Effect.forEach(
+    (yield* readProposals(principal, { mode: 'own-run', runId })).proposals,
+    (row) => toRow(row),
+    { concurrency: 1 },
+  );
 });
 
 /** Native own-recent is agent-only, company scoped and bounded to 300 rows. */
 export const listCompanyProposals = Effect.fn('AgentStore.listCompanyProposals')(function* listCompanyProposals(
   principal: TrustedPrincipalContext,
 ) {
-  return (yield* readProposals(principal, { mode: 'own-recent' })).proposals.map(toRow);
+  return yield* Effect.forEach(
+    (yield* readProposals(principal, { mode: 'own-recent' })).proposals,
+    (row) => toRow(row),
+    { concurrency: 1 },
+  );
 });
 
 export const listCompanyProposalPage = Effect.fn('AgentStore.listCompanyProposalPage')(
   function* listCompanyProposalPage(principal: TrustedPrincipalContext, request: AgentQueueRequest) {
-    const page = yield* readProposals(principal, { mode: 'queue', request });
-    return { candidates: page.candidates, proposals: page.proposals.map(toRow) };
+    const encodedRequest = yield* Schema.encodeEffect(AgentQueueRequestSchema)(request).pipe(
+      Effect.mapError(unavailable),
+    );
+    const input = yield* Schema.decodeEffect(AgentProposalQueueInputSchema)({
+      mode: 'queue',
+      request: encodedRequest,
+    }).pipe(Effect.mapError(unavailable));
+    const page = yield* readProposals(principal, input);
+    const candidates = yield* Schema.decodeEffect(Schema.Array(AgentPageCursorSchema))(page.candidates).pipe(
+      Effect.mapError(unavailable),
+    );
+    return { candidates, proposals: yield* Effect.forEach(page.proposals, (row) => toRow(row), { concurrency: 1 }) };
   },
 );
 
@@ -82,7 +113,11 @@ export const loadBatchProposals = Effect.fn('AgentStore.loadBatchProposals')(fun
   principal: TrustedPrincipalContext,
   batchId: string,
 ) {
-  return (yield* readProposals(principal, { batchId, mode: 'batch' })).proposals.map(toRow);
+  return yield* Effect.forEach(
+    (yield* readProposals(principal, { batchId, mode: 'batch' })).proposals,
+    (row) => toRow(row),
+    { concurrency: 1 },
+  );
 });
 
 export const batchHasApprovalInProgress = Effect.fn('AgentStore.batchHasApprovalInProgress')(
@@ -104,7 +139,7 @@ export const loadProposalBatch = Effect.fn('AgentStore.loadProposalBatch')(funct
   batchId: string,
 ) {
   const batch = yield* readProposals(principal, { batchId, mode: 'batch' });
-  return { ...batch, proposals: batch.proposals.map(toRow) };
+  return { ...batch, proposals: yield* Effect.forEach(batch.proposals, (row) => toRow(row), { concurrency: 1 }) };
 });
 
 /** Historical claim success is not authority to resume a released or replaced reservation. */
@@ -211,10 +246,10 @@ export const releaseApprovalClaim = (principal: TrustedPrincipalContext, input: 
   mutateAgentProposals(principal, { ...input, operation: 'release-approval' });
 export const markApplied = Effect.fn('AgentStore.markApplied')(function* markApplied(
   principal: TrustedPrincipalContext,
-  input: Omit<Command<'mark-applied'>, 'applyResult'> & { readonly applyResult: unknown },
+  input: Omit<Command<'mark-applied'>, 'applyResult'> & { readonly applyResult: Schema.Json },
 ) {
-  // A module response is untrusted wire data. Decode the finite native payload before dispatch, without a cast.
-  const payload = yield* Schema.decodeUnknownEffect(AgentProposalCommandPayloadSchema)({
+  // Decode the native command contract at the Shell-to-Core boundary before dispatch.
+  const payload = yield* Schema.decodeEffect(AgentProposalCommandPayloadSchema)({
     ...input,
     operation: 'mark-applied',
   });
@@ -324,9 +359,16 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
   scope: AgentActivityScope,
   transport: OperationalScopeRequest,
 ) {
+  const encodedRequest = yield* Schema.encodeEffect(AgentActivityRequestSchema)(request).pipe(
+    Effect.mapError(unavailable),
+  );
+  const input = yield* Schema.decodeEffect(agentActivityRead.descriptor.inputSchema)({
+    request: encodedRequest,
+    visibleModules: [...scope.visibleModules],
+  }).pipe(Effect.mapError(unavailable));
   const rows = yield* (yield* ReadRuntime)
     .runRead({
-      input: { request, visibleModules: [...scope.visibleModules] },
+      input,
       principal,
       registration: agentActivityRead,
       transport,
@@ -334,6 +376,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
     .pipe(Effect.mapError(unavailable));
   const names = new Map<string, string>(rows.names.map((row) => [row.principalId, row.displayName]));
   const proposalOnly = new Set(rows.proposalOnlyAgentIds);
+  const proposals = yield* Effect.forEach(rows.proposals, (row) => toRow(row), { concurrency: 1 });
   const entries = [
     ...rows.audit.map((row) =>
       auditRowToEntry(
@@ -361,27 +404,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
         scope.modules,
       ),
     ),
-    ...rows.proposals.flatMap((row) =>
-      proposalRowToEntries(
-        {
-          ...row,
-          appliedAt: Option.getOrNull(row.appliedAt),
-          batchRevertedAt: Option.getOrNull(row.batchRevertedAt),
-          batchRevertedByPrincipalId: Option.getOrNull(row.batchRevertedByPrincipalId),
-          batchRevertNote: Option.getOrNull(row.batchRevertNote),
-          decidedAt: Option.getOrNull(row.decidedAt),
-          decidedByPrincipalId: Option.getOrNull(row.decidedByPrincipalId),
-          decisionNote: Option.getOrNull(row.decisionNote),
-          failure: Option.getOrNull(row.failure),
-          revert: Option.getOrNull(row.revert),
-          revertedAt: Option.getOrNull(row.revertedAt),
-          revertedByPrincipalId: Option.getOrNull(row.revertedByPrincipalId),
-          runId: Option.getOrNull(row.runId),
-        },
-        names,
-        scope.modules,
-      ),
-    ),
-  ].filter((entry) => entry.moduleKey !== null && scope.visibleModules.has(entry.moduleKey));
+    ...proposals.flatMap((row) => proposalRowToEntries(row, names, scope.modules)),
+  ].filter((entry) => Option.isSome(entry.moduleKey) && scope.visibleModules.has(entry.moduleKey.value));
   return buildActivityResponse(entries, { ...request, limit: AGENT_PAGE_SIZE + 1 });
 });

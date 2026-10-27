@@ -1,3 +1,4 @@
+import { NodeServices } from '@effect/platform-node';
 import { DateTime, Effect, Result, Schema } from 'effect';
 import { FacilityOperationsLifecycleConflict } from '../../shared/errors/facility-operations-lifecycle-conflict.ts';
 import { FacilityOperationsNotFound } from '../../shared/errors/facility-operations-not-found.ts';
@@ -5,7 +6,7 @@ import { expect, it } from 'effect-rstest';
 import { DocumentsCommandSchema, evolveDocuments } from '../../shared/commands/documents.ts';
 import type { OpsCommandInput } from '../../shared/domain/common.ts';
 import { DocumentsStateSchema, emptyDocumentsState } from '../../shared/domain/documents.ts';
-import type { DocumentsState } from '../../shared/domain/documents.ts';
+import type { ContractTerms, DocumentsState } from '../../shared/domain/documents.ts';
 import { seedDocumentsState } from '../../scripts/seed/documents.mts';
 import { contractRegister, daysUntil, upcomingDeadlines } from '../../shared/domain/documents-deadlines.ts';
 
@@ -20,7 +21,7 @@ const input = (resourceId: string, actor = management, at = '2026-10-20T08:00:00
 });
 
 const decodeCommand = Schema.decodeUnknownEffect(DocumentsCommandSchema);
-const step = (state: DocumentsState, command: unknown, commandInput: OpsCommandInput) =>
+const step = (state: DocumentsState, command: typeof DocumentsCommandSchema.Encoded, commandInput: OpsCommandInput) =>
   Effect.gen(function* stepDocuments() {
     const decoded = yield* decodeCommand(command);
     return (yield* evolveDocuments(state, decoded, commandInput)).state;
@@ -41,7 +42,7 @@ it.effect('DocumentVersionAdd keeps every earlier version (S12-02)', () =>
       { _tag: 'DocumentVersionAdd', documentId: 'doc-1', file: pdf('file-2'), note: 'Opravená příloha' },
       input('cmd-2', operations, '2026-10-21T09:30:00Z'),
     );
-    const document = next.documents[0];
+    const [document] = next.documents;
     expect(document?.versions.map((version) => version.version)).toEqual([1, 2]);
     expect(document?.versions.map((version) => version.file.id)).toEqual(['file-1', 'file-2']);
     expect(document?.versions[1]?.uploadedBy.principalId).toBe(operations.principalId);
@@ -119,7 +120,7 @@ it.effect('a manual signature needs an uploaded version and activates a draft co
       parties: ['Siampark s.r.o.', 'Kavárna U Parku s.r.o.'],
       status: 'draft',
       validTo: '2028-10-31',
-    };
+    } satisfies ContractTerms;
     const created = yield* step(
       yield* empty,
       { _tag: 'DocumentCreate', category: 'contract', contract, title: 'Nájemní smlouva R101' },
@@ -214,7 +215,7 @@ it.effect('blank comments are refused by the command schema', () =>
 
 it.effect('the seed state decodes with the documents schema', () =>
   Effect.gen(function* seed() {
-    const state = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(seedDocumentsState());
+    const state = yield* Schema.decodeEffect(DocumentsStateSchema)(yield* seedDocumentsState());
     expect(state.documents.length).toBeGreaterThan(0);
     const ids = new Set(state.documents.map((document) => document.id));
     for (const document of state.documents) {
@@ -222,12 +223,12 @@ it.effect('the seed state decodes with the documents schema', () =>
         expect(ids.has(document.amendsDocumentId)).toBe(true);
       }
     }
-  }),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect('S12-01: a contract ending in 5 days is in the upcoming deadlines; terminated ones are not', () =>
   Effect.gen(function* deadlines() {
-    const state = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(seedDocumentsState());
+    const state = yield* Schema.decodeEffect(DocumentsStateSchema)(yield* seedDocumentsState());
     const upcoming = upcomingDeadlines(state.documents, '2026-10-20');
     const cleaning = upcoming.find((entry) => entry.document.id === 'seed-doc-uklid' && entry.kind === 'end');
     expect(cleaning?.days).toBe(5);
@@ -239,15 +240,15 @@ it.effect('S12-01: a contract ending in 5 days is in the upcoming deadlines; ter
     );
     expect(upcomingDeadlines(terminated, '2026-10-20')).toEqual([]);
     expect(daysUntil('2026-10-19', '2026-10-20')).toBe(-1);
-  }),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect('the contract register lists each amendment right after its contract', () =>
   Effect.gen(function* register() {
-    const state = yield* Schema.decodeUnknownEffect(DocumentsStateSchema)(seedDocumentsState());
+    const state = yield* Schema.decodeEffect(DocumentsStateSchema)(yield* seedDocumentsState());
     const rows = contractRegister(state.documents);
     const index = rows.findIndex((row) => row.document.id === 'seed-doc-r101');
     expect(rows[index + 1]?.document.id).toBe('seed-doc-r101-d1');
     expect(rows[index + 1]?.depth).toBe(1);
-  }),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -88,6 +88,27 @@ export const makeTestPgClient = Effect.fn('TestDatabase.makeTestPgClient')(funct
   );
 });
 
+/**
+ * Acquires one native pool and its Drizzle database under the caller's service key.
+ * Build this Layer in the fixture scope before registering row cleanup; the pool's
+ * separate resource scope then remains usable until all later cleanup finishes.
+ */
+export const layerTestDatabase = <Relations extends AnyRelations, Self>(
+  key: Context.Key<Self, TestDatabaseFromClient<Relations>>,
+  input: {
+    readonly connectionString: string;
+    readonly poolOptions?: Omit<PgClient.PgPoolConfig, 'url'>;
+    readonly relations: Relations;
+  },
+) =>
+  Layer.effect(
+    key,
+    Effect.gen(function* acquireTestDatabaseLayer() {
+      const client = yield* makeTestPgClient(input.connectionString, input.poolOptions);
+      return yield* makeTestDatabaseFromClient(client, input.relations);
+    }),
+  );
+
 /** Scoped single-session client, for tests that observe one backend or hold an explicit transaction. */
 export const makeTestPgSession = Effect.fn('TestDatabase.makeTestPgSession')(function* makeTestPgSession(
   connectionString: string,

@@ -310,12 +310,18 @@ it.effect('never admits a Shell from missing, malformed, unavailable, or expired
     ];
     for (const source of sources) {
       const { layer, requests } = gateFixture(source.value, [authorityRow(snapshot)], source.status);
-      const failure = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
+      const attempt = yield* assertPublishedShellIngressSnapshot(shellReceipt(snapshot)).pipe(
         Effect.provide(layer),
         Effect.flip,
+        Effect.forkChild,
       );
+      if (source.status === 503) {
+        // Transient reads retry after one and two seconds; drive their clock without weakening admission.
+        yield* TestClock.adjust('3 seconds');
+      }
+      const failure = yield* Fiber.join(attempt);
       expect(Schema.is(ActiveApplicationCompositionPublicationError)(failure)).toBe(true);
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
+      expect(requests.map(({ method }) => method)).toEqual(source.status === 503 ? ['GET', 'GET', 'GET'] : ['GET']);
     }
     yield* TestClock.setTime(DateTime.toEpochMillis(snapshot.validUntil));
     const expired = gateFixture(encoded, [authorityRow(snapshot)]);

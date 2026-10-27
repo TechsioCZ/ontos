@@ -1,6 +1,7 @@
 // Pure view helpers of the assets page (S02/S03). Owned by ops-assets.
 import { formatDate, formatDateTime, formatMoney } from '@app/admin-ui';
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
+import type { TOptions } from 'i18next';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type {
   Asset,
@@ -11,7 +12,7 @@ import type {
 } from '../../../../../shared/domain/assets.ts';
 import { approvedTotal, currentServiceRecords, isActiveAsset } from '../../../../../shared/domain/assets.ts';
 
-export type Translate = (key: string, options?: Record<string, unknown>) => string;
+export type Translate = (key: string, options?: TOptions) => string;
 
 const todayFormat = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
 /** Real current business date (Europe/Prague) as `YYYY-MM-DD`. */
@@ -30,13 +31,13 @@ export const money = (minor: number | undefined, missing: string): string =>
 /** Parses „120 000“, „120000,50“ or „1 200,5“ into haléře; undefined for empty, null for invalid. */
 export const parseCzk = (raw: string): number | undefined | null => {
   const compact = raw
-    .replace(/[\s ]/g, '')
-    .replace(/Kč$/i, '')
+    .replaceAll(/[\s ]/gu, '')
+    .replace(/[Kk][Čč]$/u, '')
     .replace(',', '.');
   if (compact === '') {
     return undefined;
   }
-  if (!/^\d+(\.\d{1,2})?$/.test(compact)) {
+  if (!/^\d+(?:\.\d{1,2})?$/u.test(compact)) {
     return null;
   }
   return Math.round(Number(compact) * 100);
@@ -49,15 +50,16 @@ export const principalLabel = (ref: PrincipalRef, actor: PrincipalRef | undefine
   return '';
 };
 
-export type DueState = 'overdue' | 'soon' | 'planned';
+export const DueStateSchema = Schema.Literals(['overdue', 'soon', 'planned']);
+export type DueState = typeof DueStateSchema.Type;
 export const dueState = (nextDueOn: string, today: string): DueState => {
   if (nextDueOn < today) {
     return 'overdue';
   }
   return nextDueOn <= addDays(today, 30) ? 'soon' : 'planned';
 };
-export const dueBadgeVariant = (state: DueState) =>
-  state === 'overdue' ? ('danger' as const) : state === 'soon' ? ('warning' as const) : ('outline' as const);
+const dueBadgeVariants = { overdue: 'danger', planned: 'outline', soon: 'warning' } as const;
+export const dueBadgeVariant = (state: DueState) => dueBadgeVariants[state];
 
 /** Earliest current next-due date of an asset (newest record per kind+title). */
 export const nextDueOf = (asset: Asset): ServiceRecord | undefined =>
@@ -75,14 +77,14 @@ export const remainingOf = (asset: Asset, type: DepreciationType): number | unde
 };
 
 export interface PortfolioStats {
-  readonly active: number;
-  readonly disposed: number;
   readonly acquisitionTotal: number;
+  readonly active: number;
   readonly currentTotal: number;
+  readonly disposed: number;
   readonly missingValues: number;
+  readonly openFollowUps: number;
   readonly overdue: number;
   readonly soon: number;
-  readonly openFollowUps: number;
 }
 
 export const portfolioStats = (state: AssetsState, today: string): PortfolioStats => {

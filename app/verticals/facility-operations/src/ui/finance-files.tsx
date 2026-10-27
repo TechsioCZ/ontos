@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off globalTimers:off
 // Files uploaded in Finance (invoice PDFs, scans) shown read-through in the shared documents register and on a party
 // dossier. Finance stays the owner: the list and the bytes come from Finance's governed read with the person's own
 // credential, so only people who may read Finance see them, and only for their current company.
@@ -7,7 +6,8 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
+import type { Cause } from 'effect';
 import { useEffect, useState } from 'react';
 import { readFinance } from '../api/finance-reads.ts';
 import type { FinanceFileView, FinanceInvoiceView } from '../api/finance-reads.ts';
@@ -19,11 +19,14 @@ export interface FinanceFileRow {
   readonly invoice: FinanceInvoiceView | undefined;
 }
 
-export type FinanceFilesState =
-  | { readonly status: 'loading' | 'forbidden' | 'unavailable' }
-  | { readonly status: 'ready'; readonly rows: readonly FinanceFileRow[] };
+type FinanceReadFailure = Effect.Error<ReturnType<typeof readFinance>> | Cause.TimeoutError;
 
-const failureStatus = (error: unknown): 'forbidden' | 'unavailable' =>
+export type FinanceFilesState =
+  | { readonly status: 'loading' }
+  | { readonly error: FinanceReadFailure; readonly status: 'forbidden' | 'unavailable' }
+  | { readonly rows: readonly FinanceFileRow[]; readonly status: 'ready' };
+
+const failureStatus = (error: FinanceReadFailure): 'forbidden' | 'unavailable' =>
   Match.value(error).pipe(
     Match.whenOr(
       { _tag: 'RecordsForbiddenProblem' },
@@ -40,28 +43,32 @@ export const useFinanceFiles = (): FinanceFilesState => {
   const [state, setState] = useState<FinanceFilesState>({ status: 'loading' });
   useEffect(() => {
     let alive = true;
-    void browserRuntime.runPromise(
+    browserRuntime.runFork(
       readFinance('facility-operations.documents.finance-files').pipe(
         Effect.timeout('12 seconds'),
         Effect.match({
-          onFailure: (error): FinanceFilesState => ({ status: failureStatus(error) }),
+          onFailure: (error): FinanceFilesState => ({ error, status: failureStatus(error) }),
           onSuccess: (records): FinanceFilesState => {
             const invoices = new Map(records.state.invoices.map((invoice) => [invoice.ref.resourceId, invoice]));
             return {
               rows: (records.state.documents ?? [])
-                .map((file) => ({
-                  file,
-                  invoice: file.invoiceResourceId === undefined ? undefined : invoices.get(file.invoiceResourceId),
-                }))
-                .filter((row) => row.invoice?.businessState !== 'VOIDED')
-                .toSorted((left, right) => right.file.uploadedAt.localeCompare(left.file.uploadedAt)),
+                .flatMap((file): FinanceFileRow[] => {
+                  const invoice =
+                    file.invoiceResourceId === undefined ? undefined : invoices.get(file.invoiceResourceId);
+                  return invoice?.businessState === 'VOIDED' ? [] : [{ file, invoice }];
+                })
+                .toSorted((left, right) => DateTime.Order(right.file.uploadedAt, left.file.uploadedAt)),
               status: 'ready',
             };
           },
         }),
-        Effect.map((next) => {
-          if (alive) setState(next);
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {
@@ -86,30 +93,51 @@ export const financeFileText = (row: FinanceFileRow) =>
     .filter((part) => part !== undefined)
     .join(' ');
 
-const downloadFinanceFile = (documentId: string) =>
-  browserRuntime.runPromise(
-    readFinance('facility-operations.documents.finance-file', { documentId }).pipe(
-      Effect.map((records) => {
-        const stored = records.document;
-        if (stored === undefined) {
-          return false;
-        }
+class FinanceFileDownloadFailed extends Schema.TaggedError<FinanceFileDownloadFailed>()('FinanceFileDownloadFailed', {
+  cause: Schema.Defect(),
+}) {}
+
+const downloadFinanceFile = Effect.fn('FacilityOperations.downloadFinanceFile')(
+  function* downloadFinanceFile(documentId: string) {
+    const records = yield* readFinance('facility-operations.documents.finance-file', { documentId });
+    const stored = records.document;
+    if (stored === undefined) {
+      return false;
+    }
+    const url = yield* Effect.try({
+      catch: (cause) => new FinanceFileDownloadFailed({ cause }),
+      try: () => {
         const binary = atob(stored.contentBase64);
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index += 1) {
-          bytes[index] = binary.charCodeAt(index);
+          bytes[index] = binary.codePointAt(index) ?? 0;
         }
-        const url = URL.createObjectURL(new Blob([bytes], { type: stored.mimeType }));
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = stored.fileName;
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        return true;
-      }),
-      Effect.orElseSucceed(() => false),
-    ),
-  );
+        const objectUrl = URL.createObjectURL(new Blob([bytes], { type: stored.mimeType }));
+        let downloaded = false;
+        try {
+          const anchor = document.createElement('a');
+          anchor.href = objectUrl;
+          anchor.download = stored.fileName;
+          anchor.click();
+          downloaded = true;
+          return objectUrl;
+        } finally {
+          if (!downloaded) {
+            URL.revokeObjectURL(objectUrl);
+          }
+        }
+      },
+    });
+    yield* Effect.forkDetach(
+      Effect.sleep('10 seconds').pipe(Effect.ensuring(Effect.sync(() => URL.revokeObjectURL(url)))),
+    );
+    return true;
+  },
+  Effect.matchEffect({
+    onFailure: (error) => Effect.logWarning('Finance file download failed', error).pipe(Effect.as(false)),
+    onSuccess: (downloaded: boolean) => Effect.succeed(downloaded),
+  }),
+);
 
 const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {
   const toast = useToast();
@@ -119,10 +147,18 @@ const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {
       isLoading={busy}
       onClick={() => {
         setBusy(true);
-        void downloadFinanceFile(file.id).then((ok) => {
-          setBusy(false);
-          if (!ok) toast.create({ title: 'Soubor se nepodařilo stáhnout z Financí.', type: 'error' });
-        });
+        browserRuntime.runFork(
+          downloadFinanceFile(file.id).pipe(
+            Effect.tap((ok) =>
+              Effect.sync(() => {
+                setBusy(false);
+                if (!ok) {
+                  toast.create({ title: 'Soubor se nepodařilo stáhnout z Financí.', type: 'error' });
+                }
+              }),
+            ),
+          ),
+        );
       }}
       size="sm"
       theme="outlined"
@@ -148,7 +184,11 @@ export const FinanceFilesList = ({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-medium text-sm">{file.fileName}</span>
           <span className="text-fg-secondary text-xs">
-            {[formatBytes(file.sizeBytes), file.actorLabel ?? 'Finance', formatDateTime(file.uploadedAt)].join(' · ')}
+            {[
+              formatBytes(file.sizeBytes),
+              file.actorLabel ?? 'Finance',
+              formatDateTime(DateTime.formatIso(file.uploadedAt)),
+            ].join(' · ')}
           </span>
         </div>
         <span className="flex min-w-0 flex-col text-right">

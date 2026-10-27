@@ -6,9 +6,13 @@
 import { agentDiffLine, agentEntryWithId, agentFieldLines, agentRecordHolds } from '@app/shared-contracts/agent-diff';
 import type { AgentDiffValueOptions } from '@app/shared-contracts/agent-diff';
 import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
-import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
+import {
+  AGENT_CREATED_ID_PLACEHOLDER,
+  AGENT_REVERT_UNAVAILABLE,
+  AgentCommandSchema,
+} from '@app/shared-contracts/agent-proposals';
 import type { AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
-import { Match, Predicate } from 'effect';
+import { Match, Option, Predicate, Schema } from 'effect';
 import {
   AGENT_REVERT_MISSING_BEFORE,
   agentRestoredPatch,
@@ -16,11 +20,11 @@ import {
   agentRevertNone,
 } from '@app/shared-contracts/agent-revert';
 
-type Rec = Readonly<Record<string, unknown>>;
+type ReviewItemDraft = { -readonly [Key in keyof AgentReviewItem]: AgentReviewItem[Key] };
 
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(AgentCommandSchema);
 
-const PRODUCT_LABELS: Readonly<Record<string, string>> = {
+const PRODUCT_LABELS = {
   active: 'Aktivní v nabídce',
   category: 'Kategorie',
   description: 'Popis',
@@ -33,7 +37,7 @@ const PRODUCT_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** Prices are amounts in haléře. */
-const moneyOptions = (fields: Rec): AgentDiffValueOptions => ({
+const moneyOptions = (fields: AgentCommand): AgentDiffValueOptions => ({
   moneyFields: new Set(Object.keys(fields).filter((key) => key === 'priceMinor' || key.endsWith('PriceMinor'))),
 });
 
@@ -54,19 +58,20 @@ const isRevertible = (command: AgentCommand): boolean =>
 
 /** Id of the product the command changes when it is one that is read live, undefined otherwise. */
 export const targetProductId = (command: AgentCommand): string | undefined => {
-  const id = command['id'];
-  return Match.value(String(command['_tag'])).pipe(
-    Match.whenOr('ChangePrice', 'UpdateProduct', () => (typeof id === 'string' ? id : undefined)),
-    Match.orElse(() => undefined),
+  const { id } = command;
+  return Match.value(command['_tag']).pipe(
+    Match.whenOr('ChangePrice', 'UpdateProduct', () => (Predicate.isString(id) ? id : undefined)),
+    Match.option,
+    Option.getOrUndefined,
   );
 };
 
-export const productDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined =>
+export const productDiff = (command: AgentCommand, before?: AgentCommand): AgentDiffLine[] | undefined =>
   Match.value(command).pipe(
     Match.when({ _tag: 'ChangePrice' }, () => {
       const { variantId } = command;
       const money = { moneyFields: new Set(['priceMinor']) };
-      if (typeof variantId === 'string') {
+      if (Predicate.isString(variantId)) {
         const variant = agentEntryWithId(before?.['variants'], variantId);
         return [
           agentDiffLine('priceMinor', 'Cena varianty bez DPH', variant?.['priceMinor'], command['priceMinor'], money),
@@ -83,23 +88,26 @@ export const productDiff = (command: AgentCommand, before: Rec | undefined): Age
     Match.when({ _tag: 'CreateProduct' }, () =>
       agentFieldLines(command, PRODUCT_LABELS, undefined, new Set(['id']), moneyOptions(command)),
     ),
-    Match.orElse(() => undefined),
+    Match.option,
+    Option.getOrUndefined,
   );
 
-export const productRevert = (command: AgentCommand, before: Rec | undefined): AgentRevertPlan =>
+export const productRevert = (command: AgentCommand, before?: AgentCommand): AgentRevertPlan =>
   Match.value(command).pipe(
     Match.when({ _tag: 'ChangePrice' }, () => {
-      if (before === undefined) return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
-      const id = command['id'];
+      if (before === undefined) {
+        return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
+      }
+      const { id } = command;
       const { variantId } = command;
-      if (typeof variantId === 'string') {
+      if (Predicate.isString(variantId)) {
         const variant = agentEntryWithId(before['variants'], variantId);
-        return variant !== undefined && typeof variant['priceMinor'] === 'number'
+        return variant !== undefined && Predicate.isNumber(variant['priceMinor'])
           ? agentRevertCommands([{ _tag: 'ChangePrice', id, priceMinor: variant['priceMinor'], variantId }])
           : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       }
       const price = before['currentPriceMinor'];
-      return typeof price === 'number'
+      return Predicate.isNumber(price)
         ? agentRevertCommands([{ _tag: 'ChangePrice', id, priceMinor: price }])
         : agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
     }),
@@ -119,19 +127,22 @@ export const productRevert = (command: AgentCommand, before: Rec | undefined): A
   );
 
 /** Does the product still hold what the approved command set? Undefined when there is nothing to compare. */
-export const productStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined =>
+export const productStillInPlace = (command: AgentCommand, current?: AgentCommand): boolean | undefined =>
   Match.value(command).pipe(
     Match.when({ _tag: 'ChangePrice' }, () => {
-      if (current === undefined) return false;
+      if (current === undefined) {
+        return false;
+      }
       const { variantId } = command;
-      if (typeof variantId === 'string') {
+      if (Predicate.isString(variantId)) {
         const variant = agentEntryWithId(current['variants'], variantId);
         return variant !== undefined && variant['priceMinor'] === command['priceMinor'];
       }
       return current['currentPriceMinor'] === command['priceMinor'];
     }),
     Match.when({ _tag: 'UpdateProduct' }, () => current !== undefined && agentRecordHolds(command['patch'], current)),
-    Match.orElse(() => undefined),
+    Match.option,
+    Option.getOrUndefined,
   );
 
 /** What the person's records read says they may change. */
@@ -142,11 +153,11 @@ export interface MerchandiseRights {
 }
 
 /** Why this person cannot carry out the command (approval runs as them); undefined when they can. */
-export const blockedReasonOf = (command: AgentCommand, rights: MerchandiseRights | undefined): string | undefined => {
+export const blockedReasonOf = (command: AgentCommand, rights?: MerchandiseRights): string | undefined => {
   if (rights === undefined) {
     return undefined;
   }
-  const tag = String(command['_tag']);
+  const tag = Predicate.isString(command['_tag']) ? command['_tag'] : '';
   if (!rights.canWrite) {
     return 'V tomto modulu nemáte oprávnění k zápisu.';
   }
@@ -164,7 +175,7 @@ export const blockedReasonOf = (command: AgentCommand, rights: MerchandiseRights
  * (`rights` undefined: the read failed), `product` is the live product (wire JSON; undefined: not found for them).
  */
 export interface ProductReviewInput {
-  readonly product: Rec | undefined;
+  readonly product: AgentCommand | undefined;
   readonly request: AgentReviewItemRequest;
   readonly rights: MerchandiseRights | undefined;
 }
@@ -173,29 +184,42 @@ export const reviewProductProposal = ({ product, request, rights }: ProductRevie
   const { command, key, stage } = request;
   const targeted = targetProductId(command) !== undefined;
   if (stage === 'history') {
-    const lines = productDiff(command, undefined);
-    return { key, visible: true, ...(lines === undefined ? {} : { diff: lines }) };
+    const lines = productDiff(command);
+    const review: ReviewItemDraft = { key, visible: true };
+    if (lines !== undefined) {
+      review.diff = lines;
+    }
+    return review;
   }
   if (stage === 'undo') {
     // Undo only over a product read just now; a failed read leaves the change alone.
     const inPlace = productStillInPlace(command, product);
-    return {
-      key,
-      visible: !targeted || product !== undefined,
-      ...(inPlace === undefined ? {} : { stillInPlace: inPlace }),
-    };
+    const review: ReviewItemDraft = { key, visible: !targeted || product !== undefined };
+    if (inPlace !== undefined) {
+      review.stillInPlace = inPlace;
+    }
+    return review;
   }
   const missing = targeted && rights !== undefined && product === undefined;
   const lines = productDiff(command, product);
   const blockedReason = blockedReasonOf(command, rights);
   const name = product?.['name'] ?? product?.['title'];
-  return {
+  const review: ReviewItemDraft = {
     key,
     revert: productRevert(command, product),
     visible: !missing,
-    ...(blockedReason === undefined ? {} : { blockedReason }),
-    ...(lines === undefined ? {} : { diff: lines }),
-    ...(isRevertible(command) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
-    ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
   };
+  if (blockedReason !== undefined) {
+    review.blockedReason = blockedReason;
+  }
+  if (lines !== undefined) {
+    review.diff = lines;
+  }
+  if (!isRevertible(command)) {
+    review.revertUnavailableReason = AGENT_REVERT_UNAVAILABLE;
+  }
+  if (Predicate.isString(name) && name !== '') {
+    review.targetName = name.slice(0, 300);
+  }
+  return review;
 };

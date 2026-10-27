@@ -143,11 +143,12 @@ const makeFixture = () =>
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
-    // Artifact tests never contact a configured stage dispatcher. The real trigger has its own unit tests.
+    // Artifact tests may pass this factory to a fake host, but must never run mail startup.
+    // The real scoped trigger and host lifecycle have their own unit tests.
     yield* Effect.tryPromise(() =>
       writeFile(
         path.join(root, 'scripts/email-dispatch-trigger.mts'),
-        'export const startEmailDispatchTrigger = () => {};\n',
+        'export const startEmailDispatchTrigger = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
       ),
     );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
@@ -267,6 +268,8 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(host).not.toContain("path: '/ready'");
     expect(host).toContain(`start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && `);
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
+    expect(hostEntry).toContain('  startup: startEmailDispatchTrigger,\n');
+    expect(hostEntry).not.toContain('startEmailDispatchTrigger();');
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",
     );
@@ -1100,6 +1103,8 @@ it.live('preserves every demo worker and switches only Party to the dedicated wo
     expect(generated.hostEntry).toContain('financeBillingOutboxWorkerEntry');
     expect(generated.hostEntry).toContain('coreSystemOutboxWorkerEntry');
     expect(generated.hostEntry).toContain('startEmailDispatchTrigger');
+    expect(generated.hostEntry).toContain('  startup: startEmailDispatchTrigger,\n');
+    expect(generated.hostEntry).not.toContain('startEmailDispatchTrigger();');
     const missingDedicated = source.replace(
       /^ {8}PARTY_REGISTRY_DATABASE_URL:.*\$\{migrator_PARTY_REGISTRY_DB_PASSWORD\}.*\n/mu,
       '',
