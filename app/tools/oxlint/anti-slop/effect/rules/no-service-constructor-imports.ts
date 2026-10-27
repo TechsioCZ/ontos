@@ -4,7 +4,7 @@ import { parseSync } from "oxc-parser";
 
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree } from "@oxlint/plugins";
+import type { Context, ESTree, Variable } from "@oxlint/plugins";
 
 import { provesDataFactoryImport } from "./data-factory-proof.ts";
 import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
@@ -154,7 +154,7 @@ function addImport(model: Model, declaration: Syntax): boolean {
   for (const entry of declaration.specifiers) {
     const specifier = asNode(entry);
     if (specifier?.importKind === "type") continue;
-    if (kind(specifier) !== "ImportSpecifier") return false;
+    if (specifier === null || kind(specifier) !== "ImportSpecifier") return false;
     const imported = nameOf(asNode(specifier.imported)) ?? stringOf(asNode(specifier.imported));
     const local = nameOf(asNode(specifier.local));
     if (imported === null || local === null || !SAFE_IMPORTS.get(source)?.has(imported)) return false;
@@ -346,7 +346,7 @@ function functionScope(info: FunctionInfo): FunctionScope {
   if (kind(info.body) === "BlockStatement") {
     for (const statement of info.body.body ?? []) {
       const node = asNode(statement);
-      if (kind(node) !== "VariableDeclaration") continue;
+      if (node === null || kind(node) !== "VariableDeclaration") continue;
       if (node.kind !== "const") valid = false;
       for (const entry of node.declarations ?? []) {
         const declarator = asNode(entry);
@@ -592,15 +592,201 @@ function isPureDataFactoryImport(
     try {
       const sourceText = readFileSync(resolved, "utf8");
       const parsed = parseSync(resolved, sourceText, { sourceType: "module" });
-      cache.set(resolved, parsed.errors.length === 0 ? buildModel(parsed.program as ESTree.Program) : null);
+      const program = asNode(parsed.program);
+      cache.set(resolved, parsed.errors.length === 0 && program?.type === "Program" ? buildModel(program) : null);
     } catch {
       cache.set(resolved, null);
     }
   }
   const model = cache.get(resolved);
   const exported = model?.exports.get(importedName);
-  return model !== null && exported !== undefined &&
+  return model !== null && model !== undefined && exported !== undefined &&
     (prove(exported, model, { visiting: new Set(), proven: new Set() }) || proveLiteralDataFactory(exported, model));
+}
+
+function writesMember(identifier: ESTree.Node): boolean {
+  let current = identifier;
+  while (current.parent?.type === "MemberExpression" && current.parent.object === current) current = current.parent;
+  const parent = current.parent;
+  return (parent?.type === "AssignmentExpression" && parent.left === current) ||
+    (parent?.type === "UpdateExpression" && parent.argument === current) ||
+    (parent?.type === "UnaryExpression" && parent.operator === "delete" && parent.argument === current);
+}
+
+function unchanged(variable: Variable): boolean {
+  return !variable.references.some((reference) =>
+    (reference.isWrite() && !reference.init) || writesMember(reference.identifier));
+}
+
+function nativeImport(context: Context, node: Syntax | null, source: string, name: string): boolean {
+  if (node?.type !== "Identifier") return false;
+  const variable = lookupVariable(context, node);
+  if (variable?.defs.length !== 1 || !unchanged(variable)) return false;
+  const [definition] = variable.defs;
+  const declaration = definition?.parent;
+  const specifier = definition?.node;
+  return definition?.type === "ImportBinding" && declaration?.type === "ImportDeclaration" &&
+    declaration.source.value === source && declaration.importKind !== "type" &&
+    specifier?.type === "ImportSpecifier" && specifier.importKind !== "type" &&
+    getImportedName(specifier) === name &&
+    (!["Layer", "Effect"].includes(name) || variable.references.every((reference) => {
+      const parent = reference.identifier.parent;
+      return (parent?.type === "MemberExpression" && parent.object === reference.identifier) ||
+        (parent?.type === "TSQualifiedName" && parent.left === reference.identifier);
+    }));
+}
+
+function nativeMethod(context: Context, expression: Syntax, namespace: string, method: string): boolean {
+  const node = unwrap(expression);
+  return node.type === "MemberExpression" && !node.computed &&
+    nameOf(asNode(node.property)) === method &&
+    nativeImport(context, node.object, "effect", namespace);
+}
+
+function intactNamespaces(program: ESTree.Program, namespaces: ReadonlyMap<string, string>): boolean {
+  const pending = [program as Syntax];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    let target = asNode(node.type === "AssignmentExpression" ? node.left :
+      node.type === "UpdateExpression" || (node.type === "UnaryExpression" && node.operator === "delete")
+        ? node.argument : null);
+    while (target?.type === "MemberExpression") target = asNode(target.object);
+    if (target?.type === "Identifier" && namespaces.has(target.name)) return false;
+    if (node.type === "VariableDeclarator" && node.init?.type === "Identifier" &&
+      namespaces.has(node.init.name)) return false;
+    if (node.type === "CallExpression" && node.arguments.some((argument: Syntax) =>
+      argument.type === "Identifier" && namespaces.has(argument.name))) return false;
+    if (node.type === "Property" && node.value?.type === "Identifier" && namespaces.has(node.value.name)) return false;
+    pending.push(...children(node));
+  }
+  return true;
+}
+
+/** Verify the imported implementation defers its work in a native Layer, not an eager constructor. */
+function isNativeLayerFactoryImport(filename: string, source: string, name: string): boolean {
+  const resolved = resolveModule(filename, source);
+  if (resolved === null) return false;
+  try {
+    const parsed = parseSync(resolved, readFileSync(resolved, "utf8"), { sourceType: "module" });
+    if (parsed.errors.length !== 0) return false;
+    const program = asNode(parsed.program);
+    if (program?.type !== "Program") return false;
+    const namespaces = new Map<string, string>();
+    for (const statement of program.body) {
+      if (statement.type !== "ImportDeclaration" || statement.source.value !== "effect" ||
+        statement.importKind === "type") continue;
+      for (const specifier of statement.specifiers) {
+        if (specifier.type === "ImportSpecifier" && specifier.importKind !== "type") {
+          const imported = getImportedName(specifier);
+          if (imported === "Effect" || imported === "Layer") namespaces.set(specifier.local.name, imported);
+        }
+      }
+    }
+    if (!intactNamespaces(program, namespaces)) return false;
+    const method = (expression: Syntax, namespace: string, member: string): boolean =>
+      expression.type === "MemberExpression" && !expression.computed &&
+      namespaces.get(nameOf(asNode(expression.object)) ?? "") === namespace &&
+      nameOf(asNode(expression.property)) === member;
+    for (const statement of program.body) {
+      if (statement.type !== "ExportNamedDeclaration" || statement.declaration?.type !== "VariableDeclaration" ||
+        statement.declaration.kind !== "const") continue;
+      for (const declaration of statement.declaration.declarations) {
+        if (declaration.id.type !== "Identifier" || declaration.id.name !== name || declaration.init === null) continue;
+        const factory = unwrap(declaration.init as Syntax);
+        if (factory.type !== "ArrowFunctionExpression" || factory.async || factory.params.length !== 1 ||
+          factory.params[0]?.type !== "Identifier" || namespaces.has(factory.params[0].name)) return false;
+        const layer = unwrap(factory.body);
+        if (layer.type !== "CallExpression" || !method(layer.callee, "Layer", "effect") ||
+          layer.arguments.length !== 2 || layer.arguments[0]?.type !== "Identifier" ||
+          layer.arguments[0].name === factory.params[0].name) return false;
+        const effect = asNode(layer.arguments[1]);
+        if (effect?.type !== "CallExpression" || !method(effect.callee, "Effect", "gen") ||
+          effect.arguments.length !== 1) return false;
+        const callback = asNode(effect.arguments[0]);
+        return callback?.type === "FunctionExpression" && callback.generator === true &&
+          callback.async !== true && callback.params.length === 0;
+      }
+    }
+  } catch {
+    // Unreadable or unsupported owner implementations remain constructor diagnostics.
+  }
+  return false;
+}
+
+function layerPipeline(context: Context, expression: Syntax): Syntax | null {
+  let current = expression;
+  while (current.parent?.type === "MemberExpression" && current.parent.object === current &&
+    !current.parent.computed && nameOf(asNode(current.parent.property)) === "pipe") {
+    const call = current.parent.parent;
+    if (call?.type !== "CallExpression" || call.callee !== current.parent || call.arguments.length === 0 ||
+      !call.arguments.every((argument) => argument.type === "CallExpression" &&
+        (nativeMethod(context, argument.callee as Syntax, "Layer", "provide") ||
+          nativeMethod(context, argument.callee as Syntax, "Layer", "provideMerge")))) return null;
+    current = call as Syntax;
+  }
+  return current;
+}
+
+function shellDeploymentRoot(node: Syntax): Syntax | null {
+  let current = node;
+  for (const member of ["deployment", "shell", "composition"]) {
+    if (current.type !== "MemberExpression" || current.computed ||
+      nameOf(asNode(current.property)) !== member) return null;
+    current = current.object;
+  }
+  return current.type === "Identifier" ? current : null;
+}
+
+function loadedDeployment(context: Context, argument: Syntax, factory: Variable): boolean {
+  const root = shellDeploymentRoot(argument);
+  const variable = root === null ? null : lookupVariable(context, root);
+  if (variable?.defs.length !== 1 || !unchanged(variable)) return false;
+  const definition = variable.defs[0]?.node;
+  if (definition?.type !== "VariableDeclarator" || definition.parent?.type !== "VariableDeclaration" ||
+    definition.parent.kind !== "const") return false;
+  const loaded = asNode(definition.init);
+  const load = loaded?.type === "YieldExpression" && loaded.delegate ? asNode(loaded.argument) : null;
+  const service = load?.type === "MemberExpression" && !load.computed &&
+    nameOf(asNode(load.property)) === "load" ? asNode(load.object) : null;
+  if (service?.type !== "YieldExpression" || !service.delegate ||
+    !nativeImport(context, service.argument, "@app/core-runtime/modules/active-application-composition",
+      "ActiveApplicationCompositionService")) return false;
+  // A loaded snapshot may only supply this exact deployment slot; mutation and escapes stay rejected.
+  return variable.references.every((reference) => {
+    if (!reference.isRead()) return true;
+    let value = reference.identifier as Syntax;
+    while (value.parent?.type === "MemberExpression" && value.parent.object === value) value = value.parent;
+    const call = value.parent;
+    return shellDeploymentRoot(value) !== null && call?.type === "CallExpression" &&
+      call.arguments.length === 1 && call.arguments[0] === value &&
+      lookupVariable(context, call.callee) === factory;
+  });
+}
+
+/** Only a returned Layer in a module-level unwrap may bind the deployment loaded from Core. */
+function isDeploymentLayerComposition(context: Context, identifier: ESTree.Node, factory: Variable): boolean {
+  const call = identifier.parent;
+  if (call?.type !== "CallExpression" || call.callee !== identifier || call.arguments.length !== 1) return false;
+  const argument = asNode(call.arguments[0]);
+  if (argument === null || !loadedDeployment(context, argument, factory)) return false;
+  const returned = layerPipeline(context, call as Syntax);
+  const statement = returned?.parent;
+  const body = statement?.type === "ReturnStatement" && statement.argument === returned ? statement.parent : null;
+  const callback = body?.type === "BlockStatement" ? body.parent : null;
+  if (callback?.type !== "FunctionExpression" || !callback.generator || callback.async ||
+    callback.params.length !== 0) return false;
+  const gen = callback.parent;
+  if (gen?.type !== "CallExpression" || gen.arguments.length !== 1 || gen.arguments[0] !== callback ||
+    !nativeMethod(context, gen.callee as Syntax, "Effect", "gen")) return false;
+  const unwrapCall = gen.parent;
+  if (unwrapCall?.type !== "CallExpression" || unwrapCall.arguments.length !== 1 ||
+    unwrapCall.arguments[0] !== gen || !nativeMethod(context, unwrapCall.callee as Syntax, "Layer", "unwrap")) return false;
+  const pipeline = layerPipeline(context, unwrapCall as Syntax);
+  const declaration = pipeline?.parent;
+  const binding = declaration?.type === "VariableDeclarator" && declaration.init === pipeline ? declaration.parent : null;
+  const parent = binding?.type === "VariableDeclaration" && binding.kind === "const" ? binding.parent : null;
+  return parent?.type === "Program" ||
+    (parent?.type === "ExportNamedDeclaration" && parent.parent?.type === "Program");
 }
 
 /** Keep dependency-bearing Effect service constructors local to their owning capability modules. */
@@ -633,6 +819,9 @@ export const noServiceConstructorImportsRule = defineRule({
               (parent?.type === "CallExpression" && parent.callee === identifier &&
                 isInsideNativeServiceFactoryCallback(context, identifier));
           })) continue;
+          if (variable !== null && variable.references.length > 0 &&
+            variable.references.every((reference) => isDeploymentLayerComposition(context, reference.identifier, variable)) &&
+            isNativeLayerFactoryImport(context.filename, node.source.value, importedName)) continue;
           // DTO and native migration-metadata construction share the binding-aware proof;
           // Drizzle imports alone never exempt a constructor or one of its runtime operations.
           if (isPureDataFactoryImport(context.filename, node.source.value, importedName, cache) ||

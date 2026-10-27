@@ -8,6 +8,7 @@ import { appRoot, runOxlint, testsDirectory } from './oxlint.mts';
 import type { LintRun } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
+import { noServiceConstructorImportsRule } from '../../anti-slop/effect/rules/no-service-constructor-imports.ts';
 import {
   proveDictionaryElementOpenness,
   proveInheritedPropertyLookups,
@@ -1494,6 +1495,124 @@ it('accepts reference factories beside native domain contracts but rejects execu
     for (const [declaration, expected] of declarations) {
       writeFileSync(factory, declaration);
       expect(provesDataFactoryImport(consumer, factorySource, 'makeData'), declaration).toBe(expected);
+    }
+  });
+});
+
+it('accepts only deployment-bound native Layer composition and preserves constructor controls', () => {
+  withTemporaryWorkspace((directory) => {
+    const actualRuntime = nodePath.relative(
+      directory,
+      nodePath.join(appRoot, 'packages/core-runtime/src/actions/runtime.ts'),
+    );
+    const layerFactorySource = './layer-factory.ts';
+    const layerFactory = [
+      'import { Effect, Layer, Context } from "effect";',
+      'const Tag = Context.Service("Tag");',
+      'export const makeRuntime = (deployment) => Layer.effect(Tag, Effect.gen(function* () { return deployment; }));',
+    ].join('\n');
+    writeFileSync(nodePath.join(directory, 'layer-factory.ts'), layerFactory);
+    writeFileSync(
+      nodePath.join(directory, 'effect-factory.ts'),
+      layerFactory.replace(
+        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+        'Effect.succeed(deployment)',
+      ),
+    );
+    writeFileSync(
+      nodePath.join(directory, 'eager-factory.ts'),
+      layerFactory.replace(
+        'Layer.effect(Tag, Effect.gen(function* () { return deployment; }))',
+        '{ fetch("runtime"); return Layer.effect(Tag, Effect.gen(function* () { return deployment; })); }',
+      ),
+    );
+    writeFileSync(nodePath.join(directory, 'mutated-factory.ts'), `${layerFactory}\nLayer.effect = counterfeit;`);
+    writeFileSync(
+      nodePath.join(directory, 'escaped-factory-namespace.ts'),
+      `${layerFactory}\nObject.assign(Layer, counterfeit);`,
+    );
+    const source = [
+      'import { Effect as Fx, Layer as Layers } from "effect";',
+      'import { ActiveApplicationCompositionService as Composition } from "@app/core-runtime/modules/active-application-composition";',
+      'import { makeRuntime as makeBoundRuntime } from "./layer-factory.ts";',
+      'const runtime = Layers.unwrap(Fx.gen(function* () {',
+      '  const snapshot = yield* (yield* Composition).load;',
+      '  return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+      '}));',
+    ].join('\n');
+    const valid = {
+      'actual-runtime.ts': source
+        .replace('makeRuntime as makeBoundRuntime', 'makeActionRuntimeLive as makeBoundRuntime')
+        .replace(layerFactorySource, actualRuntime),
+      'native-layer.ts': source,
+    };
+    const invalid = {
+      'eager-factory-consumer.ts': source.replace(layerFactorySource, './eager-factory.ts'),
+      'effect-factory-consumer.ts': source.replace(layerFactorySource, './effect-factory.ts'),
+      'escaped-factory-namespace-consumer.ts': source.replace(layerFactorySource, './escaped-factory-namespace.ts'),
+      'escaped-factory.ts': `${source}\nvoid makeBoundRuntime;`,
+      'escaped-layer.ts': `${source}\nObject.assign(Layers, counterfeit);`,
+      'fake-snapshot.ts': source.replace(
+        'yield* (yield* Composition).load',
+        '{ composition: { shell: { deployment: {} } } }',
+      ),
+      'foreign-composition.ts': source.replace(
+        '@app/core-runtime/modules/active-application-composition',
+        './foreign-composition.ts',
+      ),
+      'foreign-effect.ts': source.replace('from "effect"', 'from "foreign-effect"'),
+      'hardcoded-deployment.ts': source.replace(
+        'snapshot.composition.shell.deployment',
+        '{ appId: "shell", buildMarker: "fake" }',
+      ),
+      'laundered-return.ts': source.replace(
+        'return makeBoundRuntime(snapshot.composition.shell.deployment).pipe(Layers.provide(dependencies));',
+        'return Fx.succeed(makeBoundRuntime(snapshot.composition.shell.deployment));',
+      ),
+      'mutated-deployment.ts': source.replace(
+        '  return makeBoundRuntime',
+        '  snapshot.composition.shell.deployment = replacement;\n  return makeBoundRuntime',
+      ),
+      'mutated-factory-consumer.ts': source.replace(layerFactorySource, './mutated-factory.ts'),
+      'mutated-layer.ts': `${source}\nLayers.unwrap = counterfeit;`,
+      'nested-business.ts': source.replace('const runtime =', 'function business() { return').replace('}));', '})); }'),
+      'shadowed-composition.ts': source.replace(
+        '  const snapshot',
+        '  const Composition = fakeService;\n  const snapshot',
+      ),
+      'shadowed-layer.ts': source
+        .replace('const runtime =', 'function business(Layers) { return')
+        .replace('}));', '})); }'),
+      'wrong-deployment.ts': source.replace(
+        'snapshot.composition.shell.deployment',
+        'snapshot.composition.other.deployment',
+      ),
+    };
+    const files = Object.entries({ ...valid, ...invalid }).map(([name, candidate]) => {
+      const filename = nodePath.join(directory, name);
+      writeFileSync(filename, candidate);
+      return filename;
+    });
+    const run = runOxlint(lintConfig, files, directory);
+    expect(run.numberOfFiles).toBe(files.length);
+    for (const name of Object.keys(valid)) {
+      expect(
+        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
+        name,
+      ).toEqual([]);
+    }
+    for (const name of Object.keys(invalid)) {
+      expect(
+        run.diagnostics.filter(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name),
+        name,
+      ).toHaveLength(1);
+      expect(
+        run.diagnostics.find(({ code, filename }) => code === ruleCode && nodePath.basename(filename) === name)
+          ?.message,
+        name,
+      ).toBe(
+        noServiceConstructorImportsRule.meta?.messages?.serviceConstructorImport.replace('{{name}}', 'makeRuntime'),
+      );
     }
   });
 });
