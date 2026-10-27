@@ -1,5 +1,5 @@
 import { PgClient as actualPgClient } from '@effect/sql-pg' with { rstest: 'importActual' };
-import { Array as EffectArray, Effect, Order, Redacted, Stream } from 'effect';
+import { Array as EffectArray, Effect, Exit, Order, Redacted, Stream } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { SqlClient, Statement } from 'effect/unstable/sql';
 import type { SqlConnection } from 'effect/unstable/sql';
@@ -10,7 +10,8 @@ import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import type { DatabaseIdentityConnections } from '../../packages/core-runtime/src/db/config.ts';
 import { ensureDatabaseLoginRole } from '../postgres/database-login-roles.mts';
 import { DATABASE_ROLE_GRANT_MANIFEST } from '../postgres/database-role-manifest.mts';
-import { bootstrapRuntimeRoles, explicitEntries } from '../postgres/runtime-role-bootstrap.mts';
+import { bootstrapRuntimeRoles, explicitEntries, grantExplicitRole } from '../postgres/runtime-role-bootstrap.mts';
+import type { ExplicitManifestEntry } from '../postgres/runtime-role-bootstrap.mts';
 
 rstest.mock('@effect/sql-pg', () => ({
   PgClient: { ...actualPgClient, makeClient: rstest.fn() },
@@ -18,11 +19,18 @@ rstest.mock('@effect/sql-pg', () => ({
 const { PgClient } = await import('@effect/sql-pg');
 
 const TEST_CREDENTIAL = 'unit-test-password';
+const PRIVATE_DRIVER_DETAIL = 'private-driver-detail';
+const INITIALIZE_LOCAL = 'initialize-local';
+const CORE_TABLE_GRANT = 'grant select, insert, update, delete on all tables in schema core to ontos_runtime';
 const ROLE_EXISTS_QUERY_PREFIX = 'select exists(select 1 from pg_catalog.pg_roles';
+const TABLE_EXISTS_QUERY = 'select pg_catalog.to_regclass($1) is not null as exists';
+const TABLE_ATTRIBUTES_QUERY_PREFIX = 'select attname';
+const PROBE_TABLE = 'core.bootstrap_probe';
 
 const connectionFor = (role: string) => ({
   connectionString: `postgresql://${role}:${TEST_CREDENTIAL}@127.0.0.1/unit_test`,
   database: 'unit_test',
+  expectedRole: role,
   host: '127.0.0.1',
   port: 5432,
   user: role,
@@ -35,6 +43,7 @@ const passwords = new Map(DATABASE_IDENTITIES.map(({ role }) => [role, Redacted.
 
 interface Row {
   readonly allowed?: boolean;
+  readonly attname?: string;
   readonly database?: string;
   readonly exists?: boolean;
   readonly rolbypassrls?: boolean;
@@ -48,15 +57,16 @@ interface Row {
   readonly settings?: string;
 }
 type Rows = readonly Row[];
-type Respond = (text: string, values: readonly unknown[]) => Rows;
+type Respond = (text: string, values: readonly unknown[]) => Rows | Effect.Effect<Rows, SqlError>;
 
 /** A real Effect SQL facade over an in-memory connection; transaction controls are recorded too. */
 const makeClient = (statements: string[], respond: Respond) =>
   Effect.gen(function* makeMemoryClient() {
     const execute = (text: string, values: readonly unknown[]) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         statements.push(text);
-        return respond(text, values);
+        const response = respond(text, values);
+        return Effect.isEffect(response) ? response : Effect.succeed(response);
       });
     const connection: SqlConnection.Connection = {
       execute,
@@ -116,6 +126,112 @@ afterEach(() => {
   rstest.resetAllMocks();
 });
 
+const probeEntry = (tables: ExplicitManifestEntry['grants']['tables']): ExplicitManifestEntry => {
+  const [entry] = explicitEntries;
+  if (entry === undefined) {
+    throw new Error('Expected an explicit identity for the grant probe');
+  }
+  return {
+    grants: { ...entry.grants, routines: [], schemas: ['core'], sequences: [], tables },
+    identity: entry.identity,
+  };
+};
+
+for (const columns of [
+  undefined,
+  { insert: ['present', 'future'], select: ['present', 'future'], update: ['future'] },
+] as const) {
+  it.effect(`batches table privileges without widening missing columns: ${JSON.stringify(columns)}`, () =>
+    Effect.gen(function* batchedGrantProbe() {
+      const statements: string[] = [];
+      const client = yield* makeClient(statements, (text, values) => {
+        if (text === TABLE_EXISTS_QUERY) {
+          return [{ exists: values[0] === PROBE_TABLE }];
+        }
+        if (text.startsWith(TABLE_ATTRIBUTES_QUERY_PREFIX)) {
+          return [{ attname: 'present' }];
+        }
+        return reconciledRows(text, values);
+      });
+      const entry = probeEntry([
+        {
+          columns,
+          privileges: ['select', 'insert', 'update', 'delete'],
+          reason: 'Grant batching probe',
+          table: PROBE_TABLE,
+        },
+      ]);
+      yield* grantExplicitRole(client, entry);
+      expect(statements.filter((text) => text.startsWith('grant ') && text.includes('"bootstrap_probe"'))).toEqual([
+        columns === undefined
+          ? `grant select, insert, update, delete on table "core"."bootstrap_probe" to "${entry.identity.role}"`
+          : `grant select ("present"), insert ("present"), delete on table "core"."bootstrap_probe" to "${entry.identity.role}"`,
+      ]);
+      expect(statements.filter((text) => text.startsWith(TABLE_ATTRIBUTES_QUERY_PREFIX))).toHaveLength(
+        columns === undefined ? 0 : 1,
+      );
+      expect(
+        statements.indexOf(`revoke all on all tables in schema "core" from "${entry.identity.role}"`),
+      ).toBeLessThan(statements.findIndex((text) => text.includes('on table "core"."bootstrap_probe"')));
+    }).pipe(Effect.provide(Reactivity.layer)),
+  );
+}
+
+it.effect('keeps checking the current table and columns on every grant pass', () =>
+  Effect.gen(function* grantChangedColumns() {
+    const statements: string[] = [];
+    let pass = 0;
+    const client = yield* makeClient(statements, (text, values) => {
+      if (text === TABLE_EXISTS_QUERY) {
+        return [{ exists: values[0] === PROBE_TABLE && pass > 0 }];
+      }
+      if (text.startsWith(TABLE_ATTRIBUTES_QUERY_PREFIX)) {
+        return pass === 1 ? [] : [{ attname: 'future' }];
+      }
+      return reconciledRows(text, values);
+    });
+    const entry = probeEntry([
+      { columns: { select: ['future'] }, privileges: ['select'], reason: 'Fresh catalog probe', table: PROBE_TABLE },
+    ]);
+    for (pass = 0; pass < 3; pass += 1) {
+      yield* grantExplicitRole(client, entry);
+    }
+    expect(statements.filter((text) => text === TABLE_EXISTS_QUERY)).toHaveLength(3);
+    expect(statements.filter((text) => text.startsWith(TABLE_ATTRIBUTES_QUERY_PREFIX))).toHaveLength(2);
+    expect(statements.filter((text) => text.startsWith('grant ') && text.includes('"bootstrap_probe"'))).toEqual([
+      `grant select ("future") on table "core"."bootstrap_probe" to "${entry.identity.role}"`,
+    ]);
+  }).pipe(Effect.provide(Reactivity.layer)),
+);
+
+for (const interrupted of [false, true]) {
+  it.effect(`rolls back partial reconciliation before reporting success, interrupted=${String(interrupted)}`, () =>
+    Effect.gen(function* rollbackPartialBootstrap() {
+      const statements: string[] = [];
+      const client = yield* makeClient(statements, (text, values) => {
+        if (text.startsWith('select rolsuper,')) {
+          return interrupted
+            ? Effect.interrupt
+            : Effect.fail(
+                new SqlError({
+                  reason: new AuthenticationError({ cause: PRIVATE_DRIVER_DETAIL, message: TEST_CREDENTIAL }),
+                }),
+              );
+        }
+        return reconciledRows(text, values);
+      });
+      const exit = yield* Effect.exit(bootstrapRuntimeRoles(client, connections, passwords, INITIALIZE_LOCAL));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(statements).toContain(CORE_TABLE_GRANT);
+      expect(statements).toContain('BEGIN');
+      expect(statements.at(-1)).toBe('ROLLBACK');
+      expect(statements).not.toContain('COMMIT');
+      expect(JSON.stringify(exit)).not.toContain(TEST_CREDENTIAL);
+      expect(JSON.stringify(exit)).not.toContain(PRIVATE_DRIVER_DETAIL);
+    }).pipe(Effect.provide(Reactivity.layer)),
+  );
+}
+
 for (const { identity: protectedIdentity } of explicitEntries) {
   it.effect(`stops before any mutation when ${protectedIdentity.role} is missing`, () =>
     Effect.gen(function* missingProtectedRole() {
@@ -142,7 +258,7 @@ for (const { identity: protectedIdentity } of explicitEntries) {
         return role === protectedIdentity.role
           ? Effect.fail(
               new SqlError({
-                reason: new AuthenticationError({ cause: 'private-driver-detail', message: TEST_CREDENTIAL }),
+                reason: new AuthenticationError({ cause: PRIVATE_DRIVER_DETAIL, message: TEST_CREDENTIAL }),
               }),
             )
           : makeClient([], () => [{ database: 'unit_test', role }]);
@@ -150,7 +266,7 @@ for (const { identity: protectedIdentity } of explicitEntries) {
       const failure = yield* bootstrapRuntimeRoles(client, connections, passwords, 'reconcile').pipe(Effect.flip);
       expect(failure.reason).toContain(protectedIdentity.urlKey);
       expect(JSON.stringify(failure)).not.toContain(TEST_CREDENTIAL);
-      expect(JSON.stringify(failure)).not.toContain('private-driver-detail');
+      expect(JSON.stringify(failure)).not.toContain(PRIVATE_DRIVER_DETAIL);
       expect(mutations(statements)).toEqual([]);
     }).pipe(Effect.provide(Reactivity.layer)),
   );
@@ -197,9 +313,7 @@ it.effect(
           ),
         ).toEqual([]);
       }
-      expect(statements).toContain(
-        'grant select, insert, update, delete on all tables in schema core to ontos_runtime',
-      );
+      expect(statements).toContain(CORE_TABLE_GRANT);
     }).pipe(Effect.provide(Reactivity.layer)),
 );
 
@@ -239,14 +353,12 @@ it.effect(
         text.startsWith(ROLE_EXISTS_QUERY_PREFIX) ? [{ exists: false }] : reconciledRows(text, values),
       );
       const connect = rstest.mocked(PgClient.makeClient);
-      yield* bootstrapRuntimeRoles(client, connections, passwords, 'initialize-local');
+      yield* bootstrapRuntimeRoles(client, connections, passwords, INITIALIZE_LOCAL);
       expect(connect).not.toHaveBeenCalled();
       for (const { role } of DATABASE_IDENTITIES) {
         expect(statements.some((text) => text.startsWith(`create role "${role}" login password `))).toBe(true);
       }
-      expect(statements).toContain(
-        'grant select, insert, update, delete on all tables in schema core to ontos_runtime',
-      );
+      expect(statements).toContain(CORE_TABLE_GRANT);
       expect(statements.at(-1)).toBe('COMMIT');
     }).pipe(Effect.provide(Reactivity.layer)),
 );
@@ -259,7 +371,7 @@ it.effect('refuses initialization on a non-local target before any SQL', () =>
       client,
       { ...connections, admin: { ...connections.admin, host: 'private-stage-db' } },
       passwords,
-      'initialize-local',
+      INITIALIZE_LOCAL,
     ).pipe(Effect.flip);
     expect(statements).toEqual([]);
   }).pipe(Effect.provide(Reactivity.layer)),

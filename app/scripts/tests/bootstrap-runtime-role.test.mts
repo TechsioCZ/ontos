@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -11,6 +12,65 @@ import {
   tableGrantTarget,
 } from '../postgres/runtime-role-bootstrap.mts';
 import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from '../postgres/runtime-role-grants.mts';
+
+const databaseScripts = Schema.decodeUnknownSync(
+  Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) }),
+)(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'))).scripts;
+const ownerMigrations = [
+  'core-runtime',
+  'shell-super-app',
+  'party-registry',
+  'payment-term-catalog',
+  'price-group-catalog',
+  'commerce-customer-context',
+  'commerce-market-catalog',
+  'catalog',
+  'inventory',
+  'pricing',
+  'storefront-registry',
+  'assortment',
+  'tax',
+  'privacy',
+  'property-portfolio',
+  'property-leasing',
+  'legal-agreements',
+  'work-tasks',
+  'workforce',
+  'tagging',
+  'crm',
+  'sales-pipeline',
+  'merchandise',
+  'facility-operations',
+  'sales-insights',
+  'finance-billing',
+  'crm-activities',
+];
+
+it('keeps the internal owner command sequential and free of general or portal-auth bootstraps', () => {
+  expect(databaseScripts['db:migrate:owners:internal']).toBe(
+    ownerMigrations.map((owner) => `pnpm --filter @app/${owner} db:migrate`).join(' && '),
+  );
+});
+
+it('standalone migration prepares identities, migrates owners, then verifies grants before portal auth', () => {
+  expect(databaseScripts['db:migrate']).toBe(
+    'pnpm db:bootstrap-runtime-role && pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+  );
+  expect(databaseScripts['db:bootstrap-runtime-role']).toBe('node ./scripts/postgres/bootstrap-runtime-role.mts');
+  expect(databaseScripts['db:portal-auth:migrate']).toBe(
+    'node ./scripts/run-optional-commerce-portal-auth-db.mts migrate',
+  );
+});
+
+it('prepared stage migration retains final grants and portal migration inside the sealed child', () => {
+  expect(databaseScripts['db:migrate:prepared:internal']).toBe(
+    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+  );
+  expect(databaseScripts['db:migrate']).toBe(
+    `pnpm db:bootstrap-runtime-role && ${databaseScripts['db:migrate:prepared:internal']}`,
+  );
+  expect(databaseScripts['db:migrate:prepared:internal']?.split('pnpm db:bootstrap-runtime-role')).toHaveLength(2);
+});
 
 const readBootstrapSource = (): string =>
   readFileSync(new URL('../postgres/runtime-role-bootstrap.mts', import.meta.url), 'utf-8');
