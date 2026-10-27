@@ -82,6 +82,23 @@ const login = async (page: Page, language: 'cs' | 'en', credentials: Authenticat
   await expect(page).toHaveURL(labels.url);
 };
 
+const sessionPath = `${shellAuthenticationApiContract.apiPrefix}/auth/session`;
+
+// The dashboard no longer prints e-mail or internal identifiers. Existing test
+// callbacks check the cookie-backed public session endpoint against this value.
+const expectedAuthenticatedSession = (
+  authentication: AuthenticationFixture,
+  tenant: AuthenticationFixture['tenants']['first'],
+) => ({
+  identity: {
+    email: authentication.credentials.email,
+    legalEntityId: tenant.legalEntityId,
+    principalId: tenant.principalId,
+    tenantId: tenant.tenantId,
+  },
+  state: 'authenticated',
+});
+
 // Only this real Playwright worker fixture runs Effect. Each worker owns its
 // identities; Playwright still gives every test an independent browser context.
 //
@@ -104,21 +121,25 @@ const test = base.extend<Record<never, never>, { authentication: AuthenticationF
   ],
 });
 
-test('renders the exact anonymous English and Czech home states', async ({ page }) => {
-  const expectAnonymousHome = async (language: string, label: string) => {
+test('redirects anonymous English and Czech home requests to localized login without dashboard chrome', async ({
+  page,
+}) => {
+  const expectAnonymousHome = async (language: string, heading: string, submit: string) => {
     await page.goto(`/${language}/`);
+    await expect(page).toHaveURL(new RegExp(`/${language}/login/?(?:\\?.*)?$`, 'u'));
     await Promise.all([
-      expect(page.getByRole('link', { name: label })).toBeVisible(),
-      expect(page.getByRole('link')).toHaveCount(1),
-      expect(page.getByRole('button')).toHaveCount(0),
+      expect(page.getByRole('heading', { exact: true, name: heading })).toBeVisible(),
+      expect(page.getByRole('button', { exact: true, name: submit })).toBeVisible(),
+      expect(page.locator('input[name="login"]')).toBeVisible(),
+      expect(page.locator('input[name="password"]')).toBeVisible(),
       expect(page.getByRole('checkbox')).toHaveCount(0),
       expect(page.locator('header[aria-label]')).toHaveCount(0),
       expect(page.getByRole('complementary')).toHaveCount(0),
-      expect(page.getByRole('region')).toHaveCount(0),
+      expect(page.locator('button[aria-haspopup="menu"]')).toHaveCount(0),
     ]);
   };
-  await expectAnonymousHome('en', 'Login');
-  await expectAnonymousHome('cs', 'Přihlásit se');
+  await expectAnonymousHome('en', 'Login', 'Login');
+  await expectAnonymousHome('cs', 'Přihlášení', 'Přihlásit se');
 });
 
 test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({ page }) => {
@@ -154,7 +175,10 @@ test('shows one generic error for invalid English credentials', async ({ authent
       async () =>
         await Promise.all([
           expect(page.getByText('The login or password is invalid.')).toHaveCount(1),
-          expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
+          expect(hydratedLoginForm(page).getByRole('textbox', { name: /^Login\s*\*$/u })).toHaveValue(
+            authentication.credentials.email,
+          ),
+          expect(hydratedLoginForm(page).getByLabel(/^Password/u)).toBeFocused(),
         ]),
     ));
 
@@ -192,7 +216,11 @@ test('logs a user in without any server-error response', async ({ authentication
   expect(signInResponse.status(), 'The sign-in endpoint should accept valid credentials').toBe(200);
   await expect(page).toHaveURL(/\/en\/?$/u);
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible();
-  await expect(page.getByText(authentication.credentials.email)).toBeVisible();
+  const sessionResponse = await page.request.get(sessionPath);
+  expect(sessionResponse.status()).toBe(200);
+  expect(await sessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.first),
+  );
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
   await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
@@ -203,18 +231,18 @@ test('loads localized English and Czech Contacts pages only after login', async 
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   await page.goto('/en/contacts');
+  await expect(page).toHaveURL(/\/en\/login(?:\?.*)?$/u);
   await expect(page.getByRole('heading', { name: 'Contacts' })).toHaveCount(0);
   await page.goto('/cs/contacts');
-  await expect(page.getByRole('heading', { name: 'Contacts' })).toHaveCount(0);
+  await expect(page).toHaveURL(/\/cs\/login(?:\?.*)?$/u);
+  await expect(page.getByRole('heading', { name: 'Kontakty' })).toHaveCount(0);
 
   await login(page, 'cs', authentication.credentials);
-  // The module links and the unavailable deployments render together from one composition, so the
-  // Party Registry link is the point where the deployment list is final. Asserting before it checked
-  // whatever had rendered yet. This browser stack serves Party Registry and Inventory only, so the other
-  // allowlisted deployments are listed unavailable; the module under test must not be among them.
+  // Party Registry contributes Customers to navigation. Contacts remains a
+  // protected direct route, not a sidebar destination.
   const dashboardNavigation = page.getByRole('navigation', { name: 'Navigace přehledu' });
-  const contactsLink = dashboardNavigation.getByRole('link', { name: 'Party Registry' });
-  await expect(contactsLink).toBeVisible();
+  const customersLink = dashboardNavigation.getByRole('link', { name: 'Zákazníci' });
+  await expect(customersLink).toBeVisible();
   await expect(
     dashboardNavigation
       .getByRole('listitem')
@@ -222,8 +250,8 @@ test('loads localized English and Czech Contacts pages only after login', async 
       .filter({ hasText: 'party-registry' }),
   ).toHaveCount(0);
 
-  await expect(contactsLink).toHaveAttribute('href', '/cs/contacts');
-  await contactsLink.click();
+  await expect(customersLink).toHaveAttribute('href', '/cs/prodej/zakaznici');
+  await page.goto('/cs/contacts');
 
   const expectContacts = async (content: {
     description: string;
@@ -285,14 +313,14 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
     await expect(page.getByText(status)).toBeVisible();
   };
   await expectPersistentShell('/en/search', 'No authorized results found.');
-  await expectPersistentShell('/en/modules/not-installed', 'You do not have permission to open this module.');
+  await expectPersistentShell('/en/modules/not-installed', 'This module is not available in the current context.');
   await expectPersistentShell(
     '/en/resources/not-installed/example/missing',
-    'You do not have permission to view this resource.',
+    'This resource was not found in the current context.',
   );
 });
 
-test('persists an English session, logs out, clears the cookie, and stays anonymous', async ({
+test('persists an English session, logs out, invalidates the session, and stays anonymous', async ({
   authentication,
   page,
 }) =>
@@ -311,14 +339,17 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     )
     .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
     .then(async () => await expect(page).toHaveURL(/\/en\/?$/u))
-    .then(
-      async () =>
-        await Promise.all([
-          expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-          expect(page.getByText(authentication.credentials.email)).toBeVisible(),
-          expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
-        ]),
-    )
+    .then(async () => {
+      const sessionResponse = await page.request.get(sessionPath);
+      expect(sessionResponse.status()).toBe(200);
+      expect(await sessionResponse.json()).toMatchObject(
+        expectedAuthenticatedSession(authentication, authentication.tenants.first),
+      );
+      await Promise.all([
+        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
+        expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
+      ]);
+    })
     .then(async () => await page.reload())
     .then(async () => await waitForInteractiveAccountMenu(page))
     .then(async () => await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
@@ -335,7 +366,15 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
         ]),
     )
     .then(async () => await page.reload())
-    .then(async () => await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
+    .then(async () => {
+      await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible();
+      const response = await page.request.get(sessionPath);
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ state: 'anonymous' });
+      await page.goto('/en/');
+      await expect(page).toHaveURL(/\/en\/login(?:\?.*)?$/u);
+      await expect(page.getByRole('button', { name: 'E2E user' })).toHaveCount(0);
+    }));
 
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   authentication,
@@ -345,7 +384,11 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
 
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  await expect(page.getByText(authentication.tenants.first.tenantId)).toBeVisible();
+  const firstSessionResponse = await page.request.get(sessionPath);
+  expect(firstSessionResponse.status()).toBe(200);
+  expect(await firstSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.first),
+  );
   await tenant.click();
   const switchResponsePromise = page.waitForResponse(
     (response) =>
@@ -364,14 +407,22 @@ test('switches tenant by pointer, fully reloads, and persists the selected conte
     authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
-  await expect(page.getByText(authentication.tenants.second.principalId)).toBeVisible();
-  await expect(page.getByText(authentication.tenants.second.tenantId)).toBeVisible();
+  const secondSessionResponse = await page.request.get(sessionPath);
+  expect(secondSessionResponse.status()).toBe(200);
+  expect(await secondSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.second),
+  );
 
   await page.reload();
   await expect(page.getByRole('combobox', { name: 'Current tenant' })).toContainText(
     authentication.tenants.second.name,
   );
   await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
+  const reloadedSessionResponse = await page.request.get(sessionPath);
+  expect(reloadedSessionResponse.status()).toBe(200);
+  expect(await reloadedSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.second),
+  );
 });
 
 test('retains Czech tenant context after one failed switch and supports keyboard retry', async ({
@@ -389,13 +440,17 @@ test('retains Czech tenant context after one failed switch and supports keyboard
     await route.continue();
   });
 
-  const tenant = page.getByRole('combobox', { name: 'Aktuální tenant' });
+  const tenant = page.getByRole('combobox', { name: 'Organizace' });
   await expect(tenant).toContainText(authentication.tenants.first.name);
   await tenant.click();
   await page.getByRole('option', { name: authentication.tenants.second.name }).click();
   await expect(page.getByText('Přepnutí tenantu selhalo. Zkuste to znovu.')).toBeVisible();
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  await expect(page.getByText(authentication.tenants.first.tenantId)).toBeVisible();
+  const retainedSessionResponse = await page.request.get(sessionPath);
+  expect(retainedSessionResponse.status()).toBe(200);
+  expect(await retainedSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.first),
+  );
 
   await tenant.focus();
   await page.keyboard.press('Enter');
@@ -414,8 +469,11 @@ test('retains Czech tenant context after one failed switch and supports keyboard
     }),
     tenantListbox.press('Enter'),
   ]);
-  await expect(page.getByRole('combobox', { name: 'Aktuální tenant' })).toContainText(
-    authentication.tenants.second.name,
+  await expect(page.getByRole('combobox', { name: 'Organizace' })).toContainText(authentication.tenants.second.name);
+  const switchedSessionResponse = await page.request.get(sessionPath);
+  expect(switchedSessionResponse.status()).toBe(200);
+  expect(await switchedSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.second),
   );
 });
 
@@ -443,13 +501,20 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
           await route.continue();
         }),
     )
-    .then(async () => await page.getByRole('button', { name: 'E2E user' }).focus())
-    .then(async () => await page.keyboard.press('Enter'))
+    .then(async () => {
+      await waitForInteractiveAccountMenu(page);
+      await page.getByRole('button', { name: 'E2E user' }).focus();
+    })
+    .then(async () => {
+      await page.keyboard.press('Enter');
+      // Profile precedes Logout. End selects the last menu item without a pointer.
+      await page.getByRole('menu').press('End');
+    })
     .then(
       async () =>
         await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute('data-highlighted', ''),
     )
-    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(async () => await page.getByRole('menu').press('Enter'))
     .then(
       async () =>
         await Promise.all([
@@ -458,12 +523,15 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
           expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
         ]),
     )
-    .then(async () => await page.keyboard.press('Enter'))
+    .then(async () => {
+      await page.keyboard.press('Enter');
+      await page.getByRole('menu').press('End');
+    })
     .then(
       async () =>
         await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute('data-highlighted', ''),
     )
-    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(async () => await page.getByRole('menu').press('Enter'))
     .then(async () => await expect(page).toHaveURL(/\/cs\/login\/?$/u));
 });
 
@@ -502,12 +570,20 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
     async (route) => await route.abort('failed'),
   );
 
-  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
-  await expect(page.getByRole('link', { name: 'Home' })).toBeInViewport();
   const dashboardHeader = page.locator('header[aria-label="Dashboard header"]');
-  await dashboardHeader.scrollIntoViewIfNeeded();
   await expect(dashboardHeader).toBeInViewport();
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
+  const initialSessionResponse = await page.request.get(sessionPath);
+  expect(initialSessionResponse.status()).toBe(200);
+  expect(await initialSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.first),
+  );
+  const navigationToggle = page.getByRole('button', { name: 'Toggle navigation' });
+  await expect(navigationToggle).toHaveAttribute('aria-expanded', 'false');
+  await navigationToggle.click();
+  const dashboardSidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  await expect(dashboardSidebar).toBeInViewport();
+  await expect(dashboardSidebar.getByRole('link', { exact: true, name: 'Home' })).toBeInViewport();
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await tenant.scrollIntoViewIfNeeded();
   await expect(tenant).toBeInViewport();
@@ -519,9 +595,18 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(authentication.tenants.first.name);
-  const authenticatedIdentity = page.getByRole('region', { name: 'Authenticated identity' });
-  await authenticatedIdentity.scrollIntoViewIfNeeded();
-  await expect(authenticatedIdentity).toBeInViewport();
+  const retainedSessionResponse = await page.request.get(sessionPath);
+  expect(retainedSessionResponse.status()).toBe(200);
+  expect(await retainedSessionResponse.json()).toMatchObject(
+    expectedAuthenticatedSession(authentication, authentication.tenants.first),
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
+  await dashboardSidebar.getByRole('button', { name: 'Close navigation' }).click();
+  await expect(dashboardSidebar).not.toBeVisible();
+  await expect(dashboardHeader).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
     true,
   );
