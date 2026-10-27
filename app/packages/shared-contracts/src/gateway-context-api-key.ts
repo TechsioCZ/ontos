@@ -69,9 +69,7 @@ export const issueApiKeyGatewayContext = (
         ),
       ),
     ),
-    // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Request-scoped server transport options must remain private to this server-only client and must not become a caller-visible application service. expires: 2027-03-31.
-    Effect.provideService(
-      ApiKeyGatewayContextTransport,
+    Effect.updateService(ApiKeyGatewayContextTransport, () =>
       Option.some({
         baseUrl: options.baseUrl,
         requestCorrelation: options.requestCorrelation,

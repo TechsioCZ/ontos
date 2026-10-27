@@ -439,3 +439,41 @@ it('constrains the combined gateway protocol to named reads rather than arbitrar
     400, 401, 403, 409, 429, 500, 503,
   ]);
 });
+
+it.effect('isolates API-key transport options between concurrent requests', () =>
+  Effect.gen(function* isolatedApiKeyGatewayTransport() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(
+        Response.json({
+          apiBaseUrl: '/payment-term-catalog-api',
+          compositionRevision: claims.compositionRevision,
+          expiresAt: claims.exp,
+          token: 'fresh-signed-assertion',
+        }),
+      );
+    };
+    const targets = [
+      { apiKey: 'first-key', baseUrl: 'https://first.example.test', requestCorrelation: 'first-request' },
+      { apiKey: 'second-key', baseUrl: 'https://second.example.test', requestCorrelation: 'second-request' },
+    ];
+    yield* Effect.forEach(
+      targets,
+      (target) =>
+        issueApiKeyGatewayContext(
+          { audience: 'payment-term-catalog' },
+          { ...target, apiKey: Redacted.make(target.apiKey) },
+        ),
+      { concurrency: 'unbounded' },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(requests).toHaveLength(targets.length);
+    for (const target of targets) {
+      const request = requests.find((candidate) => new URL(candidate.url).origin === target.baseUrl);
+      expect(request?.headers.get('x-api-key')).toBe(target.apiKey);
+      expect(request?.headers.get('x-correlation-id')).toBe(target.requestCorrelation);
+      expect(request?.headers.get('cookie')).toBeNull();
+      expect(request?.headers.get('authorization')).toBeNull();
+    }
+  }),
+);

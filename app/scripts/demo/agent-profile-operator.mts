@@ -34,11 +34,8 @@ import {
   ScopedRoleMembershipLifecycleLive,
   SpiceDbConfigLive,
 } from '@app/core-runtime/outbox/core-system-worker';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This operator composition root binds the approved deployment identity to the native Action runtime.
 import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/runtime.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This composition root opens the privileged SELECT-only audit/membership reader; native Actions use the separate runtime-role pool.
-import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { CoreAdminDatabaseLive, CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/db/oauth-flow-live.ts';
 import { OAuthCredentialsLive } from '../../apps/shell-super-app/api/auth/db/oauth-credentials-live.ts';
 import { OAuthEndpointGuardDataLive } from '../../apps/shell-super-app/api/oauth-connections/grant-store.ts';
@@ -106,12 +103,11 @@ const actionRuntime = Layer.unwrap(
 const reads = Layer.effect(
   AgentProfileReadDatabase,
   Effect.gen(function* readOnlyOperatorDatabase() {
-    const configuration = yield* loadDatabaseConnectionPair();
     // Privileged connection is deliberately exposed as SELECT-only. All identity writes use runtime scoped transactions.
-    const database = yield* makeCoreDatabase(configuration.admin);
+    const database = yield* CoreDatabase;
     return { executor: database.executor };
   }),
-);
+).pipe(Layer.provide(CoreAdminDatabaseLive));
 const legalEntityContext = LegalEntityContextLive.pipe(Layer.provide(persistence));
 const readRuntime = ReadRuntimeLive.pipe(Layer.provide(operations));
 const authorizationLifecycle = ActionAuthorizationLifecycleLive.pipe(

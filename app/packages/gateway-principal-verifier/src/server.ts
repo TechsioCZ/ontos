@@ -221,20 +221,18 @@ const loadGatewayPrincipalVerificationConfiguration = (
             x,
           }));
           const keySet = createLocalJWKSet({ keys });
-          return Effect.tryPromise({
-            // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
-            catch: () => configurationError(),
-            // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this cached configuration Promise boundary.
-            try: () =>
-              Promise.all(
-                keys.map(
-                  // Validate through the resolver that verifies requests, retaining its imported keys.
-                  // A separate import discarded each key and forced another import on the first JWT.
-                  // oxlint-disable-next-line sonarjs/no-nested-functions, typescript/promise-function-async -- Effect owns this cached configuration Promise boundary; key imports complete before request verification.
-                  (key) => keySet({ alg: key.alg, kid: key.kid }),
-                ),
-              ),
-          }).pipe(
+          return Effect.forEach(
+            keys,
+            // Validate through the resolver that verifies requests, retaining its imported keys.
+            // A separate import discarded each key and forced another import on the first JWT.
+            (key) =>
+              Effect.tryPromise({
+                // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Configuration failures are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
+                catch: configurationError,
+                try: keySet.bind(undefined, { alg: key.alg, kid: key.kid }, undefined),
+              }),
+            { concurrency: 8 },
+          ).pipe(
             Effect.timeoutOrElse({
               duration: VERIFY_ASSERTION_TIMEOUT,
               orElse: () => Effect.fail(configurationError()),
@@ -370,15 +368,13 @@ const makeAuthenticatedTokenVerifier = Effect.fn('GatewayPrincipalVerifier.makeA
             onNone: unavailableError,
             onSome: classifyVerificationFailure,
           }),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the Promise boundary; remove-when: the lint rule recognizes Effect.tryPromise callbacks.
-        try: () =>
-          jwtVerify(token, configuration.keySet, {
-            algorithms: ['EdDSA'],
-            audience,
-            clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
-            currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
-            issuer: configuration.issuer,
-          }),
+        try: jwtVerify.bind(undefined, token, configuration.keySet, {
+          algorithms: ['EdDSA'],
+          audience,
+          clockTolerance: GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+          currentDate: DateTime.toDateUtc(DateTime.makeUnsafe(now * 1000)),
+          issuer: configuration.issuer,
+        }),
       }).pipe(
         Effect.timeoutOrElse({
           duration: VERIFY_ASSERTION_TIMEOUT,

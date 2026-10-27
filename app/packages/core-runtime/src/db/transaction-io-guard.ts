@@ -81,10 +81,8 @@ export const insideDatabaseTransaction =
     Effect.suspend(() => {
       const open: OpenTransaction = { operationKey, refusedFetches: [] };
       return effect.pipe(
-        // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The transaction mark is this seam: inside it every FetchHttpClient refuses.
-        Effect.provideService(FetchHttpClient.Fetch, refusingFetch(open)),
-        // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The transaction mark itself, read by every Core transport guard.
-        Effect.provideService(OpenDatabaseTransaction, Option.some(open)),
+        Effect.updateService(FetchHttpClient.Fetch, () => refusingFetch(open)),
+        Effect.updateService(OpenDatabaseTransaction, () => Option.some(open)),
         Effect.exit,
         Effect.flatMap((exit) => {
           const [refusal] = open.refusedFetches;
@@ -115,7 +113,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
   const guardStatement = <Statement extends object>(statement: Statement): Statement =>
     new Proxy(statement, {
       get: (target, key, receiver) => {
-        // oxlint-disable-next-line anti-slop/no-reflect-get -- Proxy trap over the native statement: every member passes through unchanged.
         const value: unknown = Reflect.get(target, key, receiver);
         // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Proxy boundary: the statement's own execution Effect passes through unchanged.
         return statementExecutions.has(key) && Effect.isEffect(value) ? Effect.andThen(acquisition, value) : value;
@@ -131,7 +128,6 @@ export const guardPoolAcquisition = (client: PgClient.PgClient): PgClient.PgClie
   ]);
   return new Proxy(client, {
     get: (target, key, receiver) => {
-      // oxlint-disable-next-line anti-slop/no-reflect-get -- Proxy trap over the native client: unguarded members pass through unchanged.
       const member: unknown = guardedMembers.has(key) ? guardedMembers.get(key) : Reflect.get(target, key, receiver);
       return member;
     },

@@ -280,12 +280,8 @@ const command = Command.make(
         session.close.pipe(Effect.ignore),
       );
       yield* Console.log(yield* runAgentOperatorSetup(operator, demoAgentOperatorSetup, mode));
-    }).pipe(
-      Effect.scoped,
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- Executable CLI composition root; --help must not acquire native operator services.
-      Effect.provide(AgentProfileOperatorLive),
-    ),
-);
+    }).pipe(Effect.scoped),
+).pipe(Command.provide(AgentProfileOperatorLive));
 if (import.meta.main) {
   await Effect.runPromise(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)));
 }

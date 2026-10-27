@@ -244,7 +244,6 @@ it('uses one descriptor snapshot for extension keys and schema ASTs', () => {
         astReads += 1;
         return astReads === 1 ? Schema.String.ast : Schema.Unknown.ast;
       }
-      // eslint-disable-next-line anti-slop/no-reflect-get -- The adversarial proxy must faithfully forward every non-AST Schema property.
       return Reflect.get(target, key, receiver);
     },
   });
