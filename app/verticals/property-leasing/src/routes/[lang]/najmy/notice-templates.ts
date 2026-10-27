@@ -1,21 +1,21 @@
-import type { Occupancy } from '../../../../shared/apis/records.ts';
+import type { Occupancy, PreparedNotice } from '../../../../shared/apis/records.ts';
 
 export interface NoticeContext {
   readonly partyName: string;
-  readonly unitLabel: string;
-  readonly propertyLabel: string;
   readonly propertyAddress: string;
+  readonly propertyLabel: string;
   readonly record: Occupancy;
+  readonly unitLabel: string;
 }
-export type NoticeChannel = 'EMAIL' | 'SMS';
+export type NoticeChannel = PreparedNotice['channel'];
 export interface NoticeTemplate {
   readonly key: string;
-  readonly label: string;
   readonly kinds: readonly Occupancy['kind'][];
+  readonly label: string;
   readonly render: (
     context: NoticeContext,
     channel: NoticeChannel,
-  ) => { readonly subject: string; readonly body: string };
+  ) => { readonly body: string; readonly subject: string };
 }
 
 const day = (value: string) => {
@@ -26,8 +26,12 @@ const period = (record: Occupancy) =>
   record.endDate === null ? `od ${day(record.startDate)}` : `od ${day(record.startDate)} do ${day(record.endDate)}`;
 const crowns = (minor: number) => `${(minor / 100).toLocaleString('cs-CZ')} Kč`;
 const people = (count: number | null) => {
-  if (count === null) return '';
-  if (count === 1) return ' pro 1 osobu';
+  if (count === null) {
+    return '';
+  }
+  if (count === 1) {
+    return ' pro 1 osobu';
+  }
   return ` pro ${count} ${count < 5 ? 'osoby' : 'osob'}`;
 };
 const place = (context: NoticeContext) =>
@@ -41,81 +45,81 @@ const signature = '\n\nS pozdravem\nSiampark';
 export const noticeTemplates: readonly NoticeTemplate[] = [
   {
     key: 'stay-confirmation',
-    label: 'Potvrzení rezervace',
     kinds: ['SHORT_STAY'],
+    label: 'Potvrzení rezervace',
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            subject: '',
             body: `Siampark: potvrzujeme rezervaci ${context.unitLabel} ${period(context.record)}${people(
               context.record.peopleCount,
             )}. Podrobnosti zašleme e-mailem.`,
+            subject: '',
           }
         : {
-            subject: `Potvrzení rezervace – ${context.unitLabel}, ${period(context.record)}`,
             body: `Dobrý den, ${context.partyName},\n\npotvrzujeme Vaši rezervaci: ${place(context)}${
               context.propertyAddress.length > 0 ? ` (${context.propertyAddress})` : ''
             }, ${period(context.record)}${people(
               context.record.peopleCount,
             )}.\n\nPři příjezdu prosíme o údaje do evidenčního listu ubytovaných (jméno, datum narození, číslo dokladu a adresa).${signature}`,
+            subject: `Potvrzení rezervace – ${context.unitLabel}, ${period(context.record)}`,
           },
   },
   {
     key: 'stay-arrival',
-    label: 'Pokyny k příjezdu',
     kinds: ['SHORT_STAY'],
+    label: 'Pokyny k příjezdu',
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            subject: '',
             body: `Siampark: těšíme se na Vás ${day(context.record.startDate)} v ${context.unitLabel}${
               context.propertyAddress.length > 0 ? `, ${context.propertyAddress}` : ''
             }. Čas předání klíčů upřesníme.`,
+            subject: '',
           }
         : {
-            subject: `Pokyny k příjezdu – ${context.unitLabel}, ${day(context.record.startDate)}`,
             body: `Dobrý den, ${context.partyName},\n\nblíží se Váš pobyt ${period(context.record)}: ${place(context)}${
               context.propertyAddress.length > 0 ? `, ${context.propertyAddress}` : ''
             }.\n\nČas předání klíčů Vám upřesníme. Prosíme, mějte připravený doklad totožnosti pro evidenční list.${signature}`,
+            subject: `Pokyny k příjezdu – ${context.unitLabel}, ${day(context.record.startDate)}`,
           },
   },
   {
     key: 'stay-cancellation',
-    label: 'Zrušení rezervace',
     kinds: ['SHORT_STAY'],
+    label: 'Zrušení rezervace',
     render: (context, channel) =>
       channel === 'SMS'
-        ? { subject: '', body: `Siampark: Vaše rezervace ${context.unitLabel} ${period(context.record)} byla zrušena.` }
+        ? { body: `Siampark: Vaše rezervace ${context.unitLabel} ${period(context.record)} byla zrušena.`, subject: '' }
         : {
-            subject: `Zrušení rezervace – ${context.unitLabel}, ${period(context.record)}`,
             body: `Dobrý den, ${context.partyName},\n\npotvrzujeme zrušení rezervace: ${place(context)}, ${period(
               context.record,
             )}.${signature}`,
+            subject: `Zrušení rezervace – ${context.unitLabel}, ${period(context.record)}`,
           },
   },
   {
     key: 'lease-handover',
-    label: 'Předání jednotky',
     kinds: ['LONG_TERM_LEASE'],
+    label: 'Předání jednotky',
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            subject: '',
             body: `Siampark: předání ${context.unitLabel} k nájmu od ${day(
               context.record.startDate,
             )}. Termín předání a protokol domluvíme.`,
+            subject: '',
           }
         : {
-            subject: `Předání jednotky ${context.unitLabel} – nájem ${period(context.record)}`,
             body: `Dobrý den,\n\nk nájmu ${place(context)} ${period(
               context.record,
             )} pro ${context.partyName} připravujeme předání jednotky. Navrhněte nám prosím vhodný termín; při předání sepíšeme předávací protokol včetně stavu měřidel.${signature}`,
+            subject: `Předání jednotky ${context.unitLabel} – nájem ${period(context.record)}`,
           },
   },
   {
     key: 'lease-payment',
-    label: 'Připomenutí platby nájemného',
     kinds: ['LONG_TERM_LEASE'],
+    label: 'Připomenutí platby nájemného',
     render: (context, channel) => {
       const terms = context.record.rentTerms;
       const amount =
@@ -126,28 +130,28 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
             )} a zálohy ${crowns(terms.serviceChargesMinor)})`;
       const due = terms === undefined ? '' : ` se splatností ${terms.paymentDay}. dne v měsíci`;
       return channel === 'SMS'
-        ? { subject: '', body: `Siampark: připomínáme platbu nájmu ${context.unitLabel}: ${amount}${due}.` }
+        ? { body: `Siampark: připomínáme platbu nájmu ${context.unitLabel}: ${amount}${due}.`, subject: '' }
         : {
-            subject: `Platba nájemného – ${context.unitLabel}`,
             body: `Dobrý den,\n\npřipomínáme platbu za nájem ${place(context)} pro ${
               context.partyName
             }: ${amount}${due}. Pokud jste již platbu odeslali, považujte prosím tuto zprávu za bezpředmětnou.${signature}`,
+            subject: `Platba nájemného – ${context.unitLabel}`,
           };
     },
   },
   {
     key: 'lease-end',
-    label: 'Blížící se konec nájmu',
     kinds: ['LONG_TERM_LEASE'],
+    label: 'Blížící se konec nájmu',
     render: (context, channel) => {
       const end = context.record.endDate === null ? 'není sjednán' : day(context.record.endDate);
       return channel === 'SMS'
-        ? { subject: '', body: `Siampark: nájem ${context.unitLabel} končí ${end}. Ozvěte se nám k prodloužení.` }
+        ? { body: `Siampark: nájem ${context.unitLabel} končí ${end}. Ozvěte se nám k prodloužení.`, subject: '' }
         : {
-            subject: `Konec nájmu ${context.unitLabel}`,
             body: `Dobrý den,\n\nnájem ${place(context)} pro ${
               context.partyName
             } končí ${end}. Dejte nám prosím vědět, zda máte zájem o prodloužení, nebo domluvíme termín předání.${signature}`,
+            subject: `Konec nájmu ${context.unitLabel}`,
           };
     },
   },

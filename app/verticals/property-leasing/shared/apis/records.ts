@@ -11,6 +11,15 @@ import { UnitRefSchema } from '@app/property-portfolio/resources/unit';
 import { OccupancyRefSchema } from '../resources/occupancy.ts';
 
 export const DemoDateSchema = CalendarDateWireSchema;
+export const PrincipalIdSchema = Schema.String.pipe(Schema.brand('PrincipalId'));
+export const CounterpartyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CounterpartyId'));
+export const OccupancyIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('OccupancyId'));
+export const UnitIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('UnitId'));
+export const RegistrationSheetIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('RegistrationSheetId'));
+export const PreparedNoticeIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PreparedNoticeId'));
+export const NoticeTemplateKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(60)).pipe(
+  Schema.brand('NoticeTemplateKey'),
+);
 const TextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const MoneyMinorSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000_000_000));
 /**
@@ -42,11 +51,11 @@ export const OccupancySchema = Schema.Struct({
 export type Occupancy = typeof OccupancySchema.Type;
 /** Siampark tenant relationship evidence, scoped with the same company as the lease aggregate. */
 export const TenantContactSchema = Schema.Struct({
+  email: Schema.String.check(Schema.isMaxLength(200)),
   id: Schema.String.check(Schema.isUUID()),
   name: TextSchema,
-  role: Schema.String.check(Schema.isMaxLength(200)),
-  email: Schema.String.check(Schema.isMaxLength(200)),
   phone: Schema.String.check(Schema.isMaxLength(100)),
+  role: Schema.String.check(Schema.isMaxLength(200)),
 });
 export const TenantCaseStateSchema = Schema.Literals(['NEW', 'IN_PROGRESS', 'CONFIRMED', 'CLOSED', 'CANCELLED']);
 export const TenantActivityInputSchema = Schema.Struct({
@@ -54,24 +63,24 @@ export const TenantActivityInputSchema = Schema.Struct({
   summary: TextSchema,
 });
 export const TenantCaseDetailsSchema = Schema.Struct({
-  subject: TextSchema,
-  owner: TextSchema,
   deadline: DemoDateSchema,
-  estimatedValueMinor: Schema.NullOr(MoneyMinorSchema),
+  estimatedValueMinor: Schema.OptionFromNullOr(MoneyMinorSchema),
+  owner: TextSchema,
+  subject: TextSchema,
 });
 export type TenantCaseDetails = typeof TenantCaseDetailsSchema.Type;
 export const TenantDossierSchema = Schema.Struct({
-  caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
-  counterpartyId: Schema.String.check(Schema.isUUID()),
-  contacts: Schema.Array(TenantContactSchema),
-  caseState: TenantCaseStateSchema,
   archived: Schema.Boolean,
+  caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
+  caseState: TenantCaseStateSchema,
+  contacts: Schema.Array(TenantContactSchema),
+  counterpartyId: CounterpartyIdSchema,
   history: Schema.Array(
     Schema.Struct({
+      authorPrincipalId: PrincipalIdSchema,
       kind: Schema.Literals(['CALL', 'EMAIL', 'MEETING', 'NOTE', 'CASE', 'CONTACTS', 'ARCHIVE']),
+      occurredAt: Schema.DateTimeUtcFromString,
       summary: TextSchema,
-      occurredAt: Schema.String,
-      authorPrincipalId: Schema.String,
     }),
   ),
 });
@@ -79,7 +88,7 @@ export type TenantDossier = typeof TenantDossierSchema.Type;
 export type TenantContact = typeof TenantContactSchema.Type;
 /** Audit of a stay or lease: who changed its state or documents and when (S10-02). */
 export const OccupancyHistoryEntrySchema = Schema.Struct({
-  occupancyId: Schema.String.check(Schema.isUUID()),
+  authorPrincipalId: PrincipalIdSchema,
   kind: Schema.Literals([
     'CREATED',
     'UPDATED',
@@ -92,19 +101,19 @@ export const OccupancyHistoryEntrySchema = Schema.Struct({
     'REGISTRATION_SHEET',
     'NOTICE',
   ]),
+  occupancyId: OccupancyIdSchema,
+  occurredAt: Schema.DateTimeUtcFromString,
   summary: TextSchema,
-  occurredAt: Schema.String,
-  authorPrincipalId: Schema.String,
 });
 export type OccupancyHistoryEntry = typeof OccupancyHistoryEntrySchema.Type;
 const ShortTextSchema = Schema.Trim.check(Schema.isMaxLength(200));
 /** One person staying in the unit, as written on the registration sheet (evidenční list). */
 export const RegistrationOccupantSchema = Schema.Struct({
-  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  birthDate: Schema.NullOr(DemoDateSchema),
-  nationality: ShortTextSchema,
-  identityDocument: ShortTextSchema,
   address: Schema.Trim.check(Schema.isMaxLength(300)),
+  birthDate: Schema.OptionFromNullOr(DemoDateSchema),
+  identityDocument: ShortTextSchema,
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  nationality: ShortTextSchema,
 });
 export type RegistrationOccupant = typeof RegistrationOccupantSchema.Type;
 /**
@@ -112,40 +121,40 @@ export type RegistrationOccupant = typeof RegistrationOccupantSchema.Type;
  * from the record at the time of creation, so later changes of the reservation do not rewrite the sheet.
  */
 export const RegistrationSheetSchema = Schema.Struct({
-  sheetId: Schema.String.check(Schema.isUUID()),
-  number: Schema.String,
-  occupancyId: Schema.String.check(Schema.isUUID()),
-  unitId: Schema.String.check(Schema.isUUID()),
-  startDate: DemoDateSchema,
-  endDate: Schema.NullOr(DemoDateSchema),
-  peopleCount: Schema.NullOr(Schema.Int),
-  occupants: Schema.Array(RegistrationOccupantSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
-  purpose: Schema.Trim.check(Schema.isMaxLength(200)),
+  authorPrincipalId: PrincipalIdSchema,
+  createdAt: Schema.DateTimeUtcFromString,
+  endDate: Schema.OptionFromNullOr(DemoDateSchema),
   note: Schema.Trim.check(Schema.isMaxLength(500)),
-  createdAt: Schema.String,
-  authorPrincipalId: Schema.String,
+  number: Schema.String,
+  occupancyId: OccupancyIdSchema,
+  occupants: Schema.Array(RegistrationOccupantSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  peopleCount: Schema.OptionFromNullOr(Schema.Int),
+  purpose: Schema.Trim.check(Schema.isMaxLength(200)),
+  sheetId: RegistrationSheetIdSchema,
+  startDate: DemoDateSchema,
+  unitId: UnitIdSchema,
 });
 export type RegistrationSheet = typeof RegistrationSheetSchema.Type;
 export const NoticeChannelSchema = Schema.Literals(['EMAIL', 'SMS']);
 /** Notification text prepared from a template. Preparing never sends anything; sending needs a provider. */
 export const PreparedNoticeSchema = Schema.Struct({
-  noticeId: Schema.String.check(Schema.isUUID()),
-  occupancyId: Schema.String.check(Schema.isUUID()),
+  authorPrincipalId: PrincipalIdSchema,
+  body: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
   channel: NoticeChannelSchema,
-  templateKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(60)),
+  noticeId: PreparedNoticeIdSchema,
+  occupancyId: OccupancyIdSchema,
+  preparedAt: Schema.DateTimeUtcFromString,
   recipient: Schema.Trim.check(Schema.isMaxLength(200)),
   subject: Schema.Trim.check(Schema.isMaxLength(200)),
-  body: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
-  preparedAt: Schema.String,
-  authorPrincipalId: Schema.String,
+  templateKey: NoticeTemplateKeySchema,
 });
 export type PreparedNotice = typeof PreparedNoticeSchema.Type;
 export const OccupancyStateSchema = Schema.Struct({
-  tenantDossiers: Schema.optionalKey(Schema.Array(TenantDossierSchema)),
-  occupancyHistory: Schema.optionalKey(Schema.Array(OccupancyHistoryEntrySchema)),
-  registrationSheets: Schema.optionalKey(Schema.Array(RegistrationSheetSchema)),
-  preparedNotices: Schema.optionalKey(Schema.Array(PreparedNoticeSchema)),
   occupancies: Schema.Array(OccupancySchema),
+  occupancyHistory: Schema.optionalKey(Schema.Array(OccupancyHistoryEntrySchema)),
+  preparedNotices: Schema.optionalKey(Schema.Array(PreparedNoticeSchema)),
+  registrationSheets: Schema.optionalKey(Schema.Array(RegistrationSheetSchema)),
+  tenantDossiers: Schema.optionalKey(Schema.Array(TenantDossierSchema)),
 });
 export type OccupancyState = typeof OccupancyStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({

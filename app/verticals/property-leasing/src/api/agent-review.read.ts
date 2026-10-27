@@ -20,7 +20,7 @@ const agentReviewEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-const encodeOccupancy = Schema.encodeSync(OccupancySchema);
+const encodeOccupancy = Schema.encodeEffect(OccupancySchema);
 
 /** Proposals still to decide (or undos of a known lease) need the leases and the write right. */
 const reviewsLiveProposals = (input: AgentReviewRequest): boolean =>
@@ -50,33 +50,39 @@ export const agentReviewRead = defineRead(
     // The write right is a SpiceDB round trip: it is decided before the transaction opens.
     prepare: (input: AgentReviewRequest, context) =>
       reviewsLiveProposals(input) ? occupancyWriteCapability(context.scope) : Effect.succeed(false),
-    load: (input: AgentReviewRequest, context: ReadLoadContext<Services, boolean>) =>
-      Effect.gen(function* () {
-        const live = reviewsLiveProposals(input);
-        // The leases as the person's records read shows them; a failed read leaves every answer open.
-        const snapshot: OccupancyState | undefined = live
-          ? yield* context.services.load().pipe(
-              Effect.map(({ snapshot: state }) => Option.some(state)),
-              Effect.orElseSucceed(Option.none<OccupancyState>),
-              Effect.map(Option.getOrUndefined),
-            )
-          : undefined;
-        const read = snapshot === undefined ? undefined : { canWrite: context.prepared };
-        const items = input.items.map((request) => {
+    load: Effect.fn('Occupancy.agentReview')(function* reviewOccupancies(
+      input: AgentReviewRequest,
+      context: ReadLoadContext<Services, boolean>,
+    ) {
+      const live = reviewsLiveProposals(input);
+      // The leases as the person's records read shows them; a failed read leaves every answer open.
+      const snapshot: OccupancyState | undefined = live
+        ? yield* context.services.load().pipe(
+            Effect.map(({ snapshot: state }) => Option.some(state)),
+            Effect.orElseSucceed(Option.none<OccupancyState>),
+            Effect.map(Option.getOrUndefined),
+          )
+        : undefined;
+      const read = snapshot === undefined ? undefined : { canWrite: context.prepared };
+      const items = yield* Effect.forEach(
+        input.items,
+        Effect.fn('propertyLeasing.reviewOccupancy')(function* reviewOccupancy(request: (typeof input.items)[number]) {
           const resourceId = targetOccupancyId(request.command);
           const occupancy =
             resourceId === undefined
               ? undefined
               : snapshot?.occupancies.find((entry) => entry.occupancyRef.resourceId === resourceId);
           return reviewOccupancyProposal({
-            occupancy: occupancy === undefined ? undefined : encodeOccupancy(occupancy),
+            occupancy: occupancy === undefined ? undefined : yield* encodeOccupancy(occupancy),
             read,
             request,
             tenantId: context.scope.tenantId,
           });
-        });
-        return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
-      }),
+        }),
+        { concurrency: 1 },
+      );
+      return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
+    }),
     // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,

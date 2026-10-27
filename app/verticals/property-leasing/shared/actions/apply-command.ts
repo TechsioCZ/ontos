@@ -21,39 +21,39 @@ import { OccupancyRefSchema } from '../resources/occupancy.ts';
 
 export const OccupancyCommandSchema = Schema.Union([
   Schema.TaggedStruct('UpdateTenantDossier', {
-    occupancyRef: OccupancyRefSchema,
-    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
-    caseState: Schema.optionalKey(TenantCaseStateSchema),
-    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
-    archived: Schema.optionalKey(Schema.Boolean),
     activity: Schema.optionalKey(TenantActivityInputSchema),
+    archived: Schema.optionalKey(Schema.Boolean),
+    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
+    caseState: Schema.optionalKey(TenantCaseStateSchema),
+    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
+    occupancyRef: OccupancyRefSchema,
   }),
   // S01: a prospect or any customer (firm or person) gets contacts, timeline and a business case without a lease.
   Schema.TaggedStruct('UpdateCounterpartyDossier', {
-    counterpartyRef: CounterpartyRefSchema,
-    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
-    caseState: Schema.optionalKey(TenantCaseStateSchema),
-    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
-    archived: Schema.optionalKey(Schema.Boolean),
     activity: Schema.optionalKey(TenantActivityInputSchema),
+    archived: Schema.optionalKey(Schema.Boolean),
+    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
+    caseState: Schema.optionalKey(TenantCaseStateSchema),
+    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
+    counterpartyRef: CounterpartyRefSchema,
   }),
   // S10: registration sheet (evidenční list) filled from the reservation or lease.
   Schema.TaggedStruct('CreateRegistrationSheet', {
+    note: RegistrationSheetSchema.fields.note,
     occupancyRef: OccupancyRefSchema,
-    sheetId: RegistrationSheetSchema.fields.sheetId,
     occupants: RegistrationSheetSchema.fields.occupants,
     purpose: RegistrationSheetSchema.fields.purpose,
-    note: RegistrationSheetSchema.fields.note,
+    sheetId: RegistrationSheetSchema.fields.sheetId,
   }),
   // S10: notification text prepared from a template; it is stored, never sent by this command.
   Schema.TaggedStruct('PrepareNotice', {
-    occupancyRef: OccupancyRefSchema,
-    noticeId: PreparedNoticeSchema.fields.noticeId,
+    body: PreparedNoticeSchema.fields.body,
     channel: NoticeChannelSchema,
-    templateKey: PreparedNoticeSchema.fields.templateKey,
+    noticeId: PreparedNoticeSchema.fields.noticeId,
+    occupancyRef: OccupancyRefSchema,
     recipient: PreparedNoticeSchema.fields.recipient,
     subject: PreparedNoticeSchema.fields.subject,
-    body: PreparedNoticeSchema.fields.body,
+    templateKey: PreparedNoticeSchema.fields.templateKey,
   }),
   Schema.TaggedStruct('CreateDraft', { record: OccupancySchema }),
   Schema.TaggedStruct('UpdateDraft', {

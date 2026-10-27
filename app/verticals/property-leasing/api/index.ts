@@ -1,6 +1,6 @@
 import { Logger, References, Tracer, Layer as GovernedReadLayer } from 'effect';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 
 import { propertyLeasingApi, propertyLeasingOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';

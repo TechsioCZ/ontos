@@ -3,18 +3,50 @@ import { PartyDocuments } from '@app/facility-operations/ui/record-discussion';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect, PlatformError } from 'effect';
-import type { RecordsResponse } from '../../../../shared/apis/records.ts';
+import type { Occupancy, RecordsResponse } from '../../../../shared/apis/records.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
 import { TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierChanges } from './tenant-dossier.tsx';
 
 const stateLabels = {
-  DRAFT: 'Návrh',
-  CONFIRMED: 'Potvrzeno',
   ACTIVE: 'Aktivní',
-  COMPLETED: 'Dokončeno',
   CANCELLED: 'Zrušeno',
+  COMPLETED: 'Dokončeno',
+  CONFIRMED: 'Potvrzeno',
+  DRAFT: 'Návrh',
 } as const;
+
+const CounterpartyLeases = ({
+  language,
+  leases,
+  unitName,
+}: {
+  readonly language: string;
+  readonly leases: readonly Occupancy[] | undefined;
+  readonly unitName: (id: string) => string;
+}) => (
+  <SectionCard title="Nájmy a pobyty">
+    {leases === undefined || leases.length === 0 ? (
+      <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        Zatím bez nájmu. Až bude dohodnut, založte ho tlačítkem Nový nájem v přehledu nájmů.
+      </p>
+    ) : (
+      <ul className="propertyleasing:space-y-2 propertyleasing:text-sm">
+        {leases.map((record) => (
+          <li key={record.occupancyRef.resourceId}>
+            <a
+              className="propertyleasing:underline"
+              href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
+            >
+              {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
+              {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} · {stateLabels[record.state]}
+            </a>
+          </li>
+        ))}
+      </ul>
+    )}
+  </SectionCard>
+);
 
 /** S01: contacts, timeline and business case of one counterparty, with or without a lease. */
 export const CounterpartyDossierView = ({
@@ -118,28 +150,7 @@ export const CounterpartyDossierView = ({
                 Otevřít v registru zákazníků →
               </LinkButton>
             </SectionCard>
-            <SectionCard title="Nájmy a pobyty">
-              {leases === undefined || leases.length === 0 ? (
-                <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-                  Zatím bez nájmu. Až bude dohodnut, založte ho tlačítkem Nový nájem v přehledu nájmů.
-                </p>
-              ) : (
-                <ul className="propertyleasing:space-y-2 propertyleasing:text-sm">
-                  {leases.map((record) => (
-                    <li key={record.occupancyRef.resourceId}>
-                      <a
-                        className="propertyleasing:underline"
-                        href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
-                      >
-                        {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
-                        {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} ·{' '}
-                        {stateLabels[record.state]}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SectionCard>
+            <CounterpartyLeases language={language} leases={leases} unitName={unitName} />
           </div>
         </div>
       )}
