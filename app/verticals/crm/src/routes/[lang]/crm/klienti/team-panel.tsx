@@ -7,7 +7,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import type { useCrmRecords } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const REQUEST_TIMEOUT = '30 seconds';
@@ -21,14 +21,12 @@ export const TeamPanel = ({
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- React panel receives the existing parent event adapter; remove-when: CRM parent exposes Effect commands.
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+  readonly submit: ReturnType<typeof useCrmRecords>['submit'];
 }) => {
   const toaster = useToast();
   const run = (command: CrmCommand, success: string) => {
     browserRuntime.runFork(
-      // oxlint-disable-next-line typescript/promise-function-async -- Native parent React event adapter is already Promise-based; remove-when: parent exposes an Effect command.
-      Effect.promise(() => submit(command)).pipe(
+      Effect.promise(submit.bind(undefined, command)).pipe(
         Effect.timeout(REQUEST_TIMEOUT),
         Effect.andThen((outcome) =>
           Effect.sync(() => {
