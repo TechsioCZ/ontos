@@ -30,6 +30,22 @@ on:
         description: Exact bare lowercase 64-hex revision of the migrated composition retired by incident run 40252598522.
         type: string
         default: ''
+      profile_recovery_mode:
+        description: Operator-only recovery of one existing profile operation. Does not build, migrate or deploy.
+        type: choice
+        options:
+          - none
+          - check
+          - reconcile
+        default: none
+      profile_recovery_request:
+        description: Exact reviewed operation identity and expected journal revisions as JSON. No credentials or customer data.
+        type: string
+        default: ''
+      profile_recovery_approval_sha256:
+        description: For reconcile only, the exact approval digest returned by the read-only check.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -50,9 +66,113 @@ env:
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.bleeding.dev
 
 jobs:
+  # An operator command, not a replacement release or a new worker artifact. It calls only the
+  # original owner's native recovery contract and never changes the published build identity.
+  profile-recovery:
+    name: Inspect or reconcile one admitted profile operation
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+    steps:
+      - name: Require an isolated manual operator request on demo
+        env:
+          RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+          APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
+          DEPLOY: ${{ inputs.deploy }}
+          OUTBOX_ONLY: ${{ inputs.outbox_only }}
+          CONTINUE_MIGRATED: ${{ inputs.continue_migrated_publication }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/demo/sales-crm || "$DEPLOY" != false ||
+                "$OUTBOX_ONLY" != false || "$CONTINUE_MIGRATED" != false ||
+                ( "$RECOVERY_MODE" != check && "$RECOVERY_MODE" != reconcile ) ]]; then
+            echo '::error::Profile recovery requires an isolated manual demo/sales-crm request with deployment disabled' >&2
+            exit 1
+          fi
+          if [[ ( "$RECOVERY_MODE" == reconcile && ! "$APPROVAL_SHA256" =~ ^[a-f0-9]{64}$ ) ||
+                ( "$RECOVERY_MODE" == check && -n "$APPROVAL_SHA256" ) ]]; then
+            echo '::error::Only reconcile accepts and requires the exact read-only approval digest' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Test the bounded operator command before stage access
+        working-directory: app
+        run: >-
+          mise exec -- pnpm test:scripts
+          scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/stage-profile-recovery-workflow.test.mts
+
+      - name: Connect the operator to the private database network
+        id: recovery-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Load existing database identity credentials without changing them
+        timeout-minutes: 5
+        working-directory: app
+        run: >-
+          mise exec -- pnpm exec node scripts/ops/database-identities.mts
+          --github-environment-file "$GITHUB_ENV"
+
+      - name: Run only the exact admitted profile recovery
+        timeout-minutes: 2
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ONTOS_STAGE_PROFILE_RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+          ONTOS_STAGE_PROFILE_RECOVERY_REQUEST_JSON: ${{ inputs.profile_recovery_request }}
+          ONTOS_STAGE_PROFILE_RECOVERY_APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
+          ONTOS_STAGE_PROFILE_RECOVERY_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          ONTOS_SHELL_GATEWAY_BASE_URL="$(jq -er '."commerce-customer-context".ONTOS_SHELL_GATEWAY_BASE_URL | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
+          ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$(jq -er '."commerce-customer-context".ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
+          unset ALL_RELEASE_SECRETS
+          masked_key="${ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY//%/%25}"
+          masked_key="${masked_key//$'\r'/%0D}"
+          masked_key="${masked_key//$'\n'/%0A}"
+          printf '::add-mask::%s\n' "$masked_key"
+          unset masked_key
+          export ONTOS_SHELL_GATEWAY_BASE_URL ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY
+          mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-retail-profile.mts
+
+      - name: Clear only the operator runner's private network
+        if: always() && steps.recovery-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.recovery-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.recovery-vpn.outputs.cli-path }}
+
   plan:
     name: Plan the served units
-    if: (github.event_name == 'workflow_dispatch' && !inputs.outbox_only) || (github.event_name == 'push' && vars.STAGE_DEMO_CI_DEPLOY == 'true')
+    if: (github.event_name == 'workflow_dispatch' && !inputs.outbox_only && inputs.profile_recovery_mode == 'none') || (github.event_name == 'push' && vars.STAGE_DEMO_CI_DEPLOY == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -247,6 +367,8 @@ jobs:
           scripts/tests/bootstrap-runtime-role.test.mts
           scripts/tests/database-login-roles.test.mts
           scripts/tests/enrollment-recovery-host-config.test.mts
+          scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/stage-profile-recovery-workflow.test.mts
           scripts/tests/verify-stage-migration-continuation.test.mts
           scripts/tests/prepare-stage-customer.test.mts
           scripts/tests/typecheck-project-references.test.mts
@@ -302,7 +424,7 @@ jobs:
     if: >-
       always() && !cancelled() &&
       ((needs.plan.result == 'success' && needs.build.result == 'success' && needs.build-storefront.result == 'success' && needs.release-script-tests.result == 'success' && (github.event_name == 'push' || inputs.deploy)) ||
-       (github.event_name == 'workflow_dispatch' && inputs.outbox_only))
+       (github.event_name == 'workflow_dispatch' && inputs.outbox_only && inputs.profile_recovery_mode == 'none'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: stage-edge
