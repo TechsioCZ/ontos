@@ -111,22 +111,20 @@ it.effect('uses server observation time and retains the typed domain outcome', (
 it.effect('rejects claimed purchasing scope before invoking dependencies', () =>
   Effect.gen(function* rejectMismatchedScope() {
     let called = false;
-    const failure = yield* handleCommerceQuantityResolution(
-      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
-        ...request,
-        purchasingContext: { ...request.purchasingContext, storefrontId: 'other-storefront' },
-      }),
-      {
-        readKey: 'commerce.customer-context.api.commerce-quantity-resolution',
-        scope,
-        services: {
-          resolve: () => {
-            called = true;
-            return Effect.die('Scope mismatch must be rejected before resolution');
-          },
+    const mismatchedRequest = yield* Schema.decodeEffect(CommerceQuantityResolutionRequestSchema)({
+      ...request,
+      purchasingContext: { ...request.purchasingContext, storefrontId: 'other-storefront' },
+    });
+    const failure = yield* handleCommerceQuantityResolution(mismatchedRequest, {
+      readKey: 'commerce.customer-context.api.commerce-quantity-resolution',
+      scope,
+      services: {
+        resolve: () => {
+          called = true;
+          return Effect.die('Scope mismatch must be rejected before resolution');
         },
       },
-    ).pipe(Effect.flip);
+    }).pipe(Effect.flip);
     expect(failure).toMatchObject({ code: 'read_permission_denied' });
     expect(called).toBe(false);
   }),
@@ -151,10 +149,12 @@ it.effect('the registered production factory fails closed without authoritative 
 it('declares finite Guest, Retail, and Counterparty authorization targets', () => {
   const plan = getReadConditionalPermissionPlan(commerceQuantityResolutionPermission);
   expect(commerceQuantityResolutionPermission.branchTags).toEqual(['COUNTERPARTY', 'GUEST', 'RETAIL']);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.RETAIL.requiredKinds).toEqual(['module', 'resource_read']);
-  expect(plan.branches.COUNTERPARTY.requiredKinds).toEqual(['module', 'resource_read']);
   expect(commerceQuantityGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
+  expect(plan.resolve(request, scope)).toEqual({
+    kind: 'GUEST',
+    requiredKinds: ['module'],
+    requirements: commerceQuantityGuestPermissionTargets(),
+  });
 
   const retailSubject = {
     kind: 'RETAIL' as const,
@@ -165,13 +165,17 @@ it('declares finite Guest, Retail, and Counterparty authorization targets', () =
       tenantId,
     },
   };
-  expect(
-    commerceQuantityProfilePermissionTargets(
-      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({ ...request, subject: retailSubject }),
-      retailSubject,
-      scope,
-    ),
-  ).toEqual([
+  const retailRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+    ...request,
+    subject: retailSubject,
+  });
+  const retailTargets = commerceQuantityProfilePermissionTargets(retailRequest, retailSubject, scope);
+  expect(plan.resolve(retailRequest, scope)).toEqual({
+    kind: 'RETAIL',
+    requiredKinds: ['module', 'resource_read'],
+    requirements: retailTargets,
+  });
+  expect(retailTargets).toEqual([
     { kind: 'module', moduleId: 'commerce.customer-context' },
     {
       kind: 'resource_read',
@@ -183,4 +187,32 @@ it('declares finite Guest, Retail, and Counterparty authorization targets', () =
       },
     },
   ]);
+  const counterpartySubject = {
+    kind: 'COUNTERPARTY' as const,
+    profileRef: {
+      ...retailSubject.profileRef,
+      resourceId: '40000000-0000-4000-8000-000000000002',
+      resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
+    },
+  };
+  const counterpartyRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+    ...request,
+    subject: counterpartySubject,
+  });
+  expect(plan.resolve(counterpartyRequest, scope)).toEqual({
+    kind: 'COUNTERPARTY',
+    requiredKinds: ['module', 'resource_read'],
+    requirements: [
+      { kind: 'module', moduleId: 'commerce.customer-context' },
+      {
+        kind: 'resource_read',
+        permission: 'read',
+        resource: {
+          moduleId: counterpartySubject.profileRef.moduleId,
+          resourceId: counterpartySubject.profileRef.resourceId,
+          resourceType: counterpartySubject.profileRef.resourceType,
+        },
+      },
+    ],
+  });
 });
