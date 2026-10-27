@@ -1678,7 +1678,6 @@ const exitWhenCommandCompletes: Runtime.Teardown = (exit, onExit) => {
   Runtime.defaultTeardown(exit, (code) => {
     onExit(code);
     // Scope finalizers have completed before this executable teardown is called.
-    // oxlint-disable-next-line effect-native/no-process-exit-outside-script-entry -- Native executable teardown after Scope closure; expires: 2027-03-31.
     process.exit(code);
   });
 };
