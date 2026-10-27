@@ -241,6 +241,12 @@ jobs:
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
           scripts/tests/stage-demo-migrate.test.mts
+          scripts/tests/stage-deploy-diagnostics.test.mts
+          scripts/tests/application-composition-authority-publication.test.mts
+          scripts/tests/application-composition-release-lifecycle.test.mts
+          scripts/tests/bootstrap-runtime-role.test.mts
+          scripts/tests/database-login-roles.test.mts
+          scripts/tests/enrollment-recovery-host-config.test.mts
           scripts/tests/verify-stage-migration-continuation.test.mts
           scripts/tests/prepare-stage-customer.test.mts
           scripts/tests/typecheck-project-references.test.mts
@@ -413,6 +419,72 @@ jobs:
           mise exec -- pnpm exec node scripts/ops/database-identities.mts
           --github-environment-file "$GITHUB_ENV"
 
+      # Read-only: fail before database preparation if the canonical owner configuration cannot
+      # start recovery. Missing host copies are planned additions, never replacement credentials.
+      - name: Validate canonical enrollment recovery host configuration
+        timeout-minutes: 2
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+        run: mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check
+
+      # Advisory only: live pending work may drain, and initial/sealed releases still need their
+      # authoritative native guards. Unknown diagnostics fail before any identity or schema mutation.
+      - name: Inspect migration readiness before database preparation
+        if: ${{ !inputs.outbox_only && !inputs.continue_migrated_publication }}
+        timeout-minutes: 2
+        working-directory: app
+        run: |
+          status=0
+          mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --readiness \
+            >"$RUNNER_TEMP/stage-migration-readiness.json" || status=$?
+          node --input-type=module - "$RUNNER_TEMP/stage-migration-readiness.json" "$status" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { Schema } from 'effect';
+          import { ApplicationCompositionReadinessSchema } from './scripts/application-composition-authority-publication.mts';
+          import { formatStageDeployDiagnostic } from './scripts/stage-deploy-diagnostics.mts';
+
+          const [path, exitCode] = process.argv.slice(2);
+          let input;
+          for (const line of readFileSync(path, 'utf8').split(/\r?\n/u)) {
+            try {
+              const candidate = JSON.parse(line);
+              if (candidate?.advisoryOnly === true) input = candidate;
+            } catch {
+              // Runtime error rendering is not an authoritative readiness record.
+            }
+          }
+          let result;
+          let reportedByCommand = false;
+          try {
+            result = Schema.decodeUnknownSync(ApplicationCompositionReadinessSchema)(input);
+            reportedByCommand = true;
+          } catch {
+            result = { advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' };
+          }
+          // The command already emits its canonical diagnostic. Only a missing/invalid record
+          // needs a fallback here, otherwise the step would append a second, incomplete summary.
+          if (!reportedByCommand) {
+            const formatted = formatStageDeployDiagnostic({
+              migrationsCompleted: false,
+              migrationStarted: false,
+              phase: 'readiness',
+              reason: result.reason,
+              status: 'unknown',
+            });
+            console.error(formatted.stderr);
+            console.error(formatted.annotation);
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              appendFileSync(process.env.GITHUB_STEP_SUMMARY, formatted.summary);
+            }
+          }
+          const guardedRetry = exitCode === '1' &&
+            ['pending-work', 'authority-missing', 'authority-sealed'].includes(result.reason);
+          if (!(result.status === 'ready' && exitCode === '0') && !guardedRetry) process.exitCode = 1;
+          NODE
+
       - name: Bootstrap every database identity before migrations
         if: ${{ !inputs.outbox_only && !inputs.continue_migrated_publication }}
         timeout-minutes: 10
@@ -450,12 +522,16 @@ jobs:
           ONTOS_RETIRED_COMPOSITION_REVISION: ${{ inputs.retired_composition_revision }}
         run: mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication
 
-      # Refresh exact grants and revocations after every demo owner has migrated. Never run the old shared grant path.
-      - name: Bootstrap every database identity after migrations
+      # Final exact grants and portal migrations already ran inside the sealed child. Verify here
+      # instead of executing a third full bootstrap after marking migration complete.
+      - name: Verify every migrated owner schema
         if: ${{ !inputs.outbox_only }}
         timeout-minutes: 10
         working-directory: app
-        run: mise exec -- pnpm db:bootstrap-runtime-role
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: mise exec -- pnpm db:verify
 
       # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation.
       - name: Reconcile storefront, Commerce and Privacy service grants
@@ -593,6 +669,17 @@ jobs:
           grep -q "setup: 'outbox-worker-host'" "$ZEROPS_YAML_PATH"
           wc -c "$ZEROPS_YAML_PATH"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
+
+      - name: Provision canonical enrollment recovery host configuration
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+        run: |
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify
 
       - name: Push the outbox worker host
         env:

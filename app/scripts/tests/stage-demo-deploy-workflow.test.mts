@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Layer, Schema } from 'effect';
+import { Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { expect, it } from 'effect-rstest';
@@ -40,7 +40,12 @@ const readJobs = () =>
 
 const localBootstrapScript = new URL('../demo/up.sh', import.meta.url);
 const MIGRATE = 'Migrate every owner schema';
-const POST_MIGRATION_BOOTSTRAP = 'Bootstrap every database identity after migrations';
+const POST_MIGRATION_BOOTSTRAP = 'Verify every migrated owner schema';
+const READINESS = 'Inspect migration readiness before database preparation';
+const INITIAL_BOOTSTRAP = 'Bootstrap every database identity before migrations';
+const RECOVERY_CONFIG_CHECK = 'Validate canonical enrollment recovery host configuration';
+const RECOVERY_CONFIG_APPLY = 'Provision canonical enrollment recovery host configuration';
+const PUBLICATION = 'Publish the Application Composition';
 const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
 const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
@@ -73,16 +78,17 @@ it('runs every owner migration through the native lifecycle on the private netwo
   expect(migrate?.['continue-on-error']).toBeUndefined();
   expect(indexOf(steps, 'Write the initial cutover receipt')).toBeGreaterThanOrEqual(0);
   expect(indexOf(steps, 'Write the initial cutover receipt')).toBeLessThan(indexOf(steps, MIGRATE));
-  expect(indexOf(steps, MIGRATE)).toBeGreaterThan(
-    indexOf(steps, 'Bootstrap every database identity before migrations'),
-  );
+  expect(indexOf(steps, MIGRATE)).toBeGreaterThan(indexOf(steps, INITIAL_BOOTSTRAP));
   expect(indexOf(steps, POST_MIGRATION_BOOTSTRAP)).toBeGreaterThan(indexOf(steps, MIGRATE));
   const connect = steps.findIndex(({ id }) => id === 'composition-vpn');
   expect(connect).toBeGreaterThanOrEqual(0);
+  expect(indexOf(steps, READINESS)).toBeGreaterThan(connect);
+  expect(indexOf(steps, READINESS)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
+  expect(steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP)?.run).toBe('mise exec -- pnpm db:verify');
   expect(indexOf(steps, MIGRATE)).toBeGreaterThan(connect);
   for (const later of [
     'Upload every immutable release Worker',
-    'Publish the Application Composition',
+    PUBLICATION,
     'Activate the Shell ingress',
     'Deploy the AKROS storefront',
   ]) {
@@ -99,7 +105,7 @@ it('keeps exact-published-revision outbox retries out of the schema migration an
   expect(verifyRevision?.run).toContain('"$published" != "$GITHUB_SHA"');
   expect(indexOf(steps, outboxRetry)).toBeGreaterThanOrEqual(0);
   expect(indexOf(steps, 'Push the outbox worker host')).toBeGreaterThan(indexOf(steps, outboxRetry));
-  for (const name of ['Bootstrap every database identity before migrations', MIGRATE, POST_MIGRATION_BOOTSTRAP]) {
+  for (const name of [INITIAL_BOOTSTRAP, MIGRATE, POST_MIGRATION_BOOTSTRAP]) {
     const step = steps.find((candidate) => candidate.name === name);
     expect(step?.if).toBe(name === POST_MIGRATION_BOOTSTRAP ? fullPublicationCondition : freshMigrationCondition);
     expect(step?.['continue-on-error']).toBeUndefined();
@@ -114,7 +120,7 @@ it('retains full native publication after the separately guarded completed-migra
   expect(continuation?.if).toBe('inputs.continue_migrated_publication && !inputs.outbox_only');
   expect(continuation?.['continue-on-error']).toBeUndefined();
   expect(continuation?.run).toBe('mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication');
-  for (const name of [POST_MIGRATION_BOOTSTRAP, 'Publish the Application Composition']) {
+  for (const name of [POST_MIGRATION_BOOTSTRAP, PUBLICATION]) {
     expect(steps.find((step) => step.name === name)?.if).toBe(fullPublicationCondition);
     expect(indexOf(steps, name)).toBeGreaterThan(indexOf(steps, continuationName));
   }
@@ -126,6 +132,33 @@ it('migrates the Commerce portal realm with the runtime and administrator databa
     COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: secretReference('DATABASE_ADMIN_URL'),
     COMMERCE_PORTAL_AUTH_DATABASE_URL: secretReference('DATABASE_URL'),
   });
+  const verify = readJobs().release.steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP);
+  expect(verify?.env).toEqual(migrate?.env);
+});
+
+it('checks canonical recovery configuration before database mutation and provisions it before host deployment', () => {
+  const { steps } = readJobs().release;
+  const check = steps.find(({ name }) => name === RECOVERY_CONFIG_CHECK);
+  const provision = steps.find(({ name }) => name === RECOVERY_CONFIG_APPLY);
+  expect(check?.run).toBe('mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check');
+  expect(check?.env).toEqual({
+    ALL_RELEASE_SECRETS: secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS'),
+    ZEROPS_MIGRATOR_SERVICE_ID: ['${{', 'vars.ZEROPS_MIGRATOR_SERVICE_ID', '}}'].join(' '),
+    ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ['${{', 'vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID', '}}'].join(' '),
+  });
+  expect(provision?.env).toEqual(check?.env);
+  expect(provision?.run?.split('\n').filter(Boolean)).toEqual([
+    'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply',
+    'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify',
+  ]);
+  expect(indexOf(steps, RECOVERY_CONFIG_CHECK)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
+  expect(indexOf(steps, RECOVERY_CONFIG_CHECK)).toBeLessThan(indexOf(steps, READINESS));
+  expect(indexOf(steps, RECOVERY_CONFIG_APPLY)).toBeGreaterThan(indexOf(steps, PUBLICATION));
+  expect(indexOf(steps, RECOVERY_CONFIG_APPLY)).toBeLessThan(indexOf(steps, 'Push the outbox worker host'));
+  for (const step of [check, provision]) {
+    expect(step?.if).toBeUndefined();
+    expect(step?.['continue-on-error']).toBeUndefined();
+  }
 });
 
 it('runs this workflow test with the release script tests that gate the release job', () => {
@@ -133,6 +166,12 @@ it('runs this workflow test with the release script tests that gate the release 
   for (const name of [
     'stage-demo-deploy-workflow',
     'stage-demo-migrate',
+    'stage-deploy-diagnostics',
+    'application-composition-authority-publication',
+    'application-composition-release-lifecycle',
+    'bootstrap-runtime-role',
+    'database-login-roles',
+    'enrollment-recovery-host-config',
     'typecheck-project-references',
     'reconcile-stage-service-grants',
     'verification-context',
@@ -141,6 +180,58 @@ it('runs this workflow test with the release script tests that gate the release 
     expect(tests?.run).toContain(`scripts/tests/${name}.test.mts`);
   }
 });
+
+for (const example of [
+  { exitCode: 0, passes: true, reason: 'drained', status: 'ready' },
+  { exitCode: 1, passes: false, reason: 'drained', status: 'ready' },
+  { exitCode: 1, passes: true, reason: 'pending-work', status: 'blocked' },
+  { exitCode: 137, passes: false, reason: 'pending-work', status: 'blocked' },
+  { exitCode: 1, passes: true, reason: 'authority-sealed', status: 'blocked' },
+  { exitCode: 1, passes: true, reason: 'authority-missing', status: 'unknown' },
+  { exitCode: 130, passes: false, reason: 'authority-missing', status: 'unknown' },
+  { exitCode: 1, passes: false, reason: 'authority-expired', status: 'blocked' },
+  { exitCode: 1, passes: false, reason: 'replacement-publication-required', status: 'blocked' },
+  { exitCode: 1, passes: false, reason: 'diagnostic-timeout', status: 'unknown' },
+  { exitCode: 1, passes: false, reason: 'diagnostic-unavailable', status: 'unknown' },
+  { exitCode: 1, passes: false, reason: 'untrusted-reason', status: 'untrusted-status' },
+]) {
+  it.effect(
+    `the actual workflow readiness gate handles ${example.status}/${example.reason}/exit-${example.exitCode}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* runWorkflowReadinessGate() {
+          const fs = yield* FileSystem.FileSystem;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-readiness-gate-' });
+          const input = `${directory}/readiness.json`;
+          const summary = `${directory}/summary.md`;
+          yield* fs.writeFileString(
+            input,
+            `${JSON.stringify({ advisoryOnly: true, reason: example.reason, status: example.status })}\n`,
+          );
+          const step = readJobs().release.steps.find(({ name }) => name === READINESS);
+          const program = step?.run?.match(/<<'NODE'\n(?<program>[\s\S]+)\nNODE/u)?.groups?.program;
+          expect(program).toBeDefined();
+          const outcome = yield* runCommand({
+            args: ['--input-type=module', '-', input, String(example.exitCode)],
+            command: 'node',
+            cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+            env: { GITHUB_STEP_SUMMARY: Redacted.make(summary) },
+            stdin: Redacted.make(program ?? ''),
+          }).pipe(Effect.exit);
+          expect(Exit.isSuccess(outcome)).toBe(example.passes);
+          if (example.status === 'untrusted-status') {
+            const rendered = yield* fs.readFileString(summary);
+            expect(rendered).toContain('diagnostic-unavailable');
+            expect(rendered).not.toContain('untrusted-');
+            expect(rendered).not.toContain('migration authorized');
+          } else {
+            // The real CLI owns its complete summary; a valid record must not be rendered twice.
+            expect(yield* fs.exists(summary)).toBe(false);
+          }
+        }),
+      ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+}
 
 it('publishes rebuilt contracts before replacing running demo processes, but starts new artifact endpoints first', () => {
   const script = readFileSync(new URL('../demo/rebuild-one.sh', import.meta.url), 'utf-8');
