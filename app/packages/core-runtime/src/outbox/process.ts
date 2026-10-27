@@ -14,7 +14,7 @@ import {
   Schema,
   Tracer,
 } from 'effect';
-import type { Layer } from 'effect';
+import type { Layer, Scope } from 'effect';
 
 import {
   ActiveApplicationCompositionService,
@@ -37,6 +37,17 @@ import type {
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
+
+const isCoreSystemRegistration = ({ descriptor }: AnyOutboxWorkerRegistration) =>
+  isCoreSystemOutboxSubscription(descriptor);
+const hasSystemEntrypoint = ({ descriptor }: AnyOutboxWorkerRegistration) => descriptor.entrypoint.scope === 'system';
+const ownerSubscriptions = (
+  catalog: Effect.Success<ReturnType<typeof buildApplicationCompositionCatalog>>,
+  ownerModules: ReadonlySet<string>,
+) =>
+  catalog.contracts.flatMap(({ runtime }) =>
+    runtime.outboxSubscriptions.filter(({ consumerModuleKey }) => ownerModules.has(consumerModuleKey)),
+  );
 
 const sameSubscriptions = Schema.toEquivalence(Schema.Array(OutboxSubscriptionAuthoritySchema));
 const subscriptionOrder = Order.mapInput(Order.String, ({ workerKey }: { readonly workerKey: string }) => workerKey);
@@ -76,9 +87,11 @@ export interface OutboxWorkerEntry<out LayerError> {
   readonly runLoop: (input: OutboxWorkerLoopInput) => Effect.Effect<void, LayerError>;
 }
 
-export interface RunOutboxWorkerHostInput<LayerError> {
+export interface RunOutboxWorkerHostInput<LayerError, StartupError = never> {
   readonly entries: readonly OutboxWorkerEntry<LayerError>[];
   readonly health?: boolean;
+  /** Additional process services share the host Scope and its existing runtime adapter. */
+  readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
 }
 
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
@@ -89,35 +102,23 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
   const compiledSubscriptions = Object.freeze(
     input.subscriptions.map((subscription) => Object.freeze({ ...subscription })),
   );
+
   return Object.freeze({
     claimOwnerPrefix: input.claimOwnerPrefix,
     registrations: registrations.length,
     runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
         const authority = yield* ActiveApplicationCompositionService;
-        const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
-          Schema.Array(OutboxSubscriptionAuthoritySchema),
-          { onExcessProperty: 'error' },
-        )(compiledSubscriptions).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ActiveApplicationCompositionUnavailableError({
-                cause,
-                reason: 'The compiled Outbox Worker subscription contract is invalid',
-              }),
-          ),
-          Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
-        );
-        const admitComposition = Effect.gen(function* admitWorkerComposition() {
+        const admitWorkerComposition = Effect.fn('OutboxWorker.admitComposition')(function* admitCompositionEffect(
+          suppliedSubscriptions: readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[],
+        ) {
           const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
           const modulesById = new Map<string, (typeof snapshot.composition.modules)[number]>();
           for (const module of snapshot.composition.modules) {
             modulesById.set(module.moduleId, module);
           }
-          const coreEntry = registrations.length > 0 && registrations.every(({ descriptor }) =>
-            isCoreSystemOutboxSubscription(descriptor),
-          );
-          if (!coreEntry && registrations.some(({ descriptor }) => descriptor.entrypoint.scope === 'system')) {
+          const coreEntry = registrations.length > 0 && registrations.every(isCoreSystemRegistration);
+          if (!coreEntry && registrations.some(hasSystemEntrypoint)) {
             return yield* new OutboxWorkerDescriptorError({
               code: 'outbox_worker_descriptor_invalid',
               reason: 'Core system workers cannot share a tenant module owner artifact',
@@ -152,14 +153,11 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           }
           const approvedSubscriptions: OutboxWorkerSubscription[] = coreEntry
             ? [...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS]
-            : catalog.contracts.flatMap(({ runtime }) =>
-                runtime.outboxSubscriptions.filter(({ consumerModuleKey }) => ownerModules.has(consumerModuleKey)),
-              );
+            : ownerSubscriptions(catalog, ownerModules);
           approvedSubscriptions.sort(subscriptionOrder);
-          const approvedContract = yield* Schema.decodeUnknownEffect(
-            Schema.Array(OutboxSubscriptionAuthoritySchema),
-            { onExcessProperty: 'error' },
-          )(approvedSubscriptions).pipe(Effect.mapError(unavailableSubscriptionCatalog));
+          const approvedContract = yield* Schema.decodeUnknownEffect(Schema.Array(OutboxSubscriptionAuthoritySchema), {
+            onExcessProperty: 'error',
+          })(approvedSubscriptions).pipe(Effect.mapError(unavailableSubscriptionCatalog));
           if (!sameSubscriptions(approvedContract, suppliedSubscriptions)) {
             return yield* new OutboxWorkerDescriptorError({
               code: 'outbox_worker_descriptor_invalid',
@@ -168,6 +166,20 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           }
           return snapshot.composition.revision;
         });
+        const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(OutboxSubscriptionAuthoritySchema),
+          { onExcessProperty: 'error' },
+        )(compiledSubscriptions).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ActiveApplicationCompositionUnavailableError({
+                cause,
+                reason: 'The compiled Outbox Worker subscription contract is invalid',
+              }),
+          ),
+          Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
+        );
+        const admitComposition = admitWorkerComposition(suppliedSubscriptions);
         const pollingInput: RunOutboxPollingLoopInput<Registration> = {
           admitComposition,
           config,
@@ -241,9 +253,14 @@ const hostedLoop = <LayerError>(
  * endpoint. The first loop to fail interrupts the others; each loop disposes its own runtime
  * before the host scope closes, so the failure surfaces only after every runtime is released.
  */
-export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<LayerError>) =>
+export const runOutboxWorkerHost = <LayerError, StartupError = never>(
+  input: RunOutboxWorkerHostInput<LayerError, StartupError>,
+) =>
   Effect.scoped(
     Effect.gen(function* runOutboxWorkerHostEffect() {
+      if (input.startup !== undefined) {
+        yield* input.startup();
+      }
       const processNonce = yield* Random.nextInt;
       const configs = yield* parseOutboxPollingConfig({
         claimOwnerPrefixes: input.entries.map((entry) => entry.claimOwnerPrefix),
@@ -312,8 +329,11 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
   return [...new Set(names)].join(', ');
 };
 
-export const startOutboxWorkerHost = <LayerError extends { readonly _tag: string }>(
-  input: RunOutboxWorkerHostInput<LayerError>,
+export const startOutboxWorkerHost = <
+  LayerError extends { readonly _tag: string },
+  StartupError extends { readonly _tag: string } = never,
+>(
+  input: RunOutboxWorkerHostInput<LayerError, StartupError>,
 ): void => {
   Effect.runCallback(
     runOutboxWorkerHost(input).pipe(

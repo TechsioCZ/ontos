@@ -184,16 +184,22 @@ const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
 
-const observed: Parameters<ReadRuntimeService['runRead']>[0][] = [];
-// SAFETY: This test double exercises only the handler's runRead call and deliberately omits no
-// other ReadRuntimeService member; remove when the generic runtime interface exposes a test port.
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Test-only generic service double; expires: 2026-12-31.
-const readRuntime = {
-  runRead: (input: Parameters<ReadRuntimeService['runRead']>[0]) => {
+interface ObservedReadInput {
+  readonly audience?: string;
+  readonly decodedInput?: unknown;
+  readonly input?: unknown;
+}
+const observed: ObservedReadInput[] = [];
+const readRuntime: ReadRuntimeService = {
+  runRead: (input) => {
     observed.push(input);
-    return Effect.succeed({ ok: true as const });
+    return Schema.decodeEffect(input.registration.descriptor.resultSchema)({ ok: true }).pipe(
+      Effect.mapError(
+        () => new ReadResultValidationError({ code: 'read_result_invalid', reason: 'Invalid test result' }),
+      ),
+    );
   },
-} as ReadRuntimeService;
+};
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
 
 it.effect('reports authentication and response encoding separately without exposing request values', () =>

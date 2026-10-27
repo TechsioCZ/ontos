@@ -148,11 +148,11 @@ const logUnexpectedPersistence = (claim?: OutboxClaim) =>
     claim === undefined ? { outcome: 'persistence_failure' } : claimAnnotations(claim, 'persistence_failure'),
   );
 
-const withOutcomeSpan = <Value, Error, Requirements>(
-  effect: Effect.Effect<Value, Error, Requirements>,
+const withOutcomeSpan = <Value, Failure, Requirements>(
+  effect: Effect.Effect<Value, Failure, Requirements>,
   claim: OutboxClaim,
   outcome: string,
-): Effect.Effect<Value, Error, Requirements> =>
+): Effect.Effect<Value, Failure, Requirements> =>
   effect.pipe(
     Effect.withSpan('OutboxWorker.finalize', {
       attributes: claimAnnotations(claim, outcome),

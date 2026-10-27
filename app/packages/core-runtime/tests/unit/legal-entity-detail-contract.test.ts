@@ -59,7 +59,9 @@ it.effect(
     ]);
     expect(described.welcome).toBe('Bread and pastry for the whole town.');
     const corrupt = yield* Effect.flip(
-      classifyLegalEntityDetail(request, legalEntityRef.tenantId, [{ legalName: 'Bad', status: 'unknown', welcome: null }]),
+      classifyLegalEntityDetail(request, legalEntityRef.tenantId, [
+        { legalName: 'Bad', status: 'unknown', welcome: null },
+      ]),
     );
     expect(Schema.is(ReadHandlerUnavailable)(corrupt)).toBe(true);
   }),

@@ -9,7 +9,7 @@ import {
 } from '@authzed/authzed-node/v1/permissions';
 import type { WriteRelationshipsResponse } from '@authzed/authzed-node/v1/permissions';
 import type { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, flow } from 'effect';
 import type { Scope } from 'effect';
 import {
   createPermissionRelationshipMutationClient,
@@ -181,12 +181,14 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
     }),
     resourceType: 'business_permission',
   });
-  const rows = yield* Effect.tryPromise(() =>
-    client.readRelationships(
-      ReadRelationshipsRequest.create({
-        consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
-        relationshipFilter: filter,
-      }),
+  const rows = yield* Effect.tryPromise(
+    flow(
+      () =>
+        ReadRelationshipsRequest.create({
+          consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+          relationshipFilter: filter,
+        }),
+      client.readRelationships.bind(client),
     ),
   ).pipe(
     Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),
@@ -213,18 +215,20 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
   if (!apply) {
     return { existing: 1, migrated: 0 };
   }
-  yield* Effect.tryPromise(() =>
-    client.writeRelationships(
-      WriteRelationshipsRequest.create({
-        optionalPreconditions: [Precondition.create({ filter, operation: Precondition_Operation.MUST_MATCH })],
-        updates: [
-          RelationshipUpdate.create({
-            operation: RelationshipUpdate_Operation.TOUCH,
-            relationship: { ...previous, relation: 'self_service_grantee' },
-          }),
-          RelationshipUpdate.create({ operation: RelationshipUpdate_Operation.DELETE, relationship: previous }),
-        ],
-      }),
+  yield* Effect.tryPromise(
+    flow(
+      () =>
+        WriteRelationshipsRequest.create({
+          optionalPreconditions: [Precondition.create({ filter, operation: Precondition_Operation.MUST_MATCH })],
+          updates: [
+            RelationshipUpdate.create({
+              operation: RelationshipUpdate_Operation.TOUCH,
+              relationship: { ...previous, relation: 'self_service_grantee' },
+            }),
+            RelationshipUpdate.create({ operation: RelationshipUpdate_Operation.DELETE, relationship: previous }),
+          ],
+        }),
+      client.writeRelationships.bind(client),
     ),
   ).pipe(
     Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),

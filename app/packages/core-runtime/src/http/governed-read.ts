@@ -243,18 +243,6 @@ type GovernedReadDomainMapperResult<Mapper> = Mapper extends (...arguments_: nev
   ? Problem
   : never;
 
-const invokeGovernedReadDomainMapper = <
-  DomainFailure,
-  Mapper extends (error: DomainFailure) => GovernedReadDomainProblem,
->(
-  mapper: Mapper,
-  error: DomainFailure,
-): GovernedReadDomainMapperResult<Mapper> =>
-  // SAFETY: calling the exact mapper produces its declared ReturnType; TypeScript cannot
-  // retain that relationship for a still-generic function value.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Validated generic invocation; expires: 2027-03-31.
-  mapper(error) as GovernedReadDomainMapperResult<Mapper>;
-
 interface GovernedReadHttpOptions<
   InputSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -454,7 +442,7 @@ export function makeGovernedReadHttpHandler<
   DomainErrorSchema extends Schema.ConstraintDecoder<{
     readonly _tag: string;
   }> = typeof Schema.Never,
-  DomainErrorMapper extends ((error: DomainErrorSchema['Type']) => GovernedReadDomainProblem) | undefined = undefined,
+  DomainProblem extends GovernedReadDomainProblem = never,
 >(
   options: {
     /** Trusted receiver configuration, never supplied by the HTTP caller. */
@@ -483,7 +471,7 @@ export function makeGovernedReadHttpHandler<
       ReadRequirements,
       DomainErrorSchema
     >;
-  } & Readonly<{ mapDomainError?: DomainErrorMapper }>,
+  } & Readonly<{ mapDomainError?: ((error: DomainErrorSchema['Type']) => DomainProblem) | undefined }>,
 ) {
   return Effect.fn('GovernedReadHttp.handle')(function* handleGovernedRead({
     payload,
@@ -554,7 +542,7 @@ export function makeGovernedReadHttpHandler<
               never,
               | Authentication
               | Forbidden
-              | GovernedReadDomainMapperResult<DomainErrorMapper>
+              | DomainProblem
               | Internal
               | Invalid
               | NotFound
@@ -587,15 +575,7 @@ export function makeGovernedReadHttpHandler<
               if (Option.isNone(decoded)) {
                 return failProblem(options.problems.internal());
               }
-              const problem = invokeGovernedReadDomainMapper<
-                DomainErrorSchema['Type'],
-                Exclude<DomainErrorMapper, undefined>
-              >(
-                // SAFETY: the undefined branch returned above; this is the exact declared mapper.
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Narrowed generic optional mapper; expires: 2027-03-31.
-                options.mapDomainError as Exclude<DomainErrorMapper, undefined>,
-                decoded.value,
-              );
+              const problem = options.mapDomainError(decoded.value);
               return isGovernedReadDomainProblem(problem)
                 ? Effect.fail(problem)
                 : failProblem(options.problems.internal());

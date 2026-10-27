@@ -1,5 +1,5 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, flow } from 'effect';
 
 import { SpiceDbConfigError } from './config-error.ts';
 import type { SpiceDbConfigValue } from './config.ts';
@@ -41,23 +41,43 @@ const rpcFailure = (cause: unknown): SpiceDbRpcError =>
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
   const client = newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(timeoutMilliseconds)] });
   const deadline = spiceDbDeadline(timeoutMilliseconds);
-  const call =
-    <Request, Response>(rpc: (request: Request) => Promise<Response>) =>
-    (request: Request): Effect.Effect<Response, SpiceDbRpcError> =>
-      Effect.tryPromise({
-        catch: rpcFailure,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => rpc(request),
-      }).pipe(Effect.timeoutOrElse(deadline));
   const { promises } = client;
   return {
-    checkBulkPermissions: call(promises.checkBulkPermissions.bind(promises)),
-    checkPermission: call(promises.checkPermission.bind(promises)),
+    checkBulkPermissions: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.checkBulkPermissions.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
+    checkPermission: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.checkPermission.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
     close: () => client.close(),
-    diffSchema: call(promises.diffSchema.bind(promises)),
-    readRelationships: call(promises.readRelationships.bind(promises)),
-    readSchema: call(promises.readSchema.bind(promises)),
-    writeRelationships: call(promises.writeRelationships.bind(promises)),
-    writeSchema: call(promises.writeSchema.bind(promises)),
+    diffSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.diffSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
+    readRelationships: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.readRelationships.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
+    readSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.readSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
+    writeRelationships: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.writeRelationships.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
+    writeSchema: (request) =>
+      Effect.tryPromise({
+        catch: rpcFailure,
+        try: flow(() => request, promises.writeSchema.bind(promises)),
+      }).pipe(Effect.timeoutOrElse(deadline)),
   };
 };

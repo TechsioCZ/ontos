@@ -831,63 +831,62 @@ const claimDecisions = (memo: RequestPermissionDecisionMemo, requests: readonly 
 
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   /** One CheckBulkPermissions call: a decision per request, or every one `unavailable` when the answer does not match. */
-  const decide = (
+  const decide = Effect.fn('ContextAccess.decide')(function* decideWithDiagnostics(
     requests: readonly CheckBulkPermissionsRequestItem[],
-  ): Effect.Effect<readonly ContextAccessDecision[]> =>
-    Effect.gen(function* decideWithDiagnostics() {
-      const startedAt = yield* Clock.currentTimeMillis;
-      const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
-      const reportUnavailable = (
-        failureKind:
-          | 'timeout'
-          | 'client_failure'
-          | 'response_count_mismatch'
-          | 'response_request_mismatch'
-          | 'response_unavailable',
-      ) =>
-        Clock.currentTimeMillis.pipe(
-          Effect.flatMap((now) =>
-            Effect.logWarning('SpiceDB bulk permission check unavailable').pipe(
-              Effect.annotateLogs({
-                elapsedMs: now - startedAt,
-                failureKind,
-                operation: 'CheckBulkPermissions',
-                requestCount: requests.length,
-              }),
-            ),
+  ): Effect.fn.Return<readonly ContextAccessDecision[]> {
+    const startedAt = yield* Clock.currentTimeMillis;
+    const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
+    const reportUnavailable = (
+      failureKind:
+        | 'timeout'
+        | 'client_failure'
+        | 'response_count_mismatch'
+        | 'response_request_mismatch'
+        | 'response_unavailable',
+    ) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          Effect.logWarning('SpiceDB bulk permission check unavailable').pipe(
+            Effect.annotateLogs({
+              elapsedMs: now - startedAt,
+              failureKind,
+              operation: 'CheckBulkPermissions',
+              requestCount: requests.length,
+            }),
           ),
-          Effect.as(unavailableAll),
-        );
-      return yield* client
-        .checkBulkPermissions(
-          CheckBulkPermissionsRequest.create({
-            consistency: fullyConsistent,
-            items: [...requests],
-            withTracing: false,
-          }),
-        )
-        .pipe(
-          Effect.flatMap((response) => {
-            if (response.pairs.length !== requests.length) {
-              return reportUnavailable('response_count_mismatch');
-            }
-            const decisions = response.pairs.map((pair, index) => {
-              const expected = requests[index];
-              return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
-            });
-            if (!decisions.every((decision): decision is ContextAccessDecision => decision !== null)) {
-              return reportUnavailable('response_request_mismatch');
-            }
-            if (decisions.some((decision) => decision === 'unavailable')) {
-              return reportUnavailable('response_unavailable').pipe(Effect.as(decisions));
-            }
-            return Effect.succeed(decisions);
-          }),
-          Effect.catchTag('SpiceDbPermissionClientError', (error) =>
-            reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure'),
-          ),
-        );
-    });
+        ),
+        Effect.as(unavailableAll),
+      );
+    return yield* client
+      .checkBulkPermissions(
+        CheckBulkPermissionsRequest.create({
+          consistency: fullyConsistent,
+          items: [...requests],
+          withTracing: false,
+        }),
+      )
+      .pipe(
+        Effect.flatMap((response) => {
+          if (response.pairs.length !== requests.length) {
+            return reportUnavailable('response_count_mismatch');
+          }
+          const decisions = response.pairs.map((pair, index) => {
+            const expected = requests[index];
+            return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
+          });
+          if (!decisions.every((decision): decision is ContextAccessDecision => decision !== null)) {
+            return reportUnavailable('response_request_mismatch');
+          }
+          if (decisions.some((decision) => decision === 'unavailable')) {
+            return reportUnavailable('response_unavailable').pipe(Effect.as(decisions));
+          }
+          return Effect.succeed(decisions);
+        }),
+        Effect.catchTag('SpiceDbPermissionClientError', (error) =>
+          reportUnavailable(Cause.isTimeoutError(error.cause) ? 'timeout' : 'client_failure'),
+        ),
+      );
+  });
 
   /**
    * Joins the decisions this request already has or is waiting for and asks SpiceDB, in one call, only for the

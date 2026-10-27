@@ -102,11 +102,11 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
   if (rental === undefined) {
     yield* persistence.createRental;
   }
-  for (const company of additionalDemoCompanies) {
-    if (!rows.some((row) => row.legalEntityId === company.legalEntityId)) {
-      yield* persistence.createCompany(company);
-    }
-  }
+  yield* Effect.forEach(
+    additionalDemoCompanies.filter((company) => !rows.some((row) => row.legalEntityId === company.legalEntityId)),
+    (company) => persistence.createCompany(company),
+    { concurrency: 1, discard: true },
+  );
   yield* persistence.ensureModules;
   return {
     companies: [

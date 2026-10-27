@@ -4,7 +4,7 @@ import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option,
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { constVoid } from 'effect/Function';
-/* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
+/* oxlint-disable sonarjs/use-type-alias -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
 import { v1 } from '@authzed/authzed-node';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
@@ -1471,6 +1471,43 @@ it.effect('runs owner prepare before the transaction, only owner load inside it,
   }),
 );
 
+it.effect('passes undefined preparation to load and finish when the owner omits prepare', () =>
+  Effect.gen(function* ownerPipelineWithoutPreparation() {
+    const events: string[] = [];
+    const harness = yield* makeHarness({ sqlEvents: events });
+    const read = defineRead(
+      registration().descriptor,
+      {
+        finish: (_input, context: ReadFinishContext<undefined, readonly string[]>) =>
+          Effect.sync(() => {
+            expect(context.prepared).toBeUndefined();
+            events.push('owner-finish');
+            return { evidence: { resultCount: context.loaded.length }, result: context.loaded };
+          }),
+        load: (_input, context) =>
+          Effect.sync(() => {
+            expect(context.prepared).toBeUndefined();
+            events.push('owner-load');
+            return ['visible'];
+          }),
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toEqual(['visible']);
+    expect(events.filter((event) => event.startsWith('owner-'))).toEqual(['owner-load', 'owner-finish']);
+    expect(events.indexOf('owner-load')).toBeLessThan(events.indexOf('COMMIT'));
+    expect(events.indexOf('owner-finish')).toBeGreaterThan(events.indexOf('COMMIT'));
+  }),
+);
+
 const unusedSpiceDbRpc = () => Effect.die(new Error('unused SpiceDB RPC'));
 
 /** A SpiceDB RPC behind the production transaction guard; each round trip that reaches it is recorded. */
@@ -2610,6 +2647,9 @@ it.effect('rejects generic tenant access as an alternative permission target', (
   Effect.gen(function* migratedTest15() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';
     let handlerCalls = 0;
+    const forgedTenantTarget = { kind: 'tenant' as const, permission: 'manage_identity' as const };
+    // Simulate a resolver whose valid typed target was tampered with at runtime.
+    Object.defineProperty(forgedTenantTarget, 'permission', { value: 'access' });
     const invalid = defineRead(
       {
         ...registration().descriptor,
@@ -2623,22 +2663,20 @@ it.effect('rejects generic tenant access as an alternative permission target', (
         },
       },
       () => Effect.succeed({}),
-      () =>
-        // SAFETY: This intentionally forges a runtime-invalid alternative to prove validation fails closed.
-        ({
-          kind: 'any_of',
-          targets: [
-            {
-              kind: 'resource',
-              resource: {
-                moduleId: 'party.registry',
-                resourceId: 'counterparty-1',
-                resourceType: 'counterparty',
-              },
+      () => ({
+        kind: 'any_of',
+        targets: [
+          {
+            kind: 'resource',
+            resource: {
+              moduleId: 'party.registry',
+              resourceId: 'counterparty-1',
+              resourceType: 'counterparty',
             },
-            { kind: 'tenant', permission: 'access' },
-          ],
-        }) as never,
+          },
+          forgedTenantTarget,
+        ],
+      }),
     );
     const failure = yield* Effect.flip(
       (yield* makeHarness({
@@ -3233,41 +3271,51 @@ it.effect('executes only the selected finite conditional authorization branch', 
     type Input = typeof InputSchema.Type;
     type Subject = typeof SubjectSchema.Type;
     const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
+    const branchCalls: string[] = [];
     const conditional = defineReadConditionalPermission<Input, Subject>({
       branches: {
         GUEST: {
           requiredKinds: ['module'],
-          resolve: () => [{ kind: 'module', moduleId: 'commerce.customer-context' }],
+          resolve: () => {
+            branchCalls.push('resolve:GUEST');
+            return [{ kind: 'module', moduleId: 'commerce.customer-context' }];
+          },
         },
         PROFILE: {
           requiredKinds: ['business_permission', 'resource_read'],
-          resolve: (_input, subject, trustedScope) => [
-            {
-              businessPermission: {
-                permission,
-                target: {
-                  kind: 'retail_profile',
-                  legalEntityId: trustedScope.legalEntityId ?? '',
-                  profileId: subject.profileId,
-                  tenantId: trustedScope.tenantId,
+          resolve: (_input, subject, trustedScope) => {
+            branchCalls.push('resolve:PROFILE');
+            return [
+              {
+                businessPermission: {
+                  permission,
+                  target: {
+                    kind: 'retail_profile',
+                    legalEntityId: trustedScope.legalEntityId ?? '',
+                    profileId: subject.profileId,
+                    tenantId: trustedScope.tenantId,
+                  },
+                },
+                kind: 'business_permission',
+              },
+              {
+                kind: 'resource_read',
+                permission: 'read',
+                resource: {
+                  moduleId: 'commerce.customer-context',
+                  resourceId: subject.profileId,
+                  resourceType: 'retail-customer-profile',
                 },
               },
-              kind: 'business_permission',
-            },
-            {
-              kind: 'resource_read',
-              permission: 'read',
-              resource: {
-                moduleId: 'commerce.customer-context',
-                resourceId: subject.profileId,
-                resourceType: 'retail-customer-profile',
-              },
-            },
-          ],
+            ];
+          },
         },
       },
       permissionKey: 'module.access',
-      select: ({ subject }) => subject,
+      select: ({ subject }) => {
+        branchCalls.push(`select:${subject.kind}`);
+        return subject;
+      },
     });
     let handlerCalls = 0;
     const read = defineRead(
@@ -3315,6 +3363,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
       resolvedScope: { ...scope, legalEntityId },
     });
     expect(yield* run(guest, { subject: { kind: 'GUEST' } })).toEqual(['visible']);
+    expect(branchCalls).toEqual(['select:GUEST', 'resolve:GUEST']);
     expect(guest.permissionChecks()).toEqual({
       businessPermissionChecks: 0,
       contextPermissionChecks: 0,
@@ -3339,6 +3388,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
         resourcePermissionDecision: 'unavailable',
       },
     ] as const) {
+      branchCalls.length = 0;
       const harness = yield* makeHarness({
         ...decisions,
         modulePermissionDecision: 'allowed',
@@ -3359,6 +3409,7 @@ it.effect('executes only the selected finite conditional authorization branch', 
       ).toBe(true);
       expect(harness.permissionChecks().businessPermissionChecks).toBe(1);
       expect(harness.permissionChecks().resourcePermissionChecks).toBe(1);
+      expect(branchCalls).toEqual(['select:PROFILE', 'resolve:PROFILE']);
     }
     expect(handlerCalls).toBe(1);
   }),

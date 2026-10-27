@@ -4,7 +4,6 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreIdentityPolicies } from '../../src/db/identity-policies.ts';
-import * as schemaExports from '../../src/db/schema.ts';
 import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT } from '../support/database-identities.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -16,6 +15,8 @@ import {
   domainEvents,
   principals,
 } from '../../src/db/schema.ts';
+
+const schemaExports = await import('../../src/db/schema.ts');
 
 const actionConfig = getTableConfig(actionInvocations);
 const dialect = new PgDialect();
@@ -52,6 +53,36 @@ it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
   expect(new Set(qualifiedNames).size).toBe(expectedQualifiedNames.length);
   expect(qualifiedNames.some((name) => name.startsWith('public.'))).toBe(false);
   expect(qualifiedNames.some((name) => /^(?:auth|ticketing|properties|property|accounting)\./u.test(name))).toBe(false);
+});
+it('keeps the mail ledger protected by tenant and legal entity row policies', () => {
+  const config = getTableConfig(schemaExports.emailDeliveries);
+  expect(config.enableRLS).toBe(true);
+  expect(config.policies.map(({ name }) => name).toSorted()).toEqual([
+    'demo_email_deliveries_scope_insert',
+    'demo_email_deliveries_scope_select',
+    'demo_email_deliveries_scope_update',
+  ]);
+  expect(
+    config.policies.map((policy) => ({
+      for: policy.for,
+      hasUsing: policy.using !== undefined,
+      hasWithCheck: policy.withCheck !== undefined,
+      to: policy.to,
+    })),
+  ).toEqual([
+    { for: 'select', hasUsing: true, hasWithCheck: false, to: 'ontos_runtime' },
+    { for: 'insert', hasUsing: false, hasWithCheck: true, to: 'ontos_runtime' },
+    { for: 'update', hasUsing: true, hasWithCheck: true, to: 'ontos_runtime' },
+  ]);
+  for (const policy of config.policies) {
+    for (const predicate of [policy.using, policy.withCheck]) {
+      if (predicate !== undefined) {
+        const { sql: predicateSql } = dialect.sqlToQuery(predicate);
+        expect(predicateSql).toContain("current_setting('ontos.tenant_id', true)");
+        expect(predicateSql).toContain("current_setting('ontos.legal_entity_id', true)");
+      }
+    }
+  }
 });
 it('keeps publication authority singleton state admin-owned with one read-only runtime policy', () => {
   const config = getTableConfig(applicationCompositionAuthority);
