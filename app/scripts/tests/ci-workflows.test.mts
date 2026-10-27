@@ -170,6 +170,7 @@ const WorkflowStepSchema = Schema.Struct({
   name: Schema.String,
   run: Schema.optional(Schema.String),
   'timeout-minutes': Schema.optional(Schema.Number),
+  'working-directory': Schema.optional(Schema.String),
 });
 const EdgeDeployWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -2299,10 +2300,72 @@ const IdentityGateJobsSchema = Schema.Struct({
   }),
 });
 
+const INITIALIZE_CI_IDENTITIES = 'Initialize the fresh CI database identities from the grant manifest';
+const INTEGRATION_SUITE_CONDITION = "matrix.suite == 'integration'";
+
+it('initializes every fresh CI database before reconcile bootstrap without changing deployment role policy', () => {
+  const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  for (const { condition, consumers, job, start } of [
+    {
+      condition: null,
+      consumers: [
+        'Remove the pre-seeded runtime role to prove deployment bootstrap ordering',
+        'Run the assembled stage migrator artifact against the fresh database',
+        'Apply and verify Core, Auth, and Contacts migrations, plus Party Registry',
+      ],
+      job: jobs['service-integration'],
+      start: 'Start fresh PostgreSQL and SpiceDB services',
+    },
+    {
+      condition: "matrix.proof == 'node'",
+      consumers: ['Migrate the Node proof database and provision its runtime identities'],
+      job: jobs['node-artifact-build'],
+      start: 'Install the app workspace',
+    },
+    {
+      condition: "matrix.proof == 'topology'",
+      consumers: ['Migrate and initialize the local tenant for the Worker topology'],
+      job: jobs['cloudflare-artifact-build'],
+      start: 'Start fresh PostgreSQL and SpiceDB services for the Worker topology',
+    },
+  ]) {
+    const { steps } = job;
+    const initializers = steps.filter(({ name }) => name === INITIALIZE_CI_IDENTITIES);
+    expect(initializers).toHaveLength(1);
+    const [initialize] = initializers;
+    expect(initialize?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
+    expect(initialize?.['working-directory']).toBe('app');
+    // Only this step may initialize passwords, only against its loopback development fixture.
+    expect(initialize?.env).toEqual({
+      DATABASE_LOGIN_ROLE_POLICY: 'initialize-local',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
+    });
+    expect(initialize?.if ?? null).toBe(condition);
+    const initialized = steps.findIndex(({ name }) => name === INITIALIZE_CI_IDENTITIES);
+    const started = steps.findIndex(({ name }) => name === start);
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(initialized).toBeGreaterThan(started);
+    for (const consumer of consumers) {
+      expect(steps.findIndex(({ name }) => name === consumer)).toBeGreaterThan(initialized);
+    }
+    expect(job.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
+    for (const step of steps.filter(({ name }) => name !== INITIALIZE_CI_IDENTITIES)) {
+      expect(step.env?.DATABASE_LOGIN_ROLE_POLICY).toBeUndefined();
+      expect(step.run ?? '').not.toContain('initialize-local');
+    }
+  }
+  // Service integration and browser share the unconditional initializer. The artifact still proves stage.
+  const integration = jobs['service-integration'].steps;
+  expect(integration.find(({ name }) => name.startsWith('Apply and verify Core'))?.if).toBeUndefined();
+  const migrator = integration.find(({ name }) => name.startsWith('Run the assembled stage migrator'));
+  expect(migrator?.if).toBe(INTEGRATION_SUITE_CONDITION);
+  expect(migrator?.env?.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT).toBe('stage');
+});
+
 it('runs migration equivalence proofs only against the owned CI maintenance database', () => {
   const { jobs } = Schema.decodeUnknownSync(IdentityGateJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
   const integration = jobs['service-integration'].steps.find(({ run }) => run === 'mise exec -- pnpm test:integration');
-  expect(integration?.if).toBe("matrix.suite == 'integration'");
+  expect(integration?.if).toBe(INTEGRATION_SUITE_CONDITION);
   expect(integration?.env).toEqual({
     MIGRATION_EQUIVALENCE_TEST_DATABASE_URL: 'postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/postgres',
     MIGRATION_EQUIVALENCE_TEST_SANDBOX: 'owned-postgres18',
@@ -2336,7 +2399,7 @@ it('gives every CI database tool a separate login per runtime identity and audit
   const audit = steps.findIndex(({ name }) => name === AUDIT_STEP);
   expect(migrations).toBeGreaterThanOrEqual(0);
   expect(audit).toBe(migrations + 1);
-  expect(steps[audit]?.if).toBe("matrix.suite == 'integration'");
+  expect(steps[audit]?.if).toBe(INTEGRATION_SUITE_CONDITION);
   expect(steps[audit]?.run).toBe('mise exec -- pnpm database-trust:audit');
 });
 
