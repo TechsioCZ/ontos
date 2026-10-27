@@ -5,15 +5,20 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { Asset, AssetsState, DepreciationPlan, DepreciationType } from '../../../../../shared/domain/assets.ts';
 import { approvedTotal, indicativeSchedule, isActiveAsset } from '../../../../../shared/domain/assets.ts';
 import { instantLabel, isoDateLabel, planOf, principalLabel, todayIsoDate } from './assets-model.ts';
 
+const YEARS_LABEL = 'depreciation.yearsValue';
+const START_DATE_LABEL = 'fields.startDate';
+const TAX_GROUP_LABEL = 'fields.taxGroup';
+
 const useK = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.assets.${key}`, options);
+  return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
 /** Always-visible honesty banner (S03 „Nedělat“: vlastní zákonný výpočet). */
@@ -82,6 +87,10 @@ const PlanCard = ({
     ? schedule
     : schedule.filter((row) => row.period <= horizon || entries.has(row.period)).slice(-12);
   const extra = plan.entries.filter((entry) => !schedule.some((row) => row.period === entry.period));
+  const tableRows: readonly { readonly amountMinor?: number; readonly period: string }[] = [
+    ...visible,
+    ...extra.map((entry) => ({ period: entry.period })),
+  ];
   const total = approvedTotal(plan);
   const active = isActiveAsset(asset);
   return (
@@ -114,7 +123,7 @@ const PlanCard = ({
         <div>
           <dt className="text-fg-secondary text-xs">{k('fields.years')}</dt>
           <dd>
-            {k('depreciation.yearsValue', { count: plan.years })} · {k(`interval.${plan.interval}`)}
+            {k(YEARS_LABEL, { count: plan.years })} · {k(`interval.${plan.interval}`)}
           </dd>
         </div>
         <div>
@@ -122,12 +131,12 @@ const PlanCard = ({
           <dd className="tabular-nums">{formatMoney(plan.baseMinor)}</dd>
         </div>
         <div>
-          <dt className="text-fg-secondary text-xs">{k('fields.startDate')}</dt>
+          <dt className="text-fg-secondary text-xs">{k(START_DATE_LABEL)}</dt>
           <dd>{isoDateLabel(plan.startDate)}</dd>
         </div>
         {plan.taxGroup !== undefined && (
           <div>
-            <dt className="text-fg-secondary text-xs">{k('fields.taxGroup')}</dt>
+            <dt className="text-fg-secondary text-xs">{k(TAX_GROUP_LABEL)}</dt>
             <dd>{plan.taxGroup}</dd>
           </div>
         )}
@@ -142,12 +151,13 @@ const PlanCard = ({
       </dl>
       {plan.note !== undefined && <p className="text-fg-secondary text-sm">{plan.note}</p>}
       {/* Keep the audit's intrinsic width inside its own viewport, not the panel's prose and controls. */}
-      <div
+      {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Approved demo/sales-crm policy: this named audit viewport needs keyboard scrolling. */}
+      <section
         aria-label={k(`depreciation.${plan.type}Plan`)}
-        role="region"
         style={{ marginInline: '-1.25rem', minWidth: 0, overflowX: 'auto', overscrollBehaviorX: 'contain' }}
         tabIndex={0}
       >
+        {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
         <Table size="sm" style={{ minWidth: 840, tableLayout: 'fixed' }} variant="line">
           <colgroup>
             <col style={{ width: 70 }} />
@@ -170,7 +180,7 @@ const PlanCard = ({
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {[...visible, ...extra.map((entry) => ({ amountMinor: undefined, period: entry.period }))].map((row) => {
+            {tableRows.map((row) => {
               const entry = entries.get(row.period);
               return (
                 <Table.Row key={row.period}>
@@ -195,7 +205,7 @@ const PlanCard = ({
                   <Table.Cell style={{ whiteSpace: 'nowrap' }}>
                     {entry?.documentRef ?? (entry === undefined ? '' : k('notProvided'))}
                   </Table.Cell>
-                  <Table.Cell className="text-fg-secondary" style={{ fontSize: '1rem', minWidth: 260, maxWidth: 320 }}>
+                  <Table.Cell className="text-fg-secondary" style={{ fontSize: '1rem', maxWidth: 320, minWidth: 260 }}>
                     {entry === undefined ? null : (
                       <>
                         <div>{principalLabel(entry.by, actor, k('you'))}</div>
@@ -209,7 +219,7 @@ const PlanCard = ({
             })}
           </Table.Body>
         </Table>
-      </div>
+      </section>
       <div
         className="flex flex-wrap items-center justify-between gap-100 text-fg-secondary"
         style={{ fontSize: '1rem' }}
@@ -306,16 +316,23 @@ export const DepreciationOverview = ({
   readonly state: AssetsState;
 }) => {
   const k = useK();
-  const rows = state.assets
-    .filter((asset) => asset.archive === undefined)
-    .flatMap((asset) => (asset.depreciationPlans ?? []).map((plan) => ({ asset, plan })));
+  const rows = state.assets.flatMap((asset) =>
+    asset.archive === undefined ? (asset.depreciationPlans ?? []).map((plan) => ({ asset, plan })) : [],
+  );
   const year = todayIsoDate().slice(0, 4);
-  const sumFor = (type: DepreciationType) =>
-    rows
-      .filter((row) => row.plan.type === type)
-      .flatMap((row) => row.plan.entries)
-      .filter((entry) => entry.period.startsWith(year))
-      .reduce((sum, entry) => sum + entry.amountMinor, 0);
+  const sumFor = (type: DepreciationType) => {
+    let sum = 0;
+    for (const { plan } of rows) {
+      if (plan.type === type) {
+        for (const entry of plan.entries) {
+          if (entry.period.startsWith(year)) {
+            sum += entry.amountMinor;
+          }
+        }
+      }
+    }
+    return sum;
+  };
   return (
     <div className="flex flex-col gap-250">
       <EvidenceBanner />
@@ -362,8 +379,8 @@ export const DepreciationOverview = ({
                 <Table.Cell>
                   {plan.method}
                   <span className="block text-fg-secondary text-xs">
-                    {k('depreciation.yearsValue', { count: plan.years })}
-                    {plan.taxGroup === undefined ? '' : ` · ${k('fields.taxGroup')} ${plan.taxGroup}`}
+                    {k(YEARS_LABEL, { count: plan.years })}
+                    {plan.taxGroup === undefined ? '' : ` · ${k(TAX_GROUP_LABEL)} ${plan.taxGroup}`}
                   </span>
                 </Table.Cell>
                 <Table.Cell align="end" className="tabular-nums">
@@ -401,15 +418,12 @@ export const DepreciationOverview = ({
         ) : (
           <ul className="grid grid-cols-1 gap-150 sm:grid-cols-3">
             {(state.templates ?? []).map((template) => (
-              <li
-                className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}
-                key={template.id}
-              >
+              <li className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`} key={template.id}>
                 <span className="font-medium">{template.name}</span>
                 <span className="text-fg-secondary">
-                  {k(`depreciation.${template.type}`)} · {template.method} ·{' '}
-                  {k('depreciation.yearsValue', { count: template.years })} · {k(`interval.${template.interval}`)}
-                  {template.taxGroup === undefined ? '' : ` · ${k('fields.taxGroup')} ${template.taxGroup}`}
+                  {k(`depreciation.${template.type}`)} · {template.method} · {k(YEARS_LABEL, { count: template.years })}{' '}
+                  · {k(`interval.${template.interval}`)}
+                  {template.taxGroup === undefined ? '' : ` · ${k(TAX_GROUP_LABEL)} ${template.taxGroup}`}
                 </span>
                 {template.note !== undefined && <span className="text-fg-secondary text-xs">{template.note}</span>}
               </li>

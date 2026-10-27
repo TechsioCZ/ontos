@@ -14,7 +14,7 @@ export type LegacyBatchesResult =
 const ABSENT: LegacyBatchesResult = { state: 'absent' };
 const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
 
-const readLegacyOnce = Effect.fn('AgentPlatform.readLegacyOnce')(function* readLegacyOnce(
+const readLegacyOnce = Effect.fn('AgentPlatform.readLegacyOnce')(function* readLegacyOnceEffect(
   principal: TrustedPrincipalContext,
   module: LegacyEngineModule,
   options: {

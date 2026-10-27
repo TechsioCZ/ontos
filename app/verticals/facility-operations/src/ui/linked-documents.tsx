@@ -1,8 +1,9 @@
+import { Effect } from 'effect';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 // Documents linked to one record (S12.R3) — OWNED BY THE documents LANE. Embed inside AgendaFrame:
 //   <LinkedDocuments subject={{ kind: 'property', id: property.id, label: property.label }} />
 // Lists every document whose links contain that subject, with preview and authorised download. Writers can upload a
 // file straight onto the record (new document linked to it) or attach an existing document.
-// @effect-diagnostics asyncFunction:off
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -15,26 +16,43 @@ import { CategoryBadge, currentVersion, FileTypeIcon, formatBytes, formatWhen } 
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
+import type { CommandOutcome } from './use-agenda.ts';
 import { dividedListClassName } from '@app/admin-ui';
 
 const k = 'facility-operations.documents';
 
+const uploadLinkedDocument = Effect.fn('FacilityOperations.uploadLinkedDocument')(function* uploadLinkedDocument(
+  file: File,
+  context: { readonly run: ReturnType<typeof useAgendaRecords>['run']; readonly subject: SubjectRef },
+) {
+  const uploaded = yield* uploadFile(file);
+  if (!uploaded.ok) {
+    return { ok: false as const };
+  }
+  const outcome = yield* context.run({
+    _tag: 'DocumentCreate',
+    category: file.type.startsWith('image/') ? 'photo' : 'other',
+    file: uploaded.file,
+    links: [context.subject],
+    title: file.name.replace(/\.[^.]+$/u, ''),
+  });
+  return { ok: true as const, outcome };
+});
+
 export const LinkedDocuments = ({
   hideWhenForbidden = false,
-  subject,
   records,
+  subject,
 }: {
-  readonly subject: SubjectRef;
-  readonly records?: ReturnType<typeof useAgendaRecords>;
   readonly hideWhenForbidden?: boolean;
+  readonly records?: ReturnType<typeof useAgendaRecords>;
+  readonly subject: SubjectRef;
 }) => {
   const { language, t } = useModernI18n();
   // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
   const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
-  const [preview, setPreview] = useState<{ readonly file: StoredFileRef; readonly title: string } | undefined>(
-    undefined,
-  );
+  const [preview, setPreview] = useState<{ readonly file: StoredFileRef; readonly title: string } | undefined>();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const envelope = ops.data?.agendas.documents;
@@ -52,54 +70,52 @@ export const LinkedDocuments = ({
   );
   const others = state.documents.filter((document) => !documents.includes(document));
 
-  const uploadHere = async (file: File | undefined) => {
-    if (file === undefined) {
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      toast.create({ title: t(`${k}.tooLarge`), type: 'error' });
-      return;
-    }
-    setBusy(true);
-    const uploaded = await uploadFile(file);
-    if (!uploaded.ok) {
-      setBusy(false);
-      toast.create({ title: t(`${k}.uploadFailed`), type: 'error' });
-      return;
-    }
-    const outcome = await ops.run({
-      _tag: 'DocumentCreate',
-      category: file.type.startsWith('image/') ? 'photo' : 'other',
-      file: uploaded.file,
-      links: [subject],
-      title: file.name.replace(/\.[^.]+$/, ''),
+  const stopBusy = Effect.sync(() => setBusy(false));
+  const notifyUploadFailed = Effect.sync(() => {
+    toast.create({ title: t(`${k}.uploadFailed`), type: 'error' });
+  });
+  const notifyCommand = (outcome: CommandOutcome, success: 'created' | 'updated') =>
+    Effect.sync(() => {
+      toast.create(
+        outcome.ok
+          ? { title: t(`${k}.${success}`), type: 'success' }
+          : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
+      );
     });
-    setBusy(false);
-    toast.create(
-      outcome.ok
-        ? { title: t(`${k}.created`), type: 'success' }
-        : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
-    );
-  };
+  const finishUpload = (uploaded: Effect.Success<ReturnType<typeof uploadLinkedDocument>>) =>
+    uploaded.ok ? notifyCommand(uploaded.outcome, 'created') : notifyUploadFailed;
+  const uploadFailed = (error: Effect.Error<ReturnType<typeof uploadLinkedDocument>>) =>
+    Effect.logWarning('Linked document upload failed', error).pipe(Effect.andThen(notifyUploadFailed));
 
-  const attachExisting = async (documentId: string | undefined) => {
-    const document = others.find((entry) => entry.id === documentId);
-    if (document === undefined) {
-      return;
-    }
-    setBusy(true);
-    const outcome = await ops.run({
-      _tag: 'DocumentUpdate',
-      documentId: document.id,
-      links: [...documentLinks(document), subject],
+  const uploadHere = (file: File | undefined): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      if (file === undefined) {
+        return Effect.void;
+      }
+      if (file.size > MAX_UPLOAD_BYTES) {
+        return Effect.sync(() => {
+          toast.create({ title: t(`${k}.tooLarge`), type: 'error' });
+        });
+      }
+      setBusy(true);
+      return uploadLinkedDocument(file, { run: ops.run, subject }).pipe(
+        Effect.matchEffect({ onFailure: uploadFailed, onSuccess: finishUpload }),
+        Effect.ensuring(stopBusy),
+      );
     });
-    setBusy(false);
-    toast.create(
-      outcome.ok
-        ? { title: t(`${k}.updated`), type: 'success' }
-        : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
-    );
-  };
+
+  const finishAttach = (outcome: CommandOutcome) => notifyCommand(outcome, 'updated');
+  const attachExisting = (documentId: string | undefined): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      const document = others.find((entry) => entry.id === documentId);
+      if (document === undefined) {
+        return Effect.void;
+      }
+      setBusy(true);
+      return ops
+        .run({ _tag: 'DocumentUpdate', documentId: document.id, links: [...documentLinks(document), subject] })
+        .pipe(Effect.tap(finishAttach), Effect.ensuring(stopBusy), Effect.asVoid);
+    });
 
   const hrefOf = (documentId: string) => `/${language ?? 'cs'}/provoz/dokumenty?doc=${encodeURIComponent(documentId)}`;
 
@@ -152,7 +168,7 @@ export const LinkedDocuments = ({
               className="sr-only"
               data-testid="linked-documents-upload"
               onChange={(event) => {
-                void uploadHere(event.target.files?.[0]);
+                browserRuntime.runFork(uploadHere(event.target.files?.[0]));
                 event.target.value = '';
               }}
               type="file"
@@ -171,8 +187,10 @@ export const LinkedDocuments = ({
                 }))}
                 label={t(`${k}.linked.attach`)}
                 name={`attach-${subject.kind}-${subject.id}`}
+                onValueChange={({ value }) => {
+                  browserRuntime.runFork(attachExisting(value[0]));
+                }}
                 placeholder={t(`${k}.linked.attach`)}
-                onValueChange={({ value }) => void attachExisting(value[0])}
                 size="sm"
                 value={[]}
               />

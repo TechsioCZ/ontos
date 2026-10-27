@@ -1,3 +1,5 @@
+import { pipe, DateTime } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // AREA: reports (C05) — owned by the crm-reports lane. "Přehled prodejů": confirmed imported orders by period,
 // salesperson, client and status meaning; values strictly per currency; excluded orders reported aside; CSV export
 // of exactly the rows shown; drill-down to the client card. Data = the ACL-projected records of the signed-in
@@ -5,6 +7,7 @@
 import { PageHeader, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
@@ -13,7 +16,6 @@ import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmStateGate } from '../../../../crm/ui.tsx';
 import { ReportCharts } from './report-charts.tsx';
-import type { ReportQuery } from './report-filters.tsx';
 import {
   ALL,
   ReportFilterBar,
@@ -23,9 +25,12 @@ import {
   reportPeriodOptions,
   writeQuery,
 } from './report-filters.tsx';
+import type { ReportQuery } from './report-filters.tsx';
+
 import { downloadCsv } from './report-format.ts';
-import type { GroupingKey } from './report-tables.tsx';
 import { ItemsCard, OrdersTable, SummaryTable, groupingLabels, summaryCsv } from './report-tables.tsx';
+import type { GroupingKey } from './report-tables.tsx';
+
 import { SalesKpiTiles } from './sales-kpi-strip.tsx';
 
 const fileSlug = (value: string) =>
@@ -39,28 +44,34 @@ const fileSlug = (value: string) =>
 const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
   const { language } = useModernI18n();
   const lang = language ?? 'cs';
-  const [query, setQueryState] = useState<ReportQuery>(readQuery);
-  const setQuery = (patch: Partial<ReportQuery>) => {
+  const [query, setQuery] = useState<ReportQuery>(readQuery);
+  const patchQuery = (patch: Partial<ReportQuery>) => {
     const next = { ...query, ...patch };
-    setQueryState(next);
+    setQuery(next);
     writeQuery(next);
   };
   const scopeAll = canSeeEverything(records.viewer);
   const periods = reportPeriodOptions(records);
   const report = buildSalesReport(records.state, filtersOf(query, periods));
   const filterParts = describeFilters(query, records, periods);
-  const stamp = records.now.slice(0, 10);
+  const stamp = DateTime.formatIsoDateUtc(records.now);
   const fileBase = `prehled-prodeju-${stamp}-${fileSlug(filterParts.join(' '))}`;
   const anyOrders = records.state.imports.orders.length > 0;
+  let excludedWord = 'objednávek';
+  if (report.excludedTotal === 1) {
+    excludedWord = 'objednávka';
+  } else if (report.excludedTotal < 5) {
+    excludedWord = 'objednávky';
+  }
 
   const pick = (grouping: GroupingKey, key: string) => {
     if (grouping === 'salesperson') {
-      setQuery({ grouping: 'client', salesperson: key });
+      patchQuery({ grouping: 'client', salesperson: key });
     } else if (grouping === 'status') {
       // Without an approved mapping (R04) the groups are raw source statuses.
-      setQuery({ status: key.startsWith('raw:') ? `r:${key.slice(4)}` : `m:${key}` });
+      patchQuery({ status: key.startsWith('raw:') ? `r:${key.slice(4)}` : `m:${key}` });
     } else if (grouping === 'month') {
-      setQuery({ grouping: 'client', period: key });
+      patchQuery({ grouping: 'client', period: key });
     }
   };
 
@@ -82,7 +93,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
         title="Přehled prodejů"
       />
 
-      <ReportFilterBar onChange={setQuery} periods={periods} query={query} records={records} scopeAll={scopeAll} />
+      <ReportFilterBar onChange={patchQuery} periods={periods} query={query} records={records} scopeAll={scopeAll} />
 
       <div className="flex flex-col gap-50 text-sm">
         <p>
@@ -92,7 +103,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
           <span className="text-fg-secondary"> · Filtry: </span>
           {filterParts.join(', ')}
           <span className="text-fg-secondary"> · Stav dat: </span>
-          {formatDateTime(records.now)}
+          {pipe(records.now, orderDateText, formatDateTime)}
         </p>
         {scopeAll ? (
           <p
@@ -102,7 +113,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
             {report.excludedTotal > 0 ? (
               <>
                 <span className="font-semibold">Vyloučeno z přehledu: {report.excludedTotal} </span>
-                {report.excludedTotal === 1 ? 'objednávka' : report.excludedTotal < 5 ? 'objednávky' : 'objednávek'} (
+                {excludedWord} (
                 {report.excluded.map((entry) => `${entry.count}× ${exclusionReasonLabels[entry.reason]}`).join('; ')}
                 ). Počet vyloučených záznamů platí pro celé zvolené období, bez filtru klienta, obchodníka a stavu.{' '}
                 <a className="underline underline-offset-2" href={`/${lang}/crm/parovani`}>
@@ -145,7 +156,7 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
                 `${fileBase}-souhrn-${fileSlug(groupingLabels[query.grouping])}.csv`,
               )
             }
-            onGroupingChange={(grouping) => setQuery({ grouping })}
+            onGroupingChange={(grouping) => patchQuery({ grouping })}
             onPick={pick}
             report={report}
             state={records.state}

@@ -72,6 +72,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
+        // This parsed CLI owns its administrative database Layer at the executable boundary.
+        'verticals/work-tasks/scripts/prune-demo-leftovers.mts',
         'apps/shell-super-app/scripts/bootstrap-stage-accounts.mts',
       ],
     },

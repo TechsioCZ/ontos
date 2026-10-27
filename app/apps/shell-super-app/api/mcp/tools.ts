@@ -3,7 +3,14 @@
  * filtered by the connection (live rights ∩ grant ∩ write policy). Expected failures are Czech tool results.
  * Writes under the `approval` policy never change data: they go to the platform approval queue („Ke schválení“).
  */
-import { agentCommandOf } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentAppIdSchema,
+  AgentLegalEntityIdSchema,
+  AgentRunIdSchema,
+  AgentProposalInputSchema,
+  AgentProposalSubmitRequestSchema,
+  agentCommandOf,
+} from '@app/shared-contracts/agent-proposals';
 import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
 import { Duration, Effect, Option, Predicate, Result, Schema } from 'effect';
 
@@ -18,7 +25,8 @@ import type { ProposalRefused } from './proposal-refused.ts';
 import { CAPABILITIES_OUTPUT, PROPOSALS_OUTPUT, READ_OUTPUT, WHOAMI_OUTPUT, WRITE_OUTPUT } from './output-schemas.ts';
 import { DEFAULT_READ_LIMIT, paginateReadResult, selectPath } from './read-shaping.ts';
 import type { ReadPathError } from './read-shaping.ts';
-import { directReplays, requestHash } from './replay.ts';
+import { DirectReplayResultSchema, directReplays, requestHash } from './replay.ts';
+import type { DirectReplayResult } from './replay.ts';
 import { matchesTokens, queryTokens } from './search.ts';
 import { annotationsFor, canPropose, canRead, canWrite, grantAllowsWrite, isOffered, planTools } from './tool-plan.ts';
 import type { GenericToolName } from './tool-plan.ts';
@@ -96,13 +104,6 @@ const ReadPage = Schema.Struct({
   truncated: Schema.Array(
     Schema.Struct({ offset: Schema.Finite, path: Schema.String, returned: Schema.Finite, total: Schema.Finite }),
   ),
-});
-const ExecutedResult = Schema.Struct({
-  messageCs: Schema.String,
-  replayed: Schema.Boolean,
-  result: Schema.Json,
-  status: Schema.Literal('executed'),
-  url: Schema.optionalKey(Schema.String),
 });
 
 /** Action-owned fields stay untouched. A key collision requires the generic input wrapper. */
@@ -191,12 +192,44 @@ const snapshotAllowsWrite = (tool: McpCatalogTool, flags: Schema.Json): boolean 
   !isJsonObject(flags) ||
   (flags['canWrite'] !== false && (tool.liveRight === undefined || flags[tool.liveRight] !== false));
 
-const checkActionInput = (tool: McpCatalogTool, input: Schema.JsonObject): ToolResult | undefined => {
-  const problems = inputProblems(tool.inputSchema, input, 'input');
+const validateInput = (schema: JsonObject, input: Schema.Json | undefined, prefix = '') =>
+  Effect.fromResult(inputProblems(schema, input, prefix)).pipe(
+    Effect.mapError((cause) => new ModuleUnavailable({ cause, message: 'Schéma vstupu se nepodařilo zpracovat.' })),
+  );
+
+const checkActionInput = (tool: McpCatalogTool, input: Schema.JsonObject) =>
+  validateInput(tool.inputSchema, input, 'input').pipe(
+    Effect.map((problems) =>
+      problems === undefined
+        ? undefined
+        : errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' }),
+    ),
+  );
+
+const runValidatedTool = Effect.fn('Mcp.runValidatedTool')(function* runValidatedTool(
+  operation: { readonly inputSchema: JsonObject; readonly name: string; readonly run: ToolRun },
+  input: Schema.JsonObject,
+) {
+  const problems = yield* validateInput(operation.inputSchema, input);
   return problems === undefined
-    ? undefined
-    : errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' });
-};
+    ? yield* operation.run(input)
+    : errorResult(`Neplatné argumenty nástroje ${operation.name}: ${problems}.`, { 'ontos/code': 'invalid_arguments' });
+});
+
+type ProposalBatch = Effect.Success<McpToolContext['backend']['listProposals']>['batches'][number];
+const encodeProposalBatch = Effect.fn('Mcp.encodeProposalBatch')(function* encodeProposalBatch(
+  reviewUrl: string,
+  batch: ProposalBatch,
+) {
+  const createdAt = yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(batch.createdAt);
+  return {
+    batchId: batch.batchId,
+    createdAt,
+    instruction: batch.instruction,
+    items: batch.items.map((item) => ({ status: item.status, summary: item.summary, targetLabel: item.targetLabel })),
+    reviewUrl: `${reviewUrl}?davka=${encodeURIComponent(batch.batchId)}`,
+  };
+});
 
 export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec[] => {
   const { backend, catalog, description: d } = context;
@@ -258,7 +291,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       );
     }
     const problem = czechProblem(error);
-    return Schema.decodeUnknownEffect(Schema.JsonObject)(problem.meta).pipe(
+    return Schema.decodeEffect(Schema.JsonObject)(problem.meta).pipe(
       Effect.map((meta) => errorResult(problem.text, meta)),
       // A malformed locally generated diagnostic is a defect; retain its SchemaError at the SDK boundary.
       Effect.orDie,
@@ -281,16 +314,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
           Effect.mapError(
             (cause) => new InvalidToolArguments({ cause, message: 'Argumenty nástroje musí být objekt JSON.' }),
           ),
-          Effect.flatMap((input) => {
-            const problems = inputProblems(inputSchema, input);
-            return problems === undefined
-              ? run(input)
-              : Effect.succeed(
-                  errorResult(`Neplatné argumenty nástroje ${name}: ${problems}.`, {
-                    'ontos/code': 'invalid_arguments',
-                  }),
-                );
-          }),
+          Effect.flatMap((input) => runValidatedTool({ inputSchema, name, run }, input)),
           Effect.matchEffect({ onFailure: toolError, onSuccess: Effect.succeed }),
           Effect.timed,
           Effect.tap(([elapsed, result]) =>
@@ -370,13 +394,17 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     if (tool === undefined || tool.access !== 'read') {
       return Effect.succeed(errorResult(MSG_UNKNOWN(id)));
     }
-    const problems = inputProblems(tool.inputSchema, input ?? {}, 'input');
-    if (problems !== undefined) {
-      return Effect.succeed(errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' }));
-    }
-    return runRead(tool, input ?? {}, options).pipe(
-      Effect.flatMap((read) =>
-        okResult(read.truncated.length > 0 || read.omitted.length > 0 ? { ...read, noteCs: READ_NOTE_CS } : read),
+    return validateInput(tool.inputSchema, input ?? {}, 'input').pipe(
+      Effect.flatMap((problems) =>
+        problems === undefined
+          ? runRead(tool, input ?? {}, options).pipe(
+              Effect.flatMap((read) =>
+                okResult(
+                  read.truncated.length > 0 || read.omitted.length > 0 ? { ...read, noteCs: READ_NOTE_CS } : read,
+                ),
+              ),
+            )
+          : Effect.succeed(errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' })),
       ),
     );
   });
@@ -451,16 +479,16 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     runId: string | undefined,
   ) {
     const proposals = items.map((item): AgentProposalInput => {
-      const proposal: AgentProposalInput = {
+      const proposal = AgentProposalInputSchema.make({
         actionSlug: actionSlugOf(item.tool),
-        appId: item.tool.appId,
+        appId: AgentAppIdSchema.make(item.tool.appId),
         command: agentCommandOf(commandOf(item.tool, item.input)),
         diff: [],
         reason: item.reason,
         risk: item.tool.destructive ? 'high' : 'medium',
         summary: item.summary.slice(0, 300),
         targetLabel: item.targetLabel.slice(0, 300),
-      };
+      });
       return item.tool.referenceAudiences.length === 0
         ? proposal
         : { ...proposal, referenceAudiences: item.tool.referenceAudiences };
@@ -468,12 +496,17 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     const request = {
       agentLabel: `${d.acting.displayName} přes ${d.client.name}`.slice(0, 300),
       instruction: instruction.slice(0, 4000),
-      legalEntityId: d.legalEntityId,
+      legalEntityId: AgentLegalEntityIdSchema.make(d.legalEntityId),
       proposals,
     };
-    const response = yield* backend.submitProposals(runId === undefined ? request : { ...request, runId }, {
-      idempotencyKey,
-    });
+    const response = yield* backend.submitProposals(
+      AgentProposalSubmitRequestSchema.make(
+        runId === undefined ? request : { ...request, runId: AgentRunIdSchema.make(runId) },
+      ),
+      {
+        idempotencyKey,
+      },
+    );
     const batchUrl = `${context.publicOrigin}${response.reviewPath}?davka=${encodeURIComponent(response.batchId)}`;
     const result = {
       batchId: response.batchId,
@@ -503,7 +536,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     }
     const { tool } = checked;
     const payload = input ?? {};
-    const invalid = checkActionInput(tool, payload);
+    const invalid = yield* checkActionInput(tool, payload);
     if (invalid !== undefined) {
       return invalid;
     }
@@ -515,11 +548,13 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       if (!snapshotAllowsWrite(tool, snapshot)) {
         return errorResult(MSG_NO_LIVE_RIGHT(labelOf(tool.moduleId)));
       }
-      const hash = yield* requestHash(context.crypto, tool.id, payload);
-      const replay = directReplays.lookup(d.grantId, idempotencyKey, hash);
+      const hash = yield* requestHash(context.crypto, tool.id, payload).pipe(
+        Effect.mapError((cause) => new ModuleUnavailable({ cause, message: 'Vstup změny se nepodařilo zakódovat.' })),
+      );
+      const replay = yield* directReplays.lookup(d.grantId, idempotencyKey, hash);
       if (replay.kind === 'hit') {
         // Only this Shell's executed-result envelope is stored here; invalid cached data is a defect.
-        const cached = yield* Schema.decodeUnknownEffect(ExecutedResult)(replay.result).pipe(Effect.orDie);
+        const cached = yield* Schema.decodeEffect(DirectReplayResultSchema)(replay.result).pipe(Effect.orDie);
         return yield* okResult({ ...cached, replayed: true });
       }
       if (replay.kind === 'conflict') {
@@ -527,14 +562,14 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       }
       const result = yield* executeDirect(tool, payload, key, snapshot);
       const link = moduleLink(tool.moduleId);
-      const resultValue = {
+      const resultValue: DirectReplayResult = {
         messageCs: MSG_EXECUTED,
         replayed: false,
         result,
         status: 'executed',
       };
       const value = link?.type === 'resource_link' ? { ...resultValue, url: link.uri } : resultValue;
-      directReplays.remember(d.grantId, idempotencyKey, hash, value);
+      yield* directReplays.remember(d.grantId, idempotencyKey, hash, value);
       return yield* okResult(value, link === undefined ? [] : [link]);
     }
     const trimmed = (reason ?? '').trim();
@@ -646,32 +681,53 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     });
   });
 
+  const prepareProposedItem = Effect.fn('Mcp.prepareProposedItem')(function* prepareProposedItem(
+    change: (typeof ProposeInput.Type)['changes'][number],
+    index: number,
+  ) {
+    const checked = writeTargetOf(change.id, 'propose');
+    if ('error' in checked) {
+      return Result.fail(checked.error);
+    }
+    const input = change.input ?? {};
+    const invalid = yield* checkActionInput(checked.tool, input);
+    if (invalid !== undefined) {
+      const [first] = invalid.content;
+      const text = first?.type === 'text' ? first.text : '';
+      return Result.fail(errorResult(`Změna č. ${index + 1}: ${text}`, { 'ontos/code': 'invalid_input' }));
+    }
+    const title = titleOf(checked.tool);
+    return Result.succeed({
+      input,
+      reason: textOr(change.reason, `Změna navržená přes ${d.client.name}`),
+      summary: textOr(change.summary, title),
+      targetLabel: textOr(change.targetLabel, title),
+      tool: checked.tool,
+    });
+  });
+
   const propose = Effect.fn('Mcp.propose')(function* propose(args: typeof ProposeInput.Type) {
-    const items: ProposeItem[] = [];
-    for (const [index, change] of args.changes.entries()) {
-      const checked = writeTargetOf(change.id, 'propose');
-      if ('error' in checked) {
-        return checked.error;
-      }
-      const input = change.input ?? {};
-      const invalid = checkActionInput(checked.tool, input);
-      if (invalid !== undefined) {
-        const [first] = invalid.content;
-        const text = first?.type === 'text' ? first.text : '';
-        return errorResult(`Změna č. ${index + 1}: ${text}`, { 'ontos/code': 'invalid_input' });
-      }
-      const title = titleOf(checked.tool);
-      items.push({
-        input,
-        reason: textOr(change.reason, `Změna navržená přes ${d.client.name}`),
-        summary: textOr(change.summary, title),
-        targetLabel: textOr(change.targetLabel, title),
-        tool: checked.tool,
-      });
+    // Validate in order; after the first refusal, later changes perform no validation or I/O.
+    const items = yield* Effect.reduce(
+      args.changes,
+      (): Result.Result<readonly ProposeItem[], ToolResult> => Result.succeed([]),
+      (
+        collected: Result.Result<readonly ProposeItem[], ToolResult>,
+        change,
+        index,
+      ): Effect.Effect<Result.Result<readonly ProposeItem[], ToolResult>, ToolFailure> =>
+        Result.isFailure(collected)
+          ? Effect.succeed(collected)
+          : prepareProposedItem(change, index).pipe(
+              Effect.map(Result.map((item: ProposeItem) => [...collected.success, item])),
+            ),
+    );
+    if (Result.isFailure(items)) {
+      return items.failure;
     }
     return yield* proposeBatch(
       args.instruction.trim() === '' ? 'Dávka změn' : args.instruction,
-      items,
+      items.success,
       args.idempotencyKey,
       args.runId,
     );
@@ -679,21 +735,12 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
 
   const listProposals = backend.listProposals.pipe(
     Effect.flatMap((queue) =>
-      okResult({
-        batches: queue.batches.slice(0, 20).map((batch) => ({
-          batchId: batch.batchId,
-          createdAt: batch.createdAt,
-          instruction: batch.instruction,
-          items: batch.items.map((item) => ({
-            status: item.status,
-            summary: item.summary,
-            targetLabel: item.targetLabel,
-          })),
-          reviewUrl: `${reviewUrl}?davka=${encodeURIComponent(batch.batchId)}`,
-        })),
-        pendingCount: queue.pendingCount,
-        reviewUrl,
-      }),
+      Effect.forEach(queue.batches.slice(0, 20), (batch) => encodeProposalBatch(reviewUrl, batch), {
+        concurrency: 1,
+      }).pipe(
+        Effect.mapError((cause) => new ModuleUnavailable({ cause, message: 'Seznam návrhů se nepodařilo zakódovat.' })),
+        Effect.flatMap((batches) => okResult({ batches, pendingCount: queue.pendingCount, reviewUrl })),
+      ),
     ),
   );
 
@@ -703,7 +750,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
         acting: d.acting,
         client: { host: d.client.host, kind: d.client.kind, name: d.client.name },
         company: { legalEntityId: d.legalEntityId, legalName: d.legalName },
-        delegatedBy: d.delegatedBy,
+        delegatedBy: Option.getOrNull(d.delegatedBy),
         modules: d.modules.map((granted) => {
           const module = moduleOf(granted.moduleId);
           const write = canWrite(d, module);

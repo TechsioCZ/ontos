@@ -6,6 +6,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 import type { ReportFilters } from '../../../../../shared/domain/reports.ts';
 import {
   UNASSIGNED,
@@ -31,7 +32,7 @@ const isStatusMeaning = Schema.is(Schema.Literals(statusMeanings));
 export const reportPeriodOptions = (records: RecordsResponse) =>
   periodOptions(
     records.now,
-    records.state.imports.orders.map((order) => orderDate(order).slice(0, 7)),
+    records.state.imports.orders.map((order) => orderDateText(orderDate(order)).slice(0, 7)),
   );
 
 /** Query -> domain filters. Unknown values fall back to "all" (e.g. a client the viewer may not see). */

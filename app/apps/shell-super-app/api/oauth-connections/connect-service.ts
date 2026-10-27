@@ -27,8 +27,16 @@ import type {
   ConnectionClient,
   ConnectionModulesRequest,
 } from '@app/shared-contracts/oauth-connections';
-import { ConnectionModulesRequestSchema, OAUTH_DRAFT_TTL_SECONDS } from '@app/shared-contracts/oauth-connections';
-import { Clock, Crypto, Duration, Effect, Schema } from 'effect';
+import {
+  ConnectionClientIdSchema,
+  ConnectionGrantIdSchema,
+  ConnectionLegalEntityIdSchema,
+  ConnectionModulesRequestSchema,
+  ConnectionPrincipalIdSchema,
+  ConnectionProfileIdSchema,
+  OAUTH_DRAFT_TTL_SECONDS,
+} from '@app/shared-contracts/oauth-connections';
+import { Clock, Crypto, Duration, Effect, Option, Schema } from 'effect';
 
 import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
@@ -84,13 +92,11 @@ export const choosePreselect = (input: {
     offered(input.requestedCompany) ??
     offered(input.activeLegalEntityId) ??
     (input.companies.length === 1 ? input.companies[0] : undefined);
-  const agentPrincipalId =
-    company !== undefined &&
-    input.requestedAgent !== null &&
-    company.agents.some((agent) => agent.principalId === input.requestedAgent)
-      ? input.requestedAgent
-      : null;
-  return { agentPrincipalId, legalEntityId: company?.legalEntityId ?? null };
+  const agent = company?.agents.find((candidate) => candidate.principalId === input.requestedAgent);
+  return {
+    agentPrincipalId: Option.fromUndefinedOr(agent?.principalId),
+    legalEntityId: Option.fromUndefinedOr(company?.legalEntityId),
+  };
 };
 
 const ModulesJson = Schema.fromJsonString(ConnectionModulesRequestSchema);
@@ -133,15 +139,16 @@ const mayActAsAgent = Effect.fn('OAuthConnectService.mayActAsAgent')(function* m
 const verifiedClient = Effect.fn('OAuthConnectService.verifiedClient')(function* verifiedClient(oauthQuery: string) {
   const flow = yield* OAuthFlow;
   const verified = yield* flow.verifyQuery(oauthQuery);
-  const clientInfo = yield* flow.findClient(verified.clientId);
-  if (clientInfo === undefined) {
+  const foundClient = yield* flow.findClient(verified.clientId);
+  if (Option.isNone(foundClient)) {
     return yield* new ConnectionInvalid({ code: 'oauth_query_invalid' });
   }
+  const clientInfo = foundClient.value;
   const client: ConnectionClient = {
-    clientId: clientInfo.clientId,
+    clientId: ConnectionClientIdSchema.make(clientInfo.clientId),
     host: redirectHostOf(verified.redirectUri),
     kind: clientKindOf(verified.redirectUri),
-    logoUri: clientInfo.logoUri,
+    logoUri: Option.fromNullOr(clientInfo.logoUri),
     name: clientInfo.name,
   };
   return { client, verified };
@@ -169,12 +176,12 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
   request: ConnectOptionsRequest,
 ) {
   const { client, verified } = yield* verifiedClient(request.oauthQuery);
-  const user = { displayName: session.displayName, principalId: session.principalId };
+  const user = { displayName: session.displayName, principalId: ConnectionPrincipalIdSchema.make(session.principalId) };
   if (session.companies.length === 0) {
     return {
       client,
       companies: [],
-      preselect: { agentPrincipalId: null, legalEntityId: null },
+      preselect: { agentPrincipalId: Option.none(), legalEntityId: Option.none() },
       state: 'access_blocked',
       user,
     } satisfies ConnectOptions;
@@ -193,7 +200,7 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
     return {
       displayName: agent.displayName,
       modules: authority.offered,
-      principalId: agent.principalId,
+      principalId: ConnectionPrincipalIdSchema.make(agent.principalId),
       writePolicy: authority.policyCap,
     } satisfies ConnectAgentOption;
   });
@@ -213,7 +220,7 @@ export const connectOptions = Effect.fn('OAuthConnectService.connectOptions')(fu
     );
     return {
       agents: agentOptions,
-      legalEntityId: company.legalEntityId,
+      legalEntityId: ConnectionLegalEntityIdSchema.make(company.legalEntityId),
       legalName: company.legalName,
       modules: own.offered,
     } satisfies ConnectCompanyOption;
@@ -243,8 +250,8 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
   }
   let actingKind: ConnectionActingKind = 'human';
   let actingPrincipalId = session.principalId;
-  if (request.actingPrincipalId !== null) {
-    const agentId = request.actingPrincipalId;
+  if (Option.isSome(request.actingPrincipalId)) {
+    const agentId = request.actingPrincipalId.value;
     if (!(yield* mayActAsAgent(session, agentId, request.legalEntityId))) {
       return yield* new ConnectionForbidden({
         code: 'acting_principal_forbidden',
@@ -290,7 +297,7 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
     clientHost: client.host,
     clientId: client.clientId,
     clientKind: client.kind,
-    clientLogoUri: client.logoUri,
+    clientLogoUri: Option.getOrNull(client.logoUri),
     clientName: client.name,
     legalEntityId: request.legalEntityId,
     modules: request.modules,
@@ -301,7 +308,7 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
     userPrincipalId: session.principalId,
     writePolicy,
   });
-  return { grantId: row.grantId } satisfies ConnectDraftResponse;
+  return { grantId: ConnectionGrantIdSchema.make(row.grantId) } satisfies ConnectDraftResponse;
 });
 
 export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(function* draftSummary(
@@ -334,17 +341,22 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
     acting: {
       displayName: actingName,
       kind: grant.actingKind,
-      principalId: grant.actingPrincipalId,
+      principalId: ConnectionPrincipalIdSchema.make(grant.actingPrincipalId),
     },
     client: {
-      clientId: grant.clientId,
+      clientId: ConnectionClientIdSchema.make(grant.clientId),
       host: grant.clientHost,
       kind: grant.clientKind,
-      logoUri: grant.clientLogoUri,
+      logoUri: Option.fromNullOr(grant.clientLogoUri),
       name: grant.clientName,
     },
-    delegatedBy: agent ? { displayName: session.displayName, principalId: session.principalId } : null,
-    grantId: grant.grantId,
+    delegatedBy: agent
+      ? Option.some({
+          displayName: session.displayName,
+          principalId: ConnectionPrincipalIdSchema.make(session.principalId),
+        })
+      : Option.none(),
+    grantId: ConnectionGrantIdSchema.make(grant.grantId),
     legalName: legalName ?? grant.legalEntityId,
     modules:
       grant.modules === 'all'
@@ -422,7 +434,11 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* approv
       principalId: session.principalId,
     })
     .pipe(Effect.mapError(toUnavailable));
-  return { grantId: active.grantId, profileId: active.profileId, status: 'active' } satisfies ConnectApproveResponse;
+  return {
+    grantId: ConnectionGrantIdSchema.make(active.grantId),
+    profileId: ConnectionProfileIdSchema.make(active.profileId),
+    status: 'active',
+  } satisfies ConnectApproveResponse;
 });
 
 export const deny = Effect.fn('OAuthConnectService.deny')(function* deny(
@@ -430,8 +446,8 @@ export const deny = Effect.fn('OAuthConnectService.deny')(function* deny(
   request: ConnectDenyRequest,
 ) {
   const verified = yield* (yield* OAuthFlow).verifyQuery(request.oauthQuery);
-  if (request.grantId !== null) {
-    const grant = yield* findGrant(request.grantId);
+  if (Option.isSome(request.grantId)) {
+    const grant = yield* findGrant(request.grantId.value);
     if (
       grant !== undefined &&
       grant.status === 'draft' &&

@@ -1,8 +1,10 @@
+import { AiAdapterFailure, AiFailure } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   merchandiseAiCommandSchemas,
   MerchandiseCommandSchema,
+  MerchandiseNotFound,
   MerchandisePermissionDenied,
 } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
@@ -19,6 +21,9 @@ import {
   orderStatusLabels,
 } from '../../src/services/persistence.service.ts';
 import { stockOnHandOf } from '../../src/services/stock-levels.ts';
+
+/** A real asynchronous boundary with no timing assertion or external I/O. */
+const nextMicrotask = Effect.promise(Promise.resolve.bind(Promise));
 
 const agent = { principalId: '20000000-0000-4000-8000-0000000000c1', tenantId: '20000000-0000-4000-8000-000000000001' };
 const approver = {
@@ -191,5 +196,74 @@ it.effect('API keys may propose but never decide or revert', () =>
         ),
       { concurrency: 1 },
     );
+  }),
+);
+
+it.live('order description awaits the owner reducer without starting a nested runtime', () =>
+  Effect.gen(function* asynchronousDescription() {
+    const start = yield* seeded;
+    const proposed = yield* applyMerchandiseAiCommand(
+      start,
+      yield* decodeAi({
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CANCELLED' },
+            reason: 'Zákazník objednávku zrušil.',
+          },
+        ],
+        instruction: 'Stornuj objednávku zákazníka.',
+      }),
+      { actor: agent, invocationId: 'async-order-description', now },
+      {
+        describeAddress,
+        describeContact,
+        describeLines,
+        describeShipping,
+        evolveMerchandiseState: (state, command, input) =>
+          evolveMerchandiseState(state, command, input).pipe(Effect.tap(() => nextMicrotask)),
+        orderStatusLabels,
+      },
+    );
+    expect(proposed.state.orders).toBe(start.orders);
+    expect(stock(proposed.state)).toBe(7);
+    expect(proposed.state.aiChanges?.changes[0]?.diff[0]).toEqual({
+      after: 'Stornovaná',
+      before: 'Nová',
+      field: 'status',
+      label: 'Stav',
+    });
+    expect(proposed.state.aiChanges?.changes[0]?.proposedSnapshots?.map((snapshot) => snapshot.kind)).toEqual([
+      'order',
+      'movement',
+    ]);
+  }),
+);
+
+it.effect('order proposal rejection preserves its Czech message and original typed reducer failure', () =>
+  Effect.gen(function* failedOrderProposal() {
+    const start = yield* seeded;
+    const failure = yield* ai(
+      start,
+      {
+        _tag: 'AiProposeChanges',
+        changes: [
+          {
+            operation: { _tag: 'EditOrder', id: 'missing-order', note: 'Doručit po 14:00' },
+            reason: 'Zákazník volal.',
+          },
+        ],
+        instruction: 'Doplň poznámku k objednávce.',
+      },
+      'missing-order-proposal',
+      agent,
+    ).pipe(Effect.flip);
+    expect(Schema.is(AiFailure)(failure)).toBe(true);
+    expect(failure.kind).toBe('invalid');
+    expect(failure.message).toBe('Návrh č. 1 (Úprava objednávky) nelze přijmout: Objednávka neexistuje.');
+    expect(Schema.is(AiAdapterFailure)(failure.cause)).toBe(true);
+    expect(Schema.is(MerchandiseNotFound)(failure.cause?.cause)).toBe(true);
+    expect(start.aiChanges).toBeUndefined();
+    expect(stock(start)).toBe(7);
   }),
 );

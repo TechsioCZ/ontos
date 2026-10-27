@@ -264,10 +264,10 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
       secret: configuration.secret,
       trustedOrigins: [...configuration.trustedOrigins],
     });
-  let provider: ReturnType<typeof makeProvider> | undefined;
+  let retainedProvider: ReturnType<typeof makeProvider> | undefined;
   const getProvider = () => {
-    provider ??= makeProvider();
-    return provider;
+    retainedProvider ??= makeProvider();
+    return retainedProvider;
   };
   const metadata = (keyId: string) =>
     database
@@ -400,7 +400,7 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
     // Verification is one indexed read: the key is random, so Better Auth's SHA-256 lookup hash is the whole check.
     // Better Auth's own verifyApiKey also writes the row twice per call (last request, updated at) for quota and
     // rate-limit bookkeeping that Shell keys never carry, which serialized every caller of one key on its row.
-    verify: Effect.fn('ApiKeyService.verify')(function* verifyApiKey(rawKey) {
+    verify: Effect.fn('ApiKeyService.verify')(function* verifyApiKey(rawKey: string) {
       const keyHash = yield* apiKeyLookupHash(crypto, rawKey);
       const [record] = yield* database
         .select({ enabled: apikey.enabled, expiresAt: apikey.expiresAt, id: apikey.id })

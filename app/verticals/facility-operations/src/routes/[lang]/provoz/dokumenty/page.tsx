@@ -44,7 +44,7 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { changedOn, documentSortKey, DocumentsSearchSchema, selectionForSearch } from './documents-route-state.ts';
 import { DocumentDetailPanel } from './document-detail.tsx';
-import { DocumentFormPanel } from './document-form.tsx';
+import { DocumentFormPanel, documentFormKey } from './document-form.tsx';
 import './documents.css';
 import type { DocumentFormMode } from './document-form.tsx';
 import {
@@ -295,12 +295,10 @@ const useDocumentsModel = () => {
         ]),
       ],
     };
-    browserRuntime.runFork(
-      Effect.promise(exportCsv.bind(undefined, input)).pipe(Effect.asVoid, Effect.timeout('30 seconds')),
-    );
+    browserRuntime.runFork(exportCsv(input).pipe(Effect.asVoid, Effect.timeout('30 seconds'), Effect.scoped));
   };
   const retry = () => {
-    browserRuntime.runFork(Effect.promise(ops.reload).pipe(Effect.timeout('30 seconds')));
+    browserRuntime.runFork(ops.reload().pipe(Effect.timeout('30 seconds'), Effect.scoped));
   };
   const { activeContracts, contractDocs, deadlines, expiringSoon, register, versionCount } = documentSummary(
     documents,
@@ -869,20 +867,23 @@ const DocumentsView = () => {
           run={ops.run}
         />
       )}
-      <DocumentFormPanel
-        contracts={contractDocs}
-        mode={form ?? { kind: 'create' }}
-        onClose={() => setForm(undefined)}
-        onSaved={(documentId) => {
-          setForm(undefined);
-          if (documentId !== undefined) {
-            setOpenId(documentId);
-          }
-        }}
-        open={form !== undefined}
-        run={ops.run}
-        tasks={tasks}
-      />
+      {form !== undefined && (
+        <DocumentFormPanel
+          contracts={contractDocs}
+          key={documentFormKey(form)}
+          mode={form}
+          onClose={() => setForm(undefined)}
+          onSaved={(documentId) => {
+            setForm(undefined);
+            if (documentId !== undefined) {
+              setOpenId(documentId);
+            }
+          }}
+          open
+          run={ops.run}
+          tasks={tasks}
+        />
+      )}
     </>
   );
 };

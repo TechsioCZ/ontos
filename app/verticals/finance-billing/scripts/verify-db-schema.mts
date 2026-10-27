@@ -40,10 +40,10 @@ const InfrastructureSchema = Schema.Struct({
   runtimeSuper: Schema.Boolean,
   runtimeUsage: Schema.Boolean,
 });
-class FinanceDatabaseVerificationError extends Schema.TaggedError<FinanceDatabaseVerificationError>()(
-  'FinanceDatabaseVerificationError',
-  { reason: Schema.String },
-) {}
+class FinanceDatabaseVerificationError extends Schema.TaggedError<
+  FinanceDatabaseVerificationError,
+  { readonly brand: unique symbol }
+>()('FinanceDatabaseVerificationError', { reason: Schema.String }) {}
 const failure = (reason: string) => new FinanceDatabaseVerificationError({ reason });
 const hasRuntimeGrants = (table: typeof CatalogSchema.Type, adminOwner: string) =>
   table.owner === adminOwner &&

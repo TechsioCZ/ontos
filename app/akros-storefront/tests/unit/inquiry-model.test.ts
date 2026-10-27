@@ -27,7 +27,9 @@ describe("governed inquiry input", () => {
       ).toBe(productId);
     }
     for (const productId of ["", " ", "p".repeat(301), 123]) {
-      expect(parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId })).toBeNull();
+      expect(
+        parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId }),
+      ).toBeNull();
     }
     expect(parseInquirySubmission({ ...inquiry, productId: inquiry.requestId })).toBeNull();
   });

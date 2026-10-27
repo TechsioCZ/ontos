@@ -1,3 +1,4 @@
+import { Effect } from 'effect';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -35,9 +36,9 @@ export const ConnectedAppsEditPanel = ({
 }) => {
   const [draft, setDraft] = useState<EditDraft>(() => draftFromConnection(connection));
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [failure, setFailure] = useState<string | undefined>();
   const problem = draftProblem(draft);
-  const name = connection.client.name;
+  const { name } = connection.client;
   const policies = policyChoices(connection);
   const modules = moduleChoices(connection);
 
@@ -51,22 +52,26 @@ export const ConnectedAppsEditPanel = ({
     }
     setBusy(true);
     setFailure(undefined);
-    void browserRuntime
-      .runPromise(updateConnectionAccess(draftToRequest(connection.grantId, draft)))
-      .then((outcome) => {
-        if (outcome.status === 'ok') {
-          onSaved(name);
-          onClose();
-          return;
-        }
-        if (isStale(outcome.reason)) {
-          onStale(failureText(outcome.reason, outcome.detail));
-          onClose();
-          return;
-        }
-        setBusy(false);
-        setFailure(failureText(outcome.reason, outcome.detail));
-      });
+    browserRuntime.runFork(
+      updateConnectionAccess(draftToRequest(connection.grantId, draft)).pipe(
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            if (outcome.status === 'ok') {
+              onSaved(name);
+              onClose();
+              return;
+            }
+            if (isStale(outcome.reason)) {
+              onStale(failureText(outcome.reason, outcome.detail));
+              onClose();
+              return;
+            }
+            setBusy(false);
+            setFailure(failureText(outcome.reason, outcome.detail));
+          }),
+        ),
+      ),
+    );
   };
 
   return (
@@ -124,7 +129,7 @@ export const ConnectedAppsEditPanel = ({
               {modules.map((module) => {
                 const choice = draft.modules[module.moduleId] ?? 'none';
                 return (
-                  <div key={module.moduleId} className="grid gap-100 rounded-md border border-border-primary p-150">
+                  <div className="grid gap-100 rounded-md border border-border-primary p-150" key={module.moduleId}>
                     <p className="font-medium text-sm">{module.label}</p>
                     <div className="flex flex-wrap gap-300">
                       <FormCheckbox
@@ -150,7 +155,7 @@ export const ConnectedAppsEditPanel = ({
         <section className="grid gap-150">
           <h3 className="font-semibold text-sm">Jak bude zapisovat</h3>
           {policies.map((policy) => (
-            <label key={policy.value} className="flex items-start gap-150">
+            <label className="flex items-start gap-150" key={policy.value}>
               <input
                 checked={draft.writePolicy === policy.value}
                 disabled={policy.disabled}

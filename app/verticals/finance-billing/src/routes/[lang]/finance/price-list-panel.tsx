@@ -1,5 +1,5 @@
-// @effect-diagnostics asyncFunction:off
-// @effect-diagnostics newPromise:off
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { Effect } from 'effect';
 import { dialogCloseLabel, EmptyState, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -11,13 +11,13 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { PriceListItem, VatRate } from '../../../../shared/apis/records.ts';
 import { lineDiscountMinor } from '../../../../shared/domain/invoice-totals.ts';
-import { minorToInput, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceViewModel } from './finance-ui.tsx';
+import { invoiceLineKey, minorToInput, outcomeMessage, parseAmountMinor, withOccurrenceKeys } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 
 interface ItemDraft {
   readonly code: string;
-  readonly id: string | undefined;
+  readonly id?: string;
   readonly name: string;
   readonly price: string;
   readonly unit: string;
@@ -26,71 +26,95 @@ interface ItemDraft {
 
 const VAT_CHOICES: readonly VatRate[] = [21, 12, 0];
 
-const emptyItem: ItemDraft = { code: '', id: undefined, name: '', price: '', unit: 'měsíc', vatRate: 21 };
+const emptyItem: ItemDraft = { code: '', name: '', price: '', unit: 'měsíc', vatRate: 21 };
 
 /** S07.R4: the company price list; invoice lines copy a snapshot of an item, discounts are approved per line. */
-export const PriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
-  const items = [...(vm.snapshot?.state.priceList ?? [])].sort(
+const priceListPanelSaveProgram = Effect.fn('Finance.save')(function* priceListPanelSaveProgram(
+  context: Pick<ReturnType<typeof usePriceListPanel>, 'draft' | 'items' | 'setDraft' | 'setError' | 'vm'>,
+) {
+  const { draft, items, setDraft, setError, vm } = context;
+  if (draft === undefined) {
+    return;
+  }
+  const price = parseAmountMinor(draft.price);
+  if (draft.name.trim() === '' || price === undefined) {
+    setError('Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).');
+    return;
+  }
+  const existing = items.find((item) => item.id === draft.id);
+  const upsertPriceListItemCommand: FinanceCommandDraft<'UpsertPriceListItem'> = {
+    _tag: 'UpsertPriceListItem',
+    active: existing?.active ?? true,
+    name: draft.name.trim(),
+    unitPriceMinor: price,
+    vatRate: draft.vatRate,
+  };
+  if (vm.actorLabel !== undefined) {
+    upsertPriceListItemCommand.actorLabel = vm.actorLabel;
+  }
+  if (draft.code.trim() !== '') {
+    upsertPriceListItemCommand.code = draft.code.trim();
+  }
+  if (draft.id !== undefined) {
+    upsertPriceListItemCommand.id = draft.id;
+  }
+  if (draft.unit.trim() !== '') {
+    upsertPriceListItemCommand.unit = draft.unit.trim();
+  }
+  const outcome = yield* vm.execute(
+    upsertPriceListItemCommand,
+    draft.id === undefined ? 'Položka ceníku přidána' : 'Položka ceníku uložena',
+  );
+  if (outcome.ok) {
+    setDraft(undefined);
+    setError(undefined);
+  } else {
+    setError(outcomeMessage(vm, outcome));
+  }
+});
+
+const usePriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
+  const items = (vm.snapshot?.state.priceList ?? []).toSorted(
     (left, right) => Number(right.active) - Number(left.active) || left.name.localeCompare(right.name, 'cs'),
   );
   const [draft, setDraft] = useState<ItemDraft>();
   const [error, setError] = useState<string>();
   const discounted = (vm.snapshot?.state.invoices ?? [])
-    .filter((invoice) => invoice.businessState !== 'VOIDED')
     .flatMap((invoice) =>
-      (invoice.lines ?? []).flatMap((line) =>
+      (invoice.businessState === 'VOIDED' ? [] : (invoice.lines ?? [])).flatMap((line) =>
         line.discount === undefined ? [] : [{ invoice, line, minor: lineDiscountMinor(line) }],
       ),
     )
     .slice(0, 12);
 
-  const save = async () => {
-    if (draft === undefined) {
-      return;
-    }
-    const price = parseAmountMinor(draft.price);
-    if (draft.name.trim() === '' || price === undefined) {
-      setError('Vyplňte název a cenu bez DPH (např. 1 500 nebo 1 500,50).');
-      return;
-    }
-    const existing = items.find((item) => item.id === draft.id);
-    const outcome = await vm.execute(
-      {
-        _tag: 'UpsertPriceListItem',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        active: existing?.active ?? true,
-        ...(draft.code.trim() === '' ? {} : { code: draft.code.trim() }),
-        ...(draft.id === undefined ? {} : { id: draft.id }),
-        name: draft.name.trim(),
-        ...(draft.unit.trim() === '' ? {} : { unit: draft.unit.trim() }),
-        unitPriceMinor: price,
-        vatRate: draft.vatRate,
-      },
-      draft.id === undefined ? 'Položka ceníku přidána' : 'Položka ceníku uložena',
-    );
-    if (outcome.ok) {
-      setDraft(undefined);
-      setError(undefined);
-    } else {
-      setError(outcomeMessage(vm, outcome));
-    }
+  const save = (): void => {
+    void financeBrowserRuntime.runPromise(priceListPanelSaveProgram({ draft, items, setDraft, setError, vm }));
   };
 
-  const toggle = (item: PriceListItem) =>
-    void vm.execute(
-      {
-        _tag: 'UpsertPriceListItem',
-        active: !item.active,
-        ...(item.code === undefined ? {} : { code: item.code }),
-        id: item.id,
-        name: item.name,
-        ...(item.unit === undefined ? {} : { unit: item.unit }),
-        unitPriceMinor: item.unitPriceMinor,
-        vatRate: item.vatRate,
-      },
-      item.active ? 'Položka vyřazena z nabídky' : 'Položka znovu v nabídce',
+  const toggle = (item: PriceListItem) => {
+    const upsertPriceListItemCommand: FinanceCommandDraft<'UpsertPriceListItem'> = {
+      _tag: 'UpsertPriceListItem',
+      active: !item.active,
+      id: item.id,
+      name: item.name,
+      unitPriceMinor: item.unitPriceMinor,
+      vatRate: item.vatRate,
+    };
+    if (item.code !== undefined) {
+      upsertPriceListItemCommand.code = item.code;
+    }
+    if (item.unit !== undefined) {
+      upsertPriceListItemCommand.unit = item.unit;
+    }
+    void financeBrowserRuntime.runPromise(
+      vm.execute(upsertPriceListItemCommand, item.active ? 'Položka vyřazena z nabídky' : 'Položka znovu v nabídce'),
     );
+  };
+  return { discounted, draft, error, items, save, setDraft, setError, toggle, vm };
+};
 
+export const PriceListPanel = (props: { readonly vm: FinanceViewModel }) => {
+  const { discounted, draft, error, items, save, setDraft, setError, toggle, vm } = usePriceListPanel(props);
   return (
     <div className="flex flex-col gap-500">
       <SectionCard
@@ -210,8 +234,11 @@ export const PriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {discounted.map(({ invoice, line, minor }, index) => (
-                  <Table.Row key={`${invoice.ref.resourceId}-${index}`}>
+                {withOccurrenceKeys(
+                  discounted,
+                  ({ invoice, line }) => `${invoice.ref.resourceId}:${invoiceLineKey(line)}`,
+                ).map(({ key, value: { invoice, line, minor } }) => (
+                  <Table.Row key={key}>
                     <Table.Cell className="whitespace-nowrap">
                       <a className="underline" href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`}>
                         {invoice.number ?? invoice.documentNumber}
@@ -238,7 +265,13 @@ export const PriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             <Button onClick={() => setDraft(undefined)} theme="outlined" variant="secondary">
               Zrušit
             </Button>
-            <Button isLoading={vm.busy} onClick={() => void save()} variant="primary">
+            <Button
+              isLoading={vm.busy}
+              onClick={() => {
+                save();
+              }}
+              variant="primary"
+            >
               Uložit
             </Button>
           </>
@@ -298,7 +331,11 @@ export const PriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 value={draft.price}
               />
               <SelectTemplate
-                items={VAT_CHOICES.map((rate) => ({ displayValue: `${rate} %`, label: `${rate} %`, value: String(rate) }))}
+                items={VAT_CHOICES.map((rate) => ({
+                  displayValue: `${rate} %`,
+                  label: `${rate} %`,
+                  value: String(rate),
+                }))}
                 label="Sazba DPH"
                 labelProps={{ className: 'font-label text-label-md' }}
                 onValueChange={({ value }) => {

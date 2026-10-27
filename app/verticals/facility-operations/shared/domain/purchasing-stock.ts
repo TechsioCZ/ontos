@@ -1,6 +1,6 @@
 // Pure stock computations over the purchasing ledger (S05). Used by the reducer (guards) and the UI (overview,
 // material plan, replenishment suggestions). OWNED BY THE `purchasing` LANE (ops-purchasing).
-import { DateTime } from 'effect';
+import { Schema, DateTime } from 'effect';
 import type {
   PurchaseOrder,
   PurchasingState,
@@ -89,8 +89,8 @@ export const batchQuantityIn = (
 export const batchesInStock = (
   state: Pick<PurchasingState, 'movements'>,
   itemId: StockItemId,
-): ReadonlyArray<{ readonly batch: string; readonly warehouseId: StockWarehouseId; readonly quantity: number }> => {
-  const totals = new Map<string, { batch: string; warehouseId: StockWarehouseId; quantity: number }>();
+): readonly { readonly batch: string; readonly quantity: number; readonly warehouseId: StockWarehouseId }[] => {
+  const totals = new Map<string, { batch: string; quantity: number; warehouseId: StockWarehouseId }>();
   for (const movement of itemMovements(state, itemId)) {
     if (movement.batch === undefined) {
       continue;
@@ -123,25 +123,28 @@ export const orderRemainingQuantity = (order: PurchaseOrder) =>
   order.lines.reduce((sum, line) => sum + lineRemaining(line), 0);
 
 export const orderTotalMinor = (order: {
-  readonly lines: ReadonlyArray<{ readonly quantity: number; readonly unitPriceMinor: number }>;
+  readonly lines: readonly { readonly quantity: number; readonly unitPriceMinor: number }[];
 }) => order.lines.reduce((sum, line) => sum + line.quantity * line.unitPriceMinor, 0);
 
 export const orderOpenValueMinor = (order: PurchaseOrder) =>
   order.lines.reduce((sum, line) => sum + lineRemaining(line) * line.unitPriceMinor, 0);
 
 export const expectedReceiptsOf = (state: Pick<PurchasingState, 'orders'>, itemId: StockItemId) =>
-  state.orders
-    .filter((order) => OPEN_ORDER_STATUSES.has(order.status))
-    .flatMap((order) =>
-      order.lines
-        .filter((line) => line.itemId === itemId && lineRemaining(line) > 0)
-        .map((line) => ({ expectedDate: order.expectedDate, order, quantity: lineRemaining(line) })),
-    );
+  state.orders.flatMap((order) =>
+    OPEN_ORDER_STATUSES.has(order.status)
+      ? order.lines.flatMap((line) =>
+          line.itemId === itemId && lineRemaining(line) > 0
+            ? [{ expectedDate: order.expectedDate, order, quantity: lineRemaining(line) }]
+            : [],
+        )
+      : [],
+  );
 
 export const plannedIssuesOf = (state: Pick<PurchasingState, 'plannedIssues'>, itemId: StockItemId) =>
   state.plannedIssues.filter((entry) => entry.itemId === itemId && entry.status === 'planned');
 
-export type StockLevel = 'below_minimum' | 'above_maximum' | 'ok';
+export const StockLevelSchema = Schema.Literals(['below_minimum', 'above_maximum', 'ok']);
+export type StockLevel = typeof StockLevelSchema.Type;
 
 /** S05-02: strictly below minimum (7 < 8) is „pod minimem“; equal to the minimum is fine. */
 export const stockLevelOf = (item: Pick<StockItem, 'minimum' | 'maximum'>, onHand: number): StockLevel => {
@@ -156,21 +159,21 @@ export const addDays = (isoDate: string, days: number): string =>
   DateTime.formatIsoDate(DateTime.add(DateTime.makeUnsafe(`${isoDate}T12:00:00Z`), { days }));
 
 export interface MaterialPlan {
-  readonly item: StockItem;
-  readonly onHand: number;
-  readonly expectedReceipts: number;
-  readonly plannedIssues: number;
-  /** S05: plán = aktuální stav + očekávané příjmy − plánované výdeje. */
-  readonly projected: number;
-  readonly level: StockLevel;
-  /** Rule-based replenishment: order up to the maximum when the projected stock falls below the minimum. */
-  readonly suggestedQuantity: number;
   /**
    * Expected availability of the shortage: the latest open order's expected date when open orders cover the
    * planned issues, otherwise today + the item's manually stored lead time.
    */
   readonly availableFrom: string | undefined;
-  readonly nextExpectedDate: string | undefined;
+  readonly expectedReceipts: number;
+  readonly item: StockItem;
+  readonly level: StockLevel;
+  readonly nextExpectedDate: PurchaseOrder['expectedDate'];
+  readonly onHand: number;
+  readonly plannedIssues: number;
+  /** S05: plán = aktuální stav + očekávané příjmy − plánované výdeje. */
+  readonly projected: number;
+  /** Rule-based replenishment: order up to the maximum when the projected stock falls below the minimum. */
+  readonly suggestedQuantity: number;
 }
 
 export const materialPlanOf = (state: PurchasingState, item: StockItem, today: string): MaterialPlan => {
@@ -183,10 +186,13 @@ export const materialPlanOf = (state: PurchasingState, item: StockItem, today: s
   const target = Math.max(item.maximum, item.minimum);
   const suggestedQuantity = projected < item.minimum ? Math.max(0, target - projected) : 0;
   const dates = receipts.flatMap((entry) => (entry.expectedDate === undefined ? [] : [entry.expectedDate])).toSorted();
-  const nextExpectedDate = dates[0];
+  const [nextExpectedDate] = dates;
   const short = onHand - plannedIssues < 0 || onHand <= 0;
   const coveredByOrders = projected >= 0 && dates.length > 0;
-  const availableFrom = short ? (coveredByOrders ? dates.at(-1) : addDays(today, item.leadTimeDays)) : undefined;
+  let availableFrom: string | undefined;
+  if (short) {
+    availableFrom = coveredByOrders ? dates.at(-1) : addDays(today, item.leadTimeDays);
+  }
   return {
     availableFrom,
     expectedReceipts,

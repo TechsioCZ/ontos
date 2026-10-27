@@ -256,7 +256,8 @@ it.effect('stops if original Create recovery has no authoritative result', () =>
             _tag: 'PartyCommandCommitResolution',
             invocationId: decisionId,
             retryCommand: false,
-            state: 'RUNNING',
+            // Commit proof without the owner's Create result must still stop conversion.
+            state: 'COMMITTED',
           }),
         ),
     });

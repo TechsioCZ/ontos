@@ -151,27 +151,33 @@ export interface ReviseCommercialFeeActionServices {
   readonly validateCatalogTarget: CommercialFeeCatalogTargetAssessmentPort['validate'];
 }
 
+const commercialFeeScopeMatches = (
+  payload: ReviseCommercialFeePayload,
+  trusted: ReviseCommercialFeeTrustedContext,
+): boolean =>
+  trusted.legalEntityId !== undefined &&
+  payload.identityKey.target.variantRef.tenantId === trusted.tenantId &&
+  payload.identityKey.commercialScope.sellingLegalEntityId === trusted.legalEntityId;
+
+const commercialFeeCatalogScopeMatches = (
+  evidence: Exclude<ReviseCommercialFeePayload, { readonly intent: 'RETIRE_CURRENT' }>['catalogTargetEvidence'],
+  tenantId: string,
+): boolean => evidence.productRef.tenantId === tenantId && evidence.variantRef.tenantId === tenantId;
+
 export const applyCommercialFeeRevision = Effect.fn('ReviseCommercialFeeAction.apply')(
   function* applyCommercialFeeRevision(
     payload: ReviseCommercialFeePayload,
     trusted: ReviseCommercialFeeTrustedContext,
     services: ReviseCommercialFeeActionServices,
   ) {
-    if (
-      trusted.legalEntityId === undefined ||
-      payload.identityKey.target.variantRef.tenantId !== trusted.tenantId ||
-      payload.identityKey.commercialScope.sellingLegalEntityId !== trusted.legalEntityId
-    ) {
+    if (!commercialFeeScopeMatches(payload, trusted)) {
       return yield* new ReviseCommercialFeeRejected({
         code: 'revise_commercial_fee_scope_mismatch',
         reason: 'Commercial Fee revision must match the trusted Tenant and Selling Legal Entity scope',
       });
     }
     if (payload.intent !== 'RETIRE_CURRENT') {
-      if (
-        payload.catalogTargetEvidence.productRef.tenantId !== trusted.tenantId ||
-        payload.catalogTargetEvidence.variantRef.tenantId !== trusted.tenantId
-      ) {
+      if (!commercialFeeCatalogScopeMatches(payload.catalogTargetEvidence, trusted.tenantId)) {
         return yield* new ReviseCommercialFeeRejected({
           code: 'revise_commercial_fee_scope_mismatch',
           reason: 'Commercial Fee Catalog evidence must match the trusted Tenant scope',

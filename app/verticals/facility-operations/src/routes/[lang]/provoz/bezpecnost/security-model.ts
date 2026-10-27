@@ -1,21 +1,23 @@
-// @effect-diagnostics asyncFunction:off
 // Security agenda view model: labels and the linked service task in work-tasks.
 // The task is created through work-tasks's PUBLIC apply-command Action (its own gateway audience),
 // never by touching that module's tables; the incident only stores the returned TaskRef snapshot.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import type { CalendarDateWireSchema } from '@app/shared-contracts';
+import type { TOptions } from 'i18next';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { executeApplyCommand as executeWorkCommand } from '@app/work-tasks/clients/apply-command';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import type { ContextRef } from '@app/work-tasks/contracts/records';
-import { DateTime, Effect, Random } from 'effect';
+import { DateTime, Effect, Predicate, Random } from 'effect';
 import { useEffect, useState } from 'react';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
+import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { SecurityDevice, SecurityIncident, SecuritySeverity } from '../../../../../shared/domain/security.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 export const useSecurityLabel = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.security.${key}`, options ?? {});
+  return (key: string, options?: TOptions) => t(`facility-operations.security.${key}`, options ?? {});
 };
 
 export type SecurityLabel = ReturnType<typeof useSecurityLabel>;
@@ -52,7 +54,7 @@ export const deviceTypeIcon = (type: SecurityDevice['deviceType']) =>
     }) as const
   )[type];
 
-const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value);
 
 /** work-tasks context reference for the device's property/unit (only real property-module ids). */
 const contextRefsOf = (location: PropertyRef | undefined, tenantId: string): ContextRef[] => {
@@ -76,16 +78,12 @@ const correlation = Effect.map(
   ([first, second]) => `facility-operations:security:${first}:${second}`,
 );
 
-const priorityOf = (severity: SecuritySeverity) =>
-  severity === 'critical' || severity === 'high'
-    ? ('HIGH' as const)
-    : severity === 'medium'
-      ? ('NORMAL' as const)
-      : ('LOW' as const);
+const priorities = { critical: 'HIGH', high: 'HIGH', low: 'LOW', medium: 'NORMAL' } as const;
+const priorityOf = (severity: SecuritySeverity) => priorities[severity];
 
 export interface LinkedTaskDraft {
   readonly description: string;
-  readonly dueDate: string;
+  readonly dueDate: typeof CalendarDateWireSchema.Type;
   readonly severity: SecuritySeverity;
   readonly title: string;
 }
@@ -101,44 +99,32 @@ export type TaskCreation =
  * Creates one task with its structured property/unit link and a same-principal owner-read credential.
  * Only a revision conflict is retried. Never hide a refused reference by creating an unlinked task.
  */
-export const createServiceTask = async (
-  draft: LinkedTaskDraft,
-  device: SecurityDevice,
-  tenantId: string,
-): Promise<TaskCreation> => {
-  const attempt = (contextRefs: ContextRef[]) =>
-    correlation.pipe(
-      Effect.flatMap((requestId) => executeWorkRecords({ state: 'NEW' }, requestId)),
-      Effect.flatMap((records) =>
-        correlation.pipe(
-          Effect.flatMap((idempotencyKey) =>
-            makeReferenceGatewayCredentials(contextRefs.map(() => 'property-portfolio')).pipe(
-              Effect.flatMap((referenceCredentials) =>
-                executeWorkCommand(
-                  {
-                    command: {
-                      _tag: 'CreateTask',
-                      ...(contextRefs.length === 0 ? {} : { contextRefs }),
-                      description: draft.description.slice(0, 2000),
-                      dueDate: draft.dueDate,
-                      priority: priorityOf(draft.severity),
-                      title: draft.title.slice(0, 200),
-                    },
-                    expectedRevision: records.revision,
-                  },
-                  idempotencyKey,
-                  { idempotencyKey, referenceCredentials },
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
+export const createServiceTask = (draft: LinkedTaskDraft, device: SecurityDevice, tenantId: string) => {
+  const attempt = Effect.fn('Security.createServiceTaskAttempt')(function* attempt(contextRefs: ContextRef[]) {
+    const requestId = yield* correlation;
+    const records = yield* executeWorkRecords({ state: 'NEW' }, requestId);
+    const idempotencyKey = yield* correlation;
+    const referenceCredentials = yield* makeReferenceGatewayCredentials(contextRefs.map(() => 'property-portfolio'));
+    return yield* executeWorkCommand(
+      {
+        command: {
+          _tag: 'CreateTask',
+          ...optionalField('contextRefs', contextRefs.length === 0 ? undefined : contextRefs),
+          description: draft.description.slice(0, 2000),
+          dueDate: draft.dueDate,
+          priority: priorityOf(draft.severity),
+          title: draft.title.slice(0, 200),
+        },
+        expectedRevision: records.revision,
+      },
+      idempotencyKey,
+      { idempotencyKey, referenceCredentials },
     );
+  });
   const refs = contextRefsOf(device.location, tenantId);
 
   const program = attempt(refs).pipe(
-    Effect.catchTag('ApplyCommandActionConflictProblem', () => attempt(refs)),
+    Effect.retry({ times: 1, while: (error) => Predicate.isTagged(error, 'ApplyCommandActionConflictProblem') }),
     Effect.map((result): TaskCreation =>
       result.task === undefined
         ? { ok: false }
@@ -151,49 +137,62 @@ export const createServiceTask = async (
             },
           },
     ),
-    Effect.orElseSucceed((): TaskCreation => ({ ok: false })),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        Effect.logWarning('Service task creation failed', error).pipe(Effect.as({ ok: false } as const)),
+      onSuccess: Effect.succeed,
+    }),
   );
-  return browserRuntime.runPromise(program);
+  return program;
 };
 
 export type LiveTaskState =
   | { readonly status: 'loading' }
   | { readonly status: 'failed' }
-  | { readonly status: 'ready'; readonly state: string | undefined };
+  | { readonly state: string | undefined; readonly status: 'ready' };
+
+const failedTaskStates = (ids: readonly string[]) =>
+  Object.fromEntries(ids.map((id) => [id, { status: 'failed' } as const]));
+const readyTaskStates = (ids: readonly string[], records: Effect.Success<ReturnType<typeof executeWorkRecords>>) =>
+  Object.fromEntries(
+    ids.map((id) => [
+      id,
+      {
+        state: records.items.find((task) => task.ref.resourceId === id)?.state,
+        status: 'ready',
+      } as const,
+    ]),
+  );
+const readTaskStates = (ids: readonly string[]) =>
+  correlation.pipe(
+    Effect.flatMap((requestId) => executeWorkRecords({}, requestId)),
+    Effect.map((records) => readyTaskStates(ids, records)),
+    Effect.matchEffect({
+      onFailure: (error) =>
+        Effect.logWarning('Linked service task read failed', error).pipe(Effect.as(failedTaskStates(ids))),
+      onSuccess: Effect.succeed,
+    }),
+  );
 
 /** Reads the current state of linked tasks from work-tasks (one governed read for the open detail). */
 export const useLiveTaskStates = (resourceIds: readonly string[]) => {
   const key = resourceIds.toSorted().join(',');
   const [states, setStates] = useState<Readonly<Record<string, LiveTaskState>>>({});
   useEffect(() => {
-    if (key === '') {
-      return;
-    }
     let alive = true;
-    const ids = key.split(',');
-    void browserRuntime.runPromise(
-      correlation.pipe(
-        Effect.flatMap((requestId) => executeWorkRecords({}, requestId)),
-        Effect.match({
-          onFailure: () => Object.fromEntries(ids.map((id) => [id, { status: 'failed' } as const])),
-          onSuccess: (records) =>
-            Object.fromEntries(
-              ids.map((id) => [
-                id,
-                {
-                  state: records.items.find((task) => task.ref.resourceId === id)?.state,
-                  status: 'ready',
-                } as const,
-              ]),
-            ),
-        }),
-        Effect.map((next) => {
-          if (alive) {
-            setStates(next);
-          }
-        }),
-      ),
-    );
+    if (key !== '') {
+      void browserRuntime.runPromise(
+        readTaskStates(key.split(',')).pipe(
+          Effect.tap((next) =>
+            Effect.sync(() => {
+              if (alive) {
+                setStates(next);
+              }
+            }),
+          ),
+        ),
+      );
+    }
     return () => {
       alive = false;
     };

@@ -53,8 +53,12 @@ const lines: readonly InvoiceLine[] = [
   { description: 'Kniha', quantity: 2, unitPriceMinor: 125, vatRate: 12 },
   { description: 'Školení zdarma', quantity: 1, unitPriceMinor: 0, vatRate: 0 },
 ];
-const run = (snapshot: FinanceState, command: FinanceCommand, resourceId: string) =>
-  transitionFinance(snapshot, command, scope, validators, { attemptId: 'attempt', now, resourceId });
+const run = (snapshot: FinanceState, command: typeof FinanceCommandSchema.Encoded, resourceId: string) =>
+  Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap((decoded) =>
+      transitionFinance(snapshot, decoded, scope, validators, { attemptId: 'attempt', now, resourceId }),
+    ),
+  );
 
 describe('Invoice line totals', () => {
   it('rounds VAT per line half-up in minor units and reconciles the recap with the totals', () => {
@@ -74,15 +78,15 @@ describe('Invoice line totals', () => {
       ],
     });
     // Per-line rounding differs from rounding the per-rate base: 2 × 1050 → 221 + 221, not round(441).
-    expect(
-      computeInvoiceTotals([
-        { description: 'A', quantity: 1, unitPriceMinor: 1050, vatRate: 21 },
-        { description: 'B', quantity: 1, unitPriceMinor: 1050, vatRate: 21 },
-      ])?.vatMinor,
-    ).toBe(442);
-    expect(
-      computeInvoiceTotals([{ description: 'X', quantity: 1_000_000, unitPriceMinor: 1_000_000_000, vatRate: 0 }]),
-    ).toBeUndefined();
+    const roundingLines: readonly InvoiceLine[] = [
+      { description: 'A', quantity: 1, unitPriceMinor: 1050, vatRate: 21 },
+      { description: 'B', quantity: 1, unitPriceMinor: 1050, vatRate: 21 },
+    ];
+    expect(computeInvoiceTotals(roundingLines)?.vatMinor).toBe(442);
+    const outOfRangeLines: readonly InvoiceLine[] = [
+      { description: 'X', quantity: 1_000_000, unitPriceMinor: 1_000_000_000, vatRate: 0 },
+    ];
+    expect(computeInvoiceTotals(outOfRangeLines)).toBeUndefined();
   });
 
   it('rejects unsupported VAT rates, empty line lists and fractional quantities at the public contract', () => {
@@ -117,7 +121,10 @@ describe('Invoice line snapshots', () => {
         totalMinor: 1,
       };
       const draft = yield* run({ ...empty, invoices: [legacyInvoice] }, create, 'invoice-manual');
-      expect(draft.invoice!).toMatchObject({
+      if (draft.invoice === undefined) {
+        expect.unreachable('The draft transition must return its invoice');
+      }
+      expect(draft.invoice).toMatchObject({
         businessState: 'DRAFT',
         number: 'FV-2026-0001',
         partyId,
@@ -132,12 +139,15 @@ describe('Invoice line snapshots', () => {
         {
           ...create,
           _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice!.ref,
+          invoiceRef: draft.invoice.ref,
           lines: [{ description: 'Licence', quantity: 2, unitPriceMinor: 1000, vatRate: 21 }],
         },
         'unused',
       );
-      expect(relined.invoice!).toMatchObject({
+      if (relined.invoice === undefined) {
+        expect.unreachable('The relined transition must return its invoice');
+      }
+      expect(relined.invoice).toMatchObject({
         number: 'FV-2026-0001',
         subtotalMinor: 2000,
         totalMinor: 2420,
@@ -146,47 +156,45 @@ describe('Invoice line snapshots', () => {
       });
 
       const plainConfirm = yield* Effect.exit(
-        run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused'),
+        run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref }, 'unused'),
       );
       expect(Exit.isFailure(plainConfirm)).toBe(true);
       const prepared = yield* run(
         relined.state,
-        { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] },
+        { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice.ref] },
         'unused',
       );
-      const confirmed = yield* run(
-        prepared.state,
-        { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref },
-        'unused',
-      );
+      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref }, 'unused');
+      if (confirmed.invoice === undefined) {
+        expect.unreachable('The confirmed transition must return its invoice');
+      }
       const {
         approvedAt: _approvedAt,
         businessState: _confirmedState,
         preparedAt: _confirmedPreparedAt,
         updatedAt: _confirmedAt,
         ...confirmedSnapshot
-      } = confirmed.invoice!;
-      const { businessState: _draftState, updatedAt: _draftAt, ...draftSnapshot } = relined.invoice!;
+      } = confirmed.invoice;
+      const { businessState: _draftState, updatedAt: _draftAt, ...draftSnapshot } = relined.invoice;
       expect(confirmedSnapshot).toEqual(draftSnapshot);
-      expect(confirmed.invoice!.lines).toBe(relined.invoice!.lines);
+      expect(confirmed.invoice.lines).toBe(relined.invoice.lines);
 
       const lateEdit = yield* Effect.exit(
-        run(
-          confirmed.state,
-          { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice!.ref, lines },
-          'unused',
-        ),
+        run(confirmed.state, { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice.ref, lines }, 'unused'),
       );
       expect(Exit.isFailure(lateEdit)).toBe(true);
 
-      const voided = yield* run(confirmed.state, { _tag: 'VoidInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
-      expect(voided.invoice!.lines).toBe(relined.invoice!.lines);
-      expect(voided.invoice!.totalMinor).toBe(2420);
+      const voided = yield* run(confirmed.state, { _tag: 'VoidInvoice', invoiceRef: draft.invoice.ref }, 'unused');
+      if (voided.invoice === undefined) {
+        expect.unreachable('The voided transition must return its invoice');
+      }
+      expect(voided.invoice.lines).toBe(relined.invoice.lines);
+      expect(voided.invoice.totalMinor).toBe(2420);
 
       const roundTrip = yield* Schema.decodeEffect(FinanceStateSchema)(
         yield* Schema.encodeEffect(FinanceStateSchema)(confirmed.state),
       );
-      expect(roundTrip.invoices[1]?.vatRecap).toEqual(confirmed.invoice!.vatRecap);
+      expect(roundTrip.invoices[1]?.vatRecap).toEqual(confirmed.invoice.vatRecap);
     }),
   );
 
@@ -203,9 +211,12 @@ describe('Invoice line snapshots', () => {
         totalMinor: 99_900,
       };
       const created = yield* run(empty, legacy, 'invoice-legacy-new');
-      expect(created.invoice!.totalMinor).toBe(99_900);
-      expect(created.invoice!.lines).toBeUndefined();
-      expect(created.invoice!.vatRecap).toBeUndefined();
+      if (created.invoice === undefined) {
+        expect.unreachable('The created transition must return its invoice');
+      }
+      expect(created.invoice.totalMinor).toBe(99_900);
+      expect(created.invoice.lines).toBeUndefined();
+      expect(created.invoice.vatRecap).toBeUndefined();
       const { totalMinor: _total, ...withoutTotal } = legacy;
       expect(Exit.isFailure(yield* Effect.exit(run(empty, withoutTotal, 'invoice-x')))).toBe(true);
       const zeroLines = yield* Effect.exit(
@@ -236,8 +247,11 @@ describe('CreateInvoiceFromOpportunity', () => {
         partyId,
       };
       const first = yield* run({ ...empty, invoices: [legacyInvoice] }, command, 'invoice-opportunity');
+      if (first.invoice === undefined) {
+        expect.unreachable('The first transition must return its invoice');
+      }
       expect(first.changed).toBe(true);
-      expect(first.invoice!).toMatchObject({
+      expect(first.invoice).toMatchObject({
         businessState: 'DRAFT',
         counterpartyRef,
         direction: 'OUTGOING',
@@ -252,17 +266,23 @@ describe('CreateInvoiceFromOpportunity', () => {
       });
 
       const redelivered = yield* run(first.state, command, 'invoice-opportunity-duplicate');
+      if (redelivered.invoice === undefined) {
+        expect.unreachable('The redelivered transition must return its invoice');
+      }
       expect(redelivered.changed).toBe(false);
       expect(redelivered.state).toBe(first.state);
-      expect(redelivered.invoice!.ref).toEqual(first.invoice!.ref);
+      expect(redelivered.invoice.ref).toEqual(first.invoice.ref);
 
       const differentLines = yield* run(
         first.state,
         { ...command, lines: [{ description: 'Jiné', quantity: 1, unitPriceMinor: 10, vatRate: 0 }] },
         'invoice-opportunity-other',
       );
+      if (differentLines.invoice === undefined) {
+        expect.unreachable('The differentLines transition must return its invoice');
+      }
       expect(differentLines.changed).toBe(false);
-      expect(differentLines.invoice!.totalMinor).toBe(2760);
+      expect(differentLines.invoice.totalMinor).toBe(2760);
 
       const defaultDate = yield* run(
         first.state,

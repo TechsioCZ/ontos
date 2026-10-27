@@ -1,10 +1,15 @@
-import { Effect, Layer, Predicate } from 'effect';
+import { Effect, Layer, Predicate, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { ActiveApplicationCompositionService, ContextAccess, agentGrantRelationships } from '@app/core-runtime';
 import type { AgentGrantWritePolicy } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
+import {
+  ApplyCommandPayloadSchema,
+  ApplyCommandResultSchema,
+  CrmCommandSchema,
+} from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 
@@ -16,10 +21,10 @@ const principal = {
   principalId: '20000000-0000-4000-8000-000000000001',
   tenantId: '40000000-0000-4000-8000-000000000001',
 } as const;
-const payload: ApplyCommandPayload = {
+const payload = Schema.decodeUnknownSync(ApplyCommandPayloadSchema)({
   command: { _tag: 'UpdateClient', id: 'client-native-grant', patch: { name: 'Native grant client' } },
   expectedRevision: 0,
-};
+});
 const request = {
   payload,
   principal,
@@ -67,7 +72,11 @@ it.effect('executes an API-key principal through the real Action when native exe
           apply: (command, expectedRevision, invocationId) =>
             Effect.sync(() => {
               calls.push({ command, invocationId });
-              return { entityIds: ['client-native-grant'], revision: expectedRevision + 1 };
+              const result = Schema.decodeUnknownSync(ApplyCommandResultSchema)({
+                entityIds: ['client-native-grant'],
+                revision: expectedRevision + 1,
+              });
+              return { ...result, entityIds: [...result.entityIds] };
             }),
           loadAssignmentDirectory: unused,
           loadRecords: unused,
@@ -132,7 +141,7 @@ it.effect.each([
   Effect.gen(function* unavailableAssignment() {
     const harness = yield* makeActionTestHarness({ actionPermission: 'allowed' });
     const failure = yield* harness.runtime
-      .runAction({ ...request, payload: { ...payload, command } })
+      .runAction({ ...request, payload: { ...payload, command: Schema.decodeUnknownSync(CrmCommandSchema)(command) } })
       .pipe(Effect.flip);
     expect(Predicate.isTagged(failure, 'ActionPolicyDenied')).toBe(true);
     expect(harness.snapshot().transactionCount).toBe(0);

@@ -35,13 +35,13 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
           </Button>
           <Button
             className="shrink-0 whitespace-nowrap"
-            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             isLoading={busy}
             loadingText={t(key('create.submitting'))}
             onClick={() => {
               onConfirm(orders ?? [], trimmed === '' ? undefined : trimmed);
               setReason('');
             }}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
             variant="danger"
           >
             {single === undefined ? t(key('confirm.cancelBulkAction')) : t(key('confirm.cancelAction'))}

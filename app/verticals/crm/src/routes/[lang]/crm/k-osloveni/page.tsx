@@ -1,3 +1,4 @@
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // AREA: visits (C06) — owned by the crm-visits lane. "K oslovení": the salesperson's manual contact plan
 // (Můj plán), the lead's team overview (Tým) and completed items (Vyřízené). Only manually planned contacts appear
 // here; automatic recommendations (C07) are parked until their rules are approved.
@@ -15,11 +16,13 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { Schema } from 'effect';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
-import type { PlanItem } from '../../../../../shared/domain/visits.ts';
 import { lastVisitOf } from '../../../../../shared/domain/visits.ts';
+import type { PlanItem } from '../../../../../shared/domain/visits.ts';
+
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmScopeNote, CrmStateGate } from '../../../../crm/ui.tsx';
@@ -41,16 +44,19 @@ import {
 } from '../navstevy/visits-model.ts';
 import { CompletePlanPanel, PlanContactPanel } from './plan-panels.tsx';
 
+const dangerTextClass = 'text-danger';
+
 const ALL = '__all__';
 
-type Bucket = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later';
-const bucketMeta: Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'plain' }> = {
+const BucketSchema = Schema.Literals(['overdue', 'today', 'tomorrow', 'week', 'later']);
+type Bucket = typeof BucketSchema.Type;
+const bucketMeta = {
   later: { label: 'Později', tone: 'plain' },
   overdue: { label: 'Po termínu', tone: 'danger' },
   today: { label: 'Dnes', tone: 'warning' },
   tomorrow: { label: 'Zítra', tone: 'info' },
   week: { label: 'Do 7 dní', tone: 'plain' },
-};
+} satisfies Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'plain' }>;
 const bucketOrder: readonly Bucket[] = ['overdue', 'today', 'tomorrow', 'week', 'later'];
 
 const bucketOf = (item: PlanItem, today: string): Bucket => {
@@ -92,7 +98,7 @@ const PlanRow = ({
     <li className="flex flex-wrap items-center gap-200 px-250 py-200">
       <div
         className={`flex w-700 shrink-0 flex-col items-center whitespace-nowrap rounded-md bg-surface px-100 py-50 ${
-          bucket === 'overdue' ? 'text-danger' : ''
+          bucket === 'overdue' ? dangerTextClass : ''
         }`}
       >
         <span className="font-semibold text-sm tabular-nums">{formatShortDay(item.dueDate)}</span>
@@ -178,7 +184,7 @@ const Agenda = ({
             <section aria-label={bucketMeta[bucket].label} key={bucket}>
               <h3
                 className={`flex items-baseline gap-100 px-250 pt-250 pb-50 font-semibold text-sm ${
-                  bucket === 'overdue' ? 'text-danger' : ''
+                  bucket === 'overdue' ? dangerTextClass : ''
                 }`}
               >
                 {bucketMeta[bucket].label}
@@ -207,10 +213,10 @@ const Agenda = ({
 
 const TeamOverview = ({ records }: { readonly records: RecordsResponse }) => {
   const today = localDay(records.now);
-  const plan = records.state.visits.plan;
-  const rows = [
+  const { plan } = records.state.visits;
+  const rows: readonly { readonly id?: string; readonly name: string }[] = [
     ...records.state.salespeople.map((person) => ({ id: person.id, name: person.name })),
-    ...(plan.some((item) => item.salespersonId === undefined) ? [{ id: undefined, name: 'Bez obchodníka' }] : []),
+    ...(plan.some((item) => item.salespersonId === undefined) ? [{ name: 'Bez obchodníka' }] : []),
   ];
   return (
     <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
@@ -234,7 +240,7 @@ const TeamOverview = ({ records }: { readonly records: RecordsResponse }) => {
             <div className="grid grid-cols-2 gap-150 sm:grid-cols-4">
               {[
                 { label: 'Otevřené', value: open.length },
-                { label: 'Po termínu', tone: overdue.length > 0 ? 'text-danger' : '', value: overdue.length },
+                { label: 'Po termínu', tone: overdue.length > 0 ? dangerTextClass : '', value: overdue.length },
                 { label: 'Do 7 dní', value: week.length },
                 { label: 'Vyřízeno (30 dní)', value: done30.length },
               ].map((cell) => (
@@ -267,7 +273,9 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
     <SectionCard flush>
       <ul className={`flex flex-col ${dividedListClassName}`}>
         {items
-          .toSorted((left, right) => (right.doneAt ?? '').localeCompare(left.doneAt ?? ''))
+          .toSorted((left, right) =>
+            (orderDateText(right.doneAt) ?? '').localeCompare(orderDateText(left.doneAt) ?? ''),
+          )
           .map((item) => {
             const visit = records.state.visits.items.find((entry) => entry.id === item.doneVisitId);
             return (
@@ -290,8 +298,8 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
                   {item.doneNote !== undefined && <span className="text-sm">{`Výsledek: ${item.doneNote}`}</span>}
                   <span className="text-fg-secondary text-xs">
                     {`Plánováno na ${formatDay(item.dueDate)} · vyřízeno ${item.doneAt === undefined ? '—' : formatVisitTime(item.doneAt)}${
-                      item.doneBy === undefined ? '' : ` · ${principalLabel(records, item.doneBy)}`
-                    }${visit === undefined ? '' : ` · zapsán kontakt: ${visit.result}`}`}
+                      item.doneBy === undefined ? '' : [' · ', principalLabel(records, item.doneBy)].join('')
+                    }${visit === undefined ? '' : [' · zapsán kontakt: ', visit.result].join('')}`}
                   </span>
                 </div>
               </li>
@@ -300,6 +308,43 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
       </ul>
     </SectionCard>
   );
+};
+
+const planSelection = ({
+  completeId,
+  records,
+  rescheduleId,
+  salespersonFilter,
+  tab,
+}: {
+  readonly completeId: string | undefined;
+  readonly records: RecordsResponse;
+  readonly rescheduleId: string | undefined;
+  readonly salespersonFilter: string;
+  readonly tab: string | undefined;
+}) => {
+  const today = localDay(records.now);
+  const lead = canSeeEverything(records.viewer);
+  const own = records.viewer.salespersonId;
+  const { plan } = records.state.visits;
+  const open = plan.filter((item) => item.status === 'open');
+  const mine = open.filter((item) => item.salespersonId === own);
+  const activeTab = tab ?? (lead && (own === undefined || mine.length === 0) ? 'team' : 'mine');
+  const teamItems = open.filter(
+    (item) => salespersonFilter === ALL || (item.salespersonId ?? 'none') === salespersonFilter,
+  );
+  const scope = activeTab === 'team' || own === undefined ? open : mine;
+  const done = plan.filter(
+    (item) =>
+      item.status === 'done' &&
+      (lead
+        ? salespersonFilter === ALL || (item.salespersonId ?? 'none') === salespersonFilter
+        : own === undefined || item.salespersonId === own),
+  );
+  const canWrite = canWriteVisits(records) && writableClients(records).length > 0;
+  const rescheduling = plan.find((item) => item.id === rescheduleId);
+  const completing = plan.find((item) => item.id === completeId);
+  return { activeTab, canWrite, completing, done, lead, mine, open, own, plan, rescheduling, scope, teamItems, today };
 };
 
 const PlanContent = () => {
@@ -313,27 +358,21 @@ const PlanContent = () => {
   return (
     <CrmStateGate onRetry={load} state={state}>
       {(records) => {
-        const today = localDay(records.now);
-        const lead = canSeeEverything(records.viewer);
-        const own = records.viewer.salespersonId;
-        const plan = records.state.visits.plan;
-        const open = plan.filter((item) => item.status === 'open');
-        const mine = open.filter((item) => item.salespersonId === own);
-        const activeTab = tab ?? (lead && (own === undefined || mine.length === 0) ? 'team' : 'mine');
-        const teamItems = open.filter(
-          (item) => salespersonFilter === ALL || (item.salespersonId ?? 'none') === salespersonFilter,
-        );
-        const scope = activeTab === 'team' ? open : own === undefined ? open : mine;
-        const done = plan.filter(
-          (item) =>
-            item.status === 'done' &&
-            (lead
-              ? salespersonFilter === ALL || (item.salespersonId ?? 'none') === salespersonFilter
-              : own === undefined || item.salespersonId === own),
-        );
-        const canWrite = canWriteVisits(records) && writableClients(records).length > 0;
-        const rescheduling = plan.find((item) => item.id === rescheduleId);
-        const completing = plan.find((item) => item.id === completeId);
+        const {
+          activeTab,
+          canWrite,
+          completing,
+          done,
+          lead,
+          mine,
+          open,
+          own,
+          plan,
+          rescheduling,
+          scope,
+          teamItems,
+          today,
+        } = planSelection({ completeId, records, rescheduleId, salespersonFilter, tab });
         return (
           <>
             <PageHeader

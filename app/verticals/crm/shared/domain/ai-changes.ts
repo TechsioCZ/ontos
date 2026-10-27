@@ -10,13 +10,20 @@ import { Schema } from 'effect';
 import { clientsCommandSchemas } from '../commands/clients.ts';
 import { importsCommandSchemas } from '../commands/imports.ts';
 import { visitsCommandSchemas } from '../commands/visits.ts';
-import type { CrmViewer } from './access.ts';
 import { canSeeEverything } from './access.ts';
+import type { CrmViewer } from './access.ts';
+
 import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
 
-const [CreateClient, UpdateClient, , , AddContactPerson, UpdateContactPerson, , AssignClient] = clientsCommandSchemas;
-const [, , PairOrder, UnpairOrder] = importsCommandSchemas;
-const [, , PlanContact] = visitsCommandSchemas;
+const {
+  0: CreateClient,
+  1: UpdateClient,
+  4: AddContactPerson,
+  5: UpdateContactPerson,
+  7: AssignClient,
+} = clientsCommandSchemas;
+const { 2: PairOrder, 3: UnpairOrder } = importsCommandSchemas;
+const { 2: PlanContact } = visitsCommandSchemas;
 
 /** The only CRM operations an AI agent may propose. Anything else (archive, import...) is refused. */
 export const aiOperationSchemas = [
@@ -75,7 +82,12 @@ export const newClientContactsDiff = (
   const firstPrimary = contacts?.findIndex((contact) => contact.primary === true);
   return (contacts ?? []).flatMap((contact, index) =>
     fields.flatMap(([field, label]) => {
-      const value = field === 'primary' ? (index === firstPrimary ? 'ano' : 'ne') : contact[field];
+      let value: string | undefined;
+      if (field === 'primary') {
+        value = index === firstPrimary ? 'ano' : 'ne';
+      } else {
+        value = contact[field];
+      }
       return value === undefined || value === ''
         ? []
         : [{ after: value, field: `contacts.${index}.${field}`, label: `Kontakt ${index + 1} · ${label}` }];
@@ -180,16 +192,16 @@ export const initialAiChangesSlice: AiChangesSlice = { batches: [], changes: [],
 export const projectAiChangesSlice = (slice: AiChangesSlice | undefined, viewer: CrmViewer): AiChangesSlice =>
   slice !== undefined && canSeeEverything(viewer) ? slice : initialAiChangesSlice;
 
-export const aiRiskLabel: Record<AiRisk, string> = {
+export const aiRiskLabel = {
   high: 'Vysoké riziko',
   low: 'Nízké riziko',
   medium: 'Střední riziko',
-};
+} satisfies Record<AiRisk, string>;
 
-export const aiStatusLabel: Record<AiChangeStatus, string> = {
+export const aiStatusLabel = {
   applied: 'Provedeno',
   failed: 'Nelze provést',
   pending: 'Čeká na schválení',
   rejected: 'Zamítnuto',
   reverted: 'Vráceno',
-};
+} satisfies Record<AiChangeStatus, string>;

@@ -33,6 +33,11 @@ test('a revoked token that was never rotated is dead, not reuse', () => {
 });
 
 test('the storage key matches Better Auth hashed storage (unpadded base64url SHA-256)', () => {
-  const expected = createHash('sha256').update('abc').digest('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+  const expected = createHash('sha256')
+    .update('abc')
+    .digest('base64')
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '');
   expect(refreshTokenStorageKey('abc')).toBe(expected);
 });

@@ -5,8 +5,8 @@ import { Effect, Match, Schema } from 'effect';
 import { EntityIdSchema, PrincipalIdSchema, ShortTextSchema } from '../domain/common.ts';
 import type { CrmState } from '../domain/state.ts';
 import type { Salesperson } from '../domain/team.ts';
-import type { Reducer } from './context.ts';
 import { conflict, definedOnly, newId, notFound, requireAssign } from './context.ts';
+import type { Reducer } from './context.ts';
 
 const OptionalText = Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(200)));
 
@@ -30,8 +30,11 @@ const withSalespeople = (state: CrmState, salespeople: readonly Salesperson[]): 
 
 export const applyTeamCommand: Reducer<TeamCommand> = (state, command, context) =>
   Match.value(command).pipe(
-    Match.tag('RegisterSalesperson', (value) =>
-      Effect.gen(function* registerSalesperson() {
+    Match.tag(
+      'RegisterSalesperson',
+      Effect.fn('Crm.registerSalesperson')(function* registerSalesperson(
+        value: Extract<TeamCommand, { readonly _tag: 'RegisterSalesperson' }>,
+      ) {
         yield* requireAssign(context);
         const existing = state.salespeople.find((person) => person.principalId === value.principalId);
         if (existing !== undefined) {
@@ -54,8 +57,11 @@ export const applyTeamCommand: Reducer<TeamCommand> = (state, command, context) 
         return { entityIds: [id], state: withSalespeople(state, [...state.salespeople, salesperson]) };
       }),
     ),
-    Match.tag('SetSalespersonActive', (value) =>
-      Effect.gen(function* setSalespersonActive() {
+    Match.tag(
+      'SetSalespersonActive',
+      Effect.fn('Crm.setSalespersonActive')(function* setSalespersonActive(
+        value: Extract<TeamCommand, { readonly _tag: 'SetSalespersonActive' }>,
+      ) {
         yield* requireAssign(context);
         const person = state.salespeople.find((entry) => entry.id === value.salespersonId);
         if (person === undefined) {

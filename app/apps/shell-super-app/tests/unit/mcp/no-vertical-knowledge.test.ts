@@ -6,6 +6,7 @@
  * Companies are tenant data too: the Shell UI must not name a demo company or key behaviour by its legal entity id.
  * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour).
  */
+import { OntosDeploymentAppIdSchema, OntosModuleIdSchema } from '@app/core-runtime';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,8 @@ import {
   eshopDemoCompany,
   rentalDemoCompany,
 } from '@app/core-runtime/demo-company-profiles';
-import { expect, it } from '@rstest/core';
+import { expect, it } from 'effect-rstest';
+import { Schema } from 'effect';
 import { parseSync } from 'oxc-parser';
 
 const appRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -38,11 +40,22 @@ const GUARDED = [
 const EXCEPTIONS = ['apps/shell-super-app/src/demo-guide/guides/'];
 const SEED_DIRECTORY = `${path.sep}demo-seed${path.sep}`;
 
+const VerticalManifestSchema = Schema.fromJsonString(
+  Schema.Struct({
+    modernjs: Schema.optionalKey(
+      Schema.Struct({
+        appId: Schema.optionalKey(OntosDeploymentAppIdSchema),
+        ontosModule: Schema.optionalKey(Schema.Struct({ moduleId: Schema.optionalKey(OntosModuleIdSchema) })),
+      }),
+    ),
+  }),
+);
+
 const verticals = readdirSync(verticalsRoot).flatMap((directory) => {
   try {
-    const manifest = JSON.parse(readFileSync(path.join(verticalsRoot, directory, 'package.json'), 'utf-8')) as {
-      readonly modernjs?: { readonly appId?: string; readonly ontosModule?: { readonly moduleId?: string } };
-    };
+    const manifest = Schema.decodeUnknownSync(VerticalManifestSchema)(
+      readFileSync(path.join(verticalsRoot, directory, 'package.json'), 'utf-8'),
+    );
     return [
       {
         appId: manifest.modernjs?.appId ?? directory,
@@ -54,11 +67,11 @@ const verticals = readdirSync(verticalsRoot).flatMap((directory) => {
   }
 });
 
-const escape = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+const escapeRegex = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 const patterns = verticals.flatMap(({ appId, moduleId }) => [
-  { id: appId, pattern: new RegExp(`['"\`/]${escape(appId)}['"\`/]`, 'u') },
-  ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escape(moduleId), 'u') }]),
+  { id: appId, pattern: new RegExp(`['"\`/]${escapeRegex(appId)}['"\`/]`, 'u') },
+  ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escapeRegex(moduleId), 'u') }]),
 ]);
 
 const isException = (file: string): boolean => {
@@ -90,10 +103,13 @@ const baseName = (legalName: string): string => legalName.replace(/\s+(?:s\.r\.o
 const companyPatterns = companies.flatMap(({ legalEntityId, legalName }) => {
   const significant = (legalEntityId.split('-').at(-1) ?? '').replace(/^0+/u, '');
   return [
-    { id: legalEntityId, pattern: new RegExp(escape(legalEntityId), 'u') },
+    { id: legalEntityId, pattern: new RegExp(escapeRegex(legalEntityId), 'u') },
     // A quoted suffix of the id, e.g. `'020'`, used to key company behaviour without naming the full id.
-    { id: `${legalEntityId} suffix`, pattern: new RegExp(`['"\`]0+${escape(significant)}['"\`]`, 'u') },
-    { id: legalName, pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escape(baseName(legalName))}(?![\\p{L}\\p{N}])`, 'u') },
+    { id: `${legalEntityId} suffix`, pattern: new RegExp(`['"\`]0+${escapeRegex(significant)}['"\`]`, 'u') },
+    {
+      id: legalName,
+      pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(baseName(legalName))}(?![\\p{L}\\p{N}])`, 'u'),
+    },
   ];
 });
 

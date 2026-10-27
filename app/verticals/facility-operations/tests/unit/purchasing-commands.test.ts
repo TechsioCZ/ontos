@@ -52,11 +52,11 @@ const receipt = (
   state: PurchasingState,
   quantity: number,
   resourceId: string,
-  extra: Partial<Record<string, unknown>> = {},
+  extra: Partial<Extract<CommandInput, { readonly _tag: 'StockReceipt' }>> = {},
 ) =>
   apply(
     state,
-    { _tag: 'StockReceipt', date: '2026-10-20', itemId: 'item', quantity, reason: 'Příjem', ...extra } as CommandInput,
+    { _tag: 'StockReceipt', date: '2026-10-20', itemId: 'item', quantity, reason: 'Příjem', ...extra },
     resourceId,
   );
 
@@ -87,7 +87,7 @@ it.effect('S05-01: issuing 3 of 10 leaves 7 and keeps a ledger row with the auth
 it.effect('S05-02: stock 7 with minimum 8 is below minimum, 8 is not', () =>
   Effect.gen(function* s0502() {
     const stocked = yield* receipt(yield* base(), 7, 'r1');
-    const item = stocked.state.items[0];
+    const [item] = stocked.state.items;
     expect(item === undefined ? undefined : stockLevelOf(item, onHandOf(stocked.state, item.id))).toBe('below_minimum');
     expect(item === undefined ? undefined : stockLevelOf(item, 8)).toBe('ok');
     expect(item === undefined ? undefined : stockLevelOf(item, 21)).toBe('above_maximum');
@@ -125,7 +125,7 @@ it.effect('S05-04: serial numbers are required per unit and traceable to their m
     ).pipe(Effect.flip);
     expect(isConflict(wrong)).toBe(true);
     expect([...serialsInStock(issued.state, itemId('item')).keys()]).toEqual(['A1']);
-    const trail = issued.state.movements.filter((row) => row.serialNumbers?.includes('A2'));
+    const trail = issued.state.movements.filter((row) => row.serialNumbers?.includes('A2') === true);
     expect(trail.map((row) => row.kind)).toEqual(['receipt', 'issue']);
   }),
 );
@@ -182,7 +182,7 @@ it.effect('S06-01/02: order from a quote keeps line and price; 1 of 2 delivered 
       { _tag: 'PurchaseOrderCreateFromQuote', quoteId: 'q1', warehouseId: 'wh' },
       'po',
     );
-    const order = ordered.state.orders[0];
+    const [order] = ordered.state.orders;
     expect(order?.quoteId).toBe('q1');
     expect(order?.lines[0]?.quantity).toBe(2);
     expect(order?.lines[0]?.unitPriceMinor).toBe(129_000);
@@ -221,7 +221,7 @@ it.effect('S06-01/02: order from a quote keeps line and price; 1 of 2 delivered 
       },
       'd1',
     );
-    const after = partial.state.orders[0];
+    const [after] = partial.state.orders;
     expect(after?.status).toBe('partially_delivered');
     expect((after?.lines[0]?.quantity ?? 0) - (after?.lines[0]?.receivedQuantity ?? 0)).toBe(1);
     expect(onHandOf(partial.state, itemId('item'))).toBe(1);
@@ -275,9 +275,9 @@ it.effect('Material plan counts open orders and planned issues and suggests repl
       { _tag: 'StockPlannedIssueCreate', date: '2026-11-01', itemId: 'item', quantity: 4, reason: 'Revize' },
       'p1',
     );
-    const item = planned.state.items[0];
+    const [item] = planned.state.items;
     if (item === undefined) {
-      return;
+      throw new Error('Missing planned stock item');
     }
     const result = materialPlanOf(planned.state, item, '2026-10-20');
     expect(result.projected).toBe(1);
@@ -285,10 +285,12 @@ it.effect('Material plan counts open orders and planned issues and suggests repl
   }),
 );
 
-it('The demo seed replays through the reducer (21 items, 4 orders, BZ-001 at 7 below minimum 8)', () => {
-  const seed = buildPurchasingSeed();
-  expect(seed.items).toHaveLength(21);
-  expect(seed.orders.map((order) => order.status)).toEqual(['partially_delivered', 'completed', 'ordered', 'draft']);
-  const chlorine = seed.items.find((entry) => entry.sku === 'BZ-001');
-  expect(chlorine === undefined ? undefined : onHandOf(seed, chlorine.id)).toBe(7);
-});
+it.effect('The demo seed replays through the reducer (21 items, 4 orders, BZ-001 at 7 below minimum 8)', () =>
+  Effect.gen(function* purchasingSeedReplay() {
+    const seed = yield* buildPurchasingSeed();
+    expect(seed.items).toHaveLength(21);
+    expect(seed.orders.map((order) => order.status)).toEqual(['partially_delivered', 'completed', 'ordered', 'draft']);
+    const chlorine = seed.items.find((entry) => entry.sku === 'BZ-001');
+    expect(chlorine === undefined ? undefined : onHandOf(seed, chlorine.id)).toBe(7);
+  }),
+);

@@ -617,8 +617,8 @@ it('declares finite Guest and Profile authorization branches for Launch resoluti
   const plan = getReadConditionalPermissionPlan(purchaseCurrencyResolutionPermission);
   expect(purchaseCurrencyResolutionPermission.branchTags).toEqual(['GUEST', 'PROFILE']);
   expect(purchaseCurrencyGuestPermissionTargets()).toEqual([{ kind: 'module', moduleId: 'commerce.customer-context' }]);
-  expect(plan.branches.GUEST.requiredKinds).toEqual(['module']);
-  expect(plan.branches.PROFILE.requiredKinds).toEqual(['business_permission', 'resource_read']);
+  expect(plan.resolve({ ...baseResolution().request, subject: guestSubject }, scope).requiredKinds).toEqual(['module']);
+  expect(plan.resolve(baseResolution().request, scope).requiredKinds).toEqual(['business_permission', 'resource_read']);
   expect(
     purchaseCurrencyProfilePermissionTargets(
       baseResolution().request,

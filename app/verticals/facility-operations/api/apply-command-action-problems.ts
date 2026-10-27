@@ -126,15 +126,21 @@ export const applyCommandActionProblem = {
 const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      FacilityOperationsLifecycleConflict: () => applyCommandActionProblem.conflict('facility_operations_lifecycle_conflict'),
+      FacilityOperationsLifecycleConflict: () =>
+        applyCommandActionProblem.conflict('facility_operations_lifecycle_conflict'),
       FacilityOperationsNotFound: () => applyCommandActionProblem.notFound('facility_operations_not_found'),
-      FacilityOperationsNotImplemented: () => applyCommandActionProblem.unavailable('facility_operations_not_implemented'),
-      FacilityOperationsPermissionDenied: () => applyCommandActionProblem.forbidden('facility_operations_permission_denied'),
+      FacilityOperationsNotImplemented: () =>
+        applyCommandActionProblem.unavailable('facility_operations_not_implemented'),
+      FacilityOperationsPermissionDenied: () =>
+        applyCommandActionProblem.forbidden('facility_operations_permission_denied'),
       FacilityOperationsPersistenceUnavailable: () =>
         applyCommandActionProblem.unavailable('facility_operations_persistence_unavailable'),
-      FacilityOperationsReferenceIneligible: () => applyCommandActionProblem.ineligible('facility_operations_reference_ineligible'),
-      FacilityOperationsReferenceUnavailable: () => applyCommandActionProblem.unavailable('facility_operations_reference_unavailable'),
-      FacilityOperationsRevisionConflict: () => applyCommandActionProblem.conflict('facility_operations_revision_conflict'),
+      FacilityOperationsReferenceIneligible: () =>
+        applyCommandActionProblem.ineligible('facility_operations_reference_ineligible'),
+      FacilityOperationsReferenceUnavailable: () =>
+        applyCommandActionProblem.unavailable('facility_operations_reference_unavailable'),
+      FacilityOperationsRevisionConflict: () =>
+        applyCommandActionProblem.conflict('facility_operations_revision_conflict'),
       FacilityOperationsScopeMismatch: () => applyCommandActionProblem.forbidden('facility_operations_scope_mismatch'),
     }),
     Match.exhaustive,

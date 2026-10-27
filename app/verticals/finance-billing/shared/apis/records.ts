@@ -15,6 +15,13 @@ import { FinancialPlanEntryRefSchema } from '../resources/financial-plan-entry.t
 export const DEMO_BUSINESS_DATE = '2026-10-05';
 export const CalendarDateSchema = CalendarDateWireSchema;
 export const FinanceTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+export const FinancePriceListItemIdSchema = FinanceTextSchema.pipe(Schema.brand('FinancePriceListItemId'));
+export const FinanceInvoiceResourceIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceInvoiceResourceId'));
+export const FinancePrincipalIdSchema = FinanceTextSchema.pipe(Schema.brand('FinancePrincipalId'));
+export const FinanceCompanyIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceCompanyId'));
+export const FinanceRecurringTemplateIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceRecurringTemplateId'));
+export const FinanceDocumentIdSchema = FinanceTextSchema.pipe(Schema.brand('FinanceDocumentId'));
+
 const FinancePropertyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePropertyId')));
 const FinanceResourceIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResourceId')));
 /** Opaque customer identity owned by the party registry; never dereferenced by billing state. */
@@ -25,26 +32,6 @@ export const FinanceOpportunityIdSchema = Schema.toEncoded(
 );
 /** Opaque merchandise product identity captured on an invoice line snapshot. */
 export const FinanceProductIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceProductId')));
-// These contracts expose encoded string identifiers, as the existing finance identifiers do.
-// Compose the original text codec back in so projecting the brand does not drop trimming or length checks.
-const FinancePriceListItemIdSchema = Schema.toEncoded(
-  FinanceTextSchema.pipe(Schema.brand('FinancePriceListItemId')),
-).pipe(Schema.decodeTo(FinanceTextSchema));
-const FinanceInvoiceResourceIdSchema = Schema.toEncoded(
-  FinanceTextSchema.pipe(Schema.brand('FinanceInvoiceResourceId')),
-).pipe(Schema.decodeTo(FinanceTextSchema));
-const FinancePrincipalIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePrincipalId'))).pipe(
-  Schema.decodeTo(FinanceTextSchema),
-);
-const FinanceCompanyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceCompanyId'))).pipe(
-  Schema.decodeTo(FinanceTextSchema),
-);
-const FinanceRecurringTemplateIdSchema = Schema.toEncoded(
-  FinanceTextSchema.pipe(Schema.brand('FinanceRecurringTemplateId')),
-).pipe(Schema.decodeTo(FinanceTextSchema));
-const FinanceDocumentIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceDocumentId'))).pipe(
-  Schema.decodeTo(FinanceTextSchema),
-);
 // Bounded aggregates keep sums of at most 1000 amounts safely inside Number's exact integer range.
 export const MoneyMinorSchema = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
@@ -119,7 +106,9 @@ export const InvoiceDraftCommandFields = {
 export const InvoiceDocumentKindSchema = Schema.Literals(['STANDARD', 'ADVANCE', 'PARTIAL', 'FINAL', 'RECURRING']);
 export type InvoiceDocumentKind = typeof InvoiceDocumentKindSchema.Type;
 /** Calendar month `YYYY-MM`. */
-export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(?:0[1-9]|1[0-2])$/u));
+
+export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-(?<month>0[1-9]|1[0-2])$/u));
+
 export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 /** Purchase-order identity in the same tenant/legal-entity finance aggregate. */
 export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
@@ -213,7 +202,9 @@ const ActorFields = {
 export const FinanceDocumentSchema = Schema.Struct({
   ...ActorFields,
   fileName: FinanceTextSchema,
-  id: FinanceTextSchema,
+
+  id: FinanceDocumentIdSchema,
+
   invoiceResourceId: Schema.optionalKey(FinanceInvoiceResourceIdSchema),
   mimeType: FinanceTextSchema,
   sha256: FinanceTextSchema,
@@ -239,7 +230,7 @@ export const RecurringTemplateSchema = Schema.Struct({
   counterpartyRef: CounterpartyRefSchema,
   createdAt: Schema.DateTimeUtcFromString,
   dueDays: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(90)),
-  id: FinanceTextSchema,
+  id: FinanceRecurringTemplateIdSchema,
   issueDay: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(28)),
   lines: InvoiceLinesSchema,
   name: FinanceTextSchema,
@@ -262,6 +253,7 @@ export const InvoiceReminderSchema = Schema.Struct({
 });
 export type InvoiceReminder = typeof InvoiceReminderSchema.Type;
 /** Czech company registration number (IČO), exactly 8 digits. */
+
 export const IssuerIcoSchema = Schema.toEncoded(
   Schema.String.check(Schema.isPattern(/^\d{8}$/u)).pipe(Schema.brand('IssuerIco')),
 );
@@ -375,7 +367,7 @@ export const PriceListItemSchema = Schema.Struct({
   ...ActorFields,
   active: Schema.Boolean,
   code: Schema.optionalKey(FinanceTextSchema),
-  id: FinanceTextSchema,
+  id: FinancePriceListItemIdSchema,
   name: FinanceTextSchema,
   unit: Schema.optionalKey(FinanceTextSchema),
   unitPriceMinor: MoneyMinorSchema,
@@ -447,7 +439,7 @@ export const RecordsResponseSchema = Schema.Struct({
     Schema.Struct({
       contentBase64: Schema.String,
       fileName: FinanceTextSchema,
-      id: FinanceTextSchema,
+      id: FinanceDocumentIdSchema,
       mimeType: FinanceTextSchema,
     }),
   ),

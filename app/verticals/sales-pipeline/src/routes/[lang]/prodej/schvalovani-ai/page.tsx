@@ -5,7 +5,6 @@
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
 import { executeApplyCommand as executeMerchandiseCommand } from '@app/merchandise/clients/apply-command';
 import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/clients/records';
-import type { ApplyCommandPayload as MerchandisePayload } from '@app/merchandise/contracts/apply-command';
 import { aiLogActionLabel, aiRiskLabel, aiStatusLabel } from '@app/shared-contracts/ai-approvals';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
@@ -16,15 +15,16 @@ import { Helmet } from '@modern-js/runtime/head';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Match, Random, Schema } from 'effect';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { Table } from '@techsio/ui-kit/organisms/table';
+import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import '../../../index.css';
 import { applyPipelineCommand } from '../prilezitosti/pipeline-api.ts';
-import type { PipelineCommand } from '../prilezitosti/pipeline-api.ts';
+import { salesPipelineAiCommandSchemas } from '../../../../../shared/actions/apply-command.ts';
 import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';
 import { allRecordsInput, pipelineRecords, usePipelineRecordsSnapshot } from '../prilezitosti/pipeline-records.ts';
 import type { RecordsLoadError } from '../prilezitosti/pipeline-records.ts';
@@ -35,24 +35,19 @@ const i18nResources = {
   en: { 'sales-pipeline': enResource },
 } as const;
 
-type ModuleKey = 'opportunities' | 'orders';
-type MerchandiseCommand = MerchandisePayload['command'];
-type AiCommand =
-  | {
-      readonly _tag: 'AiDecideChanges';
-      readonly changeIds: readonly string[];
-      readonly decision: 'approve' | 'reject';
-      readonly note?: string;
-    }
-  | { readonly _tag: 'AiRevertBatch'; readonly batchId: string; readonly note?: string };
+const ModuleKeySchema = Schema.Literals(['opportunities', 'orders']);
+type ModuleKey = typeof ModuleKeySchema.Type;
+const HumanAiCommandSchema = Schema.Union([salesPipelineAiCommandSchemas[1], salesPipelineAiCommandSchemas[2]]);
+type AiCommand = typeof HumanAiCommandSchema.Type;
+const decodeHumanAiCommand = Schema.decodeEffect(HumanAiCommandSchema);
 
 interface ModuleSlice {
   readonly batches: readonly AiBatch[];
-  /** Customer (partyId) of every opportunity or order, so a target reads „title · customer“. */
-  readonly partyOf: ReadonlyMap<string, string>;
   readonly canWrite: boolean;
   readonly changes: readonly AiChange<unknown>[];
   readonly log: readonly AiLogEntry[];
+  /** Customer (partyId) of every opportunity or order, so a target reads „title · customer“. */
+  readonly partyOf: ReadonlyMap<string, string>;
   readonly revision: number;
 }
 
@@ -62,13 +57,15 @@ type ModuleState =
   | { readonly status: 'error' }
   | ({ readonly status: 'ready' } & ModuleSlice);
 
-const moduleLabel: Readonly<Record<ModuleKey, string>> = { opportunities: 'Příležitosti', orders: 'Objednávky' };
+const moduleLabel = { opportunities: 'Příležitosti', orders: 'Objednávky' } satisfies Readonly<
+  Record<ModuleKey, string>
+>;
 
 /** One agent run: the batch of each module that the run produced (same agent, same runId). */
 interface RunGroup {
   readonly agentLabel: string;
   readonly agentPrincipalId: string;
-  readonly createdAt: string;
+  readonly createdAt: AiBatch['createdAt'];
   readonly instruction: string;
   readonly key: string;
   readonly parts: readonly {
@@ -83,10 +80,10 @@ const correlation = (name: string) => Random.nextInt.pipe(Effect.map((nonce) => 
 /** Opportunity proposals come with the unfiltered records read the records page shares. */
 const opportunitySlice = (response: RecordsResponse): ModuleSlice => ({
   batches: response.aiChanges?.batches ?? [],
-  partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
   canWrite: response.canWrite,
   changes: response.aiChanges?.changes ?? [],
   log: response.aiChanges?.log ?? [],
+  partyOf: new Map<string, string>(response.items.map((item) => [item.id, item.partyId] as const)),
   revision: response.revision,
 });
 
@@ -111,10 +108,8 @@ const orderPartiesOf = (changes: readonly AiChange<unknown>[]) => {
   ).pipe(
     Effect.map(
       (responses) =>
-        new Map(
-          responses.flatMap((response) =>
-            response.orders.map((order) => [order.id as string, order.partyId as string] as const),
-          ),
+        new Map<string, string>(
+          responses.flatMap((response) => response.orders.map((order) => [order.id, order.partyId] as const)),
         ),
     ),
   );
@@ -161,43 +156,51 @@ export const preloadPage = modulePagePreload(
   (props) => aiOrders.preload(legalEntityOf(props)),
 );
 
+const RefusalDetailSchema = Schema.Struct({ detail: Schema.optional(Schema.String) });
+
 /** Readable reason of a refused command (the module answers Czech details for AI refusals). */
-const refusal = (error: unknown): string => {
-  const detail =
-    typeof error === 'object' && error !== null && 'detail' in error && typeof error.detail === 'string'
-      ? error.detail
-      : undefined;
+const refusal = (
+  error:
+    | Effect.Error<ReturnType<typeof applyPipelineCommand>>
+    | Effect.Error<ReturnType<typeof sendOrders>>
+    | Effect.Error<ReturnType<typeof decodeHumanAiCommand>>,
+): string => {
+  const detail = Schema.decodeUnknownOption(RefusalDetailSchema)(error).pipe(
+    Option.flatMap((problem) => Option.fromUndefinedOr(problem.detail)),
+    Option.getOrUndefined,
+  );
   return detail !== undefined && !detail.startsWith('The ')
     ? detail
     : 'Záznam se mezitím změnil nebo k akci nemáte oprávnění.';
 };
 
-const sendOrders = (command: AiCommand) =>
-  Effect.gen(function* send() {
+const sendOrders = Effect.fn('SalesPipeline.sendAiOrderCommand')(
+  function* sendOrders(command: AiCommand) {
     const key = yield* correlation('orders-command');
     const { revision } = yield* executeMerchandiseRecords({ view: { limit: 0, ordersLimit: 0 } }, `${key}:revision`);
-    return yield* executeMerchandiseCommand(
-      { command: command as MerchandiseCommand, expectedRevision: revision },
-      key,
-      { idempotencyKey: key },
-    );
-  }).pipe(
-    // Storefront orders bump the merchandise revision at any time: re-read once and send again.
-    Effect.retry({
-      times: 1,
-      while: (error) =>
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'merchandise_revision_conflict',
-    }),
-  );
+    return yield* executeMerchandiseCommand({ command, expectedRevision: revision }, key, { idempotencyKey: key });
+  },
+  // Storefront orders bump the merchandise revision at any time: re-read once and send again.
+  Effect.retry({
+    times: 1,
+    while: (error) =>
+      Match.value(error).pipe(
+        Match.tag('ApplyCommandActionConflictProblem', (problem) => problem.code === 'merchandise_revision_conflict'),
+        Match.orElse(() => false),
+      ),
+  }),
+);
 
 /** Failure is the readable reason shown to the approver. */
 const sendCommand = (module: ModuleKey, command: AiCommand, revision: number): Effect.Effect<void, string> =>
-  module === 'opportunities'
-    ? applyPipelineCommand(command as PipelineCommand, revision).pipe(Effect.asVoid, Effect.mapError(refusal))
-    : sendOrders(command).pipe(Effect.asVoid, Effect.mapError(refusal));
+  decodeHumanAiCommand(command).pipe(
+    Effect.mapError(refusal),
+    Effect.flatMap((parsed) =>
+      module === 'opportunities'
+        ? applyPipelineCommand(parsed, revision).pipe(Effect.asVoid, Effect.mapError(refusal))
+        : sendOrders(parsed).pipe(Effect.asVoid, Effect.mapError(refusal)),
+    ),
+  );
 
 /** Principal id -> employee name, so decisions show who approved them (people only; agents have their label). */
 const usePrincipalNames = () => {
@@ -211,12 +214,14 @@ const usePrincipalNames = () => {
             item.principalRef === undefined ? [] : [[item.principalRef.principalId, item.fullName] as const],
           ),
         ),
-        Effect.match({
-          onFailure: () => undefined,
-          onSuccess: (entries) => {
-            if (active) setNames(new Map(entries));
-          },
-        }),
+        Effect.tap((entries) =>
+          Effect.sync(() => {
+            if (active) {
+              setNames(new Map(entries));
+            }
+          }),
+        ),
+        Effect.result,
       ),
     );
     return () => {
@@ -231,8 +236,12 @@ const moduleStateOf = <A, E>(
   slice: (value: A) => ModuleSlice,
   absent: (error: E) => boolean,
 ): ModuleState => {
-  if (snapshot.state === 'ready') return { status: 'ready', ...slice(snapshot.value) };
-  if (snapshot.state === 'failed') return { status: absent(snapshot.error) ? 'absent' : 'error' };
+  if (snapshot.state === 'ready') {
+    return { status: 'ready', ...slice(snapshot.value) };
+  }
+  if (snapshot.state === 'failed') {
+    return { status: absent(snapshot.error) ? 'absent' : 'error' };
+  }
   return { status: 'loading' };
 };
 
@@ -271,7 +280,9 @@ const groupRuns = (modules: Readonly<Record<ModuleKey, ModuleState>>): readonly 
   const groups = new Map<string, { group: RunGroup; parts: RunGroup['parts'][number][] }>();
   for (const module of ['opportunities', 'orders'] as const) {
     const state = modules[module];
-    if (state.status !== 'ready') continue;
+    if (state.status !== 'ready') {
+      continue;
+    }
     for (const batch of state.batches) {
       const key = `${batch.agentPrincipalId}|${batch.runId ?? batch.id}`;
       const part = { batch, changes: state.changes.filter((change) => change.batchId === batch.id), module };
@@ -295,8 +306,16 @@ const groupRuns = (modules: Readonly<Record<ModuleKey, ModuleState>>): readonly 
   }
   return [...groups.values()]
     .map(({ group, parts }) => ({ ...group, parts }))
-    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .toSorted((left, right) => DateTime.Order(right.createdAt, left.createdAt));
 };
+
+const changeStatusVariant = {
+  applied: 'success',
+  failed: 'secondary',
+  pending: 'warning',
+  rejected: 'secondary',
+  reverted: 'secondary',
+} as const;
 
 const ChangeCard = ({
   busy,
@@ -309,7 +328,7 @@ const ChangeCard = ({
   readonly busy: boolean;
   readonly canWrite: boolean;
   readonly change: AiChange<unknown>;
-  readonly decide: (ids: readonly string[], decision: 'approve' | 'reject') => void;
+  readonly decide: (ids: readonly AiChange<unknown>['id'][], decision: 'approve' | 'reject') => void;
   readonly targetLabel: string;
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => (
@@ -320,11 +339,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{targetLabel}</p>
       </div>
       <div className="sp-ai-review-actions">
-        <Badge
-          variant={change.status === 'pending' ? 'warning' : change.status === 'applied' ? 'success' : 'secondary'}
-        >
-          {aiStatusLabel[change.status]}
-        </Badge>
+        <Badge variant={changeStatusVariant[change.status]}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
@@ -332,32 +347,34 @@ const ChangeCard = ({
       <span className="font-medium">Proč AI změnu navrhuje: </span>
       {change.reason}
     </p>
-    <div className="sp-ai-review-diff" role="table" aria-label={`Porovnání: ${change.summary}`}>
-      <div className="sp-ai-review-diff-head" role="row">
-        <span role="columnheader">Údaj</span>
-        <span role="columnheader">Před změnou</span>
-        <span role="columnheader">Po schválení</span>
-      </div>
-      {change.diff.map((line) => (
-        <div className="sp-ai-review-diff-row" role="row" key={line.field}>
-          <span className="font-medium" role="cell">
-            {line.label}
-          </span>
-          <span className="sp-ai-review-before" role="cell">
-            {valueLabel(line.field, line.before) ?? 'Neuvedeno'}
-          </span>
-          <span className="sp-ai-review-after" role="cell">
-            {valueLabel(line.field, line.after) ?? 'Vymazáno'}
-          </span>
-        </div>
-      ))}
-    </div>
-    {change.failure && (
+    <Table aria-label={`Porovnání: ${change.summary}`} className="sp-ai-review-diff" size="sm">
+      <Table.Header>
+        <Table.Row className="sp-ai-review-diff-head">
+          <Table.ColumnHeader>Údaj</Table.ColumnHeader>
+          <Table.ColumnHeader>Před změnou</Table.ColumnHeader>
+          <Table.ColumnHeader>Po schválení</Table.ColumnHeader>
+        </Table.Row>
+      </Table.Header>
+      <Table.Body>
+        {change.diff.map((line) => (
+          <Table.Row className="sp-ai-review-diff-row" key={line.field}>
+            <Table.Cell className="font-medium">{line.label}</Table.Cell>
+            <Table.Cell className="sp-ai-review-before">
+              {valueLabel(line.field, line.before) ?? 'Neuvedeno'}
+            </Table.Cell>
+            <Table.Cell className="sp-ai-review-after">{valueLabel(line.field, line.after) ?? 'Vymazáno'}</Table.Cell>
+          </Table.Row>
+        ))}
+      </Table.Body>
+    </Table>
+    {change.failure !== undefined && change.failure !== '' && (
       <p className="text-sm" role="alert">
         Změnu nelze provést: {change.failure}
       </p>
     )}
-    {change.decisionNote && <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>}
+    {change.decisionNote !== undefined && change.decisionNote !== '' && (
+      <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>
+    )}
     {change.status === 'pending' && canWrite && (
       <div className="sp-ai-review-actions sp-ai-review-end">
         <Button
@@ -399,9 +416,8 @@ const RunCard = ({
 }) => {
   const [note, setNote] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
-  const noteValue = note.trim() === '' ? {} : { note: note.trim() };
   const pending = group.parts.flatMap((part) =>
-    part.changes.filter((change) => change.status === 'pending').map((change) => ({ change, module: part.module })),
+    part.changes.flatMap((change) => (change.status === 'pending' ? [{ change, module: part.module }] : [])),
   );
   const decidable = pending.filter((entry) => canWrite(entry.module));
   const revertible = group.parts.filter(
@@ -409,14 +425,16 @@ const RunCard = ({
   );
   const reverted = group.parts.find((part) => part.batch.revertedAt !== undefined)?.batch;
   const decideMany = (
-    entries: readonly { readonly change: AiChange<unknown>; readonly module: ModuleKey }[],
+    entries: readonly { readonly change: Pick<AiChange<unknown>, 'id'>; readonly module: ModuleKey }[],
     decision: 'approve' | 'reject',
   ) => {
     const steps = (['opportunities', 'orders'] as const).flatMap((module) => {
-      const ids = entries.filter((entry) => entry.module === module).map((entry) => entry.change.id);
-      return ids.length === 0
-        ? []
-        : [{ command: { _tag: 'AiDecideChanges', changeIds: ids, decision, ...noteValue } as const, module }];
+      const ids = entries.flatMap((entry) => (entry.module === module ? [entry.change.id] : []));
+      if (ids.length === 0) {
+        return [];
+      }
+      const command: AiCommand = { _tag: 'AiDecideChanges', changeIds: ids, decision };
+      return [{ command: note.trim() === '' ? command : { ...command, note: note.trim() }, module }];
     });
     run(
       steps,
@@ -425,48 +443,42 @@ const RunCard = ({
         : 'Návrhy zamítnuty. Data zůstala beze změny.',
     );
   };
-  const decideOne = (module: ModuleKey) => (ids: readonly string[], decision: 'approve' | 'reject') =>
+  const decideOne = (module: ModuleKey) => (ids: readonly AiChange<unknown>['id'][], decision: 'approve' | 'reject') =>
     decideMany(
-      ids.map((id) => ({ change: { id } as AiChange<unknown>, module })),
+      ids.map((id) => ({ change: { id }, module })),
       decision,
     );
+  let batchVariant: 'secondary' | 'success' | 'warning' = 'secondary';
+  let batchLabel = 'Dávka vrácena';
+  if (reverted === undefined) {
+    batchLabel = 'Vyřízeno';
+    if (pending.length > 0) {
+      batchVariant = 'warning';
+      batchLabel = `${pending.length} ke schválení`;
+    } else if (revertible.length > 0) {
+      batchVariant = 'success';
+      batchLabel = 'Změny provedeny';
+    }
+  }
   return (
     <section className="sp-ai-review-batch" data-run-key={group.key}>
       <header className="sp-ai-review-batch-header">
         <div className="sp-ai-review-heading">
           <div>
             <p className="text-fg-secondary text-xs">
-              {formatDateTime(group.createdAt)} · {group.agentLabel} ·{' '}
+              {formatDateTime(DateTime.formatIso(group.createdAt))} · {group.agentLabel} ·{' '}
               {group.parts.map((part) => moduleLabel[part.module]).join(' + ')}
             </p>
             <h2 className="sp-ai-review-instruction">{group.instruction}</h2>
           </div>
-          <Badge
-            variant={
-              reverted !== undefined
-                ? 'secondary'
-                : pending.length > 0
-                  ? 'warning'
-                  : revertible.length > 0
-                    ? 'success'
-                    : 'secondary'
-            }
-          >
-            {reverted !== undefined
-              ? 'Dávka vrácena'
-              : pending.length > 0
-                ? `${pending.length} ke schválení`
-                : revertible.length > 0
-                  ? 'Změny provedeny'
-                  : 'Vyřízeno'}
-          </Badge>
+          <Badge variant={batchVariant}>{batchLabel}</Badge>
         </div>
         {pending.length > decidable.length && (
           <p className="text-fg-secondary text-sm">
             Část změn může schválit jen uživatel s právem zápisu do daného modulu (
-            {[
-              ...new Set(pending.filter((entry) => !canWrite(entry.module)).map((entry) => moduleLabel[entry.module])),
-            ].join(', ')}
+            {[...new Set(pending.flatMap((entry) => (canWrite(entry.module) ? [] : [moduleLabel[entry.module]])))].join(
+              ', ',
+            )}
             ).
           </p>
         )}
@@ -475,9 +487,9 @@ const RunCard = ({
             <FormInput
               id={`note-${group.key}`}
               label="Poznámka k rozhodnutí (nepovinná)"
-              value={note}
               onChange={(event) => setNote(event.target.value)}
               placeholder="Např. ověřeno se zákazníkem"
+              value={note}
             />
             <div className="sp-ai-review-actions">
               <Button disabled={busy} onClick={() => decideMany(decidable, 'approve')} size="sm">
@@ -500,9 +512,9 @@ const RunCard = ({
             <Button
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
+              size="sm"
               theme="outlined"
               variant="secondary"
-              size="sm"
             >
               Vrátit vše
             </Button>
@@ -518,7 +530,6 @@ const RunCard = ({
                 <div className="sp-ai-review-actions">
                   <Button
                     disabled={busy}
-                    size="sm"
                     onClick={() => {
                       setConfirmRevert(false);
                       run(
@@ -533,10 +544,11 @@ const RunCard = ({
                         'Celá dávka vrácena. Původní údaje obnoveny, historie zachována.',
                       );
                     }}
+                    size="sm"
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button size="sm" theme="outlined" variant="secondary" onClick={() => setConfirmRevert(false)}>
+                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
                     Zrušit
                   </Button>
                 </div>
@@ -544,9 +556,9 @@ const RunCard = ({
             )}
           </div>
         )}
-        {reverted?.revertedAt && (
+        {reverted?.revertedAt !== undefined && (
           <p className="text-fg-secondary text-xs">
-            Vráceno {formatDateTime(reverted.revertedAt)} · {nameOf(reverted.revertedBy)}
+            Vráceno {formatDateTime(DateTime.formatIso(reverted.revertedAt))} · {nameOf(reverted.revertedBy)}
           </p>
         )}
       </header>
@@ -555,11 +567,11 @@ const RunCard = ({
           <p className="text-fg-secondary text-xs font-medium">{moduleLabel[part.module]}</p>
           {part.changes.map((change) => (
             <ChangeCard
-              key={change.id}
               busy={busy}
               canWrite={canWrite(part.module)}
               change={change}
               decide={decideOne(part.module)}
+              key={change.id}
               targetLabel={targetLabel(part.module, change)}
               valueLabel={valueLabel}
             />
@@ -570,98 +582,12 @@ const RunCard = ({
   );
 };
 
-const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
-  const { opportunities, orders, refresh } = useProposalModules(legalEntityId);
-  const references = usePipelineReferences();
-  const principalNames = usePrincipalNames();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const [filter, setFilter] = useState<'all' | 'pending'>('pending');
-  const [showFullLog, setShowFullLog] = useState(false);
-  const modules = useMemo(() => ({ opportunities, orders }), [opportunities, orders]);
-  const groups = useMemo(() => groupRuns(modules), [modules]);
-
-  const employeeNames = useMemo(
-    () =>
-      new Map(
-        references.employees.status === 'ready'
-          ? references.employees.items.map((employee) => [employee.id as string, employee.fullName] as const)
-          : [],
-      ),
-    [references.employees],
-  );
-  const customerNames = useMemo(
-    () =>
-      new Map(
-        references.customers.status === 'ready'
-          ? references.customers.items.map(
-              (customer) => [customer.id as string, customer.name ?? 'Zákazník bez názvu'] as const,
-            )
-          : [],
-      ),
-    [references.customers],
-  );
-  const valueLabel = useCallback(
-    (field: string, value: string | undefined) =>
-      value === undefined
-        ? undefined
-        : field === 'ownerEmployeeId'
-          ? (employeeNames.get(value) ?? 'Obchodník mimo seznam')
-          : field === 'partyId'
-            ? (customerNames.get(value) ?? 'Zákazník mimo seznam')
-            : value,
-    [customerNames, employeeNames],
-  );
-  const targetLabel = useCallback(
-    (module: ModuleKey, change: AiChange<unknown>) => {
-      const state = modules[module];
-      const partyId =
-        state.status === 'ready' && change.target.id !== undefined ? state.partyOf.get(change.target.id) : undefined;
-      const customer = partyId === undefined ? undefined : customerNames.get(partyId);
-      return customer === undefined || change.target.label.includes(customer)
-        ? change.target.label
-        : `${change.target.label} · ${customer}`;
-    },
-    [customerNames, modules],
-  );
-  const nameOf = useCallback(
-    (principalId: string | undefined) => {
-      if (principalId === undefined) return 'neznámý účet';
-      const agent = groups.find((group) => group.agentPrincipalId === principalId);
-      return agent?.agentLabel ?? principalNames.get(principalId) ?? `účet ${principalId.slice(0, 8)}…`;
-    },
-    [groups, principalNames],
-  );
-  const canWrite = (module: ModuleKey) => {
-    const state = modules[module];
-    return state.status === 'ready' && state.canWrite;
-  };
-  const run = (steps: readonly { readonly command: AiCommand; readonly module: ModuleKey }[], success: string) => {
-    setBusy(true);
-    setMessage('');
-    void browserRuntime
-      .runPromise(
-        Effect.forEach(
-          steps,
-          (step) => {
-            const state = modules[step.module];
-            return sendCommand(step.module, step.command, state.status === 'ready' ? state.revision : 0);
-          },
-          { concurrency: 1, discard: true },
-        ).pipe(
-          Effect.match({
-            onFailure: (reason) => `Akci se nepodařilo dokončit: ${reason}`,
-            onSuccess: () => success,
-          }),
-        ),
-      )
-      .then((text) => {
-        setMessage(text);
-        setBusy(false);
-        refresh();
-      });
-  };
-
+const proposalOverview = (
+  modules: Readonly<Record<ModuleKey, ModuleState>>,
+  groups: readonly RunGroup[],
+  filter: 'all' | 'pending',
+) => {
+  const { opportunities, orders } = modules;
   const loading = opportunities.status === 'loading' || orders.status === 'loading';
   const noAccess = opportunities.status !== 'ready' && orders.status !== 'ready' && !loading;
   const visibleGroups = groups.filter(
@@ -673,7 +599,126 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
       const state = modules[module];
       return state.status === 'ready' ? state.log.map((entry) => ({ entry, module })) : [];
     })
-    .toSorted((left, right) => right.entry.at.localeCompare(left.entry.at));
+    .toSorted((left, right) => DateTime.Order(right.entry.at, left.entry.at));
+  return { loading, log, noAccess, visibleGroups };
+};
+
+const AiApprovalLog = ({
+  log,
+  nameOf,
+  onToggle,
+  showFullLog,
+}: {
+  readonly log: ReturnType<typeof proposalOverview>['log'];
+  readonly nameOf: (principalId: string | undefined) => string;
+  readonly onToggle: () => void;
+  readonly showFullLog: boolean;
+}) => (
+  <SectionCard title="Deník AI a schvalování">
+    {log.length === 0 ? (
+      <p className="text-fg-secondary text-sm">Deník se naplní prvním návrhem AI.</p>
+    ) : (
+      <ol className="sp-ai-review-log">
+        {log.slice(0, showFullLog ? log.length : 8).map(({ entry, module }) => (
+          <li key={`${module}:${entry.id}`}>
+            <div className="text-fg-secondary text-xs">
+              {formatDateTime(DateTime.formatIso(entry.at))} · {moduleLabel[module]} · {nameOf(entry.actorPrincipalId)}{' '}
+              · {entry.actorKind === 'agent' ? 'AI návrh' : 'Rozhodnutí člověka'}
+            </div>
+            <p className="text-sm">{entry.message}</p>
+            <span className="text-fg-secondary text-xs">{aiLogActionLabel[entry.action]}</span>
+          </li>
+        ))}
+      </ol>
+    )}
+    {log.length > 8 && (
+      <Button onClick={onToggle} size="sm" theme="outlined" variant="secondary">
+        {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${log.length})`}
+      </Button>
+    )}
+  </SectionCard>
+);
+
+const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
+  const { opportunities, orders, refresh } = useProposalModules(legalEntityId);
+  const references = usePipelineReferences();
+  const principalNames = usePrincipalNames();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [filter, setFilter] = useState<'all' | 'pending'>('pending');
+  const [showFullLog, setShowFullLog] = useState(false);
+  const modules = { opportunities, orders };
+  const groups = groupRuns(modules);
+  const employeeNames = new Map<string, string>(
+    references.employees.status === 'ready'
+      ? references.employees.items.map((employee) => [employee.id, employee.fullName])
+      : [],
+  );
+  const customerNames = new Map<string, string>(
+    references.customers.status === 'ready'
+      ? references.customers.items.map((customer) => [customer.id, customer.name ?? 'Zákazník bez názvu'])
+      : [],
+  );
+  const valueLabel = (field: string, value: string | undefined): string | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (field === 'ownerEmployeeId') {
+      return employeeNames.get(value) ?? 'Obchodník mimo seznam';
+    }
+    if (field === 'partyId') {
+      return customerNames.get(value) ?? 'Zákazník mimo seznam';
+    }
+    return value;
+  };
+  const targetLabel = (module: ModuleKey, change: AiChange<unknown>) => {
+    const state = modules[module];
+    const partyId =
+      state.status === 'ready' && change.target.id !== undefined ? state.partyOf.get(change.target.id) : undefined;
+    const customer = partyId === undefined ? undefined : customerNames.get(partyId);
+    return customer === undefined || change.target.label.includes(customer)
+      ? change.target.label
+      : `${change.target.label} · ${customer}`;
+  };
+  const nameOf = (principalId: string | undefined) => {
+    if (principalId === undefined) {
+      return 'neznámý účet';
+    }
+    const agent = groups.find((group) => group.agentPrincipalId === principalId);
+    return agent?.agentLabel ?? principalNames.get(principalId) ?? `účet ${principalId.slice(0, 8)}…`;
+  };
+  const canWrite = (module: ModuleKey) => {
+    const state = modules[module];
+    return state.status === 'ready' && state.canWrite;
+  };
+  const run = (steps: readonly { readonly command: AiCommand; readonly module: ModuleKey }[], success: string) => {
+    setBusy(true);
+    setMessage('');
+    void browserRuntime.runPromise(
+      Effect.forEach(
+        steps,
+        (step) => {
+          const state = modules[step.module];
+          return sendCommand(step.module, step.command, state.status === 'ready' ? state.revision : 0);
+        },
+        { concurrency: 1, discard: true },
+      ).pipe(
+        Effect.match({
+          onFailure: (reason) => `Akci se nepodařilo dokončit: ${reason}`,
+          onSuccess: () => success,
+        }),
+        Effect.tap((text) =>
+          Effect.sync(() => {
+            setMessage(text);
+            setBusy(false);
+            refresh();
+          }),
+        ),
+      ),
+    );
+  };
+
+  const { loading, log, noAccess, visibleGroups } = proposalOverview(modules, groups, filter);
 
   return (
     <div className="flex flex-col gap-250">
@@ -682,23 +727,23 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
         <meta content="noindex, nofollow" name="robots" />
       </Helmet>
       <PageHeader
-        title="AI změny ke schválení"
-        description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
-        meta={<Badge variant="secondary">Úroveň C</Badge>}
         actions={
-          <Button disabled={busy} onClick={refresh} theme="outlined" variant="secondary" size="sm">
+          <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
             Obnovit seznam
           </Button>
         }
+        description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
+        meta={<Badge variant="secondary">Úroveň C</Badge>}
+        title="AI změny ke schválení"
       />
-      {loading ? (
-        <p className="text-fg-secondary text-sm">Načítám návrhy AI…</p>
-      ) : noAccess ? (
+      {loading ? <p className="text-fg-secondary text-sm">Načítám návrhy AI…</p> : null}
+      {!loading && noAccess && (
         <EmptyState
-          title="Návrhy AI nejsou dostupné"
           description="Schvalovat změny AI může uživatel s právem zápisu do příležitostí nebo objednávek. Zkuste seznam obnovit."
+          title="Návrhy AI nejsou dostupné"
         />
-      ) : (
+      )}
+      {!loading && !noAccess && (
         <div className="sp-ai-review">
           <div className="sp-ai-review-safety">
             <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
@@ -714,47 +759,43 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               Zkuste seznam obnovit.
             </p>
           )}
-          <div className="sp-ai-review-actions" role="group" aria-label="Zobrazení dávek">
+          <fieldset aria-label="Zobrazení dávek" className="sp-ai-review-actions">
             <Button
+              aria-pressed={filter === 'pending'}
+              onClick={() => setFilter('pending')}
               size="sm"
               theme={filter === 'pending' ? 'solid' : 'outlined'}
               variant={filter === 'pending' ? 'primary' : 'secondary'}
-              aria-pressed={filter === 'pending'}
-              onClick={() => setFilter('pending')}
             >
               Ke schválení
             </Button>
             <Button
+              aria-pressed={filter === 'all'}
+              onClick={() => setFilter('all')}
               size="sm"
               theme={filter === 'all' ? 'solid' : 'outlined'}
               variant={filter === 'all' ? 'primary' : 'secondary'}
-              aria-pressed={filter === 'all'}
-              onClick={() => setFilter('all')}
             >
               Všechny dávky
             </Button>
-          </div>
-          {message && (
-            <p className="sp-ai-review-feedback" role="status">
-              {message}
-            </p>
-          )}
+          </fieldset>
+          {message !== '' && <output className="sp-ai-review-feedback">{message}</output>}
           {visibleGroups.length === 0 ? (
             <EmptyState
-              title={filter === 'pending' ? 'Žádné změny nečekají na schválení' : 'Zatím nemáte návrhy AI'}
               description={
                 filter === 'pending'
                   ? 'Hotová rozhodnutí a možnost vrácení najdete ve Všech dávkách.'
                   : 'Připojte agenta s profilem C a požádejte ho o úpravu příležitosti nebo objednávky. Návrh se uloží sem, nikoli přímo do dat.'
               }
+              title={filter === 'pending' ? 'Žádné změny nečekají na schválení' : 'Zatím nemáte návrhy AI'}
             />
           ) : (
             visibleGroups.map((group) => (
               <RunCard
-                key={group.key}
                 busy={busy}
                 canWrite={canWrite}
                 group={group}
+                key={group.key}
                 nameOf={nameOf}
                 run={run}
                 targetLabel={targetLabel}
@@ -762,29 +803,12 @@ const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string 
               />
             ))
           )}
-          <SectionCard title="Deník AI a schvalování">
-            {log.length === 0 ? (
-              <p className="text-fg-secondary text-sm">Deník se naplní prvním návrhem AI.</p>
-            ) : (
-              <ol className="sp-ai-review-log">
-                {log.slice(0, showFullLog ? log.length : 8).map(({ entry, module }) => (
-                  <li key={`${module}:${entry.id}`}>
-                    <div className="text-fg-secondary text-xs">
-                      {formatDateTime(entry.at)} · {moduleLabel[module]} · {nameOf(entry.actorPrincipalId)} ·{' '}
-                      {entry.actorKind === 'agent' ? 'AI návrh' : 'Rozhodnutí člověka'}
-                    </div>
-                    <p className="text-sm">{entry.message}</p>
-                    <span className="text-fg-secondary text-xs">{aiLogActionLabel[entry.action]}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-            {log.length > 8 && (
-              <Button size="sm" theme="outlined" variant="secondary" onClick={() => setShowFullLog(!showFullLog)}>
-                {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${log.length})`}
-              </Button>
-            )}
-          </SectionCard>
+          <AiApprovalLog
+            log={log}
+            nameOf={nameOf}
+            onToggle={() => setShowFullLog(!showFullLog)}
+            showFullLog={showFullLog}
+          />
         </div>
       )}
     </div>

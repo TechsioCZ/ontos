@@ -1,3 +1,6 @@
+import { AgentProposalIdSchema } from '@app/shared-contracts/agent-proposals';
+import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { reviewTaskProposal, taskDiff, taskRevert, taskStillInPlace } from '../../src/api/agent-review.ts';
@@ -7,8 +10,8 @@ const taskRef = { moduleId: 'work.tasks', resourceId: 'T-1', resourceType: 'work
 const created = { moduleId: 'work.tasks', resourceId: '$createdId', resourceType: 'work.tasks.task', tenantId };
 
 const review = (
-  request: Partial<Parameters<typeof reviewTaskProposal>[0]['request']> & { command: Record<string, unknown> },
-  task?: Record<string, unknown>,
+  request: Partial<Parameters<typeof reviewTaskProposal>[0]['request']> & { command: AgentCommand },
+  task?: Schema.JsonObject,
   canWrite: boolean | undefined = true,
 ) =>
   reviewTaskProposal({
@@ -20,14 +23,12 @@ const review = (
   });
 
 it('a new task lists its fields in Czech', () => {
-  expect(
-    taskDiff({ _tag: 'CreateTask', dueDate: '2026-10-30', priority: 'HIGH', title: 'Zavolat' }, undefined),
-  ).toEqual([
+  expect(taskDiff({ _tag: 'CreateTask', dueDate: '2026-10-30', priority: 'HIGH', title: 'Zavolat' })).toEqual([
     { after: '30. 10. 2026', field: 'dueDate', label: 'Termín' },
     { after: 'Vysoká', field: 'priority', label: 'Priorita' },
     { after: 'Zavolat', field: 'title', label: 'Název úkolu' },
   ]);
-  expect(taskDiff({ _tag: 'BulkChangeTaskState' }, undefined)).toBeUndefined();
+  expect(taskDiff({ _tag: 'BulkChangeTaskState' })).toBeUndefined();
 });
 
 it('CreateTask is undone by cancelling and archiving the created task', () => {
@@ -70,7 +71,7 @@ it('task updates compare only the fields the command set', () => {
   const command = { _tag: 'UpdateTask', taskRef, title: 'Nový název' };
   expect(taskStillInPlace(command, { description: 'cokoli', title: 'Nový název' })).toBe(true);
   expect(taskStillInPlace(command, { title: 'Ručně přepsáno' })).toBe(false);
-  expect(taskStillInPlace({ _tag: 'CreateTask', title: 'X' }, undefined)).toBeUndefined();
+  expect(taskStillInPlace({ _tag: 'CreateTask', title: 'X' })).toBeUndefined();
 });
 
 it('a pending update shows the live task, its name and its undo plan', () => {
@@ -89,7 +90,6 @@ it('a proposal about a task that is gone for the reader is hidden, a read-only r
     reviewTaskProposal({
       canWrite: true,
       request: { actionSlug: 'apply-command', command: { _tag: 'AssignTask', taskRef }, key: 'k', stage: 'proposed' },
-      task: undefined,
       taskRead: true,
       tenantId,
     }).visible,
@@ -100,7 +100,11 @@ it('a proposal about a task that is gone for the reader is hidden, a read-only r
 });
 
 it('an approved change names the proposing agent in a task comment', () => {
-  const proposal = { agentLabel: 'AI agent B', proposalId: 'p-1', summary: 'Nový úkol' };
+  const proposal = {
+    agentLabel: 'AI agent B',
+    proposalId: Schema.decodeUnknownSync(AgentProposalIdSchema)('p-1'),
+    summary: 'Nový úkol',
+  };
   expect(review({ command: { _tag: 'CreateTask', title: 'X' }, proposal }).followUp).toEqual({
     commands: [
       {

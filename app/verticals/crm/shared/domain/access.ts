@@ -30,6 +30,7 @@ export const CrmViewerSchema = Schema.Struct({
   writeAssigned: Schema.Boolean,
 });
 export type CrmViewer = typeof CrmViewerSchema.Type;
+export type CrmViewerInput = typeof CrmViewerSchema.Encoded;
 
 interface OwnedClient {
   readonly ownerSalespersonId?: string | undefined;

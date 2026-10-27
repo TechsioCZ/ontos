@@ -4,7 +4,7 @@
  */
 import { verifyOAuthQueryParams } from '@better-auth/oauth-provider';
 import { eq } from 'drizzle-orm';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Option } from 'effect';
 
 import { ConnectionInvalid, ConnectionUnavailable } from '../../oauth-connections/errors.ts';
 import { OAuthFlow } from '../../oauth-connections/oauth-flow.ts';
@@ -57,10 +57,10 @@ export const OAuthFlowLive = Layer.effect(
           .limit(1)
           .pipe(
             Effect.mapError(unavailable),
-            Effect.map(([row]): OAuthClientInfo | undefined =>
+            Effect.map(([row]): Option.Option<OAuthClientInfo> =>
               row === undefined
-                ? undefined
-                : { clientId: row.clientId, logoUri: row.icon, name: row.name ?? row.clientId },
+                ? Option.none()
+                : Option.some({ clientId: row.clientId, logoUri: row.icon, name: row.name ?? row.clientId }),
             ),
           ),
       verifyQuery: (oauthQuery: string) =>

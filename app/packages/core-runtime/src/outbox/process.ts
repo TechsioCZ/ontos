@@ -87,8 +87,12 @@ export interface OutboxWorkerEntry<out LayerError> {
   readonly runLoop: (input: OutboxWorkerLoopInput) => Effect.Effect<void, LayerError>;
 }
 
-export interface RunOutboxWorkerHostInput<LayerError, StartupError = never> {
-  readonly entries: readonly OutboxWorkerEntry<LayerError>[];
+/** Infer each owner's failure independently before combining the entries' error channels. */
+export interface RunOutboxWorkerHostInput<
+  LayerErrors extends readonly { readonly _tag: string }[],
+  StartupError = never,
+> {
+  readonly entries: { readonly [Index in keyof LayerErrors]: OutboxWorkerEntry<LayerErrors[Index]> };
   readonly health?: boolean;
   /** Additional process services share the host Scope and its existing runtime adapter. */
   readonly startup?: () => Effect.Effect<void, StartupError, Scope.Scope>;
@@ -253,8 +257,11 @@ const hostedLoop = <LayerError>(
  * endpoint. The first loop to fail interrupts the others; each loop disposes its own runtime
  * before the host scope closes, so the failure surfaces only after every runtime is released.
  */
-export const runOutboxWorkerHost = <LayerError, StartupError = never>(
-  input: RunOutboxWorkerHostInput<LayerError, StartupError>,
+export const runOutboxWorkerHost = <
+  const LayerErrors extends readonly { readonly _tag: string }[],
+  StartupError = never,
+>(
+  input: RunOutboxWorkerHostInput<LayerErrors, StartupError>,
 ) =>
   Effect.scoped(
     Effect.gen(function* runOutboxWorkerHostEffect() {
@@ -267,7 +274,7 @@ export const runOutboxWorkerHost = <LayerError, StartupError = never>(
         defaultProcessIdentity: `${process.pid}:${processNonce}`,
       });
       const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
-      const loops: readonly HostedLoop<LayerError>[] = yield* Effect.forEach(
+      const loops: readonly HostedLoop<LayerErrors[number]>[] = yield* Effect.forEach(
         Arr.zip(input.entries, configs),
         ([entry, config]) => hostedLoop(entry, config, healthApi),
         { concurrency: 1 },
@@ -330,10 +337,10 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
 };
 
 export const startOutboxWorkerHost = <
-  LayerError extends { readonly _tag: string },
+  const LayerErrors extends readonly { readonly _tag: string }[],
   StartupError extends { readonly _tag: string } = never,
 >(
-  input: RunOutboxWorkerHostInput<LayerError, StartupError>,
+  input: RunOutboxWorkerHostInput<LayerErrors, StartupError>,
 ): void => {
   Effect.runCallback(
     runOutboxWorkerHost(input).pipe(

@@ -36,6 +36,7 @@
   "dependencies": {
     "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",

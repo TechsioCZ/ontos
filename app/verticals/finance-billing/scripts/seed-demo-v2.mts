@@ -13,11 +13,16 @@ import { Command, Flag } from 'effect/cli';
 import { Reactivity } from 'effect/reactivity';
 import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node';
 import type { FinanceCommand } from '../shared/actions/apply-command.ts';
-import { FinanceStateSchema } from '../shared/apis/records.ts';
+import { FinanceCompanyIdSchema, FinanceInvoiceResourceIdSchema, FinanceStateSchema } from '../shared/apis/records.ts';
 import type { FinanceState, Invoice } from '../shared/apis/records.ts';
 import { nextInvoiceNumber } from '../shared/domain/invoice-totals.ts';
 import { MANUAL_COUNTERPARTY_ID, transitionFinance } from '../src/services/persistence.service.ts';
 import type { DocumentWrite, FinanceValidators } from '../src/services/persistence.service.ts';
+
+class DemoSeedRejected extends Schema.TaggedError<DemoSeedRejected, { readonly brand: unique symbol }>()(
+  'DemoSeedRejected',
+  { reason: Schema.String },
+) {}
 
 const TENANT = '70000000-0000-4000-8000-000000000020';
 const MARKER = 'demo-v2-seed';
@@ -112,7 +117,9 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
     return result.invoice;
   });
   const invoiceOf = (value: Invoice | undefined) =>
-    value === undefined ? Effect.die(`seed step ${counter} returned no invoice`) : Effect.succeed(value);
+    value === undefined
+      ? Effect.fail(new DemoSeedRejected({ reason: `seed step ${counter} returned no invoice` }))
+      : Effect.succeed(value);
 
   // ---- S07: received invoices (manual suppliers), one due yesterday and unpaid → overdue ----
   const incoming = [
@@ -189,7 +196,7 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
             dueDate: entry.due,
             issueDate: entry.issued,
             note: `Přijatá faktura (${MARKER})`,
-            supplierCompanyId: entry.ico,
+            supplierCompanyId: yield* Schema.decodeEffect(FinanceCompanyIdSchema)(entry.ico),
             supplierName: entry.supplier,
             totalMinor: entry.amount,
           }),
@@ -404,7 +411,9 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
     _tag: 'CreateAccountingExport',
     actorLabel: ACTOR,
     format: 'CSV',
-    invoiceResourceIds: incomingInvoices.slice(1, 4).map((invoice) => invoice.ref.resourceId),
+    invoiceResourceIds: yield* Schema.decodeEffect(Schema.Array(FinanceInvoiceResourceIdSchema))(
+      incomingInvoices.slice(1, 4).map((invoice) => invoice.ref.resourceId),
+    ),
   });
 
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(FinanceStateSchema))(state);
@@ -419,7 +428,7 @@ const seed = Effect.fn('Finance.seedDemoV2')(function* seedDemoV2(LEGAL_ENTITY: 
           where tenant_id = ${TENANT} and legal_entity_id = ${LEGAL_ENTITY} and revision = ${existing.revision}
           returning revision`;
         if (updated.length === 0) {
-          return yield* Effect.die('finance state changed concurrently; run the seed again');
+          return yield* new DemoSeedRejected({ reason: 'finance state changed concurrently; run the seed again' });
         }
       }
       return yield* Effect.forEach(

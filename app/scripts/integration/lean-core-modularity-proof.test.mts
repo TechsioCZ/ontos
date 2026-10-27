@@ -517,6 +517,7 @@ it.live(
     );
     const betterAuthRuntime = Layer.succeedContext(yield* Layer.build(BetterAuthRuntimeLive));
     const oauthAuthenticationLayer = Layer.mergeAll(
+      BetterAuthNativeAdapterLive,
       betterAuthRuntime,
       BetterAuthNativeAdapterLive,
       OAuthAuthenticationAuditLive,

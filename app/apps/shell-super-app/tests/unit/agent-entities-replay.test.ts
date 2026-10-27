@@ -1,3 +1,4 @@
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Schema } from 'effect' with { rstest: 'importActual' };
 import {
   ActionRuntime,
@@ -9,7 +10,11 @@ import {
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService, withPostgresSessionAdvisoryLock } from '@app/core-runtime';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
-import { ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
+import {
+  AgentAccessClientIdSchema,
+  ConnectionSummarySchema,
+  ManageAgentEntityRequestSchema,
+} from '@app/shared-contracts/agent-access';
 import type { ConnectionSummary, ManageAgentEntityRequest } from '@app/shared-contracts/agent-access';
 import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -139,7 +144,7 @@ const principal: DemoAccountCaller['principal'] = {
   authContextRef: 'better-auth-session:agent-replay-test',
   authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
-  principalId: '00000000-0000-4000-8000-000000000003',
+  principalId: AgentPrincipalIdSchema.make('00000000-0000-4000-8000-000000000003'),
   tenantId: '00000000-0000-4000-8000-000000000001',
 };
 const caller: DemoAccountCaller = { legalName: 'Company', principal };
@@ -151,38 +156,45 @@ const disable: ManageAgentEntityRequest = {
   expectedStatus: 'active',
   newStatus: 'disabled',
   operation: 'change-status',
-  principalId: agentId,
+  principalId: AgentPrincipalIdSchema.make(agentId),
   reason: 'Ukončení provozu',
 };
 const archive: ManageAgentEntityRequest = {
   expectedStatus: 'active',
   operation: 'delete',
-  principalId: agentId,
+  principalId: AgentPrincipalIdSchema.make(agentId),
   reason: 'Ukončení provozu',
 };
 const StatusSchema = Schema.Literals(['active', 'disabled', 'archived']);
-const connection = (grantId: string): ConnectionSummary => ({
-  acting: { displayName: 'Agent', kind: 'agent', principalId: agentId },
-  allModules: true,
-  client: { clientId: 'test-client', host: 'example.invalid', kind: 'cimd', logoUri: null, name: 'Test client' },
-  createdAt: '2026-10-25T00:00:00.000Z',
-  delegatedBy: { displayName: 'Administrator', principalId: principal.principalId },
-  granted: { modules: [], writePolicy: 'read_only' },
-  grantId,
-  lastUsedAt: null,
-  legalEntityId: principal.legalEntityId,
-  legalName: 'Company',
-  limits: { maxWritePolicy: 'read_only', modules: [] },
-  modules: [],
-  profileId: 'test-profile',
-  revokedAt: null,
-  revokeNote: null,
-  revokeReason: null,
-  status: 'active',
-  tenantId: principal.tenantId,
-  user: { displayName: 'Administrator', principalId: principal.principalId },
-  writePolicy: 'read_only',
-});
+const connection = (grantId: string): ConnectionSummary =>
+  Schema.decodeUnknownSync(ConnectionSummarySchema)({
+    acting: { displayName: 'Agent', kind: 'agent', principalId: agentId },
+    allModules: true,
+    client: {
+      clientId: AgentAccessClientIdSchema.make('test-client'),
+      host: 'example.invalid',
+      kind: 'cimd',
+      logoUri: null,
+      name: 'Test client',
+    },
+    createdAt: '2026-10-25T00:00:00.000Z',
+    delegatedBy: { displayName: 'Administrator', principalId: principal.principalId },
+    granted: { modules: [], writePolicy: 'read_only' },
+    grantId,
+    lastUsedAt: null,
+    legalEntityId: principal.legalEntityId,
+    legalName: 'Company',
+    limits: { maxWritePolicy: 'read_only', modules: [] },
+    modules: [],
+    profileId: 'test-profile',
+    revokedAt: null,
+    revokeNote: null,
+    revokeReason: null,
+    status: 'active',
+    tenantId: principal.tenantId,
+    user: { displayName: 'Administrator', principalId: principal.principalId },
+    writePolicy: 'read_only',
+  });
 
 interface AgentState {
   rows: Proposal[];
@@ -357,7 +369,7 @@ const fixture = (options: ReplayOptions = {}) =>
       FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
     );
     const composition = yield* makeCompositionSnapshot([
-      makeModuleContractFixture({ appId: 'notes', moduleId: 'fixture.notes' }),
+      makeModuleContractFixture({ appId: 'notes', moduleId: AgentModuleKeySchema.make('fixture.notes') }),
     ]);
     const preparation = yield* AgentProposalCommandPreparation.pipe(
       Effect.provide(AgentProposalCommandPreparationLive),
@@ -804,7 +816,9 @@ it('requires an explicit non-archived expected status in the actual delete wire 
   const valid = Schema.is(ManageAgentEntityRequestSchema);
   expect(valid(archive)).toBe(true);
   expect(valid({ ...archive, expectedStatus: 'disabled' })).toBe(true);
-  expect(valid({ operation: 'delete', principalId: agentId, reason: 'Důvod' })).toBe(false);
+  expect(valid({ operation: 'delete', principalId: AgentPrincipalIdSchema.make(agentId), reason: 'Důvod' })).toBe(
+    false,
+  );
   expect(valid({ ...archive, expectedStatus: 'archived' })).toBe(false);
   expect(valid({ ...archive, expectedStatus: null })).toBe(false);
   expect(valid({ ...archive, expectedStatus: 'inactive' })).toBe(false);

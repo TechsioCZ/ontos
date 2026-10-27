@@ -5,19 +5,24 @@
  * at all is refused too.
  */
 export const isSameOriginRequest = (
-  headers: Readonly<Record<string, string | undefined>>,
+  headers: {
+    readonly host?: string | undefined;
+    readonly origin?: string | undefined;
+    readonly 'sec-fetch-site'?: string | undefined;
+    readonly 'x-forwarded-host'?: string | undefined;
+  },
   issuerOrigin: string,
 ): boolean => {
   if (headers['sec-fetch-site'] === 'cross-site') {
     return false;
   }
-  const origin = headers['origin'];
+  const { origin } = headers;
   if (origin === undefined) {
     return headers['sec-fetch-site'] === 'same-origin';
   }
   if (origin === issuerOrigin) {
     return true;
   }
-  const requestHost = (headers['x-forwarded-host'] ?? headers['host'])?.split(',')[0]?.trim();
+  const requestHost = (headers['x-forwarded-host'] ?? headers.host)?.split(',')[0]?.trim();
   return URL.canParse(origin) && requestHost !== undefined && new URL(origin).host === requestHost;
 };

@@ -1,7 +1,8 @@
 // @rstest-environment node
 import { ContextAccess, OAuthGrantRegistry } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
-import { Crypto, Effect, Layer, Option, PlatformError } from 'effect';
+import { ConnectDraftRequestSchema } from '@app/shared-contracts/oauth-connections';
+import { Crypto, Effect, Layer, Option, PlatformError, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeInstalledModuleCatalogLayer } from '../../../api/modules/installed-module-catalog.ts';
@@ -27,16 +28,16 @@ const session: ConnectSession = {
   tenantId: retainedGrant.tenantId,
   userId: retainedGrant.userId,
 };
-const request = {
-  actingPrincipalId: null,
-  legalEntityId: retainedGrant.legalEntityId,
-  modules: 'all',
-  oauthQuery: 'verified-query',
-  writePolicy: 'read_only',
-} as const;
 
 const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =>
   Effect.gen(function* draftFixture() {
+    const request = yield* Schema.decodeEffect(ConnectDraftRequestSchema)({
+      actingPrincipalId: null,
+      legalEntityId: retainedGrant.legalEntityId,
+      modules: 'all',
+      oauthQuery: 'verified-query',
+      writePolicy: 'read_only',
+    });
     const snapshot = yield* makeCompositionSnapshot([]);
     const inserted: string[] = [];
     let uuidCalls = 0;
@@ -65,7 +66,9 @@ const fixture = (previousProfileId: Option.Option<string>, failCrypto = false) =
       Layer.succeed(OAuthFlow, {
         deleteGrantTokens: () => Effect.die('Unexpected token deletion'),
         findClient: () =>
-          Effect.succeed({ clientId: retainedGrant.clientId, logoUri: null, name: retainedGrant.clientName }),
+          Effect.succeed(
+            Option.some({ clientId: retainedGrant.clientId, logoUri: null, name: retainedGrant.clientName }),
+          ),
         verifyQuery: () =>
           Effect.succeed({
             agent: null,

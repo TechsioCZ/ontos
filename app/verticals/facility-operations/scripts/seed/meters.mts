@@ -10,8 +10,20 @@
 //   - A101 elektřina: a mistyped reading voided with a reason (history kept).
 import type { MetersStateEncoded } from '../../shared/domain/meters.ts';
 
-type Medium = 'ELECTRICITY' | 'WATER' | 'GAS' | 'HEAT';
-type Location = { readonly id: string; readonly kind: 'property' | 'unit'; readonly label: string };
+const seedText = {
+  cez2024Rv07: 'ČEZ-2024-RV-07',
+  cez2025Pk01: 'ČEZ-2025-PK-01',
+  pvk20190457: 'PVK-2019-0457',
+} as const;
+
+type EncodedMeter = MetersStateEncoded['meters'][number];
+type MutableMeter = { -readonly [Key in keyof EncodedMeter]: EncodedMeter[Key] };
+type Medium = Exclude<EncodedMeter['medium'], 'OTHER'>;
+interface Location {
+  readonly id: string;
+  readonly kind: 'property' | 'unit';
+  readonly label: string;
+}
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -19,7 +31,11 @@ const operations = { principalId: '72000000-0000-4000-8000-000000000022', tenant
 
 const parkovaName = 'Rezidence Parková';
 const riversideName = 'Riverside Office Park';
-const property = (id: string, name: string, code: string): Location => ({ id, kind: 'property', label: `${name} (${code})` });
+const property = (id: string, name: string, code: string): Location => ({
+  id,
+  kind: 'property',
+  label: `${name} (${code})`,
+});
 const unit = (id: string, propertyName: string, name: string, code: string): Location => ({
   id,
   kind: 'unit',
@@ -48,30 +64,37 @@ const wiggle = [1, 0.97, 1.04, 0.99, 1.03] as const;
 const readers = ['Petr Novák (správce areálu)', 'Jana Dvořáková (provoz)'] as const;
 
 /** Price per unit of measure in haléře (indicative, used only for seeded period costs). */
-const priceMinor: Readonly<Record<Medium, number>> = { ELECTRICITY: 620, GAS: 3_200, HEAT: 98_000, WATER: 12_800 };
-const unitOf: Readonly<Record<Medium, string>> = { ELECTRICITY: 'kWh', GAS: 'm³', HEAT: 'GJ', WATER: 'm³' };
-const decimalsOf: Readonly<Record<Medium, number>> = { ELECTRICITY: 0, GAS: 1, HEAT: 2, WATER: 2 };
+const priceMinor = { ELECTRICITY: 620, GAS: 3200, HEAT: 98_000, WATER: 12_800 } satisfies Readonly<
+  Record<Medium, number>
+>;
+const unitOf = { ELECTRICITY: 'kWh', GAS: 'm³', HEAT: 'GJ', WATER: 'm³' } satisfies Readonly<Record<Medium, string>>;
+const decimalsOf = { ELECTRICITY: 0, GAS: 1, HEAT: 2, WATER: 2 } satisfies Readonly<Record<Medium, number>>;
 const round = (value: number, decimals: number) => Math.round(value * 10 ** decimals) / 10 ** decimals;
 
+interface ReadingPeriodExtras {
+  costMinor: number;
+  note?: string;
+}
+
 interface MeterSpec {
-  readonly n: number;
-  readonly serialNumber: string;
-  readonly medium: Medium;
-  readonly location: Location;
-  readonly start: number;
-  /** Consumption per month May…September (before wiggle). */
-  readonly monthly: readonly number[];
-  readonly supplyPoint?: string;
-  readonly supplier?: string;
   readonly consumer?: string;
   readonly contract?: string;
+  readonly location: Location;
+  readonly medium: Medium;
+  /** Consumption per month May…September (before wiggle). */
+  readonly monthly: readonly number[];
+  readonly n: number;
   readonly note?: string;
-  /** Multiplies one period (index 0 = May) to stage an anomaly, with a note on that reading. */
-  readonly spike?: { readonly period: number; readonly factor: number; readonly note: string };
   /** Mid-October reading: consumption so far in October (no cost yet). */
   readonly october?: number;
   /** Only an initial reading on this date (new meter). */
   readonly onlyInitial?: { readonly date: string; readonly value: number };
+  readonly serialNumber: string;
+  /** Multiplies one period (index 0 = May) to stage an anomaly, with a note on that reading. */
+  readonly spike?: { readonly factor: number; readonly note: string; readonly period: number };
+  readonly start: number;
+  readonly supplier?: string;
+  readonly supplyPoint?: string;
   /** Adds a mistyped reading on this date that was voided. */
   readonly voidedTypo?: { readonly date: string; readonly value: number };
 }
@@ -81,25 +104,226 @@ const pre = 'ČEZ Prodej, a.s.';
 const water = 'Pražské vodovody a kanalizace, a.s.';
 
 const specs: readonly MeterSpec[] = [
-  { n: 1, serialNumber: 'EL-PK-A101', medium: 'ELECTRICITY', location: a101, start: 18_420, monthly: flat(185), supplyPoint: 'EAN 859182400100457101', supplier: pre, contract: 'ČEZ-2025-PK-01', consumer: 'Nájemce bytu A101', voidedTypo: { date: '2026-07-15', value: 19_560 } },
-  { n: 2, serialNumber: 'VO-PK-A101', medium: 'WATER', location: a101, start: 412.35, monthly: flat(4.6), supplyPoint: 'Podružný vodoměr A101', supplier: water, contract: 'PVK-2019-0457' },
-  { n: 3, serialNumber: 'EL-PK-A102', medium: 'ELECTRICITY', location: a102, start: 26_870, monthly: flat(245), supplyPoint: 'EAN 859182400100457102', supplier: pre, contract: 'ČEZ-2025-PK-01', october: 120 },
-  { n: 4, serialNumber: 'VO-PK-A102', medium: 'WATER', location: a102, start: 688.1, monthly: flat(6.8), supplyPoint: 'Podružný vodoměr A102', supplier: water, contract: 'PVK-2019-0457' },
-  { n: 5, serialNumber: 'EL-PK-A201', medium: 'ELECTRICITY', location: a201, start: 9_310, monthly: flat(128), supplyPoint: 'EAN 859182400100457201', supplier: pre, contract: 'ČEZ-2025-PK-01' },
-  { n: 6, serialNumber: 'VO-PK-A201', medium: 'WATER', location: a201, start: 233.62, monthly: flat(3.1), supplyPoint: 'Podružný vodoměr A201', supplier: water, contract: 'PVK-2019-0457' },
-  { n: 7, serialNumber: 'EL-PK-A202', medium: 'ELECTRICITY', location: a202, start: 15_044, monthly: flat(176), supplyPoint: 'EAN 859182400100457202', supplier: pre, contract: 'ČEZ-2025-PK-01' },
-  { n: 8, serialNumber: 'VO-PK-A202', medium: 'WATER', location: a202, start: 517.4, monthly: flat(4.9), supplyPoint: 'Podružný vodoměr A202', supplier: water, contract: 'PVK-2019-0457', spike: { factor: 1.85, note: 'Výrazně vyšší spotřeba, protéká WC. Nahlášeno údržbě.', period: 4 }, october: 2.7 },
-  { n: 9, serialNumber: 'PL-PK-KOT1', medium: 'GAS', location: parkova, start: 48_210.4, monthly: [900, 610, 505, 520, 600], supplyPoint: 'EIC 27ZG100Z0045712K', supplier: 'Pražská plynárenská, a.s.', contract: 'PP-2024-0981', note: 'Hlavní plynoměr kotelny (vytápění a ohřev vody celého domu).' },
-  { n: 10, serialNumber: 'EL-RV-R101', medium: 'ELECTRICITY', location: r101, start: 84_150, monthly: flat(1_380), supplyPoint: 'EAN 859182400200811101', supplier: pre, contract: 'ČEZ-2024-RV-07', consumer: 'Nájemce obchodního prostoru R101', spike: { factor: 1.5, note: 'Celý měsíc v provozu klimatizace výlohy.', period: 3 } },
-  { n: 11, serialNumber: 'VO-RV-R101', medium: 'WATER', location: r101, start: 1_204.5, monthly: flat(9.5), supplyPoint: 'Podružný vodoměr R101', supplier: water, contract: 'PVK-2021-1120' },
-  { n: 12, serialNumber: 'EL-RV-R201', medium: 'ELECTRICITY', location: r201, start: 52_330, monthly: flat(910), supplyPoint: 'EAN 859182400200811201', supplier: pre, contract: 'ČEZ-2024-RV-07', october: 470 },
-  { n: 13, serialNumber: 'TE-RV-R201', medium: 'HEAT', location: r201, start: 612.4, monthly: [6.2, 3.6, 3.1, 3.2, 3.7], supplyPoint: 'Předávací stanice tepla RV-2', supplier: 'Pražská teplárenská a.s.', contract: 'PT-2022-3301' },
-  { n: 14, serialNumber: 'EL-RV-R301', medium: 'ELECTRICITY', location: r301, start: 47_905, monthly: flat(860), supplyPoint: 'EAN 859182400200811301', supplier: pre, contract: 'ČEZ-2024-RV-07' },
-  { n: 15, serialNumber: 'TE-RV-R301', medium: 'HEAT', location: r301, start: 587.15, monthly: [5.8, 3.4, 2.9, 3.0, 3.5], supplyPoint: 'Předávací stanice tepla RV-3', supplier: 'Pražská teplárenská a.s.', contract: 'PT-2022-3301' },
-  { n: 16, serialNumber: 'VO-RV-R301', medium: 'WATER', location: r301, start: 890.75, monthly: flat(11.2), supplyPoint: 'Podružný vodoměr R301', supplier: water, contract: 'PVK-2021-1120' },
-  { n: 17, serialNumber: 'EL-RV-S01', medium: 'ELECTRICITY', location: s01, start: 21_760, monthly: flat(310), supplyPoint: 'EAN 859182400200811901', supplier: pre, contract: 'ČEZ-2024-RV-07' },
-  { n: 18, serialNumber: 'EL-RV-S01-CH', medium: 'ELECTRICITY', location: s01, start: 0, monthly: flat(0), supplier: pre, note: 'Nový podružný elektroměr chladicího boxu, osazen 1. 10. 2026.', onlyInitial: { date: '2026-10-01', value: 0 } },
-  { n: 19, serialNumber: 'EL-RV-HLAVNI', medium: 'ELECTRICITY', location: riverside, start: 912_400, monthly: flat(5_150), supplyPoint: 'EAN 859182400200811000', supplier: pre, contract: 'ČEZ-2024-RV-07', note: 'Hlavní elektroměr budovy (společné prostory a technologie).', october: 2_480 },
+  {
+    consumer: 'Nájemce bytu A101',
+    contract: seedText.cez2025Pk01,
+    location: a101,
+    medium: 'ELECTRICITY',
+    monthly: flat(185),
+    n: 1,
+    serialNumber: 'EL-PK-A101',
+    start: 18_420,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400100457101',
+    voidedTypo: { date: '2026-07-15', value: 19_560 },
+  },
+  {
+    contract: seedText.pvk20190457,
+    location: a101,
+    medium: 'WATER',
+    monthly: flat(4.6),
+    n: 2,
+    serialNumber: 'VO-PK-A101',
+    start: 412.35,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr A101',
+  },
+  {
+    contract: seedText.cez2025Pk01,
+    location: a102,
+    medium: 'ELECTRICITY',
+    monthly: flat(245),
+    n: 3,
+    october: 120,
+    serialNumber: 'EL-PK-A102',
+    start: 26_870,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400100457102',
+  },
+  {
+    contract: seedText.pvk20190457,
+    location: a102,
+    medium: 'WATER',
+    monthly: flat(6.8),
+    n: 4,
+    serialNumber: 'VO-PK-A102',
+    start: 688.1,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr A102',
+  },
+  {
+    contract: seedText.cez2025Pk01,
+    location: a201,
+    medium: 'ELECTRICITY',
+    monthly: flat(128),
+    n: 5,
+    serialNumber: 'EL-PK-A201',
+    start: 9310,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400100457201',
+  },
+  {
+    contract: seedText.pvk20190457,
+    location: a201,
+    medium: 'WATER',
+    monthly: flat(3.1),
+    n: 6,
+    serialNumber: 'VO-PK-A201',
+    start: 233.62,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr A201',
+  },
+  {
+    contract: seedText.cez2025Pk01,
+    location: a202,
+    medium: 'ELECTRICITY',
+    monthly: flat(176),
+    n: 7,
+    serialNumber: 'EL-PK-A202',
+    start: 15_044,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400100457202',
+  },
+  {
+    contract: seedText.pvk20190457,
+    location: a202,
+    medium: 'WATER',
+    monthly: flat(4.9),
+    n: 8,
+    october: 2.7,
+    serialNumber: 'VO-PK-A202',
+    spike: { factor: 1.85, note: 'Výrazně vyšší spotřeba, protéká WC. Nahlášeno údržbě.', period: 4 },
+    start: 517.4,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr A202',
+  },
+  {
+    contract: 'PP-2024-0981',
+    location: parkova,
+    medium: 'GAS',
+    monthly: [900, 610, 505, 520, 600],
+    n: 9,
+    note: 'Hlavní plynoměr kotelny (vytápění a ohřev vody celého domu).',
+    serialNumber: 'PL-PK-KOT1',
+    start: 48_210.4,
+    supplier: 'Pražská plynárenská, a.s.',
+    supplyPoint: 'EIC 27ZG100Z0045712K',
+  },
+  {
+    consumer: 'Nájemce obchodního prostoru R101',
+    contract: seedText.cez2024Rv07,
+    location: r101,
+    medium: 'ELECTRICITY',
+    monthly: flat(1380),
+    n: 10,
+    serialNumber: 'EL-RV-R101',
+    spike: { factor: 1.5, note: 'Celý měsíc v provozu klimatizace výlohy.', period: 3 },
+    start: 84_150,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400200811101',
+  },
+  {
+    contract: 'PVK-2021-1120',
+    location: r101,
+    medium: 'WATER',
+    monthly: flat(9.5),
+    n: 11,
+    serialNumber: 'VO-RV-R101',
+    start: 1204.5,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr R101',
+  },
+  {
+    contract: seedText.cez2024Rv07,
+    location: r201,
+    medium: 'ELECTRICITY',
+    monthly: flat(910),
+    n: 12,
+    october: 470,
+    serialNumber: 'EL-RV-R201',
+    start: 52_330,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400200811201',
+  },
+  {
+    contract: 'PT-2022-3301',
+    location: r201,
+    medium: 'HEAT',
+    monthly: [6.2, 3.6, 3.1, 3.2, 3.7],
+    n: 13,
+    serialNumber: 'TE-RV-R201',
+    start: 612.4,
+    supplier: 'Pražská teplárenská a.s.',
+    supplyPoint: 'Předávací stanice tepla RV-2',
+  },
+  {
+    contract: seedText.cez2024Rv07,
+    location: r301,
+    medium: 'ELECTRICITY',
+    monthly: flat(860),
+    n: 14,
+    serialNumber: 'EL-RV-R301',
+    start: 47_905,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400200811301',
+  },
+  {
+    contract: 'PT-2022-3301',
+    location: r301,
+    medium: 'HEAT',
+    monthly: [5.8, 3.4, 2.9, 3, 3.5],
+    n: 15,
+    serialNumber: 'TE-RV-R301',
+    start: 587.15,
+    supplier: 'Pražská teplárenská a.s.',
+    supplyPoint: 'Předávací stanice tepla RV-3',
+  },
+  {
+    contract: 'PVK-2021-1120',
+    location: r301,
+    medium: 'WATER',
+    monthly: flat(11.2),
+    n: 16,
+    serialNumber: 'VO-RV-R301',
+    start: 890.75,
+    supplier: water,
+    supplyPoint: 'Podružný vodoměr R301',
+  },
+  {
+    contract: seedText.cez2024Rv07,
+    location: s01,
+    medium: 'ELECTRICITY',
+    monthly: flat(310),
+    n: 17,
+    serialNumber: 'EL-RV-S01',
+    start: 21_760,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400200811901',
+  },
+  {
+    location: s01,
+    medium: 'ELECTRICITY',
+    monthly: flat(0),
+    n: 18,
+    note: 'Nový podružný elektroměr chladicího boxu, osazen 1. 10. 2026.',
+    onlyInitial: { date: '2026-10-01', value: 0 },
+    serialNumber: 'EL-RV-S01-CH',
+    start: 0,
+    supplier: pre,
+  },
+  {
+    contract: seedText.cez2024Rv07,
+    location: riverside,
+    medium: 'ELECTRICITY',
+    monthly: flat(5150),
+    n: 19,
+    note: 'Hlavní elektroměr budovy (společné prostory a technologie).',
+    october: 2480,
+    serialNumber: 'EL-RV-HLAVNI',
+    start: 912_400,
+    supplier: pre,
+    supplyPoint: 'EAN 859182400200811000',
+  },
 ];
 
 const audit = (at: string, by = operations) => ({ createdAt: at, createdBy: by, updatedAt: at, updatedBy: by });
@@ -125,16 +349,19 @@ const buildMeter = (spec: MeterSpec): MetersStateEncoded['meters'][number] => {
   if (spec.onlyInitial === undefined) {
     let value = spec.start;
     push(monthEnds[0], value, { note: 'Počáteční stav při převzetí do evidence.' });
-    spec.monthly.forEach((base, period) => {
+    for (const [period, base] of spec.monthly.entries()) {
       const factor = (wiggle[period] ?? 1) * (spec.spike?.period === period ? spec.spike.factor : 1);
       const consumption = round(base * factor, decimals);
       value += consumption;
       const date = monthEnds[period + 1] ?? monthEnds[0];
-      push(date, value, {
+      const extra: ReadingPeriodExtras = {
         costMinor: Math.round(consumption * priceMinor[spec.medium]),
-        ...(spec.spike?.period === period ? { note: spec.spike.note } : {}),
-      });
-    });
+      };
+      if (spec.spike?.period === period) {
+        extra.note = spec.spike.note;
+      }
+      push(date, value, extra);
+    }
     if (spec.october !== undefined) {
       push('2026-10-15', value + spec.october, { note: 'Průběžný odečet, náklad zatím nevyfakturován.' });
     }
@@ -153,19 +380,16 @@ const buildMeter = (spec: MeterSpec): MetersStateEncoded['meters'][number] => {
       updatedAt: `${spec.voidedTypo.date}T09:20:00.000Z`,
       updatedBy: management,
       value: spec.voidedTypo.value,
-      voided: { at: `${spec.voidedTypo.date}T09:20:00.000Z`, by: management, reason: 'Překlep při zápisu (prohozené číslice), stav ověřen fotkou.' },
+      voided: {
+        at: `${spec.voidedTypo.date}T09:20:00.000Z`,
+        by: management,
+        reason: 'Překlep při zápisu (prohozené číslice), stav ověřen fotkou.',
+      },
     });
   }
   const last = readings.at(-1)?.updatedAt ?? installedAt;
-  const optional = <K extends string>(key: K, value: string | undefined) =>
-    value === undefined ? {} : ({ [key]: value } as Record<K, string>);
-  return {
+  const meter: MutableMeter = {
     ...audit(installedAt, management),
-    ...optional('contract', spec.contract),
-    ...optional('consumer', spec.consumer),
-    ...optional('note', spec.note),
-    ...optional('supplier', spec.supplier),
-    ...optional('supplyPoint', spec.supplyPoint),
     id: meterId(spec.n),
     location: spec.location,
     medium: spec.medium,
@@ -176,6 +400,22 @@ const buildMeter = (spec: MeterSpec): MetersStateEncoded['meters'][number] => {
     updatedAt: last,
     updatedBy: operations,
   };
+  if (spec.contract !== undefined) {
+    meter.contract = spec.contract;
+  }
+  if (spec.consumer !== undefined) {
+    meter.consumer = spec.consumer;
+  }
+  if (spec.note !== undefined) {
+    meter.note = spec.note;
+  }
+  if (spec.supplier !== undefined) {
+    meter.supplier = spec.supplier;
+  }
+  if (spec.supplyPoint !== undefined) {
+    meter.supplyPoint = spec.supplyPoint;
+  }
+  return meter;
 };
 
 export const seedMetersState = (): MetersStateEncoded => ({ meters: specs.map(buildMeter) });

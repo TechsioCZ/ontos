@@ -1,25 +1,20 @@
-import type { AgentQueueBatch, AgentQueueResponse } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentLegalEntityIdSchema,
+  AgentQueueBatchSchema,
+  AgentQueueResponseSchema,
+} from '@app/shared-contracts/agent-proposals';
+import type { AgentQueueResponse } from '@app/shared-contracts/agent-proposals';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Deferred, Effect } from 'effect';
+import { Deferred, Effect, Schema } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
 
 import { ApprovalsPanel } from '../../../src/routes/agent-platform/approvals-panel.tsx';
 
 interface ApprovalsFixture {
-  queue: { state: 'ready'; value: AgentQueueResponse };
+  queue?: { state: 'ready'; value: AgentQueueResponse } | undefined;
 }
 const { fetch, fixture, refresh } = rstest.hoisted(() => {
-  const state: ApprovalsFixture = {
-    queue: {
-      state: 'ready',
-      value: {
-        batches: [],
-        company: { legalEntityId: 'company', legalName: 'Company' },
-        pendingCount: 0,
-        unavailableModules: [],
-      },
-    },
-  };
+  const state: ApprovalsFixture = {};
   return { fetch: rstest.fn<typeof globalThis.fetch>(), fixture: state, refresh: rstest.fn() };
 });
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({ useRouterState: () => '' }));
@@ -32,7 +27,7 @@ rstest.mock('../../../src/routes/agent-platform/platform-page-data.ts', () => ({
     subscribe: () => () => {},
   },
 }));
-const batch: AgentQueueBatch = {
+const batch = Schema.decodeUnknownSync(AgentQueueBatchSchema)({
   agentLabel: 'Agent',
   agentPrincipalId: 'principal',
   batchId: 'batch',
@@ -58,7 +53,7 @@ const batch: AgentQueueBatch = {
   key: 'core:batch',
   moduleLabels: ['Tasks'],
   source: 'core',
-};
+});
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
   fetch.mockReset();
@@ -67,12 +62,12 @@ beforeEach(() => {
   globalThis.fetch = fetch;
   fixture.queue = {
     state: 'ready',
-    value: {
+    value: AgentQueueResponseSchema.make({
       batches: [batch],
-      company: { legalEntityId: 'company', legalName: 'Company' },
+      company: { legalEntityId: AgentLegalEntityIdSchema.make('company'), legalName: 'Company' },
       pendingCount: 1,
       unavailableModules: [],
-    },
+    }),
   };
 });
 afterEach(() => {
@@ -92,12 +87,12 @@ it.effect('retains the original decision and key after a lost response, note edi
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Changed after failure' } });
     fixture.queue = {
       state: 'ready',
-      value: {
+      value: AgentQueueResponseSchema.make({
         batches: [],
-        company: { legalEntityId: 'company', legalName: 'Company' },
+        company: { legalEntityId: AgentLegalEntityIdSchema.make('company'), legalName: 'Company' },
         pendingCount: 0,
         unavailableModules: [],
-      },
+      }),
     };
     view.rerender(<ApprovalsPanel />);
     fetch.mockResolvedValueOnce(Response.json({ results: [{ itemKey: 'core:item', outcome: 'applied' }] }));

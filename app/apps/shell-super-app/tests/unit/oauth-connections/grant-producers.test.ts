@@ -14,6 +14,7 @@ import {
   OAuthEndpointGuardData,
   OAuthEndpointGuardDataLive,
   OAuthGrantOwnersLive,
+  toGrantRow,
 } from '../../../api/oauth-connections/grant-store.ts';
 import type { OAuthRefreshGuardRow } from '../../../api/oauth-connections/types.ts';
 import { grantRegistryFixture, retainedGrant } from './grant-registry-fixture.ts';
@@ -27,7 +28,7 @@ const token = {
   rotationReplayExpiresAt: null,
   userId: retainedGrant.userId,
 };
-const row: OAuthRefreshGuardRow = { ...token, grant: Option.some(retainedGrant) };
+const row: OAuthRefreshGuardRow = { ...token, grant: Option.some(toGrantRow(retainedGrant)) };
 const credentials = (
   overrides: Partial<(typeof OAuthCredentials)['Service']> = {},
 ): (typeof OAuthCredentials)['Service'] => ({
@@ -177,7 +178,7 @@ it.effect('retained revoked bindings do not require admission before family clea
     yield* Effect.gen(function* revoke() {
       yield* (yield* OAuthEndpointGuardData).revokeFamily({
         ...row,
-        grant: Option.some({ ...retainedGrant, status: 'revoked' }),
+        grant: Option.some(toGrantRow({ ...retainedGrant, status: 'revoked' })),
       });
     }).pipe(Effect.provide(dataLayer(registry)));
     expect(revoked).toBe(true);

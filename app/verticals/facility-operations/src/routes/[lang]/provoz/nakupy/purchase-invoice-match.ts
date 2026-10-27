@@ -1,8 +1,8 @@
 export interface IncomingInvoiceLink {
-  readonly sourceOrder?: { readonly id: string; readonly number: string };
   readonly number: string;
-  readonly supplier: string | undefined;
   readonly resourceId: string;
+  readonly sourceOrder?: { readonly id: string; readonly number: string };
+  readonly supplier?: string | undefined;
 }
 
 const normalize = (value: string) => value.trim().toLocaleLowerCase('cs-CZ');

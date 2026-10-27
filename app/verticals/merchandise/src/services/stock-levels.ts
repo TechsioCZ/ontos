@@ -82,12 +82,12 @@ export const availabilityOf = (input: {
   return input.stock <= input.threshold ? 'LOW_STOCK' : 'IN_STOCK';
 };
 
-const availabilityRank: Readonly<Record<Availability, number>> = {
+const availabilityRank = {
   IN_STOCK: 3,
   LOW_STOCK: 2,
   OUT_OF_STOCK: 0,
   UNKNOWN: 1,
-};
+} satisfies Readonly<Record<Availability, number>>;
 
 export const realVariantsOf = (product: Product) => (product.variants ?? []).filter(isRealVariant);
 
@@ -144,10 +144,12 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
     };
   }
   const sellable = variants.filter((variant) => variant.active);
-  const best = sellable.reduce<Availability>(
-    (acc, variant) => (availabilityRank[variant.availability] > availabilityRank[acc] ? variant.availability : acc),
-    'OUT_OF_STOCK',
-  );
+  let best: Availability = 'OUT_OF_STOCK';
+  for (const variant of sellable) {
+    if (availabilityRank[variant.availability] > availabilityRank[best]) {
+      best = variant.availability;
+    }
+  }
   const variantStock = sumOf(variants, (variant) => variant.stockOnHand);
   const grossPrices = (sellable.length > 0 ? sellable : variants).map((variant) => variant.grossPriceMinor);
   return {

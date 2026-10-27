@@ -15,7 +15,11 @@ type SearchAnswer =
       readonly status: 'ready';
       readonly total: number;
     }
-  | { readonly request: string; readonly status: 'error' };
+  | {
+      readonly cause: Effect.Error<ReturnType<typeof searchCategoryTrails>>;
+      readonly request: string;
+      readonly status: 'error';
+    };
 
 const NO_MATCHES: readonly CategoryTrail[] = [];
 const ALL = '__all__';
@@ -39,6 +43,26 @@ export interface CategorySearchComboboxProps {
   readonly selected: CategoryTrail | null;
   readonly size?: 'sm';
 }
+
+const categoryItems = (
+  allLabel: string | undefined,
+  selected: CategoryTrail | null,
+  found: readonly CategoryTrail[],
+) => [
+  ...(allLabel === undefined ? [] : [{ id: ALL, label: allLabel, value: ALL }]),
+  // The picked category stays an option even when the current search does not list it.
+  ...(selected === null || found.some((category) => category.id === selected.id)
+    ? []
+    : [{ id: selected.id, label: selected.trail, value: selected.id }]),
+  ...found.map((category) => ({ id: category.id, label: category.trail, value: category.id })),
+];
+
+const categoryValue = (selected: CategoryTrail | null, allLabel: string | undefined) => {
+  if (selected !== null) {
+    return [selected.id];
+  }
+  return allLabel === undefined ? [] : [ALL];
+};
 
 /**
  * Opening the combobox lists the top-level categories; typing searches any part of the path (`din 912 a 2`),
@@ -74,7 +98,7 @@ export const CategorySearchCombobox = ({
           Effect.sleep(SEARCH_DEBOUNCE).pipe(
             Effect.andThen(searchCategoryTrails(query)),
             Effect.match({
-              onFailure: (): SearchAnswer => ({ request, status: 'error' }),
+              onFailure: (cause): SearchAnswer => ({ cause, request, status: 'error' }),
               onSuccess: ({ matches, total }): SearchAnswer => ({ matches, request, status: 'ready', total }),
             }),
             Effect.map(setAnswer),
@@ -91,14 +115,7 @@ export const CategorySearchCombobox = ({
   // While a newer search runs, the previous matches stay listed.
   const found = answer?.status === 'ready' ? answer.matches : NO_MATCHES;
   const total = answer?.status === 'ready' ? answer.total : 0;
-  const items = [
-    ...(allLabel === undefined ? [] : [{ id: ALL, label: allLabel, value: ALL }]),
-    // The picked category stays an option even when the current search does not list it.
-    ...(selected === null || found.some((category) => category.id === selected.id)
-      ? []
-      : [{ id: selected.id, label: selected.trail, value: selected.id }]),
-    ...found.map((category) => ({ id: category.id, label: category.trail, value: category.id })),
-  ];
+  const items = categoryItems(allLabel, selected, found);
 
   return (
     <>
@@ -139,7 +156,7 @@ export const CategorySearchCombobox = ({
         retryLabel={retryLabel}
         {...(size === undefined ? {} : { size })}
         translations={comboboxTranslations}
-        value={selected === null ? (allLabel === undefined ? [] : [ALL]) : [selected.id]}
+        value={categoryValue(selected, allLabel)}
       />
     </>
   );

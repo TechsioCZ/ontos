@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'effect-rstest';
+import { DateTime, Schema } from 'effect';
 import { periodOf, periodWithDate, readQuery } from '../../src/crm/report-query.ts';
 import { periodOptions } from '../../src/routes/[lang]/crm/prehled-prodeju/report-format.ts';
-import { buildSalesReport, ordersCsv } from '../../shared/domain/reports.ts';
-import type { CrmState } from '../../shared/domain/state.ts';
-import { initialCrmState } from '../../shared/domain/state.ts';
+import { ReportPeriodSchema, buildSalesReport, ordersCsv } from '../../shared/domain/reports.ts';
+import { CrmStateSchema, initialCrmState } from '../../shared/domain/state.ts';
 import { filtersOf } from '../../src/routes/[lang]/crm/prehled-prodeju/report-filters.tsx';
 
-const periods = periodOptions('2026-10-26T10:00:00Z', []);
+const periods = periodOptions(DateTime.makeUnsafe('2026-10-26T10:00:00Z'), []);
 
 it('keeps the unfiltered query defaults during server rendering', () => {
   expect(readQuery()).toEqual({
@@ -66,28 +66,44 @@ describe('sales report calendar period', () => {
     expect(periodOf('2028-02-29:2028-03-01', periods)).toEqual({ from: '2028-02-29', to: '2028-03-01' });
   });
   it('edits a preset without losing the other boundary', () => {
-    expect(periodWithDate({ from: '2026-10-01', to: '2026-10-26' }, 'from', '2026-10-05')).toBe(
-      '2026-10-05:2026-10-26',
-    );
+    expect(
+      periodWithDate(
+        Schema.decodeSync(ReportPeriodSchema)({ from: '2026-10-01', to: '2026-10-26' }),
+        'from',
+        '2026-10-05',
+      ),
+    ).toBe('2026-10-05:2026-10-26');
   });
   it('keeps an edited range ordered', () => {
-    expect(periodWithDate({ from: '2026-10-01', to: '2026-10-07' }, 'from', '2026-10-10')).toBe(
-      '2026-10-10:2026-10-10',
-    );
-    expect(periodWithDate({ from: '2026-10-05', to: '2026-10-07' }, 'to', '2026-10-01')).toBe('2026-10-01:2026-10-01');
+    expect(
+      periodWithDate(
+        Schema.decodeSync(ReportPeriodSchema)({ from: '2026-10-01', to: '2026-10-07' }),
+        'from',
+        '2026-10-10',
+      ),
+    ).toBe('2026-10-10:2026-10-10');
+    expect(
+      periodWithDate(
+        Schema.decodeSync(ReportPeriodSchema)({ from: '2026-10-05', to: '2026-10-07' }),
+        'to',
+        '2026-10-01',
+      ),
+    ).toBe('2026-10-01:2026-10-01');
   });
   it('clears bounds without leaving a hidden custom filter', () => {
-    expect(periodWithDate({ from: '2026-10-05', to: '2026-10-07' }, 'from', '')).toBe(':2026-10-07');
-    expect(periodWithDate({ to: '2026-10-07' }, 'to', '')).toBe('vse');
+    expect(
+      periodWithDate(Schema.decodeSync(ReportPeriodSchema)({ from: '2026-10-05', to: '2026-10-07' }), 'from', ''),
+    ).toBe(':2026-10-07');
+    expect(periodWithDate(Schema.decodeSync(ReportPeriodSchema)({ to: '2026-10-07' }), 'to', '')).toBe('vse');
   });
 });
 
 it('includes both calendar boundaries in the report and CSV, but neither neighbouring day', () => {
   const at = '2026-10-01T00:00:00.000Z';
-  const state: CrmState = {
-    ...initialCrmState,
+  const state = Schema.decodeSync(CrmStateSchema)({
+    ...Schema.encodeSync(CrmStateSchema)(initialCrmState),
     clients: {
-      ...initialCrmState.clients,
+      ...Schema.encodeSync(CrmStateSchema)(initialCrmState).clients,
       items: [
         {
           createdAt: at,
@@ -101,7 +117,7 @@ it('includes both calendar boundaries in the report and CSV, but neither neighbo
       ],
     },
     imports: {
-      ...initialCrmState.imports,
+      ...Schema.encodeSync(CrmStateSchema)(initialCrmState).imports,
       orders: [
         '2026-10-04T23:59:59.000Z',
         '2026-10-05T00:00:00.000Z',
@@ -122,7 +138,7 @@ it('includes both calendar boundaries in the report and CSV, but neither neighbo
         statusHistory: [],
       })),
     },
-  };
+  });
   const report = buildSalesReport(state, { period: periodOf('2026-10-05:2026-10-07', periods) ?? {} });
   expect(report.count).toBe(2);
   expect(report.totals).toEqual([{ amount: '20.00', count: 2, currency: 'CZK' }]);

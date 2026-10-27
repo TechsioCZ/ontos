@@ -73,8 +73,8 @@ const apiHandlersLive = GovernedReadLayer.mergeAll(
 export const makeAvailabilityApiRuntime = () =>
   assembleEffectBffRuntime({
     api: availabilityApi,
-    handlers: apiHandlersLive.pipe(GovernedReadLayer.provide(RequestSchemaProblemLive), GovernedReadLayer.orDie),
-    services: runtimeObservabilityLive.pipe(GovernedReadLayer.orDie),
+    handlers: apiHandlersLive.pipe(GovernedReadLayer.provide(RequestSchemaProblemLive)),
+    services: runtimeObservabilityLive,
   });
 const apiRuntime = makeAvailabilityApiRuntime();
 

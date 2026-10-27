@@ -1,5 +1,6 @@
 import { Clock, ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { identity } from 'effect/Function';
 import { TestClock } from 'effect/testing';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 
@@ -11,6 +12,7 @@ import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/outbox/health.ts';
 import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
+import type { OutboxWorkerEntry } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import type { OutboxCycleResult } from '../../src/outbox/runtime.ts';
 import {
@@ -253,6 +255,37 @@ it.effect('retains a typed startup failure and releases partial startup before a
     expect(yield* cyclesOf(loop)).toBe(0);
     expect(yield* Ref.get(loop.disposed)).toBe(false);
     expect(yield* Ref.get(startupReleased)).toBe(true);
+  }),
+);
+
+it.effect('preserves distinct owner failures and startup errors when hosting heterogeneous entries', () =>
+  Effect.gen(function* heterogeneousHostFailures() {
+    const secondFailure = new HostStartupRejected({});
+    const first: OutboxWorkerEntry<PersistenceFailure> = {
+      claimOwnerPrefix: 'first-owner-outbox-worker',
+      registrations: 0,
+      runLoop: () => Effect.never,
+    };
+    const second: OutboxWorkerEntry<HostStartupRejected> = {
+      claimOwnerPrefix: 'second-owner-outbox-worker',
+      registrations: 0,
+      runLoop: () => Effect.fail(secondFailure),
+    };
+    const startupFailure = new ActiveApplicationCompositionUnavailableError({ reason: 'controlled startup failure' });
+    const startupHost = runOutboxWorkerHost({
+      entries: [first, second],
+      startup: () => Effect.fail(startupFailure),
+    });
+    const acceptHostFailure = identity<Effect.Error<typeof startupHost>>;
+    expect(acceptHostFailure(controlledFailure)).toBe(controlledFailure);
+    expect(acceptHostFailure(secondFailure)).toBe(secondFailure);
+    expect(acceptHostFailure(startupFailure)).toBe(startupFailure);
+    // @ts-expect-error The host must retain its concrete failure union, not admit unrelated owner errors.
+    acceptHostFailure({ _tag: 'UnregisteredOwnerFailure' });
+
+    expect(yield* startupHost.pipe(hostEnvironment({}), Effect.flip)).toBe(startupFailure);
+    const loopFailure = yield* runOutboxWorkerHost({ entries: [first, second] }).pipe(hostEnvironment({}), Effect.flip);
+    expect(loopFailure).toBe(secondFailure);
   }),
 );
 

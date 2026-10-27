@@ -2,13 +2,30 @@
 // CSV import batches, imported external orders (projection, never edited), state history, row errors, dedup,
 // approved external-customer links and the manual pairing history.
 // Adding fields: make them Schema.optionalKey (persisted JSON from older revisions must still decode).
-import { Schema } from 'effect';
-import type { CrmViewer } from './access.ts';
+import { DateTime, Schema } from 'effect';
 import { canSeeEverything } from './access.ts';
-import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
+import type { CrmViewer } from './access.ts';
+
+import {
+  CalendarDateSchema,
+  EntityIdSchema,
+  IsoTimeSchema,
+  LongTextSchema,
+  PrincipalIdSchema,
+  ShortTextSchema,
+} from './common.ts';
+
+/** External order dates may be civil days or actual instants; the source determines which. */
+export const OrderDateSchema = Schema.Union([CalendarDateSchema, IsoTimeSchema]);
+export type OrderDate = typeof OrderDateSchema.Type;
+export function orderDateText(value: OrderDate): string;
+export function orderDateText(value: OrderDate | undefined): string | undefined;
+export function orderDateText(value: OrderDate | undefined): string | undefined {
+  return DateTime.isDateTime(value) ? DateTime.formatIso(value) : value;
+}
 
 /** Exact decimal as a string ("1234.50"); never a float. Always paired with a currency. */
-export const DecimalStringSchema = Schema.String.check(Schema.isPattern(/^-?\d{1,15}(\.\d{1,4})?$/u));
+export const DecimalStringSchema = Schema.String.check(Schema.isPattern(/^-?\d{1,15}(?:\.\d{1,4})?$/u));
 
 export const ImportRowErrorSchema = Schema.Struct({
   message: LongTextSchema,
@@ -48,11 +65,11 @@ export const ImportBatchSchema = Schema.Struct({
   /** Status changes applied to existing orders. */
   updated: Schema.optionalKey(Schema.Int),
   /** Rows kept but flagged "vyžaduje kontrolu" (out-of-order event, cross-source duplicate). */
+  results: Schema.optionalKey(Schema.Array(ImportRowResultSchema)),
   review: Schema.optionalKey(Schema.Int),
+  unknownColumns: Schema.optionalKey(Schema.Array(ShortTextSchema)),
   /** New orders without an approved customer link. */
   unpaired: Schema.optionalKey(Schema.Int),
-  results: Schema.optionalKey(Schema.Array(ImportRowResultSchema)),
-  unknownColumns: Schema.optionalKey(Schema.Array(ShortTextSchema)),
 });
 export type ImportBatch = typeof ImportBatchSchema.Type;
 
@@ -113,6 +130,10 @@ export const ImportedOrderSchema = Schema.Struct({
   currency: Schema.optionalKey(ShortTextSchema),
   customerName: Schema.optionalKey(ShortTextSchema),
   /** Another order this one duplicates across sources (kept out of confirmed totals). */
+  candidates: Schema.optionalKey(Schema.Array(PairingCandidateSchema)),
+  customerEmail: Schema.optionalKey(ShortTextSchema),
+  customerRegNo: Schema.optionalKey(ShortTextSchema),
+  decisions: Schema.optionalKey(Schema.Array(OrderDecisionSchema)),
   duplicateOf: Schema.optionalKey(EntityIdSchema),
   externalCustomerId: Schema.optionalKey(ShortTextSchema),
   externalId: ShortTextSchema,
@@ -121,16 +142,12 @@ export const ImportedOrderSchema = Schema.Struct({
   /** Present only when the source really sends lines (never invented). */
   lines: Schema.optionalKey(Schema.Array(OrderLineSchema)),
   number: Schema.optionalKey(ShortTextSchema),
-  orderedAt: Schema.optionalKey(IsoTimeSchema),
+  orderedAt: Schema.optionalKey(OrderDateSchema),
   pairing: PairingStateSchema,
   rawStatus: ShortTextSchema,
   receivedAt: IsoTimeSchema,
   source: ShortTextSchema,
   statusHistory: Schema.Array(OrderStatusEventSchema),
-  candidates: Schema.optionalKey(Schema.Array(PairingCandidateSchema)),
-  customerEmail: Schema.optionalKey(ShortTextSchema),
-  customerRegNo: Schema.optionalKey(ShortTextSchema),
-  decisions: Schema.optionalKey(Schema.Array(OrderDecisionSchema)),
   /** Why the order is flagged (e.g. the same number from another source). */
   reviewReason: Schema.optionalKey(LongTextSchema),
 });
@@ -152,13 +169,16 @@ export const CustomerLinkSchema = Schema.Struct({
 });
 export type CustomerLink = typeof CustomerLinkSchema.Type;
 
-interface PartyHolder {
-  readonly id: string;
+interface PartyHolder<Id extends string> {
+  readonly id: Id;
   readonly partyRef?: { readonly counterpartyId?: string | undefined } | undefined;
 }
 
 /** The CRM client an approved link pairs orders to: the current holder of its Counterparty, else `clientId`. */
-export const linkTargetClientId = (clients: readonly PartyHolder[], link: CustomerLink): string => {
+export const linkTargetClientId = <Id extends string>(
+  clients: readonly PartyHolder<Id>[],
+  link: { readonly clientId: Id; readonly counterpartyId?: string | undefined },
+): Id => {
   const counterpartyId =
     link.counterpartyId ?? clients.find((client) => client.id === link.clientId)?.partyRef?.counterpartyId;
   if (counterpartyId === undefined) {
@@ -203,9 +223,12 @@ export const projectImportsSlice = (
   if (canSeeEverything(viewer)) {
     return slice;
   }
-  const orders = slice.orders
-    .filter((order) => order.clientId !== undefined && visible.has(order.clientId))
-    .map(({ candidates: _candidates, ...order }) => order);
+  const orders: ImportedOrder[] = [];
+  for (const { candidates: _candidates, ...order } of slice.orders) {
+    if (order.clientId !== undefined && visible.has(order.clientId)) {
+      orders.push(order);
+    }
+  }
   const orderIds = new Set(orders.map((order) => order.id));
   return {
     batches: [],

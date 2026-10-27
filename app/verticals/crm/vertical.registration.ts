@@ -28,11 +28,11 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     pages: {
       // <generated-module-registration-pages>
       'page-clients': () => import('./src/routes/[lang]/crm/klienti/page.tsx'),
-      'page-visits': () => import('./src/routes/[lang]/crm/navstevy/page.tsx'),
-      'page-plan': () => import('./src/routes/[lang]/crm/k-osloveni/page.tsx'),
       'page-imports': () => import('./src/routes/[lang]/crm/importy/page.tsx'),
       'page-pairing': () => import('./src/routes/[lang]/crm/parovani/page.tsx'),
+      'page-plan': () => import('./src/routes/[lang]/crm/k-osloveni/page.tsx'),
       'page-reports': () => import('./src/routes/[lang]/crm/prehled-prodeju/page.tsx'),
+      'page-visits': () => import('./src/routes/[lang]/crm/navstevy/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

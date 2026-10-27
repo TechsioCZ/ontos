@@ -7,27 +7,38 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import { Option, Schema } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { WorkCommand } from '../../../../shared/actions/apply-command.ts';
 import { PlanningCommandSchema } from '../../../../shared/actions/apply-command.ts';
+import { ProjectStateSchema } from '../../../../shared/apis/records.ts';
 import type { AssignmentPrincipal, RecordsResponse, WorkProject } from '../../../../shared/apis/records.ts';
 import { formatDueDate, isOpenTask, selectOption, todayIsoDate } from './tasks-model.ts';
 import { ChangeHistory } from './change-history.tsx';
 
 const states = { ACTIVE: 'Aktivní', DONE: 'Dokončený', PAUSED: 'Pozastavený', PLANNED: 'Plánovaný' } as const;
-interface Draft {
-  title: string;
-  plannedStart: string;
-  plannedEnd: string;
-  responsiblePrincipalRef: string;
-  state: WorkProject['state'];
-  milestones: { title: string; dueDate: string; completed: boolean }[];
-}
+const hoursFormatter = new Intl.NumberFormat('cs-CZ');
+type MilestoneDraft = WorkProject['milestones'][number] & { readonly editorKey: number };
+type Draft = Pick<WorkProject, 'plannedEnd' | 'plannedStart' | 'state' | 'title'> & {
+  readonly milestones: readonly MilestoneDraft[];
+  readonly responsiblePrincipalRef: string;
+};
 type Outcome = { readonly ok: true } | { readonly message: string; readonly ok: false };
 type Apply = (command: WorkCommand, onDone: (outcome: Outcome) => void) => void;
 
+/** Display identity follows content; identical text rows are distinguished only within their own group. */
+const milestoneDisplayItems = (milestones: WorkProject['milestones']) => {
+  const occurrences = new Map<string, number>();
+  return milestones.map((milestone) => {
+    const { completed, dueDate, title } = milestone;
+    const content = `${completed ? '1' : '0'}:${dueDate.length}:${dueDate}:${title.length}:${title}`;
+    const occurrence = occurrences.get(content) ?? 0;
+    occurrences.set(content, occurrence + 1);
+    return { key: `${content}:${occurrence}`, milestone };
+  });
+};
+
 const initial = (project: WorkProject | undefined): Draft => ({
-  milestones: (project?.milestones ?? []).map((milestone) => ({ ...milestone })),
+  milestones: (project?.milestones ?? []).map((milestone, editorKey) => ({ ...milestone, editorKey })),
   plannedEnd: project?.plannedEnd ?? todayIsoDate(),
   plannedStart: project?.plannedStart ?? todayIsoDate(),
   responsiblePrincipalRef:
@@ -36,7 +47,7 @@ const initial = (project: WorkProject | undefined): Draft => ({
   title: project?.title ?? '',
 });
 
-const projectFieldLabels: Record<string, string> = {
+const projectFieldLabels = {
   milestones: 'Milníky',
   plannedEnd: 'Plánovaný konec',
   plannedStart: 'Plánovaný začátek',
@@ -47,15 +58,15 @@ const projectFieldLabels: Record<string, string> = {
 
 const ProjectEditor = ({
   actorName,
-  apply,
   close,
+  onApply,
   principalNames,
   principals,
   project,
 }: {
   readonly actorName: (principalId: string, displayName?: string) => string;
-  readonly apply: Apply;
   readonly close: () => void;
+  readonly onApply: Apply;
   readonly principalNames: ReadonlyMap<string, string>;
   readonly principals: readonly AssignmentPrincipal[];
   readonly project: WorkProject | undefined;
@@ -79,21 +90,26 @@ const ProjectEditor = ({
     return value;
   };
   const [draft, setDraft] = useState(() => initial(project));
+  const nextMilestoneKey = useRef(draft.milestones.length);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const patch = (value: Partial<Draft>) => setDraft((current) => ({ ...current, ...value }));
   const save = () => {
-    const command = Schema.decodeUnknownOption(PlanningCommandSchema)({
+    const input = {
       _tag: project === undefined ? 'CreateProject' : 'UpdateProject',
       ...draft,
+      milestones: draft.milestones.map(({ completed, dueDate, title }) => ({ completed, dueDate, title })),
       responsiblePrincipalRef:
         selectedPrincipal(principals, draft.responsiblePrincipalRef) ??
         (project?.responsiblePrincipalRef !== undefined &&
         principalKey(project.responsiblePrincipalRef) === draft.responsiblePrincipalRef
           ? project.responsiblePrincipalRef
           : undefined),
-      ...(project === undefined ? {} : { id: project.id }),
-    });
+    };
+    if (project !== undefined) {
+      Object.assign(input, { id: project.id });
+    }
+    const command = Schema.decodeUnknownOption(PlanningCommandSchema)(input);
     if (
       Option.isNone(command) ||
       draft.plannedStart > draft.plannedEnd ||
@@ -106,7 +122,7 @@ const ProjectEditor = ({
     }
     setBusy(true);
     setError(undefined);
-    apply(command.value, (outcome) => {
+    onApply(command.value, (outcome) => {
       setBusy(false);
       if (outcome.ok) {
         close();
@@ -189,8 +205,11 @@ const ProjectEditor = ({
           items={Object.entries(states).map(([value, label]) => selectOption(label, value))}
           label="Stav"
           onValueChange={({ value }) => {
-            const next = value[0];
-            if (next !== undefined && next in states) patch({ state: next as Draft['state'] });
+            const [next] = value;
+            const decoded = Schema.decodeUnknownOption(ProjectStateSchema)(next);
+            if (Option.isSome(decoded)) {
+              patch({ state: decoded.value });
+            }
           }}
           value={[draft.state]}
         />
@@ -198,9 +217,16 @@ const ProjectEditor = ({
           <h3 className="font-semibold">Milníky</h3>
           <Button
             disabled={busy || draft.milestones.length >= 50}
-            onClick={() =>
-              patch({ milestones: [...draft.milestones, { title: '', dueDate: draft.plannedEnd, completed: false }] })
-            }
+            onClick={() => {
+              const editorKey = nextMilestoneKey.current;
+              nextMilestoneKey.current += 1;
+              patch({
+                milestones: [
+                  ...draft.milestones,
+                  { completed: false, dueDate: draft.plannedEnd, editorKey, title: '' },
+                ],
+              });
+            }}
             size="sm"
             variant="secondary"
           >
@@ -211,7 +237,7 @@ const ProjectEditor = ({
           <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
         )}
         {draft.milestones.map((milestone, index) => (
-          <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={index}>
+          <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={milestone.editorKey}>
             <FormInput
               disabled={busy}
               label="Název milníku"
@@ -271,7 +297,7 @@ const ProjectEditor = ({
             actorName={actorName}
             createdAt={project.createdAt}
             entries={project.history}
-            fieldLabel={(field) => projectFieldLabels[field] ?? field}
+            fieldLabel={(field) => Object.entries(projectFieldLabels).find(([name]) => name === field)?.[1] ?? field}
             formatValue={historyValue}
             updatedAt={project.updatedAt}
           />
@@ -283,20 +309,20 @@ const ProjectEditor = ({
 
 export const WorkPlanning = ({
   actorName,
-  apply,
-  openTask,
+  onApply,
+  onOpenTask,
   principalNames,
   principals,
   records,
 }: {
   readonly actorName: (principalId: string, displayName?: string) => string;
-  readonly apply: Apply;
-  readonly openTask: (task: RecordsResponse['items'][number]) => void;
+  readonly onApply: Apply;
+  readonly onOpenTask: (task: RecordsResponse['items'][number]) => void;
   readonly principalNames: ReadonlyMap<string, string>;
   readonly principals: readonly AssignmentPrincipal[];
   readonly records: RecordsResponse;
 }) => {
-  const [editor, setEditor] = useState<{ project: WorkProject | undefined }>();
+  const [editor, setEditor] = useState<{ readonly project?: WorkProject }>();
   const [from, setFrom] = useState(`${todayIsoDate().slice(0, 7)}-01`);
   const [to, setTo] = useState(`${todayIsoDate().slice(0, 7)}-31`);
   const projects = records.projects ?? [];
@@ -326,7 +352,7 @@ export const WorkPlanning = ({
       <SectionCard
         actions={
           records.canWrite && (
-            <Button size="sm" variant="primary" onClick={() => setEditor({ project: undefined })}>
+            <Button onClick={() => setEditor({})} size="sm" variant="primary">
               Nový projekt
             </Button>
           )
@@ -367,8 +393,8 @@ export const WorkPlanning = ({
                 </div>
                 {project.milestones.length > 0 && (
                   <ul className="flex flex-col gap-100">
-                    {project.milestones.map((milestone, index) => (
-                      <li key={index}>
+                    {milestoneDisplayItems(project.milestones).map(({ key, milestone }) => (
+                      <li key={key}>
                         {milestone.completed ? 'Dokončeno: ' : 'Milník: '}
                         {milestone.title} · {formatDueDate(milestone.dueDate)}
                       </li>
@@ -383,7 +409,7 @@ export const WorkPlanning = ({
                     <ul>
                       {tasks.map((task) => (
                         <li key={task.ref.resourceId}>
-                          <button className="text-left underline" onClick={() => openTask(task)} type="button">
+                          <button className="text-left underline" onClick={() => onOpenTask(task)} type="button">
                             {task.title}
                           </button>
                         </li>
@@ -426,11 +452,11 @@ export const WorkPlanning = ({
               { accessorKey: 'count', header: 'Otevřené úkoly' },
               {
                 accessorKey: 'hours',
-                header: 'Plánované hodiny',
                 cell: (info) =>
                   info.row.original.unknown === info.row.original.count
                     ? 'Bez odhadu'
-                    : `${new Intl.NumberFormat('cs-CZ').format(info.row.original.hours)} h`,
+                    : `${hoursFormatter.format(info.row.original.hours)} h`,
+                header: 'Plánované hodiny',
               },
               { accessorKey: 'unknown', header: 'Úkoly bez odhadu' },
             ]}
@@ -448,9 +474,9 @@ export const WorkPlanning = ({
       {editor !== undefined && (
         <ProjectEditor
           actorName={actorName}
-          apply={apply}
           close={() => setEditor(undefined)}
           key={editor.project?.id ?? 'new'}
+          onApply={onApply}
           principalNames={principalNames}
           principals={principals}
           project={editor.project}

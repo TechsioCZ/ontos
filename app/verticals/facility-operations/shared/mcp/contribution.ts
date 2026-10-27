@@ -129,7 +129,10 @@ export const facilityOperationsMcpContribution = defineOntosMcpContribution({
   page: '/provoz/prehled',
   reads: {
     overview: {
-      title: { cs: 'Termíny, incidenty a vyhledávání provozu', en: 'Facility operations deadlines, incidents and search' },
+      title: {
+        cs: 'Termíny, incidenty a vyhledávání provozu',
+        en: 'Facility operations deadlines, incidents and search',
+      },
     },
     records: { title: { cs: 'Přehled provozních agend', en: 'Facility operations overview' } },
   },

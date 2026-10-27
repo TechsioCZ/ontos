@@ -1,26 +1,15 @@
-// @effect-diagnostics globalTimers:off
 // Display helpers of the sales report (crm-reports lane): exact-decimal money, CSV download, period presets.
-import type { MoneyTotal, ReportPeriod } from '../../../../../shared/domain/reports.ts';
+import { DateTime, Effect } from 'effect';
+import { CalendarDateSchema } from '../../../../../shared/domain/common.ts';
+import { useCrmMoneyFormats } from '../../../../crm/number-formats.tsx';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { monthLabel } from '../../../../../shared/domain/reports.ts';
+import type { MoneyTotal, ReportPeriod } from '../../../../../shared/domain/reports.ts';
 
-const moneyFormats = new Map<string, Intl.NumberFormat>();
-
-/** "48250.50" + "CZK" -> "48 250,50 Kč". Display only; sums are exact decimals in the domain. */
-export const formatDecimalMoney = (amount: string, currency: string) => {
-  let format = moneyFormats.get(currency);
-  if (format === undefined) {
-    format = new Intl.NumberFormat('cs-CZ', {
-      currency,
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 0,
-      style: 'currency',
-    });
-    moneyFormats.set(currency, format);
-  }
-  const value = Number(amount);
-  return Number.isInteger(value)
-    ? format.format(value)
-    : new Intl.NumberFormat('cs-CZ', { currency, minimumFractionDigits: 2, style: 'currency' }).format(value);
+/** "48250.50" + "CZK" -> "48 250,50 Kč". Display only; sums stay exact decimals. */
+export const useFormatDecimalMoney = () => {
+  const { formatReportCurrency } = useCrmMoneyFormats();
+  return (amount: string, currency: string) => formatReportCurrency(Number(amount), currency);
 };
 
 export const totalIn = (totals: readonly MoneyTotal[], currency: string) =>
@@ -32,10 +21,21 @@ export const downloadCsv = (content: string, fileName: string) => {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = fileName;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  let clicked = false;
+  try {
+    document.body.append(anchor);
+    anchor.click();
+    clicked = true;
+  } finally {
+    anchor.remove();
+    if (clicked) {
+      browserRuntime.runFork(
+        Effect.sleep('10 seconds').pipe(Effect.ensuring(Effect.sync(() => URL.revokeObjectURL(url)))),
+      );
+    } else {
+      URL.revokeObjectURL(url);
+    }
+  }
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -58,8 +58,8 @@ const daysInMonth = (year: number, month: number) => {
 };
 
 const monthRange = (month: string): ReportPeriod => ({
-  from: `${month}-01`,
-  to: `${month}-${pad(daysInMonth(Number(month.slice(0, 4)), Number(month.slice(5, 7))))}`,
+  from: CalendarDateSchema.make(`${month}-01`),
+  to: CalendarDateSchema.make(`${month}-${pad(daysInMonth(Number(month.slice(0, 4)), Number(month.slice(5, 7))))}`),
 });
 
 const shiftMonth = (month: string, delta: number) => {
@@ -68,20 +68,32 @@ const shiftMonth = (month: string, delta: number) => {
 };
 
 /** Presets relative to the server's "now", then one entry per month that has data (newest first). */
-export const periodOptions = (now: string, monthsWithData: readonly string[]): PeriodOption[] => {
-  const today = now.slice(0, 10);
+export const periodOptions = (now: DateTime.Utc, monthsWithData: readonly string[]): PeriodOption[] => {
+  const today = CalendarDateSchema.make(DateTime.formatIsoDateUtc(now));
   const thisMonth = today.slice(0, 7);
   const presets: PeriodOption[] = [
     { label: 'Celé období', period: {}, value: 'vse' },
-    { label: 'Tento měsíc', period: { from: `${thisMonth}-01`, to: today }, value: 'tento-mesic' },
+    {
+      label: 'Tento měsíc',
+      period: { from: CalendarDateSchema.make(`${thisMonth}-01`), to: today },
+      value: 'tento-mesic',
+    },
     { label: 'Minulý měsíc', period: monthRange(shiftMonth(thisMonth, -1)), value: 'minuly-mesic' },
-    { label: 'Poslední 3 měsíce', period: { from: `${shiftMonth(thisMonth, -2)}-01`, to: today }, value: '3-mesice' },
+    {
+      label: 'Poslední 3 měsíce',
+      period: { from: CalendarDateSchema.make(`${shiftMonth(thisMonth, -2)}-01`), to: today },
+      value: '3-mesice',
+    },
     {
       label: 'Posledních 12 měsíců',
-      period: { from: `${shiftMonth(thisMonth, -11)}-01`, to: today },
+      period: { from: CalendarDateSchema.make(`${shiftMonth(thisMonth, -11)}-01`), to: today },
       value: '12-mesicu',
     },
-    { label: `Rok ${today.slice(0, 4)}`, period: { from: `${today.slice(0, 4)}-01-01`, to: today }, value: 'letos' },
+    {
+      label: `Rok ${today.slice(0, 4)}`,
+      period: { from: CalendarDateSchema.make(`${today.slice(0, 4)}-01-01`), to: today },
+      value: 'letos',
+    },
   ];
   const months = [...new Set(monthsWithData)]
     .toSorted((left, right) => right.localeCompare(left))

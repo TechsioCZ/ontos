@@ -6,9 +6,11 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadServiceFactory } from '@app/core-runtime';
+
 import { Effect, Schema } from 'effect';
 import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../shared/apis/agent-review.ts';
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
+
 import { CrmStateSchema } from '../../shared/apis/records.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import { clientIdOf, clientReadEvidence, reviewCrmProposal, seesAllClients } from './agent-review.ts';
@@ -41,7 +43,7 @@ const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<Retu
     ),
   );
 
-const encodeState = Schema.encodeSync(CrmStateSchema);
+const encodeState = Schema.encodeEffect(CrmStateSchema);
 const crmUnavailable = (cause: unknown) =>
   Object.defineProperty(
     new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'CRM is temporarily unavailable' }),
@@ -84,19 +86,25 @@ export const agentReviewRead = defineRead(
       // The reader's own records answer: clients narrowed to what they may see, and their rights.
       finishCrmRecords({}, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(crmUnavailable),
-        Effect.map((records) => {
-          const clients = encodeState(records.state).clients.items;
-          const items = input.items.map((request) => reviewCrmProposal(request, records.viewer, clients));
-          const [request] = input.items;
-          const clientId = input.items.length === 1 && request !== undefined ? clientIdOf(request.command) : undefined;
-          return {
-            evidence: clientReadEvidence(
-              items.length,
-              clients.find((client) => client.id === clientId),
-            ),
-            result: { items, seesAllRecords: seesAllClients(records.viewer) },
-          };
-        }),
+        Effect.flatMap((records) =>
+          encodeState(records.state).pipe(
+            Effect.mapError(crmUnavailable),
+            Effect.map((encodedState) => {
+              const clients = encodedState.clients.items;
+              const items = input.items.map((request) => reviewCrmProposal(request, records.viewer, clients));
+              const [request] = input.items;
+              const clientId =
+                input.items.length === 1 && request !== undefined ? clientIdOf(request.command) : undefined;
+              return {
+                evidence: clientReadEvidence(
+                  items.length,
+                  clients.find((client) => client.id === clientId),
+                ),
+                result: { items, seesAllRecords: seesAllClients(records.viewer) },
+              };
+            }),
+          ),
+        ),
       ),
     // oxlint-enable perfectionist/sort-objects
   },

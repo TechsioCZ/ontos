@@ -48,6 +48,13 @@ export interface ReadTestHarnessOptions {
 }
 
 const scopeValuesSchema = Schema.Tuple([Schema.String, Schema.String]);
+const readCommittedIsolation = 'read committed';
+const scopeWithReadFenceValuesSchema = Schema.Tuple([
+  Schema.String,
+  Schema.String,
+  Schema.Literal(readCommittedIsolation),
+]);
+const readFenceValuesSchema = Schema.Tuple([Schema.Literal(readCommittedIsolation)]);
 
 /**
  * Scripted SQL transport for the real Core Read lifecycle and the registration's original owner
@@ -84,7 +91,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         return [];
       }
       if (text === "select current_setting('transaction_isolation') as isolation") {
-        return [{ isolation: 'read committed' }];
+        return [{ isolation: readCommittedIsolation }];
       }
       if (
         text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))"
@@ -163,6 +170,42 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         );
         return [
           {
+            legal_entity_id: scope.legalEntityId,
+            operation_at: options.operationTime,
+            role: connection.role,
+            tenant_id: scope.tenantId,
+          },
+        ];
+      }
+      // The lock statement installs/verifies scope but cannot serve the authority read: admission
+      // must use a separate post-lock snapshot. Match both exact native scope-authority protocols.
+      if (
+        text ===
+        "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $3 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock"
+      ) {
+        const [tenantId, legalEntityId, isolation] = yield* Schema.decodeUnknownEffect(scopeWithReadFenceValuesSchema)(
+          params,
+        ).pipe(Effect.orDie);
+        scope.tenantId = tenantId;
+        scope.legalEntityId = legalEntityId;
+        return [
+          {
+            isolation,
+            legal_entity_id: scope.legalEntityId,
+            operation_at: options.operationTime,
+            role: connection.role,
+            tenant_id: scope.tenantId,
+          },
+        ];
+      }
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $1 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock"
+      ) {
+        const [isolation] = yield* Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(Effect.orDie);
+        return [
+          {
+            isolation,
             legal_entity_id: scope.legalEntityId,
             operation_at: options.operationTime,
             role: connection.role,

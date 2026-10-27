@@ -16,26 +16,32 @@ export interface ObjectSelection {
 export const emptyObjectSelection: ObjectSelection = { contractId: '', costCenter: '', propertyId: '', unitId: '' };
 
 /** Selection → command anchors, without empty keys. Unknown ids (stale lists) are dropped. */
-export const objectAnchors = (
-  objects: RentalObjects,
-  selection: ObjectSelection,
-): {
-  readonly contractRef?: ContractRef;
-  readonly costCenter?: string;
-  readonly propertyRef?: PropertyRef;
-  readonly unitRef?: UnitRef;
-} => {
+export interface InvoiceObjectAnchors {
+  contractRef?: ContractRef;
+  costCenter?: string;
+  propertyRef?: PropertyRef;
+  unitRef?: UnitRef;
+}
+export const objectAnchors = (objects: RentalObjects, selection: ObjectSelection): InvoiceObjectAnchors => {
   const property = objects.properties.find((entry) => entry.ref.resourceId === selection.propertyId);
   const unit = objects.units.find(
     (entry) => entry.ref.resourceId === selection.unitId && entry.propertyId === selection.propertyId,
   );
   const contract = objects.contracts.find((entry) => entry.ref.resourceId === selection.contractId);
-  return {
-    ...(contract === undefined ? {} : { contractRef: contract.ref }),
-    ...(selection.costCenter === '' ? {} : { costCenter: selection.costCenter }),
-    ...(property === undefined ? {} : { propertyRef: property.ref }),
-    ...(property === undefined || unit === undefined ? {} : { unitRef: unit.ref }),
-  };
+  const anchors: InvoiceObjectAnchors = {};
+  if (contract !== undefined) {
+    anchors.contractRef = contract.ref;
+  }
+  if (selection.costCenter !== '') {
+    anchors.costCenter = selection.costCenter;
+  }
+  if (property !== undefined) {
+    anchors.propertyRef = property.ref;
+  }
+  if (property !== undefined && unit !== undefined) {
+    anchors.unitRef = unit.ref;
+  }
+  return anchors;
 };
 
 /** Readable "Hala B (HB) · B-101 – Kancelář · Správa areálu" for an assigned object. */

@@ -6,7 +6,8 @@ import {
   PROTOCOL_VERSION_META_KEY,
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client';
-import { Crypto, Effect, FiberSet } from 'effect';
+import { AgentProposalSubmitResponseSchema, AgentQueueResponseSchema } from '@app/shared-contracts/agent-proposals';
+import { Crypto, Effect, FiberSet, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
@@ -71,16 +72,23 @@ const fakeBackend = (calls: Recorded[], proposals: unknown[] = []): McpBackend =
       }
       return { body: { ok: true }, status: 200 };
     }),
-  listProposals: Effect.succeed({
-    batches: [],
-    company: { legalEntityId: 'le', legalName: 'Obchodní firma' },
-    pendingCount: 0,
-    unavailableModules: [],
-  }),
+  listProposals: Effect.succeed(
+    Schema.decodeUnknownSync(AgentQueueResponseSchema)({
+      batches: [],
+      company: { legalEntityId: 'le', legalName: 'Obchodní firma' },
+      pendingCount: 0,
+      unavailableModules: [],
+    }),
+  ),
   submitProposals: (request) =>
     Effect.sync(() => {
       proposals.push(request);
-      return { batchId: 'batch-1', proposalIds: ['p-1'], replayed: false, reviewPath: '/cs/sprava/ke-schvaleni' };
+      return Schema.decodeUnknownSync(AgentProposalSubmitResponseSchema)({
+        batchId: 'batch-1',
+        proposalIds: ['p-1'],
+        replayed: false,
+        reviewPath: '/cs/sprava/ke-schvaleni',
+      });
     }),
 });
 

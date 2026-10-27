@@ -1,15 +1,8 @@
+import type { SendEmail } from '@cloudflare/workers-types';
 import { Effect, Predicate, Schema } from 'effect';
 
-// A different type name and filename still describe the foreign Workers SDK.
-export interface NativeMailBinding {
-  readonly send: (message: {
-    readonly from: string;
-    readonly html?: string;
-    readonly subject: string;
-    readonly text: string;
-    readonly to: string;
-  }) => Promise<{ readonly messageId: string }>;
-}
+// The Promise protocol is owned by the imported Workers SDK.
+export type NativeMailBinding = Pick<SendEmail, 'send'>;
 
 export const bindingSchema = Schema.Struct({
   send: Schema.declare<NativeMailBinding['send']>(

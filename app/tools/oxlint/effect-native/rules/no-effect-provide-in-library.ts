@@ -42,6 +42,10 @@
  *   transaction body, and anything laundered through another combinator
  *   (`Effect.runSync(Effect.succeed(p.pipe(Effect.provide(L))))`), is still reported.
  *   Disable the exemption entirely with `allowOuterRunSeam: false`.
+ * - A service method returned by a native `Layer.effect(Tag, Effect.gen(...))` may close over a
+ *   dependency acquired directly with `const service = yield* Dependency` in that generator. Only
+ *   `provideService` of that same immutable tag/binding is allowed; the Layer keeps the dependency
+ *   in R. Nested runtime entry, injected values and lookalike factories do not establish this proof.
  * - Test files (`includeTests: false` by default); tests legitimately provide stub layers.
  * - `Layer.provide` / `Layer.provideMerge` (layer composition, not requirement erasure) and
  *   `Layer.orDie` at a deliberate startup root (D tier) are never matched by this rule.
@@ -52,9 +56,9 @@
  * Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
-import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES } from '../shared/ast.ts';
+import { unwrapNode as unwrap, memberName as staticMemberName, FUNCTION_TYPES, walk } from '../shared/ast.ts';
 import { lookupVariable, resolvesToImport } from '../shared/bindings.ts';
 import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
@@ -425,6 +429,290 @@ function isOuterRunSeam(context: Context, node: ESTree.Node, bindings: ProvideBi
   return state.sawRunSeam;
 }
 
+interface ImportedReference {
+  readonly source: string;
+  readonly members: readonly string[];
+}
+
+const unwritten = (variable: Variable): boolean =>
+  !variable.references.some((reference) => reference.isWrite() && !reference.init);
+
+/** Resolve native module members by their lexical imports, including immutable aliases. */
+function importedReference(context: Context, input: ESTree.Node, depth = 0): ImportedReference | null {
+  if (depth > 8) return null;
+  const node = unwrap(input);
+  if (node.type === 'MemberExpression') {
+    const member = memberName(node);
+    const owner = importedReference(context, node.object, depth + 1);
+    return member === null || owner === null ? null : { ...owner, members: [...owner.members, member] };
+  }
+  if (node.type !== 'Identifier') return null;
+  const variable = lookupVariable(context, node);
+  if (variable === null || variable.defs.length !== 1 || !unwritten(variable)) return null;
+  const definition = variable.defs[0];
+  if (definition === undefined) return null;
+  if (definition.type === 'ImportBinding' && definition.parent?.type === 'ImportDeclaration') {
+    if (definition.parent.importKind === 'type') return null;
+    const specifier = definition.node;
+    if (specifier.type === 'ImportNamespaceSpecifier') {
+      return { source: definition.parent.source.value, members: [] };
+    }
+    if (specifier.type !== 'ImportSpecifier' || specifier.importKind === 'type') return null;
+    const name = specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
+    return { source: definition.parent.source.value, members: [name] };
+  }
+  const declaration = definition.node;
+  if (
+    declaration.type !== 'VariableDeclarator' ||
+    declaration.init === null ||
+    declaration.parent?.type !== 'VariableDeclaration' ||
+    declaration.parent.kind !== 'const'
+  )
+    return null;
+  const owner = importedReference(context, declaration.init, depth + 1);
+  if (owner === null) return null;
+  if (declaration.id.type === 'Identifier') return owner;
+  if (declaration.id.type !== 'ObjectPattern') return null;
+  for (const property of declaration.id.properties) {
+    if (
+      property.type !== 'Property' ||
+      property.computed ||
+      property.value.type !== 'Identifier' ||
+      property.value.name !== node.name
+    )
+      continue;
+    const name =
+      property.key.type === 'Identifier'
+        ? property.key.name
+        : property.key.type === 'Literal' && typeof property.key.value === 'string'
+          ? property.key.value
+          : null;
+    if (name !== null) return { ...owner, members: [...owner.members, name] };
+  }
+  return null;
+}
+
+function nativeMember(context: Context, node: ESTree.Node, namespace: string, member: string): boolean {
+  const reference = importedReference(context, node);
+  if (reference === null) return false;
+  const native =
+    (reference.source === 'effect' &&
+      reference.members.length === 2 &&
+      reference.members[0] === namespace &&
+      reference.members[1] === member) ||
+    (reference.source === `effect/${namespace}` && reference.members.length === 1 && reference.members[0] === member);
+  const binding = tagReference(context, node);
+  return native && binding !== null && !hasTagWrite(context, binding);
+}
+
+interface TagReference {
+  readonly variable: Variable;
+  readonly members: readonly string[];
+  readonly imported: ImportedReference | null;
+}
+
+function tagReference(context: Context, input: ESTree.Node): TagReference | null {
+  let node = unwrap(input);
+  const members: string[] = [];
+  while (node.type === 'MemberExpression') {
+    const member = memberName(node);
+    if (member === null) return null;
+    members.unshift(member);
+    node = unwrap(node.object);
+  }
+  if (node.type !== 'Identifier') return null;
+  const variable = lookupVariable(context, node);
+  return variable === null ? null : { imported: importedReference(context, input), members, variable };
+}
+
+const sameTag = (left: TagReference, right: TagReference): boolean =>
+  left.variable === right.variable &&
+  left.members.length === right.members.length &&
+  left.members.every((member, index) => member === right.members[index]);
+
+function nativeTagFactory(context: Context, input: ESTree.Node): boolean {
+  let node = unwrap(input);
+  for (let depth = 0; depth < 4 && node.type === 'CallExpression'; depth += 1) node = unwrap(node.callee);
+  return nativeMember(context, node, 'Context', 'Service') || nativeMember(context, node, 'Context', 'Reference');
+}
+
+/** Imported tags and native local Context tags are stable; parameters and mutable aliases are not. */
+function stableTag(context: Context, input: ESTree.Node, depth = 0): boolean {
+  if (depth > 8) return false;
+  const reference = tagReference(context, input);
+  if (reference === null || reference.variable.defs.length !== 1 || !unwritten(reference.variable)) return false;
+  const definition = reference.variable.defs[0];
+  if (definition === undefined) return false;
+  if (definition.type === 'ImportBinding') {
+    return (
+      definition.parent?.type === 'ImportDeclaration' &&
+      definition.parent.importKind !== 'type' &&
+      (definition.node.type !== 'ImportSpecifier' || definition.node.importKind !== 'type')
+    );
+  }
+  const declaration = definition.node;
+  if (declaration.type === 'ClassDeclaration' && declaration.superClass !== null)
+    return nativeTagFactory(context, declaration.superClass);
+  return (
+    declaration.type === 'VariableDeclarator' &&
+    declaration.id.type === 'Identifier' &&
+    declaration.init !== null &&
+    declaration.parent?.type === 'VariableDeclaration' &&
+    declaration.parent.kind === 'const' &&
+    (nativeTagFactory(context, declaration.init) || stableTag(context, declaration.init, depth + 1))
+  );
+}
+
+function hasTagWrite(context: Context, tag: TagReference): boolean {
+  let mutated = false;
+  walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (node) => {
+    const target =
+      node.type === 'AssignmentExpression'
+        ? node.left
+        : node.type === 'UpdateExpression'
+          ? node.argument
+          : node.type === 'UnaryExpression' && node.operator === 'delete'
+            ? node.argument
+            : null;
+    if (target === null) return;
+    const reference = tagReference(context, target);
+    if (reference === null) return;
+    const direct =
+      reference.variable === tag.variable &&
+      reference.members.length <= tag.members.length &&
+      reference.members.every((member, index) => member === tag.members[index]);
+    const alias =
+      reference.imported !== null &&
+      tag.imported !== null &&
+      reference.imported.source === tag.imported.source &&
+      reference.imported.members.length <= tag.imported.members.length &&
+      reference.imported.members.every((member, index) => member === tag.imported?.members[index]);
+    if (direct || alias) mutated = true;
+  });
+  return mutated;
+}
+
+function hasRuntimeReentry(context: Context, object: ESTree.ObjectExpression): boolean {
+  let reentry = false;
+  walk(object, context.sourceCode.visitorKeys, (node) => {
+    if (node.type !== 'Identifier' && node.type !== 'MemberExpression') return;
+    if (isInTypePosition(node)) return;
+    if (
+      node.type === 'Identifier' &&
+      nonReferencePosition(node, { keyParents: REFERENCE_KEYS, variableBindings: true }) &&
+      !(node.parent?.type === 'Property' && node.parent.shorthand && node.parent.value === node)
+    )
+      return;
+    const reference = importedReference(context, node);
+    if (reference === null) return;
+    const members =
+      reference.source === 'effect' && reference.members[0] === 'Effect'
+        ? reference.members.slice(1)
+        : reference.source === 'effect/Effect'
+          ? reference.members
+          : [];
+    if (members.length === 1 && /^run/u.test(members[0] ?? '')) reentry = true;
+  });
+  return reentry;
+}
+
+/** Require a method of the object returned directly by the Layer's construction generator. */
+function returnedServiceObject(
+  call: ESTree.CallExpression,
+  generator: ESTree.FunctionExpression,
+): ESTree.ObjectExpression | null {
+  for (let node: ESTree.Node | null = call; node !== null && node !== generator; node = node.parent) {
+    if (!FUNCTION_TYPES.has(node.type)) continue;
+    const property = node.parent;
+    if (property?.type !== 'Property' || property.value !== node || property.kind !== 'init' || property.computed)
+      continue;
+    const object = property.parent;
+    if (object?.type !== 'ObjectExpression') continue;
+    const statement = object.parent;
+    if (statement?.type === 'ReturnStatement' && statement.argument === object && statement.parent === generator.body)
+      return object;
+  }
+  return null;
+}
+
+/** The Layer acquires the capability in R and its returned service closes over that exact capability. */
+function isCapturedLayerDependency(context: Context, reference: ESTree.Node, member: string): boolean {
+  if (member !== 'provideService') return false;
+  let callee = reference;
+  while (callee.parent !== null && preservesPipeline(callee.parent)) callee = callee.parent;
+  const call = callee.parent;
+  if (
+    call?.type !== 'CallExpression' ||
+    call.optional ||
+    unwrap(call.callee) !== unwrap(callee) ||
+    (call.arguments.length !== 2 && call.arguments.length !== 3)
+  )
+    return false;
+  const tagNode = call.arguments.at(-2);
+  const valueNode = call.arguments.at(-1);
+  if (tagNode === undefined || valueNode === undefined) return false;
+  const value = unwrap(valueNode);
+  if (value.type !== 'Identifier') return false;
+  const variable = lookupVariable(context, value);
+  if (variable === null || variable.defs.length !== 1 || !unwritten(variable)) return false;
+  const declaration = variable.defs[0]?.node;
+  if (
+    declaration?.type !== 'VariableDeclarator' ||
+    declaration.id.type !== 'Identifier' ||
+    declaration.init === null ||
+    declaration.parent?.type !== 'VariableDeclaration' ||
+    declaration.parent.kind !== 'const'
+  )
+    return false;
+  const body = declaration.parent.parent;
+  const generator = body?.parent;
+  if (
+    body?.type !== 'BlockStatement' ||
+    generator?.type !== 'FunctionExpression' ||
+    !generator.generator ||
+    generator.params.length !== 0 ||
+    generator.body !== body
+  )
+    return false;
+  const acquisition = unwrap(declaration.init);
+  if (acquisition.type !== 'YieldExpression' || !acquisition.delegate || acquisition.argument === null) return false;
+  const capturedTag = tagReference(context, acquisition.argument);
+  const providedTag = tagReference(context, tagNode);
+  if (
+    capturedTag === null ||
+    providedTag === null ||
+    !sameTag(capturedTag, providedTag) ||
+    !stableTag(context, tagNode) ||
+    hasTagWrite(context, capturedTag)
+  )
+    return false;
+  const genCall = generator.parent;
+  if (
+    genCall?.type !== 'CallExpression' ||
+    genCall.optional ||
+    genCall.arguments.length !== 1 ||
+    genCall.arguments[0] !== generator ||
+    !nativeMember(context, genCall.callee, 'Effect', 'gen')
+  )
+    return false;
+  const layerCall = genCall.parent;
+  if (
+    layerCall?.type !== 'CallExpression' ||
+    layerCall.optional ||
+    layerCall.arguments.length !== 2 ||
+    layerCall.arguments[1] !== genCall ||
+    !nativeMember(context, layerCall.callee, 'Layer', 'effect')
+  )
+    return false;
+  const serviceTag = layerCall.arguments[0];
+  if (serviceTag === undefined || !stableTag(context, serviceTag)) return false;
+  const service = returnedServiceObject(call, generator);
+  if (service === null || service.parent?.type !== 'ReturnStatement') return false;
+  return (
+    body.body.indexOf(declaration.parent) < body.body.indexOf(service.parent) && !hasRuntimeReentry(context, service)
+  );
+}
+
 const REFERENCE_KEYS = new Set(['Property', 'PropertyDefinition', 'MethodDefinition', 'AccessorProperty']);
 function isRuntimeImportReference(context: Context, node: Extract<ESTree.Node, { type: 'Identifier' }>): boolean {
   return (
@@ -472,6 +760,9 @@ export const rule = defineRule({
     let bindings: ProvideBindings | null = null;
 
     const report = (node: ESTree.Node, member: string): void => {
+      if (isCapturedLayerDependency(context, node, member)) {
+        return;
+      }
       if (isInsideCoreReadTestHarnessCallback(context, node)) {
         return;
       }

@@ -1,3 +1,8 @@
+import { pipe, DateTime, Effect } from 'effect';
+import { orderDateText, needsReview } from '../../../../../shared/domain/imports.ts';
+import type { CustomerLink, ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 // AREA: imports — owned by the crm-imports lane. C04 Párování objednávek: queue of orders without a confirmed
 // client, orders flagged "vyžaduje kontrolu", approved external customer links and the full pairing history.
 import {
@@ -18,20 +23,20 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { CustomerLink, ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
-import { needsReview } from '../../../../../shared/domain/imports.ts';
+
 import { CrmPage } from '../../../../crm/crm-page.tsx';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+
 import { CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import {
   RESIZE_LABEL,
   clientLabel,
-  formatAmount,
+  useFormatAmount,
   orderDate,
   orderTitle,
   principalLabel,
@@ -40,7 +45,12 @@ import {
 } from '../importy/order-model.ts';
 import { OrderDetailPanel, PairingForm, PairingStateBadge, RawStatusBadge } from '../importy/order-panels.tsx';
 
-const queueColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
+const orderLabel = 'Objednávka';
+
+const queueColumns = (
+  records: RecordsResponse,
+  formatAmount: ReturnType<typeof useFormatAmount>,
+): ColumnDef<ImportedOrder>[] => [
   {
     accessorFn: (order) => orderTitle(order),
     cell: (info) => (
@@ -49,7 +59,7 @@ const queueColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
         <span className="truncate text-fg-secondary text-xs">{`${info.row.original.source} · ID ${info.row.original.externalId}`}</span>
       </div>
     ),
-    header: 'Objednávka',
+    header: orderLabel,
     id: 'order',
     meta: { type: 'string', width: 200 },
   },
@@ -61,7 +71,13 @@ const queueColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
         <div className="flex min-w-0 flex-col">
           <span className="truncate">{order.customerName ?? 'název neposkytnut'}</span>
           <span className="truncate text-fg-secondary text-xs">
-            {[order.externalCustomerId, order.customerRegNo && `IČO ${order.customerRegNo}`, order.customerEmail]
+            {[
+              order.externalCustomerId,
+              order.customerRegNo === undefined || order.customerRegNo === ''
+                ? undefined
+                : `IČO ${order.customerRegNo}`,
+              order.customerEmail,
+            ]
               .filter((part) => part !== undefined && part !== '')
               .join(' · ') || 'identifikace neposkytnuta'}
           </span>
@@ -126,7 +142,7 @@ const reviewColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => 
         <span className="truncate text-fg-secondary text-xs">{`${info.row.original.source} · ID ${info.row.original.externalId}`}</span>
       </div>
     ),
-    header: 'Objednávka',
+    header: orderLabel,
     id: 'order',
     meta: { type: 'string', width: 200 },
   },
@@ -154,9 +170,10 @@ const reviewColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => 
 
 const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] => [
   {
-    accessorKey: 'at',
-    cell: (info) => formatDateTime(info.row.original.at),
+    accessorFn: (change) => DateTime.formatIso(change.at),
+    cell: (info) => pipe(info.row.original.at, orderDateText, formatDateTime),
     header: 'Kdy',
+    id: 'at',
     meta: { type: 'string', width: 150 },
   },
   {
@@ -164,7 +181,7 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
       const order = records.state.imports.orders.find((entry) => entry.id === change.orderId);
       return order === undefined ? change.orderId : orderTitle(order);
     },
-    header: 'Objednávka',
+    header: orderLabel,
     id: 'order',
     meta: { type: 'string', width: 150 },
   },
@@ -245,7 +262,10 @@ const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
       return party === undefined ? (
         <span className="text-fg-secondary">pouze klient v CRM</span>
       ) : (
-        <span title="Vazba vede na zákazníka v evidenci zákazníků">{party}</span>
+        <span>
+          {party}
+          <span className="sr-only"> · Vazba vede na zákazníka v evidenci zákazníků</span>
+        </span>
       );
     },
     header: 'Evidence zákazníků',
@@ -259,9 +279,10 @@ const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
     meta: { type: 'string', width: 160 },
   },
   {
-    accessorKey: 'createdAt',
-    cell: (info) => formatDateTime(info.row.original.createdAt),
+    accessorFn: (link) => DateTime.formatIso(link.createdAt),
+    cell: (info) => pipe(info.row.original.createdAt, orderDateText, formatDateTime),
     header: 'Kdy',
+    id: 'createdAt',
     meta: { type: 'string', width: 150 },
   },
 ];
@@ -277,47 +298,54 @@ const PairPanel = ({
   readonly onClose: () => void;
   readonly order: ImportedOrder;
   readonly records: RecordsResponse;
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
-}) => (
-  <SidePanel
-    actions={
-      <Button onClick={onClose} theme="outlined" variant="secondary">
-        Zavřít
-      </Button>
-    }
-    closeOnInteractOutside={false}
-    description={`${order.source} · ID ${order.externalId} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
-    onOpenChange={(open) => {
-      if (!open) {
-        onClose();
+  readonly submit: CrmCommandSubmit;
+}) => {
+  const formatAmount = useFormatAmount();
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          Zavřít
+        </Button>
       }
-    }}
-    open
-    resizeLabel={RESIZE_LABEL}
-    size="lg"
-    title={`Napárovat ${orderTitle(order)}`}
-  >
-    <div className="flex flex-col gap-200">
-      <div className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}>
-        <span className="text-fg-secondary text-xs">Zákazník podle zdroje</span>
-        <span className="font-medium">{order.customerName ?? 'název neposkytnut'}</span>
-        <span className="text-fg-secondary">
-          {[
-            order.externalCustomerId && `ID ${order.externalCustomerId}`,
-            order.customerRegNo && `IČO ${order.customerRegNo}`,
-            order.customerEmail,
-          ]
-            .filter((part) => part !== undefined && part !== '')
-            .join(' · ') || 'identifikace neposkytnuta'}
-        </span>
-        <span className="flex items-center gap-100">
-          Stav ve zdroji: <RawStatusBadge status={order.rawStatus} />
-        </span>
+      closeOnInteractOutside={false}
+      description={`${order.source} · ID ${order.externalId} · ${orderDate(order)} · ${formatAmount(order.amount, order.currency)}`}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel={RESIZE_LABEL}
+      size="lg"
+      title={`Napárovat ${orderTitle(order)}`}
+    >
+      <div className="flex flex-col gap-200">
+        <div className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}>
+          <span className="text-fg-secondary text-xs">Zákazník podle zdroje</span>
+          <span className="font-medium">{order.customerName ?? 'název neposkytnut'}</span>
+          <span className="text-fg-secondary">
+            {[
+              order.externalCustomerId === undefined || order.externalCustomerId === ''
+                ? undefined
+                : `ID ${order.externalCustomerId}`,
+              order.customerRegNo === undefined || order.customerRegNo === ''
+                ? undefined
+                : `IČO ${order.customerRegNo}`,
+              order.customerEmail,
+            ]
+              .filter((part) => part !== undefined && part !== '')
+              .join(' · ') || 'identifikace neposkytnuta'}
+          </span>
+          <span className="flex items-center gap-100">
+            Stav ve zdroji: <RawStatusBadge status={order.rawStatus} />
+          </span>
+        </div>
+        <PairingForm busy={busy} onDone={onClose} order={order} records={records} submit={submit} />
       </div>
-      <PairingForm busy={busy} onDone={onClose} order={order} records={records} submit={submit} />
-    </div>
-  </SidePanel>
-);
+    </SidePanel>
+  );
+};
 
 const NewLinkPanel = ({
   busy,
@@ -328,7 +356,7 @@ const NewLinkPanel = ({
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+  readonly submit: CrmCommandSubmit;
 }) => {
   const toaster = useToast();
   const sources = sourcesOf(records.state.imports.orders);
@@ -339,26 +367,31 @@ const NewLinkPanel = ({
     (order) =>
       order.pairing !== 'paired' && order.source === source && order.externalCustomerId === externalCustomerId.trim(),
   ).length;
-  const save = () =>
-    void submit({ _tag: 'LinkExternalCustomer', clientId, externalCustomerId: externalCustomerId.trim(), source }).then(
-      (outcome) => {
-        toaster.create(
-          outcome.ok
-            ? {
-                description:
-                  outcome.entityIds.length > 1
-                    ? `Napárováno čekajících objednávek: ${String(outcome.entityIds.length - 1)}`
-                    : undefined,
-                title: 'Vazba schválena',
-                type: 'success',
-              }
-            : { description: outcome.message, title: 'Uložení se nezdařilo', type: 'error' },
-        );
-        if (outcome.ok) {
-          onClose();
-        }
-      },
+  const save = () => {
+    browserRuntime.runFork(
+      submit({ _tag: 'LinkExternalCustomer', clientId, externalCustomerId: externalCustomerId.trim(), source }).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            toaster.create(
+              outcome.ok
+                ? {
+                    description:
+                      outcome.entityIds.length > 1
+                        ? `Napárováno čekajících objednávek: ${String(outcome.entityIds.length - 1)}`
+                        : undefined,
+                    title: 'Vazba schválena',
+                    type: 'success',
+                  }
+                : { description: outcome.message, title: 'Uložení se nezdařilo', type: 'error' },
+            );
+            if (outcome.ok) {
+              onClose();
+            }
+          }),
+        ),
+      ),
     );
+  };
   return (
     <SidePanel
       actions={
@@ -439,6 +472,7 @@ const Heading = ({ hint, title }: { readonly hint?: string; readonly title: stri
 );
 
 const PairingContent = () => {
+  const formatAmount = useFormatAmount();
   const { t } = useModernI18n();
   const { busy, load, state, submit } = useCrmRecords();
   const [pairId, setPairId] = useState<string | undefined>();
@@ -527,7 +561,7 @@ const PairingContent = () => {
             )}
             {queue.length > 0 && (
               <DataTable
-                columns={queueColumns(records)}
+                columns={queueColumns(records, formatAmount)}
                 data={queue}
                 enableSorting
                 getRowId={(row) => row.id}

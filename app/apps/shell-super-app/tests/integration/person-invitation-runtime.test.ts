@@ -90,7 +90,7 @@ import {
   makeOutboxWorkerComposition,
 } from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
 import { dispatchEmailBatchWith } from '../../../../packages/email-delivery/src/dispatcher/dispatch.ts';
-import { makeSmtpEmailDelivery } from '../../../../packages/email-delivery/src/smtp.ts';
+import { SmtpEmailDeliveryLive } from '../../../../packages/email-delivery/src/smtp.ts';
 import type { EmailTransportRuntime } from '../../../../packages/email-delivery/src/transport-runtime.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, BetterAuthNativeAdapterLive, makeAuthDatabase } from '../../api/auth/db/client.ts';
@@ -367,8 +367,8 @@ it.live(
       );
       const emailSql = yield* PgClient.makeClient({ url: Redacted.make(configuration.connectionString) });
       const transport: EmailTransportRuntime = {
+        deliveryLayer: (from) => SmtpEmailDeliveryLive({ from, host: '127.0.0.1', port: smtpPort }),
         kind: 'smtp',
-        makeDelivery: (from) => makeSmtpEmailDelivery({ from, host: '127.0.0.1', port: smtpPort }),
         provider: { configured: true, label: 'Owned Mailpit test capture' },
       };
       const dispatch = dispatchEmailBatchWith(transport, { ONTOS_PUBLIC_URL: 'http://localhost:3020' }).pipe(

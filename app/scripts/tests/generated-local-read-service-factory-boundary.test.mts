@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { expect, it } from 'effect-rstest';
 
 import { hasOwnerLocalReadServiceFactoryResult } from '../generated-governed-http-boundary.mts';
+import { hasGeneratedModuleApiReadContract } from '../generated-module-api-boundary.mts';
 
 const nativeTypeImport = "import type { ReadServiceFactory } from '@app/core-runtime';";
 const nativeEffectImport = "import { Effect } from 'effect';";
@@ -120,21 +121,18 @@ it('accepts a required parameter after a default only when its position is suppl
   expect(accepts(source.replace(`${makerName}(loadOwner)`, `${makerName}(loadOwner, ownerFence)`))).toBe(true);
 });
 
-it('does not invent a retired Pricing factory in its explicit prepared Read', () => {
+it('accepts the current Pricing read contract and rejects the removed local maker identity', () => {
   const pricingOwner = 'verticals/pricing';
   const pricingRead = `${pricingOwner}/src/api/current-pricing-decision.read.ts`;
-  const sources = new Map(
-    [
-      pricingRead,
-      `${pricingOwner}/src/integrations/current-pricing-decision-whole-evaluation-adapters.ts`,
-      `${pricingOwner}/src/integrations/current-pricing-decision-owner-final-fence.ts`,
-    ].map((file): readonly [string, string] => [
-      file,
-      readFileSync(new URL(`../../${file}`, import.meta.url), 'utf-8'),
-    ]),
-  );
-  expect(sources.get(pricingRead)).toContain('finish: makeFinishCurrentPricingDecision()');
-  expect(sources.get(pricingRead)).not.toContain('export const currentPricingDecisionReadServiceFactory');
+  const source = readFileSync(new URL(`../../${pricingRead}`, import.meta.url), 'utf-8');
+  const sources = new Map([[pricingRead, source]]);
+  expect(source).toContain('finish: makeFinishCurrentPricingDecision()');
+  expect(source).not.toContain('export const currentPricingDecisionReadServiceFactory');
+  expect(
+    hasGeneratedModuleApiReadContract(source, 'commerce.pricing', 'current-pricing-decision', {
+      kind: 'authenticated_principal',
+    }),
+  ).toBe(true);
   expect(
     hasOwnerLocalReadServiceFactoryResult(
       sources,

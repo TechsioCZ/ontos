@@ -1,5 +1,5 @@
-import { CalendarDateWireSchema } from '@app/shared-contracts';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
+import { ReportPeriodSchema } from '../../shared/domain/reports.ts';
 import type { ReportPeriod } from '../../shared/domain/reports.ts';
 import type { PeriodOption } from '../routes/[lang]/crm/prehled-prodeju/report-format.ts';
 
@@ -24,7 +24,6 @@ const PARAMS = {
 } as const satisfies Record<keyof ReportQuery, string>;
 
 const isGrouping = Schema.is(ReportQuerySchema.fields.grouping);
-const isCalendarDate = Schema.is(CalendarDateWireSchema);
 
 /** Browser URL adapter. An SSR render has the same defaults as an unfiltered report. */
 export const readQuery = (): ReportQuery => {
@@ -64,16 +63,19 @@ export const periodOf = (value: string, periods: readonly PeriodOption[]): Repor
     !value.includes(':') ||
     extra.length > 0 ||
     (from === '' && to === '') ||
-    (from !== '' && !isCalendarDate(from)) ||
-    (to !== '' && !isCalendarDate(to)) ||
     (from !== '' && to !== '' && from > to)
   ) {
     return undefined;
   }
+  let encoded: typeof ReportPeriodSchema.Encoded;
   if (from === '') {
-    return { to };
+    encoded = { to };
+  } else if (to === '') {
+    encoded = { from };
+  } else {
+    encoded = { from, to };
   }
-  return to === '' ? { from } : { from, to };
+  return Option.getOrUndefined(Schema.decodeOption(ReportPeriodSchema)(encoded));
 };
 
 /** Keep the opposite date when editing a preset, moving it only if the bounds would cross. */

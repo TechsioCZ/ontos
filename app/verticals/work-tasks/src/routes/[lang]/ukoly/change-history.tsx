@@ -2,12 +2,12 @@ import { DateTime } from 'effect';
 import type { HistoryEntry } from '../../../../shared/apis/records.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
 
-const actionLabels: Record<HistoryEntry['action'], string> = {
+const actionLabels = {
   archived: 'Skryto ze seznamu',
   created: 'Založeno',
   restored: 'Vráceno do seznamu',
   updated: 'Změněno',
-};
+} satisfies Record<HistoryEntry['action'], string>;
 
 const timestamp = new Intl.DateTimeFormat('cs-CZ', {
   dateStyle: 'medium',
@@ -36,7 +36,7 @@ export const ChangeHistory = ({
   readonly formatValue: (field: string, value: string | undefined) => string;
   readonly updatedAt: DateTime.Utc;
 }) => {
-  const newestFirst = [...(entries ?? [])].reverse();
+  const newestFirst = (entries ?? []).toReversed();
   return (
     <section aria-label="Historie změn" className="flex flex-col gap-100 border-t border-border-primary pt-200">
       <h3 className="font-semibold">Historie změn</h3>

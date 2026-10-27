@@ -11,7 +11,6 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import type {
   ActionCoreError,
   ContextAccess,
-  DatabaseConfigError,
   PrincipalManagementError,
   PrincipalResolutionError,
   OperationalScopeRequest,
@@ -27,6 +26,7 @@ import {
   IdentityAdministrationDeniedAuditLive,
   ContextAccessLive,
   CorePersistenceLive,
+  DatabaseConfig,
   DatabaseConfigLive,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContextLive,
@@ -60,7 +60,6 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
 import type { ApiKeyGatewayContextRequest, GatewayContextProblem } from '@app/shared-contracts';
-import type { PgClient } from '@effect/sql-pg';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { runEffectRequest } from '@modern-js/bff-effect/effect-client';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -88,11 +87,15 @@ import {
 import type { Types } from 'effect';
 import { FetchHttpClient, Headers as HttpHeaders, HttpRouter, HttpServerRequest } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
-import type { SqlError } from 'effect/sql/SqlError';
 import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../../database/identity-enrollment.ts';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
-import { EmailDatabaseLive, EmailDeliveryTransportLive, EmailProviderTransportLive } from './email/transport.ts';
+import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import { listDeliveries } from '@app/email-delivery/deliveries';
+import { PgClient } from '@effect/sql-pg';
+
+import { EmailDeliveryRequests, EmailReceiptHandlersLive, EmailTransportLive } from './email/transport.ts';
+import type { EmailDeliveryQuery } from './email/transport.ts';
 import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
 import {
@@ -2866,30 +2869,6 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
 const authenticationIsolateRuntime = ManagedRuntime.make(Layer.merge(BetterAuthRuntimeLive, OAuthAccessTokensLive));
 const authenticationIsolateLive = Layer.effectContext(authenticationIsolateRuntime.contextEffect);
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
-// Only the email delivery routes acquire this client, inside their current request scope.
-const emailRequestDatabaseLive = EmailDatabaseLive.pipe(
-  Layer.provide(Layer.merge(DatabaseConfigLive, Reactivity.layer)),
-);
-const emailDatabaseUnavailableResponse = (failure: DatabaseConfigError | SqlError) =>
-  Effect.logError('Email database unavailable', failure).pipe(
-    Effect.andThen(
-      HttpServerResponse.json(
-        { error: 'email_unavailable' },
-        { headers: { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' }, status: 503 },
-      ),
-    ),
-  );
-const emailRequestDatabaseMiddleware = HttpRouter.middleware<{ provides: PgClient.PgClient }>()((handler) =>
-  Layer.build(emailRequestDatabaseLive).pipe(
-    Effect.flatMap((services) => Effect.provideContext(handler, services)),
-    Effect.catchTags({
-      DatabaseConfigError: emailDatabaseUnavailableResponse,
-      SqlError: emailDatabaseUnavailableResponse,
-    }),
-    Effect.withSpan('Shell.emailDatabaseRequestScope'),
-  ),
-);
-
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
 const betterAuthNativeAdapterLive = BetterAuthNativeAdapterLive.pipe(Layer.provide(authPersistenceLive));
@@ -3230,7 +3209,27 @@ export const makeShellAuthenticationApiRuntime = (
         Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive), Layer.provide(corePersistenceLive))),
       )
     : Layer.empty;
+  // These factories are installed with request services, but open a pool only after the email route has authorized its work.
+  // Each operation owns a fresh scope, retaining the per-operation pool lifetime on both Node and Workers.
+  const emailDatabaseLive = Layer.effect(
+    PgClient.PgClient,
+    Effect.gen(function* makeEmailRequestDatabase() {
+      const config = yield* DatabaseConfig;
+      return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(DatabaseConfigLive, Reactivity.layer)));
+  const emailDeliveryRequestsLive = Layer.succeed(EmailDeliveryRequests, {
+    dispatch: Effect.gen(function* dispatchRequestEmailBatch() {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* dispatchEmailBatch.pipe(Effect.provideContext(database));
+    }).pipe(Effect.scoped),
+    list: Effect.fn('Shell.emailDeliveries')(function* listEmailDeliveries(query: EmailDeliveryQuery) {
+      const database = yield* Layer.build(emailDatabaseLive);
+      return yield* listDeliveries(query).pipe(Effect.provideContext(database));
+    }, Effect.scoped),
+  });
   const handlerDependenciesLive = Layer.mergeAll(
+    emailDeliveryRequestsLive,
     authenticationIsolateLive,
     BetterAuthPersonInvitationIdentityProviderLive,
     authenticationLayer,
@@ -3302,8 +3301,7 @@ export const makeShellAuthenticationApiRuntime = (
     services: requestServicesLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive,
-      EmailProviderTransportLive,
-      EmailDeliveryTransportLive.pipe(Layer.provide(emailRequestDatabaseMiddleware.layer)),
+      EmailTransportLive.pipe(Layer.provide(EmailReceiptHandlersLive)),
       // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
       OAuthServerTransportLive,
       InvitationTransportLive,

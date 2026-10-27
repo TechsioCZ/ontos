@@ -1,8 +1,15 @@
 // AREA: visits (C02, C06) — owned by the crm-visits lane.
 // Visits / calls / e-mails with correction history, and the manual contact plan ("K oslovení").
 // Adding fields: make them Schema.optionalKey (persisted JSON from older revisions must still decode).
-import { Schema } from 'effect';
-import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
+import { DateTime, Schema } from 'effect';
+import {
+  CalendarDateSchema,
+  EntityIdSchema,
+  IsoTimeSchema,
+  LongTextSchema,
+  PrincipalIdSchema,
+  ShortTextSchema,
+} from './common.ts';
 
 /** visit = osobní návštěva, call = telefonát, video = videohovor, email = e-mail. */
 export const VisitKindSchema = Schema.Literals(['visit', 'call', 'video', 'email']);
@@ -30,7 +37,7 @@ export const VisitSchema = Schema.Struct({
   id: EntityIdSchema,
   kind: VisitKindSchema,
   nextStep: Schema.optionalKey(LongTextSchema),
-  nextStepDate: Schema.optionalKey(IsoTimeSchema),
+  nextStepDate: Schema.optionalKey(CalendarDateSchema),
   note: Schema.optionalKey(LongTextSchema),
   /** When the visit really happened (not when it was typed in). */
   occurredAt: IsoTimeSchema,
@@ -57,7 +64,7 @@ export const PlanItemSchema = Schema.Struct({
   /** Visit / call recorded when the contact was completed. */
   doneVisitId: Schema.optionalKey(EntityIdSchema),
   /** Calendar day (YYYY-MM-DD) to get in touch. */
-  dueDate: IsoTimeSchema,
+  dueDate: CalendarDateSchema,
   id: EntityIdSchema,
   note: Schema.optionalKey(LongTextSchema),
   salespersonId: Schema.optionalKey(EntityIdSchema),
@@ -82,7 +89,7 @@ export const projectVisitsSlice = (slice: VisitsSlice, visible: ReadonlySet<stri
   plan: slice.plan.filter((item) => visible.has(item.clientId)),
 });
 
-const byOccurredDesc = (left: Visit, right: Visit) => right.occurredAt.localeCompare(left.occurredAt);
+const byOccurredDesc = (left: Visit, right: Visit) => DateTime.Order(right.occurredAt, left.occurredAt);
 
 /** Visits of one client, newest first. */
 export const visitsOfClient = (visits: readonly Visit[], clientId: string): readonly Visit[] =>

@@ -10,7 +10,11 @@ import { SEARCH_DEBOUNCE, searchProducts } from './product-reads.ts';
 /** The answer to one search, tagged with the request it answers so a newer request reads as loading. */
 type SearchAnswer =
   | { readonly items: readonly ProductRecord[]; readonly request: string; readonly status: 'ready' }
-  | { readonly request: string; readonly status: 'error' };
+  | {
+      readonly cause: Effect.Error<ReturnType<typeof searchProducts>>;
+      readonly request: string;
+      readonly status: 'error';
+    };
 
 const NO_ITEMS: readonly ProductRecord[] = [];
 
@@ -65,7 +69,7 @@ export const ProductSearchCombobox = ({
           Effect.sleep(SEARCH_DEBOUNCE).pipe(
             Effect.andThen(searchProducts(query, activeOnly)),
             Effect.match({
-              onFailure: (): SearchAnswer => ({ request, status: 'error' }),
+              onFailure: (cause): SearchAnswer => ({ cause, request, status: 'error' }),
               onSuccess: (items): SearchAnswer => ({ items, request, status: 'ready' }),
             }),
             Effect.map(setAnswer),

@@ -2,7 +2,10 @@ import { Match } from 'effect';
 import type { FinanceCommand } from '../actions/apply-command.ts';
 import type { Invoice, RecurringTemplate } from '../apis/records.ts';
 
+const PROPERTY_PORTFOLIO_AUDIENCE = 'property-portfolio';
+
 type InvoiceAnchors = Partial<Pick<Invoice, 'contractRef' | 'occupancyRef' | 'propertyRef' | 'taskRef' | 'unitRef'>>;
+type MutableInvoiceAnchors = { -readonly [Key in keyof InvoiceAnchors]: InvoiceAnchors[Key] };
 
 /**
  * Gateway audiences the backend validators read for one invoice. The counterparty is always checked in the party
@@ -12,8 +15,8 @@ type InvoiceAnchors = Partial<Pick<Invoice, 'contractRef' | 'occupancyRef' | 'pr
  */
 export const invoiceReferenceAudiences = (anchors: InvoiceAnchors): readonly string[] => [
   'party-registry',
-  ...(anchors.propertyRef === undefined ? [] : ['property-portfolio']),
-  ...(anchors.unitRef === undefined ? [] : ['property-portfolio']),
+  ...(anchors.propertyRef === undefined ? [] : [PROPERTY_PORTFOLIO_AUDIENCE]),
+  ...(anchors.unitRef === undefined ? [] : [PROPERTY_PORTFOLIO_AUDIENCE]),
   ...(anchors.occupancyRef === undefined ? [] : ['property-leasing']),
   ...(anchors.contractRef === undefined ? [] : ['legal-agreements']),
   ...(anchors.taskRef === undefined ? [] : ['work-tasks']),
@@ -23,8 +26,8 @@ export const invoiceReferenceAudiences = (anchors: InvoiceAnchors): readonly str
 export const anchorReferenceAudiences = (
   anchors: Partial<Pick<Invoice, 'contractRef' | 'propertyRef' | 'unitRef'>>,
 ): readonly string[] => [
-  ...(anchors.propertyRef === undefined ? [] : ['property-portfolio']),
-  ...(anchors.unitRef === undefined ? [] : ['property-portfolio']),
+  ...(anchors.propertyRef === undefined ? [] : [PROPERTY_PORTFOLIO_AUDIENCE]),
+  ...(anchors.unitRef === undefined ? [] : [PROPERTY_PORTFOLIO_AUDIENCE]),
   ...(anchors.contractRef === undefined ? [] : ['legal-agreements']),
 ];
 
@@ -43,10 +46,13 @@ export const commandReferenceAudiences = (
     // A manually typed supplier has no registry party to check; a picked registry supplier does.
     // A hand-typed supplier has no registry party to check, but its property/unit anchors are still verified.
     Match.tag('RecordIncomingInvoice', (incoming) => {
-      const anchors = {
-        ...(incoming.propertyRef === undefined ? {} : { propertyRef: incoming.propertyRef }),
-        ...(incoming.unitRef === undefined ? {} : { unitRef: incoming.unitRef }),
-      };
+      const anchors: MutableInvoiceAnchors = {};
+      if (incoming.propertyRef !== undefined) {
+        anchors.propertyRef = incoming.propertyRef;
+      }
+      if (incoming.unitRef !== undefined) {
+        anchors.unitRef = incoming.unitRef;
+      }
       return incoming.counterpartyRef === undefined
         ? anchorReferenceAudiences(anchors)
         : invoiceReferenceAudiences(anchors);

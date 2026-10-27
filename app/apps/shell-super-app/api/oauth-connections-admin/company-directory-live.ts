@@ -9,7 +9,9 @@ import {
   ReadRuntime,
   replaceAgentOperatorsAction,
 } from '@app/core-runtime';
+import type { CompanyAgentDirectoryResultSchema } from '@app/core-runtime';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Layer, Match, Schema } from 'effect';
 
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
@@ -20,6 +22,7 @@ import { ConnectionsGone } from './connections-gone.ts';
 import { ConnectionsInvalid } from './connections-invalid.ts';
 import { ConnectionsNotFound } from './connections-not-found.ts';
 import { ConnectionsUnavailable } from './connections-unavailable.ts';
+import type { CompanyDirectorySnapshot } from './ports.ts';
 
 const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
 const fromRuntimeError = (error: { readonly _tag: string }) =>
@@ -44,6 +47,21 @@ const sameSet = (left: readonly string[], right: readonly string[]) => {
   return left.length === rightIds.size && left.every((id) => rightIds.has(id));
 };
 
+const directorySnapshot = (snapshot: typeof CompanyAgentDirectoryResultSchema.Type): CompanyDirectorySnapshot => ({
+  ...snapshot,
+  agents: snapshot.agents.map((agent) => ({
+    ...agent,
+    modules: agent.modules.map((module) => ({
+      ...module,
+      moduleId: AgentModuleKeySchema.make(module.moduleId),
+    })),
+  })),
+  people: snapshot.people.map((person) => ({
+    ...person,
+    principalId: AgentPrincipalIdSchema.make(person.principalId),
+  })),
+});
+
 /** Bind the original authenticated carrier once; the Layer owns its runtime dependencies. */
 export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
   Layer.effect(
@@ -54,14 +72,18 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
       const lifecycle = yield* ActionAuthorizationLifecycle;
       const catalog = yield* ShellInstalledModuleCatalog;
 
-      const snapshot = Effect.suspend(() =>
+      const loadSnapshot = Effect.suspend(() =>
         reads.runRead({
           input: {},
           principal: request.principal,
           registration: companyAgentDirectoryRead,
           transport: { correlationId: request.transport.correlationId },
         }),
-      ).pipe(Effect.mapError(fromRuntimeError), Effect.withSpan('CompanyDirectory.snapshot'));
+      ).pipe(
+        Effect.map(directorySnapshot),
+        Effect.mapError(fromRuntimeError),
+        Effect.withSpan('CompanyDirectory.snapshot'),
+      );
 
       const reconcile = Effect.fn('CompanyDirectory.reconcile')(function* reconcileOperators(agentPrincipalId: string) {
         const installed = yield* catalog.load;
@@ -83,7 +105,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
           return yield* new ConnectionsInvalid({ reason: 'Operátory lze nastavit jen aktivnímu agentovi.' });
         }
         const wanted = [...new Set(input.operatorPrincipalIds)].toSorted();
-        const eligible = new Set(input.snapshot.people.map((person) => person.principalId));
+        const eligible = new Set<string>(input.snapshot.people.map((person) => person.principalId));
         if (wanted.some((id) => !eligible.has(id))) {
           return yield* new ConnectionsInvalid({ reason: 'Agenta mohou připojit jen aktivní lidé z firmy.' });
         }
@@ -127,7 +149,7 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         }
         // A matching committed command is resumed rather than written/audited again.
         yield* reconcile(agent.principalId);
-        const confirmed = (yield* snapshot).agents.find((candidate) => candidate.principalId === agent.principalId);
+        const confirmed = (yield* loadSnapshot).agents.find((candidate) => candidate.principalId === agent.principalId);
         if (
           confirmed?.status !== 'active' ||
           confirmed.operatorCommand?.revision !== revision ||
@@ -153,6 +175,6 @@ export const CompanyDirectoryLive = (request: CompanyDirectoryRequest) =>
         return yield* Effect.void;
       });
 
-      return { confirmArchived, replaceOperators, snapshot } satisfies CompanyDirectoryPort<never>;
+      return { confirmArchived, replaceOperators, snapshot: loadSnapshot } satisfies CompanyDirectoryPort<never>;
     }),
   );

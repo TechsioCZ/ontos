@@ -1,19 +1,27 @@
 import { env } from 'cloudflare:workers';
-import { makeCloudflareEmailDelivery } from './cloudflare.ts';
-import type { CloudflareEmailBinding } from './cloudflare.ts';
-import type { EmailEnvironment, EmailTransportRuntime } from './transport-runtime.ts';
+import { ConfigProvider, Effect, Schema } from 'effect';
+import type { Config } from 'effect';
 
-const bindings = env as unknown as Readonly<Record<string, unknown>>;
-export const emailEnvironment: EmailEnvironment = Object.fromEntries(
-  Object.entries(bindings).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-);
-const binding = bindings['EMAIL'] as CloudflareEmailBinding | undefined;
-const configured =
-  typeof binding?.send === 'function' &&
-  /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(emailEnvironment['ONTOS_EMAIL_FROM'] ?? '');
+import { CloudflareEmailBindingSchema, CloudflareEmailDeliveryLive } from './cloudflare.ts';
+import { configuredProvider, emailSettings } from './transport-runtime.ts';
+import type { EmailTransportRuntime } from './transport-runtime.ts';
 
-export const emailTransport: EmailTransportRuntime = {
-  kind: 'cloudflare',
-  provider: configured ? { configured: true, label: 'Cloudflare Email Service' } : { configured: false, label: null },
-  makeDelivery: (from) => makeCloudflareEmailDelivery(binding, from),
-};
+const deployment = ConfigProvider.fromUnknown(env);
+export const emailEnvironment = emailSettings.parse(deployment);
+
+export const emailTransport = Effect.gen(function* workerEmailTransport(): Effect.fn.Return<
+  EmailTransportRuntime,
+  Config.ConfigError
+> {
+  const environment = yield* emailEnvironment;
+  const provider = yield* configuredProvider.parse(deployment);
+  const configured =
+    provider !== 'none' &&
+    Schema.is(CloudflareEmailBindingSchema)(env.EMAIL) &&
+    /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(environment.ONTOS_EMAIL_FROM ?? '');
+  return {
+    deliveryLayer: (from: string) => CloudflareEmailDeliveryLive(env.EMAIL, from),
+    kind: 'cloudflare',
+    provider: configured ? { configured: true, label: 'Cloudflare Email Service' } : { configured: false, label: null },
+  };
+});

@@ -1,3 +1,6 @@
+import { makeEntityId } from '../../../../../shared/domain/common.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect } from 'effect';
 // AREA: imports — owned by the crm-imports lane. CSV import: choose / drop / paste a file or take a sample, see a
 // row-by-row preview computed by the same engine the server runs, then import (C03).
 import { SidePanel, formatNumber, surfaceTileClassName } from '@app/admin-ui';
@@ -5,13 +8,12 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { ImportRowOutcome } from '../../../../../shared/domain/imports.ts';
 import { parseOrdersCsv } from '../../../../../shared/imports/csv.ts';
 import { importOrders } from '../../../../../shared/imports/engine.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 import { RESIZE_LABEL, importRowsLabel, outcomeMeta } from './order-model.ts';
 
 const MAX_BYTES = 350_000;
@@ -28,7 +30,56 @@ const SummaryChip = ({ count, outcome }: { readonly count: number; readonly outc
   </div>
 );
 
-export const ImportPanel = ({
+/** Row-by-row outcome table (preview and import history detail). */
+export const RowResults = ({
+  results,
+}: {
+  readonly results: readonly { externalId?: string; message: string; outcome: ImportRowOutcome; row: number }[];
+}) => (
+  <div className="max-h-[50dvh] overflow-auto">
+    <table className="w-full text-sm">
+      <thead className="sticky top-0 bg-surface text-fg-secondary text-xs">
+        <tr>
+          <th className="px-150 py-100 text-left font-normal">Řádek</th>
+          <th className="px-150 py-100 text-left font-normal">ID objednávky</th>
+          <th className="px-150 py-100 text-left font-normal">Výsledek</th>
+          <th className="px-150 py-100 text-left font-normal">Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {results.map((result) => (
+          <tr className="border-border-primary border-t align-top" key={`${String(result.row)}-${result.outcome}`}>
+            <td className="px-150 py-100 tabular-nums">{result.row}</td>
+            <td className="px-150 py-100 font-mono text-xs">{result.externalId ?? '—'}</td>
+            <td className="px-150 py-100">
+              <Badge size="sm" variant={outcomeMeta[result.outcome].variant}>
+                {outcomeMeta[result.outcome].label}
+              </Badge>
+            </td>
+            <td className="px-150 py-100">{result.message}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+const previewImport = (draft: ImportDraft | undefined, records: RecordsResponse) => {
+  if (draft === undefined) {
+    return draft;
+  }
+  const parsed = parseOrdersCsv(draft.csv);
+  const result = importOrders(records.state.imports, records.state.clients, parsed, {
+    batchId: makeEntityId('preview'),
+    by: records.viewer.principalId,
+    fileName: draft.fileName,
+    newId: (suffix) => makeEntityId(`preview-${suffix}`),
+    now: records.now,
+  });
+  return { batch: result.batch, parsed };
+};
+
+const useImportPanel = ({
   busy,
   initial,
   onClose,
@@ -41,7 +92,7 @@ export const ImportPanel = ({
   readonly onClose: () => void;
   readonly onImported: (batchId: string) => void;
   readonly records: RecordsResponse;
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+  readonly submit: CrmCommandSubmit;
 }) => {
   const toaster = useToast();
   const [draft, setDraft] = useState<ImportDraft | undefined>(initial);
@@ -51,20 +102,7 @@ export const ImportPanel = ({
   const [fileError, setFileError] = useState<string | undefined>();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const preview = useMemo(() => {
-    if (draft === undefined) {
-      return undefined;
-    }
-    const parsed = parseOrdersCsv(draft.csv);
-    const result = importOrders(records.state.imports, records.state.clients, parsed, {
-      batchId: 'preview',
-      by: records.viewer.principalId,
-      fileName: draft.fileName,
-      newId: (suffix) => `preview-${suffix}`,
-      now: records.now,
-    });
-    return { batch: result.batch, parsed };
-  }, [draft, records]);
+  const preview = previewImport(draft, records);
 
   const readFile = (file: File) => {
     setFileError(undefined);
@@ -73,33 +111,96 @@ export const ImportPanel = ({
       setFileError('Soubor je pro demo import příliš velký (max. 350 kB).');
       return;
     }
-    void file.text().then((text) => setDraft({ csv: text, fileName: file.name }));
+    const onReadFailure = () => {
+      setDraft(undefined);
+      setFileError('Soubor se nepodařilo přečíst.');
+    };
+    browserRuntime.runFork(
+      Effect.tryPromise(file.text.bind(file)).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (cause) =>
+            Effect.logWarning('CRM import file read failed', cause).pipe(Effect.tap(() => Effect.sync(onReadFailure))),
+          onSuccess: (text) => Effect.sync(() => setDraft({ csv: text, fileName: file.name })),
+        }),
+      ),
+    );
   };
 
   const confirm = () => {
     if (draft === undefined) {
       return;
     }
-    void submit({ _tag: 'ImportOrdersCsv', csv: draft.csv, fileName: draft.fileName }).then((outcome) => {
-      if (outcome.ok) {
-        const batch = preview?.batch;
-        toaster.create({
-          description:
-            batch === undefined
-              ? undefined
-              : `Nové ${String(batch.created ?? 0)} · změny stavu ${String(batch.updated ?? 0)} · duplicity ${String(batch.duplicates)} · ke kontrole ${String(batch.review ?? 0)} · chyby ${String(batch.rejected)}`,
-          title: 'Import uložen',
-          type: 'success',
-        });
-        onImported(outcome.entityIds[0] ?? '');
-      } else {
-        toaster.create({ description: outcome.message, title: 'Import se nezdařil', type: 'error' });
-      }
-    });
+    browserRuntime.runFork(
+      submit({ _tag: 'ImportOrdersCsv', csv: draft.csv, fileName: draft.fileName }).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              const batch = preview?.batch;
+              toaster.create({
+                description:
+                  batch === undefined
+                    ? undefined
+                    : `Nové ${String(batch.created ?? 0)} · změny stavu ${String(batch.updated ?? 0)} · duplicity ${String(batch.duplicates)} · ke kontrole ${String(batch.review ?? 0)} · chyby ${String(batch.rejected)}`,
+                title: 'Import uložen',
+                type: 'success',
+              });
+              onImported(outcome.entityIds[0] ?? '');
+            } else {
+              toaster.create({ description: outcome.message, title: 'Import se nezdařil', type: 'error' });
+            }
+          }),
+        ),
+      ),
+    );
   };
 
   const counts = preview?.batch;
   const okRows = counts === undefined ? 0 : counts.accepted + counts.duplicates;
+
+  return {
+    busy,
+    confirm,
+    counts,
+    draft,
+    dragging,
+    fileError,
+    inputRef,
+    okRows,
+    onClose,
+    paste,
+    pasteOpen,
+    preview,
+    readFile,
+    records,
+    setDraft,
+    setDragging,
+    setPaste,
+    setPasteOpen,
+  };
+};
+
+export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
+  const {
+    busy,
+    confirm,
+    counts,
+    draft,
+    dragging,
+    fileError,
+    inputRef,
+    okRows,
+    onClose,
+    paste,
+    pasteOpen,
+    preview,
+    readFile,
+    records,
+    setDraft,
+    setDragging,
+    setPaste,
+    setPasteOpen,
+  } = useImportPanel(props);
 
   return (
     <SidePanel
@@ -143,7 +244,7 @@ export const ImportPanel = ({
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
-            const file = event.dataTransfer.files[0];
+            const [file] = event.dataTransfer.files;
             if (file !== undefined) {
               readFile(file);
             }
@@ -264,9 +365,7 @@ export const ImportPanel = ({
                 <RowResults results={preview.batch.results ?? []} />
               </>
             ) : (
-              <div className="rounded-lg bg-bg-danger-subtle p-150 text-sm">
-                {preview.parsed.fileError}
-              </div>
+              <div className="rounded-lg bg-bg-danger-subtle p-150 text-sm">{preview.parsed.fileError}</div>
             )}
           </div>
         )}
@@ -274,37 +373,3 @@ export const ImportPanel = ({
     </SidePanel>
   );
 };
-
-/** Row-by-row outcome table (preview and import history detail). */
-export const RowResults = ({
-  results,
-}: {
-  readonly results: readonly { row: number; outcome: ImportRowOutcome; externalId?: string; message: string }[];
-}) => (
-  <div className="max-h-[50dvh] overflow-auto">
-    <table className="w-full text-sm">
-      <thead className="sticky top-0 bg-surface text-fg-secondary text-xs">
-        <tr>
-          <th className="px-150 py-100 text-left font-normal">Řádek</th>
-          <th className="px-150 py-100 text-left font-normal">ID objednávky</th>
-          <th className="px-150 py-100 text-left font-normal">Výsledek</th>
-          <th className="px-150 py-100 text-left font-normal">Detail</th>
-        </tr>
-      </thead>
-      <tbody>
-        {results.map((result) => (
-          <tr className="border-border-primary border-t align-top" key={`${String(result.row)}-${result.outcome}`}>
-            <td className="px-150 py-100 tabular-nums">{result.row}</td>
-            <td className="px-150 py-100 font-mono text-xs">{result.externalId ?? '—'}</td>
-            <td className="px-150 py-100">
-              <Badge size="sm" variant={outcomeMeta[result.outcome].variant}>
-                {outcomeMeta[result.outcome].label}
-              </Badge>
-            </td>
-            <td className="px-150 py-100">{result.message}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-);

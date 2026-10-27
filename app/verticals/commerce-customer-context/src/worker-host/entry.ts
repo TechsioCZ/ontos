@@ -16,6 +16,8 @@ import { CommercePortalAuthConfigLive } from '../../api/portal-auth/provider/con
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { CommercePortalAuthEmailDeliveryLive } from '../../api/portal-auth/provider/recovery/email-delivery.ts';
 import { CommercePortalAuthPlatformEmailDeliveryLive } from '../../api/portal-auth/provider/platform-email-delivery.ts';
+import type { CommercePortalAuthPlatformEmailSubmit } from '../../api/portal-auth/provider/platform-email-delivery.ts';
+import { EmailDeliveryService } from '@app/email-delivery/server';
 import { CommercePortalAuthTransactionalEmailLive } from '../../api/portal-auth/provider/transactional-email.ts';
 import { CommerceEnrollmentContinuationLive } from '../enrollment/continuation/enrollment-continuation.ts';
 import { CommerceEnrollmentOwnerEffectRegistryLive } from '../enrollment/orchestration/owner-effect-registry.ts';
@@ -26,7 +28,7 @@ import { CommercePortalAuthAccountCreationReconciliationLive } from '../portal-a
 import { CommercePortalAuthDatabaseLive } from '../portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../portal-auth/persistence/portal-auth-recovery-store.ts';
 
-import { Effect, Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import {
   runCommerceEnrollmentRecovery,
   validateCommerceEnrollmentRecoveryConfiguration,
@@ -67,12 +69,21 @@ const ownerTransactionsLive = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
   Layer.provide(databaseIdentitiesLive),
 );
 const portalDatabaseLive = CommercePortalAuthDatabaseLive.pipe(Layer.provideMerge(CommercePortalAuthConfigLive));
+const platformEmailDeliveryLive = CommercePortalAuthPlatformEmailDeliveryLive(
+  Effect.fn('CommercePortalAuth.workerSubmitPlatformEmail')(function* submitPortalEmail(
+    transport: Parameters<CommercePortalAuthPlatformEmailSubmit>[0],
+    from: Parameters<CommercePortalAuthPlatformEmailSubmit>[1],
+    message: Parameters<CommercePortalAuthPlatformEmailSubmit>[2],
+  ) {
+    const delivery = yield* Layer.build(transport.deliveryLayer(from, message.to));
+    const service = Context.get(delivery, EmailDeliveryService);
+    return yield* service.send(message);
+  }, Effect.scoped),
+).pipe(Layer.provide(NodeCrypto.layer));
 const providerLive = CommercePortalAuthLive.pipe(
   Layer.provide(
     CommercePortalAuthEmailDeliveryLive.pipe(
-      Layer.provide(
-        CommercePortalAuthTransactionalEmailLive.pipe(Layer.provide(CommercePortalAuthPlatformEmailDeliveryLive)),
-      ),
+      Layer.provide(CommercePortalAuthTransactionalEmailLive.pipe(Layer.provide(platformEmailDeliveryLive))),
       Layer.provide(CommercePortalAuthRecoveryStoreLive.pipe(Layer.provide(portalDatabaseLive))),
     ),
   ),

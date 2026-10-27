@@ -12,8 +12,13 @@ import { financeBrowserRuntime } from '../../../runtime/browser.ts';
 /** The shell resolves the selected legal entity from the authenticated session, never an invoice locale or URL. */
 export const InvoiceIssuerSessionSchema = Schema.Union([
   Schema.Struct({
+    identity: Schema.Struct({
+      displayName: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)),
+      email: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)),
+      legalEntityId: Schema.String.pipe(Schema.brand('InvoiceIssuerLegalEntityId')),
+      legalName: Schema.Trim.check(Schema.isMinLength(1)),
+    }),
     state: Schema.Literal('authenticated'),
-    identity: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.Trim.check(Schema.isMinLength(1)) }),
   }),
   Schema.Struct({ state: Schema.Literals(['anonymous', 'selection_required', 'access_blocked']) }),
 ]);
@@ -30,11 +35,10 @@ const lookup = makeEffectHttpApiClient(IssuerApi, { baseUrl: '/shell-super-app-a
   // "Údaj neposkytnut" for the whole document and dropped the issuer from POHODA exports created from it.
   Effect.timeout('10 seconds'),
   Effect.retry({ times: 2 }),
-  Effect.map(invoiceIssuerName),
-  Effect.orElseSucceed(() => undefined),
 );
 // Company switching reloads the document. Share the trusted session read within this document only.
-export const issuerForDocument = financeBrowserRuntime.runSync(Effect.cached(lookup));
+export const invoiceSessionForDocument = financeBrowserRuntime.runSync(Effect.cached(lookup));
+export const issuerForDocument = invoiceSessionForDocument.pipe(Effect.map(invoiceIssuerName));
 export const useInvoiceIssuer = () => {
   const [name, setName] = useState<string>();
   useEffect(() => {
@@ -43,9 +47,12 @@ export const useInvoiceIssuer = () => {
       issuerForDocument.pipe(
         Effect.tap((value) =>
           Effect.sync(() => {
-            if (active) setName(value);
+            if (active) {
+              setName(value);
+            }
           }),
         ),
+        Effect.result,
       ),
     );
     return () => {

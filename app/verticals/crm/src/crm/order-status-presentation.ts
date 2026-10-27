@@ -32,6 +32,6 @@ export const orderStatusLabel = (raw: string): string => {
 /** Only the system-generated status reference is localized, not arbitrary quoted customer/audit text. */
 export const statusReviewReasonLabel = (reason: string): string =>
   reason.replace(
-    /^(Událost je starší než poslední známý stav )„([^“]+)“/u,
+    /^(?<prefix>Událost je starší než poslední známý stav )„(?<status>[^“]+)“/u,
     (_match, prefix: string, status: string) => `${prefix}„${orderStatusLabel(status)}“`,
   );

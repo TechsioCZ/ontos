@@ -3,9 +3,11 @@
 import { NodeCrypto, NodeFileSystem, NodePath } from '@effect/platform-node';
 import { expect, it } from 'effect-rstest';
 import { PgClient } from '@effect/sql-pg';
-import { Config, ConfigProvider, Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from 'effect';
+import { Config, ConfigProvider, Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import type { EmailTransportRuntime } from '../../src/transport-runtime.ts';
+import { EmailDeliveryService } from '../../src/server.ts';
+import { RentReminderInputSchema } from '../../src/dispatcher/contract.ts';
 import { dispatchEmailBatchWith } from '../../src/dispatcher/dispatch.ts';
 import { listDeliveries } from '../../src/dispatcher/ledger.ts';
 import { inDeliveryScope } from '../../src/dispatcher/scope.ts';
@@ -26,6 +28,13 @@ const migration = Effect.fn('EmailDeliveryTest.migration')(function* readMigrati
   const content = yield* fileSystem.readFileString(migrationPath);
   return content.split('--> statement-breakpoint').filter((statement) => statement.trim() !== '');
 });
+
+const SeedFinanceStateJsonSchema = Schema.fromJsonString(
+  Schema.Struct({
+    invoices: Schema.Array(Schema.Never),
+    reminders: Schema.Array(Schema.toEncoded(RentReminderInputSchema.fields.reminder)),
+  }),
+);
 
 const reminder = (id: string, recipient: string, text: string) => ({
   createdAt: '2026-10-22T06:00:00.000Z',
@@ -48,14 +57,15 @@ class DeliveryTestFixture extends Context.Service<
 
 const sent: { readonly recipient: string; readonly subject: string; readonly text: string }[] = [];
 const transport: EmailTransportRuntime = {
+  deliveryLayer: (_from, recipient) =>
+    Layer.succeed(EmailDeliveryService, {
+      send: (message) =>
+        Effect.sync(() => {
+          sent.push({ recipient, subject: message.subject, text: Redacted.value(message.text) });
+          return { accepted: true as const, id: `message-${sent.length}` };
+        }),
+    }),
   kind: 'smtp',
-  makeDelivery: (_from, recipient) => ({
-    send: (message) =>
-      Effect.sync(() => {
-        sent.push({ recipient, subject: message.subject, text: Redacted.value(message.text) });
-        return { accepted: true as const, id: `message-${sent.length}` };
-      }),
-  }),
   provider: { configured: true, label: 'recording transport' },
 };
 
@@ -116,9 +126,12 @@ const DeliveryTestLive = Layer.effectContext(
       ] as const,
       ([tenant, entity, name, reminders]) =>
         Effect.gen(function* seedCompany() {
-          yield* admin`insert into core.legal_entities values (${tenant}::uuid, ${entity}::uuid, ${name})`;
-          yield* admin`insert into finance_billing.finance_states values (
-      ${tenant}::uuid, ${entity}::uuid, ${admin.json({ invoices: [], reminders })})`;
+          yield* admin.unsafe('insert into core.legal_entities values ($1, $2, $3)', [tenant, entity, name]);
+          yield* admin.unsafe('insert into finance_billing.finance_states values ($1, $2, $3::jsonb)', [
+            tenant,
+            entity,
+            yield* Schema.encodeEffect(SeedFinanceStateJsonSchema)({ invoices: [], reminders }),
+          ]);
         }),
       { discard: true },
     );

@@ -10,12 +10,10 @@ export interface ProfilePageModel {
 }
 
 export const loader = ({ request }: { readonly request: Request }): Promise<ProfilePageModel> =>
-  browserRuntime
-    .runPromise(
-      loadHomePageModel(request).pipe(
-        Effect.timeout('30 seconds'),
-        Effect.map((shell) => ({ shell })),
-      ),
-      { signal: request.signal },
-    )
-    .then((model) => requireSignedIn(request, model));
+  browserRuntime.runPromise(
+    loadHomePageModel(request).pipe(
+      Effect.timeout('30 seconds'),
+      Effect.map((shell) => requireSignedIn(request, { shell })),
+    ),
+    { signal: request.signal },
+  );

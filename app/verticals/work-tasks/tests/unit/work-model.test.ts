@@ -542,21 +542,21 @@ it.effect('task property, unit and contract context can be replaced or cleared o
         tenantId,
       },
     ]);
-    const update = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+    const update = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
       contextRefs,
       taskRef: created.task.ref,
     });
     const linked = yield* evolveWorkState(created.state, update, { now, resourceId: 'unused', tenantId });
     expect(linked.task.contextRefs).toEqual(contextRefs);
-    const clear = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+    const clear = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
       contextRefs: [],
       taskRef: created.task.ref,
     });
     const cleared = yield* evolveWorkState(linked.state, clear, { now, resourceId: 'unused', tenantId });
     expect(cleared.task.contextRefs).toEqual([]);
-    const foreign = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+    const foreign = yield* Schema.decodeUnknownEffect(SingleWorkCommandSchema)({
       _tag: 'UpdateTask',
       contextRefs: [{ ...contextRefs[0], tenantId: '20000000-0000-4000-8000-000000000099' }],
       taskRef: created.task.ref,
@@ -573,7 +573,7 @@ it.effect('task property, unit and contract context can be replaced or cleared o
 it.effect('retains a real storefront inquiry as an actionable task with its product identity', () =>
   Effect.gen(function* storefrontInquiryTask() {
     const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
-    const inquiry = yield* Schema.decodeEffect(StorefrontInquirySchema)({
+    const inquiry = yield* Schema.decodeUnknownEffect(StorefrontInquirySchema)({
       email: 'pavel@example.com',
       kind: 'PRODUCT_QUESTION',
       message: 'Prosím o potvrzení jakosti.',

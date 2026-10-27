@@ -29,8 +29,8 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
-    './PageRecords': './src/routes/[lang]/prodej/prilezitosti/page.tsx',
     './PageAiApprovals': './src/routes/[lang]/prodej/schvalovani-ai/page.tsx',
+    './PageRecords': './src/routes/[lang]/prodej/prilezitosti/page.tsx',
     './Route': './src/federation-entry.tsx',
   },
   filename: 'remoteEntry.js',

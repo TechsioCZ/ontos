@@ -31,6 +31,14 @@ import type { ContractRef } from '../../shared/resources/contract.ts';
 import type { DocumentRef } from '../../shared/resources/document.ts';
 import { agreementsState } from '../database/schema.ts';
 
+const businessDateFormat = new Intl.DateTimeFormat('sv-SE', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+const currentBusinessDate = () => businessDateFormat.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
+
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 export interface AgreementsGuardScope {
   readonly legalEntityId: string;
@@ -492,13 +500,6 @@ export const transitionAgreements = (
     ),
     Match.exhaustive,
   );
-const currentBusinessDate = () =>
-  new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Europe/Prague',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 export const presentContracts = (state: AgreementsState, businessDate = currentBusinessDate()) =>
   state.contracts.map((record) => {
     const hasSuccessorDraft = state.contracts.some(

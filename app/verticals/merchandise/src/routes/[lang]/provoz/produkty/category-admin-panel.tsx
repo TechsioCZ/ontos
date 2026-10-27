@@ -220,7 +220,7 @@ const CategoryEditor = ({
 };
 
 /** Side panel for the storefront category tree: rename, heading, descriptions and sibling order. */
-export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) => {
+const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [open, setOpen] = useState(false);
@@ -318,6 +318,67 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     setServerError(null);
   };
 
+  return {
+    backToList,
+    busy,
+    categories,
+    draft,
+    list,
+    loaded,
+    nameInvalid,
+    open,
+    openPanel,
+    parentName,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  };
+};
+
+const categoryListState = ({ categories, loaded, selection }: ReturnType<typeof useCategoryAdmin>) => ({
+  empty: loaded.status === 'ready' && categories.length === 0,
+  failed: loaded.status === 'error',
+  loading: loaded.status === 'idle' || loaded.status === 'loading',
+  visible: loaded.status === 'ready' && categories.length > 0 && selection === null,
+});
+
+export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
+  const model = useCategoryAdmin(props);
+  const {
+    backToList,
+    busy,
+    draft,
+    list,
+    nameInvalid,
+    open,
+    openPanel,
+    parentName,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  } = model;
+  const listState = categoryListState(model);
+
   return (
     <>
       <Button icon="icon-[mdi--file-tree-outline]" onClick={openPanel} size="sm" theme="outlined" variant="secondary">
@@ -347,8 +408,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         title="Kategorie e-shopu"
       >
         <div className="flex flex-col gap-200 py-200">
-          {(loaded.status === 'idle' || loaded.status === 'loading') && <StatusText>Načítám kategorie…</StatusText>}
-          {loaded.status === 'error' && (
+          {listState.loading && <StatusText>Načítám kategorie…</StatusText>}
+          {listState.failed && (
             <>
               <StatusText showIcon status="error">
                 Kategorie se nepodařilo načíst.
@@ -358,10 +419,8 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               </Button>
             </>
           )}
-          {loaded.status === 'ready' && categories.length === 0 && (
-            <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>
-          )}
-          {loaded.status === 'ready' && categories.length > 0 && selection === null && (
+          {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
+          {listState.visible && (
             <>
               <FormInput
                 id="category-admin-search"

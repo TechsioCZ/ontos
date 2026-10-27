@@ -1,10 +1,10 @@
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { randomUUID } from 'node:crypto';
 
 import {
   ActionRuntime,
   ContextAccess,
   PrincipalResolver,
-  SHARED_RUNTIME_IDENTITY,
   SupportRecoveryPrincipalContextResolver,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,

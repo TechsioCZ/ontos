@@ -1,20 +1,36 @@
-// @effect-diagnostics *:off
 // Committed-state readers. Which e-mails are due is decided once, by demo_email.pending_deliveries() (ids only, the
 // dispatcher's sole cross-tenant read). Content is read here, only inside inDeliveryScope (RLS) and only for those ids.
 import { PgClient } from '@effect/sql-pg';
-import { Effect, Schema } from 'effect';
-import type {
-  AgendaNotificationInput,
-  AgendaPreferenceInput,
-  AgendaRecipientInput,
-  AkrosOrderInput,
-  EmailDeliverySource,
-  RentReminderInput,
+import { Effect, Match, Schema } from 'effect';
+import type { AgendaRecipientInput, EmailDeliverySource, RentReminderInput } from './contract.ts';
+import {
+  AKROS_LEGAL_ENTITY_ID,
+  DEMO_TENANT_ID,
+  StorefrontInquiryTaskSchema,
+  AkrosOrderInputSchema,
+  RentReminderInputSchema,
+  AgendaNotificationInputSchema,
+  AgendaPreferenceInputSchema,
+  EmailDeliverySourceSchema,
 } from './contract.ts';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, StorefrontInquiryTaskSchema } from './contract.ts';
 import type { DeliveryScope } from './scope.ts';
 
-const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
+const StoredOrderSchema = Schema.Union([
+  Schema.toEncoded(AkrosOrderInputSchema),
+  Schema.fromJsonString(Schema.toEncoded(AkrosOrderInputSchema)),
+]);
+const StoredReminderSchema = Schema.Union([
+  Schema.toEncoded(RentReminderInputSchema.fields.reminder),
+  Schema.fromJsonString(Schema.toEncoded(RentReminderInputSchema.fields.reminder)),
+]);
+const StoredNotificationsSchema = Schema.Union([
+  Schema.Array(Schema.toEncoded(AgendaNotificationInputSchema)),
+  Schema.fromJsonString(Schema.Array(Schema.toEncoded(AgendaNotificationInputSchema))),
+]);
+const StoredPreferenceSchema = Schema.Union([
+  Schema.toEncoded(AgendaPreferenceInputSchema),
+  Schema.fromJsonString(Schema.toEncoded(AgendaPreferenceInputSchema)),
+]);
 /** Per source and tick; the function caps it at 100. */
 export const PENDING_PAGE_SIZE = 10;
 
@@ -23,7 +39,7 @@ export interface PendingDelivery extends DeliveryScope {
   readonly deliveryId: string;
 }
 
-export const readPendingDeliveries = Effect.gen(function* () {
+export const readPendingDeliveries = Effect.gen(function* readPendingDeliveries() {
   const sql = yield* PgClient.PgClient;
   return yield* sql<PendingDelivery>`
     select tenant_id::text as "tenantId", legal_entity_id::text as "legalEntityId", delivery_id as "deliveryId"
@@ -41,50 +57,64 @@ export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => 
   const separator = deliveryId.indexOf(':');
   const source = deliveryId.slice(0, separator);
   const rest = deliveryId.slice(separator + 1);
-  if (separator < 0 || rest === '') return null;
-  switch (source) {
-    case 'storefront-inquiry':
-    case 'person-invitation':
-    case 'rent-reminder':
-      return { source, subjectId: rest };
-    case 'akros-order': {
-      const end = rest.lastIndexOf(':');
-      return end <= 0 ? null : { source, subjectId: rest.slice(0, end) };
-    }
-    case 'facility-agenda': {
-      const end = rest.indexOf(':');
-      return end <= 0 ? null : { source, subjectId: rest.slice(0, end) };
-    }
-    default:
-      return null;
+  if (separator === -1 || rest === '') {
+    return null;
   }
+  if (!Schema.is(EmailDeliverySourceSchema)(source)) {
+    return null;
+  }
+  return Match.value(source).pipe(
+    Match.whenOr('storefront-inquiry', 'person-invitation', 'rent-reminder', (kind) => ({
+      source: kind,
+      subjectId: rest,
+    })),
+    Match.when('akros-order', (kind) => {
+      const end = rest.lastIndexOf(':');
+      return end <= 0 ? null : { source: kind, subjectId: rest.slice(0, end) };
+    }),
+    Match.when('facility-agenda', (kind) => {
+      const end = rest.indexOf(':');
+      return end <= 0 ? null : { source: kind, subjectId: rest.slice(0, end) };
+    }),
+    Match.exhaustive,
+  );
 };
 
 /** Call inside inDeliveryScope(scope). The explicit predicates restate what RLS already enforces. */
-export const readAkrosOrders = (scope: DeliveryScope, orderIds: readonly string[]) =>
-  Effect.gen(function* () {
-    if (orderIds.length === 0) return [] as readonly AkrosOrderInput[];
-    const sql = yield* PgClient.PgClient;
-    const rows = yield* sql<{ readonly order: unknown }>`
+export const readAkrosOrders = Effect.fn('EmailSources.readAkrosOrders')(function* readOrders(
+  scope: DeliveryScope,
+  orderIds: readonly string[],
+) {
+  if (orderIds.length === 0) {
+    return [];
+  }
+  const sql = yield* PgClient.PgClient;
+  const rows = yield* sql<{ readonly order: unknown }>`
       select r.document as "order" from demo_merchandise.orders r
       where r.tenant_id = ${scope.tenantId}::uuid and r.legal_entity_id = ${scope.legalEntityId}::uuid
         and r.id in ${sql.in(orderIds)}
       order by r.created_at, r.id`;
-    return rows.map((row) => json<AkrosOrderInput>(row.order));
+  return yield* Effect.forEach(rows, (row) => Schema.decodeUnknownEffect(StoredOrderSchema)(row.order), {
+    concurrency: 1,
   });
+});
 
 /** Call inside inDeliveryScope(scope). */
-export const readRentReminders = (scope: DeliveryScope, reminderIds: readonly string[]) =>
-  Effect.gen(function* () {
-    if (reminderIds.length === 0) return [] as readonly RentReminderInput[];
-    const sql = yield* PgClient.PgClient;
-    const rows = yield* sql<{
-      readonly invoiceNumber: string | null;
-      readonly legalEntityId: string;
-      readonly legalName: string | null;
-      readonly reminder: unknown;
-      readonly tenantId: string;
-    }>`
+export const readRentReminders = Effect.fn('EmailSources.readRentReminders')(function* readReminders(
+  scope: DeliveryScope,
+  reminderIds: readonly string[],
+) {
+  if (reminderIds.length === 0) {
+    return [];
+  }
+  const sql = yield* PgClient.PgClient;
+  const rows = yield* sql<{
+    readonly invoiceNumber: string | null;
+    readonly legalEntityId: string;
+    readonly legalName: string | null;
+    readonly reminder: unknown;
+    readonly tenantId: string;
+  }>`
       select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", r as "reminder",
         (select le.legal_name from core.legal_entities le
           where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
@@ -94,29 +124,40 @@ export const readRentReminders = (scope: DeliveryScope, reminderIds: readonly st
       where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
         and r->>'id' in ${sql.in(reminderIds)}
       order by r->>'createdAt', r->>'id'`;
-    return rows.map((row): RentReminderInput => ({
-      invoiceNumber: row.invoiceNumber,
-      legalEntityId: row.legalEntityId,
-      legalName: row.legalName,
-      reminder: json<RentReminderInput['reminder']>(row.reminder),
-      tenantId: row.tenantId,
-    }));
-  });
+  return yield* Effect.forEach(
+    rows,
+    (row) =>
+      Schema.decodeUnknownEffect(StoredReminderSchema)(row.reminder).pipe(
+        Effect.map((reminder): RentReminderInput => ({
+          invoiceNumber: row.invoiceNumber,
+          legalEntityId: row.legalEntityId,
+          legalName: row.legalName,
+          reminder,
+          tenantId: row.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+});
 
 /** Call inside inDeliveryScope(scope). All notifications of each person; the planner groups them into batches. */
-export const readAgendaRecipients = (scope: DeliveryScope, principalIds: readonly string[]) =>
-  Effect.gen(function* () {
-    if (principalIds.length === 0) return [] as readonly AgendaRecipientInput[];
-    const sql = yield* PgClient.PgClient;
-    const rows = yield* sql<{
-      readonly email: string | null;
-      readonly legalEntityId: string;
-      readonly legalName: string | null;
-      readonly notifications: unknown;
-      readonly preference: unknown;
-      readonly principalId: string;
-      readonly tenantId: string;
-    }>`
+export const readAgendaRecipients = Effect.fn('EmailSources.readAgendaRecipients')(function* readRecipients(
+  scope: DeliveryScope,
+  principalIds: readonly string[],
+) {
+  if (principalIds.length === 0) {
+    return [];
+  }
+  const sql = yield* PgClient.PgClient;
+  const rows = yield* sql<{
+    readonly email: string | null;
+    readonly legalEntityId: string;
+    readonly legalName: string | null;
+    readonly notifications: unknown;
+    readonly preference: unknown;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }>`
       select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", p as "preference",
         p->'principal'->>'principalId' as "principalId",
         (select u.email from core.principal_auth_bindings b join auth."user" u on u.id = b.provider_subject_id
@@ -130,16 +171,29 @@ export const readAgendaRecipients = (scope: DeliveryScope, principalIds: readonl
       cross join lateral jsonb_array_elements(coalesce(s.state->'preferences', '[]'::jsonb)) p
       where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
         and s.agenda = 'agenda' and p->'principal'->>'principalId' in ${sql.in(principalIds)}`;
-    return rows.map((row): AgendaRecipientInput => ({
-      email: row.email,
-      legalEntityId: row.legalEntityId,
-      legalName: row.legalName,
-      notifications: json<readonly AgendaNotificationInput[]>(row.notifications),
-      preference: json<AgendaPreferenceInput>(row.preference),
-      principalId: row.principalId,
-      tenantId: row.tenantId,
-    }));
-  });
+  return yield* Effect.forEach(
+    rows,
+    (row) =>
+      Effect.all(
+        {
+          notifications: Schema.decodeUnknownEffect(StoredNotificationsSchema)(row.notifications),
+          preference: Schema.decodeUnknownEffect(StoredPreferenceSchema)(row.preference),
+        },
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map(({ notifications, preference }): AgendaRecipientInput => ({
+          email: row.email,
+          legalEntityId: row.legalEntityId,
+          legalName: row.legalName,
+          notifications,
+          preference,
+          principalId: row.principalId,
+          tenantId: row.tenantId,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+});
 
 /** Scoped committed task state, only pending ids discovered by the migration-owned scheduler. */
 export const readStorefrontInquiryTasks = Effect.fn('Sources.readStorefrontInquiryTasks')(
@@ -154,8 +208,9 @@ export const readStorefrontInquiryTasks = Effect.fn('Sources.readStorefrontInqui
       where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
         and t->'ref'->>'resourceId' in ${sql.in(taskIds)} and t->'storefrontInquiry' is not null
       order by t->>'createdAt', t->'ref'->>'resourceId'`;
-    return yield* Effect.all(
-      rows.map((row) => Schema.decodeUnknownEffect(Schema.toEncoded(StorefrontInquiryTaskSchema))(row.task)),
+    return yield* Effect.forEach(
+      rows,
+      (row) => Schema.decodeUnknownEffect(Schema.toEncoded(StorefrontInquiryTaskSchema))(row.task),
       { concurrency: 1 },
     );
   },

@@ -58,6 +58,13 @@ interface ProductDetailPageContentProps {
   readonly routeParams: ProductDetailPageRouteParameters;
 }
 
+const productFailureKey = (reason: string) => {
+  if (reason === 'reload-required') {
+    return 'states.reloadRequired';
+  }
+  return reason === 'forbidden' ? 'states.forbidden' : 'states.errorDescription';
+};
+
 const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailPageContentProps) => {
   const { language, t } = useModernI18n();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
@@ -103,8 +110,8 @@ const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailP
       <UltramodernRouteHead />
       {state.status === 'ready' ? (
         <ProductDetailView
-          canWrite={state.response.canManageCatalog ?? state.response.canWrite}
           canMoveStock={state.response.canWrite}
+          canWrite={state.response.canManageCatalog ?? state.response.canWrite}
           {...(state.response.storefrontOrigin === undefined
             ? {}
             : { storefrontOrigin: state.response.storefrontOrigin })}
@@ -125,15 +132,7 @@ const ProductDetailPageContent = ({ legalEntityId, routeParams }: ProductDetailP
               Match.when({ status: 'loading' }, () => k('states.loading')),
               Match.when({ status: 'invalid' }, () => k('states.invalidId')),
               Match.when({ status: 'not-found' }, () => k('states.notFound')),
-              Match.when({ status: 'error' }, ({ reason }) =>
-                k(
-                  reason === 'reload-required'
-                    ? 'states.reloadRequired'
-                    : reason === 'forbidden'
-                      ? 'states.forbidden'
-                      : 'states.errorDescription',
-                ),
-              ),
+              Match.when({ status: 'error' }, ({ reason }) => k(productFailureKey(reason))),
               Match.exhaustive,
             )}
           </StatusText>
@@ -176,7 +175,7 @@ export const preloadPage = modulePagePreload((props) =>
 );
 
 const ProductDetailRoute = ({ context, routeParams: suppliedParams }: Partial<ProductDetailPageProps>) => {
-  const params = useParams({ from: '/$lang/provoz/produkty/$id', shouldThrow: false });
+  const params: unknown = useParams({ from: '/$lang/provoz/produkty/$id', shouldThrow: false });
   const routeParams = Schema.decodeUnknownOption(ProductDetailPageRouteParams)(params);
   return (
     <ProductDetailPage

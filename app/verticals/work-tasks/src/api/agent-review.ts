@@ -8,11 +8,13 @@ import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-c
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
 import type { AgentFollowUp, AgentReviewItem, AgentReviewItemRequest } from '@app/shared-contracts/agent-review';
 import { AGENT_REVERT_MISSING_BEFORE, agentRevertCommands, agentRevertNone } from '@app/shared-contracts/agent-revert';
-import { Match, Option, Predicate } from 'effect';
+import { Match, Option, Predicate, Schema } from 'effect';
+import { TaskStateSchema } from '../../shared/apis/records.ts';
+import type { TaskState } from '../../shared/apis/records.ts';
 
-type Rec = Readonly<Record<string, unknown>>;
+type Rec = Schema.JsonObject;
 
-const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = Schema.is(Schema.JsonObject);
 
 /** The ref of the task an approved CreateTask makes; `$createdId` is filled in from the command's answer. */
 const taskRefOfCreated = (tenantId: string) => ({
@@ -25,13 +27,13 @@ const taskRefOfCreated = (tenantId: string) => ({
 const TASK_STATE_UNAVAILABLE = 'Úkol nelze vrátit do původního stavu.';
 const NULLABLE_TASK_KEYS = new Set(['dueDate', 'plannedHours', 'projectId']);
 
-const TASK_STATE_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
+const TASK_STATE_TRANSITIONS = {
   CANCELLED: [],
   DONE: [],
   IN_PROGRESS: ['WAITING', 'DONE', 'CANCELLED'],
   NEW: ['IN_PROGRESS', 'CANCELLED'],
   WAITING: ['IN_PROGRESS', 'DONE', 'CANCELLED'],
-};
+} satisfies Readonly<Record<TaskState, readonly TaskState[]>>;
 
 const VALUE_OPTIONS = {
   valueLabels: {
@@ -40,7 +42,7 @@ const VALUE_OPTIONS = {
   },
 };
 
-const TASK_LABELS: Readonly<Record<string, string>> = {
+const TASK_LABELS = {
   archived: 'Archivováno',
   contextRefs: 'Souvislosti',
   description: 'Popis',
@@ -58,8 +60,8 @@ const TASK_SKIP: ReadonlySet<string> = new Set(['taskRef']);
 
 /** Commands that change one existing task, read live for `before`, the undo plan and the in-place check. */
 const targetsExistingTask = (command: AgentCommand): boolean =>
-  Match.value(String(command['_tag'])).pipe(
-    Match.whenOr('UpdateTask', 'ChangeTaskState', 'AssignTask', () => true),
+  Match.value(command).pipe(
+    Match.whenOr({ _tag: 'UpdateTask' }, { _tag: 'ChangeTaskState' }, { _tag: 'AssignTask' }, () => true),
     Match.orElse(() => false),
   );
 const isRevertibleTaskCommand = (command: AgentCommand): boolean =>
@@ -77,12 +79,12 @@ const isRevertibleTaskCommand = (command: AgentCommand): boolean =>
 /** Resource id of the task the command changes when it is one that is read live, undefined otherwise. */
 export const targetTaskId = (command: AgentCommand): string | undefined => {
   const ref = command['taskRef'];
-  return targetsExistingTask(command) && isRecord(ref) && typeof ref['resourceId'] === 'string'
+  return targetsExistingTask(command) && isRecord(ref) && Schema.is(Schema.String)(ref['resourceId'])
     ? ref['resourceId']
     : undefined;
 };
 
-export const taskDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined =>
+export const taskDiff = (command: AgentCommand, before?: Rec): AgentDiffLine[] | undefined =>
   Match.value(command).pipe(
     Match.when({ _tag: 'CreateTask' }, () =>
       agentFieldLines(command, TASK_LABELS, undefined, TASK_SKIP, VALUE_OPTIONS),
@@ -115,7 +117,7 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
       if (before === undefined) {
         return agentRevertNone(AGENT_REVERT_MISSING_BEFORE);
       }
-      const fields: Record<string, unknown> = {};
+      const fields: Record<string, Schema.Json> = {};
       for (const key of Object.keys(command)) {
         if (key === '_tag' || key === 'taskRef') {
           continue;
@@ -132,11 +134,14 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
       return agentRevertCommands([{ _tag: 'UpdateTask', taskRef, ...fields }]);
     }),
     Match.when({ _tag: 'ChangeTaskState' }, () => {
-      const from = command['state'];
-      const to = before?.['state'];
-      const allowed = typeof from === 'string' ? (TASK_STATE_TRANSITIONS[from] ?? []) : [];
-      return typeof to === 'string' && allowed.includes(to)
-        ? agentRevertCommands([{ _tag: 'ChangeTaskState', state: to, taskRef }])
+      const from = Schema.decodeUnknownOption(TaskStateSchema)(command['state']);
+      const to = Schema.decodeUnknownOption(TaskStateSchema)(before?.['state']);
+      if (Option.isNone(from) || Option.isNone(to)) {
+        return agentRevertNone(TASK_STATE_UNAVAILABLE);
+      }
+      const allowed: readonly TaskState[] = TASK_STATE_TRANSITIONS[from.value];
+      return allowed.includes(to.value)
+        ? agentRevertCommands([{ _tag: 'ChangeTaskState', state: to.value, taskRef }])
         : agentRevertNone(TASK_STATE_UNAVAILABLE);
     }),
     Match.when({ _tag: 'AssignTask' }, () => {
@@ -150,7 +155,7 @@ export const taskRevert = (command: AgentCommand, before: Rec | undefined, tenan
 };
 
 /** Does the task still hold what the approved command set (only the fields the command set are compared)? */
-export const taskStillInPlace = (command: AgentCommand, current: Rec | undefined): boolean | undefined => {
+export const taskStillInPlace = (command: AgentCommand, current?: Rec): boolean | undefined => {
   if (!targetsExistingTask(command)) {
     return undefined;
   }
@@ -175,7 +180,7 @@ export const provenanceComment = (
   if (!isRecord(taskRef)) {
     return undefined;
   }
-  return {
+  const followUp: AgentFollowUp = {
     commands: [
       {
         _tag: 'AddTaskComment',
@@ -183,16 +188,19 @@ export const provenanceComment = (
         text: `Změnu „${proposal.summary}“ navrhl ${proposal.agentLabel}; schváleno na stránce Ke schválení.`,
       },
     ],
-    ...(created ? { createdIdPath: 'task.ref.resourceId' } : {}),
     referenceAudiences: [],
   };
+  if (created) {
+    Object.assign(followUp, { createdIdPath: 'task.ref.resourceId' });
+  }
+  return followUp;
 };
 
 /** What the person reading may know about one proposal. `task` is the live task (undefined: not found for them). */
 export interface TaskReviewInput {
   readonly canWrite: boolean | undefined;
   readonly request: AgentReviewItemRequest;
-  readonly task: Rec | undefined;
+  readonly task?: Rec | undefined;
   /** The live task was read (false: not needed, or the read failed). */
   readonly taskRead: boolean;
   readonly tenantId: string;
@@ -208,30 +216,41 @@ export const reviewTaskProposal = ({
   const { command, key, proposal, stage } = request;
   const targeted = targetTaskId(command) !== undefined;
   if (stage === 'history') {
-    const lines = taskDiff(command, undefined);
-    return { key, visible: true, ...(lines === undefined ? {} : { diff: lines }) };
+    const lines = taskDiff(command);
+    const review: AgentReviewItem = { key, visible: true };
+    if (lines !== undefined) {
+      Object.assign(review, { diff: lines });
+    }
+    return review;
   }
   if (stage === 'undo') {
     // Undo only over a task read just now; a failed read leaves the change alone.
     const inPlace = taskStillInPlace(command, task);
-    return {
-      key,
-      visible: !targeted || task !== undefined,
-      ...(inPlace === undefined ? {} : { stillInPlace: inPlace }),
-    };
+    const review: AgentReviewItem = { key, visible: !targeted || task !== undefined };
+    if (inPlace !== undefined) {
+      Object.assign(review, { stillInPlace: inPlace });
+    }
+    return review;
   }
   const missing = targeted && taskRead && task === undefined;
   const lines = taskDiff(command, task);
   const name = task?.['title'];
   const followUp = proposal === undefined ? undefined : provenanceComment(command, proposal, tenantId);
-  return {
-    key,
-    revert: taskRevert(command, task, tenantId),
-    visible: !missing,
-    ...(canWrite === false ? { blockedReason: 'V tomto modulu nemáte oprávnění k zápisu.' } : {}),
-    ...(lines === undefined ? {} : { diff: lines }),
-    ...(followUp === undefined ? {} : { followUp }),
-    ...(isRevertibleTaskCommand(command) ? {} : { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE }),
-    ...(typeof name === 'string' && name !== '' ? { targetName: name.slice(0, 300) } : {}),
-  };
+  const review: AgentReviewItem = { key, revert: taskRevert(command, task, tenantId), visible: !missing };
+  if (canWrite === false) {
+    Object.assign(review, { blockedReason: 'V tomto modulu nemáte oprávnění k zápisu.' });
+  }
+  if (lines !== undefined) {
+    Object.assign(review, { diff: lines });
+  }
+  if (followUp !== undefined) {
+    Object.assign(review, { followUp });
+  }
+  if (!isRevertibleTaskCommand(command)) {
+    Object.assign(review, { revertUnavailableReason: AGENT_REVERT_UNAVAILABLE });
+  }
+  if (Schema.is(Schema.String)(name) && name !== '') {
+    Object.assign(review, { targetName: name.slice(0, 300) });
+  }
+  return review;
 };

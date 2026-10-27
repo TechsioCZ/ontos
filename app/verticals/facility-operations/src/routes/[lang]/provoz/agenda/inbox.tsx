@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
 // S13 notification centre, „Moje agenda“ and notification settings + export log. Owned by the ops-agenda lane.
 import { EmptyState, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -8,8 +7,7 @@ import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { DateTime } from 'effect';
 import { useState } from 'react';
-import type { Notification, NotificationPreference } from '../../../../../shared/domain/agenda.ts';
-import type { AgendaState } from '../../../../../shared/domain/agenda.ts';
+import type { Notification, NotificationPreference, AgendaState } from '../../../../../shared/domain/agenda.ts';
 import {
   DEFAULT_LEAD_DAYS,
   MANDATORY_EMAIL_CATEGORIES,
@@ -29,17 +27,18 @@ import {
   urgencyTone,
 } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import type { Tone } from '../../../../ui/ops-agenda/model.ts';
+import type { AgendaEmailReceipts, EmailProviderState } from './agenda-email.tsx';
 import { agendaEmailKey, useAgendaEmailReceipts, useEmailProvider } from './agenda-email.tsx';
 
 const k = 'facility-operations.agenda';
 const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 
-const notificationTone: Record<Notification['category'], Tone> = {
+const notificationTone = {
   ASSIGNED: 'primary',
   CHANGE: 'info',
   DEADLINE: 'warning',
   OVERDUE: 'danger',
-};
+} as const satisfies Record<Notification['category'], Tone>;
 const notificationIcon = { ASSIGNED: 'tasks', CHANGE: 'refresh', DEADLINE: 'timer', OVERDUE: 'alert' } as const;
 
 export const myNotifications = (state: AgendaState | undefined, me: string | undefined) =>
@@ -51,6 +50,60 @@ export const myPreference = (
   state: AgendaState | undefined,
   me: string | undefined,
 ): NotificationPreference | undefined => state?.preferences?.find((entry) => entry.principal.principalId === me);
+
+const emailKeyOf = (entry: Notification) =>
+  agendaEmailKey(entry.recipient.principalId, DateTime.formatIso(entry.createdAt));
+
+type Translate = ReturnType<typeof useModernI18n>['t'];
+
+const notificationEmailLabel = (
+  receipt: NonNullable<ReturnType<AgendaEmailReceipts['get']>>,
+  lang: ReturnType<typeof langOf>,
+  t: Translate,
+) => {
+  if (receipt.status === 'SENT' && receipt.sentAt !== null) {
+    return t(`${k}.notifications.emailSent`, { time: fmt.stamp(lang, receipt.sentAt) });
+  }
+  if (receipt.status === 'SKIPPED') {
+    return t(`${k}.notifications.emailSkipped`);
+  }
+  if (receipt.status === 'FAILED' || receipt.status === 'UNKNOWN') {
+    return t(`${k}.notifications.emailFailed`);
+  }
+  return t(`${k}.notifications.emailPending`);
+};
+
+const providerPillOf = (provider: EmailProviderState, t: Translate) => {
+  if (provider.kind === 'ready' && provider.provider.configured) {
+    return <Pill tone="success">{t(`${k}.settings.emailOn`)}</Pill>;
+  }
+  if (provider.kind === 'loading') {
+    return null;
+  }
+  return <Pill tone="warning">{t(`${k}.settings.emailOff`)}</Pill>;
+};
+
+const providerTextOf = (provider: EmailProviderState, address: string, t: Translate) => {
+  if (provider.kind === 'loading') {
+    return t(`${k}.settings.emailChecking`);
+  }
+  if (provider.kind === 'unavailable') {
+    return t(`${k}.settings.emailUnknown`);
+  }
+  return provider.provider.configured
+    ? t(`${k}.settings.emailReal`, { address, provider: provider.provider.label ?? 'SMTP' })
+    : t(`${k}.settings.emailNotConfigured`);
+};
+
+const exportListLabel = (list: string, t: Translate) => {
+  if (list.startsWith('overview:')) {
+    return t(`${k}.kpi.${list.slice('overview:'.length)}.label`);
+  }
+  if (list === 'search') {
+    return t(`${k}.search.label`);
+  }
+  return list === 'calendar' ? t(`${k}.tabs.kalendar`) : t(`${k}.exportsLog.other`);
+};
 
 // ---- Notification centre -----------------------------------------------------------------------------------------
 
@@ -68,7 +121,7 @@ export const NotificationCenter = ({
   readonly me: string | undefined;
   readonly onCheck: () => void;
   readonly onMarkAll: () => void;
-  readonly onMarkRead: (id: string) => void;
+  readonly onMarkRead: (id: Notification['id']) => void;
   readonly state: AgendaState | undefined;
 }) => {
   const { language, t } = useModernI18n();
@@ -80,8 +133,6 @@ export const NotificationCenter = ({
   const unread = all.filter((entry) => entry.readAt === undefined);
   const rows = filter === 'unread' ? unread : all;
   const emailOn = myPreference(state, me)?.emailOptIn === true;
-  const emailKeyOf = (entry: Notification) =>
-    agendaEmailKey(entry.recipient.principalId, DateTime.formatIso(entry.createdAt));
   const receipts = useAgendaEmailReceipts(emailOn ? rows.slice(0, 100).map(emailKeyOf) : []);
   return (
     <SectionCard
@@ -209,15 +260,10 @@ export const NotificationCenter = ({
                   )}
                   {(() => {
                     const receipt = receipts.get(emailKeyOf(entry));
-                    if (receipt === undefined) return null;
-                    const label =
-                      receipt.status === 'SENT' && receipt.sentAt !== null
-                        ? t(`${k}.notifications.emailSent`, { time: fmt.stamp(lang, receipt.sentAt) })
-                        : receipt.status === 'SKIPPED'
-                          ? t(`${k}.notifications.emailSkipped`)
-                          : receipt.status === 'FAILED' || receipt.status === 'UNKNOWN'
-                            ? t(`${k}.notifications.emailFailed`)
-                            : t(`${k}.notifications.emailPending`);
+                    if (receipt === undefined) {
+                      return null;
+                    }
+                    const label = notificationEmailLabel(receipt, lang, t);
                     return (
                       <span
                         className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
@@ -249,6 +295,8 @@ export const NotificationCenter = ({
 };
 
 // ---- Moje agenda --------------------------------------------------------------------------------------------------
+
+const addDaysBack = (today: string) => `${today.slice(0, 8)}01`;
 
 export const MyAgenda = ({
   deadlines,
@@ -377,8 +425,6 @@ export const MyAgenda = ({
   );
 };
 
-const addDaysBack = (today: string) => today.slice(0, 8) + '01';
-
 // ---- Settings + export log ---------------------------------------------------------------------------------------
 
 export const SettingsPanel = ({
@@ -410,20 +456,8 @@ export const SettingsPanel = ({
   );
   const provider = useEmailProvider();
   const address = t(`${k}.settings.yourAddress`);
-  const providerPill =
-    provider.kind === 'ready' && provider.provider.configured ? (
-      <Pill tone="success">{t(`${k}.settings.emailOn`)}</Pill>
-    ) : provider.kind === 'loading' ? undefined : (
-      <Pill tone="warning">{t(`${k}.settings.emailOff`)}</Pill>
-    );
-  const providerText =
-    provider.kind === 'loading'
-      ? t(`${k}.settings.emailChecking`)
-      : provider.kind === 'unavailable'
-        ? t(`${k}.settings.emailUnknown`)
-        : provider.provider.configured
-          ? t(`${k}.settings.emailReal`, { address, provider: provider.provider.label ?? 'SMTP' })
-          : t(`${k}.settings.emailNotConfigured`);
+  const providerPill = providerPillOf(provider, t);
+  const providerText = providerTextOf(provider, address, t);
   const exports = (state?.exports ?? [])
     .toSorted((left, right) => DateTime.toEpochMillis(right.exportedAt) - DateTime.toEpochMillis(left.exportedAt))
     .slice(0, 25);
@@ -487,8 +521,11 @@ export const SettingsPanel = ({
                     onCheckedChange={(checked) =>
                       setOptional((previous) => {
                         const next = new Set(previous);
-                        if (checked) next.add(category);
-                        else next.delete(category);
+                        if (checked) {
+                          next.add(category);
+                        } else {
+                          next.delete(category);
+                        }
                         return next;
                       })
                     }
@@ -559,15 +596,7 @@ export const SettingsPanel = ({
                       {personOf(entry.exportedBy.principalId)?.displayName ?? ''}
                     </td>
                     <td className="facilityoperations:px-2 facilityoperations:py-1.5">
-                      <div>
-                        {entry.list.startsWith('overview:')
-                          ? t(`${k}.kpi.${entry.list.slice('overview:'.length)}.label`)
-                          : entry.list === 'search'
-                            ? t(`${k}.search.label`)
-                            : entry.list === 'calendar'
-                              ? t(`${k}.tabs.kalendar`)
-                              : t(`${k}.exportsLog.other`)}
-                      </div>
+                      <div>{exportListLabel(entry.list, t)}</div>
                       {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
                         <div className="facilityoperations:text-xs" style={muted}>
                           {entry.filter}

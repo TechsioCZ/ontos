@@ -61,6 +61,10 @@
  *   a comment-bearing statement between the two reads breaks adjacency and the run.
  * - **Destructured dependency** — `const { id } = yield* a.load(); const b = yield* c.get(id);`
  *   references `id`, so it is a genuine data dependency and is not reported.
+ * - **Proven shared transaction** — queries using the same immutable, Core-branded transaction
+ *   binding have a resource dependency. Imported helpers count only when bounded source inspection
+ *   proves their canonical transaction parameter reaches a yielded or returned query. A shared
+ *   receiver, scope object, transaction-like name or opaque helper argument is not sufficient.
  * - **Tests** (`includeTests`, default `false`) and **`scripts/`** (`includeScripts`, default
  *   `false`): B2 and B3 own those surfaces. Anything outside `include`, anything matching `ignore`,
  *   and any generator whose wrapper is not an `effect` `Effect.gen`/`fn`/`fnUntraced` binding (a
@@ -72,7 +76,7 @@
  * hatch for known ordering steps, not a proof that all other calls commute. Report-only: no fixer, no suggestion.
  */
 import { defineRule } from '@oxlint/plugins';
-import type { Context, ESTree } from '@oxlint/plugins';
+import type { Context, ESTree, Variable } from '@oxlint/plugins';
 
 import { asNode as sharedAsNode, childrenOf, memberName as sharedMemberName } from '../shared/ast.ts';
 import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
@@ -80,6 +84,7 @@ import { bindingsWithExtraModules, collectRootNamespaces, collectNamedImports } 
 import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
 import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { transactionResourceProof } from '../shared/transaction-resource-proof.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
 const DEFAULT_IGNORE: readonly string[] = ['**/dist/**', '**/build/**', '**/node_modules/**', 'tools/**', '**/*.d.ts'];
@@ -310,6 +315,7 @@ interface Candidate {
   readonly bound: ReadonlySet<string>;
   readonly referenced: ReadonlySet<string>;
   readonly ordering: boolean;
+  readonly resources: ReadonlySet<Variable>;
 }
 
 function inScope(filename: string, options: RuleOptions): boolean {
@@ -424,6 +430,7 @@ export const rule = defineRule({
     const visitorKeys = context.sourceCode.visitorKeys;
     const ordering = safeRegExp(options.orderingCalleePattern, DEFAULT_ORDERING_PATTERN);
     const analysed = new Set<number>();
+    const transactionResources = transactionResourceProof(context);
 
     /** A single-declarator `const x = yield* <non-effect member call>` statement, or `null`. */
     const candidateOf = (statement: AnyNode): Candidate | null => {
@@ -445,12 +452,14 @@ export const rule = defineRule({
         calleeNode,
         ordering: ordering.test(calleeName),
         referenced: collectReferencedNames(init, visitorKeys),
+        resources: transactionResources(subject),
       };
     };
 
     const analyseStatements = (statements: readonly unknown[]): void => {
       let head: Candidate | null = null;
       let seen = new Set<string>();
+      let resources = new Set<Variable>();
       const entries = statements.flatMap((entry) => {
         const statement = asNode(entry);
         return statement?.type === 'VariableDeclaration' && Array.isArray(statement.declarations)
@@ -465,6 +474,7 @@ export const rule = defineRule({
         if (statement === null) {
           head = null;
           seen = new Set();
+          resources = new Set();
           continue;
         }
         const candidate = candidateOf(statement);
@@ -472,17 +482,22 @@ export const rule = defineRule({
         if (candidate === null || candidate.ordering) {
           head = null;
           seen = new Set();
+          resources = new Set();
           continue;
         }
         if (head === null) {
           head = candidate;
           seen = new Set(candidate.bound);
+          resources = new Set(candidate.resources);
           continue;
         }
-        const dependent = [...candidate.referenced].some((name) => seen.has(name));
+        const dependent =
+          [...candidate.referenced].some((name) => seen.has(name)) ||
+          [...candidate.resources].some((resource) => resources.has(resource));
         if (dependent) {
           head = candidate;
           seen = new Set(candidate.bound);
+          resources = new Set(candidate.resources);
           continue;
         }
         context.report({
@@ -494,6 +509,7 @@ export const rule = defineRule({
           node: candidate.calleeNode as unknown as ESTree.Node,
         });
         for (const name of candidate.bound) seen.add(name);
+        for (const resource of candidate.resources) resources.add(resource);
       }
     };
 

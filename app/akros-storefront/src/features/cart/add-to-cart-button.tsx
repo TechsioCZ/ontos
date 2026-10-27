@@ -22,7 +22,9 @@ export function AddToCartButton({
       aria-label={`${label}: ${item.variantLabel ?? item.name}`}
       buttonVariant="cart"
       aria-disabled={adding}
-      onClick={() => void addItem(item, quantity)}
+      onClick={() => {
+        void addItem(item, quantity);
+      }}
     >
       {label}
     </ProductCard.Button>

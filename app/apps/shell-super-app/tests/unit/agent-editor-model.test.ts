@@ -1,5 +1,8 @@
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import { Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { AgentEntity, AgentModuleOption, AgentRolePreset } from '@app/shared-contracts/agent-access';
+import { AgentEntitySchema, ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
+import type { AgentModuleOption, AgentRolePreset } from '@app/shared-contracts/agent-access';
 import {
   configureRequest,
   createRequest,
@@ -12,22 +15,22 @@ import {
 } from '../../src/routes/people/agent-editor-model.ts';
 
 const options: readonly AgentModuleOption[] = [
-  { label: 'Provoz', maxAccess: 'read', moduleId: 'facility.operations' },
-  { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: 'work.tasks' },
+  { label: 'Provoz', maxAccess: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
+  { label: 'Úkoly a projekty', maxAccess: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
 ];
 
-const agent: AgentEntity = {
+const agent = Schema.decodeUnknownSync(AgentEntitySchema)({
   connections: [],
   description: null,
   displayName: 'Asistent provozu',
   hasProfile: true,
-  modules: [{ access: 'write', moduleId: 'work.tasks' }],
-  operators: [{ displayName: 'Vedení', principalId: 'p1' }],
-  owner: { displayName: 'Provoz', principalId: 'p2' },
-  principalId: 'a1',
+  modules: [{ access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') }],
+  operators: [{ displayName: 'Vedení', principalId: AgentPrincipalIdSchema.make('p1') }],
+  owner: { displayName: 'Provoz', principalId: AgentPrincipalIdSchema.make('p2') },
+  principalId: AgentPrincipalIdSchema.make('a1'),
   status: 'active',
   writePolicy: 'approval',
-};
+});
 
 it('maps an agent onto the draft', () => {
   const draft = draftFromAgent(agent);
@@ -42,9 +45,9 @@ it('copies a role preset and drops modules the company does not offer', () => {
     key: 'provoz',
     label: 'Provoz',
     modules: [
-      { access: 'write', moduleId: 'facility.operations' },
-      { access: 'write', moduleId: 'work.tasks' },
-      { access: 'read', moduleId: 'unknown.module' },
+      { access: 'write', moduleId: AgentModuleKeySchema.make('facility.operations') },
+      { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
+      { access: 'read', moduleId: AgentModuleKeySchema.make('unknown.module') },
     ],
   };
   expect(withPreset(emptyAgentDraft, preset, options).modules).toEqual({
@@ -56,8 +59,8 @@ it('copies a role preset and drops modules the company does not offer', () => {
 it('lists chosen modules in option order with write capped to the company maximum', () => {
   const draft = { ...emptyAgentDraft, modules: { 'facility.operations': 'write', 'work.tasks': 'write' } } as const;
   expect(draftModules(draft, options)).toEqual([
-    { access: 'read', moduleId: 'facility.operations' },
-    { access: 'write', moduleId: 'work.tasks' },
+    { access: 'read', moduleId: AgentModuleKeySchema.make('facility.operations') },
+    { access: 'write', moduleId: AgentModuleKeySchema.make('work.tasks') },
   ]);
 });
 
@@ -66,16 +69,25 @@ it('reports missing name, owner and modules in order', () => {
 });
 
 it('trims the name and turns a blank description into null', () => {
-  const draft = { ...emptyAgentDraft, description: '   ', displayName: '  Asistent  ', ownerPrincipalId: 'p2' };
+  const draft = {
+    ...emptyAgentDraft,
+    description: '   ',
+    displayName: '  Asistent  ',
+    ownerPrincipalId: AgentPrincipalIdSchema.make('p2'),
+  };
   const request = createRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options);
   if (request.operation !== 'create') {
     throw new Error('Expected the create command');
   }
   expect(request.displayName).toBe('Asistent');
-  expect(request.description).toBeNull();
+  const encoded = Schema.encodeSync(ManageAgentEntityRequestSchema)(request);
+  if (encoded.operation !== 'create') {
+    expect.unreachable('Expected the encoded create command');
+  }
+  expect(encoded.description).toBeNull();
   expect(configureRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options, 'a1')).toMatchObject({
     operation: 'configure',
-    principalId: 'a1',
+    principalId: AgentPrincipalIdSchema.make('a1'),
   });
 });
 
@@ -86,7 +98,13 @@ it('ignores write modules only under the read-only policy', () => {
 });
 
 it('starts an unprofiled agent with an explicit new-draft policy instead of a reported fallback', () => {
-  const draft = draftFromAgent({ ...agent, hasProfile: false, modules: [], owner: null, writePolicy: 'read_only' });
+  const draft = draftFromAgent({
+    ...agent,
+    hasProfile: false,
+    modules: [],
+    owner: Option.none(),
+    writePolicy: 'read_only',
+  });
   expect(draft.writePolicy).toBe('approval');
   expect(draft.modules).toEqual({});
   expect(draft.ownerPrincipalId).toBeNull();

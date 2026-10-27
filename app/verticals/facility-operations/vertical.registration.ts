@@ -26,13 +26,13 @@ export const facilityOperationsRegistration = defineVerticalRuntimeRegistration(
     },
     pages: {
       // <generated-module-registration-pages>
-      'page-overview': () => import('./src/routes/[lang]/provoz/prehled/page.tsx'),
       'page-agenda': () => import('./src/routes/[lang]/provoz/agenda/page.tsx'),
       'page-assets': () => import('./src/routes/[lang]/provoz/majetek/page.tsx'),
+      'page-documents': () => import('./src/routes/[lang]/provoz/dokumenty/page.tsx'),
       'page-meters': () => import('./src/routes/[lang]/provoz/meridla/page.tsx'),
+      'page-overview': () => import('./src/routes/[lang]/provoz/prehled/page.tsx'),
       'page-purchasing': () => import('./src/routes/[lang]/provoz/nakupy/page.tsx'),
       'page-security': () => import('./src/routes/[lang]/provoz/bezpecnost/page.tsx'),
-      'page-documents': () => import('./src/routes/[lang]/provoz/dokumenty/page.tsx'),
       // </generated-module-registration-pages>
     },
     reports: {

@@ -41,17 +41,35 @@ export const requireIssue779ProductUnitRef = (unitRef: CatalogResourceRef): Prod
   return unitRef;
 };
 
-export const makeIssue779Scenario = Effect.fn('test.makeIssue779Scenario')(function* makeIssue779Scenario(options?: {
+interface Issue779ScenarioOptions {
   readonly currencyCode?: 'CZK' | 'EUR';
   readonly discounts?: readonly [catalog: string, group: string, counterparty: string];
   readonly feeAmount?: string;
   readonly occurrenceId?: string;
   readonly priceAmount?: string;
   readonly promotionAmount?: string;
-}) {
-  const currencyCode = options?.currencyCode ?? 'CZK';
-  const priceAmount = options?.priceAmount ?? '100';
-  const scenarioOccurrenceId = options?.occurrenceId ?? occurrenceId;
+}
+
+const issue779ScenarioOptions = (options?: Issue779ScenarioOptions) => ({
+  currencyCode: options?.currencyCode ?? 'CZK',
+  discounts: options?.discounts ?? (['10', '10', '10'] as const),
+  feeAmount: options?.feeAmount ?? '0',
+  occurrenceId: options?.occurrenceId ?? occurrenceId,
+  priceAmount: options?.priceAmount ?? '100',
+  promotionAmount: options?.promotionAmount,
+});
+
+export const makeIssue779Scenario = Effect.fn('test.makeIssue779Scenario')(function* makeIssue779Scenario(
+  options?: Issue779ScenarioOptions,
+) {
+  const {
+    currencyCode,
+    discounts,
+    feeAmount,
+    occurrenceId: scenarioOccurrenceId,
+    priceAmount,
+    promotionAmount,
+  } = issue779ScenarioOptions(options);
   const unitPrice = yield* calculatePricingUnitPrice(
     yield* unitPriceCalculationAttempt({
       currencyCode,
@@ -120,7 +138,6 @@ export const makeIssue779Scenario = Effect.fn('test.makeIssue779Scenario')(funct
     resourceType: 'party.registry.counterparty' as const,
     tenantId: unitPriceFixtureTenantId,
   };
-  const feeAmount = options?.feeAmount ?? '0';
   const feeTarget = { variantRef: selection.variantRef };
   const feeOwnerRevision = 'pricing-commercial-fees:779';
   const feePredicateRef = pricingCommercialFeeCurrentSetPredicateRef({
@@ -326,7 +343,7 @@ export const makeIssue779Scenario = Effect.fn('test.makeIssue779Scenario')(funct
       outcome: 'DISCOUNT_APPLICABLE',
     });
   };
-  const [catalog, group, counterparty] = options?.discounts ?? ['10', '10', '10'];
+  const [catalog, group, counterparty] = discounts;
   const candidates: readonly PricingDiscountCompositionCandidate[] = yield* Effect.all([
     candidateFor('CATALOG', catalog, 1),
     candidateFor('PRICE_GROUP_CONTRACTUAL', group, 2),
@@ -359,7 +376,6 @@ export const makeIssue779Scenario = Effect.fn('test.makeIssue779Scenario')(funct
     Number(group) -
     Number(counterparty)
   ).toString();
-  const promotionAmount = options?.promotionAmount;
   const rawAmount = (Number(prePromotionAmount) + Number(promotionAmount ?? '0')).toString();
   const subjectEvidence = {
     evidenceRef: 'subject-evidence:779',

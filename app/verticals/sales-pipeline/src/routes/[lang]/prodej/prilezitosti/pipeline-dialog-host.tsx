@@ -1,4 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { BulkTagDialog } from '@app/tagging/components/tag-controls';
 import { Option } from 'effect';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -21,6 +24,7 @@ export type Target =
   | { ids: readonly OpportunityId[]; mode: 'bulk'; stages?: readonly OpportunityStage[] };
 
 export type DialogState =
+  | { kind: 'archive'; opportunity: Opportunity }
   | { kind: 'form'; opportunity?: Opportunity }
   | { kind: 'stage'; target: Target }
   | { kind: 'owner'; target: Target }
@@ -56,6 +60,7 @@ interface PipelineDialogHostProps {
   readonly dialog: DialogState | undefined;
   readonly employees: LoadState<readonly EmployeeOption[]>;
   readonly error: string | undefined;
+  readonly onArchiveSubmit: (opportunity: Opportunity) => void;
   readonly onBulkByTagDone: (result: BulkByTagResult) => void;
   readonly onBulkTagsDone: () => void;
   readonly onClose: () => void;
@@ -74,6 +79,7 @@ export const PipelineDialogHost = ({
   dialog,
   employees,
   error,
+  onArchiveSubmit,
   onBulkByTagDone,
   onBulkTagsDone,
   onClose,
@@ -91,6 +97,31 @@ export const PipelineDialogHost = ({
 
   if (dialog === undefined) {
     return null;
+  }
+  if (dialog.kind === 'archive') {
+    return (
+      <Dialog
+        actions={
+          <>
+            <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
+              {t(`${K}.create.cancel`)}
+            </Button>
+            <Button disabled={busy} onClick={() => onArchiveSubmit(dialog.opportunity)} variant="danger">
+              {t(`${K}.actions.archive`)}
+            </Button>
+          </>
+        }
+        customTrigger
+        description={t(`${K}.archiveConfirm`, { title: dialog.opportunity.title })}
+        onOpenChange={(details) => close(details.open)}
+        open
+        role="alertdialog"
+        size="sm"
+        title={t(`${K}.actions.archive`)}
+      >
+        {error !== undefined && <StatusText status="error">{error}</StatusText>}
+      </Dialog>
+    );
   }
   if (dialog.kind === 'form') {
     return (
@@ -137,9 +168,9 @@ export const PipelineDialogHost = ({
         busy={busy}
         currentStage={target.mode === 'row' ? target.opportunity.stage : undefined}
         description={description}
-        selectedStages={target.mode === 'bulk' ? target.stages : undefined}
         onOpenChange={close}
         onSubmit={onStageSubmit}
+        selectedStages={target.mode === 'bulk' ? target.stages : undefined}
         serverError={error}
         showNote={target.mode === 'row'}
       />

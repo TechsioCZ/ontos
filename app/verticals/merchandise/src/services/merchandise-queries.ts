@@ -20,6 +20,7 @@ import {
 import {
   AvailabilitySchema,
   CatalogCategoryIdSchema,
+  ProductIdReferenceSchema,
   CategoryNodeSchema,
   VariantSummarySchema,
 } from '../../shared/domain/merchandise-model.ts';
@@ -98,7 +99,7 @@ const productSelection = {
 
 const outerProductId = sql.raw('"products"."id"');
 
-type VariantSummary = typeof VariantSummarySchema.Encoded;
+type VariantSummaryEncoded = typeof VariantSummarySchema.Encoded;
 
 /**
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
@@ -113,7 +114,7 @@ const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric
 const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
   then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
   else ${variantMinimumSql} end`;
-const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select json_build_object(
+const variantSummarySql = (scope: StoreScope) => sql<VariantSummaryEncoded>`(select json_build_object(
     'count', count(*)::int,
     'minGrossPriceMinor', min(v.gross_price_minor),
     'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
@@ -124,10 +125,12 @@ const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select jso
     and v.product_id = ${outerProductId} and v.variant_id is not null and v.price_minor is not null
     and v.active)`;
 
-interface StorefrontHead {
-  readonly homepageFeaturedProductIds: readonly string[];
-  readonly revision: number;
-}
+const StorefrontHeadSchema = Schema.Struct({
+  homepageFeaturedProductIds: Schema.Array(ProductIdReferenceSchema),
+  revision: Schema.Int,
+});
+type StorefrontHead = typeof StorefrontHeadSchema.Type;
+type StorefrontHeadEncoded = typeof StorefrontHeadSchema.Encoded;
 
 interface ProductPage {
   readonly head: StorefrontHead | null;
@@ -160,10 +163,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     .select({
       head:
         input.catalogHead === true
-          ? sql<StorefrontHead | null>`(select json_build_object(
+          ? sql<StorefrontHeadEncoded | null>`(select json_build_object(
             'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${catalogHeads.homepageFeaturedProductIds})
           from ${catalogHeads} where ${whereScope(catalogHeads, scope)})`.as('head')
-          : sql<StorefrontHead | null>`null::json`.as('head'),
+          : sql<StorefrontHeadEncoded | null>`null::json`.as('head'),
       total: sql<number>`count(*)::int`.as('total'),
     })
     .from(products)
@@ -205,7 +208,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       variantSummary:
         input.variantSummary === true
           ? variantSummarySql(scope).as('variant_summary')
-          : sql<VariantSummary | null>`null::json`.as('variant_summary'),
+          : sql<VariantSummaryEncoded | null>`null::json`.as('variant_summary'),
     })
     .from(products)
     .where(where)
@@ -288,7 +291,12 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     }),
     { concurrency: 1 },
   );
-  return { head: result[0]?.head ?? null, products: records, total } satisfies ProductPage;
+  const rawHead = result[0]?.head;
+  const head =
+    rawHead === undefined || rawHead === null
+      ? null
+      : yield* Schema.decodeEffect(StorefrontHeadSchema)(rawHead).pipe(Effect.mapError(storedRowsFailure));
+  return { head, products: records, total } satisfies ProductPage;
 });
 
 const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | undefined)[] => [

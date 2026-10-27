@@ -19,6 +19,7 @@ import {
   ApplyCommandActionUnavailableProblemSchema,
 } from '../shared/apis/apply-command-action.ts';
 import type { ApplyCommandActionProblem } from '../shared/apis/apply-command-action.ts';
+
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
 
 type DomainError = typeof applyCommandAction.descriptor.domainErrorSchema.Type;

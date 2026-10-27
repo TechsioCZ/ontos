@@ -1,17 +1,20 @@
 // CRM.md §3/§4 + C04: the server-side Party Registry intake targets and the external-id correlation.
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Exit, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Redacted, Schema } from 'effect';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
 import { correlateCustomerLinks, uncorrelatedCustomerLinks } from '../../shared/commands/clients.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
-import type { CrmCommand } from '../../shared/commands/index.ts';
-import { dispatchCrmCommand } from '../../shared/commands/index.ts';
+import type { CrmCommandInput } from '../../shared/commands/index.ts';
+import { CrmCommandSchema, dispatchCrmCommand } from '../../shared/commands/index.ts';
+import { CrmViewerSchema } from '../../shared/domain/access.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
-import type { Client } from '../../shared/domain/clients.ts';
+import type { ClientSchema } from '../../shared/domain/clients.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
-import { initialCrmState } from '../../shared/domain/state.ts';
+import { CrmStateSchema, initialCrmState } from '../../shared/domain/state.ts';
 import type { IntakeCrmClient } from '../../src/services/party-intake.ts';
 import {
+  RegistryCustomerSchema,
   ambiguousCaseDecision,
   linkClientsInBatch,
   matchingRegistryCustomer,
@@ -20,7 +23,7 @@ import {
 } from '../../src/services/party-intake.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
-const client = (id: string, extra: Partial<Client> = {}): Client => ({
+const client = (id: string, extra: Partial<typeof ClientSchema.Encoded> = {}): typeof ClientSchema.Encoded => ({
   createdAt: at,
   createdBy: 'p-admin',
   id,
@@ -32,8 +35,8 @@ const client = (id: string, extra: Partial<Client> = {}): Client => ({
 });
 const linked = (id: string, counterpartyId: string, partyId: string) =>
   client(id, { partyRef: { counterpartyId, partyId } });
-const base: CrmState = {
-  ...initialCrmState,
+const base = Schema.decodeSync(CrmStateSchema)({
+  ...Schema.encodeSync(CrmStateSchema)(initialCrmState),
   clients: {
     assignmentHistory: [],
     contacts: [],
@@ -44,23 +47,23 @@ const base: CrmState = {
     ],
   },
   imports: {
-    ...initialCrmState.imports,
+    ...Schema.encodeSync(CrmStateSchema)(initialCrmState).imports,
     customerLinks: [
       { clientId: 'x', createdAt: at, createdBy: 'p-admin', externalCustomerId: 'ESH-1', source: 'E-shop' },
       { clientId: 'y', createdAt: at, createdBy: 'p-admin', externalCustomerId: 'ESH-2', source: 'E-shop' },
     ],
   },
   salespeople: [{ active: true, id: 'a', name: 'Jan Novák', principalId: 'p-a' }],
-};
-const lead: CrmViewer = {
+});
+const lead = Schema.decodeSync(CrmViewerSchema)({
   assign: true,
   principalId: 'p-lead',
   readAll: true,
   readAssigned: false,
   writeAll: true,
   writeAssigned: false,
-};
-const repA: CrmViewer = {
+});
+const repA = Schema.decodeSync(CrmViewerSchema)({
   assign: false,
   principalId: 'p-a',
   readAll: false,
@@ -68,19 +71,26 @@ const repA: CrmViewer = {
   salespersonId: 'a',
   writeAll: false,
   writeAssigned: true,
-};
+});
+const verifiedParty = Schema.decodeSync(VerifiedPartySchema);
 const commandExit = (
   state: CrmState,
-  command: CrmCommand,
+  input: CrmCommandInput,
   viewer: CrmViewer,
   verifiedParties?: ReadonlyMap<string, VerifiedParty>,
-) => {
-  const context = { invocationId: 'inv1', now: at, viewer };
-  return Effect.exit(
-    dispatchCrmCommand(state, command, verifiedParties === undefined ? context : { ...context, verifiedParties }),
+) =>
+  Schema.decodeEffect(CrmCommandSchema)(input).pipe(
+    Effect.flatMap((command) => {
+      const context = { invocationId: 'inv1', now: DateTime.makeUnsafe(at), viewer };
+      return dispatchCrmCommand(
+        state,
+        command,
+        verifiedParties === undefined ? context : { ...context, verifiedParties },
+      );
+    }),
+    Effect.exit,
   );
-};
-const intake: CrmViewer = { ...lead, assign: false, principalId: 'p-intake' };
+const intake = Schema.decodeSync(CrmViewerSchema)({ ...lead, assign: false, principalId: 'p-intake' });
 
 const fresh = (id: string, regNo?: string): IntakeCrmClient => {
   const entry: IntakeCrmClient = { id, kind: 'organization', name: 'Pekárna Novák s.r.o.', status: 'active' };
@@ -102,20 +112,22 @@ const fakeSteps = () => {
           const sameIco = sameIcoClientCustomer(
             entry,
             crmClients,
-            created.map((partyId) => ({
-              companyId: null,
-              counterpartyId: `cp-${partyId}`,
-              displayName: entry.name,
-              partyId,
-              status: 'ACTIVE',
-            })),
+            Schema.decodeSync(Schema.Array(RegistryCustomerSchema))(
+              created.map((partyId) => ({
+                companyId: null,
+                counterpartyId: `cp-${partyId}`,
+                displayName: entry.name,
+                partyId,
+                status: 'ACTIVE',
+              })),
+            ),
           );
           if (sameIco !== undefined) {
-            return Option.some({ counterpartyId: sameIco.counterpartyId, partyId: sameIco.partyId });
+            return Option.some(verifiedParty({ counterpartyId: sameIco.counterpartyId, partyId: sameIco.partyId }));
           }
           const partyId = `party-${created.length + 1}`;
           created.push(partyId);
-          return Option.some({ counterpartyId: `cp-${partyId}`, partyId });
+          return Option.some(verifiedParty({ counterpartyId: `cp-${partyId}`, partyId }));
         }),
       link: (clientId: string, party: VerifiedParty, expectedRevision: number) =>
         Effect.sync(() => {
@@ -148,10 +160,16 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
 
   it.effect('the intake link stores the verified identity, records it and correlates external customer ids', () =>
     Effect.gen(function* intakeScenario() {
-      const verified = new Map([['cp-y', { counterpartyId: 'cp-y', displayName: 'Firma y', partyId: 'party-y' }]]);
+      const verified = new Map([
+        ['cp-y', verifiedParty({ counterpartyId: 'cp-y', displayName: 'Firma y', partyId: 'party-y' })],
+      ]);
       const exit = yield* commandExit(
         base,
-        { _tag: 'LinkClientParty', clientId: 'y', partyRef: { counterpartyId: 'cp-y', partyId: 'party-y' } },
+        {
+          _tag: 'LinkClientParty',
+          clientId: 'y',
+          partyRef: verifiedParty({ counterpartyId: 'cp-y', partyId: 'party-y' }),
+        },
         intake,
         verified,
       );
@@ -169,12 +187,16 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
         expect(uncorrelatedCustomerLinks(next)).toBe(0);
       }
       // A Party another CRM client already holds is refused.
-      const taken = new Map([['cp-x', { counterpartyId: 'cp-x', partyId: 'party-x' }]]);
+      const taken = new Map([['cp-x', verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' })]]);
       expect(
         Exit.isFailure(
           yield* commandExit(
             base,
-            { _tag: 'LinkClientParty', clientId: 'y', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } },
+            {
+              _tag: 'LinkClientParty',
+              clientId: 'y',
+              partyRef: verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' }),
+            },
             intake,
             taken,
           ),
@@ -186,12 +208,14 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
   it('migrates existing approved correlations of linked clients', () => {
     expect(uncorrelatedCustomerLinks(base)).toBe(1);
     const migrated = correlateCustomerLinks(base);
-    expect(migrated.imports.customerLinks[0]).toMatchObject({ counterpartyId: 'cp-x', partyId: 'party-x' });
+    expect(migrated.imports.customerLinks[0]).toMatchObject(
+      verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' }),
+    );
     expect(correlateCustomerLinks(migrated)).toBe(migrated);
   });
 
   it('reuses a registry customer by IČO, else by name, skipping taken ones', () => {
-    const customers = [
+    const customers = Schema.decodeSync(Schema.Array(RegistryCustomerSchema))([
       { companyId: '27082440', counterpartyId: 'c1', displayName: 'Alza', partyId: 'p1', status: 'ACTIVE' },
       {
         companyId: null,
@@ -200,7 +224,7 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
         partyId: 'p2',
         status: 'ACTIVE',
       },
-    ];
+    ]);
     expect(matchingRegistryCustomer({ name: 'x', regNo: '27082440' }, customers, new Set())?.counterpartyId).toBe('c1');
     expect(matchingRegistryCustomer({ name: 'bistro u magnolie  s.r.o.' }, customers, new Set())?.counterpartyId).toBe(
       'c2',
@@ -224,18 +248,18 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
     const dupState = (regNoExisting: string | undefined, regNoDuplicate: string | undefined): CrmState => {
       const previous = { ...existing, name: 'Pekárna Novák s.r.o.' };
       const duplicate = client('dup', { name: 'Pekárna Novák s.r.o.', ownerSalespersonId: 'a' });
-      return {
-        ...base,
+      return Schema.decodeSync(CrmStateSchema)({
+        ...Schema.encodeSync(CrmStateSchema)(base),
         clients: {
-          ...base.clients,
+          ...Schema.encodeSync(CrmStateSchema)(base).clients,
           items: [
             regNoExisting === undefined ? previous : { ...previous, regNo: regNoExisting },
             regNoDuplicate === undefined ? duplicate : { ...duplicate, regNo: regNoDuplicate },
           ],
         },
-      };
+      });
     };
-    const customers = [
+    const customers = Schema.decodeSync(Schema.Array(RegistryCustomerSchema))([
       {
         companyId: '27082440',
         counterpartyId: 'cp-x',
@@ -243,7 +267,7 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
         partyId: 'party-x',
         status: 'ACTIVE',
       },
-    ];
+    ]);
     const taken = new Set(['cp-x', 'party-x']);
 
     it.effect('same IČO: the intake reuses the existing Party and the CRM stores the shared link', () =>
@@ -252,19 +276,33 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
         const match = matchingRegistryCustomer({ name: 'Pekárna Novák s.r.o.', regNo: '27082440' }, customers, taken);
         expect(match?.partyId).toBe('party-x');
         // A CRM IČO the registry does not hold as identifier (no checksum): the same-IČO client's customer is reused.
-        const legacy = [{ ...customers[0], companyId: null }];
+        const [existingCustomer] = customers;
+        if (existingCustomer === undefined) {
+          throw new Error('Missing registry fixture');
+        }
+        const legacyCustomer = { ...existingCustomer, companyId: Option.none() };
+        const legacy = [legacyCustomer];
         const { items } = dupState('90000101', '90000101').clients;
         expect(sameIcoClientCustomer({ id: 'dup', regNo: '9000 0101' }, items, legacy)?.partyId).toBe('party-x');
         expect(sameIcoClientCustomer({ id: 'dup' }, items, legacy)).toBeUndefined();
         expect(sameIcoClientCustomer({ id: 'dup', regNo: '25596641' }, items, legacy)).toBeUndefined();
         expect(
-          sameIcoClientCustomer({ id: 'dup', regNo: '90000101' }, items, [{ ...legacy[0], status: 'ARCHIVED' }]),
+          sameIcoClientCustomer({ id: 'dup', regNo: '90000101' }, items, [{ ...legacyCustomer, status: 'ARCHIVED' }]),
         ).toBeUndefined();
         const exit = yield* commandExit(
           state,
-          { _tag: 'LinkClientParty', clientId: 'dup', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } },
+          {
+            _tag: 'LinkClientParty',
+            clientId: 'dup',
+            partyRef: verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' }),
+          },
           intake,
-          new Map([['cp-x', { counterpartyId: 'cp-x', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-x' }]]),
+          new Map([
+            [
+              'cp-x',
+              verifiedParty({ counterpartyId: 'cp-x', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-x' }),
+            ],
+          ]),
         );
         expect(Exit.isSuccess(exit)).toBe(true);
         if (Exit.isSuccess(exit)) {
@@ -292,7 +330,10 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
           ).toBe('review');
           expect(ambiguousCaseDecision({ evaluatedEvidence: [], lifecycleState: 'RESOLVED' })).toBe('review');
           const verified = new Map([
-            ['cp-new', { counterpartyId: 'cp-new', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-new' }],
+            [
+              'cp-new',
+              verifiedParty({ counterpartyId: 'cp-new', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-new' }),
+            ],
           ]);
           for (const regNo of [undefined, '25596641']) {
             const exit = yield* commandExit(
@@ -300,7 +341,7 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
               {
                 _tag: 'LinkClientParty',
                 clientId: 'dup',
-                partyRef: { counterpartyId: 'cp-new', partyId: 'party-new' },
+                partyRef: verifiedParty({ counterpartyId: 'cp-new', partyId: 'party-new' }),
               },
               intake,
               verified,
@@ -316,10 +357,10 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
                   {
                     _tag: 'LinkClientParty',
                     clientId: 'dup',
-                    partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' },
+                    partyRef: verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' }),
                   },
                   intake,
-                  new Map([['cp-x', { counterpartyId: 'cp-x', partyId: 'party-x' }]]),
+                  new Map([['cp-x', verifiedParty({ counterpartyId: 'cp-x', partyId: 'party-x' })]]),
                 ),
               ),
             ).toBe(true);

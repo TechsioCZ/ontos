@@ -63,6 +63,8 @@ const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApp
   );
   const revision = result.changed ? yield* context.services.save(result.state, current.revision) : current.revision;
   if (result.changed) {
+    // Writes share one transaction and retain their original order and first-failure behavior.
+
     yield* Effect.forEach(
       result.documentWrites ?? [],
       (write) =>

@@ -6,17 +6,18 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect } from 'effect';
-import { useEffect, useMemo, useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import { Effect, Fiber, Option } from 'effect';
+import { useEffect, useState } from 'react';
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { Client } from '../../../../../shared/domain/clients.ts';
-import type { RegistryCustomer, RegistryFailure } from '../../../../crm/party-registry.ts';
+import type { Client, PartyLinkInput } from '../../../../../shared/domain/clients.ts';
 import {
   loadRegistryCustomers,
   registerClientInRegistry,
   registryFailureMessage,
 } from '../../../../crm/party-registry.ts';
+import type { RegistryCustomer, RegistryFailure } from '../../../../crm/party-registry.ts';
+
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 type Directory =
@@ -26,8 +27,9 @@ type Directory =
 
 /** Registry customers that look like this client: same IČO first, then the same name. Only a suggestion. */
 export const suggestedCustomer = (client: Client, customers: readonly RegistryCustomer[]) =>
-  customers.find((entry) => client.regNo !== undefined && entry.companyId === client.regNo) ??
-  customers.find((entry) => foldSearchText(entry.displayName) === foldSearchText(client.name));
+  customers.find(
+    (entry) => client.regNo !== undefined && Option.isSome(entry.companyId) && entry.companyId.value === client.regNo,
+  ) ?? customers.find((entry) => foldSearchText(entry.displayName) === foldSearchText(client.name));
 
 export const PartyLinkDialog = ({
   busy,
@@ -40,15 +42,15 @@ export const PartyLinkDialog = ({
   readonly client: Client;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  readonly run: (command: CrmCommand, success: string) => Promise<boolean>;
+  readonly run: (command: CrmCommandInput, success: string) => Effect.Effect<boolean>;
 }) => {
   const [directory, setDirectory] = useState<Directory>({ kind: 'loading' });
   const [choice, setChoice] = useState<string>('');
   const [creating, setCreating] = useState(false);
-  const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [failure, setFailure] = useState<string | undefined>();
 
   useEffect(() => {
-    void browserRuntime.runPromise(
+    const fiber = browserRuntime.runFork(
       loadRegistryCustomers.pipe(
         Effect.match({
           onFailure: (reason) => setDirectory({ failure: reason, kind: 'failed' }),
@@ -56,65 +58,64 @@ export const PartyLinkDialog = ({
         }),
       ),
     );
+    return () => {
+      browserRuntime.runFork(Fiber.interrupt(fiber));
+    };
   }, []);
 
   // A Party already linked to another CRM client is not offered again, unless that client has the same IČO
   // (the same organization entered twice shares its registry identity).
-  const taken = useMemo(
-    () =>
-      new Set(
-        records.state.clients.items
-          .filter(
-            (entry) =>
-              entry.id !== client.id &&
-              ((client.regNo ?? '').trim() === '' ||
-                (entry.regNo ?? '').replaceAll(/\s+/gu, '') !== (client.regNo ?? '').replaceAll(/\s+/gu, '')),
-          )
-          .flatMap((entry) => (entry.partyRef?.counterpartyId === undefined ? [] : [entry.partyRef.counterpartyId])),
-      ),
-    [client.id, records],
+  const taken = new Set(
+    records.state.clients.items.flatMap((entry) => {
+      if (entry.id === client.id) {
+        return [];
+      }
+      const anotherOrganization =
+        (client.regNo ?? '').trim() === '' ||
+        (entry.regNo ?? '').replaceAll(/\s+/gu, '') !== (client.regNo ?? '').replaceAll(/\s+/gu, '');
+      return anotherOrganization && entry.partyRef?.counterpartyId !== undefined ? [entry.partyRef.counterpartyId] : [];
+    }),
   );
   const offered =
     directory.kind === 'ready' ? directory.customers.filter((entry) => !taken.has(entry.link.counterpartyId)) : [];
   const suggestion = suggestedCustomer(client, offered);
-  useEffect(() => {
-    if (choice === '' && suggestion !== undefined) {
-      setChoice(suggestion.link.counterpartyId);
-    }
-  }, [choice, suggestion]);
-  const chosen = offered.find((entry) => entry.link.counterpartyId === choice);
+  const selectedChoice = choice === '' ? (suggestion?.link.counterpartyId ?? '') : choice;
+  const chosen = offered.find((entry) => entry.link.counterpartyId === selectedChoice);
 
-  const link = (partyRef: { readonly counterpartyId: string; readonly partyId: string }, name: string) =>
-    run({ _tag: 'LinkClientParty', clientId: client.id, partyRef }, `Propojeno s evidencí zákazníků: ${name}`).then(
-      (ok) => {
-        if (ok) {
-          onClose();
-        }
-      },
+  const link = (partyRef: PartyLinkInput, name: string) =>
+    run({ _tag: 'LinkClientParty', clientId: client.id, partyRef }, `Propojeno s evidencí zákazníků: ${name}`).pipe(
+      Effect.tap((ok) =>
+        Effect.sync(() => {
+          if (ok) {
+            onClose();
+          }
+        }),
+      ),
     );
 
-  const createInRegistry = () => {
+  const createInRegistry = Effect.suspend(() => {
     setFailure(undefined);
     setCreating(true);
-    void browserRuntime
-      .runPromise(
-        registerClientInRegistry(client).pipe(
-          Effect.match({
-            onFailure: (reason) => ({ failure: reason, ok: false as const }),
-            onSuccess: (created) => ({ created, ok: true as const }),
+    return registerClientInRegistry(client).pipe(
+      Effect.matchEffect({
+        onFailure: (reason) =>
+          Effect.sync(() => {
+            setCreating(false);
+            setFailure(registryFailureMessage[reason]);
           }),
-        ),
-      )
-      .then((outcome) => {
-        setCreating(false);
-        if (!outcome.ok) {
-          setFailure(registryFailureMessage[outcome.failure]);
-          return;
-        }
-        void link(outcome.created.link, client.name);
-      });
-  };
+        onSuccess: (created) =>
+          Effect.sync(() => setCreating(false)).pipe(Effect.andThen(link(created.link, client.name)), Effect.asVoid),
+      }),
+    );
+  });
 
+  let suggestionHelp = 'Návrh podle shodného IČO nebo názvu; před propojením ho zkontrolujte. Nic se nepropojí samo.';
+  if (suggestion === undefined) {
+    suggestionHelp =
+      client.kind === 'organization'
+        ? 'V registru není zákazník se stejným IČO ani názvem. Firmu můžete v registru založit z údajů karty.'
+        : 'V registru není zákazník se stejným jménem. Fyzickou osobu založte v Prodej › Zákazníci a pak ji vyberte zde.';
+  }
   return (
     <Dialog
       actions={
@@ -128,7 +129,9 @@ export const PartyLinkDialog = ({
               icon="icon-[mdi--database-plus-outline]"
               isLoading={creating}
               loadingText="Zakládám v registru…"
-              onClick={createInRegistry}
+              onClick={() => {
+                browserRuntime.runFork(createInRegistry);
+              }}
               theme="outlined"
               variant="secondary"
             >
@@ -142,7 +145,7 @@ export const PartyLinkDialog = ({
             loadingText="Propojuji…"
             onClick={() => {
               if (chosen !== undefined) {
-                void link(chosen.link, chosen.displayName);
+                browserRuntime.runFork(link(chosen.link, chosen.displayName));
               }
             }}
             variant="primary"
@@ -178,7 +181,7 @@ export const PartyLinkDialog = ({
               items={[
                 { label: offered.length === 0 ? 'Žádný volný zákazník v registru' : 'Vyberte zákazníka…', value: '' },
                 ...offered.map((entry) => ({
-                  label: `${entry.displayName}${entry.companyId === undefined ? '' : ` · IČO ${entry.companyId}`}${
+                  label: `${entry.displayName}${Option.isNone(entry.companyId) ? '' : [' · IČO ', entry.companyId.value].join('')}${
                     entry === suggestion ? ' (shoda)' : ''
                   }`,
                   value: entry.link.counterpartyId,
@@ -187,15 +190,9 @@ export const PartyLinkDialog = ({
               label="Existující zákazník v evidenci zákazníků"
               name="party-link-target"
               onValueChange={(details) => setChoice(details.value[0] ?? '')}
-              value={[choice]}
+              value={[selectedChoice]}
             />
-            <p className="text-fg-secondary text-xs">
-              {suggestion === undefined
-                ? client.kind === 'organization'
-                  ? 'V registru není zákazník se stejným IČO ani názvem. Firmu můžete v registru založit z údajů karty.'
-                  : 'V registru není zákazník se stejným jménem. Fyzickou osobu založte v Prodej › Zákazníci a pak ji vyberte zde.'
-                : 'Návrh podle shodného IČO nebo názvu; před propojením ho zkontrolujte. Nic se nepropojí samo.'}
-            </p>
+            <p className="text-fg-secondary text-xs">{suggestionHelp}</p>
           </>
         )}
         {failure !== undefined && (

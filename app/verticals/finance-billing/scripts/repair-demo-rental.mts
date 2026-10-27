@@ -6,6 +6,11 @@ import { Reactivity } from 'effect/reactivity';
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 import { repairRentalInvoices, rentalInvoiceCorrections, rentalRepairScope } from './repair-rental-invoices.ts';
 
+class RentalRepairRejected extends Schema.TaggedError<RentalRepairRejected, { readonly brand: unique symbol }>()(
+  'RentalRepairRejected',
+  { reason: Schema.String },
+) {}
+
 const admin = Layer.effect(
   PgClient.PgClient,
   Effect.gen(function* admin() {
@@ -21,7 +26,7 @@ const program = Effect.gen(function* repair() {
       select revision,state from finance_billing.finance_states
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} for update`;
       if (row === undefined) {
-        return yield* Effect.die('Missing scoped finance state');
+        return yield* new RentalRepairRejected({ reason: 'Missing scoped finance state' });
       }
       const original = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
       // Read-only verification of the rental owner's authoritative occupancy, in the same company only.
@@ -51,7 +56,9 @@ const program = Effect.gen(function* repair() {
           lease.end_date < '2026-10-31' ||
           !['ACTIVE', 'CONFIRMED'].includes(lease.state)
         ) {
-          return yield* Effect.die('Lease evidence does not match the proposed October correction');
+          return yield* new RentalRepairRejected({
+            reason: 'Lease evidence does not match the proposed October correction',
+          });
         }
       }
       const state = yield* repairRentalInvoices(original, yield* DateTime.now);
@@ -64,7 +71,7 @@ const program = Effect.gen(function* repair() {
       set state=${encoded}::jsonb,revision=revision+1,updated_at=now()
       where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and revision=${row.revision} returning revision`;
       if (updated.length !== 1) {
-        return yield* Effect.die('Concurrent finance change; retry scoped repair');
+        return yield* new RentalRepairRejected({ reason: 'Concurrent finance change; retry scoped repair' });
       }
       return yield* Console.log(
         `Siampark rental repair revision ${row.revision} -> ${row.revision + 1}: two linked replacements; original issued customer/amount snapshots and exports preserved; duplicate draft voided.`,

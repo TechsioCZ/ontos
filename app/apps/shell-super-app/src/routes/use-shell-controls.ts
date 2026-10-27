@@ -16,12 +16,13 @@ import { forgetRecordedPageReads } from './browser-request-cache.ts';
 import { seedDocumentGatewayAssertions, warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
-const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
+const authenticationRequired = 'authentication-required' as const;
+const SwitchFailureStateSchema = Schema.Literals([authenticationRequired, 'failed']);
 type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
 
 const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
+    Match.tag('TenantAuthenticationRequiredProblem', () => authenticationRequired),
     Match.tag(
       'HttpClientError',
       'SchemaError',
@@ -35,7 +36,7 @@ const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailure
 
 const legalEntitySwitchFailureState = (error: SwitchLegalEntityClientError): SwitchFailureState =>
   Match.value(error).pipe(
-    Match.tag('TenantAuthenticationRequiredProblem', () => 'authentication-required' as const),
+    Match.tag('TenantAuthenticationRequiredProblem', () => authenticationRequired),
     Match.tag(
       'HttpClientError',
       'LegalEntityAccessForbiddenProblem',
@@ -126,9 +127,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
           onSuccess: () => Effect.succeed('switched' as const),
         }),
         Effect.flatMap((outcome) =>
-          outcome === 'authentication-required' || outcome === 'switched'
-            ? reload()
-            : Effect.sync(() => setFailed(true)),
+          outcome === authenticationRequired || outcome === 'switched' ? reload() : Effect.sync(() => setFailed(true)),
         ),
         Effect.matchEffect({
           onFailure: (error) =>

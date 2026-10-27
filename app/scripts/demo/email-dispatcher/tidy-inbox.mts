@@ -11,8 +11,7 @@ import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from '../../../packages/email-delivery/src/dispatcher/contract.ts';
-import { isTestRecipient } from '../../../packages/email-delivery/src/dispatcher/recipients.ts';
+import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, isTestRecipient } from '@app/email-delivery/contract';
 
 export const MailpitMessageSchema = Schema.Struct({
   Created: Schema.String,
@@ -78,7 +77,9 @@ const tidyInbox = Effect.fn('tidyInbox.run')(function* runTidyInbox(apply: boole
     Config.withDefault('http://127.0.0.1:8025'),
     Config.map((url) => url.replace(/\/+$/u, '')),
   );
-  const removed = yield* removedOrderNumbers;
+  const removed = yield* Effect.scoped(
+    Layer.build(DatabaseLive).pipe(Effect.flatMap((context) => Effect.provideContext(removedOrderNumbers, context))),
+  );
   const messages = yield* listMessages(mailpit);
   const doomed = messagesToDelete(messages, removed);
   for (const message of doomed) {
@@ -101,7 +102,7 @@ const command = Command.make(
 if (import.meta.main) {
   NodeRuntime.runMain(
     Command.run(command, { version: '1.0.0' }).pipe(
-      Effect.provide(Layer.mergeAll(DatabaseLive, NodeServices.layer, FetchHttpClient.layer)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
       Effect.scoped,
     ),
   );

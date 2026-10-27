@@ -3,16 +3,28 @@
 // demo (stock on hand, partial deliveries, remaining quantities) is produced by the production rules.
 // Deterministic: fixed resource ids and timestamps. Returns the ENCODED state.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { DateTime, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { OpsCommandInput } from '../../shared/domain/common.ts';
+import { optionalField } from '../../shared/domain/common.ts';
 import { PurchasingCommandSchema, evolvePurchasing } from '../../shared/commands/purchasing.ts';
 import { PurchasingStateSchema, emptyPurchasingState } from '../../shared/domain/purchasing.ts';
-import type { PurchasingState, PurchasingStateEncoded } from '../../shared/domain/purchasing.ts';
+
+const seedText = {
+  date20260919: '2026-09-19',
+  labelPropertyParkova: 'label:property-parkova',
+  labelPropertyRiverside: 'label:property-riverside',
+  naclo2607B: 'NaClO-2607-B',
+  rezidenceParkovaParkova: 'Rezidence Parková (PARKOVA)',
+  riversideOfficeParkKancelarR201R201: 'Riverside Office Park › Kancelář R201 (R201)',
+  riversideOfficeParkRiverside: 'Riverside Office Park (RIVERSIDE)',
+  seedPoAq: 'seed-po-aq',
+  seedPoEl: 'seed-po-el',
+  seedPoFi: 'seed-po-fi',
+} as const;
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
-const principal = Schema.decodeUnknownSync(PrincipalRefSchema);
-const management = principal({ principalId: '72000000-0000-4000-8000-000000000021', tenantId });
-const operations = principal({ principalId: '72000000-0000-4000-8000-000000000022', tenantId });
+const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
+const operations = { principalId: '72000000-0000-4000-8000-000000000022', tenantId };
 
 type CommandInput = typeof PurchasingCommandSchema.Encoded;
 interface Step {
@@ -83,8 +95,8 @@ add(
     email: 'obchod@aquachem.example',
     leadTimeDays: 10,
     name: 'AquaChem Bohemia a.s.',
-    phone: '+420 602 418 900',
     note: 'Rámcová smlouva na bazénovou chemii, doprava zdarma nad 10 000 Kč.',
+    phone: '+420 602 418 900',
   },
   S.aqua,
 );
@@ -127,21 +139,21 @@ add(
 
 // ── Skladové položky (spotřební materiál, náhradní díly, chemie) ─────────────────────────────────────────────────
 interface ItemSeed {
-  readonly sku: string;
-  readonly name: string;
+  readonly batch?: string;
   readonly category: 'consumable' | 'spare_part' | 'cleaning' | 'chemical' | 'tool';
-  readonly warehouseId: string;
-  readonly unit: string;
-  readonly tracking: 'none' | 'batch' | 'serial';
-  readonly minimum: number;
-  readonly maximum: number;
   readonly leadTimeDays: number;
-  readonly supplierId?: string;
+  readonly maximum: number;
+  readonly minimum: number;
+  readonly name: string;
+  readonly note?: string;
   readonly opening: number;
   readonly price: number;
-  readonly batch?: string;
   readonly serialPrefix?: string;
-  readonly note?: string;
+  readonly sku: string;
+  readonly supplierId?: string;
+  readonly tracking: 'none' | 'batch' | 'serial';
+  readonly unit: string;
+  readonly warehouseId: string;
 }
 const items: ItemSeed[] = [
   {
@@ -151,7 +163,8 @@ const items: ItemSeed[] = [
     minimum: 40,
     name: 'Toaletní papír 2vrstvý (bal. 8 rolí)',
     opening: 70,
-    sku: 'UK-001', price: 15900,
+    price: 15_900,
+    sku: 'UK-001',
     supplierId: S.hygiena,
     tracking: 'none',
     unit: 'bal',
@@ -164,7 +177,8 @@ const items: ItemSeed[] = [
     minimum: 20,
     name: 'Papírové ručníky ZZ (karton)',
     opening: 30,
-    sku: 'UK-002', price: 54900,
+    price: 54_900,
+    sku: 'UK-002',
     supplierId: S.hygiena,
     tracking: 'none',
     unit: 'karton',
@@ -178,7 +192,8 @@ const items: ItemSeed[] = [
     minimum: 10,
     name: 'Tekuté mýdlo 5 l',
     opening: 16,
-    sku: 'UK-003', price: 21900,
+    price: 21_900,
+    sku: 'UK-003',
     supplierId: S.hygiena,
     tracking: 'batch',
     unit: 'ks',
@@ -192,7 +207,8 @@ const items: ItemSeed[] = [
     minimum: 24,
     name: 'Dezinfekce povrchů 1 l',
     opening: 48,
-    sku: 'UK-004', price: 8900,
+    price: 8900,
+    sku: 'UK-004',
     supplierId: S.hygiena,
     tracking: 'batch',
     unit: 'ks',
@@ -205,7 +221,8 @@ const items: ItemSeed[] = [
     minimum: 30,
     name: 'Pytle na odpad 120 l (role 25 ks)',
     opening: 60,
-    sku: 'UK-005', price: 12900,
+    price: 12_900,
+    sku: 'UK-005',
     supplierId: S.hygiena,
     tracking: 'none',
     unit: 'role',
@@ -217,23 +234,25 @@ const items: ItemSeed[] = [
     maximum: 60,
     minimum: 20,
     name: 'Posypová sůl 25 kg',
+    note: 'Zimní údržba chodníků a parkoviště.',
     opening: 12,
-    sku: 'UK-006', price: 18500,
+    price: 18_500,
+    sku: 'UK-006',
     supplierId: S.hygiena,
     tracking: 'none',
     unit: 'pytel',
     warehouseId: W.sanitary,
-    note: 'Zimní údržba chodníků a parkoviště.',
   },
   {
-    batch: 'NaClO-2607-B',
+    batch: seedText.naclo2607B,
     category: 'chemical',
     leadTimeDays: 10,
     maximum: 24,
     minimum: 8,
     name: 'Chlornan sodný 25 kg (bazén)',
     opening: 14,
-    sku: 'BZ-001', price: 89000,
+    price: 89_000,
+    sku: 'BZ-001',
     supplierId: S.aqua,
     tracking: 'batch',
     unit: 'kanystr',
@@ -247,7 +266,8 @@ const items: ItemSeed[] = [
     minimum: 4,
     name: 'pH mínus 25 kg',
     opening: 8,
-    sku: 'BZ-002', price: 129000,
+    price: 129_000,
+    sku: 'BZ-002',
     supplierId: S.aqua,
     tracking: 'batch',
     unit: 'kanystr',
@@ -261,7 +281,8 @@ const items: ItemSeed[] = [
     minimum: 6,
     name: 'Flokulant tekutý 5 l',
     opening: 8,
-    sku: 'BZ-003', price: 64500,
+    price: 64_500,
+    sku: 'BZ-003',
     supplierId: S.aqua,
     tracking: 'batch',
     unit: 'ks',
@@ -274,7 +295,8 @@ const items: ItemSeed[] = [
     minimum: 5,
     name: 'Testovací tablety DPD1 (bal. 100 ks)',
     opening: 10,
-    sku: 'BZ-004', price: 42000,
+    price: 42_000,
+    sku: 'BZ-004',
     supplierId: S.aqua,
     tracking: 'none',
     unit: 'bal',
@@ -287,8 +309,9 @@ const items: ItemSeed[] = [
     minimum: 1,
     name: 'Oběhové čerpadlo bazénu 230 V / 0,75 kW',
     opening: 2,
+    price: 2_450_000,
     serialPrefix: 'CP-2026-014',
-    sku: 'ND-001', price: 2450000,
+    sku: 'ND-001',
     supplierId: S.kovo,
     tracking: 'serial',
     unit: 'ks',
@@ -301,7 +324,8 @@ const items: ItemSeed[] = [
     minimum: 10,
     name: 'Tryska pískového filtru (náhradní)',
     opening: 18,
-    sku: 'ND-002', price: 8500,
+    price: 8500,
+    sku: 'ND-002',
     supplierId: S.filtrace,
     tracking: 'none',
     unit: 'ks',
@@ -314,7 +338,8 @@ const items: ItemSeed[] = [
     minimum: 30,
     name: 'LED trubice T8 150 cm',
     opening: 40,
-    sku: 'ND-003', price: 18900,
+    price: 18_900,
+    sku: 'ND-003',
     supplierId: S.elektro,
     tracking: 'none',
     unit: 'ks',
@@ -327,7 +352,8 @@ const items: ItemSeed[] = [
     minimum: 10,
     name: 'Jistič 16 A jednopólový',
     opening: 12,
-    sku: 'ND-004', price: 16500,
+    price: 16_500,
+    sku: 'ND-004',
     supplierId: S.elektro,
     tracking: 'none',
     unit: 'ks',
@@ -340,8 +366,9 @@ const items: ItemSeed[] = [
     minimum: 4,
     name: 'Optický detektor kouře (náhradní)',
     opening: 5,
+    price: 129_000,
     serialPrefix: 'DK-5510',
-    sku: 'ND-005', price: 129000,
+    sku: 'ND-005',
     supplierId: S.elektro,
     tracking: 'serial',
     unit: 'ks',
@@ -354,8 +381,9 @@ const items: ItemSeed[] = [
     minimum: 2,
     name: 'Hasicí přístroj práškový 6 kg',
     opening: 3,
+    price: 119_000,
     serialPrefix: 'HP6-2210',
-    sku: 'ND-006', price: 119000,
+    sku: 'ND-006',
     supplierId: S.elektro,
     tracking: 'serial',
     unit: 'ks',
@@ -368,7 +396,8 @@ const items: ItemSeed[] = [
     minimum: 4,
     name: 'Klínový řemen VZT SPZ 1250',
     opening: 6,
-    sku: 'ND-007', price: 32000,
+    price: 32_000,
+    sku: 'ND-007',
     supplierId: S.filtrace,
     tracking: 'none',
     unit: 'ks',
@@ -381,7 +410,8 @@ const items: ItemSeed[] = [
     minimum: 12,
     name: 'Kapsový filtr VZT F7 592×592',
     opening: 20,
-    sku: 'ND-008', price: 41500,
+    price: 41_500,
+    sku: 'ND-008',
     supplierId: S.filtrace,
     tracking: 'none',
     unit: 'ks',
@@ -394,7 +424,8 @@ const items: ItemSeed[] = [
     minimum: 20,
     name: 'LED žárovka E27 10 W',
     opening: 85,
-    sku: 'SP-001', price: 7900,
+    price: 7900,
+    sku: 'SP-001',
     supplierId: S.elektro,
     tracking: 'none',
     unit: 'ks',
@@ -407,7 +438,8 @@ const items: ItemSeed[] = [
     minimum: 10,
     name: 'Silikon sanitární bílý 310 ml',
     opening: 14,
-    sku: 'SP-002', price: 14900,
+    price: 14_900,
+    sku: 'SP-002',
     supplierId: S.hygiena,
     tracking: 'none',
     unit: 'ks',
@@ -420,8 +452,9 @@ const items: ItemSeed[] = [
     minimum: 0,
     name: 'Akumulátorová vrtačka 18 V',
     opening: 1,
+    price: 399_000,
     serialPrefix: 'AV18-778',
-    sku: 'NR-001', price: 399000,
+    sku: 'NR-001',
     supplierId: S.elektro,
     tracking: 'serial',
     unit: 'ks',
@@ -447,8 +480,8 @@ for (const [index, entry] of items.entries()) {
       tracking: entry.tracking,
       unit: entry.unit,
       warehouseId: entry.warehouseId,
-      ...(entry.supplierId === undefined ? {} : { supplierId: entry.supplierId }),
-      ...(entry.note === undefined ? {} : { note: entry.note }),
+      ...optionalField('supplierId', entry.supplierId),
+      ...optionalField('note', entry.note),
     },
     item(entry.sku),
   );
@@ -461,8 +494,11 @@ for (const [index, entry] of items.entries()) {
     itemId: item(entry.sku),
     quantity: entry.opening,
     reason: 'Počáteční stav – inventura 1. 8. 2026',
-    ...(entry.batch === undefined ? {} : { batch: entry.batch }),
-    ...(entry.serialPrefix === undefined ? {} : { serialNumbers: serialsOf(entry.serialPrefix, 1, entry.opening) }),
+    ...optionalField('batch', entry.batch),
+    ...optionalField(
+      'serialNumbers',
+      entry.serialPrefix === undefined ? undefined : serialsOf(entry.serialPrefix, 1, entry.opening),
+    ),
   });
 }
 
@@ -472,8 +508,8 @@ const issue = (
   sku: string,
   quantity: number,
   reason: string,
-  refs: ReadonlyArray<{ readonly id: string; readonly kind: 'task' | 'unit' | 'property'; readonly label: string }>,
-  extra: Record<string, unknown> = {},
+  refs: readonly { readonly id: string; readonly kind: 'task' | 'unit' | 'property'; readonly label: string }[],
+  extra: Partial<Extract<CommandInput, { readonly _tag: 'StockIssue' }>> = {},
 ) =>
   add(
     at,
@@ -485,27 +521,27 @@ const issue = (
       reason,
       refs: [...refs],
       ...extra,
-    } as CommandInput,
+    },
     undefined,
     operations,
   );
 
 issue('2026-08-06T09:00:00Z', 'UK-001', 18, 'Doplnění toalet – bytový dům', [
-  { id: 'label:property-parkova', kind: 'property', label: 'Rezidence Parková (PARKOVA)' },
+  { id: seedText.labelPropertyParkova, kind: 'property', label: seedText.rezidenceParkovaParkova },
 ]);
 issue('2026-08-06T09:10:00Z', 'UK-002', 8, 'Doplnění zásobníků – kanceláře', [
-  unitRef('R201', 'Riverside Office Park › Kancelář R201 (R201)'),
+  unitRef('R201', seedText.riversideOfficeParkKancelarR201R201),
 ]);
-issue('2026-08-12T08:30:00Z', 'BZ-001', 3, 'Dávkování chloru – týden 33', [], { batch: 'NaClO-2607-B' });
+issue('2026-08-12T08:30:00Z', 'BZ-001', 3, 'Dávkování chloru – týden 33', [], { batch: seedText.naclo2607B });
 issue('2026-08-14T13:00:00Z', 'ND-003', 6, 'Výměna osvětlení chodby 2. NP', [
-  unitRef('R201', 'Riverside Office Park › Kancelář R201 (R201)'),
+  unitRef('R201', seedText.riversideOfficeParkKancelarR201R201),
 ]);
-issue('2026-08-19T08:30:00Z', 'BZ-001', 2, 'Dávkování chloru – týden 34', [], { batch: 'NaClO-2607-B' });
+issue('2026-08-19T08:30:00Z', 'BZ-001', 2, 'Dávkování chloru – týden 34', [], { batch: seedText.naclo2607B });
 issue('2026-08-21T10:00:00Z', 'UK-005', 14, 'Úklid areálu po akci', [
-  { id: 'label:property-riverside', kind: 'property', label: 'Riverside Office Park (RIVERSIDE)' },
+  { id: seedText.labelPropertyRiverside, kind: 'property', label: seedText.riversideOfficeParkRiverside },
 ]);
 issue('2026-09-02T07:45:00Z', 'UK-001', 22, 'Doplnění toalet – kanceláře', [
-  { id: 'label:property-riverside', kind: 'property', label: 'Riverside Office Park (RIVERSIDE)' },
+  { id: seedText.labelPropertyRiverside, kind: 'property', label: seedText.riversideOfficeParkRiverside },
 ]);
 issue(
   '2026-09-03T11:00:00Z',
@@ -524,13 +560,13 @@ issue(
   [taskRef('eps', 'Revize EPS – byty A1xx'), unitRef('A101', 'Rezidence Parková › Byt A101 · 2+kk (A101)')],
   { serialNumbers: ['DK-55101', 'DK-55102'] },
 );
-issue('2026-09-16T08:30:00Z', 'BZ-001', 4, 'Dávkování chloru – týdny 37–38', [], { batch: 'NaClO-2607-B' });
+issue('2026-09-16T08:30:00Z', 'BZ-001', 4, 'Dávkování chloru – týdny 37–38', [], { batch: seedText.naclo2607B });
 issue(
   '2026-09-18T09:30:00Z',
   'UK-003',
   6,
   'Doplnění dávkovačů mýdla',
-  [{ id: 'label:property-riverside', kind: 'property', label: 'Riverside Office Park (RIVERSIDE)' }],
+  [{ id: seedText.labelPropertyRiverside, kind: 'property', label: seedText.riversideOfficeParkRiverside }],
   { batch: 'MY-2608-14' },
 );
 issue('2026-09-24T10:00:00Z', 'ND-008', 8, 'Výměna filtrů VZT – kavárna', [
@@ -542,34 +578,34 @@ issue('2026-09-30T13:00:00Z', 'UK-002', 12, 'Doplnění zásobníků – kancel�
 ]);
 issue('2026-10-01T08:00:00Z', 'ND-003', 8, 'Oprava osvětlení před kanceláří R201', [
   taskRef('svetla-r201', 'Oprava osvětlení před kanceláří R201'),
-  unitRef('R201', 'Riverside Office Park › Kancelář R201 (R201)'),
+  unitRef('R201', seedText.riversideOfficeParkKancelarR201R201),
 ]);
-issue('2026-10-06T08:30:00Z', 'BZ-001', 4, 'Dávkování chloru – týdny 40–41', [], { batch: 'NaClO-2607-B' });
+issue('2026-10-06T08:30:00Z', 'BZ-001', 4, 'Dávkování chloru – týdny 40–41', [], { batch: seedText.naclo2607B });
 issue('2026-10-07T09:00:00Z', 'UK-001', 16, 'Doplnění toalet – bytový dům', [
-  { id: 'label:property-parkova', kind: 'property', label: 'Rezidence Parková (PARKOVA)' },
+  { id: seedText.labelPropertyParkova, kind: 'property', label: seedText.rezidenceParkovaParkova },
 ]);
 issue('2026-10-08T10:30:00Z', 'SP-002', 3, 'Přetěsnění sprchového koutu', [
   unitRef('A102', 'Rezidence Parková › Byt A102 · 3+kk (A102)'),
 ]);
 issue('2026-10-13T08:30:00Z', 'BZ-002', 3, 'Korekce pH – týden 42', [], { batch: 'PHM-2606-A' });
 issue('2026-10-14T12:00:00Z', 'UK-006', 8, 'Posyp – první mráz', [
-  { id: 'label:property-parkova', kind: 'property', label: 'Rezidence Parková (PARKOVA)' },
+  { id: seedText.labelPropertyParkova, kind: 'property', label: seedText.rezidenceParkovaParkova },
 ]);
 issue('2026-10-15T09:00:00Z', 'UK-002', 4, 'Doplnění zásobníků – bytový dům', [
-  { id: 'label:property-parkova', kind: 'property', label: 'Rezidence Parková (PARKOVA)' },
+  { id: seedText.labelPropertyParkova, kind: 'property', label: seedText.rezidenceParkovaParkova },
 ]);
 
 add(
   '2026-09-05T09:00:00Z',
   {
     _tag: 'StockTransfer',
+    batch: 'DZ-2607-03',
     date: '2026-09-05',
     fromWarehouseId: W.sanitary,
     itemId: item('UK-004'),
     quantity: 12,
     reason: 'Příruční zásoba pro strojovnu bazénu',
     toWarehouseId: W.chem,
-    batch: 'DZ-2607-03',
   },
   undefined,
   operations,
@@ -614,7 +650,7 @@ add('2026-10-10T08:05:00Z', {
   itemId: item('UK-006'),
   quantity: 10,
   reason: 'Zimní údržba – listopad',
-  refs: [{ id: 'label:property-parkova', kind: 'property', label: 'Rezidence Parková (PARKOVA)' }],
+  refs: [{ id: seedText.labelPropertyParkova, kind: 'property', label: seedText.rezidenceParkovaParkova }],
 });
 add('2026-10-12T08:00:00Z', {
   _tag: 'StockPlannedIssueCreate',
@@ -652,19 +688,19 @@ add(
     quoteId: 'seed-quote-aq-118',
     warehouseId: W.chem,
   },
-  'seed-po-aq',
+  seedText.seedPoAq,
 );
 add('2026-09-23T13:00:00Z', {
   _tag: 'PurchaseOrderTransition',
-  orderId: 'seed-po-aq',
-  to: 'approved',
   note: 'Schváleno – rámcová smlouva AquaChem',
+  orderId: seedText.seedPoAq,
+  to: 'approved',
 });
 add('2026-09-23T13:05:00Z', {
   _tag: 'PurchaseOrderTransition',
-  orderId: 'seed-po-aq',
-  to: 'ordered',
   note: 'Odesláno e-mailem obchod@aquachem.example',
+  orderId: seedText.seedPoAq,
+  to: 'ordered',
 });
 add(
   '2026-10-02T11:00:00Z',
@@ -677,7 +713,7 @@ add(
       { batch: 'FL-2609-A', lineId: 'seed-po-aq:line-2', quantity: 4 },
       { lineId: 'seed-po-aq:line-3', quantity: 1 },
     ],
-    orderId: 'seed-po-aq',
+    orderId: seedText.seedPoAq,
   },
   undefined,
   operations,
@@ -688,7 +724,7 @@ add('2026-10-05T09:00:00Z', {
   invoiceDate: '2026-10-03',
   note: 'Dílčí faktura za 1. dodávku',
   number: 'FV-AQ-2026-04411',
-  orderId: 'seed-po-aq',
+  orderId: seedText.seedPoAq,
 });
 
 // 2) Elektro: nabídka → objednávka → kompletně dodáno, detektory se sériovými čísly, faktura připojena.
@@ -712,25 +748,25 @@ add(
   '2026-09-12T08:00:00Z',
   {
     _tag: 'PurchaseOrderCreateFromQuote',
-    expectedDate: '2026-09-19',
+    expectedDate: seedText.date20260919,
     quoteId: 'seed-quote-el-0912',
     warehouseId: W.main,
   },
-  'seed-po-el',
+  seedText.seedPoEl,
 );
-add('2026-09-12T09:00:00Z', { _tag: 'PurchaseOrderTransition', orderId: 'seed-po-el', to: 'approved' });
-add('2026-09-12T09:10:00Z', { _tag: 'PurchaseOrderTransition', orderId: 'seed-po-el', to: 'ordered' });
+add('2026-09-12T09:00:00Z', { _tag: 'PurchaseOrderTransition', orderId: seedText.seedPoEl, to: 'approved' });
+add('2026-09-12T09:10:00Z', { _tag: 'PurchaseOrderTransition', orderId: seedText.seedPoEl, to: 'ordered' });
 add(
   '2026-09-19T10:00:00Z',
   {
     _tag: 'PurchaseOrderReceive',
-    date: '2026-09-19',
+    date: seedText.date20260919,
     deliveryNote: 'DL-ES-20931',
     lines: [
       { lineId: 'seed-po-el:line-1', quantity: 4, serialNumbers: ['DK-55201', 'DK-55202', 'DK-55203', 'DK-55204'] },
       { lineId: 'seed-po-el:line-2', quantity: 40 },
     ],
-    orderId: 'seed-po-el',
+    orderId: seedText.seedPoEl,
   },
   undefined,
   operations,
@@ -738,9 +774,9 @@ add(
 add('2026-09-22T10:00:00Z', {
   _tag: 'PurchaseOrderLinkInvoice',
   amountMinor: 1_539_120,
-  invoiceDate: '2026-09-19',
+  invoiceDate: seedText.date20260919,
   number: 'FA-2026-3318',
-  orderId: 'seed-po-el',
+  orderId: seedText.seedPoEl,
 });
 
 // 3) Filtrace: přímá objednávka (bez nabídky) – objednáno, čeká na dodání.
@@ -758,10 +794,10 @@ add(
     supplierId: S.filtrace,
     warehouseId: W.main,
   },
-  'seed-po-fi',
+  seedText.seedPoFi,
 );
-add('2026-10-14T10:00:00Z', { _tag: 'PurchaseOrderTransition', orderId: 'seed-po-fi', to: 'approved' });
-add('2026-10-14T10:05:00Z', { _tag: 'PurchaseOrderTransition', orderId: 'seed-po-fi', to: 'ordered' });
+add('2026-10-14T10:00:00Z', { _tag: 'PurchaseOrderTransition', orderId: seedText.seedPoFi, to: 'approved' });
+add('2026-10-14T10:05:00Z', { _tag: 'PurchaseOrderTransition', orderId: seedText.seedPoFi, to: 'ordered' });
 
 // 4) Hygiena: nabídka čeká na rozhodnutí (S06-01 lze předvést živě) + návrh objednávky.
 add(
@@ -846,26 +882,40 @@ add(
   'seed-po-hp',
 );
 
-const decodeCommand = Schema.decodeUnknownSync(PurchasingCommandSchema);
-const decodeState = Schema.decodeUnknownSync(PurchasingStateSchema);
-const encodeState = Schema.encodeSync(PurchasingStateSchema);
+class PurchasingSeedStepFailed extends Schema.TaggedError<PurchasingSeedStepFailed>()('PurchasingSeedStepFailed', {
+  cause: Schema.Defect(),
+  commandTag: Schema.String,
+  step: Schema.String,
+}) {}
 
-/** Replays the seed commands through the production reducer. Throws on the first refused command. */
-export const buildPurchasingSeed = (): PurchasingState =>
-  steps.reduce<PurchasingState>((state, step) => {
-    const input: OpsCommandInput = {
-      actor: step.by ?? management,
-      now: DateTime.makeUnsafe(step.at),
-      resourceId: step.id,
-    };
-    return Effect.runSync(
-      evolvePurchasing(state, decodeCommand(step.command), input).pipe(
-        Effect.map((result) => result.state),
+/** Replays commands in their recorded order and stops at the first refused step. */
+export const buildPurchasingSeed = Effect.fn('FacilityOperations.buildPurchasingSeed')(function* buildPurchasingSeed() {
+  const initial = yield* Schema.decodeUnknownEffect(PurchasingStateSchema)(emptyPurchasingState);
+  return yield* Effect.reduce(
+    steps,
+    () => initial,
+    (state, step) =>
+      Effect.gen(function* replayPurchasingStep() {
+        const [actor, now, command] = yield* Effect.all(
+          [
+            Schema.decodeUnknownEffect(PrincipalRefSchema)(step.by ?? management),
+            Schema.decodeUnknownEffect(Schema.DateTimeUtcFromString)(step.at),
+            Schema.decodeUnknownEffect(PurchasingCommandSchema)(step.command),
+          ],
+          { concurrency: 1 },
+        );
+        const input: OpsCommandInput = { actor, now, resourceId: step.id };
+        const result = yield* evolvePurchasing(state, command, input);
+        return result.state;
+      }).pipe(
         Effect.mapError(
-          (error) => new Error(`purchasing seed step ${step.id} (${step.command._tag}): ${error.reason}`),
+          (cause) => new PurchasingSeedStepFailed({ cause, commandTag: step.command._tag, step: step.id }),
         ),
       ),
-    );
-  }, decodeState(emptyPurchasingState));
+  );
+});
 
-export const seedPurchasingState = (): PurchasingStateEncoded => encodeState(buildPurchasingSeed());
+export const seedPurchasingState = Effect.fn('FacilityOperations.seedPurchasingState')(function* seedPurchasingState() {
+  const state = yield* buildPurchasingSeed();
+  return yield* Schema.encodeEffect(PurchasingStateSchema)(state);
+});

@@ -25,7 +25,9 @@ vi.mock("react", () => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({
-  after: (task: () => unknown) => void task(),
+  after: (task: () => unknown) => {
+    void task();
+  },
 }));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
 

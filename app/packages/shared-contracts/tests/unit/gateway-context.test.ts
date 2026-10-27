@@ -421,10 +421,10 @@ it.effect('issues API-key gateway context through the server-only credential bou
 
 it('lets server API keys bind the active revision without weakening session revision pinning', () => {
   const payload = { audience: 'merchandise' };
-  expect(Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
+  expect(Schema.decodeSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
   expect(() => Schema.decodeUnknownSync(GatewayContextRequestSchema)(payload)).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
+    Schema.decodeSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
   ).toThrow();
 });
 

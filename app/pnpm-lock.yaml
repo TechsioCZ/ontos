@@ -257,9 +257,15 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:packages/core-runtime
+      '@app/crm':
+        specifier: workspace:*
+        version: link:verticals/crm
       '@app/crm-activities':
         specifier: workspace:*
         version: link:verticals/crm-activities
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:packages/email-delivery
       '@app/finance-billing':
         specifier: workspace:*
         version: link:verticals/finance-billing
@@ -284,12 +290,18 @@ importers:
       '@app/property-portfolio':
         specifier: workspace:*
         version: link:verticals/property-portfolio
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:packages/shared-contracts
       '@app/shell-super-app':
         specifier: workspace:*
         version: link:apps/shell-super-app
       '@app/work-tasks':
         specifier: workspace:*
         version: link:verticals/work-tasks
+      '@app/workforce':
+        specifier: workspace:*
+        version: link:verticals/workforce
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
@@ -423,6 +435,9 @@ importers:
       oxlint-tsgolint:
         specifier: 7.0.2001
         version: 7.0.2001
+      playwright-core:
+        specifier: 1.64.0
+        version: 1.64.0
       ultracite:
         specifier: 7.11.0
         version: 7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(patch_hash=cda809a6a40ab30bbcebe27191ffa710fdd57a758268f5e0cdc4a081a53fbb91)(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)
@@ -892,6 +907,9 @@ importers:
 
   packages/email-delivery:
     dependencies:
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
       '@effect/sql-pg':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)
@@ -899,6 +917,12 @@ importers:
         specifier: 4.0.5
         version: 4.0.5
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260923.1
+        version: 5.20260923.1
+      '@effect/platform-node':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)(redis@6.3.0(@opentelemetry/api@1.9.1))
       '@rstest/core':
         specifier: 0.11.12
         version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
@@ -1994,6 +2018,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:../../packages/email-delivery
       '@app/finance-billing':
         specifier: workspace:*
         version: link:../finance-billing
@@ -2160,6 +2187,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:../../packages/email-delivery
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
@@ -2628,6 +2658,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:../../packages/email-delivery
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
@@ -13269,6 +13302,11 @@ packages:
   playwright-core@1.61.0:
     resolution: {integrity: sha512-caX7TrY3Ml6egyDX0WUcTHDxodl/b51y5wJOdCEA36QviK/s2g081hvmGs8eaE3DWb6NYZQ6BjO/QkNRPenoPA==}
     engines: {node: '>=18'}
+    hasBin: true
+
+  playwright-core@1.64.0:
+    resolution: {integrity: sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg==}
+    engines: {node: '>=20'}
     hasBin: true
 
   playwright@1.61.0:
@@ -25882,6 +25920,8 @@ snapshots:
   playwright-core@1.58.2: {}
 
   playwright-core@1.61.0: {}
+
+  playwright-core@1.64.0: {}
 
   playwright@1.61.0:
     dependencies:

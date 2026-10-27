@@ -9,6 +9,28 @@ import type { DateTime } from 'effect';
 import { FacilityOperationsLifecycleConflict } from '../errors/facility-operations-lifecycle-conflict.ts';
 import { FacilityOperationsNotFound } from '../errors/facility-operations-not-found.ts';
 
+import type { AgendaState } from './agenda.ts';
+import type { AssetsState } from './assets.ts';
+import type { DocumentsState } from './documents.ts';
+import type { MetersState } from './meters.ts';
+import type { PurchasingState } from './purchasing.ts';
+import type { SecurityState } from './security.ts';
+import type { AgendaCommand } from '../commands/agenda.ts';
+import type { AssetsCommand } from '../commands/assets.ts';
+import type { DocumentsCommand } from '../commands/documents.ts';
+import type { MetersCommand } from '../commands/meters.ts';
+import type { PurchasingCommand } from '../commands/purchasing.ts';
+import type { SecurityCommand } from '../commands/security.ts';
+
+type OpsAgendaState = AgendaState | AssetsState | DocumentsState | MetersState | PurchasingState | SecurityState;
+type OpsAgendaCommand =
+  | AgendaCommand
+  | AssetsCommand
+  | DocumentsCommand
+  | MetersCommand
+  | PurchasingCommand
+  | SecurityCommand;
+
 /** Branded opaque identifier (1–300 chars). */
 export const OpsIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
   Schema.brand('FacilityOpsId'),
@@ -60,6 +82,12 @@ export interface OpsCommandInput {
   readonly now: DateTime.Utc;
   /** Server-minted identity (Core action invocation id). Use for ids of records the command creates. */
   readonly resourceId: string;
+}
+
+/** Named data supplied to one command reducer. */
+export interface OpsCommandCall<Command> {
+  readonly input: OpsCommandInput;
+  readonly value: Command;
 }
 
 export const auditCreated = (input: OpsCommandInput): AuditFields => ({
@@ -122,4 +150,30 @@ export interface AgendaDefinition<State, StateEncoded, Command extends { readonl
 
 export const defineAgenda = <State, StateEncoded, Command extends { readonly _tag: string }>(
   definition: AgendaDefinition<State, StateEncoded, Command>,
-) => definition;
+) => {
+  const { evolve, ...description } = definition;
+  const dispatch = Effect.fn(`FacilityOperations.${definition.id}.dispatch`)(function* decodeAgendaCommand(
+    state: OpsAgendaState,
+    command: OpsAgendaCommand,
+    input: OpsCommandInput,
+  ) {
+    const current = yield* Schema.decodeUnknownEffect(Schema.toType(definition.stateSchema))(state);
+    const selected = yield* Schema.decodeUnknownEffect(Schema.toType(definition.commandSchema))(command);
+    const change = yield* evolve(current, selected, input);
+    return {
+      encoding: Schema.encodeEffect(definition.stateSchema)(change.state),
+      entityIds: change.entityIds,
+    };
+  });
+  return { ...description, dispatch };
+};
+
+/** Copies one optional field while keeping an absent value out of the object's own keys. */
+type OptionalField<Key extends string, Value> = Partial<Record<Key, Value>>;
+export const optionalField = <Key extends string, Value>(key: Key, value: Value | undefined) => {
+  const fields: OptionalField<Key, Value> = {};
+  if (value !== undefined) {
+    fields[key] = value;
+  }
+  return fields;
+};

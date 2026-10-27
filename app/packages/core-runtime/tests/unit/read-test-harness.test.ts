@@ -1,9 +1,12 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
 import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
+import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
+import { defineDatabaseIdentityEnrollment } from '../../src/db/database-identities.ts';
+import { FIXTURE_DATABASE_IDENTITY_ENROLLMENT, FIXTURE_DESCRIPTOR } from '../support/database-identities.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { tenants } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
@@ -148,4 +151,61 @@ it.layer(NodeCrypto.layer)('read test harness', (suite) => {
       expect(harness.snapshot().statements.at(-1)).toBe('ROLLBACK');
     }),
   );
+});
+
+const compositionRevision = 'a'.repeat(64);
+const fencedReadScenarios = [
+  {
+    databaseIdentities: defineDatabaseIdentityEnrollment([]),
+    name: 'session settings',
+    principal: trustVerifiedGatewayPrincipalContext(scope, compositionRevision),
+  },
+  {
+    databaseIdentities: FIXTURE_DATABASE_IDENTITY_ENROLLMENT,
+    name: 'registered gateway grant',
+    principal: trustVerifiedGatewayPrincipalContext(scope, compositionRevision, {
+      assertion: Redacted.make('read-harness-registered-scope'),
+      audience: FIXTURE_DESCRIPTOR.request.gatewayScopeAudiences[0],
+    }),
+  },
+];
+
+it.layer(NodeCrypto.layer)('read publication fencing', (suite) => {
+  for (const scenario of fencedReadScenarios) {
+    suite.effect(`keeps combined ${scenario.name} and publication fencing out of owner queries`, () =>
+      Effect.gen(function* composedReadProtocol() {
+        const harness = yield* makeReadTestHarness({
+          compositionRevision,
+          databaseIdentities: scenario.databaseIdentities,
+          executeOwnerQuery: (query) => {
+            expect(query.sql).toContain('from "core"."tenants"');
+            expect(query.scope).toEqual({ legalEntityId: '', tenantId: scope.tenantId });
+            return Effect.succeed([{ tenantId: scope.tenantId }]);
+          },
+          operationTime,
+          ownerAuthorizationDecision: 'allowed',
+          permissionDecision: 'allowed',
+          scope: scenario.principal,
+        });
+        expect(yield* harness.runtime.runRead({ ...invocation, principal: scenario.principal })).toEqual([
+          scope.tenantId,
+        ]);
+        const snapshot = harness.snapshot();
+        expect(snapshot.ownerQueries).toHaveLength(1);
+        expect(snapshot.evidenceWrites).toBe(1);
+        const fenceIndex = snapshot.statements.findIndex((statement) => statement.includes('as publication_lock'));
+        expect(fenceIndex).toBeGreaterThan(-1);
+        expect(snapshot.statements[fenceIndex]).toContain("current_setting('transaction_isolation') as isolation");
+        expect(snapshot.statements[fenceIndex]).toContain('then pg_advisory_xact_lock_shared');
+        const admissionIndex = snapshot.statements.findIndex(
+          (statement, index) =>
+            index > fenceIndex && statement.includes('from "core"."application_composition_authority"'),
+        );
+        const ownerIndex = snapshot.statements.findIndex((statement) => statement.includes('from "core"."tenants"'));
+        expect(admissionIndex).toBeGreaterThan(fenceIndex);
+        expect(ownerIndex).toBeGreaterThan(admissionIndex);
+        expect(snapshot.stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
+      }),
+    );
+  }
 });

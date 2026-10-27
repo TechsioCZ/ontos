@@ -20,6 +20,7 @@ import {
   Struct,
   Trim,
   check,
+  decodeResult,
   decodeUnknownResult,
   isMinLength,
   makeFilter,
@@ -42,7 +43,7 @@ const NonEmptyBuildStringSchema = OptionFromUndefinedOr(Trim.pipe(check(isMinLen
 
 /** Reads a build input from the framework build environment; blank values count as unset. */
 const readBuildEnvironmentValue: BuildEnvironmentReader = (name) => {
-  const decoded = decodeUnknownResult(NonEmptyBuildStringSchema)(getBuildConfigEnvironment(name));
+  const decoded = decodeResult(NonEmptyBuildStringSchema)(getBuildConfigEnvironment(name));
   return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 
@@ -114,14 +115,14 @@ export const createCloudflareWorkerSecurity = () => ({
 
 const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: string): string =>
   getResultOrThrow(
-    decodeUnknownResult(
-      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
-    )(envValue(name) ?? ''),
+    decodeResult(Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))))(
+      envValue(name) ?? '',
+    ),
   );
 
-const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
-  OptionFromNullOr(Struct({ binding: StringSchema, idVariable: StringSchema })),
-).pipe(
+const DeclaredCloudflareHyperdrivesSchema = Struct({ binding: StringSchema, idVariable: StringSchema }).pipe(
+  OptionFromNullOr,
+  ArraySchema,
   check(
     isMinLength(1, { message: 'A Cloudflare Worker build needs at least one Hyperdrive binding' }),
     makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) =>
@@ -138,7 +139,7 @@ const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
 );
 
 const declaredCloudflareHyperdrives = (declared: CloudflareHyperdriveBuildBindings) =>
-  getResultOrThrow(decodeUnknownResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
+  getResultOrThrow(decodeResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
 
 const cloudflareHyperdriveBindings = (envValue: BuildEnvironmentReader, declared: CloudflareHyperdriveBuildBindings) =>
   declaredCloudflareHyperdrives(declared).map(({ binding, idVariable }) => ({
@@ -192,11 +193,9 @@ interface CloudflareEmailBindings {
 
 /** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
 export const createCloudflareEmailBindings = (envValue: BuildEnvironmentReader): CloudflareEmailBindings => {
-  const sender = getOptionOrUndefined(
-    getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(envValue('ULTRAMODERN_EMAIL_SENDER')),
-    ),
-  );
+  const sender = decodeResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(
+    envValue('ULTRAMODERN_EMAIL_SENDER'),
+  ).pipe(getResultOrThrow, getOptionOrUndefined);
   if (sender === undefined || sender === '') {
     return {};
   }
@@ -269,12 +268,9 @@ export const createCloudflareWorkerConfig = (
   const dataPlane = createCloudflareDataPlaneBindings(envValue, hyperdrives);
   // Backend-heavy Workers must not follow a distant caller away from the private data plane.
   // Placement probes a public single-homed endpoint, not a private VPC hostname.
-  const placementHost = getOptionOrUndefined(
-    getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
-        envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
-      ),
-    ),
+  const placementHost = decodeResult(NonEmptyBuildStringSchema)(envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST')).pipe(
+    getResultOrThrow,
+    getOptionOrUndefined,
   );
   const placement: { readonly host: string } | { readonly mode: 'off' } =
     placementHost === undefined ? { mode: 'off' } : { host: placementHost };

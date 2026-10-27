@@ -1,55 +1,117 @@
-// @effect-diagnostics asyncFunction:off globalFetch:off globalTimers:off -- CIMD's fetch transport is a bounded Promise boundary. expires: 2027-03-31.
 import type { ClientMetadataResourceFetch } from '@better-auth/oauth-provider';
+import { Effect, Exit, Predicate, Schema, Stream } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 
-export const CIMD_FETCH_TIMEOUT_MS = 5_000;
+export const CIMD_FETCH_TIMEOUT_MS = 5000;
 export const CIMD_MAX_RESPONSE_BYTES = 5 * 1024;
 
-const validateUrl = (url: URL): void => {
+export class CimdFetchError extends Schema.TaggedError<CimdFetchError>()('CimdFetchError', {
+  cause: Schema.optional(Schema.Defect()),
+  message: Schema.String,
+}) {}
+
+const transportFailure = (cause: unknown) =>
+  new CimdFetchError({
+    cause,
+    message: Predicate.isError(cause) ? cause.message : 'CIMD resource request failed',
+  });
+
+const isPublicHttpsUrl = (url: URL): boolean => {
   const hostname = url.hostname.toLowerCase().replace(/\.$/u, '');
-  if (
-    url.protocol !== 'https:' ||
-    url.username !== '' ||
-    url.password !== '' ||
-    url.hash !== '' ||
-    hostname === 'localhost' ||
-    hostname.endsWith('.localhost') ||
-    hostname.endsWith('.local') ||
-    hostname.includes(':') ||
-    /^[\d.]+$/u.test(hostname)
-  ) {
-    throw new TypeError('CIMD requires a public HTTPS hostname');
-  }
+  return (
+    url.protocol === 'https:' &&
+    url.username === '' &&
+    url.password === '' &&
+    url.hash === '' &&
+    hostname !== 'localhost' &&
+    !hostname.endsWith('.localhost') &&
+    !hostname.endsWith('.local') &&
+    !hostname.includes(':') &&
+    !/^[\d.]+$/u.test(hostname)
+  );
 };
 
+const cancelResponseBody = Effect.fn('Cimd.cancelResponseBody')((response: Response) =>
+  response.body === null
+    ? Effect.void
+    : Effect.tryPromise({
+        catch: transportFailure,
+        try: response.body.cancel.bind(response.body),
+      }).pipe(Effect.timeout('1 second')),
+);
+
+const rejectResponse = Effect.fn('Cimd.rejectResponse')((response: Response, message: string) =>
+  cancelResponseBody(response).pipe(Effect.andThen(Effect.fail(new CimdFetchError({ message })))),
+);
+
+const readResponseBytes = Effect.fn('Cimd.readResponseBytes')(function* readBytes(response: Response) {
+  if (response.body === null) {
+    return new Uint8Array();
+  }
+  const { body } = response;
+  const bytes = new Uint8Array(CIMD_MAX_RESPONSE_BYTES);
+  const size = yield* Stream.fromReadableStream({
+    evaluate: () => body,
+    onError: transportFailure,
+    releaseLockOnEnd: true,
+  }).pipe(
+    Stream.runFoldEffect(
+      () => 0,
+      (offset, chunk) =>
+        Effect.suspend(() => {
+          const nextOffset = offset + chunk.byteLength;
+          if (nextOffset > CIMD_MAX_RESPONSE_BYTES) {
+            return Effect.fail(new CimdFetchError({ message: 'CIMD resource is too large' }));
+          }
+          bytes.set(chunk, offset);
+          return Effect.succeed(nextOffset);
+        }),
+    ),
+    Effect.onExit((exit) => (Exit.isFailure(exit) ? cancelResponseBody(response) : Effect.void)),
+  );
+  return bytes.slice(0, size);
+});
+
 /**
- * Workers egress replaces Node's DNS validation/pinning boundary: Workers own DNS and public-network
- * routing, and Fetch cannot inspect or pin a resolved address. Never bind this fetch to private services,
- * VPC, or a resolveOverride. Literal IPs and localhost are rejected before any network request.
+ * Workers own DNS and public-network routing; Fetch cannot inspect or pin a resolved address.
+ * Never bind this transport to private services, VPC, or a resolveOverride. The Better Auth SDK
+ * callback runs this operation through the serving request's Effect context.
  */
-export const fetchClientMetadataResource: ClientMetadataResourceFetch = async (input, init) => {
-  // workerd rejects `redirect: 'error'` (it supports only 'follow' and 'manual'); redirects are refused below.
-  const { redirect: _redirect, ...requestInit } = init ?? {};
-  const request = new Request(input, requestInit);
-  validateUrl(new URL(request.url));
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    throw new TypeError('CIMD supports only GET and HEAD');
-  }
-  const controller = new AbortController();
-  const abort = () => controller.abort(request.signal.reason);
-  request.signal.addEventListener('abort', abort, { once: true });
-  if (request.signal.aborted) {
-    abort();
-  }
-  const timer = setTimeout(() => controller.abort(new Error('CIMD fetch timed out')), CIMD_FETCH_TIMEOUT_MS);
-  try {
-    const response = await fetch(request, { redirect: 'manual', signal: controller.signal });
-    if (response.redirected || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
-      await response.body?.cancel();
-      throw new TypeError('CIMD redirects are forbidden');
+export const fetchClientMetadataResource = Effect.fn('Cimd.fetchClientMetadataResource')(
+  function* fetchMetadata(
+    input: Parameters<ClientMetadataResourceFetch>[0],
+    init?: Parameters<ClientMetadataResourceFetch>[1],
+  ) {
+    // workerd supports only follow/manual redirects. Refuse redirected responses explicitly below.
+    const { redirect: _redirect, ...requestInit } = init ?? {};
+    const request = yield* Effect.try({
+      catch: transportFailure,
+      try: () => new Request(input, requestInit),
+    });
+    if (!isPublicHttpsUrl(new URL(request.url))) {
+      return yield* new CimdFetchError({ message: 'CIMD requires a public HTTPS hostname' });
     }
-    // The CIMD resolver joins conditional 304s with its validated cache entry.
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return yield* new CimdFetchError({ message: 'CIMD supports only GET and HEAD' });
+    }
+    const scopeSignal = yield* Effect.abortSignal;
+    const signal = AbortSignal.any([request.signal, scopeSignal]);
+    const fetch = yield* FetchHttpClient.Fetch;
+    const response = yield* Effect.tryPromise({
+      catch: transportFailure,
+      try: fetch.bind(globalThis, request, { redirect: 'manual', signal }),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: CIMD_FETCH_TIMEOUT_MS,
+        orElse: () => Effect.fail(new CimdFetchError({ message: 'CIMD fetch timed out' })),
+      }),
+    );
+    if (response.redirected || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
+      return yield* rejectResponse(response, 'CIMD redirects are forbidden');
+    }
+    // The resolver joins conditional 304s with its validated cache entry.
     if (response.status === 304 || request.method === 'HEAD') {
-      await response.body?.cancel();
+      yield* cancelResponseBody(response);
       return new Response(null, {
         headers: response.headers,
         status: response.status,
@@ -57,47 +119,21 @@ export const fetchClientMetadataResource: ClientMetadataResourceFetch = async (i
       });
     }
     if (!/^application\/(?:[\w.+-]+\+)?json(?:\s*;|\s*$)/iu.test(response.headers.get('content-type') ?? '')) {
-      await response.body?.cancel();
-      throw new TypeError('CIMD resource must be JSON');
+      return yield* rejectResponse(response, 'CIMD resource must be JSON');
     }
     if (Number(response.headers.get('content-length')) > CIMD_MAX_RESPONSE_BYTES) {
-      await response.body?.cancel();
-      throw new TypeError('CIMD resource is too large');
+      return yield* rejectResponse(response, 'CIMD resource is too large');
     }
-    const reader = response.body?.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    if (reader !== undefined) {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) {
-            break;
-          }
-          size += value.byteLength;
-          if (size > CIMD_MAX_RESPONSE_BYTES) {
-            await reader.cancel();
-            throw new TypeError('CIMD resource is too large');
-          }
-          chunks.push(value);
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    JSON.parse(new TextDecoder().decode(bytes));
+    const bytes = yield* readResponseBytes(response);
+    yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(new TextDecoder().decode(bytes));
     const headers = new Headers(response.headers);
     headers.delete('content-length');
     headers.delete('content-encoding');
     return new Response(bytes, { headers, status: response.status, statusText: response.statusText });
-  } finally {
-    clearTimeout(timer);
-    request.signal.removeEventListener('abort', abort);
-  }
-};
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: CIMD_FETCH_TIMEOUT_MS,
+    orElse: () => Effect.fail(new CimdFetchError({ message: 'CIMD fetch timed out' })),
+  }),
+);

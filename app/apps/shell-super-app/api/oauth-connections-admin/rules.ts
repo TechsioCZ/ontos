@@ -11,18 +11,46 @@ import type {
 } from '@app/shared-contracts/agent-access';
 
 /** Weakest to strongest. */
-export const WRITE_POLICY_ORDER: readonly AgentWritePolicy[] = ['read_only', 'approval', 'direct'];
+export const WRITE_POLICY_ORDER = ['read_only', 'approval', 'direct'] satisfies readonly AgentWritePolicy[];
 
 export const policyRank = (policy: AgentWritePolicy): number => WRITE_POLICY_ORDER.indexOf(policy);
 
-export const writePolicyLabel: Readonly<Record<AgentWritePolicy, string>> = {
+export const writePolicyLabel = {
   approval: 'Ke schválení',
   direct: 'Přímo',
   read_only: 'Jen čtení',
-};
+} satisfies Readonly<Record<AgentWritePolicy, string>>;
 
 /** Czech answer to an attempted widening. */
 export const WIDEN_HINT = 'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu.';
+
+const moduleSelectionProblem = (
+  request: Pick<ConnectionUpdateRequest, 'allModules' | 'modules'>,
+): string | undefined => {
+  if (request.allModules && request.modules.length > 0) {
+    return 'Při volbě „Vše“ nevybírejte jednotlivé moduly.';
+  }
+  if (!request.allModules && request.modules.length === 0) {
+    return 'Vyberte alespoň jeden modul.';
+  }
+  const moduleIds = request.modules.map((module) => module.moduleId);
+  if (new Set(moduleIds).size !== moduleIds.length) {
+    return 'Každý modul vyberte jen jednou.';
+  }
+  return undefined;
+};
+
+const firstModuleEntries = <Entry extends { readonly moduleId: string }>(
+  entries: readonly Entry[],
+): ReadonlyMap<string, Entry> => {
+  const first = new Map<string, Entry>();
+  for (const entry of entries) {
+    if (!first.has(entry.moduleId)) {
+      first.set(entry.moduleId, entry);
+    }
+  }
+  return first;
+};
 
 /**
  * First problem with a requested change, as a Czech message; undefined when the update is allowed. An update may
@@ -34,21 +62,17 @@ export const wideningProblem = (
   connection: Pick<ConnectionSummary, 'allModules' | 'granted' | 'limits'>,
 ): string | undefined => {
   const { granted, limits } = connection;
-  if (request.allModules && request.modules.length > 0) {
-    return 'Při volbě „Vše“ nevybírejte jednotlivé moduly.';
-  }
-  if (!request.allModules && request.modules.length === 0) {
-    return 'Vyberte alespoň jeden modul.';
-  }
-  const moduleIds = request.modules.map((module) => module.moduleId);
-  if (new Set(moduleIds).size !== moduleIds.length) {
-    return 'Každý modul vyberte jen jednou.';
+  const selectionProblem = moduleSelectionProblem(request);
+  if (selectionProblem !== undefined) {
+    return selectionProblem;
   }
   if (request.allModules && !connection.allModules) {
     return WIDEN_HINT;
   }
+  const limitsByModule = firstModuleEntries(limits.modules);
+  const grantsByModule = firstModuleEntries(granted.modules);
   for (const module of request.modules) {
-    const limit = limits.modules.find((item) => item.moduleId === module.moduleId);
+    const limit = limitsByModule.get(module.moduleId);
     if (limit === undefined || !limit.read) {
       return `Modul ${limit?.label ?? module.moduleId} nemáte k dispozici.`;
     }
@@ -56,7 +80,7 @@ export const wideningProblem = (
       return `Do modulu ${limit.label} nesmíte zapisovat.`;
     }
     if (!connection.allModules) {
-      const approved = granted.modules.find((item) => item.moduleId === module.moduleId);
+      const approved = grantsByModule.get(module.moduleId);
       if (approved === undefined || (module.access === 'write' && approved.access !== 'write')) {
         return WIDEN_HINT;
       }
@@ -84,9 +108,7 @@ export const adminStats = (connections: readonly ConnectionSummary[]): Connectio
   return {
     active: active.length,
     agentsConnected: new Set(
-      active
-        .filter((connection) => connection.acting.kind === 'agent')
-        .map((connection) => connection.acting.principalId),
+      active.flatMap((connection) => (connection.acting.kind === 'agent' ? [connection.acting.principalId] : [])),
     ).size,
     directWrite: active.filter((connection) => connection.writePolicy === 'direct').length,
   };
@@ -112,20 +134,24 @@ export const adminFilterOptions = (
       principalId: connection.user.principalId,
     })),
     (person) => person.principalId,
-  ).sort((a, b) => a.displayName.localeCompare(b.displayName, 'cs'));
+  ).toSorted((a, b) => a.displayName.localeCompare(b.displayName, 'cs'));
   const agents = distinctBy(
-    connections
-      .filter((connection) => connection.acting.kind === 'agent')
-      .map((connection) => ({
-        displayName: connection.acting.displayName,
-        principalId: connection.acting.principalId,
-      })),
+    connections.flatMap((connection) =>
+      connection.acting.kind === 'agent'
+        ? [
+            {
+              displayName: connection.acting.displayName,
+              principalId: connection.acting.principalId,
+            },
+          ]
+        : [],
+    ),
     (agent) => agent.principalId,
-  ).sort((a, b) => a.displayName.localeCompare(b.displayName, 'cs'));
+  ).toSorted((a, b) => a.displayName.localeCompare(b.displayName, 'cs'));
   const clients = distinctBy(
     connections.map((connection) => ({ clientId: connection.client.clientId, name: connection.client.name })),
     (client) => client.clientId,
-  ).sort((a, b) => a.name.localeCompare(b.name, 'cs'));
+  ).toSorted((a, b) => a.name.localeCompare(b.name, 'cs'));
   return { agents, clients, people };
 };
 

@@ -170,6 +170,23 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
   },
 );
 
+/** Owner observation commits first; evidence is then installed and committed in its own scoped transaction. */
+const expectCommittedReadEvidence = (statements: readonly string[]) => {
+  const ownerQueryIndex = statements.findIndex((statement) => statement.includes('from "inventory"."stock_items"'));
+  const ownerCommitIndex = statements.findIndex(
+    (statement, index) => index > ownerQueryIndex && statement === 'COMMIT',
+  );
+  const evidenceIndex = statements.findIndex((statement) =>
+    statement.includes('insert into "core"."data_access_events"'),
+  );
+  expect(ownerQueryIndex).toBeGreaterThan(-1);
+  expect(ownerCommitIndex).toBeGreaterThan(ownerQueryIndex);
+  expect(evidenceIndex).toBeGreaterThan(ownerCommitIndex);
+  expect(statements.slice(ownerCommitIndex + 1, evidenceIndex)).toContain('BEGIN');
+  expect(statements.at(-2)).toContain('insert into "core"."data_access_events"');
+  expect(statements.at(-1)).toBe('COMMIT');
+};
+
 const problems = makeGovernedReadProblems({
   authentication: CurrentRelevantStockPositionSetAuthenticationProblemSchema,
   forbidden: CurrentRelevantStockPositionSetForbiddenProblemSchema,
@@ -198,9 +215,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
       expect(runtime.snapshot().stages).toContain('evidence_persisted');
-      // Allowed evidence follows the committed owner transaction.
-      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
-      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
+      expectCommittedReadEvidence(runtime.snapshot().statements);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );
 
@@ -232,8 +247,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       // (00dc1c50c), so the denial stops the read before any result is decoded or released.
       expect(runtime.snapshot().stages).toContain('handler_executed');
       expect(runtime.snapshot().stages).not.toContain('result_decoded');
-      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
-      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
+      expectCommittedReadEvidence(runtime.snapshot().statements);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
     }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
   );

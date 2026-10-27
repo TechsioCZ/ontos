@@ -1,4 +1,5 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — Měřidla a energie (S04). OWNED BY THE `meters` LANE (ops-meters).
 // List of meters with last reading, truthful consumption and anomaly highlight → detail side panel with history and
 // chart → record reading / edit meter; consumption and costs per property/unit below the list.
@@ -14,12 +15,15 @@ import {
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { useEffect, useState } from 'react';
+import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+import type { ReactNode } from 'react';
+import { useState } from 'react';
+import { DateTime, Option, Schema } from 'effect';
 import {
   daysBetween,
   latestRow,
@@ -42,19 +46,40 @@ import {
   mediumVariant,
   meterSearchText,
   monthLongLabel,
+  pluralCategory,
   recentAnomaly,
   trendOf,
 } from './meters-view.ts';
 
+const NOT_PROVIDED = 'facility-operations.common.notProvided';
+const CLOSE_LABEL = 'facility-operations.common.close';
+const SearchValueSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
+const RouteSearchSchema = Schema.toCodecJson(Schema.URLSearchParams).pipe(
+  Schema.decodeTo(Schema.fromURLSearchParams(Schema.Struct({ meter: Schema.optionalKey(SearchValueSchema) }))),
+);
+const isSearchList = Schema.is(Schema.Array(Schema.String));
+const useInitialSelection = () =>
+  useRouterState({
+    select: (state) => {
+      const parsed = Schema.decodeOption(RouteSearchSchema)(state.location.searchStr);
+      const value = parsed.pipe(
+        Option.map((search) => search.meter),
+        Option.getOrUndefined,
+      );
+      const first = isSearchList(value) ? value[0] : value;
+      return first === '' ? undefined : first;
+    },
+  });
+
 const k = 'facility-operations.meters';
 
-const pragueToday = (): string =>
-  new Intl.DateTimeFormat('en-CA', {
-    day: '2-digit',
-    month: '2-digit',
-    timeZone: 'Europe/Prague',
-    year: 'numeric',
-  }).format(Date.now());
+const pragueDate = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+const pragueToday = (): string => pragueDate.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 
 /** Tiny bar sparkline of the daily consumption of the last periods; anomalies in the danger colour. */
 const Trend = ({ meter }: { readonly meter: Meter }) => {
@@ -91,7 +116,158 @@ const Trend = ({ meter }: { readonly meter: Meter }) => {
   );
 };
 
-const MetersView = () => {
+const MeterNumberCell = ({ row }: CellContext<Meter>) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="flex min-w-0 flex-col">
+      <span className="font-semibold">{row.original.serialNumber}</span>
+      <span className="truncate text-fg-secondary text-xs">{row.original.supplyPoint ?? t(NOT_PROVIDED)}</span>
+    </div>
+  );
+};
+
+const MeterMediumCell = ({ row }: CellContext<Meter>) => {
+  const { t } = useModernI18n();
+  return (
+    <Badge size="sm" variant={mediumVariant[row.original.medium]}>
+      {t(`${k}.medium.${row.original.medium}`)}
+    </Badge>
+  );
+};
+
+const MeterLocationCell = ({ row }: CellContext<Meter>) => {
+  const { t } = useModernI18n();
+  return (
+    <Tooltip content={row.original.location?.label ?? t(NOT_PROVIDED)}>
+      <span className="line-clamp-2 text-sm">{row.original.location?.label ?? t(NOT_PROVIDED)}</span>
+    </Tooltip>
+  );
+};
+
+const MeterLastReadingCell = ({ row }: CellContext<Meter>) => {
+  const { t } = useModernI18n();
+  const last = latestRow(row.original);
+  return last === undefined ? (
+    <span className="text-fg-secondary text-xs italic">{t(`${k}.row.noReadings`)}</span>
+  ) : (
+    <div className="flex flex-col tabular-nums">
+      <span>{formatQuantity(last.reading.value, last.reading.unit)}</span>
+      <span className="text-fg-secondary text-xs">{formatDate(last.reading.date)}</span>
+    </div>
+  );
+};
+
+const MeterConsumptionCell = ({ row }: CellContext<Meter>) => {
+  const { language, t } = useModernI18n();
+  const last = latestRow(row.original);
+  if (last === undefined) {
+    return <span className="text-fg-secondary text-xs">—</span>;
+  }
+  if (last.status === 'first') {
+    return <span className="text-fg-secondary text-xs italic">{t(`${k}.row.first`)}</span>;
+  }
+  if (last.status === 'unitChanged') {
+    return <span className="text-fg-secondary text-xs italic">{t(`${k}.row.unitChanged`)}</span>;
+  }
+  return (
+    <div className="flex flex-col tabular-nums">
+      <strong>{formatQuantity(last.consumption ?? 0, last.reading.unit)}</strong>
+      <span className="text-fg-secondary text-xs">
+        {t(`${k}.row.days_${pluralCategory(last.days ?? 0, language)}`, { count: last.days ?? 0 })}
+      </span>
+    </div>
+  );
+};
+
+const MeterTrendCell = ({ row }: CellContext<Meter>) => <Trend meter={row.original} />;
+
+const MeterStateCell = ({ row }: CellContext<Meter>) => {
+  const { t } = useModernI18n();
+  if (row.original.status === 'RETIRED') {
+    return (
+      <Badge size="sm" variant="outline">
+        {t(`${k}.row.retired`)}
+      </Badge>
+    );
+  }
+  const anomaly = recentAnomaly(row.original);
+  const last = latestRow(row.original);
+  if (anomaly?.change !== undefined) {
+    return (
+      <div className="flex flex-col items-start gap-50">
+        <span className="whitespace-nowrap">
+          <Badge size="sm" variant="danger">
+            {t(`${k}.row.anomaly`, { change: formatChange(anomaly.change) })}
+          </Badge>
+        </span>
+        <span className="whitespace-nowrap text-fg-secondary text-xs">
+          {t(`${k}.row.anomalyPeriod`, { date: formatDate(anomaly.reading.date) })}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <span className="whitespace-nowrap">
+      {last?.status === 'ok' ? (
+        <Badge size="sm" variant="success">
+          {t(`${k}.row.normal`)}
+        </Badge>
+      ) : (
+        <Badge size="sm" variant="outline">
+          {t('facility-operations.common.noData')}
+        </Badge>
+      )}
+    </span>
+  );
+};
+
+interface MeterFilters {
+  readonly anomaliesOnly: boolean;
+  readonly medium: MeterMedium | 'ALL';
+  readonly search: string;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+}
+const meterOverview = (meters: readonly Meter[], { anomaliesOnly, medium, search, t }: MeterFilters) => {
+  const today = pragueToday();
+  const active = meters.filter((meter) => meter.status !== 'RETIRED');
+  let recentReadings = 0;
+  for (const meter of meters) {
+    for (const reading of validReadingsOf(meter)) {
+      const age = daysBetween(reading.date, today);
+      if (age >= 0 && age <= 30) {
+        recentReadings += 1;
+      }
+    }
+  }
+  const anomalies = active.filter(isAnomalous);
+  const series = monthlySeries(meters);
+  const costMonths = series.filter((point) => point.costMinor !== undefined);
+  const costMonth = costMonths
+    .map((point) => point.month)
+    .toSorted()
+    .at(-1);
+  const costPoints = costMonth === undefined ? [] : series.filter((point) => point.month === costMonth);
+  const costTotal = costPoints.reduce((sum, point) => sum + (point.costMinor ?? 0), 0);
+  const costMissing = costPoints.reduce((sum, point) => sum + point.periodsWithoutCost, 0);
+
+  const visible = meters
+    .filter(
+      (meter) =>
+        (medium === 'ALL' || meter.medium === medium) &&
+        (!anomaliesOnly || isAnomalous(meter)) &&
+        (search.trim() === '' || matchesSearch(meterSearchText(meter, t), search)),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(isAnomalous(right)) - Number(isAnomalous(left)) ||
+        (left.location?.label ?? '').localeCompare(right.location?.label ?? '', 'cs') ||
+        left.serialNumber.localeCompare(right.serialNumber, 'cs'),
+    );
+
+  return { active, anomalies, costMissing, costMonth, costTotal, recentReadings, visible };
+};
+
+const useMetersView = () => {
   const { language, t } = useModernI18n();
   const toast = useToast();
   const ops = useAgendaRecords(['meters']);
@@ -106,167 +282,58 @@ const MetersView = () => {
   const [medium, setMedium] = useState<MeterMedium | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
-  const [detailId, setDetailId] = useState<string | undefined>(undefined);
+  const initialSelection = useInitialSelection();
+  const [detailId, setDetailId] = useState<string | undefined>(initialSelection);
   const [detailMode, setDetailMode] = useState<DetailMode>('view');
   const [creating, setCreating] = useState(false);
   const [recording, setRecording] = useState(false);
 
-  // Deep link: /provoz/meridla?meter=<id> opens that meter's detail.
-  useEffect(() => {
-    const linked = new URLSearchParams(window.location.search).get('meter');
-    if (linked !== null && linked !== '') {
-      setDetailId(linked);
-    }
-  }, []);
-
   const detail = meters.find((meter) => meter.id === detailId);
-  const today = pragueToday();
-  const active = meters.filter((meter) => meter.status !== 'RETIRED');
-  const recentReadings = meters.flatMap(validReadingsOf).filter((reading) => {
-    const age = daysBetween(reading.date, today);
-    return age >= 0 && age <= 30;
-  }).length;
-  const anomalies = active.filter(isAnomalous);
-  const costMonths = monthlySeries(meters).filter((point) => point.costMinor !== undefined);
-  const costMonth = costMonths
-    .map((point) => point.month)
-    .sort()
-    .at(-1);
-  const costPoints = costMonth === undefined ? [] : monthlySeries(meters).filter((point) => point.month === costMonth);
-  const costTotal = costPoints.reduce((sum, point) => sum + (point.costMinor ?? 0), 0);
-  const costMissing = costPoints.reduce((sum, point) => sum + point.periodsWithoutCost, 0);
-
-  const visible = meters
-    .filter((meter) => medium === 'ALL' || meter.medium === medium)
-    .filter((meter) => !anomaliesOnly || isAnomalous(meter))
-    .filter((meter) => search.trim() === '' || matchesSearch(meterSearchText(meter, t), search))
-    .toSorted(
-      (left, right) =>
-        Number(isAnomalous(right)) - Number(isAnomalous(left)) ||
-        (left.location?.label ?? '').localeCompare(right.location?.label ?? '', 'cs') ||
-        left.serialNumber.localeCompare(right.serialNumber, 'cs'),
-    );
-
+  const { active, anomalies, costMissing, costMonth, costTotal, recentReadings, visible } = meterOverview(meters, {
+    anomaliesOnly,
+    medium,
+    search,
+    t,
+  });
   const columns: ColumnDef<Meter>[] = [
     {
-      cell: ({ row }) => (
-        <div className="flex min-w-0 flex-col">
-          <span className="font-semibold">{row.original.serialNumber}</span>
-          <span className="truncate text-fg-secondary text-xs">
-            {row.original.supplyPoint ?? t('facility-operations.common.notProvided')}
-          </span>
-        </div>
-      ),
+      cell: MeterNumberCell,
       header: t(`${k}.columns.meter`),
       id: 'meter',
       meta: { width: 180 },
     },
     {
-      cell: ({ row }) => (
-        <Badge size="sm" variant={mediumVariant[row.original.medium]}>
-          {t(`${k}.medium.${row.original.medium}`)}
-        </Badge>
-      ),
+      cell: MeterMediumCell,
       header: t(`${k}.columns.medium`),
       id: 'medium',
       meta: { width: 86 },
     },
     {
-      cell: ({ row }) => (
-        <span className="line-clamp-2 text-sm" title={row.original.location?.label}>
-          {row.original.location?.label ?? t('facility-operations.common.notProvided')}
-        </span>
-      ),
+      cell: MeterLocationCell,
       header: t(`${k}.columns.location`),
       id: 'location',
       meta: { width: 205 },
     },
     {
-      cell: ({ row }) => {
-        const last = latestRow(row.original);
-        return last === undefined ? (
-          <span className="text-fg-secondary text-xs italic">{t(`${k}.row.noReadings`)}</span>
-        ) : (
-          <div className="flex flex-col tabular-nums">
-            <span>{formatQuantity(last.reading.value, last.reading.unit)}</span>
-            <span className="text-fg-secondary text-xs">{formatDate(last.reading.date)}</span>
-          </div>
-        );
-      },
+      cell: MeterLastReadingCell,
       header: t(`${k}.columns.lastReading`),
       id: 'lastReading',
       meta: { width: 128 },
     },
     {
-      cell: ({ row }) => {
-        const last = latestRow(row.original);
-        if (last === undefined) {
-          return <span className="text-fg-secondary text-xs">—</span>;
-        }
-        if (last.status === 'first') {
-          return <span className="text-fg-secondary text-xs italic">{t(`${k}.row.first`)}</span>;
-        }
-        if (last.status === 'unitChanged') {
-          return <span className="text-fg-secondary text-xs italic">{t(`${k}.row.unitChanged`)}</span>;
-        }
-        return (
-          <div className="flex flex-col tabular-nums">
-            <strong>{formatQuantity(last.consumption ?? 0, last.reading.unit)}</strong>
-            <span className="text-fg-secondary text-xs">
-              {t(`${k}.row.days_${new Intl.PluralRules(language).select(last.days ?? 0)}`, { count: last.days ?? 0 })}
-            </span>
-          </div>
-        );
-      },
+      cell: MeterConsumptionCell,
       header: t(`${k}.columns.consumption`),
       id: 'consumption',
       meta: { width: 160 },
     },
     {
-      cell: ({ row }) => <Trend meter={row.original} />,
+      cell: MeterTrendCell,
       header: t(`${k}.columns.trend`),
       id: 'trend',
       meta: { width: 100 },
     },
     {
-      cell: ({ row }) => {
-        if (row.original.status === 'RETIRED') {
-          return (
-            <Badge size="sm" variant="outline">
-              {t(`${k}.row.retired`)}
-            </Badge>
-          );
-        }
-        const anomaly = recentAnomaly(row.original);
-        const last = latestRow(row.original);
-        if (anomaly?.change !== undefined) {
-          return (
-            <div className="flex flex-col items-start gap-50">
-              <span className="whitespace-nowrap">
-                <Badge size="sm" variant="danger">
-                  {t(`${k}.row.anomaly`, { change: formatChange(anomaly.change) })}
-                </Badge>
-              </span>
-              <span className="whitespace-nowrap text-fg-secondary text-xs">
-                {t(`${k}.row.anomalyPeriod`, { date: formatDate(anomaly.reading.date) })}
-              </span>
-            </div>
-          );
-        }
-        return (
-          <span className="whitespace-nowrap">
-            {last?.status === 'ok' ? (
-              <Badge size="sm" variant="success">
-                {t(`${k}.row.normal`)}
-              </Badge>
-            ) : (
-              <Badge size="sm" variant="outline">
-                {t('facility-operations.common.noData')}
-              </Badge>
-            )}
-          </span>
-        );
-      },
+      cell: MeterStateCell,
       header: t(`${k}.columns.state`),
       id: 'state',
       meta: { width: 160 },
@@ -278,33 +345,244 @@ const MetersView = () => {
     setDetailMode('view');
   };
 
+  return {
+    active,
+    actor,
+    anomalies,
+    anomaliesOnly,
+    canManage,
+    canReadFinancial,
+    canWrite,
+    closeDetail,
+    columns,
+    costMissing,
+    costMonth,
+    costTotal,
+    creating,
+    detail,
+    detailMode,
+    envelope,
+    fileAccess,
+    language,
+    medium,
+    meters,
+    ops,
+    recentReadings,
+    recording,
+    search,
+    setAnomaliesOnly,
+    setCreating,
+    setDetailId,
+    setDetailMode,
+    setMedium,
+    setRecording,
+    setSearch,
+    t,
+    toast,
+    visible,
+  };
+};
+
+const MeterPanels = ({ view }: { readonly view: ReturnType<typeof useMetersView> }) => {
+  const {
+    actor,
+    canManage,
+    canReadFinancial,
+    canWrite,
+    closeDetail,
+    creating,
+    detail,
+    detailMode,
+    fileAccess,
+    language,
+    meters,
+    ops,
+    recording,
+    setCreating,
+    setDetailId,
+    setDetailMode,
+    setRecording,
+    t,
+    toast,
+  } = view;
+  let detailTitle = '';
+  if (detail !== undefined) {
+    if (detailMode === 'edit') {
+      detailTitle = t(`${k}.edit.title`, { serial: detail.serialNumber });
+    } else if (detailMode === 'reading') {
+      detailTitle = t(`${k}.reading.titleFor`, { serial: detail.serialNumber });
+    } else {
+      const mediumLabel = t(`${k}.medium.${detail.medium}`);
+      detailTitle = `${detail.serialNumber} · ${mediumLabel}`;
+    }
+  }
+
   return (
     <>
-      <PageHeader
-        actions={
-          canWrite ? (
-            <>
-              {canManage && (
-                <Button onClick={() => setCreating(true)} theme="outlined" variant="secondary">
-                  {t(`${k}.actions.newMeter`)}
-                </Button>
-              )}
-              <Button onClick={() => setRecording(true)} variant="primary">
-                {t(`${k}.actions.recordReading`)}
-              </Button>
-            </>
-          ) : envelope === undefined ? undefined : (
-            <Badge size="sm" variant="outline">
-              {t('facility-operations.common.readOnly')}
-            </Badge>
-          )
-        }
-        description={t(
-          `${k}.${canReadFinancial ? 'description' : canWrite ? 'operationalDescription' : 'operationalReadOnlyDescription'}`,
+      <SidePanel
+        closeOnInteractOutside={detailMode === 'view'}
+        description={detail?.location?.label}
+        onOpenChange={(next) => {
+          if (!next) {
+            closeDetail();
+          }
+        }}
+        open={detail !== undefined}
+        resizeLabel={t(CLOSE_LABEL)}
+        size="xl"
+        title={detailTitle}
+      >
+        {detail !== undefined && (
+          <div className="py-200">
+            <MeterDetail
+              actor={actor}
+              capabilities={{
+                canManage,
+                canReadFinancial,
+                canReadPhotos: fileAccess?.canRead === true,
+                canUploadPhotos: fileAccess?.canWrite === true,
+                canWrite,
+              }}
+              language={language}
+              meter={detail}
+              meters={meters}
+              mode={detailMode}
+              onModeChange={setDetailMode}
+              run={ops.run}
+            />
+          </div>
         )}
-        title={t(`${k}.title`)}
-      />
-      <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>
+      </SidePanel>
+
+      <SidePanel
+        closeOnInteractOutside={false}
+        onOpenChange={(next) => setCreating(next)}
+        open={creating}
+        resizeLabel={t(CLOSE_LABEL)}
+        size="lg"
+        title={t(`${k}.create.title`)}
+      >
+        {creating && (
+          <div className="py-200">
+            <MeterForm
+              onCancel={() => setCreating(false)}
+              onSaved={(meterId) => {
+                toast.create({ title: t(`${k}.created`), type: 'success' });
+                setCreating(false);
+                if (meterId !== undefined) {
+                  setDetailId(meterId);
+                  setDetailMode('view');
+                }
+              }}
+              run={ops.run}
+            />
+          </div>
+        )}
+      </SidePanel>
+
+      <SidePanel
+        closeOnInteractOutside={false}
+        onOpenChange={(next) => setRecording(next)}
+        open={recording}
+        resizeLabel={t(CLOSE_LABEL)}
+        size="lg"
+        title={t(`${k}.reading.title`)}
+      >
+        {recording && (
+          <div className="py-200">
+            <ReadingForm
+              canRecordCosts={canManage}
+              canUploadPhoto={fileAccess?.canWrite === true}
+              meters={meters}
+              onCancel={() => setRecording(false)}
+              onSaved={(meterId) => {
+                toast.create({ title: t(`${k}.reading.saved`), type: 'success' });
+                setRecording(false);
+                setDetailId(meterId);
+                setDetailMode('view');
+              }}
+              run={ops.run}
+            />
+          </div>
+        )}
+      </SidePanel>
+    </>
+  );
+};
+
+const MetersView = () => {
+  const view = useMetersView();
+  const {
+    active,
+    anomalies,
+    anomaliesOnly,
+    canManage,
+    canReadFinancial,
+    canWrite,
+    columns,
+    costMissing,
+    costMonth,
+    costTotal,
+    envelope,
+    language,
+    medium,
+    meters,
+    ops,
+    recentReadings,
+    search,
+    setAnomaliesOnly,
+    setCreating,
+    setDetailId,
+    setDetailMode,
+    setMedium,
+    setRecording,
+    setSearch,
+    t,
+    visible,
+  } = view;
+  let headerActions: ReactNode;
+  if (canWrite) {
+    headerActions = (
+      <>
+        {canManage && (
+          <Button onClick={() => setCreating(true)} theme="outlined" variant="secondary">
+            {t(`${k}.actions.newMeter`)}
+          </Button>
+        )}
+        <Button onClick={() => setRecording(true)} variant="primary">
+          {t(`${k}.actions.recordReading`)}
+        </Button>
+      </>
+    );
+  } else if (envelope !== undefined) {
+    headerActions = (
+      <Badge size="sm" variant="outline">
+        {t('facility-operations.common.readOnly')}
+      </Badge>
+    );
+  }
+  let descriptionKey = 'operationalReadOnlyDescription';
+  if (canReadFinancial) {
+    descriptionKey = 'description';
+  } else if (canWrite) {
+    descriptionKey = 'operationalDescription';
+  }
+  const anomalyHintLabel = t(`${k}.stats.anomaliesHint`);
+  const anomalyHint =
+    anomalies.length === 0
+      ? t(`${k}.stats.anomaliesNone`)
+      : `${anomalyHintLabel}: ${anomalies.map((meter) => meter.serialNumber).join(', ')}`;
+
+  return (
+    <>
+      <PageHeader actions={headerActions} description={t(`${k}.${descriptionKey}`)} title={t(`${k}.title`)} />
+      <AgendaGate
+        onRetry={() => {
+          void browserRuntime.runPromise(ops.reload());
+        }}
+        readable={envelope !== undefined}
+        status={ops.status}
+      >
         <StatRow>
           <StatCard
             hint={t(`${k}.stats.countHint`, { total: meters.length })}
@@ -316,15 +594,7 @@ const MetersView = () => {
             label={t(`${k}.stats.readings30`)}
             value={String(recentReadings)}
           />
-          <StatCard
-            hint={
-              anomalies.length === 0
-                ? t(`${k}.stats.anomaliesNone`)
-                : `${t(`${k}.stats.anomaliesHint`)}: ${anomalies.map((meter) => meter.serialNumber).join(', ')}`
-            }
-            label={t(`${k}.stats.anomalies`)}
-            value={String(anomalies.length)}
-          />
+          <StatCard hint={anomalyHint} label={t(`${k}.stats.anomalies`)} value={String(anomalies.length)} />
           {canReadFinancial && (
             <StatCard
               hint={costMissing > 0 ? t(`${k}.stats.costMissing`, { count: costMissing }) : t(`${k}.stats.costHint`)}
@@ -389,12 +659,12 @@ const MetersView = () => {
             getRowId={(row) => row.id}
             getRowLabel={(row) => row.original.serialNumber}
             loading={false}
-            tableLayout="fixed"
-            size="sm"
             onRowClick={(row) => {
               setDetailId(row.original.id);
               setDetailMode('view');
             }}
+            size="sm"
+            tableLayout="fixed"
             translations={{
               emptyDescription: t('facility-operations.common.states.emptyDescription'),
               emptyTitle: t('facility-operations.common.states.emptyTitle'),
@@ -407,99 +677,7 @@ const MetersView = () => {
         )}
       </AgendaGate>
 
-      <SidePanel
-        closeOnInteractOutside={detailMode === 'view'}
-        description={detail?.location?.label}
-        onOpenChange={(next) => {
-          if (!next) {
-            closeDetail();
-          }
-        }}
-        open={detail !== undefined}
-        resizeLabel={t('facility-operations.common.close')}
-        size="xl"
-        title={
-          detail === undefined
-            ? ''
-            : detailMode === 'edit'
-              ? t(`${k}.edit.title`, { serial: detail.serialNumber })
-              : detailMode === 'reading'
-                ? t(`${k}.reading.titleFor`, { serial: detail.serialNumber })
-                : `${detail.serialNumber} · ${t(`${k}.medium.${detail.medium}`)}`
-        }
-      >
-        {detail !== undefined && (
-          <div className="py-200">
-            <MeterDetail
-              actor={actor}
-              canReadPhotos={fileAccess?.canRead === true}
-              canUploadPhotos={fileAccess?.canWrite === true}
-              canWrite={canWrite}
-              canManage={canManage}
-              canReadFinancial={canReadFinancial}
-              language={language}
-              meter={detail}
-              meters={meters}
-              mode={detailMode}
-              onModeChange={setDetailMode}
-              run={ops.run}
-            />
-          </div>
-        )}
-      </SidePanel>
-
-      <SidePanel
-        closeOnInteractOutside={false}
-        onOpenChange={(next) => setCreating(next)}
-        open={creating}
-        resizeLabel={t('facility-operations.common.close')}
-        size="lg"
-        title={t(`${k}.create.title`)}
-      >
-        {creating && (
-          <div className="py-200">
-            <MeterForm
-              onCancel={() => setCreating(false)}
-              onSaved={(meterId) => {
-                toast.create({ title: t(`${k}.created`), type: 'success' });
-                setCreating(false);
-                if (meterId !== undefined) {
-                  setDetailId(meterId);
-                  setDetailMode('view');
-                }
-              }}
-              run={ops.run}
-            />
-          </div>
-        )}
-      </SidePanel>
-
-      <SidePanel
-        closeOnInteractOutside={false}
-        onOpenChange={(next) => setRecording(next)}
-        open={recording}
-        resizeLabel={t('facility-operations.common.close')}
-        size="lg"
-        title={t(`${k}.reading.title`)}
-      >
-        {recording && (
-          <div className="py-200">
-            <ReadingForm
-              canRecordCosts={canManage}
-              canUploadPhoto={fileAccess?.canWrite === true}
-              meters={meters}
-              onCancel={() => setRecording(false)}
-              onSaved={(meterId) => {
-                toast.create({ title: t(`${k}.reading.saved`), type: 'success' });
-                setRecording(false);
-                setDetailId(meterId);
-                setDetailMode('view');
-              }}
-              run={ops.run}
-            />
-          </div>
-        )}
-      </SidePanel>
+      <MeterPanels view={view} />
     </>
   );
 };

@@ -7,6 +7,7 @@ import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Effect } from 'effect';
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 
@@ -21,8 +22,18 @@ import {
   useDemoGuideProgress,
   useDemoGuideWidth,
 } from './demo-guide-store.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+
 import { demoPasswordHint } from './demo-guide-types.ts';
 import type { DemoGuide, DemoGuideBoundaries, DemoGuidePersona, DemoGuideStep } from './demo-guide-types.ts';
+
+const toggleGuideStep = (guideId: DemoGuide['id'], doneIds: readonly string[], stepId: string): void => {
+  browserRuntime.runFork(
+    Effect.fromResult(setDemoGuideProgress(guideId, toggleStep(doneIds, stepId))).pipe(
+      Effect.tapError(Effect.logError.bind(undefined, 'Demo progress could not be encoded')),
+    ),
+  );
+};
 
 export const demoGuidePanelId = 'demo-guide-panel';
 const guideIcon = 'icon-[mdi--presentation-play]';
@@ -341,7 +352,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   }, []);
   const doneIds = useDemoGuideProgress(guide.id);
   const summary = summarizeGuideProgress(guide, doneIds);
-  const percent = summary.total === 0 ? 0 : Math.round((summary.done / summary.total) * 100);
+  const done = new Set(doneIds);
   const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (listRef.current !== null) {
@@ -405,23 +416,19 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               Začít znovu
             </Button>
           </div>
-          <div
+          <progress
             aria-label="Postup ukázky"
-            aria-valuemax={summary.total}
-            aria-valuemin={0}
-            aria-valuenow={summary.done}
-            className="h-100 w-full overflow-hidden rounded-full bg-surface"
-            role="progressbar"
-          >
-            <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
+            className="h-100 w-full overflow-hidden rounded-full bg-surface accent-primary [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-surface [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
+            max={Math.max(1, summary.total)}
+            value={summary.done}
+          />
           {guide.boundaries === undefined ? null : (
             <Button
               className="justify-self-start"
               icon="icon-[mdi--information-outline]"
               onClick={() => {
                 document
-                  .getElementById('demo-guide-boundaries')
+                  .querySelector('#demo-guide-boundaries')
                   ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
               size="sm"
@@ -439,7 +446,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           ) : null}
         </section>
         {guide.chapters.map((chapter, chapterIndex) => {
-          const chapterDone = chapter.steps.filter((step) => doneIds.includes(step.id)).length;
+          const chapterDone = chapter.steps.filter((step) => done.has(step.id)).length;
           const headingId = `demo-guide-chapter-${chapter.id}`;
           return (
             <section aria-labelledby={headingId} className="grid gap-150" key={chapter.id}>
@@ -457,13 +464,11 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               <ol className="grid gap-150">
                 {chapter.steps.map((step) => (
                   <StepCard
-                    done={doneIds.includes(step.id)}
+                    done={done.has(step.id)}
                     identityEmail={identityEmail}
                     isNext={step.id === summary.nextStepId}
                     key={step.id}
-                    onToggle={() => {
-                      setDemoGuideProgress(guide.id, toggleStep(doneIds, step.id));
-                    }}
+                    onToggle={toggleGuideStep.bind(undefined, guide.id, doneIds, step.id)}
                     step={step}
                   />
                 ))}

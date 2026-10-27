@@ -7,17 +7,22 @@ import { assetKinds, isActiveAsset } from '../../../../../shared/domain/assets.t
 import { isoDateLabel } from './assets-model.ts';
 import type { Translate } from './assets-model.ts';
 
+const assetKindOrder = new Map<string, number>(assetKinds.map((kind, index) => [kind, index]));
+
 interface Group {
+  readonly acquisition: number;
+  readonly active: number;
+  readonly current: number;
+  readonly disposed: number;
   readonly key: string;
   readonly label: string;
-  readonly active: number;
-  readonly disposed: number;
-  readonly acquisition: number;
-  readonly current: number;
 }
 
 const groupBy = (rows: readonly Asset[], keyOf: (asset: Asset) => [string, string]): readonly Group[] => {
-  const groups = new Map<string, { label: string; active: number; disposed: number; acquisition: number; current: number }>();
+  const groups = new Map<
+    string,
+    { acquisition: number; active: number; current: number; disposed: number; label: string }
+  >();
   for (const asset of rows) {
     const [key, label] = keyOf(asset);
     const group = groups.get(key) ?? { acquisition: 0, active: 0, current: 0, disposed: 0, label };
@@ -53,13 +58,13 @@ const valueAtYearEnd = (asset: Asset, year: number): number | undefined => {
 };
 
 interface YearRow {
-  readonly year: number;
   readonly acquired: number;
   readonly acquiredValue: number;
   readonly disposed: number;
-  readonly proceeds: number;
-  readonly endValue: number;
   readonly endCount: number;
+  readonly endValue: number;
+  readonly proceeds: number;
+  readonly year: number;
 }
 
 export const yearComparison = (rows: readonly Asset[], currentYear: number): readonly YearRow[] => {
@@ -92,7 +97,15 @@ export const yearComparison = (rows: readonly Asset[], currentYear: number): rea
   return result;
 };
 
-const GroupTable = ({ groups, k, title }: { readonly groups: readonly Group[]; readonly k: Translate; readonly title: string }) => (
+const GroupTable = ({
+  groups,
+  k,
+  title,
+}: {
+  readonly groups: readonly Group[];
+  readonly k: Translate;
+  readonly title: string;
+}) => (
   <div className="overflow-x-auto">
     <Table size="sm" variant="line">
       <Table.Header>
@@ -142,20 +155,20 @@ export const AssetSummary = ({
   rows,
   today,
 }: {
-  /** Rows of the register after every filter except the status filter. */
-  readonly rows: readonly Asset[];
   readonly filtered: boolean;
   readonly k: Translate;
   readonly onOpen: (asset: Asset) => void;
   readonly propertyName: (asset: Asset) => string;
+  /** Rows of the register after every filter except the status filter. */
+  readonly rows: readonly Asset[];
   readonly today: string;
 }) => {
   const byKind = groupBy(rows, (asset) => {
     const kind = asset.kind ?? 'equipment';
     return [kind, k(`kind.${kind}`)];
-  }).toSorted((left, right) => assetKinds.indexOf(left.key as never) - assetKinds.indexOf(right.key as never));
-  const byProperty = groupBy(rows, (asset) => [asset.propertyId ?? 'none', propertyName(asset)]).toSorted((left, right) =>
-    left.label.localeCompare(right.label, 'cs'),
+  }).toSorted((left, right) => (assetKindOrder.get(left.key) ?? -1) - (assetKindOrder.get(right.key) ?? -1));
+  const byProperty = groupBy(rows, (asset) => [asset.propertyId ?? 'none', propertyName(asset)]).toSorted(
+    (left, right) => left.label.localeCompare(right.label, 'cs'),
   );
   const disposed = rows
     .filter((asset) => !isActiveAsset(asset))
@@ -230,7 +243,11 @@ export const AssetSummary = ({
               </Table.Header>
               <Table.Body>
                 {disposed.map((asset) => (
-                  <Table.Row className="cursor-pointer hover:bg-surface-hover" key={asset.id} onClick={() => onOpen(asset)}>
+                  <Table.Row
+                    className="cursor-pointer hover:bg-surface-hover"
+                    key={asset.id}
+                    onClick={() => onOpen(asset)}
+                  >
                     <Table.Cell className="tabular-nums">{asset.inventoryNumber}</Table.Cell>
                     <Table.Cell className="font-medium">{asset.name}</Table.Cell>
                     <Table.Cell>{k(`disposal.${asset.disposal?.kind ?? 'retirement'}`)}</Table.Cell>

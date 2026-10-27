@@ -2,81 +2,55 @@
 /** Local, additive S13 employee-to-login bindings. Requires the running demo and accounts-admin-grants.mts.
  * Only uses governed workforce Reads/Actions; never resets another agenda or company.
  */
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { WorkforceCommandSchema } from '@app/workforce/contracts/apply-command';
+import { RecordsResponseSchema } from '@app/workforce/contracts/records';
+import { Config, Console, Effect, Redacted, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/http';
 import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-const shell = process.env['ONTOS_SHELL_URL'] ?? 'http://localhost:3020';
-const api = `${shell}/shell-super-app-api`;
-const jar = new Map<string, string>();
-const absorb = (response: Response) => {
-  for (const raw of response.headers.getSetCookie()) {
-    const pair = raw.split(';')[0] ?? '';
-    const index = pair.indexOf('=');
-    if (index > 0) jar.set(pair.slice(0, index), pair.slice(index + 1));
-  }
-};
-const call = async (path: string, payload?: unknown) => {
-  const response = await fetch(`${api}${path}`, {
-    method: payload === undefined ? 'GET' : 'POST',
-    headers: {
-      'content-type': 'application/json',
-      origin: shell,
-      cookie: [...jar].map(([key, value]) => `${key}=${value}`).join('; '),
-    },
-    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
-  });
-  absorb(response);
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status} ${await response.text()}`);
-  return response.json();
-};
-await call('/auth/sign-in', { email: 'management@siampark.demo', password: process.env['ONTOS_DEMO_PASSWORD'] ?? 'password1234' });
-await call('/auth/legal-entity/switch', { legalEntityId: rentalDemoLegalEntityId });
-const composition = await call('/shell/composition');
-const gateway = await call('/auth/gateway-context', {
-  audience: 'workforce',
-  compositionRevision: composition.compositionRevision,
-  legalEntityId: rentalDemoLegalEntityId,
-});
-const invoke = async (path: string, payload: unknown) => {
-  const response = await fetch(`${shell}${gateway.apiBaseUrl}${path}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      origin: shell,
-      authorization: `Bearer ${gateway.token}`,
-      'x-ontos-composition-revision': gateway.compositionRevision,
-      'x-correlation-id': `seed-work-people-${Date.now()}`,
-      'idempotency-key': `seed-work-people-${crypto.randomUUID()}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status} ${await response.text()}`);
-  return response.json();
-};
-for (const [key, name, role, department, suffix] of [
+import { connectSeedClient } from './seed-client.mts';
+
+const people = [
   ['management', 'Vedení Siampark', 'SALES_HEAD', 'Vedení', '21'],
   ['operations', 'Provoz Siampark', 'SUPPORT', 'Správa areálu', '22'],
   ['finance', 'Účetní Siampark', 'ACCOUNTANT', 'Finance', '23'],
   ['external', 'Externí obchodník', 'SALES_REP', 'Externí spolupráce', '24'],
-] as const) {
-  const records = await invoke('/reads/records', {});
-  const id = demoId('workforce.employee', `siampark-${key}`);
-  const email = `${key}@siampark.demo`;
-  const existing = records.items.find((item: { id: string; email: string }) => item.id === id || item.email === email);
-  if (existing !== undefined) {
-    console.log(`Already linked: ${email}`);
-    continue;
-  }
-  await invoke('/workforce/actions/apply-command', {
-    command: {
+] as const;
+
+const program = Effect.gen(function* linkWorkforceLogins() {
+  const shellUrl = yield* Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020'));
+  const password = yield* Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(
+    Config.withDefault(Redacted.make('password1234')),
+  );
+  const client = yield* connectSeedClient(
+    { legalEntityId: rentalDemoLegalEntityId, shellUrl, tenantId: demoTenantId },
+    'management@siampark.demo',
+    password,
+  );
+  for (const [key, name, role, department, suffix] of people) {
+    const records = yield* client.read('workforce', RecordsResponseSchema);
+    const id = demoId('workforce.employee', `siampark-${key}`);
+    const email = `${key}@siampark.demo`;
+    const existing = records.items.find((item) => item.id === id || item.email === email);
+    if (existing !== undefined) {
+      yield* Console.log(`Already linked: ${email}`);
+      continue;
+    }
+    const command = yield* Schema.decodeUnknownEffect(WorkforceCommandSchema)({
       _tag: 'CreateEmployee',
-      id,
-      fullName: name,
-      email,
-      role,
-      department,
       active: true,
+      department,
+      email,
+      fullName: name,
+      id,
       principalRef: { principalId: `72000000-0000-4000-8000-0000000000${suffix}`, tenantId: demoTenantId },
-    },
-    expectedRevision: records.revision,
-  });
-  console.log(`Linked: ${email} → ${name}`);
-}
+      role,
+    });
+    yield* client.apply('workforce', WorkforceCommandSchema, command, records.revision);
+    yield* Console.log(`Linked: ${email} → ${name}`);
+  }
+});
+
+NodeRuntime.runMain(
+  program.pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.provide(NodeServices.layer)),
+);

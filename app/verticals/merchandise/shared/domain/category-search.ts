@@ -38,8 +38,12 @@ const wordsOf = (text: string) =>
 const matchesInOrder = (query: readonly string[], path: readonly string[]): boolean => {
   let position = 0;
   for (const word of query) {
-    while (position < path.length && !(path[position] ?? '').startsWith(word)) position += 1;
-    if (position >= path.length) return false;
+    while (position < path.length && !(path[position] ?? '').startsWith(word)) {
+      position += 1;
+    }
+    if (position >= path.length) {
+      return false;
+    }
     position += 1;
   }
   return true;
@@ -79,6 +83,8 @@ export const rankCategories = <Candidate extends CategoryCandidate>(
     scored.push({ candidate, depth: candidate.trail.split(' › ').length, score: suffix * 2 + ordered + exactness });
   }
   return scored
-    .sort((a, b) => b.score - a.score || a.depth - b.depth || a.candidate.trail.localeCompare(b.candidate.trail, 'cs'))
+    .toSorted(
+      (a, b) => b.score - a.score || a.depth - b.depth || a.candidate.trail.localeCompare(b.candidate.trail, 'cs'),
+    )
     .map((entry) => entry.candidate);
 };

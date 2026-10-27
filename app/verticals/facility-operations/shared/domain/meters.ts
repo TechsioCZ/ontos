@@ -7,7 +7,7 @@
 // readings of the same meter with the same unit of measure (S04-01); the first reading has no consumption (S04-02).
 // Voided readings stay in the history (who/when/why) and are skipped by every calculation.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 import {
   AuditFieldsSchema,
   FileIdSchema,
@@ -106,21 +106,31 @@ export const ANOMALY_THRESHOLD = 0.3;
 
 const DAY_MS = 86_400_000;
 const dayNumber = (date: string): number =>
-  Math.round(DateTime.toEpochMillis(DateTime.makeUnsafe(`${date}T00:00:00Z`)) / DAY_MS);
+  Option.match(DateTime.make(`${date}T00:00:00Z`), {
+    onNone: () => Number.NaN,
+    onSome: (value) => Math.round(DateTime.toEpochMillis(value) / DAY_MS),
+  });
 /** Whole days between two ISO dates (b - a). */
 export const daysBetween = (from: string, to: string): number => dayNumber(to) - dayNumber(from);
 
-export const isValidReading = (reading: MeterReading): boolean => reading.voided === undefined;
+export type ReadingCalculation = Pick<MeterReading, 'date' | 'unit' | 'value' | 'voided'>;
+interface ReadingSource<Reading extends ReadingCalculation> {
+  readonly readings?: readonly Reading[];
+}
+
+export const isValidReading = (reading: Pick<MeterReading, 'voided'>): boolean => reading.voided === undefined;
 
 /** Valid readings sorted by date (oldest first). */
-export const validReadingsOf = (meter: Pick<Meter, 'readings'>): readonly MeterReading[] =>
+export const validReadingsOf = <Reading extends ReadingCalculation = MeterReading>(
+  meter: ReadingSource<Reading>,
+): readonly Reading[] =>
   (meter.readings ?? []).filter(isValidReading).toSorted((left, right) => left.date.localeCompare(right.date));
 
 /** First readings and unit changes have no comparable consumption. */
 export const ReadingRowStatusSchema = Schema.Literals(['first', 'unitChanged', 'ok']);
 export type ReadingRowStatus = typeof ReadingRowStatusSchema.Type;
 
-export interface ReadingRow {
+export interface ReadingRow<Reading extends ReadingCalculation = MeterReading> {
   readonly anomaly: boolean;
   /** Change of the daily rate against the previous `ok` period (0.45 = +45 %). */
   readonly change: number | undefined;
@@ -129,15 +139,17 @@ export interface ReadingRow {
   /** Consumption per day, only when status is `ok` and days > 0. */
   readonly dailyRate: number | undefined;
   readonly days: number | undefined;
-  readonly previous: MeterReading | undefined;
-  readonly reading: MeterReading;
+  readonly previous: Reading | undefined;
+  readonly reading: Reading;
   readonly status: ReadingRowStatus;
 }
 
 /** History rows of the valid readings (oldest first) with truthful consumption and anomaly flags. */
-export const readingRows = (meter: Pick<Meter, 'readings'>): readonly ReadingRow[] => {
+export const readingRows = <Reading extends ReadingCalculation = MeterReading>(
+  meter: ReadingSource<Reading>,
+): readonly ReadingRow<Reading>[] => {
   const readings = validReadingsOf(meter);
-  const rows: ReadingRow[] = [];
+  const rows: ReadingRow<Reading>[] = [];
   let previousRate: number | undefined;
   for (const [index, reading] of readings.entries()) {
     const previous = index === 0 ? undefined : readings[index - 1];

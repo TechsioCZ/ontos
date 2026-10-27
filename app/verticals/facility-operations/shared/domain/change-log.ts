@@ -4,7 +4,7 @@
 // Entries live in one extra `agenda_states` row (`agenda = 'change-log'`) per company, appended in the same
 // transaction as the change itself, so history can never disagree with the stored data.
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
-import { Array as Arr, DateTime, Option, Schema } from 'effect';
+import { Array as Arr, DateTime, Option, Schema, SchemaTransformation } from 'effect';
 import { AgendaIdSchema } from './common.ts';
 
 /** Row key of the change log in facility_operations.agenda_states (not an agenda; never decoded as one). */
@@ -145,6 +145,19 @@ export const diffRecords = (
   return changes.slice(0, 40);
 };
 
+/** Preserve the exact wire stamp while exposing its parsed instant to concurrency checks. */
+export const BaseUpdatedAtSchema = Schema.String.check(Schema.isMaxLength(40)).pipe(
+  Schema.decodeTo(
+    Schema.Struct({ instant: Schema.Option(Schema.DateTimeUtc), source: Schema.String }),
+    SchemaTransformation.transform({
+      decode: (source) => ({ instant: DateTime.make(source), source }),
+      encode: (value) => value.source,
+    }),
+  ),
+);
+export type BaseUpdatedAt = typeof BaseUpdatedAtSchema.Type;
+const isBaseUpdatedAtText = Schema.is(Schema.String);
+
 /**
  * Per-record optimistic concurrency: a command built from data loaded at `baseUpdatedAt` conflicts only when one of
  * the records it changes was itself changed after that instant (unrelated edits in the same agenda do not conflict).
@@ -152,9 +165,9 @@ export const diffRecords = (
 export const touchedSince = (
   currentEncoded: Schema.Json,
   entityIds: readonly string[],
-  baseUpdatedAt: string,
+  baseUpdatedAt: string | BaseUpdatedAt,
 ): boolean => {
-  const base = DateTime.make(baseUpdatedAt);
+  const base = isBaseUpdatedAtText(baseUpdatedAt) ? DateTime.make(baseUpdatedAt) : baseUpdatedAt.instant;
   if (Option.isNone(base)) {
     return true;
   }

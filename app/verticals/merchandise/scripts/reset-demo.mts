@@ -183,7 +183,7 @@ const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoSt
 const repairOrderPresentation = Effect.gen(function* repairOrderPresentation() {
   const current = yield* readCompanySnapshot(scope);
   if (current === undefined) {
-    return yield* Effect.fail(new Error('Obchodní firma merchandise must already exist'));
+    return yield* Effect.fail(new ResetInputError({ reason: 'Obchodní firma merchandise must already exist' }));
   }
   const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(current.state);
   const repaired = refreshObchodOrderPresentation(encoded);

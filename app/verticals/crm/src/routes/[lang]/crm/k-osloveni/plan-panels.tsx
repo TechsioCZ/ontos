@@ -1,3 +1,6 @@
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect } from 'effect';
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 // AREA: visits (C06) — owned by the crm-visits lane. Plan a contact / reschedule it / complete it (+ visit).
 import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
@@ -11,10 +14,12 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { PlanItem } from '../../../../../shared/domain/visits.ts';
 import { lastVisitOf } from '../../../../../shared/domain/visits.ts';
-import type { Submit, VisitDraft } from '../navstevy/visit-panels.tsx';
+import type { PlanItem } from '../../../../../shared/domain/visits.ts';
+
 import { VisitFields, emptyVisitDraft } from '../navstevy/visit-panels.tsx';
+import type { Submit, VisitDraft } from '../navstevy/visit-panels.tsx';
+
 import {
   clientLabel,
   czechError,
@@ -31,6 +36,13 @@ import {
 
 const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
 const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
+
+const quickDays = [
+  { days: 1, label: 'Zítra' },
+  { days: 7, label: 'Za týden' },
+  { days: 14, label: 'Za 14 dní' },
+  { days: 30, label: 'Za měsíc' },
+];
 
 /** New planned contact, or rescheduling an open one (`item`). */
 export const PlanContactPanel = ({
@@ -63,39 +75,44 @@ export const PlanContactPanel = ({
     if (client === '' || !/^\d{4}-\d{2}-\d{2}$/u.test(dueDate)) {
       return;
     }
-    const command = editing
-      ? {
-          _tag: 'UpdatePlanItem' as const,
-          planItemId: item.id,
-          ...(dueDate === item.dueDate ? {} : { dueDate }),
-          ...(note.trim() === (item.note ?? '') ? {} : { note: note.trim() }),
-        }
-      : {
-          _tag: 'PlanContact' as const,
-          clientId: client,
-          dueDate,
-          ...(note.trim() === '' ? {} : { note: note.trim() }),
-          ...(records.viewer.writeAll && salespersonId !== '' ? { salespersonId } : {}),
-        };
-    void submit(command).then((outcome) => {
-      if (outcome.ok) {
-        toaster.create({
-          description: `${clientLabel(records, client)} · ${formatDay(dueDate)}`,
-          title: editing ? 'Kontakt přeplánován' : 'Kontakt naplánován',
-          type: 'success',
-        });
-        onClose();
-      } else {
-        setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
+    let command: CrmCommandInput;
+    if (editing) {
+      command = { _tag: 'UpdatePlanItem', planItemId: item.id };
+      if (dueDate !== item.dueDate) {
+        Object.assign(command, { dueDate });
       }
-    });
+      if (note.trim() !== (item.note ?? '')) {
+        Object.assign(command, { note: note.trim() });
+      }
+    } else {
+      command = { _tag: 'PlanContact', clientId: client, dueDate };
+      if (note.trim() !== '') {
+        Object.assign(command, { note: note.trim() });
+      }
+      if (records.viewer.writeAll && salespersonId !== '') {
+        Object.assign(command, { salespersonId });
+      }
+    }
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              toaster.create({
+                description: `${clientLabel(records, client)} · ${formatDay(dueDate)}`,
+                title: editing ? 'Kontakt přeplánován' : 'Kontakt naplánován',
+                type: 'success',
+              });
+              onClose();
+            } else {
+              setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
+            }
+          }),
+        ),
+      ),
+    );
   };
-  const quickDays = [
-    { days: 1, label: 'Zítra' },
-    { days: 7, label: 'Za týden' },
-    { days: 14, label: 'Za 14 dní' },
-    { days: 30, label: 'Za měsíc' },
-  ];
+
   return (
     <SidePanel
       actions={
@@ -136,7 +153,6 @@ export const PlanContactPanel = ({
           <DetailList items={[{ label: 'Klient', value: clientLabel(records, client) }]} />
         ) : (
           <Combobox
-            size="sm"
             clearable={false}
             helpText={submitted && client === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
             items={writableClients(records).map((entry) => ({ label: entry.name, value: entry.id }))}
@@ -145,13 +161,13 @@ export const PlanContactPanel = ({
             onChange={(values) => setClient(firstValue(values) ?? '')}
             placeholder="Vyhledejte klienta"
             required
+            size="sm"
             translations={comboboxTranslations}
             validateStatus={submitted && client === '' ? 'error' : 'default'}
             value={client === '' ? [] : [client]}
           />
         )}
         <FormInput
-          size="sm"
           helpText={`${formatDay(dueDate)} · ${relativeDay(dueDate, today)}`}
           id="crm-plan-due"
           label="Ozvat se dne"
@@ -159,6 +175,7 @@ export const PlanContactPanel = ({
           name="dueDate"
           onChange={(event) => setDueDate(event.target.value)}
           required
+          size="sm"
           type="date"
           value={dueDate}
         />
@@ -176,7 +193,6 @@ export const PlanContactPanel = ({
           ))}
         </div>
         <FormTextarea
-          size="sm"
           id="crm-plan-note"
           label="Poznámka"
           maxLength={4000}
@@ -184,6 +200,7 @@ export const PlanContactPanel = ({
           onChange={(event) => setNote(event.target.value)}
           placeholder="např. zeptat se na zimní nabídku"
           rows={3}
+          size="sm"
           value={note}
         />
         {!editing && records.viewer.writeAll && (
@@ -234,32 +251,38 @@ export const CompletePlanPanel = ({
     if (withVisit && (draft.result.trim() === '' || occurredAt === undefined)) {
       return;
     }
-    void submit({
+    const command: Extract<CrmCommandInput, { readonly _tag: 'CompletePlanItem' }> = {
       _tag: 'CompletePlanItem',
       planItemId: item.id,
-      ...(doneNote.trim() === '' ? {} : { doneNote: doneNote.trim() }),
-      ...(withVisit && occurredAt !== undefined
-        ? {
-            visit: {
-              kind: draft.kind,
-              occurredAt,
-              result: draft.result.trim(),
-              ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
-            },
-          }
-        : {}),
-    }).then((outcome) => {
-      if (outcome.ok) {
-        toaster.create({
-          description: withVisit ? `${visitKindMeta[draft.kind].label} je v historii návštěv.` : undefined,
-          title: 'Kontakt vyřízen',
-          type: 'success',
-        });
-        onClose();
-      } else {
-        setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
+    };
+    if (doneNote.trim() !== '') {
+      Object.assign(command, { doneNote: doneNote.trim() });
+    }
+    if (withVisit && occurredAt !== undefined) {
+      const visit: NonNullable<typeof command.visit> = { kind: draft.kind, occurredAt, result: draft.result.trim() };
+      if (draft.note.trim() !== '') {
+        Object.assign(visit, { note: draft.note.trim() });
       }
-    });
+      Object.assign(command, { visit });
+    }
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            if (outcome.ok) {
+              toaster.create({
+                description: withVisit ? `${visitKindMeta[draft.kind].label} je v historii návštěv.` : undefined,
+                title: 'Kontakt vyřízen',
+                type: 'success',
+              });
+              onClose();
+            } else {
+              setServerError(czechError(outcome.message, 'Uložení se nezdařilo.'));
+            }
+          }),
+        ),
+      ),
+    );
   };
   return (
     <SidePanel
@@ -313,12 +336,12 @@ export const CompletePlanPanel = ({
           ]}
         />
         <FormInput
-          size="sm"
           autoComplete="off"
           id="crm-plan-done-note"
           label="Jak to dopadlo (krátce)"
           name="doneNote"
           onChange={(event) => setDoneNote(event.target.value)}
+          size="sm"
           value={doneNote}
         />
         <FormCheckbox

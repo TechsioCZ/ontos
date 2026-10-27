@@ -1,5 +1,15 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +20,8 @@ import { parse } from 'yaml';
 
 import { loadDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
 import { DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
+
+const ROOT_PACKAGE_JSON_PATH = '../../package.json';
 
 const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
 const WorkflowSchema = Schema.Struct({
@@ -79,7 +91,7 @@ it('holds one stage lock across dedicated identity bootstrap, every demo migrati
   );
   const packageScripts = Schema.decodeUnknownSync(
     Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
-  )(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
+  )(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8'));
   expect(packageScripts.scripts['db:migrate:prepared:internal']).toBe(
     'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
   );
@@ -2171,6 +2183,121 @@ const GateCommandsWorkflowSchema = Schema.Struct({
   }),
 });
 const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+const WorkspacePackagesSchema = Schema.Struct({ packages: Schema.Array(Schema.String) });
+const WORKSPACE_TEST_TASKS = ['test:unit', 'test:component'];
+
+const unitTestPackages = () => {
+  const { packages } = Schema.decodeUnknownSync(WorkspacePackagesSchema)(
+    parse(readFileSync(new URL('../../pnpm-workspace.yaml', import.meta.url), 'utf-8')),
+  );
+  return packages.flatMap((pattern) => {
+    expect(pattern).toMatch(/^[a-z-]+(?:\/\*)?$/u);
+    const directories = pattern.endsWith('/*')
+      ? readdirSync(new URL(`../../${pattern.slice(0, -2)}/`, import.meta.url), { withFileTypes: true })
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => `${pattern.slice(0, -2)}/${entry.name}`)
+      : [pattern];
+    return directories.flatMap((directory) => {
+      const url = new URL(`../../${directory}/package.json`, import.meta.url);
+      if (!existsSync(url)) {
+        return [];
+      }
+      const manifest = Schema.decodeUnknownSync(
+        Schema.Struct({ name: Schema.String, scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+      )(JSON.parse(readFileSync(url, 'utf-8')));
+      return [{ directory, name: manifest.name, scripts: manifest.scripts ?? {} }];
+    });
+  });
+};
+
+type UnitTestPackage = ReturnType<typeof unitTestPackages>[number];
+
+const selectedTestPackages = (filters: readonly string[], packages: readonly UnitTestPackage[]) => {
+  for (const filter of filters) {
+    expect(
+      filter === '!.' ||
+        packages.some(({ directory, name }) => [name, `./${directory}`].includes(filter.replace(/^!/u, ''))),
+    ).toBe(true);
+  }
+  const includes = filters.filter((filter) => !filter.startsWith('!'));
+  return packages.filter(({ directory, name }) => {
+    const matches = (filter: string) => filter === name || filter === `./${directory}`;
+    return (
+      (includes.length === 0 || includes.some(matches)) &&
+      !filters.some((filter) => filter.startsWith('!') && matches(filter.slice(1)))
+    );
+  });
+};
+
+// Parse the supported pnpm forms without executing any workspace test command.
+const rootUnitCoverage = (script: string, packages: readonly UnitTestPackage[]) => {
+  const coverage: string[] = [];
+  for (const command of script.split(/\s*&&\s*/u)) {
+    const tokens = [...command.matchAll(/'[^']*'|"[^"]*"|[^\s'"]+/gu)].map(([token]) =>
+      token.startsWith("'") || token.startsWith('"') ? token.slice(1, -1) : token,
+    );
+    expect(tokens.shift()).toBe('pnpm');
+    const recursive = tokens[0] === '-r';
+    if (recursive) {
+      tokens.shift();
+    }
+    const filters: string[] = [];
+    const options: string[] = [];
+    while (tokens[0]?.startsWith('--')) {
+      const option = tokens.shift() ?? '';
+      if (option === '--filter') {
+        filters.push(tokens.shift() ?? '');
+      } else {
+        options.push(option);
+      }
+    }
+    const selected = selectedTestPackages(filters, packages);
+    if (recursive) {
+      expect(sorted(options)).toEqual(sorted(['--no-sort', '--workspace-concurrency=1', '--if-present']));
+      expect(tokens.shift()).toBe('run');
+      const task = tokens.shift() ?? '';
+      expect(WORKSPACE_TEST_TASKS).toContain(task);
+      expect(tokens).toEqual(['--pool.maxWorkers', '1']);
+      for (const item of selected.filter((candidate) => candidate.scripts[task] !== undefined)) {
+        // Forwarding Rstest flags through a shell chain would send them to its last command.
+        expect(item.scripts[task]).toMatch(/^rstest(?:\s[^&]*)?$/u);
+        coverage.push(`${item.name}:${task}`);
+      }
+    } else {
+      expect(options).toEqual([]);
+      expect(filters).toHaveLength(1);
+      expect(selected).toHaveLength(1);
+      const [item] = selected;
+      expect(item).toBeDefined();
+      if (item === undefined) {
+        continue;
+      }
+      if (tokens[0] === 'exec') {
+        expect(tokens).toEqual(['exec', 'rstest', '--project', 'unit', '--pool.maxWorkers', '1']);
+        expect(item.scripts['test:unit']).toBe('rstest --project unit && pnpm test:types');
+        coverage.push(`${item.name}:test:unit`);
+      } else if (tokens[0] === 'test:types') {
+        expect(tokens).toEqual(['test:types']);
+        expect(item.scripts['test:types']).toBeDefined();
+        coverage.push(`${item.name}:test:types`);
+      } else {
+        const task = tokens.shift() ?? '';
+        expect(WORKSPACE_TEST_TASKS).toContain(task);
+        expect(item.scripts[task]).toMatch(/^vitest run /u);
+        expect(tokens).toEqual(['--maxWorkers', '1']);
+        coverage.push(`${item.name}:${task}`);
+      }
+    }
+  }
+  const expected = packages.flatMap(({ name, scripts }) =>
+    WORKSPACE_TEST_TASKS.filter((task) => scripts[task] !== undefined).map((task) => `${name}:${task}`),
+  );
+  const types = packages
+    .filter(({ scripts }) => scripts['test:unit']?.endsWith(' && pnpm test:types'))
+    .map(({ name }) => `${name}:test:types`);
+  expect(sorted(coverage)).toEqual(sorted([...expected, ...types]));
+  return coverage;
+};
 
 const readGateCommandJobs = () =>
   Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
@@ -2201,12 +2328,14 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
 
 it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
   const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
-    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
+    JSON.parse(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8')),
   );
-  // The shards run exactly what the root script runs, split by package.
-  expect(scripts['test:unit']).toBe(
-    'pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:unit --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:component --pool.maxWorkers 1',
+  const packages = unitTestPackages();
+  const expected = packages.flatMap(({ name, scripts: packageScripts }) =>
+    WORKSPACE_TEST_TASKS.filter((task) => packageScripts[task] !== undefined).map((task) => `${name}:${task}`),
   );
+  const rootCoverage = rootUnitCoverage(scripts['test:unit'] ?? '', packages);
+  expect(sorted(rootCoverage.filter((task) => !task.endsWith(':test:types')))).toEqual(sorted(expected));
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
     if (unit === undefined || !unit.endsWith(' run test:unit')) {
@@ -2232,6 +2361,33 @@ it('runs the root unit and component tests of every workspace package in exactly
     expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
     expect(() => readFileSync(new URL(`../../${filter}/package.json`, import.meta.url))).not.toThrow();
   }
+  const shardCoverage = shards.flatMap((filters) =>
+    selectedTestPackages(filters, packages).flatMap(({ name, scripts: packageScripts }) =>
+      WORKSPACE_TEST_TASKS.filter((task) => packageScripts[task] !== undefined).map((task) => `${name}:${task}`),
+    ),
+  );
+  expect(sorted(shardCoverage)).toEqual(sorted(expected));
+});
+
+it('rejects runner flags that the selected package runner cannot consume', () => {
+  const packages = unitTestPackages();
+  expect(() => rootUnitCoverage('pnpm --filter akros-storefront test:unit --pool.maxWorkers 1', packages)).toThrow();
+  expect(() =>
+    rootUnitCoverage('pnpm --filter @app/shared-contracts test:unit --pool.maxWorkers 1', packages),
+  ).toThrow();
+  const recursive =
+    "pnpm -r --no-sort --workspace-concurrency=2 --filter '!@app/shared-contracts' --filter '!akros-storefront'";
+  expect(() => rootUnitCoverage(`${recursive} --if-present run test:unit --pool.maxWorkers 1`, packages)).toThrow();
+});
+
+it('rejects an omitted or repeated workspace test command', () => {
+  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
+    JSON.parse(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8')),
+  );
+  const packages = unitTestPackages();
+  const commands = (scripts['test:unit'] ?? '').split(' && ');
+  expect(() => rootUnitCoverage(commands.slice(0, -1).join(' && '), packages)).toThrow();
+  expect(() => rootUnitCoverage([...commands, commands.at(-1) ?? ''].join(' && '), packages)).toThrow();
 });
 
 it('formats and lints every tracked file in exactly one pre-commit hook shard', () => {

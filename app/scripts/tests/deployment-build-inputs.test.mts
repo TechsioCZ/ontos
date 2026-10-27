@@ -63,5 +63,6 @@ const rootBuildInputs = (): ReadonlySet<string> => {
 it('plans a full deployment for every root-level file a delivery unit build reads', () => {
   const inputs = EffectArray.sort(rootBuildInputs(), Order.String);
   expect(inputs).toContain('module-federation.shared.ts');
+  expect(inputs).toContain('scripts/ontos-mcp-contribution.mts');
   expect(inputs.filter((input) => !CONSERVATIVE_FULL_DEPLOY_PATHS.has(input))).toEqual([]);
 });

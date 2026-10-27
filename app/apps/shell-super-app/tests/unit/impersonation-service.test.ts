@@ -29,6 +29,7 @@ import type {
 } from '../../api/auth/impersonation-service.ts';
 import {
   makeSupportImpersonationService,
+  SupportImpersonationUnavailableErrorSchema,
   SupportAuthProviderService,
   SupportImpersonationCorrelationId,
   SupportImpersonationStoreService,
@@ -128,10 +129,18 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
     ),
 };
 
+const providerUnavailable = (reason: string) =>
+  Effect.fail(
+    SupportImpersonationUnavailableErrorSchema.make({
+      code: 'support_impersonation_unavailable',
+      reason,
+    }),
+  );
+
 const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
     getSession: () =>
-      Promise.resolve({
+      Effect.succeed({
         headers: new Headers(),
         response: {
           session: impersonated
@@ -150,11 +159,11 @@ const provider = (impersonated: boolean): SupportAuthProvider => ({
           user: { id: 'original-provider-user' },
         },
       }),
-    impersonateUser: () => Promise.reject(new Error('not used')),
+    impersonateUser: () => providerUnavailable('not used'),
     stopImpersonating: () => {
       const headers = new Headers();
       headers.append('set-cookie', 'session=restored; Path=/; HttpOnly');
-      return Promise.resolve({
+      return Effect.succeed({
         headers,
         response: { session: { id: restoredSessionId } },
       });
@@ -215,7 +224,7 @@ it.effect('preserves definite requested-checkpoint errors for their declared HTT
             provider: makeSupportAuthProviderDouble({
               impersonateUser: () => {
                 providerCalls += 1;
-                return Promise.reject(new Error('must not create a session'));
+                return providerUnavailable('must not create a session');
               },
             }),
             resolver: makePrincipalResolverDouble({
@@ -281,7 +290,7 @@ it.effect('removes the provider session and recovery when started evidence canno
       configuration,
       provider: makeSupportAuthProviderDouble({
         impersonateUser: () =>
-          Promise.resolve({
+          Effect.succeed({
             headers: new Headers(),
             response: { session: { id: impersonationSessionId } },
           }),
@@ -514,7 +523,7 @@ it.effect('persists and completes stopped evidence on the first stop after imper
       authentication: makeAuthenticationServiceDouble(),
       configuration,
       provider: makeSupportAuthProviderDouble({
-        getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+        getSession: () => Effect.succeed({ headers: new Headers(), response: null }),
       }),
       resolver: makePrincipalResolverDouble(),
       store: makeSupportImpersonationStoreDouble({
@@ -584,7 +593,7 @@ const makeLostResponseRecoveryService = (recovery: SupportRecoveryRecord, expire
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+      getSession: () => Effect.succeed({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
@@ -716,7 +725,7 @@ it.effect('clears a mismatched restored session and completes recovery from the 
         stopImpersonating: () => {
           const headers = new Headers();
           headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
-          return Promise.resolve({
+          return Effect.succeed({
             headers,
             response: { session: { id: 'unexpected-restored-session' } },
           });
@@ -761,7 +770,7 @@ it.effect('deletes the impersonation session and clears cookies when original re
       configuration,
       provider: makeSupportAuthProviderDouble({
         ...provider(true).api,
-        stopImpersonating: () => Promise.reject(new Error('admin session expired')),
+        stopImpersonating: () => providerUnavailable('admin session expired'),
       }),
       resolver: makePrincipalResolverDouble(),
       store: makeSupportImpersonationStoreDouble({

@@ -13,13 +13,13 @@ import {
   MerchandiseReferenceUnavailable,
   MerchandiseRevisionConflict,
   MerchandiseScopeMismatch,
+  VersionedEditOrderCommandSchema,
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand, StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
 import {
-  ClientRequestIdSchema,
   EntityIdSchema,
   OrderIdSchema,
   PartyIdSchema,
@@ -1029,7 +1029,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   const number = nextOrderNumberOf(state);
   const order: Mutable<Order> = {
     channel: 'STOREFRONT',
-    clientRequestId: ClientRequestIdSchema.make(value.clientRequestId),
+    clientRequestId: value.clientRequestId,
     contact: value.contact,
     createdAt: input.now,
     deliveryAddress: value.deliveryAddress,
@@ -1343,14 +1343,7 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
 });
 
 /** An order edit that names the order version it was made against; see `EditOrder.expectedUpdatedAt`. */
-const OrderScopedEditSchema = Schema.TaggedStruct('EditOrder', {
-  expectedUpdatedAt: Schema.DateTimeUtcFromString,
-});
-export const isOrderScopedEdit = (
-  command: MerchandiseCommand,
-): command is Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }> & {
-  readonly expectedUpdatedAt: DateTime.Utc;
-} => Schema.is(OrderScopedEditSchema)(command);
+export const isOrderScopedEdit = Schema.is(VersionedEditOrderCommandSchema);
 
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
@@ -1548,7 +1541,10 @@ const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChan
   const changes = slice?.changes ?? [];
   const chosen = Match.value(command).pipe(
     Match.tagsExhaustive({
-      AiDecideChanges: (value) => changes.filter((change) => value.changeIds.includes(change.id)),
+      AiDecideChanges: (value) => {
+        const ids = new Set(value.changeIds);
+        return changes.filter((change) => ids.has(change.id));
+      },
       AiProposeChanges: () => [],
       AiRevertBatch: (value) => changes.filter((change) => change.batchId === value.batchId),
     }),

@@ -27,12 +27,12 @@ const siamparkLegalEntityId = rentalDemoCompany.legalEntityId;
 
 /** Encoded seed state per agenda; each comes from the lane-owned scripts/seed/<agenda>.mts. */
 const seeds = {
-  agenda: seedAgendaState,
-  assets: seedAssetsState,
+  agenda: () => Effect.sync(seedAgendaState),
+  assets: () => Effect.sync(seedAssetsState),
   documents: seedDocumentsState,
-  meters: seedMetersState,
+  meters: () => Effect.sync(seedMetersState),
   purchasing: seedPurchasingState,
-  security: seedSecurityState,
+  security: () => Effect.sync(seedSecurityState),
 };
 
 /** Decodes then re-encodes every seed through the agenda schema (fails fast on a bad seed). */
@@ -40,7 +40,8 @@ const buildStates = Effect.gen(function* buildStates() {
   const states: { readonly agenda: AgendaId; readonly encoded: unknown }[] = [];
   for (const agenda of agendaIds) {
     const schema = agendaDefinitions[agenda].stateSchema;
-    const decoded: unknown = yield* Schema.decodeUnknownEffect(schema)(seeds[agenda]());
+    const seed = yield* seeds[agenda]();
+    const decoded: unknown = yield* Schema.decodeUnknownEffect(schema)(seed);
     const encoded: unknown = yield* Schema.encodeUnknownEffect(schema)(decoded);
     states.push({ agenda, encoded });
   }
@@ -86,7 +87,7 @@ const writeStates = Effect.fn('FacilityOperations.writeDemoStates')(function* wr
       });
   }
   // documents lane: real seed files (PDF/PNG) referenced by the documents seed state, upserted by id.
-  const seedFiles = seedDocumentFiles();
+  const seedFiles = yield* seedDocumentFiles();
   for (const file of seedFiles) {
     const values = {
       bytes: sql`decode(${file.bytes.toString('base64')}, 'base64')`,

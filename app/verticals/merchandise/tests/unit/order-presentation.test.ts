@@ -4,23 +4,23 @@ import { refreshAkrosOrderPresentation, refreshObchodOrderPresentation } from '.
 
 type State = typeof MerchandiseStateSchema.Encoded;
 const order: State['orders'][number] = {
-  id: '53de7381-a66b-5a10-b5e7-ad0c41db2942',
-  number: 'OBJ-2026-0018',
   createdAt: '2025-11-20T08:00:00.000Z',
-  updatedAt: '2025-11-20T08:00:00.000Z',
-  status: 'CONFIRMED',
+  id: '53de7381-a66b-5a10-b5e7-ad0c41db2942',
+  lines: [{ productId: 'p', productName: 'Počítač', quantity: 1, sku: 'PC', unitPriceMinor: 9_129_000, vatRate: 21 }],
+  number: 'OBJ-2026-0018',
   partyId: 'customer',
-  totalMinor: 11046090,
-  totalVatMinor: 1917090,
-  lines: [{ productId: 'p', productName: 'Počítač', quantity: 1, sku: 'PC', unitPriceMinor: 9129000, vatRate: 21 }],
+  status: 'CONFIRMED',
+  totalMinor: 11_046_090,
+  totalVatMinor: 1_917_090,
+  updatedAt: '2025-11-20T08:00:00.000Z',
 };
 const state: State = {
-  products: [],
-  orders: [order],
   movements: [
-    { id: 'movement', productId: 'p', reason: 'ORDER', delta: -1, reference: order.number, at: order.createdAt },
-    { id: 'receipt', productId: 'p', reason: 'RECEIPT', delta: 10, at: order.createdAt },
+    { at: order.createdAt, delta: -1, id: 'movement', productId: 'p', reason: 'ORDER', reference: order.number },
+    { at: order.createdAt, delta: 10, id: 'receipt', productId: 'p', reason: 'RECEIPT' },
   ],
+  orders: [order],
+  products: [],
 };
 
 it('refreshes only selected open seed timestamps, retaining prices, quantities and matched movement chronology', () => {
@@ -48,10 +48,10 @@ it('preserves completed orders, edited records and unrelated company fixture ide
 it('replaces only six known placeholder contacts and retains audit/replay identity', () => {
   const sample = {
     ...order,
-    id: '2d4f33c1-d9ca-5bc8-8c9d-1ea4f78ab384',
-    contact: { name: 'Jan Novák', email: 'zakaznik1@example.invalid' },
     clientRequestId: 'akros-sample-order-0',
+    contact: { email: 'zakaznik1@example.invalid', name: 'Jan Novák' },
     history: [],
+    id: '2d4f33c1-d9ca-5bc8-8c9d-1ea4f78ab384',
   };
   const input = {
     ...state,
@@ -60,8 +60,8 @@ it('replaces only six known placeholder contacts and retains audit/replay identi
       { ...sample, id: 'visitor' },
       {
         ...sample,
+        contact: { email: 'petra@demo.invalid', name: 'Petra Malá' },
         id: '35dfeed7-61d7-518c-9cc4-8403ab864580',
-        contact: { name: 'Petra Malá', email: 'petra@demo.invalid' },
       },
     ],
   };

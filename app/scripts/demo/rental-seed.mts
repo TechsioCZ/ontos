@@ -11,7 +11,7 @@ import {
   PropertyDateSchema,
   RecordsResponseSchema as PropertyRecords,
 } from '@app/property-portfolio/contracts/records';
-import { Console, DateTime, Effect, Schema } from 'effect';
+import { Console, DateTime, Effect, Option, Schema } from 'effect';
 
 import { demoId } from './fixture-ids.mts';
 import { preflightRentalCrmOrders, seedRentalCrmOrders } from './rental-crm-orders.mts';
@@ -27,6 +27,13 @@ const workAudience = 'work-tasks';
 const partyAudience = 'party-registry';
 const pipelineAudience = 'sales-pipeline';
 const propertyResponsiblePerson = 'Provoz Siampark';
+const serviceLeaseEnd = '2026-10-31';
+const serviceLeaseKey = 'a101-technoservis';
+const atelierLeaseKey = 'r201-atelier';
+const cafeLeaseKey = 'r101-kavarna';
+const officeLeaseEnd = '2027-12-31';
+const activeLeaseState = 'ACTIVE';
+const contractResponsiblePerson = 'Jana Správcová';
 
 /**
  * Siampark rental story (company 0021): two buildings, eight units, five tenant organizations, leases in every
@@ -41,52 +48,52 @@ export const rentalStory = {
         endDate: '2028-10-31',
         noticePeriod: '6 měsíců ke konci kalendářního měsíce',
         renewalNoticeDate: '2028-04-30',
-        responsiblePerson: 'Jana Správcová',
-        state: 'ACTIVE',
+        responsiblePerson: contractResponsiblePerson,
+        state: activeLeaseState,
         subject: 'Nájem obchodního prostoru R101 pro provoz kavárny',
       },
       endDate: '2028-10-31',
-      key: 'r101-kavarna',
+      key: cafeLeaseKey,
       note: 'Kavárna s předzahrádkou, provozní doba 7–20 h.',
       rent: { monthlyRentMinor: 4_800_000, paymentDay: 10, serviceChargesMinor: 650_000 },
       startDate: '2025-11-01',
-      state: 'ACTIVE',
+      state: activeLeaseState,
       tenant: 'kavarna',
       unit: 'r101',
     },
     {
       contract: {
-        endDate: '2027-12-31',
+        endDate: officeLeaseEnd,
         noticePeriod: '3 měsíce',
         renewalNoticeDate: '2026-11-30',
-        responsiblePerson: 'Jana Správcová',
-        state: 'ACTIVE',
+        responsiblePerson: contractResponsiblePerson,
+        state: activeLeaseState,
         subject: 'Nájem kanceláře R201 (2. NP) včetně dvou parkovacích stání',
       },
-      endDate: '2027-12-31',
-      key: 'r201-atelier',
+      endDate: officeLeaseEnd,
+      key: atelierLeaseKey,
       note: null,
       rent: { monthlyRentMinor: 3_200_000, paymentDay: 15, serviceChargesMinor: 420_000 },
       startDate: '2026-01-01',
-      state: 'ACTIVE',
+      state: activeLeaseState,
       tenant: 'atelier',
       unit: 'r201',
     },
     {
       contract: {
-        endDate: '2026-10-31',
+        endDate: serviceLeaseEnd,
         noticePeriod: '2 měsíce',
         renewalNoticeDate: '2026-10-25',
         responsiblePerson: 'Martin Provozní',
-        state: 'ACTIVE',
+        state: activeLeaseState,
         subject: 'Služební byt A101 pro zaměstnance nájemce',
       },
-      endDate: '2026-10-31',
-      key: 'a101-technoservis',
+      endDate: serviceLeaseEnd,
+      key: serviceLeaseKey,
       note: 'Nájem končí 31. 10. 2026 – nájemce zvažuje prodloužení o rok.',
       rent: { monthlyRentMinor: 1_850_000, paymentDay: 5, serviceChargesMinor: 320_000 },
       startDate: '2025-11-01',
-      state: 'ACTIVE',
+      state: activeLeaseState,
       tenant: 'technoservis',
       unit: 'a101',
     },
@@ -95,7 +102,7 @@ export const rentalStory = {
         endDate: '2029-11-30',
         noticePeriod: '6 měsíců',
         renewalNoticeDate: '2029-05-31',
-        responsiblePerson: 'Jana Správcová',
+        responsiblePerson: contractResponsiblePerson,
         state: 'DRAFT',
         subject: 'Nájem kanceláře R301 pro výdejnu a zázemí lékárny',
       },
@@ -128,7 +135,7 @@ export const rentalStory = {
     },
     {
       contract: null,
-      endDate: '2027-12-31',
+      endDate: officeLeaseEnd,
       key: 'a201-novotny',
       note: 'Rozjednáno: nájemce se stěhuje z A202 do menšího bytu.',
       rent: { monthlyRentMinor: 1_450_000, paymentDay: 15, serviceChargesMinor: 240_000 },
@@ -167,7 +174,7 @@ export const rentalStory = {
       description: 'Roční revize vzduchotechniky a digestoře v kavárně, protokol založit ke smlouvě.',
       dueDate: '2026-11-12',
       key: 'r101-vzt',
-      lease: 'r101-kavarna',
+      lease: cafeLeaseKey,
       priority: 'HIGH',
       title: 'Revize vzduchotechniky – kavárna R101',
     },
@@ -175,15 +182,15 @@ export const rentalStory = {
       description: 'Výměna vadného světla na schodišti u R201.',
       dueDate: '2026-10-28',
       key: 'r201-svetlo',
-      lease: 'r201-atelier',
+      lease: atelierLeaseKey,
       priority: 'NORMAL',
       title: 'Oprava osvětlení před kanceláří R201',
     },
     {
       description: 'Předávací protokol, odečty měřidel a kontrola vybavení při konci nájmu.',
-      dueDate: '2026-10-31',
+      dueDate: serviceLeaseEnd,
       key: 'a101-predani',
-      lease: 'a101-technoservis',
+      lease: serviceLeaseKey,
       priority: 'HIGH',
       title: 'Předání bytu A101 při konci nájmu',
     },
@@ -236,7 +243,7 @@ export const rentalInvoicePlan = (asOf: Date) =>
   Array.from({ length: 4 }, (_, index) => {
     const month = DateTime.subtract(DateTime.startOf(DateTime.makeUnsafe(asOf), 'month'), { months: 3 - index });
     const period = DateTime.formatIsoDateUtc(month).slice(0, 7);
-    return (['r101-kavarna', 'r201-atelier', 'a101-technoservis'] as const).map((lease, leaseIndex) => ({
+    return ([cafeLeaseKey, atelierLeaseKey, serviceLeaseKey] as const).map((lease, leaseIndex) => ({
       documentNumber: `NAJ-${['R101', 'R201', 'A101'][leaseIndex]}-${period}`,
       dueDate: `${period}-${['10', '28', '05'][leaseIndex]}`,
       issueDate: `${period}-01`,
@@ -261,10 +268,10 @@ const occupancyReferenceAudiences = [propertyAudience, propertyAudience, partyAu
 const contractReferenceAudiences = [partyAudience, propertyAudience, propertyAudience, occupancyAudience];
 
 const ContextRef = Schema.Struct({
-  moduleId: Schema.String,
-  resourceId: Schema.String,
-  resourceType: Schema.String,
-  tenantId: Schema.String,
+  moduleId: Schema.toEncoded(Schema.String.pipe(Schema.brand('ModuleId'))),
+  resourceId: Schema.toEncoded(Schema.String.pipe(Schema.brand('ResourceId'))),
+  resourceType: Schema.toEncoded(Schema.String.pipe(Schema.brand('ResourceType'))),
+  tenantId: Schema.toEncoded(Schema.String.pipe(Schema.brand('TenantId'))),
 });
 // Bounded operator projection of the public work-tasks records contract.
 const WorkRecords = Schema.Struct({
@@ -275,7 +282,7 @@ const CreateTask = Schema.TaggedStruct('CreateTask', {
   contextRefs: Schema.Array(ContextRef),
   description: Schema.String,
   dueDate: PropertyDateSchema,
-  partyId: Schema.String,
+  partyId: Schema.toEncoded(Schema.String.pipe(Schema.brand('PartyId'))),
   priority: Schema.Literals(['LOW', 'NORMAL', 'HIGH']),
   title: Schema.String,
 });
@@ -371,12 +378,12 @@ const ensureProperty = (client: SeedClient, spec: PropertySpec) =>
       snapshot = yield* client.read(propertyAudience, propertyRead);
       record = yield* required(`Property ${spec.code}`, yield* uniqueSeedRecord(`Property ${spec.code}`, matching()));
     }
-    yield* requireSeedMatch(`Property ${spec.code}`, ['PLANNED', 'ACTIVE'].includes(record.lifecycleState));
+    yield* requireSeedMatch(`Property ${spec.code}`, ['PLANNED', activeLeaseState].includes(record.lifecycleState));
     if (record.lifecycleState === 'PLANNED') {
       yield* client.apply(
         propertyAudience,
         propertyCommand,
-        { _tag: 'ChangePropertyLifecycle', lifecycleState: 'ACTIVE', propertyRef: record.propertyRef },
+        { _tag: 'ChangePropertyLifecycle', lifecycleState: activeLeaseState, propertyRef: record.propertyRef },
         snapshot.revision,
       );
     }
@@ -408,7 +415,7 @@ const ensureUnit = (client: SeedClient, property: Property, spec: UnitSpec) =>
       snapshot = yield* client.read(propertyAudience, propertyRead);
       record = yield* required(`Unit ${spec.code}`, yield* uniqueSeedRecord(`Unit ${spec.code}`, matching()));
     }
-    yield* requireSeedMatch(`Unit ${spec.code}`, record.lifecycleState === 'ACTIVE');
+    yield* requireSeedMatch(`Unit ${spec.code}`, record.lifecycleState === activeLeaseState);
     return record;
   });
 type Unit = Effect.Success<ReturnType<typeof ensureUnit>>;
@@ -502,7 +509,7 @@ const ensureContract = (
   Effect.gen(function* contract() {
     const terms = spec.contract;
     if (terms === null) {
-      return;
+      return Option.none();
     }
     const contractRef = storyRef(target, 'legal.agreements', 'contract', spec.key);
     const find = (items: (typeof agreementsRead.Type)['contracts']) =>
@@ -546,9 +553,9 @@ const ensureContract = (
       record.counterpartyRef.resourceId === tenant.counterpartyRef.resourceId &&
         record.unitRef?.resourceId === unit.unitRef.resourceId,
     );
-    return record;
+    return Option.some(record);
   });
-type Contract = NonNullable<Effect.Success<ReturnType<typeof ensureContract>>>;
+type Contract = Option.Option.Value<Effect.Success<ReturnType<typeof ensureContract>>>;
 
 const contractState = (client: SeedClient, contract: Contract) =>
   client.read(agreementsAudience, agreementsRead).pipe(
@@ -566,7 +573,7 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
     }
     yield* applyOccupancy(client, lease, { _tag: 'Confirm', occupancyRef: lease.occupancyRef }, ['DRAFT']);
     const contractTarget = spec.contract?.state;
-    if (contract !== undefined && (contractTarget === 'ACTIVE' || contractTarget === 'TERMINATED')) {
+    if (contract !== undefined && (contractTarget === activeLeaseState || contractTarget === 'TERMINATED')) {
       const { record, revision } = yield* contractState(client, contract);
       if (record?.lifecycleState === 'DRAFT') {
         yield* client.apply(
@@ -578,7 +585,7 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
         );
       }
     }
-    if (contract !== undefined && (spec.state === 'ACTIVE' || spec.state === 'COMPLETED')) {
+    if (contract !== undefined && (spec.state === activeLeaseState || spec.state === 'COMPLETED')) {
       yield* applyOccupancy(
         client,
         lease,
@@ -587,11 +594,11 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
       );
     }
     if (spec.state === 'COMPLETED') {
-      yield* applyOccupancy(client, lease, { _tag: 'Complete', occupancyRef: lease.occupancyRef }, ['ACTIVE']);
+      yield* applyOccupancy(client, lease, { _tag: 'Complete', occupancyRef: lease.occupancyRef }, [activeLeaseState]);
     }
     if (contract !== undefined && contractTarget === 'TERMINATED') {
       const { record, revision } = yield* contractState(client, contract);
-      if (record?.lifecycleState === 'ACTIVE') {
+      if (record?.lifecycleState === activeLeaseState) {
         yield* client.apply(
           agreementsAudience,
           agreementCommand,
@@ -609,7 +616,10 @@ const ensureTenantContacts = (client: SeedClient, lease: Lease) =>
     }
     const snapshot = yield* client.read(occupancyAudience, occupancyRead);
     // Retain any operator edits, communication and archival evidence; only fill a missing dossier.
-    if (snapshot.tenantDossiers?.some((item) => item.counterpartyId === lease.customerCounterpartyRef?.resourceId)) {
+    if (
+      snapshot.tenantDossiers?.some((item) => item.counterpartyId === lease.customerCounterpartyRef?.resourceId) ===
+      true
+    ) {
       return;
     }
     yield* client.apply(
@@ -914,9 +924,9 @@ export const seedRentalDemo = (
       const unit = yield* byKey('Unit', units, spec.unit);
       const tenant = yield* byKey('Tenant', tenants, spec.tenant);
       const lease = yield* ensureLeaseDraft(client, target, spec, unit, tenant);
-      const contract = yield* ensureContract(client, target, spec, unit, tenant, lease);
+      const contract = Option.getOrUndefined(yield* ensureContract(client, target, spec, unit, tenant, lease));
       yield* progressLease(client, spec, lease, contract);
-      if (spec.key === 'r101-kavarna') {
+      if (spec.key === cafeLeaseKey) {
         yield* ensureTenantContacts(client, lease);
       }
       leases.set(spec.key, { contract, key: spec.key, lease });

@@ -1,3 +1,4 @@
+import { ConnectionModuleIdSchema } from '@app/shared-contracts/oauth-connections';
 // Effective authority for an agent connection pure module: no database or SpiceDB imports.
 import type { AgentModuleGrant } from '@app/shared-contracts/agent-access';
 import type {
@@ -6,11 +7,11 @@ import type {
   ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
 
-export const WRITE_POLICY_RANK: Readonly<Record<ConnectionWritePolicy, number>> = {
+export const WRITE_POLICY_RANK = {
   approval: 1,
   direct: 2,
   read_only: 0,
-};
+} satisfies Readonly<Record<ConnectionWritePolicy, number>>;
 export const minWritePolicy = (a: ConnectionWritePolicy, b: ConnectionWritePolicy): ConnectionWritePolicy =>
   WRITE_POLICY_RANK[a] <= WRITE_POLICY_RANK[b] ? a : b;
 export const isPolicyWithin = (requested: ConnectionWritePolicy, cap: ConnectionWritePolicy): boolean =>
@@ -43,28 +44,33 @@ export const effectiveAuthority = (input: {
   const entries =
     requested === 'all'
       ? [...live.read].map((moduleId) => ({ moduleId, write: canWrite && live.write.has(moduleId) }))
-      : requested
-          .filter((grant) => live.read.has(grant.moduleId))
-          .map((grant) => ({
-            moduleId: grant.moduleId,
-            write: canWrite && grant.access === 'write' && live.write.has(grant.moduleId),
-          }));
+      : requested.flatMap((grant) =>
+          live.read.has(grant.moduleId)
+            ? [
+                {
+                  moduleId: grant.moduleId,
+                  write: canWrite && grant.access === 'write' && live.write.has(grant.moduleId),
+                },
+              ]
+            : [],
+        );
   const seen = new Set<string>();
   const modules = entries
-    .filter((entry) => {
+    .flatMap((entry): ConnectionModule[] => {
       if (seen.has(entry.moduleId)) {
-        return false;
+        return [];
       }
       seen.add(entry.moduleId);
-      return true;
+      return [
+        {
+          label: input.labelOf(entry.moduleId),
+          moduleId: ConnectionModuleIdSchema.make(entry.moduleId),
+          read: true,
+          write: entry.write,
+        },
+      ];
     })
-    .map((entry) => ({
-      label: input.labelOf(entry.moduleId),
-      moduleId: entry.moduleId,
-      read: true,
-      write: entry.write,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label, 'cs'));
+    .toSorted((a, b) => a.label.localeCompare(b.label, 'cs'));
   return { modules, writePolicy };
 };
 

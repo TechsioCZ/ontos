@@ -1,3 +1,4 @@
+import { AgentAppIdSchema } from '@app/shared-contracts/agent-proposals';
 import { ContextAccess, OntosActionContractSchema } from '@app/core-runtime';
 import { ActionAuthority } from '@app/core-runtime/actions/runtime-wiring';
 import type { OntosActionContract } from '@app/core-runtime';
@@ -21,7 +22,7 @@ import {
 import { makeCompositionSnapshot } from '../../fixtures/application-composition.ts';
 
 const moduleId = 'work.tasks';
-const appId = 'work-tasks';
+const appId = AgentAppIdSchema.make('work-tasks');
 const caller: AgentPlatformCaller = {
   legalName: 'Test company',
   principal: {

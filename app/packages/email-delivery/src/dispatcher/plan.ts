@@ -1,4 +1,3 @@
-// @effect-diagnostics *:off
 import { DateTime, Match } from 'effect';
 import type {
   AgendaRecipientInput,
@@ -10,7 +9,15 @@ import type {
 } from './contract.ts';
 import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
-import { agendaNotificationEmail, akrosOrderEmail, orderEventLabel, rentReminderEmail } from './templates.ts';
+import {
+  agendaNotificationEmail,
+  akrosOrderEmail,
+  escapeHtml,
+  orderEventLabel,
+  rentReminderEmail,
+} from './templates.ts';
+
+const epochMillis = (iso: string): number => DateTime.toEpochMillis(DateTime.makeUnsafe(iso));
 
 export interface OrderEmailEvent {
   readonly at: string;
@@ -19,48 +26,52 @@ export interface OrderEmailEvent {
 }
 
 export const orderStatusEventOfLabel = (label: string | undefined): AkrosOrderEmailEvent | null => {
-  if (label === undefined) return null;
-  if (label.startsWith('Zpracovává se') || label.startsWith('Potvrzen')) return 'CONFIRMED';
-  if (label.startsWith('Předáno dopravci')) return 'SHIPPED';
-  if (label.startsWith('Dokončen')) return 'DELIVERED';
-  if (label.startsWith('Stornovan') || label.startsWith('Zrušen')) return 'CANCELLED';
+  if (label === undefined) {
+    return null;
+  }
+  if (label.startsWith('Zpracovává se') || label.startsWith('Potvrzen')) {
+    return 'CONFIRMED';
+  }
+  if (label.startsWith('Předáno dopravci')) {
+    return 'SHIPPED';
+  }
+  if (label.startsWith('Dokončen')) {
+    return 'DELIVERED';
+  }
+  if (label.startsWith('Stornovan') || label.startsWith('Zrušen')) {
+    return 'CANCELLED';
+  }
   return null;
 };
 
-export const orderStatusEventOfStatus = (status: string): AkrosOrderEmailEvent | null => {
-  switch (status) {
-    case 'CONFIRMED':
-      return 'CONFIRMED';
-    case 'SHIPPED':
-      return 'SHIPPED';
-    case 'DELIVERED':
-      return 'DELIVERED';
-    case 'CANCELLED':
-      return 'CANCELLED';
-    default:
-      return null;
-  }
-};
+export const orderStatusEventOfStatus = (status: string): AkrosOrderEmailEvent | null =>
+  Match.value(status).pipe(
+    Match.whenOr('CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED', (event) => event),
+    Match.orElse(() => null),
+  );
 
 export const orderEmailEvents = (order: AkrosOrderInput): readonly OrderEmailEvent[] => {
   const seen = new Set<AkrosOrderEmailEvent>(['ORDER_CREATED']);
-  const events: OrderEmailEvent[] = [{ event: 'ORDER_CREATED', at: order.createdAt }];
+  const events: OrderEmailEvent[] = [{ at: order.createdAt, event: 'ORDER_CREATED' }];
   for (const entry of order.history ?? []) {
-    if (entry.kind !== 'STATUS') continue;
-    const event = orderStatusEventOfLabel(entry.after);
-    if (event === null || seen.has(event)) continue;
-    seen.add(event);
-    events.push({
-      event,
-      at: entry.at,
-      ...(entry.reason !== undefined && entry.reason !== '' ? { reason: entry.reason } : {}),
-    });
+    if (entry.kind === 'STATUS') {
+      const event = orderStatusEventOfLabel(entry.after);
+      if (event !== null && !seen.has(event)) {
+        seen.add(event);
+        const candidate = { at: entry.at, event };
+        events.push(
+          entry.reason === undefined || entry.reason === '' ? candidate : { ...candidate, reason: entry.reason },
+        );
+      }
+    }
   }
   const current = orderStatusEventOfStatus(order.status);
-  if (current !== null && !seen.has(current)) events.push({ event: current, at: order.updatedAt });
-  const cutoff = order.demoCleanup === undefined ? null : Date.parse(order.demoCleanup.at);
-  const kept = cutoff === null ? events : events.filter((e) => Date.parse(e.at) < cutoff);
-  return kept.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  if (current !== null && !seen.has(current)) {
+    events.push({ at: order.updatedAt, event: current });
+  }
+  const cutoff = order.demoCleanup === undefined ? null : epochMillis(order.demoCleanup.at);
+  const kept = cutoff === null ? events : events.filter((e) => epochMillis(e.at) < cutoff);
+  return kept.toSorted((a, b) => epochMillis(a.at) - epochMillis(b.at));
 };
 
 export const planAkrosOrderEmails = (
@@ -76,7 +87,7 @@ export const planAkrosOrderEmails = (
   if (
     order.channel !== 'STOREFRONT' ||
     recipient === '' ||
-    Date.parse(order.createdAt) < Date.parse(options.enabledSince)
+    epochMillis(order.createdAt) < epochMillis(options.enabledSince)
   ) {
     return [];
   }
@@ -111,7 +122,7 @@ export const planRentReminderEmail = (input: RentReminderInput, enabledSince: st
   if (
     input.reminder.deliveryMode !== 'EMAIL' ||
     recipient === '' ||
-    Date.parse(input.reminder.createdAt) < Date.parse(enabledSince)
+    epochMillis(input.reminder.createdAt) < epochMillis(enabledSince)
   ) {
     return null;
   }
@@ -120,12 +131,12 @@ export const planRentReminderEmail = (input: RentReminderInput, enabledSince: st
     event: 'PAYMENT_REMINDER',
     eventAt: input.reminder.createdAt,
     eventLabel: 'Upomínka k úhradě',
+    legalEntityId: input.legalEntityId,
     recipient,
     source: 'rent-reminder',
     subjectId: input.reminder.id,
     subjectNumber: input.invoiceNumber ?? '',
     tenantId: input.tenantId,
-    legalEntityId: input.legalEntityId,
     ...rentReminderEmail(input),
   };
 };
@@ -140,16 +151,20 @@ export const planAgendaEmails = (
   options: { readonly appUrl: string; readonly enabledSince: string },
 ): readonly PlannedEmail[] => {
   const recipient = input.email?.trim() ?? '';
-  if (!input.preference.emailOptIn || recipient === '') return [];
+  if (!input.preference.emailOptIn || recipient === '') {
+    return [];
+  }
   const since = Math.max(
-    Date.parse(options.enabledSince),
-    Date.parse(input.preference.emailSince ?? input.preference.updatedAt),
+    epochMillis(options.enabledSince),
+    epochMillis(input.preference.emailSince ?? input.preference.updatedAt),
   );
   const optional = input.preference.emailCategories ?? AGENDA_OPTIONAL_EMAIL_CATEGORIES;
   const wanted = new Set([...AGENDA_MANDATORY_EMAIL_CATEGORIES, ...optional]);
   const batches = new Map<string, AgendaRecipientInput['notifications'][number][]>();
   for (const notification of input.notifications) {
-    if (!wanted.has(notification.category) || Date.parse(notification.createdAt) < since) continue;
+    if (!wanted.has(notification.category) || epochMillis(notification.createdAt) < since) {
+      continue;
+    }
     const batch = batches.get(notification.createdAt) ?? [];
     batch.push(notification);
     batches.set(notification.createdAt, batch);
@@ -223,8 +238,7 @@ export const planStorefrontInquiryEmail = (
     `Úkol v OntOS: ${options.appUrl.replace(/\/+$/u, '')}/cs/ukoly`,
     `ID úkolu: ${task.ref.resourceId}`,
   ].join('\n');
-  const escapeHtml = (value: string) =>
-    value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+
   return {
     dedupeKey: `storefront-inquiry:${task.ref.resourceId}`,
     event: 'INQUIRY_RECEIVED',

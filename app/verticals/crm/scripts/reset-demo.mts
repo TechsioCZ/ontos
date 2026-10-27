@@ -75,9 +75,9 @@ const writeState = Effect.fn('Crm.writeDemoState')(function* writeDemoState() {
   const state = yield* seedImports(decoded, {
     by: demoId(principalNamespace, leadPrincipalKey),
     clientIdOf: (key) => demoId('crm.client', key),
-    importedAt: DateTime.formatIso(DateTime.subtract(now, { days: 1, hours: 3 })),
+    importedAt: DateTime.subtract(now, { days: 1, hours: 3 }),
     invocationId: demoId('crm.import', 'initial'),
-    linkedAt: DateTime.formatIso(DateTime.subtract(now, { days: 170 })),
+    linkedAt: DateTime.subtract(now, { days: 170 }),
   });
   const encoded = yield* Schema.encodeEffect(CrmStateSchema)(state);
   const db = yield* makeWithDefaults({ relations: crmRelations });

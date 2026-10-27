@@ -19,7 +19,8 @@ export interface FinanceFileRow {
 }
 
 export type FinanceFilesState =
-  | { readonly status: 'loading' | 'forbidden' | 'unavailable' }
+  | { readonly status: 'loading' }
+  | { readonly error: Effect.Error<ReturnType<typeof readFinanceFiles>>; readonly status: 'forbidden' | 'unavailable' }
   | { readonly rows: readonly FinanceFileRow[]; readonly status: 'ready' };
 
 const readFinanceFiles = () =>
@@ -57,7 +58,7 @@ export const useFinanceFiles = (): FinanceFilesState => {
     browserRuntime.runFork(
       readFinanceFiles().pipe(
         Effect.match({
-          onFailure: (error): FinanceFilesState => ({ status: failureStatus(error) }),
+          onFailure: (error): FinanceFilesState => ({ error, status: failureStatus(error) }),
           onSuccess: (records): FinanceFilesState => ({ rows: financeFileRows(records), status: 'ready' }),
         }),
         Effect.tap((next) =>
@@ -123,7 +124,10 @@ const downloadFinanceFile = Effect.fn('FacilityOperations.downloadFinanceFile')(
     });
     return true;
   },
-  Effect.orElseSucceed(() => false),
+  Effect.matchEffect({
+    onFailure: (error) => Effect.logWarning('Finance file download failed', error).pipe(Effect.as(false)),
+    onSuccess: (downloaded: boolean) => Effect.succeed(downloaded),
+  }),
 );
 
 const FinanceFileDownload = ({ file }: { readonly file: FinanceFileView }) => {

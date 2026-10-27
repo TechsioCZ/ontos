@@ -16,11 +16,17 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const moduleKey = 'demo.merchandise';
 
 const reviewProductIds = (input: AgentReviewRequest) => [
-  ...new Set(input.items.flatMap((item) => Option.toArray(Option.fromUndefinedOr(targetProductId(item.command))))),
+  ...new Set(
+    input.items.flatMap((item) =>
+      Option.toArray(
+        Option.flatMap(Option.fromUndefinedOr(targetProductId(item.command)), Schema.decodeOption(ProductIdSchema)),
+      ),
+    ),
+  ),
 ];
 /** The person's own records read for a review: catalog rights and only the targeted products. */
 const reviewRecordsRequest = (input: AgentReviewRequest, scope: OperationalScope) => {
-  const productIds = reviewProductIds(input).map((id) => ProductIdSchema.make(id));
+  const productIds = reviewProductIds(input);
   const view: RecordsView = { limit: productIds.length, ordersLimit: 0, productIds };
   return storefrontReadRequest(scope.authMethod, scope.legalEntityId, { view });
 };
@@ -109,7 +115,7 @@ export const agentReviewRead = defineRead(
             (item) =>
               item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
           );
-          const productIds = reviewProductIds(input).map((id) => ProductIdSchema.make(id));
+          const productIds = reviewProductIds(input);
           // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
           // answer open.
           const grants = context.prepared;
