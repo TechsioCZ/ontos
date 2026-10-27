@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeCrypto, NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -19,6 +20,18 @@ import { MigrationEquivalenceError } from './migration-equivalence.mts';
 
 const OwnerSchema = Schema.Literals(['core', 'party']);
 
+/** The deployed migrator uses the installed owner's CLI, not the build workspace's package discovery. */
+export const ownerSnapshotCheckCommand = (owner: typeof OwnerSchema.Type, folder: string) => {
+  const directory = fileURLToPath(
+    new URL(owner === 'core' ? '../packages/core-runtime/' : '../verticals/party-registry/', import.meta.url),
+  );
+  return ChildProcess.make(
+    path.join(directory, 'node_modules/.bin/drizzle-kit'),
+    ['check', '--dialect', 'postgresql', '--out', folder],
+    { cwd: directory, stderr: 'inherit', stdout: 'inherit' },
+  );
+};
+
 export const runOwnerMigrationConvergence = Effect.fn('MigrationConvergence.owner')(function* run(
   owner: typeof OwnerSchema.Type,
 ) {
@@ -28,34 +41,16 @@ export const runOwnerMigrationConvergence = Effect.fn('MigrationConvergence.owne
   });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   for (const { manifest } of sources) {
-    const code = yield* spawner
-      .exitCode(
-        ChildProcess.make(
-          'pnpm',
-          [
-            '--filter',
-            owner === 'core' ? '@app/core-runtime' : '@app/party-registry',
-            'exec',
-            'drizzle-kit',
-            'check',
-            '--dialect',
-            'postgresql',
-            '--out',
-            manifest.folder,
-          ],
-          { cwd: fileURLToPath(new URL('../', import.meta.url)), stderr: 'inherit', stdout: 'inherit' },
-        ),
-      )
-      .pipe(
-        Effect.timeout('60 seconds'),
-        Effect.mapError(
-          () =>
-            new MigrationEquivalenceError({
-              history: manifest.history,
-              reason: 'Native snapshot check failed or timed out',
-            }),
-        ),
-      );
+    const code = yield* spawner.exitCode(ownerSnapshotCheckCommand(owner, manifest.folder)).pipe(
+      Effect.timeout('60 seconds'),
+      Effect.mapError(
+        () =>
+          new MigrationEquivalenceError({
+            history: manifest.history,
+            reason: 'Native snapshot check failed or timed out',
+          }),
+      ),
+    );
     if (code !== 0) {
       return yield* new MigrationEquivalenceError({
         history: manifest.history,
