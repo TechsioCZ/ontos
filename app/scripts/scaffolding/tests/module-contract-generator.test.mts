@@ -599,6 +599,43 @@ it.live(
 );
 
 it.live(
+  'accepts CRLF owner headers and rejects an altered generator marker',
+  Effect.fn(function* windowsOwnerHeaders() {
+    yield* withFixture(
+      Effect.fn(function* checkWindowsOwnerHeaders(root) {
+        yield* scaffold(root);
+        const ownerPaths = [
+          path.join(root, PROPERTY_MANIFEST_PATH),
+          path.join(root, 'verticals/property-registry/vertical.registration.ts'),
+        ];
+        for (const ownerPath of ownerPaths) {
+          const content = yield* Effect.promise(() => readFile(ownerPath, 'utf-8'));
+          yield* Effect.promise(() => writeFile(ownerPath, content.replaceAll(/\r?\n/gu, '\r\n'), 'utf-8'));
+        }
+        const emitted = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const document = yield* decodeModuleContract(yield* Effect.promise(() => readFile(emitted.path, 'utf-8')));
+        expect(document.manifest.module.id).toBe(MODULE_ID);
+        const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
+        const manifest = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        yield* Effect.promise(() =>
+          writeFile(manifestPath, manifest.replace('Module Contract v1\r\n', 'Module Contract v10\r\n'), 'utf-8'),
+        );
+        yield* expectFailure(
+          generateOntosModuleContract({ target: 'dist', vertical: APP_ID, workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+          (error) => expect(String(error)).toMatch(/missing its generated header/u),
+        );
+      }),
+    );
+  }),
+);
+
+it.live(
   'maps Cloudflare emission to the Modern output root and validates authored contracts',
   Effect.fn(function* scenario15() {
     yield* withFixture(
@@ -610,8 +647,8 @@ it.live(
           vertical: APP_ID,
           workspaceRoot: root,
         }).pipe(Effect.provide(NodeServices.layer));
-        expect(emitted.path).toMatch(
-          /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
+        expect(emitted.path).toBe(
+          path.join(root, 'verticals/property-registry/dist-cloudflare/public/.well-known/ontos-module-manifest.json'),
         );
         yield* checkOntosModuleContracts(root).pipe(Effect.provide(NodeServices.layer));
       }),

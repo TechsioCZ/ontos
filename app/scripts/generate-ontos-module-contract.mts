@@ -187,7 +187,10 @@ const assertOwnerSlots = (verticalDirectory: string) =>
     );
     for (const owner of ownerContents) {
       const { content } = owner;
-      if (!content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`)) {
+      if (
+        !content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\n`) &&
+        !content.startsWith(`${MODULE_CONTRACT_GENERATOR_HEADER}\r\n`)
+      ) {
         yield* failure(`module contract owner is missing its generated header: ${owner.path}`);
       }
       for (const slot of owner.slots) {
@@ -232,8 +235,9 @@ const loadOwnerValues = (workspaceRoot: string, verticalDirectory: string, verti
       const handle = yield* spawner
         .spawn(
           ChildProcess.make(
-            esbuildPath,
+            process.platform === 'win32' ? process.execPath : esbuildPath,
             [
+              ...(process.platform === 'win32' ? [esbuildPath] : []),
               entryPath,
               '--bundle',
               '--format=esm',
