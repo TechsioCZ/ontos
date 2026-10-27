@@ -196,8 +196,13 @@ const observe = (
     Effect.asVoid,
   );
 
-const trackedAdvance = (state: SweeperState, inner: Pick<Continuation, 'advance'>, entry: AdvanceEntry) =>
-  inner.advance(entry.attempt).pipe(
+const trackedAdvance = (
+  state: SweeperState,
+  inner: Pick<Continuation, 'advance'>,
+  entry: AdvanceEntry,
+  options?: Parameters<Continuation['advance']>[1],
+) =>
+  inner.advance(entry.attempt, options).pipe(
     Effect.tap((result) => observe(state, entry, result)),
     // A failed advance is still activity: the Attempt stays tracked so the next sweep retries it.
     Effect.tapError(() => observe(state, entry)),
@@ -487,7 +492,8 @@ export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
     const staleAfterMillis = options.staleAfterMillis ?? LEASE_WINDOW_MS;
     const sweeper: CommerceEnrollmentContinuationSweeper = {
       continuation: {
-        advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
+        advance: (attempt, advanceOptions) =>
+          trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }, advanceOptions),
         openSweepPass: inner.openSweepPass,
       },
       observation: Ref.get(observation),

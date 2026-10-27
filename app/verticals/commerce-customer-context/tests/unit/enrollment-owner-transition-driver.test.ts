@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { AttemptClaimResult, AttemptRecordResult } from '../../src/enrollment/attempts/attempt-persistence.ts';
@@ -457,6 +457,89 @@ it.effect('recovers a committed claim and lost owner answer without dispatching 
     expect(fences).toBe(1);
     expect(ownerReads).toBe(1);
     expect(reconciliations).toBe(1);
+  }),
+);
+
+it.effect('request interruption preserves an uncertain claim until exact owner reconciliation without redispatch', () =>
+  Effect.gen(function* interruptedOwnerAnswer() {
+    const { lease: _attemptLease, ...unleasedAttempt } = attempt();
+    const { lease: _operationLease, ...unleasedOperation } = operation();
+    const dispatched = yield* Deferred.make<null>();
+    let snapshot = attempt({ revision: transition.expectedRevision });
+    let journal = operation();
+    let dispatches = 0;
+    let records = 0;
+    let ownerReads = 0;
+    let serviceLive = false;
+    const store = makeAttemptStore(claimResult(), {
+      claimTransition: () =>
+        Effect.sync(() => {
+          if (dispatches > 0) {
+            snapshot = { ...unleasedAttempt, revision: snapshot.revision + 1, state: 'RECONCILIATION_REQUIRED' };
+            journal = { ...unleasedOperation, revision: 2, status: 'INDETERMINATE' };
+            return { attempt: snapshot, operation: journal, outcome: 'INDETERMINATE' as const };
+          }
+          snapshot = attempt();
+          return { attempt: snapshot, operation: journal, outcome: 'CLAIMED' as const };
+        }),
+      read: () => Effect.sync(() => snapshot),
+      readOwnerOperation: () => Effect.sync(() => journal),
+      reconcileOutcome: (input, resolution) =>
+        Effect.sync(() => {
+          expect(input.ownerInvocationId).toBe(ownerInvocationId);
+          expect(resolution.status).toBe('SUCCEEDED');
+          journal = { ...unleasedOperation, revision: journal.revision + 1, status: 'SUCCEEDED' };
+          snapshot = { ...unleasedAttempt, revision: snapshot.revision + 1 };
+          return { attempt: snapshot, operation: journal, outcome: 'RECORDED' as const };
+        }),
+      recordOutcome: () =>
+        Effect.sync(() => {
+          records += 1;
+          return recordResult;
+        }),
+    });
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: store,
+      owner: {
+        dispatch: () =>
+          Effect.sync(() => {
+            expect(serviceLive).toBe(true);
+            dispatches += 1;
+          }).pipe(Effect.andThen(Deferred.succeed(dispatched, null)), Effect.andThen(Effect.never)),
+        reconcile: (input) =>
+          Effect.sync(() => {
+            ownerReads += 1;
+            expect(input.ownerInvocationId).toBe(ownerInvocationId);
+            return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
+          }),
+      },
+      workerId: () => workerId,
+    });
+    const request = Effect.scoped(
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          serviceLive = true;
+        }),
+        () =>
+          Effect.sync(() => {
+            serviceLive = false;
+          }),
+      ).pipe(Effect.andThen(driver.execute(transition))),
+    );
+    const fiber = yield* Effect.forkScoped(request);
+    yield* Deferred.await(dispatched);
+    yield* Fiber.interrupt(fiber);
+    expect(serviceLive).toBe(false);
+    expect(journal.status).toBe('IN_PROGRESS');
+    expect(records).toBe(0);
+    expect(dispatches).toBe(1);
+    const recovery = { ...transition, expectedRevision: snapshot.revision };
+    expect(yield* Effect.flip(driver.reconcile(recovery))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
+    expect(ownerReads).toBe(0);
+    journal = operation({ lease: { leaseExpiresAt: expiredAt, leaseToken, workerId } });
+    expect((yield* driver.reconcile(recovery)).outcome).toBe('RECORDED');
+    expect(dispatches).toBe(1);
+    expect(ownerReads).toBe(1);
   }),
 );
 

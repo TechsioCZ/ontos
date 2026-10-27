@@ -158,6 +158,32 @@ it.effect('seeds a tick from the durable journal when its registry has never see
   }),
 );
 
+it.effect('forwards the HTTP verification-yield policy without applying it to worker sweep advancement', () =>
+  Effect.gen(function* preservesRequestPolicyAcrossTracking() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const scripted = yield* scriptedContinuation(yield* journalOf(due(attempt)), 'HALTED');
+    const observed: unknown[] = [];
+    const recordOptions: CommerceEnrollmentContinuationService['advance'] = (input, options) =>
+      Effect.sync(() => {
+        observed.push(options);
+      }).pipe(Effect.andThen(scripted.service.advance(input, options)));
+    const pass = yield* scripted.service.openSweepPass;
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: {
+        advance: recordOptions,
+        openSweepPass: Effect.succeed({ ...pass, advance: recordOptions }),
+      },
+      staleAfterMillis: 0,
+    });
+    yield* sweeper.continuation.advance(attempt, { yieldAfterVerification: true });
+    expect((yield* sweeper.sweep).swept).toBe(1);
+    expect(observed).toStrictEqual([{ yieldAfterVerification: true }, undefined]);
+  }),
+);
+
 it.effect('reads past a whole page of Attempts an earlier budget gave up on', () =>
   Effect.gen(function* pagesPastExhaustedAttempts() {
     const attemptFor = (): ReadEnrollmentAttemptInput => ({

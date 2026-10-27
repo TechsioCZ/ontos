@@ -11,7 +11,7 @@ import {
 } from '@app/core-runtime/modules/active-application-composition';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Exit, Layer, Option, Ref, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -104,15 +104,29 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   persistedState: 'COMPLETE' | 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' = 'IN_PROGRESS',
   afterClaim?: Effect.Effect<void>,
   readmissionRevision?: string,
+  verificationRequired = persistedState === 'VERIFICATION_REQUIRED',
 ) {
   const source = yield* Ref.make(initial);
   let admittedRevision = persistedRevision;
+  let currentState = persistedState;
+  let currentRevision = 1;
+  const verificationWrites: (readonly unknown[])[] = [];
   const dueRows = yield* Ref.make<readonly object[]>([]);
   const routines: string[] = [];
   const worker: string[] = [];
   const claimRevisions: unknown[] = [];
   const durableClaims: object[] = [];
-  const calls = { claimRevisions, durableClaims, loads: 0, owner: 0, registry: 0, routines, subject: 0, worker };
+  const calls = {
+    claimRevisions,
+    durableClaims,
+    loads: 0,
+    owner: 0,
+    registry: 0,
+    routines,
+    subject: 0,
+    verificationWrites,
+    worker,
+  };
   const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
     Effect.gen(function* invokeOwnerRoutine() {
       calls.routines.push(routine.name);
@@ -122,6 +136,12 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
           admittedRevision = readmissionRevision;
         }
         return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ admitted }]);
+      }
+      if (routine.name === 'set_portal_enrollment_verification_state') {
+        verificationWrites.push(values);
+        currentState = values.at(2) === true ? 'VERIFICATION_REQUIRED' : 'IN_PROGRESS';
+        currentRevision += 1;
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ updated: true }]);
       }
       if (routine.name === 'claim_portal_enrollment_transition' && afterClaim !== undefined) {
         const leaseToken = '60000000-0000-4000-8000-000000000001';
@@ -172,7 +192,9 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
         ]);
       }
       const rows =
-        routine.name === 'read_portal_enrollment_attempt' ? [attemptRow(admittedRevision, persistedState)] : [];
+        routine.name === 'read_portal_enrollment_attempt'
+          ? [{ ...attemptRow(admittedRevision, currentState), revision: currentRevision }]
+          : [];
       return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
     });
   const dialect = new PgDialect();
@@ -229,7 +251,7 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
           calls.registry += 1;
           return Option.some(registeredOwner);
         }),
-      verificationRequired: () => Effect.succeed(persistedState === 'VERIFICATION_REQUIRED'),
+      verificationRequired: () => Effect.succeed(verificationRequired),
     }),
     Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
       resolve: () =>
@@ -241,6 +263,8 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   );
   return {
     calls,
+    currentRevision: () => currentRevision,
+    currentState: () => currentState,
     layer: CommerceEnrollmentContinuationLive(compiled).pipe(Layer.provide(dependencies)),
     setDueRevision: (compositionRevision: string) =>
       Ref.set(dueRows, [
@@ -574,6 +598,80 @@ it.effect('an unverified signup halts before subject resolution, Party claim or 
     expect(scripted.calls.owner).toBe(0);
     expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
     expect(scripted.calls.routines).not.toContain('set_portal_enrollment_verification_state');
+  }),
+);
+
+it.effect('verified HTTP continuation commits the native wake and yields before downstream owner preparation', () =>
+  Effect.gen(function* verifiedWakeDoesNotOwnTheWholeJourney() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+      undefined,
+      undefined,
+      false,
+    );
+    const exit = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) =>
+        Effect.exit(continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      ),
+      Effect.provide(scripted.layer),
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (Exit.isSuccess(exit)) {
+      expect(exit.value).toMatchObject({ halt: { reason: 'VERIFICATION_ACCEPTED' }, outcome: 'HALTED' });
+    }
+    expect(scripted.currentState()).toBe('IN_PROGRESS');
+    expect(scripted.currentRevision()).toBe(2);
+    expect(scripted.calls.verificationWrites).toStrictEqual([[attemptId, 1, false]]);
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.registry).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+    expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
+  }),
+);
+
+it.effect('the HTTP yield policy cannot wake an unverified provider subject', () =>
+  Effect.gen(function* yieldPolicyStillRequiresVerification() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+    );
+    const result = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      Effect.provide(scripted.layer),
+    );
+    expect(result).toMatchObject({ halt: { reason: 'VERIFICATION_REQUIRED' }, outcome: 'HALTED' });
+    expect(scripted.currentState()).toBe('VERIFICATION_REQUIRED');
+    expect(scripted.calls.verificationWrites).toStrictEqual([]);
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+  }),
+);
+
+it.effect('already-running explicit recovery still advances without any background discovery budget', () =>
+  Effect.gen(function* yieldPolicyDoesNotDisableExplicitRecovery() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'IN_PROGRESS',
+      Effect.void,
+    );
+    yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput, { yieldAfterVerification: true })),
+      Effect.provide(scripted.layer),
+    );
+    expect(scripted.calls.owner).toBe(1);
+    expect(scripted.calls.durableClaims).toHaveLength(1);
+    expect(scripted.calls.verificationWrites).toStrictEqual([]);
+    expect(scripted.calls.worker).toStrictEqual([]);
   }),
 );
 
