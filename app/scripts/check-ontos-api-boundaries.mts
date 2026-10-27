@@ -58,6 +58,43 @@ interface WorkspaceAccess {
   readonly workspaceRoot: string;
 }
 
+// The native CLI's baseline flag constrains the installed package identity. It does not
+// replace the checker or its rules. Keep this command local and reject shell composition,
+// workspace retargeting, duplicate flags, and flags that can skip the required check.
+export const hasNativeApiCheckCommand = (
+  script: string | undefined,
+  verticalDirectories: readonly string[],
+): boolean => {
+  if (script === undefined || !/^[A-Za-z0-9_./@ \t-]+$/u.test(script)) {
+    return false;
+  }
+  const [command, ...argumentsList] = script.trim().split(/\s+/u);
+  if (command !== 'modern-api-check' || argumentsList.length % 2 !== 0) {
+    return false;
+  }
+  const allowedBaselines = new Set([
+    './node_modules/@modern-js/bff-effect',
+    ...verticalDirectories.map((directory) => `./${directory}/node_modules/@modern-js/bff-effect`),
+  ]);
+  const flags = new Set<string>();
+  for (let index = 0; index < argumentsList.length; index += 2) {
+    const flag = argumentsList[index];
+    const value = argumentsList[index + 1];
+    if (flag === undefined || flags.has(flag)) {
+      return false;
+    }
+    flags.add(flag);
+    if (flag === '--rules') {
+      if (value !== './scripts/api-contract-schema-rules.mts') {
+        return false;
+      }
+    } else if (flag !== '--baseline-package-directory' || value === undefined || !allowedBaselines.has(value)) {
+      return false;
+    }
+  }
+  return flags.has('--rules');
+};
+
 const listWorkspaceFiles = (
   { fileSystem, path, workspaceRoot }: WorkspaceAccess,
   startDirectory: string,
@@ -251,7 +288,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         'Root package.json must expose api:check:ontos.',
       );
       assert(
-        rootPackageJson.scripts?.['api:check'] === 'modern-api-check --rules ./scripts/api-contract-schema-rules.mts',
+        hasNativeApiCheckCommand(rootPackageJson.scripts?.['api:check'], verticalDirectories),
         'Root api:check must run the published framework checker and OntOS schema rules.',
       );
       assert(
@@ -278,11 +315,13 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   return 0;
 });
 
-const failureCount = await Effect.runPromise(
-  checkApiBoundaries.pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
-);
-if (failureCount > 0) {
-  NodeRuntime.runMain(Effect.fail(new ApiBoundaryCheckFailed({ failureCount })), {
-    disableErrorReporting: true,
-  });
+if (process.argv[1] === import.meta.filename) {
+  const failureCount = await Effect.runPromise(
+    checkApiBoundaries.pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))),
+  );
+  if (failureCount > 0) {
+    NodeRuntime.runMain(Effect.fail(new ApiBoundaryCheckFailed({ failureCount })), {
+      disableErrorReporting: true,
+    });
+  }
 }

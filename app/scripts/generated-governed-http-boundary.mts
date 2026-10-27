@@ -309,21 +309,23 @@ const constInitializer = (source: string, name: string): string | undefined => {
   return end === undefined ? undefined : source.slice(equals + 1, end).trim();
 };
 
-const isEffectFnCallback = (source: string): boolean => {
+const effectFnCallback = (source: string): string | undefined => {
   if (!source.startsWith('Effect.fn(')) {
-    return false;
+    return undefined;
   }
   const opening = source.indexOf('(');
   const closing = matchingDelimiterEnd(source, opening, '(', ')');
   const invocation = closing === undefined ? '' : source.slice(closing + 1).trim();
   const callback = invocation.startsWith('(') ? callArgument(`invoke${invocation}`, /^invoke\(/u) : undefined;
-  return (
-    callback !== undefined &&
+  return callback !== undefined &&
     matchingDelimiterEnd(invocation, 0, '(', ')') === invocation.length - 1 &&
     (matches(callback, /^(?:async\s+)?function\*?(?:\s+[A-Za-z_$][A-Za-z0-9_$]*)?\s*\(/u) ||
       matches(callback, /^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>/u))
-  );
+    ? callback
+    : undefined;
 };
+
+const isEffectFnCallback = (source: string): boolean => effectFnCallback(source) !== undefined;
 
 const isExecutableCallback = (candidate: string | undefined, ownerSource?: string): boolean => {
   if (candidate === undefined || /^(?:null|undefined)(?:\s+as\b[\s\S]*)?$/u.test(candidate)) {
@@ -570,24 +572,6 @@ const hasExactValueImport = (
     (allowAdditionalImports || imports.length === 1) &&
     importedValues.filter((candidate) => candidate === value).length === 1 &&
     !matches(code, new RegExp(`\\b(?:class|const|function|let|var)\\s+${escapeRegExp(importedBinding)}\\b`, 'u'))
-  );
-};
-
-const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
-  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
-    return false;
-  }
-  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
-  if (resolved === undefined) {
-    return false;
-  }
-  if (isEffectFnCallback(resolved)) {
-    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
-  }
-  const expression = maskNonCode(callbackReturnedExpression(resolved) ?? '', true).trim();
-  return (
-    (expression === 'Effect.succeedNone' && hasExactValueImport(ownerSource, 'Effect', 'effect')) ||
-    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression)
   );
 };
 
@@ -1153,33 +1137,11 @@ const hasNativeReadServiceFactoryExport = (source: string, binding: string): boo
   );
 };
 
-/** Resolve the original owner callable; native import renames preserve that callable's identity. */
-export const hasOwnerLocalReadServiceFactory = (
-  sources: ReadonlyMap<string, string>,
-  readFile: string,
-  ownerPath: string,
-  candidate?: string,
-): boolean => {
-  if (
-    candidate === undefined ||
-    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
-    path.posix.normalize(ownerPath) !== ownerPath ||
-    path.posix.normalize(readFile) !== readFile ||
-    !readFile.startsWith(`${ownerPath}/`)
-  ) {
-    return false;
-  }
-  const readSource = sources.get(readFile);
-  const imported = readSource === undefined ? undefined : namedSourceImport(readSource, candidate);
-  if (imported === undefined || !/^\.\.?\//u.test(imported.modulePath) || !imported.modulePath.endsWith('.ts')) {
-    return false;
-  }
-  const factoryFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
-  const factorySource = factoryFile.startsWith(`${ownerPath}/`) ? sources.get(factoryFile) : undefined;
-  return factorySource !== undefined && hasNativeReadServiceFactoryExport(factorySource, imported.imported);
-};
-
-const nativeReadFactoryAnnotationBinding = (source: string, annotation: string): string | undefined => {
+const nativeReadFactoryAnnotationBinding = (
+  source: string,
+  annotation: string,
+  nativeName = 'ReadServiceFactory',
+): string | undefined => {
   const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
   const binding = nativeType?.groups?.binding;
   const argumentsSource = nativeType?.groups?.arguments;
@@ -1187,7 +1149,7 @@ const nativeReadFactoryAnnotationBinding = (source: string, annotation: string):
   return argumentsSource !== undefined &&
     topLevelSeparators(maskNonCode(argumentsSource), '>', 0, argumentsSource.length, true)[0] ===
       argumentsSource.length - 1 &&
-    imported?.imported === 'ReadServiceFactory' &&
+    imported?.imported === nativeName &&
     imported.modulePath === CORE_RUNTIME_MODULE
     ? binding
     : undefined;
@@ -1619,6 +1581,141 @@ const hasStableReadFactoryBindings = (
   return [...expectedDeclarations].every(([binding, count]) => (declarations.get(binding) ?? 0) === count);
 };
 
+const isReadHandlerCallback = (candidate: string | undefined, ownerSource: string): boolean => {
+  if (!isExecutableCallback(candidate, ownerSource) || candidate === undefined) {
+    return false;
+  }
+  const resolved = /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ? constInitializer(ownerSource, candidate) : candidate;
+  if (resolved === undefined) {
+    return false;
+  }
+  if (isEffectFnCallback(resolved)) {
+    return /\byield\*|\.pipe\(/u.test(maskNonCode(resolved, true));
+  }
+  const expression = maskNonCode(callbackReturnedExpression(resolved) ?? '', true).trim();
+  return (
+    (/^Effect\.(?:succeedNone|void)$/u.test(expression) &&
+      hasExactValueImport(ownerSource, 'Effect', 'effect') &&
+      hasStableReadFactoryBindings(ownerSource, new Map([['Effect', 0]]), '')) ||
+    /\bEffect\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\.pipe\(/u.test(expression)
+  );
+};
+
+interface DirectArrowExpression {
+  readonly annotation: string;
+  readonly output: string;
+  readonly parameters: readonly string[];
+}
+
+const sourceParameters = (source: string, opening: number, closing: number): readonly string[] =>
+  separatedSource(
+    source,
+    topLevelSeparators(maskNonCode(source), ',', opening + 1, closing, true),
+    opening + 1,
+    closing,
+  ).filter((parameter) => parameter !== '');
+
+const directArrowExpression = (source: string | undefined): DirectArrowExpression | undefined => {
+  const closing = source?.startsWith('(') === true ? matchingDelimiterEnd(source, 0, '(', ')') : undefined;
+  if (source === undefined || closing === undefined) {
+    return undefined;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(source), '=', closing + 1, source.length, true);
+  if (arrow === undefined || source.slice(arrow, arrow + 2) !== '=>') {
+    return undefined;
+  }
+  return {
+    annotation: source.slice(closing + 1, arrow).trim(),
+    output: source.slice(arrow + 2).trim(),
+    parameters: sourceParameters(source, 0, closing),
+  };
+};
+
+const identifierParameterType = (parameter: string | undefined): string | undefined =>
+  /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(parameter?.trim() ?? '')?.groups?.type;
+
+const nativeScopedReadFactoryTypes = (
+  source: string,
+  parameters: readonly string[],
+): { readonly scopeType: string; readonly transactionType: string } | undefined => {
+  const transactionType = identifierParameterType(parameters[0]);
+  const scopeType = identifierParameterType(parameters[1]);
+  if (parameters.length !== 2 || transactionType === undefined || scopeType === undefined) {
+    return undefined;
+  }
+  const scopeImport = namedSourceImport(source, scopeType, true);
+  const factoryTypeImport = namedSourceImport(source, 'ReadServiceFactory', true);
+  const transactionAlias = assignedExpression(
+    source,
+    new RegExp(`\\btype\\s+${escapeRegExp(transactionType)}\\s*=\\s*`, 'u'),
+  );
+  return scopeImport?.imported === 'OperationalScope' &&
+    scopeImport.modulePath === CORE_RUNTIME_MODULE &&
+    factoryTypeImport?.imported === 'ReadServiceFactory' &&
+    factoryTypeImport.modulePath === CORE_RUNTIME_MODULE &&
+    transactionAlias?.replaceAll(/\s+/gu, '').replaceAll('"', "'") ===
+      "Pick<Parameters<ReadServiceFactory<Readonly<Record<string,never>>>>[0],'invoke'>"
+    ? { scopeType, transactionType }
+    : undefined;
+};
+
+const hasNativeScopedReadServiceFactoryExport = (source: string, binding: string): boolean => {
+  const arrow = directArrowExpression(constInitializer(source, binding));
+  const nativeTypes = arrow === undefined ? undefined : nativeScopedReadFactoryTypes(source, arrow.parameters);
+  if (arrow === undefined || nativeTypes === undefined) {
+    return false;
+  }
+  const outputType = /^:\s*Effect\.Effect(?<arguments><[\s\S]+>)$/u.exec(arrow.annotation)?.groups?.arguments;
+  return (
+    outputType !== undefined &&
+    topLevelSeparators(maskNonCode(outputType), '>', 0, outputType.length, true)[0] === outputType.length - 1 &&
+    isWholeCallExpression(arrow.output, /^Effect\.succeed\(/u) &&
+    hasExactValueImport(source, 'Effect', 'effect') &&
+    hasExactlyOne(maskNonCode(source), new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*=`, 'gu')) &&
+    hasStableReadFactoryBindings(
+      source,
+      new Map([
+        [binding, 1],
+        ['Effect', 0],
+        ['ReadServiceFactory', 0],
+        [nativeTypes.scopeType, 0],
+        [nativeTypes.transactionType, 1],
+      ]),
+      '',
+    )
+  );
+};
+
+/** Resolve the original owner callable; native import renames preserve that callable's identity. */
+export const hasOwnerLocalReadServiceFactory = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate?: string,
+): boolean => {
+  if (
+    candidate === undefined ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const readSource = sources.get(readFile);
+  const imported = readSource === undefined ? undefined : namedSourceImport(readSource, candidate);
+  if (imported === undefined || !/^\.\.?\//u.test(imported.modulePath) || !imported.modulePath.endsWith('.ts')) {
+    return false;
+  }
+  const factoryFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const factorySource = factoryFile.startsWith(`${ownerPath}/`) ? sources.get(factoryFile) : undefined;
+  return (
+    factorySource !== undefined &&
+    (hasNativeReadServiceFactoryExport(factorySource, imported.imported) ||
+      hasNativeScopedReadServiceFactoryExport(factorySource, imported.imported))
+  );
+};
+
 interface LocalReadFactoryMaker {
   readonly argumentsList: readonly string[];
   readonly maker: string;
@@ -1796,6 +1893,68 @@ export const hasOwnerLocalReadServiceFactoryResult = (
   );
 };
 
+const nativeReadFinishContextType = (source: string, callbackSource: string | undefined): string | undefined => {
+  const opening = callbackSource?.indexOf('(');
+  const closing =
+    callbackSource === undefined || opening === undefined
+      ? undefined
+      : matchingDelimiterEnd(callbackSource, opening, '(', ')');
+  if (callbackSource === undefined || opening === undefined || closing === undefined) {
+    return undefined;
+  }
+  const parameters = sourceParameters(callbackSource, opening, closing);
+  const annotation = /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[\s\S]+)$/u.exec(parameters[1] ?? '')?.groups?.type;
+  return parameters.length === 2 && annotation !== undefined
+    ? nativeReadFactoryAnnotationBinding(source, annotation, 'ReadFinishContext')
+    : undefined;
+};
+
+const localReadFinishFactoryMaker = (source: string, candidate: string): LocalReadFactoryMaker | undefined => {
+  const maker = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(candidate)?.groups?.name;
+  if (maker === undefined) {
+    return undefined;
+  }
+  const argumentsList = wholeCallArguments(candidate, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'));
+  const arrow = directArrowExpression(constInitializer(source, maker));
+  const callback = arrow?.annotation === '' ? effectFnCallback(arrow.output) : undefined;
+  const nativeType = nativeReadFinishContextType(source, callback);
+  return argumentsList !== undefined && arrow !== undefined && nativeType !== undefined
+    ? { argumentsList, maker, nativeType, parameters: arrow.parameters }
+    : undefined;
+};
+
+/** A finish maker must return Effect.fn with the native Core context and owner-local dependencies. */
+export const hasOwnerLocalReadFinishFactoryResult = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate: string | undefined,
+): boolean => {
+  const source = sources.get(readFile);
+  if (
+    source === undefined ||
+    candidate === undefined ||
+    path.posix.normalize(readFile) !== readFile ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    !readFile.startsWith(`${ownerPath}/`) ||
+    !hasExactValueImport(source, 'Effect', 'effect')
+  ) {
+    return false;
+  }
+  const factory = localReadFinishFactoryMaker(source, candidate);
+  const dependencies =
+    factory === undefined
+      ? undefined
+      : localReadFactoryDependencies(sources, readFile, ownerPath, source, factory.maker, factory);
+  return (
+    factory !== undefined &&
+    dependencies !== undefined &&
+    factory.argumentsList.length >= dependencies.minimumArguments &&
+    factory.argumentsList.length <= factory.parameters.length &&
+    hasStableReadFactoryBindings(source, dependencies.bindings, factory.maker)
+  );
+};
+
 const hasReadCallbacks = (
   source: string,
   readExpression: string,
@@ -1847,16 +2006,17 @@ const hasReadCallbacks = (
   const load = pipeline === undefined ? undefined : objectPropertyValue(pipeline, 'load');
   const optionalSteps = ['prepare', 'finish'].flatMap((step) => {
     const callback = pipeline === undefined ? undefined : objectPropertyValue(pipeline, step);
-    return callback === undefined ? [] : [callback];
+    return callback === undefined ? [] : [{ callback, step }];
   });
   return (
     pipeline?.trimStart().startsWith('{') === true &&
     (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
     optionalSteps.every(
-      (step) =>
-        isExecutableCallback(step, source) ||
-        isOwnerLocalImportedCallback(step) ||
-        isOwnerLocalImportedFactoryResult(step),
+      ({ callback, step }) =>
+        isExecutableCallback(callback, source) ||
+        isOwnerLocalImportedCallback(callback) ||
+        isOwnerLocalImportedFactoryResult(callback) ||
+        (step === 'finish' && hasOwnerLocalReadFinishFactoryResult(sources, readFile, ownerPath, callback)),
     ) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
