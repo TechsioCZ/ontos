@@ -6,19 +6,25 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { readProducts } from "@/ontos/catalog-server";
 import { branches } from "@/content/editorial";
+import { parseVariantIds } from "@/lib/product-variant-links";
 
 export const metadata: Metadata = { title: "Kontakty" };
 
 export default async function ContactsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ productId?: string }>;
+  searchParams: Promise<{ productId?: string; variantIds?: string | string[] }>;
 }) {
-  const { productId } = await searchParams;
+  const { productId, variantIds } = await searchParams;
+  const selectedIds = parseVariantIds(variantIds);
   const product = productId
-    ? (await readProducts({ productIds: [productId], pageSize: 1 }, "card", true)).products.find(
-        (item) => item.id === productId,
-      )
+    ? (
+        await readProducts(
+          { productIds: [productId], pageSize: 1 },
+          selectedIds.length ? "full" : "card",
+          true,
+        )
+      ).products.find((item) => item.id === productId)
     : undefined;
   return (
     <StorefrontShell>
@@ -63,6 +69,14 @@ export default async function ContactsPage({
             kind={productId ? "PRODUCT_QUESTION" : "CONTACT"}
             {...(productId ? { productId } : {})}
             {...(product ? { productName: product.name } : {})}
+            initialMessage={
+              product && selectedIds.length
+                ? product.detail.variants
+                    .filter((item) => selectedIds.includes(item.id))
+                    .map((item) => `${item.label} (${item.sku})`)
+                    .join("\n")
+                : undefined
+            }
           />
         </section>
       </article>

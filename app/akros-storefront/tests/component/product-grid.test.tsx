@@ -47,15 +47,17 @@ describe("ProductGrid", () => {
     const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
     expect(container.firstElementChild?.className).toBe("akros-product-grid");
 
-    expect(screen.getByText(/^od 10,36 Kč$/)).toBeDefined();
+    expect(screen.getByText("Cena podle zvolené varianty")).toBeDefined();
     expect(screen.getByText("Skladem")).toBeDefined();
     expect(screen.getByText("Více variant")).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
       `/produkt/${product!.slug}`,
     );
     expect(
-      screen.getByRole("link", { name: "Zobrazit oblíbené produkty" }).getAttribute("href"),
-    ).toBe("/oblibene");
+      screen
+        .getByRole("button", { name: /Vybrat oblíbené varianty/ })
+        .getAttribute("aria-haspopup"),
+    ).toBe("dialog");
     expect(screen.queryByText(/2[\s\u00a0]?929,4\s+ks/)).toBeNull();
   });
 
@@ -127,6 +129,7 @@ describe("ProductGrid", () => {
       priceMinor: 254,
       originalPriceMinor: 330,
       priceIsFrom: false,
+      hasVariants: false,
     };
     const { container } = render(<ProductGrid action="detail" products={[product]} />);
 
@@ -162,7 +165,7 @@ describe("ProductGrid", () => {
     };
     const { container } = render(<ProductGrid action="detail" products={[product]} />);
 
-    expect(screen.getByText("od 2,54 Kč")).toBeDefined();
+    expect(screen.getByText("Cena podle zvolené varianty")).toBeDefined();
     expect(container.querySelector("del")).toBeNull();
     expect(screen.queryByText("-23%")).toBeNull();
   });

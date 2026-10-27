@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -46,7 +46,7 @@ const product: CatalogProduct = {
   id: "product-hex-bolt",
   slug: "hex-bolt",
   categoryId: "bolts",
-  name: "DIN 933/A2",
+  name: "Šrouby DIN 933/A2",
   sku: "10093300",
   description: "",
   priceMinor: 84,
@@ -104,7 +104,7 @@ describe("ProductPurchaseForm", () => {
     expect(lines[0].quantity % live.packageQuantity).toBe(0);
   });
 
-  it("synchronizes typed range limits and slider values, applying them only on submit", async () => {
+  it("synchronizes typed range limits, applies them immediately and restores all variants", async () => {
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
@@ -116,39 +116,43 @@ describe("ProductPurchaseForm", () => {
     await user.type(minimum, "3");
     const sliders = screen.getAllByRole("slider", { name: /Průměr/ });
     expect(sliders[0].getAttribute("aria-valuenow")).toBe("3");
-    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
     await user.click(sliders[0]);
     await user.keyboard("{ArrowLeft}");
     minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
     expect((minimum as HTMLInputElement).value).toBe("2");
     await user.clear(minimum);
     await user.type(minimum, "3");
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
+    expect(screen.queryByRole("button", { name: "Filtruj" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
   });
 
-  it("converts Czech decimal price inputs to minor units without changing quantity inputs", async () => {
+  it("supports Czech decimal dimensions without changing order quantities", async () => {
     const user = userEvent.setup();
+    const decimalVariants = [
+      { ...variants[0], label: "M 2.5 × 5" },
+      { ...variants[1], label: "M 4.5 × 16" },
+    ];
     render(
       <CartProvider storage={null}>
-        <ProductPurchaseForm product={product} variants={variants} />
+        <ProductPurchaseForm product={product} variants={decimalVariants} />
       </CartProvider>,
     );
-    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Cena (Kč/ks)" });
-    await user.click(minimum);
-    // Dispatch the resulting input text without relying on jsdom's caret emulation.
-    fireEvent.input(minimum, { target: { value: "1,25" } });
-    expect((minimum as HTMLInputElement).value).toBe("1,25");
+    const minimum = screen.getByRole("spinbutton", { name: "Minimum – Průměr (mm)" });
+    await user.clear(minimum);
+    await user.type(minimum, "3,5");
     await user.tab();
-    expect(screen.getAllByRole("slider", { name: /Cena/ })[0].getAttribute("aria-valuenow")).toBe(
-      "125",
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("slider", { name: /Průměr/ })[0].getAttribute("aria-valuenow"),
+      ).toBe("3.5"),
     );
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
-    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Koupit M 2.5 × 5" })).toBeNull();
     expect(
-      (screen.getByRole("spinbutton", { name: "Množství M 4 × 16" }) as HTMLInputElement).value,
+      (screen.getByRole("spinbutton", { name: "Množství M 4.5 × 16" }) as HTMLInputElement).value,
     ).toBe("10");
+    expect(screen.queryByRole("spinbutton", { name: /Cena/ })).toBeNull();
   });
 
   it("keeps range limits ordered when an input exceeds the other endpoint", async () => {
@@ -276,8 +280,7 @@ describe("ProductPurchaseForm", () => {
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
   });
 
-  it("filters variants by their material after submitting the filters", async () => {
-    const user = userEvent.setup();
+  it("keeps both materials visible without a material filter or confirmation action", () => {
     const materialVariants = [
       { ...variants[0], label: "M 2 × 5 /A2" },
       { ...variants[1], label: "M 4 × 16 /A4" },
@@ -289,11 +292,11 @@ describe("ProductPurchaseForm", () => {
       </CartProvider>,
     );
 
-    await user.click(screen.getByRole("checkbox", { name: "A2" }));
-    await user.click(screen.getByRole("button", { name: "Filtruj" }));
+    expect(screen.queryByRole("checkbox", { name: "A2" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Filtruj" })).toBeNull();
 
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Koupit M 2/ })).toBeTruthy();
   });
 
   it("adds a decimal source minimum without truncating it", async () => {

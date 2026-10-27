@@ -18,6 +18,7 @@ import {
 import { formatPrice } from "@/lib/format";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useServerTotals } from "./server-totals";
+import { cs } from "@/i18n/cs";
 
 export function ReviewStep() {
   const { cart } = useCart();
@@ -129,21 +130,7 @@ export function ReviewStep() {
         >
           Zpět k dodacím údajům
         </LinkButton>
-        <div className="grid max-w-sm gap-3">
-          {storageError && (
-            <p
-              role="alert"
-              className="rounded-sm border border-(--color-danger) p-4 text-sm text-(--color-danger)"
-            >
-              {storageError}
-            </p>
-          )}
-          <p
-            role="note"
-            className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
-          >
-            Objednávka bude uložena do OntOS. Platba se zde neprovádí.
-          </p>
+        <div className="grid w-full gap-(--dimension-12) sm:max-w-(--akros-checkout-continue-width)">
           {!accountEmail && (
             <StoreLink className="underline" href="/prihlaseni">
               Před objednáním se přihlaste
@@ -157,18 +144,27 @@ export function ReviewStep() {
             size="sm"
             uppercase
             disabled={sending || submitted || !cart.lines.length || blocked || !accountEmail}
-            aria-describedby={blocked ? "review-blocked" : undefined}
+            aria-describedby={`review-order-information${blocked ? " review-blocked" : ""}${storageError ? " review-submit-error" : ""}`}
           >
             {sending ? "Odesílám do OntOS…" : "Odeslat objednávku"}
           </Button>
+          {storageError && (
+            <p id="review-submit-error" role="alert" className="text-sm text-(--color-danger)">
+              {storageError}
+            </p>
+          )}
           {blocked && (
             <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
               {quote?.blockedReason}
             </p>
           )}
-          <p className="text-center text-xs text-(--color-fg-secondary)">
-            Stav objednávky můžete sledovat ve svém účtu.
-          </p>
+          <div
+            id="review-order-information"
+            className="grid gap-(--dimension-4) text-center text-xs text-(--color-fg-secondary)"
+          >
+            <p>{cs.checkout.noOnlinePayment}</p>
+            <p>{cs.checkout.orderTrackingInformation}</p>
+          </div>
         </div>
       </div>
     </form>

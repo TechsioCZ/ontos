@@ -5,6 +5,7 @@ import { Table } from "@techsio/ui-kit/organisms/table";
 import { AccountHeading, AccountPanel } from "./account-content";
 import { orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
 import { formatPrice } from "@/lib/format";
+import { ReorderAction } from "./reorder-action";
 
 export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
   const address = order.deliveryAddress;
@@ -14,6 +15,7 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
         title={`Objednávka ${order.number}`}
         description={`Vytvořeno ${new Date(order.createdAt).toLocaleDateString("cs-CZ")} · ${orderStatusLabels[order.status]}`}
       >
+        <ReorderAction orderId={order.id} />
         <StoreLink className="underline" href="/historie-objednavek">
           Zpět na objednávky
         </StoreLink>
@@ -110,13 +112,13 @@ export function AccountOrderDetail({ order }: { order: CustomerOrder }) {
             </Table.Body>
           </Table>
         </div>
-        <ul className="grid gap-6 xl:hidden">
+        <ul className="grid min-w-0 grid-cols-1 gap-6 xl:hidden">
           {order.lines.map((line) => (
             <li
               key={`${line.productId}:${line.variantId ?? ""}`}
               className="rounded-(--dimension-8) bg-(--akros-account-surface) p-6"
             >
-              <h3 className="font-bold">
+              <h3 className="wrap-anywhere font-bold">
                 {line.productName}
                 {line.variantName ? ` – ${line.variantName}` : ""}
               </h3>

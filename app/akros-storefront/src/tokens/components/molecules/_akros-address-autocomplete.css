@@ -1,0 +1,17 @@
+.akros-address-autocomplete {
+  --akros-address-popup-max-height: var(--dimension-container-xs);
+  --color-combobox-bg-base: var(--color-input-bg-base);
+  --color-combobox-bg-hover: var(--color-input-bg-hover);
+  --color-combobox-bg-focus: var(--color-input-bg-focus);
+  --color-combobox-input-bg-base: var(--color-input-bg-base);
+  --color-combobox-input-bg-hover: var(--color-input-bg-hover);
+  --color-combobox-input-bg-focus: var(--color-input-bg-focus);
+  --color-combobox-border-hover: var(--color-input-border-hover);
+  --color-combobox-border-focus: var(--color-input-border-hover);
+  --color-combobox-border-error: var(--color-input-border-danger-base);
+  --radius-combobox-sm: var(--radius-input-sm);
+  --text-combobox-item-sm: var(--dimension-16);
+  --padding-popup-item-x-sm: var(--dimension-12);
+  --padding-popup-item-y-sm: var(--dimension-12);
+  --padding-combobox-input-sm: var(--padding-input-sm);
+}

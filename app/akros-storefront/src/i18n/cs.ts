@@ -155,6 +155,10 @@ export const cs = {
   },
   checkout: {
     title: "Objednávka",
+    deliveryInformationTitle: "Doprava a platba",
+    deliveryInformation: "Způsob dopravy a jeho cenu vyberete v dalším kroku.",
+    noOnlinePayment: "Objednávku odešlete bez online platby.",
+    orderTrackingInformation: "Stav objednávky můžete sledovat ve svém účtu.",
     demoNotice:
       "Toto je klikací ukázka. Údaje se nikam neposílají a nevznikne skutečná objednávka.",
     contactTitle: "Kontaktní a dodací údaje",

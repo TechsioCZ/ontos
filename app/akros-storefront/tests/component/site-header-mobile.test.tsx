@@ -66,6 +66,7 @@ describe("SiteHeader mobile navigation", () => {
 
   it("keeps category toggles inside the panel and closes it on navigation, including the current URL", async () => {
     const user = userEvent.setup();
+    route.pathname = "/blog";
     render(
       <CartProvider storage={null}>
         <SiteHeader />
@@ -79,7 +80,7 @@ describe("SiteHeader mobile navigation", () => {
     expect(branch.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByRole("dialog")).toBe(dialog);
 
-    await user.click(within(dialog).getByRole("link", { name: "Domů" }));
+    await user.click(within(dialog).getByRole("link", { name: "Blog" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 

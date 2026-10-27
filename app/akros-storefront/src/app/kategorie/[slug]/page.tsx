@@ -106,7 +106,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
         className="akros-section akros-product-listing-section"
         aria-labelledby="category-title"
       >
-        <div className="akros-category-heading">
+        <div className="akros-category-heading akros-category-heading--centered">
           <h1 id="category-title">{category.name}</h1>
           {description && <p>{description}</p>}
         </div>

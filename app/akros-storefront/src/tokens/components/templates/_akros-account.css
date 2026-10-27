@@ -43,7 +43,6 @@
   --radius-input-sm: var(--dimension-8);
   --text-input-sm: var(--dimension-20);
   --text-label-sm: var(--dimension-20);
-  --font-weight-label: var(--font-weight-medium);
   --text-select-trigger-sm: var(--dimension-20);
   --text-select-value-sm: var(--dimension-20);
   --text-phone-input-sm: var(--dimension-20);
@@ -87,7 +86,6 @@
   --color-checkbox-bg-base: var(--color-base);
   --text-breadcrumb-sm: var(--dimension-16);
   --padding-breadcrumb-sm: 0px;
-  --spacing-breadcrumb-item: var(--dimension-4);
   --color-breadcrumb-bg: var(--akros-account-surface);
 }
 
@@ -130,6 +128,15 @@
 [data-account-section-heading] {
   --font-weight-accordion-title: var(--font-weight-bold);
   --font-weight-button: var(--font-weight-accordion-title);
+  --spacing-button-md: var(--dimension-10);
+}
+
+[data-account-heading-actions] > [data-account-action] {
+  --height-form-control-sm: auto;
+}
+
+[data-akros-account] [data-scope="checkbox"][data-part="root"] {
+  --border-width-validation: var(--border-width-checkbox);
 }
 
 [data-account-field][data-invalid] {

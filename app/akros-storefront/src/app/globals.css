@@ -1,7 +1,14 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
+/* App-wide mappings precede the component-specific overrides. */
+@import "../tokens/_akros-semantic.css";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/_akros-layout.css";
 @import "../tokens/components/atoms/_akros-icon.css";
+@import "../tokens/components/atoms/_akros-input.css";
+@import "../tokens/components/molecules/_akros-address-autocomplete.css";
+@import "../tokens/components/molecules/_akros-select.css";
+@import "../tokens/components/atoms/_akros-textarea.css";
 @import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 /* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */
@@ -20,31 +27,16 @@
 @import "../tokens/components/templates/_akros-product-detail.css";
 @import "../tokens/components/templates/_akros-checkout.css";
 @import "../tokens/components/templates/_akros-account.css";
+@import "../tokens/components/templates/_akros-auth.css";
+@import "../tokens/components/templates/_akros-content-pages.css";
+@import "../tokens/components/molecules/_akros-favorites.css";
+@import "../tokens/components/molecules/_akros-variant-detail.css";
+@import "../styles/variant-detail.css";
+@import "../styles/favorites.css";
+@import "../styles/product-print.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";
-
-:root {
-  /* Figma keeps Input and Textarea on the white base surface in all interactive states. */
-  --color-input-bg-base: var(--color-base);
-  --color-input-bg-hover: var(--color-base);
-  --color-input-bg-focus: var(--color-base);
-  --color-textarea-bg: var(--color-base);
-  --color-textarea-bg-hover: var(--color-base);
-  --color-textarea-bg-focus: var(--color-base);
-  --akros-content-max: 1663px;
-  --akros-header-main-gutter: var(--dimension-44);
-  --akros-page-gutter: 12px;
-  --akros-section-gap: 48px;
-  --akros-sidebar-width: 280px;
-  --akros-radius-lg: 16px;
-  --akros-radius-md: 8px;
-  --akros-header-search-width: var(--dimension-container-xl);
-}
-
-* {
-  box-sizing: border-box;
-}
 
 html {
   min-width: 320px;
@@ -54,7 +46,6 @@ html {
 
 body {
   min-height: 100vh;
-  margin: 0;
   background: var(--color-fill-surface);
   color: var(--color-fg-primary);
   font-family: var(--font-body);
@@ -294,6 +285,10 @@ body {
   margin: 0;
 }
 
+.akros-category-heading--centered {
+  text-align: center;
+}
+
 .akros-category-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -308,6 +303,7 @@ body {
   background: var(--color-base);
   color: var(--color-fg-primary);
   text-decoration: none;
+  text-align: center;
 }
 
 .akros-category-card img {
@@ -400,15 +396,24 @@ body {
   line-height: 1.2;
 }
 
-.akros-product-detail__description {
-  margin: 0;
-  line-height: 1.5;
-}
-
 .akros-product-detail__facts {
   display: grid;
   gap: var(--dimension-8);
   margin: 0;
+}
+
+.akros-product-detail__delivery {
+  display: grid;
+  gap: var(--dimension-8);
+  border-top: var(--border-sm) solid var(--akros-product-detail-divider-color);
+  padding-top: var(--dimension-16);
+}
+
+.akros-product-detail__delivery h2,
+.akros-product-detail__delivery p {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: inherit;
 }
 
 .akros-product-detail__facts > div {
@@ -720,14 +725,19 @@ body {
 
 .akros-variant-table__purchase-cell {
   display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  grid-template-columns: var(--akros-variant-table-minimum-order-width) var(
+      --akros-variant-table-package-order-width
+    );
   align-items: center;
+  justify-content: end;
 }
 
 .akros-variant-table__order {
   display: grid;
   min-width: 0;
-  grid-template-columns: 96px minmax(64px, 1fr);
+  grid-template-columns: var(--akros-variant-table-quantity-width) var(
+      --akros-variant-table-minimum-button-width
+    );
   gap: var(--dimension-6);
   align-items: center;
   padding-inline: var(--dimension-6);
@@ -738,13 +748,10 @@ body {
 }
 
 .akros-variant-table__order--package {
-  --color-button-bg-secondary-active: var(--color-base-dark);
-  --color-button-bg-secondary-base: var(--color-base-dark);
-  --color-button-bg-secondary-hover: var(--color-neutral-800);
-  --color-button-fg-secondary: var(--color-base-light);
-
   border-inline-start: 1px solid var(--akros-variant-table-cell-separator-color);
-  grid-template-columns: 96px minmax(132px, 1fr);
+  grid-template-columns: var(--akros-variant-table-quantity-width) var(
+      --akros-variant-table-package-button-width
+    );
   padding-inline-end: 0;
 }
 
@@ -781,6 +788,15 @@ body {
 .akros-variant-table__buy-button small {
   font-size: 8px;
   line-height: inherit;
+}
+
+.akros-variant-table__buy-button--package > span {
+  display: block;
+  line-height: var(--akros-variant-table-compact-button-line-height);
+}
+
+.akros-variant-table__buy-button--package small {
+  font-size: var(--akros-variant-table-package-button-caption-font-size);
 }
 
 .akros-variant-table__no-package {
@@ -942,12 +958,6 @@ body {
 }
 
 @media (max-width: 1100px) {
-  :root {
-    --akros-header-main-gutter: var(--dimension-32);
-    --akros-page-gutter: 16px;
-    --akros-sidebar-width: 240px;
-  }
-
   .akros-header__utility-links a:nth-child(n + 7) {
     display: none;
   }
@@ -1064,12 +1074,6 @@ body {
 }
 
 @media (max-width: 760px) {
-  :root {
-    --akros-header-main-gutter: var(--dimension-16);
-    --akros-page-gutter: 16px;
-    --akros-section-gap: 32px;
-  }
-
   .akros-page-grid {
     display: block;
   }

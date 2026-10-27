@@ -210,6 +210,7 @@ describe("SiteHeader search", () => {
 
   it("marks the current page in both desktop and mobile navigation", async () => {
     const user = userEvent.setup();
+    route.pathname = "/obchodni-podminky";
     const { rerender } = render(
       <CartProvider storage={null}>
         <SiteHeader />
@@ -220,9 +221,9 @@ describe("SiteHeader search", () => {
       if (name === "Mobilní navigace")
         await user.click(screen.getByRole("button", { name: "Otevřít navigaci" }));
       const navigation = within(screen.getByRole("navigation", { name }));
-      expect(navigation.getByRole("link", { name: "Domů" }).getAttribute("aria-current")).toBe(
-        "page",
-      );
+      expect(
+        navigation.getByRole("link", { name: "Obchodní podmínky" }).getAttribute("aria-current"),
+      ).toBe("page");
       expect(navigation.getByRole("link", { name: "Blog" }).hasAttribute("aria-current")).toBe(
         false,
       );
@@ -245,9 +246,9 @@ describe("SiteHeader search", () => {
       expect(navigation.getByRole("link", { name: "Blog" }).getAttribute("aria-current")).toBe(
         "page",
       );
-      expect(navigation.getByRole("link", { name: "Domů" }).hasAttribute("aria-current")).toBe(
-        false,
-      );
+      expect(
+        navigation.getByRole("link", { name: "Obchodní podmínky" }).hasAttribute("aria-current"),
+      ).toBe(false);
     }
   });
 

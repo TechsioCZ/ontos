@@ -20,7 +20,10 @@ export function AccountHeading({
         )}
       </div>
       {children && (
-        <div className="flex max-w-full flex-wrap gap-(--dimension-16) [&>a]:h-auto [&>a]:min-h-(--akros-account-action-height) [&>a]:max-w-full [&>a]:whitespace-normal [&>a]:leading-(--akros-account-heading-leading)">
+        <div
+          data-account-heading-actions
+          className="flex max-w-full flex-wrap gap-(--dimension-16) [&>a]:min-h-(--akros-account-action-height) [&>a]:max-w-full [&>a]:whitespace-normal [&>a]:leading-(--akros-account-heading-leading)"
+        >
           {children}
         </div>
       )}

@@ -8,6 +8,7 @@ import { AccountHeading } from "./account-content";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import { formatPrice } from "@/lib/format";
 import { orderHref, orderStatusLabels, type CustomerOrder } from "@/ontos/order-model";
+import { ReorderAction } from "./reorder-action";
 export { orderHref } from "@/ontos/order-model";
 
 const columns: ColumnDef<CustomerOrder>[] = [
@@ -25,11 +26,22 @@ const columns: ColumnDef<CustomerOrder>[] = [
     header: "Datum",
     cell: ({ row }) => new Date(row.original.createdAt).toLocaleDateString("cs-CZ"),
   },
-  { id: "items", header: "Položky", cell: ({ row }) => row.original.lines.length },
+  {
+    id: "items",
+    accessorFn: (order) => order.lines.length,
+    header: "Položky",
+    meta: { align: "end" },
+    cell: ({ row }) => <span className="tabular-nums">{row.original.lines.length}</span>,
+  },
   {
     accessorKey: "totalMinor",
     header: "Cena celkem",
-    cell: ({ row }) => formatPrice(row.original.totalMinor),
+    meta: { align: "end" },
+    cell: ({ row }) => (
+      <strong className="whitespace-nowrap tabular-nums">
+        {formatPrice(row.original.totalMinor)}
+      </strong>
+    ),
   },
   {
     accessorKey: "status",
@@ -38,11 +50,15 @@ const columns: ColumnDef<CustomerOrder>[] = [
   },
   {
     id: "actions",
-    header: "Detail",
+    header: "Akce",
+    enableSorting: false,
     cell: ({ row }) => (
-      <StoreLink className="underline" href={orderHref(row.original)}>
-        Otevřít
-      </StoreLink>
+      <ReorderAction orderId={row.original.id}>
+        <StoreLink className="whitespace-nowrap underline" href={orderHref(row.original)}>
+          Otevřít
+          <span className="sr-only"> objednávku {row.original.number}</span>
+        </StoreLink>
+      </ReorderAction>
     ),
   },
 ];
@@ -131,6 +147,9 @@ export function AccountOrders({
                 <StoreLink className="underline" href={orderHref(order)}>
                   Detail objednávky
                 </StoreLink>
+                <div className="mt-(--dimension-16)">
+                  <ReorderAction orderId={order.id} />
+                </div>
               </li>
             ))}
           </ul>

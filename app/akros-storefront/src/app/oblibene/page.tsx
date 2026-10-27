@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
 import { AccountLink } from "@/features/account/account-link";
 import { AccountShell } from "@/components/account-shell";
-import { ProductGrid } from "@/components/product-grid";
+import { FavoritesList } from "@/features/favorites/favorites-list";
 import { AccountHeading } from "@/features/account/account-content";
-import { getCatalog } from "@/ontos/catalog-server";
 
 export const metadata: Metadata = { title: "Oblíbené produkty" };
 export default async function FavoritesPage() {
-  const { getProducts, toProductSummary } = await getCatalog();
   return (
     <AccountShell active="favorites">
       <AccountHeading
         title="Oblíbené produkty"
-        description="Ukázkový seznam často nakupovaných produktů."
+        description="Vaše oblíbené varianty uložené v tomto prohlížeči."
       >
         <AccountLink
           href="/muj-ucet/prehled"
@@ -24,12 +22,7 @@ export default async function FavoritesPage() {
           Zpět na přehled
         </AccountLink>
       </AccountHeading>
-      <div data-account-products>
-        <ProductGrid
-          products={getProducts().slice(0, 6).map(toProductSummary)}
-          columns="featured"
-        />
-      </div>
+      <FavoritesList />
     </AccountShell>
   );
 }

@@ -14,11 +14,13 @@ export function ContactForm({
   kind = "CONTACT",
   productId,
   productName,
+  initialMessage,
 }: {
   compact?: boolean;
   kind?: InquiryKind;
   productId?: string;
   productName?: string;
+  initialMessage?: string;
 }) {
   const [pending, setPending] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -139,6 +141,7 @@ export function ContactForm({
           id={compact ? "faq-message" : "contact-message"}
           label="Zpráva"
           name="message"
+          defaultValue={initialMessage}
           maxLength={1500}
           placeholder={
             kind === "COMPLAINT"

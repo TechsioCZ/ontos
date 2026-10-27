@@ -1,0 +1,34 @@
+.akros-variant-detail {
+  --akros-variant-detail-width: 960px;
+  --container-dialog-center-w-max: var(--akros-variant-detail-width);
+  --container-dialog-center-h-max: calc(100dvh - var(--dimension-32));
+  --spacing-dialog-content: var(--dimension-16);
+  --padding-dialog-content: var(--dimension-24);
+  --text-dialog-title: var(--text-xl);
+  --color-dialog-content-bg: var(--color-base);
+  --height-form-control-md: var(--dimension-44);
+  --color-button-border-secondary: var(--color-border-primary);
+  --radius-button-md: var(--radius-sm);
+}
+
+.akros-variant-detail-link {
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+  --color-button-bg-borderless-base: var(--color-bg-transparent);
+  --color-button-bg-borderless-hover: var(--color-bg-transparent);
+  --color-button-bg-borderless-active: var(--color-bg-transparent);
+  --font-weight-button: var(--font-weight-bold);
+}
+
+.akros-variant-preview {
+  --color-tooltip-bg: var(--color-base);
+  --tooltip-arrow-background: var(--color-tooltip-bg);
+  --padding-tooltip-md: var(--dimension-8);
+  --radius-tooltip: var(--radius-sm);
+}
+
+@media (max-width: 767px) {
+  .akros-variant-detail {
+    --padding-dialog-content: var(--dimension-16);
+    --text-dialog-title: var(--text-lg);
+  }
+}

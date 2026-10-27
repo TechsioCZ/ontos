@@ -55,6 +55,14 @@
   @apply akros-product-icon-[akros-product-actions--email];
 }
 
+@utility token-icon-akros-product-share {
+  @apply icon-[mdi--share-variant-outline];
+}
+
+@utility token-icon-akros-product-print {
+  @apply icon-[mdi--printer-outline];
+}
+
 @utility token-icon-akros-facebook {
   @apply akros-icon-[akros--facebook];
 }
@@ -65,9 +73,4 @@
 
 @utility token-icon-akros-youtube {
   @apply akros-icon-[akros--youtube];
-}
-
-@utility token-icon-akros-checkbox-selected {
-  @apply akros-icon-[akros--checkbox-selected];
-  @apply size-(--akros-variant-filter-checkbox-indicator-size);
 }

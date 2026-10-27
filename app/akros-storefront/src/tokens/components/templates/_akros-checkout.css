@@ -17,6 +17,12 @@
   --text-xs--line-height: var(--akros-checkout-body-leading);
   --akros-checkout-payment-heading-size: 30px;
   --font-weight-label: var(--font-weight-medium);
+  --akros-checkout-shipping-icon-size: 54px;
+  --akros-checkout-return-icon-size: var(--dimension-48);
+  --akros-checkout-progress-width: 429px;
+  --akros-checkout-progress-height: var(--dimension-6);
+  --akros-checkout-progress-radius: var(--dimension-4);
+  --akros-checkout-progress-track: #ededed;
   --color-fill-surface: #f8f9fa;
   --color-button-bg-primary-base: #fdc533;
   --color-button-fg-primary: var(--akros-checkout-ink);
@@ -63,7 +69,6 @@
   --color-button-bg-outlined-secondary-hover: var(--color-fill-hover);
   --color-button-bg-outlined-secondary-active: var(--color-fill-active);
   --height-form-control-sm: var(--dimension-60);
-  --height-numeric-input-sm: var(--height-form-control-sm);
   --width-phone-input-trigger: max-content;
   --size-icon-control-md: var(--dimension-44);
   --color-table-bg: var(--color-base);

@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 import { AccountShell } from "@/components/account-shell";
 import { CustomerNewsletterConsentForm } from "./customer-newsletter-consent";
 import type { CustomerAccount } from "@/ontos/account";
@@ -97,78 +98,109 @@ export function AccountProfilePage({
   };
   return (
     <AccountShell active="profile">
-      <h1>Můj účet</h1>
-      <form
-        action="/api/ontos/account/profile"
-        className="akros-auth-form"
-        method="post"
-        onSubmit={save}
+      <h1 className="sr-only">Můj účet</h1>
+      <Accordion
+        defaultValue={["profile", "consent"]}
+        multiple
+        collapsible
+        variant="borderless"
+        shadow="none"
+        size="sm"
+        className="gap-(--dimension-60)"
       >
-        <FormInput
-          autoComplete="name"
-          disabled={pending !== null}
-          id="account-name"
-          label="Jméno"
-          maxLength={300}
-          name="displayName"
-          onChange={(event) => edit("displayName", event.target.value)}
-          required
-          size="sm"
-          value={values.displayName}
-        />
-        <FormInput
-          autoComplete="username"
-          id="account-email"
-          label="Přihlašovací e-mail"
-          name="email"
-          readOnly
-          size="sm"
-          type="email"
-          value={account.email}
-        />
-        <p>Přihlašovací e-mail nelze změnit úpravou kontaktních údajů.</p>
-        <FormInput
-          autoComplete="tel"
-          disabled={pending !== null}
-          id="account-phone"
-          label="Telefonní kontakt"
-          maxLength={100}
-          name="phone"
-          onChange={(event) => edit("phone", event.target.value)}
-          size="sm"
-          type="tel"
-          value={values.phone}
-        />
-        <FormInput
-          disabled={pending !== null}
-          id="account-contact-email"
-          label="Kontaktní e-mail"
-          maxLength={320}
-          name="contactEmail"
-          onChange={(event) => edit("contactEmail", event.target.value)}
-          size="sm"
-          type="email"
-          value={values.contactEmail}
-        />
-        <p>
-          Kontaktní údaje se ukládají do OntOS. Jejich změna nemění přihlašovací e-mail ani heslo.
-        </p>
-        <Button disabled={pending !== null} size="sm" type="submit" variant="primary">
-          {pending === "save" ? "Ukládám…" : "Uložit změny"}
-        </Button>
-        <Button
-          disabled={pending !== null}
-          onClick={logout}
-          size="sm"
-          type="button"
-          variant="primary"
-        >
-          {pending === "logout" ? "Odhlašuji…" : "Odhlásit se"}
-        </Button>
-        {saved && <output>Údaje byly uloženy v OntOS a znovu načteny.</output>}
-        {error && <p role="alert">{error}</p>}
-      </form>
-      <CustomerNewsletterConsentForm />
+        <Accordion.Item value="profile">
+          <Accordion.Header className="w-fit [&>button]:leading-(--akros-account-heading-leading)">
+            <Accordion.Title>Kontaktní údaje</Accordion.Title>
+            <Accordion.Indicator icon="token-icon-akros-account-disclosure" />
+          </Accordion.Header>
+          <Accordion.Content className="pt-(--dimension-24)">
+            <form
+              action="/api/ontos/account/profile"
+              className="grid max-w-(--akros-account-form-width) gap-(--dimension-32)"
+              method="post"
+              onSubmit={save}
+            >
+              <div className="grid gap-(--dimension-32) md:grid-cols-2">
+                <FormInput
+                  autoComplete="name"
+                  disabled={pending !== null}
+                  id="account-name"
+                  label="Jméno a příjmení"
+                  maxLength={300}
+                  name="displayName"
+                  onChange={(event) => edit("displayName", event.target.value)}
+                  required
+                  size="sm"
+                  value={values.displayName}
+                />
+                <FormInput
+                  autoComplete="username"
+                  id="account-email"
+                  label="Přihlašovací e-mail"
+                  name="email"
+                  readOnly
+                  size="sm"
+                  type="email"
+                  value={account.email}
+                />
+                <FormInput
+                  autoComplete="tel"
+                  disabled={pending !== null}
+                  id="account-phone"
+                  label="Telefonní kontakt"
+                  maxLength={100}
+                  name="phone"
+                  onChange={(event) => edit("phone", event.target.value)}
+                  size="sm"
+                  type="tel"
+                  value={values.phone}
+                />
+                <FormInput
+                  disabled={pending !== null}
+                  id="account-contact-email"
+                  label="Kontaktní e-mail"
+                  maxLength={320}
+                  name="contactEmail"
+                  onChange={(event) => edit("contactEmail", event.target.value)}
+                  size="sm"
+                  type="email"
+                  value={values.contactEmail}
+                />
+              </div>
+              <p>
+                Kontaktní údaje se ukládají do OntOS. Jejich změna nemění přihlašovací e-mail ani
+                heslo.
+              </p>
+              <div className="flex flex-wrap justify-end gap-(--dimension-16)">
+                <Button disabled={pending !== null} size="sm" type="submit" variant="primary">
+                  {pending === "save" ? "Ukládám…" : "Uložit změny"}
+                </Button>
+                <Button
+                  disabled={pending !== null}
+                  onClick={logout}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                  theme="outlined"
+                >
+                  {pending === "logout" ? "Odhlašuji…" : "Odhlásit se"}
+                </Button>
+              </div>
+              {saved && <output>Údaje byly uloženy v OntOS a znovu načteny.</output>}
+              {error && <p role="alert">{error}</p>}
+            </form>
+          </Accordion.Content>
+        </Accordion.Item>
+        <Accordion.Item value="consent">
+          <Accordion.Header className="w-fit [&>button]:leading-(--akros-account-heading-leading)">
+            <Accordion.Title>Odběr novinek</Accordion.Title>
+            <Accordion.Indicator icon="token-icon-akros-account-disclosure" />
+          </Accordion.Header>
+          <Accordion.Content className="pt-(--dimension-24)">
+            <CustomerNewsletterConsentForm />
+          </Accordion.Content>
+        </Accordion.Item>
+      </Accordion>
     </AccountShell>
   );
 }

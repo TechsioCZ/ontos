@@ -7,13 +7,20 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import { productStockLabels, productStockTone } from "@/lib/product-stock";
-import type { CatalogProductSummary } from "@/ontos/catalog-types";
+import type { CatalogProductSummary, CatalogPriceTier } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;
+  favoriteVariantId?: string | null;
+  favoriteVariantLabel?: string;
+  variantId?: string;
+  variantLabel?: string;
+  productName?: string;
+  priceTiers?: CatalogPriceTier[];
 }
 
 export function ProductGrid({
@@ -48,9 +55,11 @@ export function ProductGrid({
           product.stock.kind === "quantity" &&
           product.stock.status === "in-stock";
         const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
-        const priceLabel = priceUnavailable
-          ? "Cena není dostupná"
-          : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`;
+        const priceLabel = product.hasVariants
+          ? "Cena podle zvolené varianty"
+          : priceUnavailable
+            ? "Cena není dostupná"
+            : formatPrice(product.priceMinor, product.currency);
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
@@ -116,16 +125,15 @@ export function ProductGrid({
                     </div>
                   )}
                 </StoreLink>
-                <LinkButton
-                  aria-label="Zobrazit oblíbené produkty"
-                  as={StoreLink}
-                  className="akros-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
-                  href="/oblibene"
-                  icon="icon-[mdi--heart-outline]"
-                  iconSize="lg"
-                  size="current"
-                  theme="borderless"
-                  variant="secondary"
+                <FavoriteButton
+                  productId={product.id}
+                  productName={product.name}
+                  productSlug={product.slug}
+                  variantId={
+                    product.favoriteVariantId ??
+                    (product.hasVariants ? undefined : (product.variantId ?? null))
+                  }
+                  placement="card"
                 />
               </div>
 
@@ -154,6 +162,7 @@ export function ProductGrid({
               </p>
 
               <ProductCard.Price
+                data-akros-product-price
                 className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--akros-checkout-heading-leading)" : ""}`}
               >
                 {hasDiscount ? (
@@ -192,8 +201,10 @@ export function ProductGrid({
                   <AddToCartButton
                     item={{
                       productId: product.id,
+                      variantId: product.variantId,
                       slug: product.slug,
-                      name: product.name,
+                      name: product.productName ?? product.name,
+                      variantLabel: product.variantLabel,
                       sku: product.sku,
                       imageSrc: product.imageSrc,
                       imageAlt: product.imageAlt,
@@ -205,6 +216,7 @@ export function ProductGrid({
                       priceExcludingVatMinor: product.priceExcludingVatMinor,
                     }}
                     quantity={product.stock.minimumQuantity}
+                    priceTiers={product.priceTiers}
                   />
                 ) : (
                   <LinkButton
