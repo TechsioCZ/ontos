@@ -81,7 +81,13 @@ it('composes the production Action runtime with Node platform Crypto beside the 
   ].join('\n');
   const patched = patchRuntimeRoot(runtimeRoot, vertical, 'changeRateActionApiLive');
   expect(patched).toContain(
-    'const productionActionRuntimeLive = pricingPolicyActionRuntimeLive.pipe(\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n);\nconst productionReadRuntimeLive',
+    'const productionActionRuntimeLive = pricingPolicyActionRuntimeLive.pipe(\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n  Layer.provide(actionHttpDatabaseIdentitiesLive),\n);\nconst productionReadRuntimeLive',
+  );
+  expect(patched).toContain(
+    'const actionHttpDatabaseIdentitiesLive = makeActionHttpDatabaseIdentityEnrollmentLive(\n  defineActionHttpDatabaseIdentityEnrollment([]),\n);',
+  );
+  expect(patched).toContain(
+    'const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(\n  Layer.provide(actionHttpDatabaseIdentitiesLive),\n  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),\n);',
   );
   expect(patched).toContain(`import { NodeCrypto } from '@effect/platform-node';\n${assemblerImport}`);
   expect(patched).toContain(
@@ -310,6 +316,7 @@ it.live(
 
 it('publishes bare Action groups and exposes the injected runtime through request services exactly once', () => {
   const source = `
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { pricingPolicyReadRuntimeLive } from './pricing-policy-production-layers.ts';
 const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
 type PricingPolicyApiRuntimeArguments = readonly [

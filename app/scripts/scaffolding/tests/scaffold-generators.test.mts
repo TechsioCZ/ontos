@@ -693,6 +693,7 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
             'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: preservedFixtureValue,
         },
+        type: 'module',
         version: '0.1.0',
       }),
     );
@@ -1693,6 +1694,21 @@ it.live(
         assertGovernedReadServers([moduleApiServer, searchServer, reportServer]);
         expect(operationBoundary).toMatch(/export const authenticateOperationPrincipal/u);
         assertComposedGovernedReads(composedApi, composedHandlers);
+        expect(hasValidGovernedHttpCompositionRoot(composedApi, composedHandlers)).toBe(true);
+        for (const [before, after] of [
+          ["'@modern-js/bff-effect/assembly'", "'./counterfeit-assembler.ts'"],
+          [
+            'GovernedReadLayer.mergeAll(fixtureLayer, governedReadApiHandlersLive)',
+            'GovernedReadLayer.mergeAll(fixtureLayer)',
+          ],
+          [
+            'services: GovernedReadLayer.mergeAll(',
+            'services: unrelatedServicesLive, unusedServices: GovernedReadLayer.mergeAll(',
+          ],
+        ] as const) {
+          expect(composedHandlers).toContain(before);
+          expect(hasValidGovernedHttpCompositionRoot(composedApi, composedHandlers.replace(before, after))).toBe(false);
+        }
         const searchContract = yield* readFixtureFile(fixture.root, inventorySearchContractFile);
         const reportContract = yield* readFixtureFile(
           fixture.root,
@@ -1741,6 +1757,7 @@ export const authenticateOperationPrincipal = (authorization, problems) =>
           fixture.root,
           'execute-generated-governed-reads.mts',
           `import { ReadRuntime } from '@app/core-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import {
   defineEffectBff,
   Effect,
@@ -1777,13 +1794,20 @@ const handlers = Layer.mergeAll(
   resourceDetailReadApiLive,
   resourceHistoryReadApiLive,
   stockLevelsReadApiLive,
-).pipe(Layer.provide(readLayer));
-const runtime = defineEffectBff({
+);
+const runtime = assembleEffectBffRuntime({
   api: fixtureApi,
-  layer: HttpApiBuilder.layer(fixtureApi).pipe(Layer.provide(handlers)),
+  handlers,
+  services: readLayer,
 });
 const server = runtime.createHandler();
-const generatedServer = generatedRuntime.createHandler();
+// Keep the generated API and handler assembly intact, but inject test-only services.
+// The production services verify PostgreSQL identity during startup.
+const generatedServer = defineEffectBff({
+  api: generatedRuntime.api,
+  layer: generatedRuntime.layer,
+  services: readLayer,
+}).createHandler();
 const requests = [
   ['/reads/resource-detail', {}],
   ['/inventory.stock/search/inventory-items', { query: 'chair' }],
@@ -1810,6 +1834,17 @@ for (const [route, payload] of requests) {
     successes.push({ body: (yield* Effect.promise(() => response.json())), status: response.status });
   }
 const callsAfterSuccess = calls.length;
+const missingAuthorizationStatuses = [];
+for (const [route, payload] of requests) {
+  const response = (yield* Effect.promise(() => server.handler(
+    new Request('http://fixture.test' + route, {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json', 'x-correlation-id': 'generated-correlation' },
+      method: 'POST',
+    }),
+  )));
+  missingAuthorizationStatuses.push(response.status);
+}
 const missingCorrelationStatuses = [];
 for (const [route, payload] of requests) {
     const response = (yield* Effect.promise(() => server.handler(
@@ -1833,6 +1868,7 @@ console.log(
       calls,
       callsAfterSuccess,
       generatedRootStatus: generatedRootResponse.status,
+      missingAuthorizationStatuses,
       missingCorrelationStatuses,
       successes,
     }),
@@ -1846,13 +1882,10 @@ console.log(
           {
             cwd: fixture.root,
             encoding: 'utf-8',
-            env: {
-              DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
-              DATABASE_URL: 'postgresql://ontos_runtime:runtime@localhost:5433/ontos',
-            },
+            env: {},
           },
         );
-        expect(execution.status, execution.stderr).toBe(0);
+        expect(execution.status, `${execution.stdout}\n${execution.stderr}`).toBe(0);
         const expectedGeneratedPrincipal = {
           authContextRef: 'job:generated-fixture:run:governed-read',
           authMethod: 'system',
@@ -1899,6 +1932,7 @@ console.log(
           ],
           callsAfterSuccess: 4,
           generatedRootStatus: 400,
+          missingAuthorizationStatuses: [401, 401, 401, 401],
           missingCorrelationStatuses: [400, 400, 400, 400],
           successes: [
             { body: { ok: true }, status: 200 },
