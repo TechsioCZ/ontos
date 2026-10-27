@@ -1,4 +1,4 @@
-import { Predicate, Schema } from 'effect';
+import { Schema } from 'effect';
 import { PropertyRefSchema } from '../resources/property.ts';
 import { UnitRefSchema } from '../resources/unit.ts';
 import { AssetRefSchema } from '../resources/asset.ts';
@@ -17,22 +17,23 @@ import { PropertyUnavailable } from './errors/property-unavailable.ts';
 
 export const PropertyCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProperty', {
-    propertyType: Schema.optionalKey(PropertyTextSchema),
-    responsiblePerson: Schema.optionalKey(PropertyTextSchema),
-    note: Schema.optionalKey(Schema.NullOr(Schema.String)),
-    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
     address: PropertyTextSchema,
     code: PropertyTextSchema,
+    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
     name: PropertyTextSchema,
-  }),
-  Schema.TaggedStruct('UpdateProperty', {
+    // Command JSON distinguishes an omitted create default from an explicit null note.
+    note: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(Schema.String))),
     propertyType: Schema.optionalKey(PropertyTextSchema),
     responsiblePerson: Schema.optionalKey(PropertyTextSchema),
-    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
+  }),
+  Schema.TaggedStruct('UpdateProperty', {
     address: PropertyTextSchema,
+    lifecycleState: Schema.optionalKey(PropertyLifecycleSchema),
     name: PropertyTextSchema,
     note: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
     propertyRef: PropertyRefSchema,
+    propertyType: Schema.optionalKey(PropertyTextSchema),
+    responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   }),
   Schema.TaggedStruct('ChangePropertyLifecycle', {
     lifecycleState: PropertyLifecycleSchema,
@@ -70,18 +71,16 @@ export const PropertyCommandSchema = Schema.Union([
     serialNumber: Schema.toEncoded(Schema.OptionFromNullOr(PropertyTextSchema)),
   }),
   Schema.TaggedStruct('ChangeAssetLifecycle', { assetRef: AssetRefSchema, lifecycleState: AssetLifecycleSchema }),
-]);
+]).pipe(Schema.toTaggedUnion('_tag'));
 export type PropertyCommand = typeof PropertyCommandSchema.Type;
-type StaffOnlyPropertyCommand = Extract<
-  PropertyCommand,
-  { readonly _tag: 'ArchiveProperty' | 'ArchiveUnit' | 'RestoreProperty' | 'RestoreUnit' }
->;
+const StaffOnlyPropertyCommandSchema = Schema.Union([
+  PropertyCommandSchema.cases.ArchiveProperty,
+  PropertyCommandSchema.cases.ArchiveUnit,
+  PropertyCommandSchema.cases.RestoreProperty,
+  PropertyCommandSchema.cases.RestoreUnit,
+]);
 /** Archive commands change what every register shows, so only interactive staff sessions may run them. */
-export const isStaffOnlyPropertyCommand = (command: PropertyCommand): command is StaffOnlyPropertyCommand =>
-  Predicate.isTagged(command, 'ArchiveProperty') ||
-  Predicate.isTagged(command, 'RestoreProperty') ||
-  Predicate.isTagged(command, 'ArchiveUnit') ||
-  Predicate.isTagged(command, 'RestoreUnit');
+export const isStaffOnlyPropertyCommand = Schema.is(StaffOnlyPropertyCommandSchema);
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: PropertyCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

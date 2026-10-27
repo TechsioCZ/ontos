@@ -15,9 +15,11 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
+import type { LeaseBlock } from './unit-story.tsx';
 import { executeRecords } from '../../../api/records-client';
 import type { RecordsResponse } from '../../../../shared/apis/records';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime';
@@ -388,12 +390,12 @@ const usePropertyRecords = (legalEntityId: string) => {
   ];
   return {
     agreements,
-    language: language ?? 'cs',
     asset,
     assets,
     availability,
     finance,
     key,
+    language: language ?? 'cs',
     loadSummary,
     message,
     money,
@@ -426,6 +428,563 @@ const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-
 const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
+type RecordsModel = ReturnType<typeof usePropertyRecords>;
+type PropertyEditor = ReturnType<typeof usePropertyEditor>;
+interface RecordsView {
+  readonly availabilityLabel: (id: string, lifecycle: string) => string;
+  readonly editor: PropertyEditor;
+  readonly leasable: (lifecycle: string) => boolean;
+  readonly model: RecordsModel;
+  readonly requestArchive: (label: string, onConfirm: (reason: string) => void) => void;
+  readonly requestRetire: (unit: RecordsResponse['units'][number]) => void;
+}
+interface RecordConfirmation {
+  readonly description: string;
+  readonly initialReason?: string;
+  readonly onConfirm: (reason: string) => void;
+  readonly title: string;
+}
+const RecordsConfirmation = ({
+  onClose,
+  request,
+}: {
+  readonly onClose: () => void;
+  readonly request: RecordConfirmation;
+}) => {
+  const [reason, setReason] = useState(request.initialReason ?? '');
+  const needsReason = request.initialReason !== undefined;
+  const confirm = () => {
+    if (needsReason && reason.trim() === '') {
+      return;
+    }
+    request.onConfirm(reason.trim());
+    onClose();
+  };
+  return (
+    <Dialog
+      actions={
+        <>
+          <Button onClick={onClose} theme="outlined" type="button" variant="secondary">
+            Zrušit
+          </Button>
+          <Button disabled={needsReason && reason.trim() === ''} onClick={confirm} type="button" variant="danger">
+            Potvrdit
+          </Button>
+        </>
+      }
+      closeLabel="Zavřít"
+      customTrigger
+      description={request.description}
+      onOpenChange={({ open }) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      title={request.title}
+    >
+      {needsReason && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            confirm();
+          }}
+        >
+          <FormInput
+            id="record-archive-reason"
+            label="Důvod archivace"
+            onChange={(event) => setReason(event.target.value)}
+            required
+            value={reason}
+          />
+        </form>
+      )}
+    </Dialog>
+  );
+};
+const unitLeaseBlock = (
+  unit: RecordsResponse['units'][number],
+  archived: boolean,
+  leasable: RecordsView['leasable'],
+): LeaseBlock | undefined => {
+  if (archived || unit.lifecycleState === 'RETIRED') {
+    return 'retired';
+  }
+  if (unit.lifecycleState === 'ACTIVE') {
+    return leasable(unit.lifecycleState) ? undefined : 'building';
+  }
+  return 'outOfService';
+};
+
+const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
+  const { editor, model } = view;
+  const { key, t } = model;
+  const handleCancelEditor = editor.cancel;
+  return (
+    editor.draft !== undefined && (
+      <form
+        className={`${detailCardClass} sp-property-editor`}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          editor.save();
+        }}
+      >
+        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
+          {t(`${key}.editor.${editor.title}`)}
+        </h2>
+        {editor.fields.map((field) => (
+          <FormInput
+            disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
+            id={`property-${field}`}
+            key={field}
+            label={t(`${key}.editor.${field}`)}
+            onChange={(event) => editor.change(field, event.target.value)}
+            required={field !== 'note'}
+            value={editor.draft?.[field] ?? ''}
+            {...(editor.errors[field] === undefined
+              ? {}
+              : { helpText: editor.errors[field], validateStatus: 'error' as const })}
+          />
+        ))}
+        {editor.draft.unitFor === undefined && (
+          <label className="sp-property-state">
+            {t(`${key}.state`)}
+            <select
+              aria-label={t(`${key}.state`)}
+              onChange={(event) => editor.changeLifecycle(event.target.value)}
+              value={editor.draft.lifecycleState}
+            >
+              {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
+                <option key={state} value={state}>
+                  {t(`${key}.states.${state}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="sp-property-editor-actions propertyportfolio:flex propertyportfolio:gap-3">
+          <Button disabled={editor.busy} type="submit" variant="warning">
+            {t(`${key}.editor.save`)}
+          </Button>
+          <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
+            {t(`${key}.editor.cancel`)}
+          </Button>
+        </div>
+      </form>
+    )
+  );
+};
+
+const RecordsTables = ({
+  showArchived,
+  showClosed,
+  view,
+}: {
+  readonly showArchived: boolean;
+  readonly showClosed: boolean;
+  readonly view: RecordsView;
+}) => {
+  const { availabilityLabel, editor, model } = view;
+  const { key, t, unit } = model;
+  return model.tables.flatMap((group) =>
+    (group.kind !== 'properties' && model.property === undefined) ||
+    (group.kind === 'assets' && group.rows.length === 0)
+      ? []
+      : [
+          <div className={tableWrapperClass} key={group.kind}>
+            <Table className="propertyportfolio:w-full" size="sm" variant="line">
+              <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
+              <Table.Header>
+                <Table.Row>
+                  {['code', 'name', 'state', 'detail'].map((column) => (
+                    <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
+                  ))}
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {group.rows.flatMap((item) => {
+                  const visible =
+                    (showArchived || !item.archived) &&
+                    (showClosed ||
+                      group.kind === 'assets' ||
+                      ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
+                      item.id === model.property?.propertyRef.resourceId ||
+                      item.id === unit?.unitRef.resourceId);
+                  if (!visible) {
+                    return [];
+                  }
+                  return [
+                    <Table.Row key={item.id}>
+                      <Table.Cell>{item.code}</Table.Cell>
+                      <Table.Cell>{item.name}</Table.Cell>
+                      <Table.Cell>
+                        <span className="propertyportfolio:inline-flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2">
+                          <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                            {t(`${key}.states.${item.state}`)}
+                          </Badge>
+                          {item.archived && (
+                            <Badge size="sm" variant="secondary">
+                              Archivováno
+                            </Badge>
+                          )}
+                          {group.kind === 'units' && (
+                            <span className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</span>
+                          )}
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell>
+                        <div className="sp-property-row-actions">
+                          <Button
+                            disabled={model.pending || editor.busy}
+                            onClick={() => group.select(item.id)}
+                            size="sm"
+                            theme="outlined"
+                            variant="secondary"
+                          >
+                            {t(`${key}.detail`)}
+                          </Button>
+                          {item.property !== null && (
+                            <Button
+                              disabled={editor.busy}
+                              onClick={() => editor.begin(item.property)}
+                              size="sm"
+                              theme="outlined"
+                              variant="secondary"
+                            >
+                              {t(`${key}.editor.edit`)}
+                            </Button>
+                          )}
+                        </div>
+                      </Table.Cell>
+                    </Table.Row>,
+                  ];
+                })}
+              </Table.Body>
+            </Table>
+          </div>,
+        ],
+  );
+};
+
+const RecordsUnitActions = ({ view }: { readonly view: RecordsView }) => {
+  const { editor, model, requestArchive, requestRetire } = view;
+  const { unit } = model;
+  if (unit === undefined) {
+    return null;
+  }
+  const unitArchive = unit.archive ?? model.property?.archive;
+  return (
+    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
+      {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
+        <Button
+          disabled={editor.busy}
+          onClick={() => {
+            requestArchive(`jednotku ${unit.code}`, (reason) => editor.archiveUnit(unit, reason));
+          }}
+          size="sm"
+          theme="outlined"
+          variant="danger"
+        >
+          Archivovat jednotku
+        </Button>
+      )}
+      {unit.archive !== undefined && model.property?.archive === undefined && (
+        <Button
+          disabled={editor.busy}
+          onClick={() => editor.restoreUnit(unit)}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Obnovit z archivu
+        </Button>
+      )}
+      {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
+        <Button
+          disabled={editor.busy}
+          onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Dočasně mimo provoz
+        </Button>
+      )}
+      {unitArchive === undefined &&
+        unit.lifecycleState === 'OUT_OF_SERVICE' &&
+        model.property?.lifecycleState !== 'DISPOSED' && (
+          <Button
+            disabled={editor.busy}
+            onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Vrátit do provozu
+          </Button>
+        )}
+      {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
+        <Button
+          disabled={editor.busy}
+          onClick={() => {
+            requestRetire(unit);
+          }}
+          size="sm"
+          theme="outlined"
+          variant="danger"
+        >
+          Vyřadit jednotku
+        </Button>
+      )}
+    </div>
+  );
+};
+
+const RecordsUnitDetails = ({ view }: { readonly view: RecordsView }) => {
+  const { availabilityLabel, leasable, model } = view;
+  const { key, t, unit } = model;
+  const unitArchive = unit?.archive ?? model.property?.archive;
+  return (
+    unit !== undefined && (
+      <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
+        <h3 className={detailHeadingClass}>
+          {unit.code} · {unit.name}
+        </h3>
+        <p className={secondaryTextClass}>
+          {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
+          {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
+        </p>
+        {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
+        {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
+          <p className={secondaryTextClass}>Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.</p>
+        )}
+        {unit.lifecycleState === 'RETIRED' && (
+          <p className={secondaryTextClass}>
+            Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
+          </p>
+        )}
+        {unitArchive !== undefined && (
+          <output className={secondaryTextClass}>
+            Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
+          </output>
+        )}
+        <RecordsUnitActions view={view} />
+        <UnitStory
+          agreements={model.agreements}
+          language={model.language}
+          leaseBlock={unitLeaseBlock(unit, unitArchive !== undefined, leasable)}
+          occupancy={model.occupancy}
+          t={t}
+          tasks={model.work?.items}
+          unit={unit}
+        />
+        <RecordDiscussion
+          subject={{ id: unit.unitRef.resourceId, kind: 'unit', label: `${unit.code} · ${unit.name}` }}
+        />
+      </aside>
+    )
+  );
+};
+
+const RecordsRelatedDetails = ({ view }: { readonly view: RecordsView }) => {
+  const { model } = view;
+  const { asset, key, relatedSections, t } = model;
+  return (
+    <>
+      {model.finance !== undefined && (
+        <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
+          <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
+          <p className={secondaryTextClass}>
+            {model.finance.state.invoices.length === 0
+              ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
+              : t(`${key}.financialValues`, {
+                  cost: model.money(model.finance.indicators.costMinor),
+                  outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
+                  revenue: model.money(model.finance.indicators.revenueMinor),
+                })}
+          </p>
+          <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+            {model.finance.state.invoices.map((invoice) => (
+              <li key={invoice.ref.resourceId}>
+                <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
+                  {invoice.documentNumber} · {model.money(invoice.totalMinor)}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <div className="propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-2">
+        {relatedSections.flatMap((section) =>
+          section.enabled
+            ? [
+                <section aria-label={section.title} className={relatedCardClass} key={section.title}>
+                  <h3 className={detailHeadingClass}>{section.title}</h3>
+                  {section.items.length === 0 && <p className={secondaryTextClass}>{t(`${key}.emptyRelated`)}</p>}
+                  <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+                    {section.items.map((item) => (
+                      <li key={item.href}>
+                        <Link href={item.href}>{item.label}</Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>,
+              ]
+            : [],
+        )}
+      </div>
+      {asset !== undefined && (
+        <aside className={relatedCardClass}>
+          <h3 className={detailHeadingClass}>
+            {asset.code} · {asset.name}
+          </h3>
+          <p className={secondaryTextClass}>
+            {asset.category} · {asset.serialNumber ?? '—'}
+          </p>
+          {model.work !== undefined && (
+            <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
+              {model.work.items.flatMap((task) =>
+                task.contextRefs.some(
+                  (ref) =>
+                    ref.moduleId === asset.assetRef.moduleId &&
+                    ref.resourceType === asset.assetRef.resourceType &&
+                    ref.tenantId === asset.assetRef.tenantId &&
+                    ref.resourceId === asset.assetRef.resourceId,
+                )
+                  ? [
+                      <li key={task.ref.resourceId}>
+                        <Link href={model.ownerHref('ukoly', task.ref.resourceId)}>{task.title}</Link>
+                      </li>,
+                    ]
+                  : [],
+              )}
+            </ul>
+          )}
+          <p className={secondaryTextClass}>
+            {t(`${key}.lastService`)}: {asset.lastServiceAt ?? '—'} · {t(`${key}.nextService`)}:{' '}
+            {asset.nextServiceAt ?? '—'}
+          </p>
+        </aside>
+      )}
+    </>
+  );
+};
+
+const RecordsPropertyDetails = ({ view }: { readonly view: RecordsView }) => {
+  const { editor, model, requestArchive } = view;
+  const { key, t, unit } = model;
+  const handleLoadSummary = model.loadSummary;
+  return (
+    model.property !== undefined && (
+      <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
+        <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
+          {model.property.code} · {model.property.name}
+        </h2>
+        <p className={secondaryTextClass}>{model.property.address}</p>
+        <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
+        {model.property.archive !== undefined && (
+          <output className={secondaryTextClass}>
+            Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}. Záznam
+            se nezobrazuje v seznamech ani výběrech ostatních agend.
+          </output>
+        )}
+        <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
+          {model.property.archive === undefined ? (
+            <>
+              <Button
+                disabled={editor.busy}
+                onClick={() => {
+                  if (model.property !== undefined) {
+                    editor.toggleLifecycle(model.property);
+                  }
+                }}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+              </Button>
+              <Button
+                disabled={editor.busy}
+                onClick={() => {
+                  if (model.property !== undefined) {
+                    editor.beginUnit(model.property);
+                  }
+                }}
+                size="sm"
+                variant="warning"
+              >
+                {t(`${key}.editor.createUnit`)}
+              </Button>
+              {model.property.lifecycleState !== 'ACTIVE' && (
+                <Button
+                  disabled={editor.busy}
+                  onClick={() => {
+                    const { property } = model;
+                    if (property !== undefined) {
+                      requestArchive(`nemovitost ${property.code}`, (reason) =>
+                        editor.archiveProperty(property, reason),
+                      );
+                    }
+                  }}
+                  size="sm"
+                  theme="outlined"
+                  variant="danger"
+                >
+                  Archivovat záznam
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button
+              disabled={editor.busy}
+              onClick={() => {
+                if (model.property !== undefined) {
+                  editor.restoreProperty(model.property);
+                }
+              }}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Obnovit z archivu
+            </Button>
+          )}
+          <Button disabled={model.pending} onClick={handleLoadSummary} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.loadSummary`)}
+          </Button>
+        </div>
+        <div className={relatedCardClass}>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
+          </p>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.responsiblePerson`)}: {model.property.responsiblePerson ?? 'Neuvedeno'}
+          </p>
+          <p className={secondaryTextClass}>
+            {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
+          </p>
+        </div>
+        <output aria-live="polite" className={messageClass}>
+          {model.summaryMessage}
+        </output>
+        {unit === undefined && model.property !== undefined && (
+          <RecordDiscussion
+            subject={{
+              id: model.property.propertyRef.resourceId,
+              kind: 'property',
+              label: model.property.name,
+            }}
+          />
+        )}
+        <RecordsUnitDetails view={view} />
+        <RecordsRelatedDetails view={view} />
+      </article>
+    )
+  );
+};
+
 const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
   const model = usePropertyRecords(legalEntityId);
   const editor = usePropertyEditor(model.records, model.refresh);
@@ -437,9 +996,8 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
       loadSummaryOnSelect();
     }
   }, [selectedProperty]);
-  const { asset, key, relatedSections, t, unit } = model;
+  const { key, t, unit } = model;
   const handleRefresh = model.refresh;
-  const handleLoadSummary = model.loadSummary;
   // A unit is offered only while both the unit and its building are in operation; retired or archived units
   // and units of a building out of operation never advertise availability.
   const leasable = (lifecycle: string) =>
@@ -459,18 +1017,29 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
     }
     return t(`${key}.availability.${model.availability(id)}`);
   };
-  const archiveReason = (label: string) =>
-    globalThis.prompt(
-      `Archivovat ${label}? Záznam zmizí ze všech seznamů a výběrů; data i historie zůstanou a lze jej obnovit. Důvod archivace:`,
-      'Testovací záznam z ověřování',
-    );
-  const handleCancelEditor = editor.cancel;
   const [showClosed, setShowClosed] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const unitArchive = unit?.archive ?? model.property?.archive;
+  const [confirmation, setConfirmation] = useState<RecordConfirmation>();
+  const requestArchive = (label: string, onConfirm: (reason: string) => void) =>
+    setConfirmation({
+      description: 'Záznam zmizí ze všech seznamů a výběrů; data i historie zůstanou a lze jej obnovit.',
+      initialReason: 'Testovací záznam z ověřování',
+      onConfirm,
+      title: `Archivovat ${label}?`,
+    });
+  const requestRetire = (item: RecordsResponse['units'][number]) =>
+    setConfirmation({
+      description: 'Jednotka se přestane nabízet k pronájmu, historie nájmů a smluv zůstane zachována.',
+      onConfirm: () => editor.changeUnitLifecycle(item, 'RETIRED'),
+      title: `Vyřadit jednotku ${item.code}?`,
+    });
   const archivedCount = model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0;
+  const view: RecordsView = { availabilityLabel, editor, leasable, model, requestArchive, requestRetire };
   return (
     <>
+      {confirmation !== undefined && (
+        <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} />
+      )}
       <UltramodernRouteHead />
       <section
         aria-labelledby="records-heading"
@@ -509,58 +1078,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 {t(`${key}.editor.${editor.feedback}`)}
               </output>
             )}
-            {editor.draft !== undefined && (
-              <form
-                className={`${detailCardClass} sp-property-editor`}
-                noValidate
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  editor.save();
-                }}
-              >
-                <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-                  {t(`${key}.editor.${editor.title}`)}
-                </h2>
-                {editor.fields.map((field) => (
-                  <FormInput
-                    disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
-                    id={`property-${field}`}
-                    key={field}
-                    label={t(`${key}.editor.${field}`)}
-                    onChange={(event) => editor.change(field, event.target.value)}
-                    required={field !== 'note'}
-                    value={editor.draft?.[field] ?? ''}
-                    {...(editor.errors[field] === undefined
-                      ? {}
-                      : { helpText: editor.errors[field], validateStatus: 'error' as const })}
-                  />
-                ))}
-                {editor.draft.unitFor === undefined && (
-                  <label className="sp-property-state">
-                    {t(`${key}.state`)}
-                    <select
-                      aria-label={t(`${key}.state`)}
-                      value={editor.draft.lifecycleState}
-                      onChange={(event) => editor.changeLifecycle(event.target.value)}
-                    >
-                      {(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((state) => (
-                        <option key={state} value={state}>
-                          {t(`${key}.states.${state}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <div className="sp-property-editor-actions propertyportfolio:flex propertyportfolio:gap-3">
-                  <Button disabled={editor.busy} type="submit" variant="warning">
-                    {t(`${key}.editor.save`)}
-                  </Button>
-                  <Button disabled={editor.busy} onClick={handleCancelEditor} theme="outlined" variant="secondary">
-                    {t(`${key}.editor.cancel`)}
-                  </Button>
-                </div>
-              </form>
-            )}
+            <RecordsEditorForm view={view} />
             <label className={`${secondaryTextClass} sp-property-toggle`}>
               <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
               Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
@@ -575,84 +1093,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 Zobrazit archivované záznamy ({archivedCount})
               </label>
             )}
-            {model.tables.flatMap((group) =>
-              (group.kind !== 'properties' && model.property === undefined) ||
-              (group.kind === 'assets' && group.rows.length === 0)
-                ? []
-                : [
-                    <div className={tableWrapperClass} key={group.kind}>
-                      <Table className="propertyportfolio:w-full" size="sm" variant="line">
-                        <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
-                        <Table.Header>
-                          <Table.Row>
-                            {['code', 'name', 'state', 'detail'].map((column) => (
-                              <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
-                            ))}
-                          </Table.Row>
-                        </Table.Header>
-                        <Table.Body>
-                          {group.rows
-                            .filter(
-                              (item) =>
-                                (showArchived || !item.archived) &&
-                                (showClosed ||
-                                  group.kind === 'assets' ||
-                                  ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
-                                  item.id === model.property?.propertyRef.resourceId ||
-                                  item.id === unit?.unitRef.resourceId),
-                            )
-                            .map((item) => (
-                              <Table.Row key={item.id}>
-                                <Table.Cell>{item.code}</Table.Cell>
-                                <Table.Cell>{item.name}</Table.Cell>
-                                <Table.Cell>
-                                  <span className="propertyportfolio:inline-flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2">
-                                    <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
-                                      {t(`${key}.states.${item.state}`)}
-                                    </Badge>
-                                    {item.archived && (
-                                      <Badge size="sm" variant="secondary">
-                                        Archivováno
-                                      </Badge>
-                                    )}
-                                    {group.kind === 'units' && (
-                                      <span className={secondaryTextClass}>
-                                        {availabilityLabel(item.id, item.state)}
-                                      </span>
-                                    )}
-                                  </span>
-                                </Table.Cell>
-                                <Table.Cell>
-                                  <div className="sp-property-row-actions">
-                                    <Button
-                                      disabled={model.pending || editor.busy}
-                                      onClick={() => group.select(item.id)}
-                                      size="sm"
-                                      theme="outlined"
-                                      variant="secondary"
-                                    >
-                                      {t(`${key}.detail`)}
-                                    </Button>
-                                    {item.property !== null && (
-                                      <Button
-                                        disabled={editor.busy}
-                                        onClick={() => editor.begin(item.property)}
-                                        size="sm"
-                                        theme="outlined"
-                                        variant="secondary"
-                                      >
-                                        {t(`${key}.editor.edit`)}
-                                      </Button>
-                                    )}
-                                  </div>
-                                </Table.Cell>
-                              </Table.Row>
-                            ))}
-                        </Table.Body>
-                      </Table>
-                    </div>,
-                  ],
-            )}
+            <RecordsTables showArchived={showArchived} showClosed={showClosed} view={view} />
             {model.property !== undefined && (
               <PropertyEquipment
                 key={`${model.property.propertyRef.resourceId}:${unit?.unitRef.resourceId ?? ''}`}
@@ -661,305 +1102,7 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 unitId={unit?.unitRef.resourceId}
               />
             )}
-            {model.property !== undefined && (
-              <article aria-label={t(`${key}.detail`)} className={detailCardClass}>
-                <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
-                  {model.property.code} · {model.property.name}
-                </h2>
-                <p className={secondaryTextClass}>{model.property.address}</p>
-                <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
-                {model.property.archive !== undefined && (
-                  <p className={secondaryTextClass} role="status">
-                    Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}.
-                    Záznam se nezobrazuje v seznamech ani výběrech ostatních agend.
-                  </p>
-                )}
-                <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-                  {model.property.archive === undefined ? (
-                    <>
-                      <Button
-                        disabled={editor.busy}
-                        onClick={() => {
-                          if (model.property !== undefined) {
-                            editor.toggleLifecycle(model.property);
-                          }
-                        }}
-                        size="sm"
-                        theme="outlined"
-                        variant="secondary"
-                      >
-                        {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
-                      </Button>
-                      <Button
-                        disabled={editor.busy}
-                        onClick={() => {
-                          if (model.property !== undefined) {
-                            editor.beginUnit(model.property);
-                          }
-                        }}
-                        size="sm"
-                        variant="warning"
-                      >
-                        {t(`${key}.editor.createUnit`)}
-                      </Button>
-                      {model.property.lifecycleState !== 'ACTIVE' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            const property = model.property;
-                            const reason = property === undefined ? null : archiveReason(`nemovitost ${property.code}`);
-                            if (property !== undefined && reason !== null && reason.trim() !== '')
-                              editor.archiveProperty(property, reason.trim());
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Archivovat záznam
-                        </Button>
-                      )}
-                    </>
-                  ) : (
-                    <Button
-                      disabled={editor.busy}
-                      onClick={() => {
-                        if (model.property !== undefined) editor.restoreProperty(model.property);
-                      }}
-                      size="sm"
-                      theme="outlined"
-                      variant="secondary"
-                    >
-                      Obnovit z archivu
-                    </Button>
-                  )}
-                  <Button
-                    disabled={model.pending}
-                    onClick={handleLoadSummary}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {t(`${key}.loadSummary`)}
-                  </Button>
-                </div>
-                <div className={relatedCardClass}>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
-                  </p>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.responsiblePerson`)}: {model.property.responsiblePerson ?? 'Neuvedeno'}
-                  </p>
-                  <p className={secondaryTextClass}>
-                    {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
-                  </p>
-                </div>
-                <output aria-live="polite" className={messageClass}>
-                  {model.summaryMessage}
-                </output>
-                {unit === undefined && model.property !== undefined && (
-                  <RecordDiscussion
-                    subject={{
-                      kind: 'property',
-                      id: model.property.propertyRef.resourceId,
-                      label: model.property.name,
-                    }}
-                  />
-                )}
-                {unit !== undefined && (
-                  <aside aria-label={`${unit.code} · ${unit.name}`} className={relatedCardClass} id="unit-detail">
-                    <h3 className={detailHeadingClass}>
-                      {unit.code} · {unit.name}
-                    </h3>
-                    <p className={secondaryTextClass}>
-                      {t(`${key}.kind`)}: {unit.unitKind ?? '—'} · {t(`${key}.capacity`)}: {unit.capacity ?? '—'} ·{' '}
-                      {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
-                    </p>
-                    {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
-                    {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
-                      <p className={secondaryTextClass}>
-                        Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.
-                      </p>
-                    )}
-                    {unit.lifecycleState === 'RETIRED' && (
-                      <p className={secondaryTextClass}>
-                        Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
-                      </p>
-                    )}
-                    {unitArchive !== undefined && (
-                      <p className={secondaryTextClass} role="status">
-                        Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
-                      </p>
-                    )}
-                    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
-                      {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            const reason = archiveReason(`jednotku ${unit.code}`);
-                            if (reason !== null && reason.trim() !== '') editor.archiveUnit(unit, reason.trim());
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Archivovat jednotku
-                        </Button>
-                      )}
-                      {unit.archive !== undefined && model.property?.archive === undefined && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => editor.restoreUnit(unit)}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          Obnovit z archivu
-                        </Button>
-                      )}
-                      {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          Dočasně mimo provoz
-                        </Button>
-                      )}
-                      {unitArchive === undefined &&
-                        unit.lifecycleState === 'OUT_OF_SERVICE' &&
-                        model.property?.lifecycleState !== 'DISPOSED' && (
-                          <Button
-                            disabled={editor.busy}
-                            onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
-                            size="sm"
-                            theme="outlined"
-                            variant="secondary"
-                          >
-                            Vrátit do provozu
-                          </Button>
-                        )}
-                      {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => {
-                            if (
-                              globalThis.confirm(
-                                `Vyřadit jednotku ${unit.code}? Jednotka se přestane nabízet k pronájmu, historie nájmů a smluv zůstane zachována.`,
-                              )
-                            )
-                              editor.changeUnitLifecycle(unit, 'RETIRED');
-                          }}
-                          size="sm"
-                          theme="outlined"
-                          variant="danger"
-                        >
-                          Vyřadit jednotku
-                        </Button>
-                      )}
-                    </div>
-                    <UnitStory
-                      agreements={model.agreements}
-                      leaseBlock={
-                        unitArchive !== undefined || unit.lifecycleState === 'RETIRED'
-                          ? 'retired'
-                          : unit.lifecycleState !== 'ACTIVE'
-                            ? 'outOfService'
-                            : leasable(unit.lifecycleState)
-                              ? undefined
-                              : 'building'
-                      }
-                      language={model.language}
-                      occupancy={model.occupancy}
-                      t={t}
-                      tasks={model.work?.items}
-                      unit={unit}
-                    />
-                    <RecordDiscussion
-                      subject={{ kind: 'unit', id: unit.unitRef.resourceId, label: `${unit.code} · ${unit.name}` }}
-                    />
-                  </aside>
-                )}
-                {model.finance !== undefined && (
-                  <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
-                    <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
-                    <p className={secondaryTextClass}>
-                      {model.finance.state.invoices.length === 0
-                        ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
-                        : t(`${key}.financialValues`, {
-                            cost: model.money(model.finance.indicators.costMinor),
-                            outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
-                            revenue: model.money(model.finance.indicators.revenueMinor),
-                          })}
-                    </p>
-                    <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                      {model.finance.state.invoices.map((invoice) => (
-                        <li key={invoice.ref.resourceId}>
-                          <Link href={model.ownerHref('finance', invoice.ref.resourceId)}>
-                            {invoice.documentNumber} · {model.money(invoice.totalMinor)}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-                <div className="propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-2">
-                  {relatedSections.flatMap((section) =>
-                    section.enabled
-                      ? [
-                          <section aria-label={section.title} className={relatedCardClass} key={section.title}>
-                            <h3 className={detailHeadingClass}>{section.title}</h3>
-                            {section.items.length === 0 && (
-                              <p className={secondaryTextClass}>{t(`${key}.emptyRelated`)}</p>
-                            )}
-                            <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                              {section.items.map((item) => (
-                                <li key={item.href}>
-                                  <Link href={item.href}>{item.label}</Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </section>,
-                        ]
-                      : [],
-                  )}
-                </div>
-                {asset !== undefined && (
-                  <aside className={relatedCardClass}>
-                    <h3 className={detailHeadingClass}>
-                      {asset.code} · {asset.name}
-                    </h3>
-                    <p className={secondaryTextClass}>
-                      {asset.category} · {asset.serialNumber ?? '—'}
-                    </p>
-                    {model.work !== undefined && (
-                      <ul className="propertyportfolio:space-y-2 propertyportfolio:text-sm">
-                        {model.work.items.flatMap((task) =>
-                          task.contextRefs.some(
-                            (ref) =>
-                              ref.moduleId === asset.assetRef.moduleId &&
-                              ref.resourceType === asset.assetRef.resourceType &&
-                              ref.tenantId === asset.assetRef.tenantId &&
-                              ref.resourceId === asset.assetRef.resourceId,
-                          )
-                            ? [
-                                <li key={task.ref.resourceId}>
-                                  <Link href={model.ownerHref('ukoly', task.ref.resourceId)}>{task.title}</Link>
-                                </li>,
-                              ]
-                            : [],
-                        )}
-                      </ul>
-                    )}
-                    <p className={secondaryTextClass}>
-                      {t(`${key}.lastService`)}: {asset.lastServiceAt ?? '—'} · {t(`${key}.nextService`)}:{' '}
-                      {asset.nextServiceAt ?? '—'}
-                    </p>
-                  </aside>
-                )}
-              </article>
-            )}
+            <RecordsPropertyDetails view={view} />
           </>
         )}
       </section>

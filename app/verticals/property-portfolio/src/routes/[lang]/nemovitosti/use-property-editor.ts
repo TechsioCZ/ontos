@@ -11,46 +11,58 @@ type Property = RecordsResponse['properties'][number];
 interface PropertyDraft {
   readonly address: string;
   readonly code: string;
+  readonly lifecycleState: Property['lifecycleState'];
   readonly name: string;
   readonly note: string;
+  readonly property?: Property;
   readonly propertyType: string;
   readonly responsiblePerson: string;
-  readonly lifecycleState: Property['lifecycleState'];
-  readonly property?: Property;
   readonly unitFor?: Property;
 }
 const emptyDraft: PropertyDraft = {
   address: '',
   code: '',
+  lifecycleState: 'PLANNED',
   name: '',
   note: '',
   propertyType: '',
   responsiblePerson: '',
-  lifecycleState: 'PLANNED',
 };
 
-type DraftField = 'address' | 'code' | 'name' | 'note' | 'propertyType' | 'responsiblePerson';
+const DraftFieldSchema = Schema.Literals(['address', 'code', 'name', 'note', 'propertyType', 'responsiblePerson']);
+type DraftField = typeof DraftFieldSchema.Type;
+interface PropertyDraftErrors {
+  address?: string;
+  code?: string;
+  name?: string;
+  note?: string;
+  propertyType?: string;
+  responsiblePerson?: string;
+}
 type Unit = RecordsResponse['units'][number];
-const fieldNames: Record<DraftField, string> = {
+const fieldNames = {
   address: 'adresu',
   code: 'kód',
   name: 'název',
   note: 'popis',
   propertyType: 'typ nemovitosti',
   responsiblePerson: 'odpovědnou osobu',
-};
+} as const satisfies Record<DraftField, string>;
 /** Czech inline messages for the property and unit form (rules 3.8 and 3.9); empty when the draft is valid. */
 export const propertyDraftErrors = (
   draft: PropertyDraft,
   records: RecordsResponse | undefined,
-): Partial<Record<DraftField, string>> => {
+): PropertyDraftErrors => {
   const fields: readonly DraftField[] =
     draft.unitFor === undefined ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson'] : ['code', 'name'];
-  const errors: Partial<Record<DraftField, string>> = {};
+  const errors: PropertyDraftErrors = {};
   for (const field of fields) {
     const value = draft[field].trim();
-    if (value.length === 0) errors[field] = `Vyplňte ${fieldNames[field]}.`;
-    else if (value.length > 300) errors[field] = 'Nejvýše 300 znaků.';
+    if (value.length === 0) {
+      errors[field] = `Vyplňte ${fieldNames[field]}.`;
+    } else if (value.length > 300) {
+      errors[field] = 'Nejvýše 300 znaků.';
+    }
   }
   const code = draft.code.trim();
   if (
@@ -59,8 +71,9 @@ export const propertyDraftErrors = (
     [...(records?.properties ?? []), ...(records?.units ?? []), ...(records?.assets ?? [])].some(
       (record) => record.code === code,
     )
-  )
+  ) {
     errors.code = 'Tento kód už používá jiná nemovitost, jednotka nebo vybavení.';
+  }
   return errors;
 };
 
@@ -69,7 +82,7 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'>();
-  const change = (field: 'address' | 'code' | 'name' | 'note' | 'propertyType' | 'responsiblePerson', value: string) =>
+  const change = (field: DraftField, value: string) =>
     setDraft((current) => (current === undefined ? current : { ...current, [field]: value }));
   const begin = (property?: Property) => {
     setFeedback(undefined);
@@ -80,12 +93,12 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
         : {
             address: property.address,
             code: property.code,
+            lifecycleState: property.lifecycleState,
             name: property.name,
             note: property.note ?? '',
+            property,
             propertyType: property.propertyType ?? '',
             responsiblePerson: property.responsiblePerson ?? '',
-            lifecycleState: property.lifecycleState,
-            property,
           },
     );
   };
@@ -142,22 +155,22 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
       _tag: 'CreateProperty',
       address: draft.address,
       code: draft.code,
+      lifecycleState: draft.lifecycleState,
       name: draft.name,
       note: draft.note.trim() || null,
       propertyType: draft.propertyType,
       responsiblePerson: draft.responsiblePerson,
-      lifecycleState: draft.lifecycleState,
     };
     if (draft.property !== undefined) {
       raw = {
         _tag: 'UpdateProperty',
-        propertyType: draft.propertyType,
-        responsiblePerson: draft.responsiblePerson,
-        lifecycleState: draft.lifecycleState,
         address: draft.address,
+        lifecycleState: draft.lifecycleState,
         name: draft.name,
         note: draft.note.trim() || null,
         propertyRef: draft.property.propertyRef,
+        propertyType: draft.propertyType,
+        responsiblePerson: draft.responsiblePerson,
       };
     }
     if (draft.unitFor !== undefined) {
@@ -171,7 +184,7 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     }
     submit(raw);
   };
-  const visibleFields: readonly ('code' | 'name' | 'address' | 'note' | 'propertyType' | 'responsiblePerson')[] =
+  const visibleFields: readonly DraftField[] =
     draft?.unitFor === undefined
       ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson', 'note']
       : ['code', 'name'];
@@ -196,19 +209,20 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     /** Staff-only archive (S02 demo hygiene): hides a test record from every register, history stays. */
     archiveProperty: (property: Property, reason: string) =>
       submit({ _tag: 'ArchiveProperty', propertyRef: property.propertyRef, reason }),
-    restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
     archiveUnit: (unit: Unit, reason: string) => submit({ _tag: 'ArchiveUnit', reason, unitRef: unit.unitRef }),
-    restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
     busy,
     cancel: () => setDraft(undefined),
     change,
     changeLifecycle: (value: string) => {
-      if (Schema.is(PropertyLifecycleSchema)(value))
+      if (Schema.is(PropertyLifecycleSchema)(value)) {
         setDraft((current) => (current === undefined ? current : { ...current, lifecycleState: value }));
+      }
     },
     draft,
     feedback,
     fields: visibleFields,
+    restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
+    restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
     save,
     title,
     toggleLifecycle: (property: Property) =>
