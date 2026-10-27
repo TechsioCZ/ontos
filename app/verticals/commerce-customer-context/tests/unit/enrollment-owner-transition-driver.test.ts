@@ -6,6 +6,7 @@ import type { CommerceEnrollmentAttemptService } from '../../src/enrollment/atte
 import {
   CommerceEnrollmentAttemptIndeterminate,
   CommerceEnrollmentAttemptRejected,
+  CommerceEnrollmentAttemptUnavailable,
 } from '../../src/enrollment/attempts/errors.ts';
 import { OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
@@ -353,6 +354,140 @@ it.effect('dispatches only from a claimed immutable active lease and records the
     expect(dispatches).toBe(1);
     expect(recorded?.status).toBe('SUCCEEDED');
     expect(recorded?.leaseToken).toBe(leaseToken);
+  }),
+);
+
+it.effect('rejects every terminal Attempt before reading its owner operation', () =>
+  Effect.gen(function* rejectsTerminalReconciliation() {
+    for (const state of ['COMPLETE', 'TERMINATED', 'FAILED'] as const) {
+      let operationReads = 0;
+      const driver = commerceEnrollmentOwnerTransitionDriverFor({
+        attempt: makeAttemptStore(claimResult(), {
+          read: () => Effect.succeed(attempt({ revision: transition.expectedRevision, state })),
+          readOwnerOperation: () =>
+            Effect.sync(() => {
+              operationReads += 1;
+              return operation({ status: 'INDETERMINATE' });
+            }),
+        }),
+        owner: {
+          dispatch: () => Effect.die('A terminal Attempt cannot dispatch'),
+          reconcile: () => Effect.die('A terminal Attempt cannot read the owner'),
+        },
+      });
+      const error = yield* Effect.flip(driver.reconcile(transition));
+      expect(error).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+      expect(error.code).toBe('attempt_terminal');
+      expect(operationReads).toBe(0);
+    }
+  }),
+);
+
+it.effect('recovers a committed claim and lost owner answer without dispatching twice', () =>
+  Effect.gen(function* recoversLostOwnerAnswer() {
+    const { lease: _attemptLease, ...unleasedAttempt } = attempt();
+    const { lease: _operationLease, ...unleasedOperation } = operation();
+    let snapshot = attempt({ revision: transition.expectedRevision });
+    let journal = operation();
+    let dispatches = 0;
+    let fences = 0;
+    let ownerReads = 0;
+    let reconciliations = 0;
+    const store = makeAttemptStore(claimResult(), {
+      claimTransition: () =>
+        Effect.sync(() => {
+          if (journal.status === 'IN_PROGRESS' && dispatches > 0) {
+            fences += 1;
+            snapshot = { ...unleasedAttempt, revision: snapshot.revision + 1, state: 'RECONCILIATION_REQUIRED' };
+            journal = { ...unleasedOperation, revision: 2, status: 'INDETERMINATE' };
+            return { attempt: snapshot, operation: journal, outcome: 'INDETERMINATE' as const };
+          }
+          snapshot = attempt();
+          return { attempt: snapshot, operation: journal, outcome: 'CLAIMED' as const };
+        }),
+      read: () => Effect.sync(() => snapshot),
+      readOwnerOperation: () => Effect.sync(() => journal),
+      reconcileOutcome: (input, resolution) =>
+        Effect.sync(() => {
+          reconciliations += 1;
+          expect(input.expectedRevision).toBe(snapshot.revision);
+          expect(input.ownerInvocationId).toBe(ownerInvocationId);
+          expect(resolution.status).toBe('SUCCEEDED');
+          snapshot = { ...unleasedAttempt, revision: snapshot.revision + 1 };
+          journal = { ...unleasedOperation, revision: journal.revision + 1, status: 'SUCCEEDED' };
+          return { attempt: snapshot, operation: journal, outcome: 'RECORDED' as const };
+        }),
+      recordOutcome: () =>
+        Effect.fail(
+          new CommerceEnrollmentAttemptIndeterminate({
+            attemptId,
+            code: 'attempt_indeterminate',
+            reason: 'The owner committed but its response recording was lost',
+            retryable: true,
+          }),
+        ),
+    });
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: store,
+      owner: {
+        dispatch: () =>
+          Effect.sync(() => {
+            dispatches += 1;
+            return outcome;
+          }),
+        reconcile: (input) =>
+          Effect.sync(() => {
+            ownerReads += 1;
+            expect(input.ownerInvocationId).toBe(ownerInvocationId);
+            expect(input.observedRevision).toBe(snapshot.revision);
+            return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
+          }),
+      },
+      workerId: () => workerId,
+    });
+    expect(yield* Effect.flip(driver.execute(transition))).toBeInstanceOf(CommerceEnrollmentAttemptIndeterminate);
+    const recovery = { ...transition, expectedRevision: snapshot.revision };
+    expect(yield* Effect.flip(driver.reconcile(recovery))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
+    expect(fences).toBe(0);
+    expect(ownerReads).toBe(0);
+    journal = operation({ lease: { leaseExpiresAt: expiredAt, leaseToken, workerId } });
+    expect((yield* driver.reconcile(recovery)).outcome).toBe('RECORDED');
+    expect((yield* driver.reconcile({ ...transition, expectedRevision: snapshot.revision })).outcome).toBe('REPLAYED');
+    expect(dispatches).toBe(1);
+    expect(fences).toBe(1);
+    expect(ownerReads).toBe(1);
+    expect(reconciliations).toBe(1);
+  }),
+);
+
+it.effect('does not dispatch when the durable claim commits but its acknowledgement is lost', () =>
+  Effect.gen(function* preservesUnacknowledgedClaim() {
+    let claims = 0;
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: makeAttemptStore(claimResult(), {
+        claimTransition: () =>
+          Effect.sync(() => {
+            claims += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new CommerceEnrollmentAttemptIndeterminate({
+                  attemptId,
+                  code: 'attempt_indeterminate',
+                  reason: 'The durable claim response was lost',
+                  retryable: true,
+                }),
+              ),
+            ),
+          ),
+      }),
+      owner: {
+        dispatch: () => Effect.die('An unacknowledged claim must not dispatch'),
+        reconcile: () => Effect.die('An unacknowledged claim requires a fresh recovery pass'),
+      },
+    });
+    expect(yield* Effect.flip(driver.execute(transition))).toBeInstanceOf(CommerceEnrollmentAttemptIndeterminate);
+    expect(claims).toBe(1);
   }),
 );
 

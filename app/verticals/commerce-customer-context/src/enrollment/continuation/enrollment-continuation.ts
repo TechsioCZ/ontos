@@ -467,11 +467,18 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   if (next === undefined) {
     return { attemptState: attempt.state, kind: 'SETTLED' };
   }
+  const operation = Option.fromNullishOr(
+    operations.find(
+      (candidate) => candidate.ownerModuleKey === next.ownerModuleKey && candidate.transitionKey === next.transitionKey,
+    ),
+  );
   yield* seams.lease;
   const isProviderCreation =
     next.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
     next.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY;
-  if (!isProviderCreation && attempt.journey === 'RETAIL_SELF_ENROLLMENT') {
+  if (!isProviderCreation && attempt.journey === 'RETAIL_SELF_ENROLLMENT' && Option.isNone(operation)) {
+    // Verification gates new downstream work, not settlement of an admitted owner invocation.
+    // Its original outcome must remain reconcilable even if current verification is unavailable.
     const required = yield* seams.registry.verificationRequired({ attempt, operations });
     if ((attempt.state === 'IN_PROGRESS' && required) || (attempt.state === 'VERIFICATION_REQUIRED' && !required)) {
       yield* seams.setVerificationState(attempt, required);
@@ -498,11 +505,6 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   if (Option.isNone(owner)) {
     return halted('NO_OWNER_EFFECT', next);
   }
-  const operation = Option.fromNullishOr(
-    operations.find(
-      (candidate) => candidate.ownerModuleKey === next.ownerModuleKey && candidate.transitionKey === next.transitionKey,
-    ),
-  );
   return yield* runTransition({ attempt, lease: seams.lease, operation, owner: owner.value, store, transition: next });
 });
 

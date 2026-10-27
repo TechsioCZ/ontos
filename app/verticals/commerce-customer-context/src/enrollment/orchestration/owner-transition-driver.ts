@@ -36,6 +36,7 @@ import {
   EnrollmentTransitionKeySchema,
   ReconcileEnrollmentResolutionSchema,
   RecordEnrollmentOutcomeInputSchema,
+  isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
 import type { AttemptClaimedResult, AttemptRecordResult } from '../attempts/attempt-persistence.ts';
 import { claimedOrIndeterminate } from '../attempts/attempt-persistence.ts';
@@ -593,7 +594,7 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
         () => invalid('The reconciliation does not match the durable Attempt Application Composition revision'),
       ),
     );
-    if (attempt.state === 'COMPLETE' || attempt.state === 'TERMINATED') {
+    if (isEnrollmentAttemptTerminal(attempt.state)) {
       return yield* new CommerceEnrollmentAttemptRejected({
         attemptId: requested.portalEnrollmentAttemptId,
         code: 'attempt_terminal',
