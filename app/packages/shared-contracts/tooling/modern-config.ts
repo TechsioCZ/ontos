@@ -1,3 +1,6 @@
+/// <reference types="node" />
+
+// This Node-only build entry sits outside the package's src-only TypeScript project.
 // @effect-diagnostics nodeBuiltinImport:off -- Build-time Modern config: Node's connect dev middleware, Rspack resolution and file URLs run outside any Effect runtime, and the effect barrel cannot load under jiti; expires: 2027-03-31.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -119,9 +122,9 @@ const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: st
     )(envValue(name) ?? ''),
   );
 
-const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
-  OptionFromNullOr(Struct({ binding: StringSchema, idVariable: StringSchema })),
-).pipe(
+const DeclaredCloudflareHyperdrivesSchema = Struct({ binding: StringSchema, idVariable: StringSchema }).pipe(
+  OptionFromNullOr,
+  ArraySchema,
   check(
     isMinLength(1, { message: 'A Cloudflare Worker build needs at least one Hyperdrive binding' }),
     makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) =>
@@ -192,11 +195,9 @@ interface CloudflareEmailBindings {
 
 /** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
 export const createCloudflareEmailBindings = (envValue: BuildEnvironmentReader): CloudflareEmailBindings => {
-  const sender = getOptionOrUndefined(
-    getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(envValue('ULTRAMODERN_EMAIL_SENDER')),
-    ),
-  );
+  const sender = decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(
+    envValue('ULTRAMODERN_EMAIL_SENDER'),
+  ).pipe(getResultOrThrow, getOptionOrUndefined);
   if (sender === undefined || sender === '') {
     return {};
   }
@@ -269,13 +270,9 @@ export const createCloudflareWorkerConfig = (
   const dataPlane = createCloudflareDataPlaneBindings(envValue, hyperdrives);
   // Backend-heavy Workers must not follow a distant caller away from the private data plane.
   // Placement probes a public single-homed endpoint, not a private VPC hostname.
-  const placementHost = getOptionOrUndefined(
-    getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
-        envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
-      ),
-    ),
-  );
+  const placementHost = decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
+    envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
+  ).pipe(getResultOrThrow, getOptionOrUndefined);
   const placement: { readonly host: string } | { readonly mode: 'off' } =
     placementHost === undefined ? { mode: 'off' } : { host: placementHost };
   const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
