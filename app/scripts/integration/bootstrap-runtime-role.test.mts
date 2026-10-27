@@ -18,6 +18,7 @@ import {
   grantTrustAuthority,
   legacySharedEntries,
   revokePublicStatementStatistics,
+  tableGrantTarget,
 } from '../postgres/runtime-role-bootstrap.mts';
 import type { ExplicitManifestEntry } from '../postgres/runtime-role-bootstrap.mts';
 
@@ -54,6 +55,85 @@ const entryWith = (predicate: (entry: ExplicitManifestEntry) => boolean): Explic
 
 const isWholeTableSelect = ({ columns, privileges }: ExplicitManifestEntry['grants']['tables'][number]) =>
   privileges.includes('select') && columns?.select === undefined;
+
+/** Small grant fixtures need explicit test URLs, not migrated owner tables or a workspace .env. */
+const rolledBackGrantProbe = <Value, Failure>(body: (session: PgClient.PgClient) => Effect.Effect<Value, Failure>) =>
+  Effect.gen(function* rolledBackProbe() {
+    const connections = yield* loadDatabaseIdentityConnections({
+      enrollment: APP_DATABASE_IDENTITY_ENROLLMENT,
+      envPath: '/dev/null',
+    });
+    const session = yield* makeTestPgSession(connections.admin.connectionString);
+    yield* session.unsafe('begin');
+    return yield* body(session).pipe(Effect.ensuring(session.unsafe('rollback').pipe(Effect.orDie)));
+  }).pipe(Effect.scoped);
+
+for (const columns of [
+  undefined,
+  { insert: ['present', 'future'], select: ['present', 'future'], update: ['future'] },
+  { insert: ['missing'], select: ['missing'], update: ['missing'] },
+] as const) {
+  it.live(`matches sequential table and column ACLs with one GRANT: ${JSON.stringify(columns)}`, () =>
+    rolledBackGrantProbe((session) =>
+      Effect.gen(function* batchedTablePrivilegeParity() {
+        const original = entryWith(() => true);
+        const role = quoteIdentifier(original.identity.role);
+        const table = 'core.bootstrap_batch_probe';
+        const privileges = ['select', 'insert', 'update', 'delete'] as const;
+        const entry: ExplicitManifestEntry = {
+          grants: {
+            ...original.grants,
+            routines: [],
+            schemas: ['core'],
+            sequences: [],
+            tables: [{ columns, privileges, reason: 'Compare sequential and batched table grants', table }],
+          },
+          identity: original.identity,
+        };
+        yield* session.unsafe(`create table ${table} (present text, future text)`);
+        const snapshot = session.unsafe<{ column_name: string; grantable: boolean; privilege: string }>(
+          `select '' as column_name, acl.is_grantable as grantable, acl.privilege_type as privilege
+             from pg_catalog.pg_class as relation
+             cross join lateral pg_catalog.aclexplode(relation.relacl) as acl
+            where relation.oid = pg_catalog.to_regclass($1)
+              and acl.grantee = (select oid from pg_catalog.pg_roles where rolname = $2)
+           union all
+           select attribute.attname, acl.is_grantable, acl.privilege_type
+             from pg_catalog.pg_attribute as attribute
+             cross join lateral pg_catalog.aclexplode(attribute.attacl) as acl
+            where attribute.attrelid = pg_catalog.to_regclass($1)
+              and acl.grantee = (select oid from pg_catalog.pg_roles where rolname = $2)
+           order by 1, 3, 2`,
+          [table, original.identity.role],
+        );
+        // Compare both sides from the same ACL state, before and after a column migration.
+        for (const existingColumns of [['present'], ['present', 'future']]) {
+          yield* session.unsafe('savepoint batch_parity');
+          if (!existingColumns.includes('future')) {
+            yield* session.unsafe(`alter table ${table} drop column future`);
+          }
+          for (const privilege of privileges) {
+            const target = tableGrantTarget(privilege, columns, existingColumns);
+            if (target !== undefined) {
+              yield* session.unsafe(`grant ${target} on table ${table} to ${role}`);
+            }
+          }
+          const sequential = yield* snapshot;
+          yield* session.unsafe('rollback to savepoint batch_parity');
+          if (!existingColumns.includes('future')) {
+            yield* session.unsafe(`alter table ${table} drop column future`);
+          }
+          yield* grantExplicitRole(session, entry);
+          expect(yield* snapshot).toEqual(sequential);
+          yield* grantExplicitRole(session, entry);
+          expect(yield* snapshot).toEqual(sequential);
+          yield* session.unsafe('rollback to savepoint batch_parity');
+          yield* session.unsafe('release savepoint batch_parity');
+        }
+      }),
+    ),
+  );
+}
 
 it.live('accepts the exact manifest privileges for every explicit role', () =>
   rolledBack((session) =>

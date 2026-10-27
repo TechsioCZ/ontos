@@ -24,7 +24,9 @@ const RUN_PATH = 'repos/TechsioCZ/ontos/actions/runs/40252598522';
 const PROVENANCE_STEP = 'Verify the completed migration incident and reviewed continuation source';
 const CONTINUATION_STEP = 'Continue publication of the completed owner migration';
 const MIGRATION_STEP = 'Migrate every owner schema';
+// The pinned historical incident must keep its original successful milestone.
 const POST_BOOTSTRAP_STEP = 'Bootstrap every database identity after migrations';
+const POST_VERIFICATION_STEP = 'Verify every migrated owner schema';
 const mode = {
   continueMigratedPublication: true,
   deploy: true,
@@ -357,7 +359,23 @@ it.effect(
         expect(step(name)?.if).toBe(expression('!inputs.outbox_only && !inputs.continue_migrated_publication'));
       }
       expect(index(CONTINUATION_STEP)).toBeGreaterThan(index('Load the dedicated database identity credentials'));
-      expect(index(CONTINUATION_STEP)).toBeLessThan(index(POST_BOOTSTRAP_STEP));
+      expect(index(CONTINUATION_STEP)).toBeLessThan(index(POST_VERIFICATION_STEP));
+      const postVerification = Schema.decodeUnknownSync(
+        Schema.Struct({
+          env: Schema.Struct({
+            COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: Schema.String,
+            COMMERCE_PORTAL_AUTH_DATABASE_URL: Schema.String,
+          }),
+          run: Schema.String,
+        }),
+      )(step(POST_VERIFICATION_STEP));
+      expect(postVerification).toEqual({
+        env: {
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: expression('secrets.DATABASE_ADMIN_URL'),
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: expression('secrets.DATABASE_URL'),
+        },
+        run: 'mise exec -- pnpm db:verify',
+      });
       expect(step(CONTINUATION_STEP)?.if).toBe('inputs.continue_migrated_publication && !inputs.outbox_only');
       expect(step(CONTINUATION_STEP)?.run).toBe(
         'mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication',
@@ -366,7 +384,7 @@ it.effect(
         expression('inputs.retired_composition_revision'),
       );
       for (const name of [
-        POST_BOOTSTRAP_STEP,
+        POST_VERIFICATION_STEP,
         'Upload every immutable release Worker',
         'Assemble the composition candidate',
         'Publish the Application Composition',
@@ -384,7 +402,7 @@ it.effect(
         '--zerops --apply',
         '--zerops --verify',
       ]);
-      for (const name of [PROVENANCE_STEP, CONTINUATION_STEP, POST_BOOTSTRAP_STEP]) {
+      for (const name of [PROVENANCE_STEP, CONTINUATION_STEP, POST_VERIFICATION_STEP]) {
         expect(step(name)?.['continue-on-error']).toBeUndefined();
       }
       expect(

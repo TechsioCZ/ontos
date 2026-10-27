@@ -1,4 +1,6 @@
 import { DateTime, Effect, Match, Random, Schema } from 'effect';
+import type { Employee } from '@app/workforce/contracts/records';
+import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { useState } from 'react';
 import type { PropertyCommand } from '../../../../shared/actions/apply-command.ts';
 import { PropertyCommandSchema } from '../../../../shared/actions/apply-command.ts';
@@ -8,6 +10,7 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
 type Property = RecordsResponse['properties'][number];
+type EmployeeOption = Pick<Employee, 'active' | 'fullName' | 'id'>;
 interface PropertyDraft {
   readonly address: string;
   readonly code: string;
@@ -16,7 +19,7 @@ interface PropertyDraft {
   readonly note: string;
   readonly property?: Property;
   readonly propertyType: string;
-  readonly responsiblePerson: string;
+  readonly responsibleEmployeeIds: readonly Employee['id'][];
   readonly unitFor?: Property;
 }
 const emptyDraft: PropertyDraft = {
@@ -26,18 +29,20 @@ const emptyDraft: PropertyDraft = {
   name: '',
   note: '',
   propertyType: '',
-  responsiblePerson: '',
+  responsibleEmployeeIds: [],
 };
 
-const DraftFieldSchema = Schema.Literals(['address', 'code', 'name', 'note', 'propertyType', 'responsiblePerson']);
+const TextFieldSchema = Schema.Literals(['address', 'code', 'name', 'note', 'propertyType']);
+type TextField = typeof TextFieldSchema.Type;
+const DraftFieldSchema = Schema.Literals([...TextFieldSchema.literals, 'responsibleEmployeeIds']);
 type DraftField = typeof DraftFieldSchema.Type;
-interface PropertyDraftErrors {
+interface DraftErrors {
   address?: string;
   code?: string;
   name?: string;
   note?: string;
   propertyType?: string;
-  responsiblePerson?: string;
+  responsibleEmployeeIds?: string;
 }
 type Unit = RecordsResponse['units'][number];
 const fieldNames = {
@@ -46,16 +51,12 @@ const fieldNames = {
   name: 'název',
   note: 'popis',
   propertyType: 'typ nemovitosti',
-  responsiblePerson: 'odpovědnou osobu',
-} as const satisfies Record<DraftField, string>;
+} as const satisfies Record<TextField, string>;
 /** Czech inline messages for the property and unit form (rules 3.8 and 3.9); empty when the draft is valid. */
-export const propertyDraftErrors = (
-  draft: PropertyDraft,
-  records: RecordsResponse | undefined,
-): PropertyDraftErrors => {
-  const fields: readonly DraftField[] =
-    draft.unitFor === undefined ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson'] : ['code', 'name'];
-  const errors: PropertyDraftErrors = {};
+export const propertyDraftErrors = (draft: PropertyDraft, records: RecordsResponse | undefined): DraftErrors => {
+  const fields: readonly TextField[] =
+    draft.unitFor === undefined ? ['code', 'name', 'address', 'propertyType'] : ['code', 'name'];
+  const errors: DraftErrors = {};
   for (const field of fields) {
     const value = draft[field].trim();
     if (value.length === 0) {
@@ -63,6 +64,9 @@ export const propertyDraftErrors = (
     } else if (value.length > 300) {
       errors[field] = 'Nejvýše 300 znaků.';
     }
+  }
+  if (draft.unitFor === undefined && draft.responsibleEmployeeIds.length === 0) {
+    errors.responsibleEmployeeIds = 'responsibleRequired';
   }
   const code = draft.code.trim();
   if (
@@ -77,16 +81,21 @@ export const propertyDraftErrors = (
   return errors;
 };
 
-export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved: () => void) => {
+export const usePropertyEditor = (
+  records: RecordsResponse | undefined,
+  employees: readonly EmployeeOption[] | undefined,
+  onSaved: () => void,
+) => {
   const [draft, setDraft] = useState<PropertyDraft>();
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<'conflict' | 'forbidden' | 'saved' | 'unavailable' | 'validation'>();
-  const change = (field: DraftField, value: string) =>
+  const change = (field: TextField, value: string) =>
     setDraft((current) => (current === undefined ? current : { ...current, [field]: value }));
   const begin = (property?: Property) => {
     setFeedback(undefined);
     setSubmitted(false);
+    const legacyEmployees = employees?.filter((employee) => employee.fullName === property?.responsiblePerson) ?? [];
     setDraft(
       property === undefined
         ? emptyDraft
@@ -98,7 +107,9 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
             note: property.note ?? '',
             property,
             propertyType: property.propertyType ?? '',
-            responsiblePerson: property.responsiblePerson ?? '',
+            responsibleEmployeeIds:
+              property.responsibleEmployeeIds ??
+              (legacyEmployees.length === 1 ? legacyEmployees.map((employee) => employee.id) : []),
           },
     );
   };
@@ -146,6 +157,10 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     if (draft === undefined) {
       return;
     }
+    if (draft.unitFor === undefined && employees === undefined) {
+      setFeedback('unavailable');
+      return;
+    }
     setSubmitted(true);
     if (Object.keys(propertyDraftErrors(draft, records)).length > 0) {
       setFeedback('validation');
@@ -159,7 +174,7 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
       name: draft.name,
       note: draft.note.trim() || null,
       propertyType: draft.propertyType,
-      responsiblePerson: draft.responsiblePerson,
+      responsibleEmployeeIds: draft.responsibleEmployeeIds,
     };
     if (draft.property !== undefined) {
       raw = {
@@ -170,7 +185,7 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
         note: draft.note.trim() || null,
         propertyRef: draft.property.propertyRef,
         propertyType: draft.propertyType,
-        responsiblePerson: draft.responsiblePerson,
+        responsibleEmployeeIds: draft.responsibleEmployeeIds,
       };
     }
     if (draft.unitFor !== undefined) {
@@ -186,7 +201,7 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
   };
   const visibleFields: readonly DraftField[] =
     draft?.unitFor === undefined
-      ? ['code', 'name', 'address', 'propertyType', 'responsiblePerson', 'note']
+      ? ['code', 'name', 'address', 'propertyType', 'responsibleEmployeeIds', 'note']
       : ['code', 'name'];
   let title = 'create';
   if (draft?.property !== undefined) {
@@ -218,6 +233,17 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
         setDraft((current) => (current === undefined ? current : { ...current, lifecycleState: value }));
       }
     },
+    changeResponsibleEmployees: (value: string | string[]) =>
+      setDraft((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              responsibleEmployeeIds: [
+                ...new Set((Array.isArray(value) ? value : [value]).filter(Schema.is(EmployeeIdSchema))),
+              ],
+            },
+      ),
     draft,
     feedback,
     fields: visibleFields,

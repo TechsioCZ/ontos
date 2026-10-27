@@ -25,7 +25,15 @@ import { CommerceEnrollmentOwnerEffectRegistry } from '../../src/enrollment/orch
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import type { CommerceEnrollmentOwnerTransactionRunnerService } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommerceEnrollmentPreparationSubjectResolver } from '../../src/enrollment/orchestration/preparation-subject.ts';
-import { EnrollmentAttemptIdSchema, EnrollmentTenantIdSchema } from '../../shared/enrollment-contracts.ts';
+import {
+  EnrollmentAttemptIdSchema,
+  EnrollmentTenantIdSchema,
+  ReconcileEnrollmentResolutionSchema,
+} from '../../shared/enrollment-contracts.ts';
+import type {
+  EnrollmentAttemptState,
+  EnrollmentOwnerOperationStatusSchema,
+} from '../../shared/enrollment-contracts.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 
 const appId = 'commerce-customer-context';
@@ -42,7 +50,7 @@ const sweepInput = (compositionRevision: string) => ({
   revision: 1,
 });
 
-const attemptRow = (compositionRevision: string, state: 'COMPLETE' | 'IN_PROGRESS' | 'VERIFICATION_REQUIRED') => ({
+const attemptRow = (compositionRevision: string, state: EnrollmentAttemptState) => ({
   attempt_outcome: 'FOUND',
   authentication_namespace_id: null,
   completed_at: null,
@@ -566,5 +574,185 @@ it.effect('an unverified signup halts before subject resolution, Party claim or 
     expect(scripted.calls.owner).toBe(0);
     expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
     expect(scripted.calls.routines).not.toContain('set_portal_enrollment_verification_state');
+  }),
+);
+
+it.effect('reconciles admitted owner work without treating current verification as a new claim gate', () =>
+  Effect.gen(function* settlesAlreadyAdmittedOwnerWork() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    for (const initial of [
+      'INDETERMINATE',
+      'RECONCILIATION_REQUIRED',
+      'FAILED',
+      'EXPIRED',
+      'LEASED',
+      'RECOVERED',
+    ] as const) {
+      let status: typeof EnrollmentOwnerOperationStatusSchema.Type = 'INDETERMINATE';
+      if (initial === 'EXPIRED' || initial === 'LEASED') {
+        status = 'IN_PROGRESS';
+      } else if (initial !== 'RECOVERED') {
+        status = initial;
+      }
+      let state: EnrollmentAttemptState = 'RECONCILIATION_REQUIRED';
+      let revision = 1;
+      const calls = { claims: 0, dispatches: 0, ownerReads: 0, records: 0, verification: 0 };
+      const pendingCode = 'owner_reconciliation_required';
+      const ownerInvocationId = '50000000-0000-4000-8000-000000000002';
+      const row = () => attemptRow(release.composition.revision, state);
+      const ownerRow = (provider: boolean) => {
+        let leaseExpiresAt: string | null = null;
+        if (!provider && status === 'IN_PROGRESS') {
+          leaseExpiresAt = initial === 'LEASED' ? '2099-09-17T10:00:00.000Z' : '1960-09-17T10:00:00.000Z';
+        }
+        return {
+          ...row(),
+          actor_principal_id: row().created_by_principal_id,
+          failure_code: !provider && status === 'FAILED' ? pendingCode : null,
+          lease_expires_at: leaseExpiresAt,
+          lease_owner: !provider && status === 'IN_PROGRESS' ? 'abandoned-worker' : null,
+          lease_token: !provider && status === 'IN_PROGRESS' ? '60000000-0000-4000-8000-000000000001' : null,
+          operation_outcome: 'FOUND',
+          owner_invocation_id: provider ? '50000000-0000-4000-8000-000000000005' : ownerInvocationId,
+          owner_module_key: provider ? 'commerce.portal-auth' : 'party.registry',
+          portal_enrollment_owner_operation_id: provider
+            ? '50000000-0000-4000-8000-000000000003'
+            : '50000000-0000-4000-8000-000000000004',
+          request_digest: 'a'.repeat(64),
+          required: true,
+          revision,
+          status: provider ? 'SUCCEEDED' : status,
+          transition_key: provider ? 'provider.account.create' : 'party.candidate.submit',
+        };
+      };
+      const projection = () => {
+        const operation = ownerRow(false);
+        return {
+          ...row(),
+          attempt_outcome: 'RECORDED',
+          failure_code: operation.failure_code,
+          operation_actor_principal_id: operation.actor_principal_id,
+          operation_id: operation.portal_enrollment_owner_operation_id,
+          operation_revision: operation.revision,
+          operation_status: operation.status,
+          owner_invocation_id: ownerInvocationId,
+          owner_module_key: operation.owner_module_key,
+          request_digest: operation.request_digest,
+          required: true,
+          revision,
+          transition_key: operation.transition_key,
+        };
+      };
+      const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
+        Effect.sync(() => {
+          let rows: readonly object[] = [];
+          if (routine.name === 'read_portal_enrollment_attempt') {
+            rows = [{ ...row(), revision }];
+          } else if (routine.name === 'read_portal_enrollment_owner_operation') {
+            if (values.at(2) === 'provider.account.create') {
+              rows = [ownerRow(true)];
+            } else if (values.at(2) === 'party.candidate.submit') {
+              rows = [ownerRow(false)];
+            }
+          } else if (routine.name === 'claim_portal_enrollment_transition') {
+            calls.claims += 1;
+            status = 'INDETERMINATE';
+            revision += 1;
+            rows = [{ ...projection(), attempt_outcome: 'INDETERMINATE' }];
+          } else if (routine.name === 'reconcile_portal_enrollment_outcome') {
+            calls.records += 1;
+            status = initial === 'RECOVERED' ? 'SUCCEEDED' : 'FAILED';
+            state = initial === 'RECOVERED' ? 'IN_PROGRESS' : 'RECONCILIATION_REQUIRED';
+            revision += 1;
+            rows = [projection()];
+          } else if (routine.name === 'set_portal_enrollment_verification_state') {
+            state = 'VERIFICATION_REQUIRED';
+            revision += 1;
+            rows = [{ updated: true }];
+          }
+          return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
+        });
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(release) }),
+        Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, {
+          run: (_scope, operation) => operation({ invoke }),
+          runWorker: () => Effect.die('This owner-local test does not list due work'),
+        }),
+        Layer.succeed(CommerceEnrollmentOwnerEffectRegistry, {
+          resolve: () =>
+            Effect.succeedSome({
+              dispatch: Option.some({
+                effect: () =>
+                  Effect.sync(() => {
+                    calls.dispatches += 1;
+                    return { status: 'SUCCEEDED' as const };
+                  }),
+                requestDigest: 'a'.repeat(64),
+              }),
+              reconcile: (input) =>
+                Effect.sync(() => {
+                  calls.ownerReads += 1;
+                  expect(input.ownerInvocationId).toBe(ownerInvocationId);
+                  return Schema.decodeSync(ReconcileEnrollmentResolutionSchema)({
+                    actorPrincipalId: input.actorPrincipalId,
+                    failureCode: pendingCode,
+                    reconciliationRef: '70000000-0000-4000-8000-000000000001',
+                    status: initial === 'RECOVERED' ? 'SUCCEEDED' : 'FAILED',
+                  });
+                }),
+            }),
+          verificationRequired: () =>
+            Effect.sync(() => {
+              calls.verification += 1;
+              return true;
+            }),
+        }),
+        Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
+          resolve: () =>
+            Effect.succeed({
+              partyCandidateDigest: 'a'.repeat(64),
+              partyRef: Option.none(),
+              portalEnrollmentAttemptId: attemptId,
+              principalRef: {
+                moduleId: 'core.identity',
+                resourceId: row().created_by_principal_id,
+                resourceType: 'core.identity.principal',
+                tenantId,
+              },
+              sellingLegalEntityRef: {
+                moduleId: 'core.identity',
+                resourceId: '80000000-0000-4000-8000-000000000001',
+                resourceType: 'core.identity.legal-entity',
+                tenantId,
+              },
+            }),
+        }),
+      );
+      let haltReason = 'RECONCILIATION_REQUIRED';
+      let expectedOwnerReads = 2;
+      if (initial === 'LEASED') {
+        haltReason = 'IN_FLIGHT';
+        expectedOwnerReads = 0;
+      } else if (initial === 'RECOVERED') {
+        haltReason = 'VERIFICATION_REQUIRED';
+        expectedOwnerReads = 1;
+      }
+      yield* Effect.gen(function* repeatRecovery() {
+        const continuation = yield* CommerceEnrollmentContinuation;
+        for (let pass = 0; pass < 2; pass += 1) {
+          expect(yield* continuation.advance(attemptInput)).toMatchObject({
+            halt: { reason: haltReason },
+            outcome: 'HALTED',
+          });
+        }
+      }).pipe(
+        Effect.provide(CommerceEnrollmentContinuationLive({ appId, buildMarker }).pipe(Layer.provide(dependencies))),
+      );
+      expect(calls.verification).toBe(initial === 'RECOVERED' ? 2 : 0);
+      expect(calls.dispatches).toBe(0);
+      expect(calls.claims).toBe(initial === 'EXPIRED' ? 1 : 0);
+      expect(calls.ownerReads).toBe(expectedOwnerReads);
+      expect(calls.records).toBe(initial === 'FAILED' || initial === 'LEASED' ? 0 : 1);
+    }
   }),
 );

@@ -30,6 +30,22 @@ on:
         description: Exact bare lowercase 64-hex revision of the migrated composition retired by incident run 40252598522.
         type: string
         default: ''
+      profile_recovery_mode:
+        description: Operator-only recovery of one existing profile operation. Does not build, migrate or deploy.
+        type: choice
+        options:
+          - none
+          - check
+          - reconcile
+        default: none
+      profile_recovery_request:
+        description: Exact reviewed operation identity and expected journal revisions as JSON. No credentials or customer data.
+        type: string
+        default: ''
+      profile_recovery_approval_sha256:
+        description: For reconcile only, the exact approval digest returned by the read-only check.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -50,9 +66,113 @@ env:
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.bleeding.dev
 
 jobs:
+  # An operator command, not a replacement release or a new worker artifact. It calls only the
+  # original owner's native recovery contract and never changes the published build identity.
+  profile-recovery:
+    name: Inspect or reconcile one admitted profile operation
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+    steps:
+      - name: Require an isolated manual operator request on demo
+        env:
+          RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+          APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
+          DEPLOY: ${{ inputs.deploy }}
+          OUTBOX_ONLY: ${{ inputs.outbox_only }}
+          CONTINUE_MIGRATED: ${{ inputs.continue_migrated_publication }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/demo/sales-crm || "$DEPLOY" != false ||
+                "$OUTBOX_ONLY" != false || "$CONTINUE_MIGRATED" != false ||
+                ( "$RECOVERY_MODE" != check && "$RECOVERY_MODE" != reconcile ) ]]; then
+            echo '::error::Profile recovery requires an isolated manual demo/sales-crm request with deployment disabled' >&2
+            exit 1
+          fi
+          if [[ ( "$RECOVERY_MODE" == reconcile && ! "$APPROVAL_SHA256" =~ ^[a-f0-9]{64}$ ) ||
+                ( "$RECOVERY_MODE" == check && -n "$APPROVAL_SHA256" ) ]]; then
+            echo '::error::Only reconcile accepts and requires the exact read-only approval digest' >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Test the bounded operator command before stage access
+        working-directory: app
+        run: >-
+          mise exec -- pnpm test:scripts
+          scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/stage-profile-recovery-workflow.test.mts
+
+      - name: Connect the operator to the private database network
+        id: recovery-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Load existing database identity credentials without changing them
+        timeout-minutes: 5
+        working-directory: app
+        run: >-
+          mise exec -- pnpm exec node scripts/ops/database-identities.mts
+          --github-environment-file "$GITHUB_ENV"
+
+      - name: Run only the exact admitted profile recovery
+        timeout-minutes: 2
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ONTOS_STAGE_PROFILE_RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+          ONTOS_STAGE_PROFILE_RECOVERY_REQUEST_JSON: ${{ inputs.profile_recovery_request }}
+          ONTOS_STAGE_PROFILE_RECOVERY_APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
+          ONTOS_STAGE_PROFILE_RECOVERY_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          ONTOS_SHELL_GATEWAY_BASE_URL="$(jq -er '."commerce-customer-context".ONTOS_SHELL_GATEWAY_BASE_URL | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
+          ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$(jq -er '."commerce-customer-context".ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
+          unset ALL_RELEASE_SECRETS
+          masked_key="${ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY//%/%25}"
+          masked_key="${masked_key//$'\r'/%0D}"
+          masked_key="${masked_key//$'\n'/%0A}"
+          printf '::add-mask::%s\n' "$masked_key"
+          unset masked_key
+          export ONTOS_SHELL_GATEWAY_BASE_URL ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY
+          mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-retail-profile.mts
+
+      - name: Clear only the operator runner's private network
+        if: always() && steps.recovery-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.recovery-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.recovery-vpn.outputs.cli-path }}
+
   plan:
     name: Plan the served units
-    if: (github.event_name == 'workflow_dispatch' && !inputs.outbox_only) || (github.event_name == 'push' && vars.STAGE_DEMO_CI_DEPLOY == 'true')
+    if: (github.event_name == 'workflow_dispatch' && !inputs.outbox_only && inputs.profile_recovery_mode == 'none') || (github.event_name == 'push' && vars.STAGE_DEMO_CI_DEPLOY == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -241,6 +361,14 @@ jobs:
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
           scripts/tests/stage-demo-migrate.test.mts
+          scripts/tests/stage-deploy-diagnostics.test.mts
+          scripts/tests/application-composition-authority-publication.test.mts
+          scripts/tests/application-composition-release-lifecycle.test.mts
+          scripts/tests/bootstrap-runtime-role.test.mts
+          scripts/tests/database-login-roles.test.mts
+          scripts/tests/enrollment-recovery-host-config.test.mts
+          scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/stage-profile-recovery-workflow.test.mts
           scripts/tests/verify-stage-migration-continuation.test.mts
           scripts/tests/prepare-stage-customer.test.mts
           scripts/tests/typecheck-project-references.test.mts
@@ -296,7 +424,7 @@ jobs:
     if: >-
       always() && !cancelled() &&
       ((needs.plan.result == 'success' && needs.build.result == 'success' && needs.build-storefront.result == 'success' && needs.release-script-tests.result == 'success' && (github.event_name == 'push' || inputs.deploy)) ||
-       (github.event_name == 'workflow_dispatch' && inputs.outbox_only))
+       (github.event_name == 'workflow_dispatch' && inputs.outbox_only && inputs.profile_recovery_mode == 'none'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: stage-edge
@@ -413,6 +541,72 @@ jobs:
           mise exec -- pnpm exec node scripts/ops/database-identities.mts
           --github-environment-file "$GITHUB_ENV"
 
+      # Read-only: fail before database preparation if the canonical owner configuration cannot
+      # start recovery. Missing host copies are planned additions, never replacement credentials.
+      - name: Validate canonical enrollment recovery host configuration
+        timeout-minutes: 2
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+        run: mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts check
+
+      # Advisory only: live pending work may drain, and initial/sealed releases still need their
+      # authoritative native guards. Unknown diagnostics fail before any identity or schema mutation.
+      - name: Inspect migration readiness before database preparation
+        if: ${{ !inputs.outbox_only && !inputs.continue_migrated_publication }}
+        timeout-minutes: 2
+        working-directory: app
+        run: |
+          status=0
+          mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --readiness \
+            >"$RUNNER_TEMP/stage-migration-readiness.json" || status=$?
+          node --input-type=module - "$RUNNER_TEMP/stage-migration-readiness.json" "$status" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          import { Schema } from 'effect';
+          import { ApplicationCompositionReadinessSchema } from './scripts/application-composition-authority-publication.mts';
+          import { formatStageDeployDiagnostic } from './scripts/stage-deploy-diagnostics.mts';
+
+          const [path, exitCode] = process.argv.slice(2);
+          let input;
+          for (const line of readFileSync(path, 'utf8').split(/\r?\n/u)) {
+            try {
+              const candidate = JSON.parse(line);
+              if (candidate?.advisoryOnly === true) input = candidate;
+            } catch {
+              // Runtime error rendering is not an authoritative readiness record.
+            }
+          }
+          let result;
+          let reportedByCommand = false;
+          try {
+            result = Schema.decodeUnknownSync(ApplicationCompositionReadinessSchema)(input);
+            reportedByCommand = true;
+          } catch {
+            result = { advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' };
+          }
+          // The command already emits its canonical diagnostic. Only a missing/invalid record
+          // needs a fallback here, otherwise the step would append a second, incomplete summary.
+          if (!reportedByCommand) {
+            const formatted = formatStageDeployDiagnostic({
+              migrationsCompleted: false,
+              migrationStarted: false,
+              phase: 'readiness',
+              reason: result.reason,
+              status: 'unknown',
+            });
+            console.error(formatted.stderr);
+            console.error(formatted.annotation);
+            if (process.env.GITHUB_STEP_SUMMARY) {
+              appendFileSync(process.env.GITHUB_STEP_SUMMARY, formatted.summary);
+            }
+          }
+          const guardedRetry = exitCode === '1' &&
+            ['pending-work', 'authority-missing', 'authority-sealed'].includes(result.reason);
+          if (!(result.status === 'ready' && exitCode === '0') && !guardedRetry) process.exitCode = 1;
+          NODE
+
       - name: Bootstrap every database identity before migrations
         if: ${{ !inputs.outbox_only && !inputs.continue_migrated_publication }}
         timeout-minutes: 10
@@ -450,12 +644,16 @@ jobs:
           ONTOS_RETIRED_COMPOSITION_REVISION: ${{ inputs.retired_composition_revision }}
         run: mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication
 
-      # Refresh exact grants and revocations after every demo owner has migrated. Never run the old shared grant path.
-      - name: Bootstrap every database identity after migrations
+      # Final exact grants and portal migrations already ran inside the sealed child. Verify here
+      # instead of executing a third full bootstrap after marking migration complete.
+      - name: Verify every migrated owner schema
         if: ${{ !inputs.outbox_only }}
         timeout-minutes: 10
         working-directory: app
-        run: mise exec -- pnpm db:bootstrap-runtime-role
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: mise exec -- pnpm db:verify
 
       # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation.
       - name: Reconcile storefront, Commerce and Privacy service grants
@@ -594,6 +792,17 @@ jobs:
           wc -c "$ZEROPS_YAML_PATH"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
+      - name: Provision canonical enrollment recovery host configuration
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+        run: |
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify
+
       - name: Push the outbox worker host
         env:
           UNITS_JSON: '["outbox-worker-host"]'
@@ -704,6 +913,27 @@ jobs:
       - name: Time /cs, OAuth metadata and the storefront home
         working-directory: app
         run: mise exec -- node scripts/ops/stage-demo-verify.mjs
+
+      # The timing probe remains blocking, but its failure must not skip this independent browser proof.
+      - name: Prove the native newsletter grant and withdrawal
+        if: (success() || failure()) && !inputs.outbox_only
+        working-directory: app
+        env:
+          AKROS_TEST_BASE_URL: ${{ env.STAGE_STOREFRONT_URL }}
+          AKROS_EVIDENCE_DIR: ${{ runner.temp }}/newsletter-consent
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node akros-storefront/tests/browser/newsletter-consent.mjs
+
+      - name: Upload the newsletter screenshots
+        if: always() && !inputs.outbox_only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: newsletter-consent
+          path: ${{ runner.temp }}/newsletter-consent/*.png
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Prove MCP over OAuth end to end
         working-directory: app

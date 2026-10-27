@@ -64,6 +64,8 @@ export function EnrollmentProgress() {
         .then(async (initial) => {
           let result = initial;
           signal.throwIfAborted();
+          // Keep confirmed progress and its recovery controls if the following request fails.
+          setProgress(result);
           let resumed = false;
           // Login may resume once. Reconciliation and terminal Attempts never replay automatically.
           if (
@@ -72,6 +74,7 @@ export function EnrollmentProgress() {
           ) {
             result = await loadProgress("resume", signal);
             signal.throwIfAborted();
+            setProgress(result);
             resumed = true;
           }
           if ((operation !== "read" || resumed) && result.state === "COMPLETE") {

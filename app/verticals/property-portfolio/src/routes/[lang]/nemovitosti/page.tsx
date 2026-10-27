@@ -15,6 +15,8 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { listEmployees } from '@app/workforce/clients/records';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
@@ -134,7 +136,15 @@ interface RecordsInput {
 const propertyRecords = definePageData({
   key: (input: RecordsInput) => input.legalEntityId,
   load: () =>
-    Random.nextInt.pipe(Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`))),
+    Effect.all(
+      {
+        employees: listEmployees().pipe(Effect.result),
+        records: Random.nextInt.pipe(
+          Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`)),
+        ),
+      },
+      { concurrency: 2 },
+    ),
   runtime: browserRuntime,
 });
 const recordsInput = (context: ModulePageProps['context']): RecordsInput => ({
@@ -181,7 +191,15 @@ const usePropertyRecords = (legalEntityId: string) => {
   useEffect(() => {
     propertyRecords.ensure({ legalEntityId });
   }, [legalEntityId]);
-  const records = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const records = snapshot.state === 'ready' ? snapshot.value.records : undefined;
+  const employees = snapshot.state === 'ready' ? Result.getOrUndefined(snapshot.value.employees) : undefined;
+  const employeesMessage =
+    snapshot.state === 'ready' && Result.isFailure(snapshot.value.employees)
+      ? Match.value(snapshot.value.employees.failure).pipe(
+          Match.tag('RecordsForbiddenProblem', () => t(`${key}.editor.employeesForbidden`)),
+          Match.orElse(() => t(`${key}.editor.employeesUnavailable`)),
+        )
+      : '';
   const recordsLoading = snapshot.state === 'pending' || snapshot.refreshing;
   const message =
     snapshot.state === 'failed'
@@ -393,6 +411,8 @@ const usePropertyRecords = (legalEntityId: string) => {
     asset,
     assets,
     availability,
+    employees,
+    employeesMessage,
     finance,
     key,
     language: language ?? 'cs',
@@ -447,14 +467,17 @@ interface RecordConfirmation {
 const RecordsConfirmation = ({
   onClose,
   request,
+  view,
 }: {
   readonly onClose: () => void;
   readonly request: RecordConfirmation;
+  readonly view: RecordsView;
 }) => {
+  const { key, t } = view.model;
   const [reason, setReason] = useState(request.initialReason ?? '');
   const needsReason = request.initialReason !== undefined;
   const confirm = () => {
-    if (needsReason && reason.trim() === '') {
+    if (view.editor.busy || (needsReason && reason.trim() === '')) {
       return;
     }
     request.onConfirm(reason.trim());
@@ -465,14 +488,19 @@ const RecordsConfirmation = ({
       actions={
         <>
           <Button onClick={onClose} theme="outlined" type="button" variant="secondary">
-            Zrušit
+            {t(`${key}.editor.cancel`)}
           </Button>
-          <Button disabled={needsReason && reason.trim() === ''} onClick={confirm} type="button" variant="danger">
-            Potvrdit
+          <Button
+            disabled={view.editor.busy || (needsReason && reason.trim() === '')}
+            onClick={confirm}
+            type="button"
+            variant="danger"
+          >
+            {needsReason ? t(`${key}.editor.archiveConfirm`) : t(`${key}.editor.retireConfirm`)}
           </Button>
         </>
       }
-      closeLabel="Zavřít"
+      closeLabel={t(`${key}.editor.cancel`)}
       customTrigger
       description={request.description}
       onOpenChange={({ open }) => {
@@ -481,6 +509,8 @@ const RecordsConfirmation = ({
         }
       }}
       open
+      role="alertdialog"
+      size="sm"
       title={request.title}
     >
       {needsReason && (
@@ -492,7 +522,7 @@ const RecordsConfirmation = ({
         >
           <FormInput
             id="record-archive-reason"
-            label="Důvod archivace"
+            label={t(`${key}.editor.archiveReason`)}
             onChange={(event) => setReason(event.target.value)}
             required
             value={reason}
@@ -519,6 +549,8 @@ const unitLeaseBlock = (
 const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model } = view;
   const { key, t } = model;
+  const selectedEmployeeIds = new Set(editor.draft?.responsibleEmployeeIds);
+  const availableEmployeeIds = new Set(model.employees?.map((employee) => employee.id));
   const handleCancelEditor = editor.cancel;
   return (
     editor.draft !== undefined && (
@@ -533,20 +565,59 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
         <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">
           {t(`${key}.editor.${editor.title}`)}
         </h2>
-        {editor.fields.map((field) => (
-          <FormInput
-            disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
-            id={`property-${field}`}
-            key={field}
-            label={t(`${key}.editor.${field}`)}
-            onChange={(event) => editor.change(field, event.target.value)}
-            required={field !== 'note'}
-            value={editor.draft?.[field] ?? ''}
-            {...(editor.errors[field] === undefined
-              ? {}
-              : { helpText: editor.errors[field], validateStatus: 'error' as const })}
-          />
-        ))}
+        {editor.fields.map((field) =>
+          field === 'responsibleEmployeeIds' ? (
+            <Combobox
+              allowCustomValue={false}
+              closeOnSelect={false}
+              disabled={editor.busy}
+              error={model.employeesMessage || undefined}
+              id="property-responsible-employees"
+              items={[
+                ...(model.employees ?? []).flatMap((employee) =>
+                  employee.active || selectedEmployeeIds.has(employee.id)
+                    ? [{ label: employee.fullName, value: employee.id }]
+                    : [],
+                ),
+                ...(editor.draft?.responsibleEmployeeIds ?? []).flatMap((id) =>
+                  availableEmployeeIds.has(id)
+                    ? []
+                    : [{ label: t(`${key}.editor.employeeUnknown`, { id }), value: id }],
+                ),
+              ]}
+              key={field}
+              label={t(`${key}.editor.responsiblePerson`)}
+              loading={model.recordsLoading}
+              loadingMessage={t(`${key}.editor.employeesLoading`)}
+              multiple
+              name="responsibleEmployeeIds"
+              noResultsMessage={t(`${key}.editor.employeesEmpty`)}
+              onChange={(value) => editor.changeResponsibleEmployees(value)}
+              onRetry={() => model.refresh()}
+              openOnClick
+              placeholder={t(`${key}.editor.employeesPlaceholder`)}
+              required
+              retryLabel={t(`${key}.editor.employeesRetry`)}
+              value={[...(editor.draft?.responsibleEmployeeIds ?? [])]}
+              {...(editor.errors.responsibleEmployeeIds === undefined
+                ? {}
+                : { helpText: t(`${key}.editor.responsibleRequired`), validateStatus: 'error' as const })}
+            />
+          ) : (
+            <FormInput
+              disabled={editor.busy || (field === 'code' && editor.draft?.property !== undefined)}
+              id={`property-${field}`}
+              key={field}
+              label={t(`${key}.editor.${field}`)}
+              onChange={(event) => editor.change(field, event.target.value)}
+              required={field !== 'note'}
+              value={editor.draft?.[field] ?? ''}
+              {...(editor.errors[field] === undefined
+                ? {}
+                : { helpText: editor.errors[field], validateStatus: 'error' as const })}
+            />
+          ),
+        )}
         {editor.draft.unitFor === undefined && (
           <label className="sp-property-state">
             {t(`${key}.state`)}
@@ -960,7 +1031,16 @@ const RecordsPropertyDetails = ({ view }: { readonly view: RecordsView }) => {
             {t(`${key}.editor.propertyType`)}: {model.property.propertyType ?? 'Neuvedeno'}
           </p>
           <p className={secondaryTextClass}>
-            {t(`${key}.editor.responsiblePerson`)}: {model.property.responsiblePerson ?? 'Neuvedeno'}
+            {t(`${key}.editor.responsiblePerson`)}:{' '}
+            {model.property.responsibleEmployeeIds === undefined
+              ? (model.property.responsiblePerson ?? t(`${key}.editor.responsibleNotSet`))
+              : model.property.responsibleEmployeeIds
+                  .map(
+                    (id) =>
+                      model.employees?.find((employee) => employee.id === id)?.fullName ??
+                      t(`${key}.editor.employeeUnknown`, { id }),
+                  )
+                  .join(', ')}
           </p>
           <p className={secondaryTextClass}>
             {t(`${key}.editor.note`)}: {model.property.note ?? 'Neuvedeno'}
@@ -987,7 +1067,7 @@ const RecordsPropertyDetails = ({ view }: { readonly view: RecordsView }) => {
 
 const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
   const model = usePropertyRecords(legalEntityId);
-  const editor = usePropertyEditor(model.records, model.refresh);
+  const editor = usePropertyEditor(model.records, model.employees, model.refresh);
   // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
   const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
   const selectedProperty = model.property;
@@ -1022,23 +1102,23 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
   const [confirmation, setConfirmation] = useState<RecordConfirmation>();
   const requestArchive = (label: string, onConfirm: (reason: string) => void) =>
     setConfirmation({
-      description: 'Záznam zmizí ze všech seznamů a výběrů; data i historie zůstanou a lze jej obnovit.',
-      initialReason: 'Testovací záznam z ověřování',
+      description: t(`${key}.editor.archiveDescription`, { label }),
+      initialReason: t(`${key}.editor.archiveDefaultReason`),
       onConfirm,
-      title: `Archivovat ${label}?`,
+      title: t(`${key}.editor.archiveTitle`, { label }),
     });
   const requestRetire = (item: RecordsResponse['units'][number]) =>
     setConfirmation({
-      description: 'Jednotka se přestane nabízet k pronájmu, historie nájmů a smluv zůstane zachována.',
+      description: t(`${key}.editor.retireDescription`, { label: item.code }),
       onConfirm: () => editor.changeUnitLifecycle(item, 'RETIRED'),
-      title: `Vyřadit jednotku ${item.code}?`,
+      title: t(`${key}.editor.retireTitle`, { label: item.code }),
     });
   const archivedCount = model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0;
   const view: RecordsView = { availabilityLabel, editor, leasable, model, requestArchive, requestRetire };
   return (
     <>
       {confirmation !== undefined && (
-        <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} />
+        <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} view={view} />
       )}
       <UltramodernRouteHead />
       <section

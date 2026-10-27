@@ -6,6 +6,7 @@ import type { HttpServerRequest } from 'effect/unstable/http';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { transportIdentifier } from '../actions/string-schemas.ts';
+import { withRequestPermissionDecisions } from '../permissions/context-access.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
@@ -585,6 +586,7 @@ export function makeGovernedReadHttpHandler<
     });
 
     return yield* execute.pipe(
+      withRequestPermissionDecisions,
       Effect.catchCauseIf(Cause.hasDies, () =>
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,

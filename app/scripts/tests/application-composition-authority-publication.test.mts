@@ -6,6 +6,7 @@ import { ApplicationCompositionAuthorityError } from '../../packages/core-runtim
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   withApplicationCompositionPublicationProgress,
+  withApplicationCompositionReadinessDeadline,
 } from '../application-composition-authority-publication.mts';
 
 const runtimeUrl = 'postgresql://ontos_runtime:runtime-test-secret@127.0.0.1:5432/publication';
@@ -97,5 +98,16 @@ it.effect('preserves publication failures and cancels heartbeats without claimin
         (message) => Array.isArray(message) && message[0] === 'Application Composition publication completed',
       ),
     ).toBe(false);
+  }),
+);
+
+it.effect('returns only sanitized unknown evidence when a readiness dependency fails', () =>
+  Effect.gen(function* unavailableReadinessDoesNotLeak() {
+    const failure = new ApplicationCompositionAuthorityError({
+      code: 'application_composition_authority_unavailable',
+      reason: 'synthetic credential-like diagnostic that must not escape',
+    });
+    const result = yield* withApplicationCompositionReadinessDeadline(Effect.fail(failure));
+    expect(result).toEqual({ advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' });
   }),
 );

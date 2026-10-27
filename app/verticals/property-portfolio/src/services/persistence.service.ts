@@ -56,6 +56,7 @@ const withoutArchive = <Record extends { readonly archive?: unknown }>(record: R
 
 interface PropertyDetails {
   propertyType?: string;
+  responsibleEmployeeIds?: NonNullable<PropertyState['properties'][number]['responsibleEmployeeIds']>;
   responsiblePerson?: string;
 }
 
@@ -65,6 +66,9 @@ const propertyDetailsOf = (
   const details: PropertyDetails = {};
   if (input.propertyType !== undefined) {
     details.propertyType = input.propertyType;
+  }
+  if (input.responsibleEmployeeIds !== undefined) {
+    details.responsibleEmployeeIds = input.responsibleEmployeeIds;
   }
   if (input.responsiblePerson !== undefined) {
     details.responsiblePerson = input.responsiblePerson;

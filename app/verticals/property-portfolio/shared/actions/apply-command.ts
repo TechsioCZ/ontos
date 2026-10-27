@@ -6,6 +6,7 @@ import {
   AssetLifecycleSchema,
   PropertyLifecycleSchema,
   PropertyTextSchema,
+  ResponsibleEmployeeIdsSchema,
   UnitLifecycleSchema,
 } from '../apis/records.ts';
 import { PropertyConflict } from './errors/property-conflict.ts';
@@ -24,6 +25,7 @@ export const PropertyCommandSchema = Schema.Union([
     // Command JSON distinguishes an omitted create default from an explicit null note.
     note: Schema.optionalKey(Schema.toEncoded(Schema.OptionFromNullOr(Schema.String))),
     propertyType: Schema.optionalKey(PropertyTextSchema),
+    responsibleEmployeeIds: Schema.optionalKey(ResponsibleEmployeeIdsSchema),
     responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   }),
   Schema.TaggedStruct('UpdateProperty', {
@@ -33,6 +35,7 @@ export const PropertyCommandSchema = Schema.Union([
     note: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
     propertyRef: PropertyRefSchema,
     propertyType: Schema.optionalKey(PropertyTextSchema),
+    responsibleEmployeeIds: Schema.optionalKey(ResponsibleEmployeeIdsSchema),
     responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   }),
   Schema.TaggedStruct('ChangePropertyLifecycle', {

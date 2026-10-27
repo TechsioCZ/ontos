@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Cause, Deferred, Effect, Fiber, Logger, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Logger, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
@@ -1145,6 +1145,138 @@ it.effect('joins a check still in flight instead of asking SpiceDB for it twice'
     expect(first.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
     expect(second).toEqual([{ decision: 'allowed', key: 'crm' }]);
     expect(requests.length).toBe(1);
+  }),
+);
+
+it.effect('batches different concurrent permission reads and preserves caller ordering and decisions', () =>
+  Effect.gen(function* batchesConcurrentPermissionReads() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const [first, second, company] = yield* withRequestPermissionDecisions(
+      Effect.all(
+        [
+          checkModules(access, ['core.shell', 'denied.billing']),
+          checkModules(access, ['denied.billing', 'crm', 'core.shell']),
+          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
+        ],
+        { concurrency: 3 },
+      ),
+    );
+    expect(first).toEqual([
+      { decision: 'allowed', key: 'core.shell' },
+      { decision: 'denied', key: 'denied.billing' },
+    ]);
+    expect(second).toEqual([
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'crm' },
+      { decision: 'allowed', key: 'core.shell' },
+    ]);
+    expect(company).toEqual([{ decision: 'allowed', key: legalEntityId }]);
+    expect(requests.map(({ items }) => items.length)).toEqual([4]);
+    expect(requests[0]?.consistency?.requirement).toEqual({
+      fullyConsistent: true,
+      oneofKind: 'fullyConsistent',
+    });
+  }),
+);
+
+it.effect('keeps concurrent request scopes in separate transport batches', () =>
+  Effect.gen(function* isolatesRequestBatches() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* Effect.all(
+      [
+        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
+        withRequestPermissionDecisions(checkModules(access, ['core.shell'])),
+      ],
+      { concurrency: 2 },
+    );
+    expect(requests.map(({ items }) => items.length)).toEqual([1, 1]);
+  }),
+);
+
+it.effect('bounds coalesced permission batches without dropping checks', () =>
+  Effect.gen(function* boundsRequestBatches() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const moduleIds = Array.from({ length: 300 }, (_, index) => `module${index}`);
+    const results = yield* withRequestPermissionDecisions(
+      Effect.all([checkModules(access, moduleIds.slice(0, 150)), checkModules(access, moduleIds.slice(150))], {
+        concurrency: 2,
+      }),
+    );
+    expect(results.flat().map(({ key }) => key)).toEqual(moduleIds);
+    expect(results.flat().every(({ decision }) => decision === 'allowed')).toBe(true);
+    expect(requests.map(({ items }) => items.length)).toEqual([256, 44]);
+  }),
+);
+
+it.live('settles joined decisions on interruption and allows a fresh request-scoped retry', () =>
+  Effect.gen(function* interruptsBatchedPermissionReads() {
+    const started = yield* Deferred.make<boolean>();
+    let attempts = 0;
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Deferred.succeed(started, true).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(
+                responseFor(
+                  request,
+                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+                ),
+              );
+        }),
+      ),
+    );
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* interruptedRequest() {
+        const owner = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Deferred.await(started);
+        const joined = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Fiber.interrupt(owner);
+        expect(yield* Fiber.join(joined)).toEqual([{ decision: 'unavailable', key: 'crm' }]);
+        expect(yield* checkModules(access, ['crm'])).toEqual([{ decision: 'allowed', key: 'crm' }]);
+      }),
+    );
+    expect(attempts).toBe(2);
+  }).pipe(Effect.timeout('2 seconds')),
+);
+
+it.effect('does not retain pending decisions after a batched client defects', () =>
+  Effect.gen(function* retriesAfterBatchDefect() {
+    let attempts = 0;
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Effect.die('Unexpected test client defect')
+            : Effect.succeed(
+                responseFor(
+                  request,
+                  request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+                ),
+              );
+        }),
+      ),
+    );
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* retryRequest() {
+        const failed = yield* Effect.all([checkModules(access, ['crm']), checkModules(access, ['core.shell'])], {
+          concurrency: 2,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(yield* checkModules(access, ['crm', 'core.shell'])).toEqual([
+          { decision: 'allowed', key: 'crm' },
+          { decision: 'allowed', key: 'core.shell' },
+        ]);
+      }),
+    );
+    expect(attempts).toBe(2);
   }),
 );
 

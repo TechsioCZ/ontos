@@ -15,12 +15,17 @@ export const CUSTOMER_CONSENT_STATUS = {
   invalid: 400,
   unavailable: 503,
 } as const;
-export const CustomerNoticeVersionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+/** Fixed demo wording, not a claim that a Privacy catalog or purpose has been provisioned. */
+export const DEMO_NEWSLETTER_NOTICE = {
+  language: 'cs',
+  noticeVersionId: 'demo-newsletter.cs.v1',
+  wording:
+    'Souhlasím se zasíláním novinek a obchodních nabídek AKROS na svůj kontaktní e-mail. Souhlas je dobrovolný, není podmínkou nákupu a mohu jej kdykoli odvolat v části Můj účet. Odvolání neovlivní zákonnost předchozího zpracování.',
+} as const;
+export const CustomerNoticeVersionIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)).pipe(
   Schema.brand('CustomerNoticeVersionId'),
 );
-const CustomerPurposeVersionIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('CustomerPurposeVersionId'),
-);
+const revision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const CustomerConsentRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('CustomerConsentRequestId'),
 );
@@ -28,20 +33,26 @@ export const CustomerConsentRequestIdSchema = Schema.String.check(Schema.isUUID(
 export const CustomerConsentNoticeSchema = Schema.Struct({
   language: Schema.String,
   noticeVersionId: CustomerNoticeVersionIdSchema,
-  purposeVersionId: CustomerPurposeVersionIdSchema,
   wording: Schema.String,
 });
 export const CustomerOwnConsentSchema = Schema.Struct({
-  decision: Schema.Literals(['ABSENT', 'GRANTED', 'REFUSED', 'WITHDRAWN']),
+  decision: Schema.Literals(['ABSENT', 'GRANTED', 'WITHDRAWN']),
   notice: CustomerConsentNoticeSchema,
+  revision,
 });
 export const UpdateCustomerOwnConsentSchema = Schema.Struct({
   decision: Schema.Literals(['GRANTED', 'WITHDRAWN']),
-  noticeAcknowledged: Schema.Literal(true),
+  expectedRevision: revision,
+  noticeAcknowledged: Schema.Boolean,
   noticeVersionId: CustomerNoticeVersionIdSchema,
-  purposeVersionId: CustomerPurposeVersionIdSchema,
   requestId: CustomerConsentRequestIdSchema,
-});
+}).check(
+  Schema.makeFilter((input) =>
+    input.decision === 'WITHDRAWN' || input.noticeAcknowledged
+      ? undefined
+      : 'An explicit grant requires acknowledgement',
+  ),
+);
 export type CustomerOwnConsent = typeof CustomerOwnConsentSchema.Type;
 export type UpdateCustomerOwnConsent = typeof UpdateCustomerOwnConsentSchema.Type;
 export const ConsentConflictProblemSchema = makeProblemDetailsSchema(

@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import { CalendarDateWireSchema } from '@app/shared-contracts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import { LegalEntityRefSchema } from '@app/core-runtime/resources/legal-entity';
+import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { PropertyRefSchema } from '../resources/property.ts';
 import { UnitRefSchema } from '../resources/unit.ts';
 import { AssetRefSchema } from '../resources/asset.ts';
@@ -12,6 +13,7 @@ export const PropertyLifecycleSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'IN
 export const UnitLifecycleSchema = Schema.Literals(['ACTIVE', 'OUT_OF_SERVICE', 'RETIRED']);
 export const AssetLifecycleSchema = Schema.Literals(['ACTIVE', 'IN_SERVICE', 'OUT_OF_SERVICE', 'DISPOSED']);
 export const PropertyTextSchema = Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(300));
+export const ResponsibleEmployeeIdsSchema = Schema.Array(EmployeeIdSchema).check(Schema.isMinLength(1));
 export const PropertyDateSchema = CalendarDateWireSchema;
 export const PropertyInstantSchema = Schema.toEncoded(Schema.DateTimeUtcFromString);
 /**
@@ -35,6 +37,8 @@ export const PropertyRecordSchema = Schema.Struct({
   note: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
   propertyRef: PropertyRefSchema,
   propertyType: Schema.optionalKey(PropertyTextSchema),
+  responsibleEmployeeIds: Schema.optionalKey(ResponsibleEmployeeIdsSchema),
+  /** Kept for older records; employee IDs are authoritative when present. */
   responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   updatedAt: PropertyInstantSchema,
 });

@@ -46,9 +46,9 @@ export function CustomerNewsletterConsentForm() {
     if (!consent || pending) return;
     const fields = {
       decision: subscribed ? "GRANTED" : "WITHDRAWN",
-      noticeAcknowledged: true,
+      noticeAcknowledged: subscribed,
       noticeVersionId: consent.notice.noticeVersionId,
-      purposeVersionId: consent.notice.purposeVersionId,
+      expectedRevision: consent.revision,
     };
     const identity = JSON.stringify(fields);
     if (request.current?.identity !== identity)
@@ -63,6 +63,12 @@ export function CustomerNewsletterConsentForm() {
         body: JSON.stringify({ ...fields, requestId: request.current.requestId }),
       });
       const result = (await response.json()) as { consent?: unknown; message?: string };
+      if (response.status === 409) {
+        request.current = null;
+        await load();
+        setError(result.message ?? "Stav se změnil. Zkontrolujte aktuální volbu.");
+        return;
+      }
       if (
         !response.ok ||
         !isCustomerNewsletterConsent(result.consent) ||
@@ -91,8 +97,8 @@ export function CustomerNewsletterConsentForm() {
             {consent.notice.wording}
           </p>
           <p>
-            Změnou volby potvrzuji seznámení s uvedenými informacemi. Souhlas je dobrovolný a lze
-            jej zde kdykoli odvolat. Nesouvisí s přijetím obchodních podmínek.
+            Zaškrtnutím potvrzuji seznámení s uvedenými informacemi. Souhlas je dobrovolný a lze jej
+            zde kdykoli odvolat odškrtnutím. Nesouvisí s přijetím obchodních podmínek.
           </p>
           <FormCheckbox
             id="account-newsletter"

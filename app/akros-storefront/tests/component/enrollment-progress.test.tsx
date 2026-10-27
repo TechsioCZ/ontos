@@ -141,14 +141,50 @@ it("makes only one automatic resume when an owner still cannot complete", async 
   expect(router.replace).not.toHaveBeenCalled();
 });
 
-it("does not retry an automatic resume after an outage or ambiguous failure", async () => {
+it.each(["IN_PROGRESS", "VERIFICATION_REQUIRED"])(
+  "keeps confirmed %s progress and allows explicit recovery after an uncertain automatic resume",
+  async (state) => {
+    fetchProgress
+      .mockResolvedValueOnce(Response.json({ state, revision: 3 }))
+      .mockResolvedValueOnce(Response.json({ message: "Dočasně nedostupné." }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }))
+      .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
+    render(<EnrollmentProgress />);
+    expect((await screen.findByRole("alert")).textContent).toContain("Dočasně nedostupné.");
+    expect(fetchProgress).toHaveBeenCalledTimes(2);
+    expect(router.replace).not.toHaveBeenCalled();
+    const resume = await screen.findByRole("button", { name: "Obnovit registraci" });
+    await waitFor(() => expect(resume.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(resume);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/muj-ucet"));
+    expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual([
+      "GET",
+      "POST",
+      "POST",
+      "GET",
+    ]);
+  },
+);
+
+it("keeps confirmed completion when admission is unavailable and recovers with a read only", async () => {
   fetchProgress
     .mockResolvedValueOnce(Response.json({ state: "IN_PROGRESS", revision: 3 }))
-    .mockResolvedValueOnce(Response.json({ message: "Dočasně nedostupné." }, { status: 503 }));
+    .mockResolvedValueOnce(Response.json({ state: "COMPLETE", revision: 12 }))
+    .mockResolvedValueOnce(Response.json({ message: "Dočasně nedostupné." }, { status: 503 }))
+    .mockResolvedValueOnce(Response.json({ state: "ADMITTED" }));
   render(<EnrollmentProgress />);
-  expect((await screen.findByRole("alert")).textContent).toContain("Dočasně nedostupné.");
-  expect(fetchProgress).toHaveBeenCalledTimes(2);
+  await screen.findByRole("alert");
+  expect(screen.getByRole("status").textContent).toContain("Registrace byla dokončena");
+  expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
   expect(router.replace).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Ověřit stav" }));
+  await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/muj-ucet"));
+  expect(fetchProgress.mock.calls.map(([, init]) => init?.method)).toEqual([
+    "GET",
+    "POST",
+    "GET",
+    "GET",
+  ]);
 });
 
 it("waits for actual delayed admission after one resume, without displaying a premature denial", async () => {

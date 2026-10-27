@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
+import { Cause, Effect, Exit, Logger, Option, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -13,6 +13,7 @@ import { OperationAuthenticationRequired } from '../../src/operations/operation-
 import { OperationContextDenied } from '../../src/operations/operation-context-denied.ts';
 import { OperationContextInvalid } from '../../src/operations/operation-context-invalid.ts';
 import { OperationContextUnavailable } from '../../src/operations/operation-context-unavailable.ts';
+import { RequestPermissionDecisions, withRequestPermissionDecisions } from '../../src/permissions/context-access.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadCoreError } from '../../src/reads/errors.ts';
 import { ReadEvidencePersistenceError } from '../../src/reads/read-evidence-persistence-error.ts';
@@ -201,6 +202,47 @@ const readRuntime: ReadRuntimeService = {
   },
 };
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
+
+it.effect('owns a fresh permission batch per HTTP read and preserves an enclosing request scope', () =>
+  Effect.gen(function* requestScopedPermissionBatches() {
+    const authenticatedScopes = new WeakSet<object>();
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () =>
+        RequestPermissionDecisions.pipe(
+          Effect.map((scope) => {
+            expect(Option.isSome(scope)).toBe(true);
+            if (Option.isSome(scope)) {
+              expect(authenticatedScopes.has(scope.value)).toBe(false);
+              authenticatedScopes.add(scope.value);
+            }
+            return principal;
+          }),
+        ),
+      problems,
+      registration,
+    });
+    const execute = handler({
+      payload: { query: 'fixture' },
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'permission-batch-test' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    yield* execute;
+    yield* execute;
+    expect(yield* RequestPermissionDecisions).toEqual(Option.none());
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* enclosingRequestScope() {
+        const enclosing = yield* RequestPermissionDecisions;
+        yield* execute;
+        expect(yield* RequestPermissionDecisions).toBe(enclosing);
+        if (Option.isSome(enclosing)) {
+          expect(authenticatedScopes.has(enclosing.value)).toBe(true);
+        }
+      }),
+    );
+  }),
+);
 
 it.effect('reports authentication and response encoding separately without exposing request values', () =>
   Effect.gen(function* encodedResponseTiming() {
