@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 import { ConfigProvider, DateTime, Effect, Exit } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
@@ -19,7 +19,10 @@ const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId 
 const now = DateTime.makeUnsafe('2026-10-21T08:00:00Z');
 const checkedAnchors: FinanceAnchors[] = [];
 const validators: FinanceValidators = {
-  anchors: (anchors) => Effect.sync(() => void checkedAnchors.push(anchors)),
+  anchors: (anchors) =>
+    Effect.sync(() => {
+      checkedAnchors.push(anchors);
+    }),
   exportReferences: Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
   invoice: () => Effect.void,
 };
@@ -88,27 +91,26 @@ const failsWith = (exit: Exit.Exit<unknown, unknown>, reason: string) =>
 
 describe('S07.R4 price list and discounts', () => {
   it('a percentage or fixed discount lowers the base and is kept separately with its reason', () => {
-    const lines = [
-      {
-        description: 'Pronájem kanceláře',
-        discount: { kind: 'PERCENT' as const, reason: 'Věrnostní sleva 10 %', value: 10 },
-        quantity: 1,
-        unitPriceMinor: 2_000_000,
-        vatRate: 21 as const,
-      },
-      {
-        description: 'Parkovací místo',
-        discount: { kind: 'AMOUNT' as const, reason: 'Kompenzace za uzavírku', value: 50_000 },
-        quantity: 2,
-        unitPriceMinor: 150_000,
-        vatRate: 21 as const,
-      },
-    ];
-    expect(lineDiscountMinor(lines[0]!)).toBe(200_000);
-    expect(lineDiscountMinor(lines[1]!)).toBe(50_000);
+    const percentageLine = {
+      description: 'Pronájem kanceláře',
+      discount: { kind: 'PERCENT' as const, reason: 'Věrnostní sleva 10 %', value: 10 },
+      quantity: 1,
+      unitPriceMinor: 2_000_000,
+      vatRate: 21 as const,
+    };
+    const amountLine = {
+      description: 'Parkovací místo',
+      discount: { kind: 'AMOUNT' as const, reason: 'Kompenzace za uzavírku', value: 50_000 },
+      quantity: 2,
+      unitPriceMinor: 150_000,
+      vatRate: 21 as const,
+    };
+    const lines = [percentageLine, amountLine];
+    expect(lineDiscountMinor(percentageLine)).toBe(200_000);
+    expect(lineDiscountMinor(amountLine)).toBe(50_000);
     expect(computeInvoiceTotals(lines)).toMatchObject({ subtotalMinor: 2_050_000, vatMinor: 430_500 });
     expect(
-      computeInvoiceTotals([{ ...lines[1]!, discount: { kind: 'AMOUNT', reason: 'Příliš', value: 300_001 } }]),
+      computeInvoiceTotals([{ ...amountLine, discount: { kind: 'AMOUNT', reason: 'Příliš', value: 300_001 } }]),
     ).toBe(undefined);
   });
 
@@ -118,7 +120,7 @@ describe('S07.R4 price list and discounts', () => {
         description: 'Úklid',
         discount: { kind: 'AMOUNT' as const, reason: 'Reklamace', value: 333 },
         quantity: 3,
-        unitPriceMinor: 1_001,
+        unitPriceMinor: 1001,
         vatRate: 21 as const,
       },
       {
@@ -129,7 +131,8 @@ describe('S07.R4 price list and discounts', () => {
         vatRate: 21 as const,
       },
     ];
-    const totals = computeInvoiceTotals(lines)!;
+    const totals = computeInvoiceTotals(lines);
+    assert.isDefined(totals);
     const xml = buildPohodaDataPack(
       [
         {
@@ -189,13 +192,9 @@ describe('S07.R4 price list and discounts', () => {
 describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
   it.effect('drafts move to prepared together, stay open, and approval records who approved', () =>
     Effect.gen(function* lifecycle() {
-      const state = {
-        ...empty,
-        invoices: [
-          invoice('d-1', { businessState: 'DRAFT', documentKind: 'RECURRING' }),
-          invoice('d-2', { businessState: 'DRAFT', documentKind: 'RECURRING' }),
-        ],
-      };
+      const firstDraft = invoice('d-1', { businessState: 'DRAFT', documentKind: 'RECURRING' });
+      const secondDraft = invoice('d-2', { businessState: 'DRAFT', documentKind: 'RECURRING' });
+      const state = { ...empty, invoices: [firstDraft, secondDraft] };
       const prepared = yield* run(state, {
         _tag: 'MarkInvoicesPrepared',
         actorLabel: 'Finance Siampark',
@@ -208,20 +207,20 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
       expect(prepared.state.accountingExports).toBe(undefined);
       const again = yield* run(prepared.state, {
         _tag: 'MarkInvoicesPrepared',
-        invoiceRefs: [state.invoices[0]!.ref],
+        invoiceRefs: [firstDraft.ref],
       });
       expect(again.changed).toBe(false);
-      const back = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: state.invoices[1]!.ref });
+      const back = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: secondDraft.ref });
       expect(back.invoice?.reviewState).toBe(undefined);
       const approved = yield* run(prepared.state, {
         _tag: 'ConfirmInvoice',
         actorLabel: 'Vedení',
-        invoiceRef: state.invoices[0]!.ref,
+        invoiceRef: firstDraft.ref,
       });
       expect(approved.invoice).toMatchObject({ approvedByLabel: 'Vedení', businessState: 'CONFIRMED' });
       expect(approved.invoice?.reviewState).toBe(undefined);
       const confirmedAgain = yield* Effect.exit(
-        run(approved.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [state.invoices[0]!.ref] }),
+        run(approved.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [firstDraft.ref] }),
       );
       expect(failsWith(confirmedAgain, 'prepare_requires_draft')).toBe(true);
     }),
@@ -229,21 +228,20 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
 
   it.effect('approval of a plain draft is refused server-side with a readable Czech reason', () =>
     Effect.gen(function* plainDraft() {
-      const state = { ...empty, invoices: [invoice('d-1', { businessState: 'DRAFT' })] };
-      const refused = yield* Effect.exit(run(state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }));
+      const draft = invoice('d-1', { businessState: 'DRAFT' });
+      const state = { ...empty, invoices: [draft] };
+      const refused = yield* Effect.exit(run(state, { _tag: 'ConfirmInvoice', invoiceRef: draft.ref }));
       expect(failsWith(refused, 'confirm_requires_prepared')).toBe(true);
       expect(failsWith(refused, 'Připraveno ke schválení')).toBe(true);
       const prepared = yield* run(state, {
         _tag: 'MarkInvoicesPrepared',
         actorLabel: 'Finance',
-        invoiceRefs: [state.invoices[0]!.ref],
+        invoiceRefs: [draft.ref],
       });
-      const returned = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: state.invoices[0]!.ref });
-      const refusedAgain = yield* Effect.exit(
-        run(returned.state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }),
-      );
+      const returned = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: draft.ref });
+      const refusedAgain = yield* Effect.exit(run(returned.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.ref }));
       expect(failsWith(refusedAgain, 'confirm_requires_prepared')).toBe(true);
-      const approved = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref });
+      const approved = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.ref });
       // The preparation step stays in the invoice history after approval.
       expect(approved.invoice).toMatchObject({ businessState: 'CONFIRMED', preparedByLabel: 'Finance' });
       expect(approved.invoice?.preparedAt).toBeDefined();
@@ -349,7 +347,7 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
           { ...empty, invoices: [advance, plain] },
           {
             _tag: 'SetPriorSettlement',
-            entries: [{ amountMinor: 1_000, invoiceResourceId: 'adv-1' }],
+            entries: [{ amountMinor: 1000, invoiceResourceId: 'adv-1' }],
             invoiceRef: plain.ref,
           },
         ),
@@ -392,14 +390,14 @@ describe('S09 plan items, object budgets, skonto and late interest', () => {
           budgetCategory: 'Energie',
           costCenter: 'Ubytování',
           direction: 'INCOMING',
-          totalMinor: 5_000,
+          totalMinor: 5000,
         }),
       ];
       expect(invoiceActualMinor(base, invoices)).toBe(15_000);
       expect(invoiceActualMinor({ ...base, propertyRef }, invoices)).toBe(10_000);
-      expect(invoiceActualMinor({ ...base, costCenter: 'Ubytování' }, invoices)).toBe(5_000);
+      expect(invoiceActualMinor({ ...base, costCenter: 'Ubytování' }, invoices)).toBe(5000);
       const first = yield* run(empty, { _tag: 'UpsertBudgetLine', ...base, plannedMinor: 20_000, propertyRef });
-      const second = yield* run(first.state, { _tag: 'UpsertBudgetLine', ...base, plannedMinor: 9_000 });
+      const second = yield* run(first.state, { _tag: 'UpsertBudgetLine', ...base, plannedMinor: 9000 });
       expect(second.state.budgets?.length).toBe(2);
       const clash = yield* Effect.exit(
         run(second.state, { _tag: 'UpsertBudgetLine', ...base, plannedMinor: 1, propertyRef }),
@@ -410,22 +408,23 @@ describe('S09 plan items, object budgets, skonto and late interest', () => {
 
   it.effect('skonto and late interest are stored as text or hand-approved amounts, never computed', () =>
     Effect.gen(function* terms() {
-      const state = { ...empty, invoices: [invoice('t-1')] };
+      const termsInvoice = invoice('t-1');
+      const state = { ...empty, invoices: [termsInvoice] };
       const set = yield* run(state, {
         _tag: 'SetPaymentTerms',
         actorLabel: 'Finance',
-        invoiceRef: state.invoices[0]!.ref,
+        invoiceRef: termsInvoice.ref,
         lateInterestText: 'Smluvní úrok z prodlení 0,05 % denně dle čl. 7 smlouvy',
-        skontoApprovedMinor: 2_000,
+        skontoApprovedMinor: 2000,
         skontoText: 'Skonto 2 % při úhradě do 7 dnů',
       });
       expect(set.invoice?.paymentTerms).toMatchObject({
         lateInterestText: 'Smluvní úrok z prodlení 0,05 % denně dle čl. 7 smlouvy',
-        skontoApprovedMinor: 2_000,
+        skontoApprovedMinor: 2000,
         updatedByLabel: 'Finance',
       });
       expect(set.invoice?.paidMinor).toBe(0);
-      const cleared = yield* run(set.state, { _tag: 'SetPaymentTerms', invoiceRef: state.invoices[0]!.ref });
+      const cleared = yield* run(set.state, { _tag: 'SetPaymentTerms', invoiceRef: termsInvoice.ref });
       expect(cleared.invoice?.paymentTerms).toBe(undefined);
     }),
   );
