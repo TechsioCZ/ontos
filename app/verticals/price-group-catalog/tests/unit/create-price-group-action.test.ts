@@ -139,9 +139,13 @@ const services = (
 describe('Create Price Group Action', () => {
   it('keeps semantic identity owner-issued and rejects a known future definition gap', () => {
     const decode = Schema.decodeUnknownSync(CreatePriceGroupPayloadSchema, { onExcessProperty: 'error' });
+    const { effectiveTo, ...withoutEffectiveTo } = payload;
 
     expect(() => decode({ ...payload, meaningFingerprint: 'a'.repeat(64) })).toThrow();
     expect(() => decode({ ...payload, effectiveTo: '2026-12-01T00:00:00.000Z' })).toThrow();
+    expect(effectiveTo).toBeNull();
+    expect(() => decode(withoutEffectiveTo)).toThrow();
+    expect(Schema.encodeSync(CreatePriceGroupPayloadSchema)(decode(payload))).toEqual(payload);
   });
 
   it('declares the catalog permission, forbidden legal-entity scope, and stable event contract', () => {
