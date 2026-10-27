@@ -3,7 +3,8 @@
   "include": [
     "src/federation-entry.tsx",
     "src/components/facility-operations-widget.tsx",
-    "src/modern-app-env.d.ts"
+    "src/modern-app-env.d.ts",
+    "src/ui/pdf-worker.d.ts"
   ],
   "compilerOptions": {
     "skipLibCheck": true,

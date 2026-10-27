@@ -3,7 +3,8 @@
   "include": [
     "src/federation-entry.tsx",
     "src/components/legal-agreements-widget.tsx",
-    "src/modern-app-env.d.ts"
+    "src/modern-app-env.d.ts",
+    "src/pdfjs-worker.d.ts"
   ],
   "compilerOptions": {
     "skipLibCheck": true,
