@@ -2,10 +2,14 @@ import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-
 import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';
 import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parseSync } from 'oxc-parser';
 
+import { SHELL_DATABASE_IDENTITY_ENROLLMENT } from '../../apps/shell-super-app/api/database-identity-enrollment.ts';
 import { BEARER_ASSERTION_ROLE_SETTINGS } from '../../packages/core-runtime/src/db/database-identities.ts';
 import {
   DATABASE_ROLE_GRANT_MANIFEST,
@@ -18,6 +22,24 @@ import {
 const explicitEntries = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) => (entry.kind === 'explicit' ? [entry] : []));
 const FIXTURE_OWNER_MODULE_KEY = 'fixture.owner';
 const schemaOf = (qualifiedName: string): string => qualifiedName.slice(0, qualifiedName.indexOf('.'));
+
+it('keeps Shell runtime composition inside its declaration root and uses package contracts for other owners', () => {
+  const shellRoot = fileURLToPath(new URL('../../apps/shell-super-app/', import.meta.url));
+  const entry = path.join(shellRoot, 'api/index.ts');
+  const imports = parseSync(entry, readFileSync(entry, 'utf-8')).module.staticImports;
+  for (const statement of imports) {
+    const specifier = statement.moduleRequest.value;
+    if (specifier.startsWith('.')) {
+      expect(path.relative(shellRoot, path.resolve(path.dirname(entry), specifier)), specifier).not.toMatch(
+        /^\.\.(?:\/|$)/u,
+      );
+    }
+  }
+});
+
+it('keeps the Shell gateway identity graph equal to the application migration enrollment', () => {
+  expect(SHELL_DATABASE_IDENTITY_ENROLLMENT).toEqual(APP_DATABASE_IDENTITY_ENROLLMENT);
+});
 
 it('gives every database identity exactly one grant manifest entry', () => {
   expect(DATABASE_ROLE_GRANT_MANIFEST).toHaveLength(DATABASE_IDENTITIES.length);
