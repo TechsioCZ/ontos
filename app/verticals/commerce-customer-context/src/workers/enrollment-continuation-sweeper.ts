@@ -117,7 +117,21 @@ interface CommerceEnrollmentContinuationSweeper {
    * registers the Attempt for a later sweep and a completion releases it.
    */
   readonly continuation: Continuation;
+  /** The runtime reads this after the same sweep, never by opening a second admission pass. */
+  readonly observation: Effect.Effect<CommerceEnrollmentRecoveryObservation>;
   readonly sweep: Effect.Effect<CommerceEnrollmentContinuationSweepResult>;
+}
+
+export interface CommerceEnrollmentRecoveryObservation {
+  readonly available: boolean;
+  /** Successful journal/admission sweep, not proof that any owner work completed. */
+  readonly lastSuccessfulSweepAt: Option.Option<number>;
+  /** Oldest due row observed in this bounded tick, not a global backlog age. */
+  readonly oldestDueAt: Option.Option<number>;
+  /** The due listing excludes exhausted rows; absence of a count must not mean zero. */
+  readonly retryExhaustedCount: Option.Option<number>;
+  /** Unsettled advances observed during this tick, not a global backlog count. */
+  readonly unresolved: number;
 }
 
 export interface CommerceEnrollmentContinuationSweeperOptions {
@@ -131,6 +145,7 @@ export interface CommerceEnrollmentContinuationSweeperOptions {
 type Registry = ReadonlyMap<string, TrackedAttempt>;
 
 interface SweeperState {
+  readonly observation: Ref.Ref<CommerceEnrollmentRecoveryObservation>;
   readonly registry: Ref.Ref<Registry>;
 }
 
@@ -198,12 +213,20 @@ const advanceEntry = (
   entry: TrackedAttempt,
 ): Effect.Effect<boolean> =>
   trackedAdvance(state, inner, entry).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) =>
+    Effect.tap((result) =>
+      isSettled(result)
+        ? Effect.void
+        : Ref.update(state.observation, (current) => ({ ...current, unresolved: current.unresolved + 1 })),
+    ),
+    Effect.matchEffect({
+      onFailure: (failure) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not advance this Attempt'), {
+          errorTag: failure._tag,
           portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-          reason: String(cause),
-        }).pipe(Effect.as(true)),
+        }).pipe(
+          Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),
+          Effect.as(true),
+        ),
       onSuccess: () => Effect.succeed(true),
     }),
   );
@@ -231,12 +254,15 @@ const claimedAdvance = (
       maxSweeps: SWEEP_BUDGET,
     })
     .pipe(
-      Effect.matchCauseEffect({
-        onFailure: (cause) =>
+      Effect.matchEffect({
+        onFailure: (failure) =>
           Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
+            errorTag: failure._tag,
             portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-            reason: String(cause),
-          }).pipe(Effect.as(false)),
+          }).pipe(
+            Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),
+            Effect.as(false),
+          ),
         onSuccess: Option.match({
           onNone: () => Effect.succeed(false),
           // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
@@ -282,8 +308,8 @@ const listDuePage = (
   staleAfterMillis: number,
 ): Effect.Effect<DurableListing> =>
   inner.listDue({ after, limit: pageLimit, maxSweeps: SWEEP_BUDGET, staleAfterMillis }).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) => Effect.succeed<DurableListing>({ attempts: [], unreadable: Option.some(String(cause)) }),
+    Effect.matchEffect({
+      onFailure: (failure) => Effect.succeed<DurableListing>({ attempts: [], unreadable: Option.some(failure._tag) }),
       onSuccess: (attempts) => Effect.succeed<DurableListing>({ attempts, unreadable: Option.none() }),
     }),
   );
@@ -389,11 +415,18 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   staleAfterMillis: number,
 ): Effect.fn.Return<CommerceEnrollmentContinuationSweepResult> {
   const [now, registry] = yield* Effect.all([Clock.currentTimeMillis, Ref.get(state.registry)], { concurrency: 2 });
+  yield* Ref.update(state.observation, (current) => ({
+    ...current,
+    available: false,
+    oldestDueAt: Option.none(),
+    unresolved: 0,
+  }));
   const admitted = yield* inner.openSweepPass.pipe(
     Effect.matchEffect({
       onFailure: (failure) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper awaits an approved continuation pass'), {
-          reason: failure.reason,
+          available: false,
+          errorTag: failure._tag,
         }).pipe(Effect.as(Option.none<CommerceEnrollmentContinuationSweepPass>())),
       onSuccess: Effect.succeedSome,
     }),
@@ -403,6 +436,20 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   }
   const pass = admitted.value;
   const durable = yield* durableDue({ inner: pass, pageLimit, staleAfterMillis });
+  let oldestDueAt: Option.Option<number> = Option.none();
+  for (const attempt of durable.attempts) {
+    oldestDueAt = Option.some(
+      Math.min(
+        Option.getOrElse(oldestDueAt, () => Infinity),
+        DateTime.toEpochMillis(attempt.updatedAt),
+      ),
+    );
+  }
+  yield* Ref.update(state.observation, (current) => ({
+    ...current,
+    available: Option.isNone(durable.unreadable),
+    oldestDueAt,
+  }));
   if (Option.isSome(durable.unreadable)) {
     yield* Effect.annotateLogs(
       Effect.logWarning('The Commerce enrollment sweeper could not read the durable Attempt journal'),
@@ -417,13 +464,24 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   });
   const swept = advanced.filter(Boolean).length;
   const tracked = yield* Ref.get(state.registry);
+  const finishedAt = yield* Clock.currentTimeMillis;
+  yield* Ref.update(state.observation, (current) =>
+    current.available ? { ...current, lastSuccessfulSweepAt: Option.some(finishedAt) } : current,
+  );
   return { released: advanced.length - swept, swept, tracked: tracked.size };
 });
 
 export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
   function* commerceEnrollmentContinuationSweeperFor(options: CommerceEnrollmentContinuationSweeperOptions) {
     const registry = yield* Ref.make<Registry>(new Map());
-    const state: SweeperState = { registry };
+    const observation = yield* Ref.make<CommerceEnrollmentRecoveryObservation>({
+      available: false,
+      lastSuccessfulSweepAt: Option.none(),
+      oldestDueAt: Option.none(),
+      retryExhaustedCount: Option.none(),
+      unresolved: 0,
+    });
+    const state: SweeperState = { observation, registry };
     const inner = options.continuation;
     const pageLimit = options.pageLimit ?? SWEEP_PAGE_LIMIT;
     const staleAfterMillis = options.staleAfterMillis ?? LEASE_WINDOW_MS;
@@ -432,6 +490,7 @@ export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
         advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
         openSweepPass: inner.openSweepPass,
       },
+      observation: Ref.get(observation),
       sweep: sweepOnce(state, inner, pageLimit, staleAfterMillis),
     };
     return sweeper;
