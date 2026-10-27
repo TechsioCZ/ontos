@@ -5,7 +5,7 @@ pre-commit:
     # oxfmt skips unsupported file types and its own ignorePatterns, matching `pnpm format`.
     - name: format
       root: "app/"
-      run: pnpm exec oxfmt --threads=2 --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec oxfmt --threads=9 --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     # Globs match repository-root paths; they select exactly the files `pnpm lint` covers.
     - name: lint
@@ -16,7 +16,7 @@ pre-commit:
         - "app/tools/ontos-agent-mcp/**/*.{ts,mts,js,mjs}"
       exclude:
         - "app/tools/oxlint/effect-native/tests/fixtures/*"
-      run: pnpm exec oxlint --threads=2 --fix --no-error-on-unmatched-pattern {staged_files}
+      run: pnpm exec oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
 
 pre-push:
@@ -24,7 +24,7 @@ pre-push:
   jobs:
     - name: typecheck
       root: "app/"
-      run: GOMAXPROCS=2 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
+      run: GOMAXPROCS=9 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
     - name: contract
       root: "app/"
-      run: GOMAXPROCS=2 GOMEMLIMIT=12GiB pnpm contract:check
+      run: GOMAXPROCS=9 GOMEMLIMIT=12GiB pnpm contract:check
