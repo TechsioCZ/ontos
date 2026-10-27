@@ -27,4 +27,4 @@ pre-push:
       run: GOMAXPROCS=2 ULTRAMODERN_TSGO_BUILDERS=1 ULTRAMODERN_TSGO_CHECKERS=1 pnpm typecheck
     - name: contract
       root: "app/"
-      run: GOMAXPROCS=1 GOMEMLIMIT=2304MiB GOGC=25 pnpm contract:check
+      run: GOMAXPROCS=2 GOMEMLIMIT=12GiB pnpm contract:check
