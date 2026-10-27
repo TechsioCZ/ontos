@@ -110,6 +110,7 @@ export const cs = {
     },
   },
   product: {
+    variantPrice: "Cena dle varianty",
     originalPrice: "Původní cena",
     tags: {
       recommended: "Doporučujeme",

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import StoreLink from "@/components/store-link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { AccountHeading } from "./account-content";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
@@ -85,7 +86,7 @@ export function AccountOrders({
         title="Objednávky"
         description="Vaše objednávky uložené v OntOS. Ceny jsou částky uložené při objednání."
       />
-      <div className="grid gap-6 rounded-(--dimension-8) bg-(--akros-account-surface) p-6 md:grid-cols-2">
+      <div className="grid gap-(--dimension-24) rounded-(--dimension-8) bg-(--akros-account-surface) p-(--dimension-24) md:grid-cols-2 max-sm:p-(--dimension-16)">
         <FormInput
           id="account-order-search"
           label="Číslo objednávky na této stránce"
@@ -122,34 +123,42 @@ export function AccountOrders({
             {visible.map((order) => (
               <li
                 key={order.id}
-                className="rounded-(--dimension-8) bg-(--akros-account-surface) p-6"
+                className="min-w-0 rounded-(--dimension-8) bg-(--akros-account-surface) p-(--dimension-24) max-sm:p-(--dimension-16)"
               >
                 <h2 className="font-bold">
                   <StoreLink className="underline" href={orderHref(order)}>
                     {order.number}
                   </StoreLink>
                 </h2>
-                <p className="mt-2">{new Date(order.createdAt).toLocaleDateString("cs-CZ")}</p>
+                <p className="mt-(--dimension-8) text-(--akros-account-muted)">
+                  {new Date(order.createdAt).toLocaleDateString("cs-CZ")}
+                </p>
                 <dl className="my-6 grid gap-2">
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap justify-between gap-(--dimension-8)">
                     <dt>Položky</dt>
-                    <dd>{order.lines.length}</dd>
+                    <dd className="tabular-nums">{order.lines.length}</dd>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap justify-between gap-(--dimension-8)">
                     <dt>Cena celkem</dt>
-                    <dd>{formatPrice(order.totalMinor)}</dd>
+                    <dd className="font-bold tabular-nums">{formatPrice(order.totalMinor)}</dd>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap justify-between gap-(--dimension-8)">
                     <dt>Stav</dt>
                     <dd>{orderStatusLabels[order.status]}</dd>
                   </div>
                 </dl>
-                <StoreLink className="underline" href={orderHref(order)}>
-                  Detail objednávky
-                </StoreLink>
-                <div className="mt-(--dimension-16)">
-                  <ReorderAction orderId={order.id} />
-                </div>
+                <ReorderAction orderId={order.id}>
+                  <LinkButton
+                    as={StoreLink}
+                    href={orderHref(order)}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                    data-account-action
+                  >
+                    Detail objednávky
+                  </LinkButton>
+                </ReorderAction>
               </li>
             ))}
           </ul>

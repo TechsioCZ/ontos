@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ProductGrid } from "@/components/product-grid";
 import { fixtureCatalog } from "../support/catalog-fixture";
@@ -11,6 +11,26 @@ const getActionProducts = () => getProducts().filter((product) => product.isActi
 
 describe("ProductGrid", () => {
   afterEach(cleanup);
+
+  it("keeps two favorite variants of one product distinct when one is removed", () => {
+    const product = toProductSummary(getProducts()[0]);
+    const variants = [
+      { ...product, name: "První varianta", variantId: "first", favoriteVariantId: "first" },
+      { ...product, name: "Druhá varianta", variantId: "second", favoriteVariantId: "second" },
+    ];
+    const consoleError = vi.spyOn(console, "error");
+    try {
+      const { rerender } = render(<ProductGrid action="detail" products={variants} />);
+      expect(screen.getAllByRole("article")).toHaveLength(2);
+      rerender(<ProductGrid action="detail" products={[variants[1]]} />);
+      expect(screen.getAllByRole("article")).toHaveLength(1);
+      expect(screen.getByRole("article").textContent).toContain("Druhá varianta");
+      expect(screen.getByRole("article").textContent).not.toContain("První varianta");
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 
   it.each(["catalog", "featured"] as const)(
     "marks the %s grid for compact mobile styling without duplicating cards",
@@ -47,7 +67,7 @@ describe("ProductGrid", () => {
     const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
     expect(container.firstElementChild?.className).toBe("akros-product-grid");
 
-    expect(screen.getByText("Cena podle zvolené varianty")).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
     expect(screen.getByText("Skladem")).toBeDefined();
     expect(screen.getByText("Více variant")).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
@@ -165,7 +185,7 @@ describe("ProductGrid", () => {
     };
     const { container } = render(<ProductGrid action="detail" products={[product]} />);
 
-    expect(screen.getByText("Cena podle zvolené varianty")).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
     expect(container.querySelector("del")).toBeNull();
     expect(screen.queryByText("-23%")).toBeNull();
   });

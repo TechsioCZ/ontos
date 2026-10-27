@@ -1,3 +1,5 @@
+import { cs } from "@/i18n/cs";
+
 export const formatPrice = (priceMinor: number, currency: "CZK" = "CZK") =>
   new Intl.NumberFormat("cs-CZ", {
     style: "currency",
@@ -46,6 +48,6 @@ export function describeOfferPrice({
   if (priceMinor <= 0) return unavailable("Cena v OntOS je nulová, položku proto nelze objednat.");
   return {
     available: true,
-    label: priceIsFrom ? "Cena podle zvolené varianty" : formatPrice(priceMinor, "CZK"),
+    label: priceIsFrom ? cs.product.variantPrice : formatPrice(priceMinor, "CZK"),
   };
 }

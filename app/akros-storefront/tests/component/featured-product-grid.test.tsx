@@ -29,7 +29,7 @@ describe("FeaturedProductGrid", () => {
     expect(screen.getAllByRole("button", { name: /Vybrat oblíbené varianty/ })).toHaveLength(
       products.length,
     );
-    expect(screen.getAllByText("Cena podle zvolené varianty")).toHaveLength(products.length);
+    expect(screen.getAllByText("Cena dle varianty")).toHaveLength(products.length);
     expect(screen.getByText("Kód produktu: 3tykv021")).toBeDefined();
     expect(screen.getAllByText("Více variant")).toHaveLength(products.length);
   });

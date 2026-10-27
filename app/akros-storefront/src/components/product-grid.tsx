@@ -56,7 +56,7 @@ export function ProductGrid({
           product.stock.status === "in-stock";
         const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
         const priceLabel = product.hasVariants
-          ? "Cena podle zvolené varianty"
+          ? cs.product.variantPrice
           : priceUnavailable
             ? "Cena není dostupná"
             : formatPrice(product.priceMinor, product.currency);
@@ -74,7 +74,7 @@ export function ProductGrid({
           : undefined;
 
         return (
-          <article className="min-w-0" key={product.id}>
+          <article className="min-w-0" key={`${product.id}:${product.variantId ?? "base"}`}>
             <ProductCard
               className="akros-product-card akros-catalog-product-card shadow-(--shadow-sm)"
               layout="column"

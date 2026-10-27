@@ -109,9 +109,15 @@ export function AccountProfilePage({
         className="gap-(--dimension-60)"
       >
         <Accordion.Item value="profile">
-          <Accordion.Header className="w-fit [&>button]:leading-(--akros-account-heading-leading)">
+          <Accordion.Header
+            data-account-section-heading
+            className="w-fit [&>button]:leading-(--akros-account-heading-leading) max-sm:[&>button]:min-h-(--dimension-44)"
+          >
             <Accordion.Title>Kontaktní údaje</Accordion.Title>
-            <Accordion.Indicator icon="token-icon-akros-account-disclosure" />
+            <Accordion.Indicator
+              icon="token-icon-akros-account-disclosure"
+              className="[&>span]:data-[state=expanded]:rotate-(--akros-account-disclosure-rotation)"
+            />
           </Accordion.Header>
           <Accordion.Content className="pt-(--dimension-24)">
             <form
@@ -192,9 +198,15 @@ export function AccountProfilePage({
           </Accordion.Content>
         </Accordion.Item>
         <Accordion.Item value="consent">
-          <Accordion.Header className="w-fit [&>button]:leading-(--akros-account-heading-leading)">
+          <Accordion.Header
+            data-account-section-heading
+            className="w-fit [&>button]:leading-(--akros-account-heading-leading) max-sm:[&>button]:min-h-(--dimension-44)"
+          >
             <Accordion.Title>Odběr novinek</Accordion.Title>
-            <Accordion.Indicator icon="token-icon-akros-account-disclosure" />
+            <Accordion.Indicator
+              icon="token-icon-akros-account-disclosure"
+              className="[&>span]:data-[state=expanded]:rotate-(--akros-account-disclosure-rotation)"
+            />
           </Accordion.Header>
           <Accordion.Content className="pt-(--dimension-24)">
             <CustomerNewsletterConsentForm />

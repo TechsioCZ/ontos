@@ -1,5 +1,8 @@
 # Kontrola integrace Akros UI — 26. 10. 2026
 
+Nejnovější cílené porovnání původních vizuálních připomínek s `feat/akros`
+je v [VISUAL-PARITY-2026-10-27.md](VISUAL-PARITY-2026-10-27.md).
+
 Aktuální následná kontrola je v [UI-REVIEW-2026-10-27.md](UI-REVIEW-2026-10-27.md).
 Obsahuje nové vizuální opravy a aktuální neúspěšné testy; níže je zachován výsledek
 historického průchodu z 26. 10., nikoli nové schválení integrace.

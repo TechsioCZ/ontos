@@ -7,7 +7,7 @@ import { cs } from "@/i18n/cs";
 afterEach(cleanup);
 
 describe("SiteFooter", () => {
-  it("shows actual contacts without unsupported payment, carrier or generic social claims", () => {
+  it("renders the complete Figma footer with customer, payment and carrier information", () => {
     render(<SiteFooter />);
 
     const footer = screen.getByRole("contentinfo");
@@ -32,17 +32,34 @@ describe("SiteFooter", () => {
     ).toBe("/faq");
 
     expect(within(footer).getByRole("img", { name: cs.footer.heurekaBadge })).toBeTruthy();
-    for (const name of ["Facebook", "Instagram", "YouTube"]) {
-      expect(within(footer).queryByRole("link", { name })).toBeNull();
+    expect(footer.querySelector(".token-icon-akros-facebook")).toBeTruthy();
+    expect(footer.querySelector(".token-icon-akros-instagram")).toBeTruthy();
+    expect(footer.querySelector(".token-icon-akros-youtube")).toBeTruthy();
+
+    for (const [name, href] of [
+      ["Facebook", "https://fb.com"],
+      ["Instagram", "https://instagram.com"],
+      ["YouTube", "https://youtube.com"],
+    ]) {
+      const link = within(footer).getByRole("link", { name });
+      expect(link.getAttribute("href")).toBe(href);
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
     }
-    for (const name of [
+
+    for (const assetName of [
       cs.footer.paymentCard,
       "Google Pay",
       "Apple Pay",
+      "Zásilkovna",
+      "PPL",
+      "GLS",
+      "DPD",
+      "Balíkovna",
       "Verified by Visa",
       "Mastercard SecureCode",
     ]) {
-      expect(within(footer).queryByRole("img", { name })).toBeNull();
+      expect(within(footer).getByRole("img", { name: assetName })).toBeTruthy();
     }
 
     expect(within(footer).getByRole("link", { name: cs.footer.cookies }).getAttribute("href")).toBe(

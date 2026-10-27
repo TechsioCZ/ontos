@@ -1,5 +1,9 @@
 # AKROS UI integration
 
+> Latest visual follow-up: [point-by-point parity with feat/akros](VISUAL-PARITY-2026-10-27.md).
+> It compares the original Google Docs screenshots, records restored UI and
+> separates visual checks from the remaining native integration limitations.
+
 > Current follow-up: [UI review, 2026-10-27](UI-REVIEW-2026-10-27.md).
 > It records visual repairs, current GitHub/Google Docs coverage, a failing
 > decimal-filter unit test and a post-restart customer-access failure. The older
