@@ -9,6 +9,7 @@ const BUILT_INS = new Set([
   'Omit',
   'PropertyKey',
   'NonNullable',
+  'Extract',
 ]);
 const DICTIONARY_WRAPPERS = new Set([
   'Readonly',
@@ -419,6 +420,39 @@ function resolvesToDictionary(
   return dictionaryValueTypes(type, environment, substitutions, resolvingAliases).length > 0;
 }
 
+/** Compare the semantic syntax of two owner type expressions, excluding parser locations. */
+function sameTypeSyntax(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right))
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+      left.every((entry, index) => sameTypeSyntax(entry, right[index]));
+  const ignored = new Set(['parent', 'start', 'end', 'loc', 'range', 'raw', 'comments']);
+  const a = left as Readonly<Record<string, unknown>>, b = right as Readonly<Record<string, unknown>>;
+  const aKeys = Object.keys(a).filter((key) => !ignored.has(key));
+  const bKeys = Object.keys(b).filter((key) => !ignored.has(key));
+  return aKeys.length === bKeys.length && aKeys.every((key) => Object.hasOwn(b, key) && sameTypeSyntax(a[key], b[key]));
+}
+
+/** A homomorphic mapped type retains the owner's exact keys and corresponding property types.
+ * Readonly changes do not turn that contract into a string dictionary. Remapping keys, replacing
+ * values, or changing optionality does not carry this proof. Broad bases remain broad below.
+ */
+function preservedMappedSource(
+  type: ESTree.TSMappedType,
+  substitutions: TypeAliasEnvironment,
+): ESTree.TSType | null {
+  const constraint = unwrapTransparentType(type.constraint);
+  const value = type.typeAnnotation === null ? null : unwrapTransparentType(type.typeAnnotation);
+  if (type.nameType !== null || type.optional !== false || constraint.type !== 'TSTypeOperator' || constraint.operator !== 'keyof' ||
+    value?.type !== 'TSIndexedAccessType') return null;
+  const index = unwrapTransparentType(value.indexType);
+  if (index.type !== 'TSTypeReference' || !isUnappliedReferenceTo(index, type.key.name)) return null;
+  const owner = resolvedSubstitutionArgument(constraint.typeAnnotation, substitutions);
+  const indexedOwner = resolvedSubstitutionArgument(value.objectType, substitutions);
+  return sameTypeSyntax(owner, indexedOwner) ? owner : null;
+}
+
 export function classifyWideningTarget(
   type: ESTree.TSType,
   environment: TypeEnvironment,
@@ -427,7 +461,11 @@ export function classifyWideningTarget(
   if (unwrapped.type === 'TSUnknownKeyword') return { kind: 'unknown' };
   if (unwrapped.type === 'TSObjectKeyword') return { kind: 'object' };
   if (unwrapped.type === 'TSTypeLiteral') return classifyLiteralWideningTarget(unwrapped);
-  if (unwrapped.type === 'TSMappedType') return { kind: 'open dictionary' };
+  if (unwrapped.type === 'TSMappedType') {
+    const source = preservedMappedSource(unwrapped, new Map());
+    return source === null ? { kind: 'open dictionary' }
+      : classifyAliasBroadTarget(source, environment, new Map(), new Set());
+  }
   if (unwrapped.type !== 'TSTypeReference') return null;
   return classifyReferenceWideningTarget(unwrapped, environment);
 }
@@ -458,6 +496,9 @@ function classifyNamedAliasTarget(
   if (alias === undefined) return null;
   if ((alias.typeParameters?.params.length ?? 0) > 0) {
     const substitutions = aliasSubstitution(alias, unwrapped, new Map());
+    const target = unwrapTransparentType(alias.typeAnnotation);
+    if (substitutions !== null && target.type === 'TSMappedType' && preservedMappedSource(target, substitutions) !== null)
+      return classifyAliasBroadTarget(target, environment, substitutions, new Set([name]));
     return substitutions !== null &&
       resolvesToDictionary(alias.typeAnnotation, environment, substitutions, new Set([name]))
       ? { kind: 'generic container' }
@@ -515,6 +556,8 @@ function classifyAliasBroadTarget(
       : null;
   }
   if (unwrapped.type === 'TSMappedType') {
+    const source = preservedMappedSource(unwrapped, substitutions);
+    if (source !== null) return classifyAliasBroadTarget(source, environment, substitutions, resolvingAliases);
     return isBroadMappedKey(unwrapped.constraint, environment, substitutions)
       ? { kind: 'open dictionary' }
       : null;
@@ -545,6 +588,10 @@ function classifyNamedBroadTarget(
   substitutions: TypeAliasEnvironment,
   resolvingAliases: ReadonlySet<string>,
 ): WideningTarget | null {
+  if (name === 'Extract' && isBuiltIn(name, environment)) {
+    const source = unwrapped.typeArguments?.params[0];
+    return source === undefined ? null : classifyAliasBroadTarget(source, environment, substitutions, resolvingAliases);
+  }
   if (TRANSPARENT_WRAPPERS.has(name) && isBuiltIn(name, environment)) {
     const wrapped = unwrapped.typeArguments?.params[0];
     return wrapped === undefined

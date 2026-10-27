@@ -153,3 +153,7 @@ patchedDependencies:
   '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
+  # Handle omitted optional AST children in the upstream CFG traverser.
+  oxlint@1.81.0: patches/oxlint@1.81.0.patch
+  # Require array evidence before suggesting Set membership; strings use substring matching.
+  oxlint-plugin-react-doctor@0.9.12: patches/oxlint-plugin-react-doctor@0.9.12.patch

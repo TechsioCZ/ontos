@@ -67,6 +67,9 @@
  *   `CallExpression`, so they are structurally unreachable from these visitors.
  * - **Reading, building and annotating a tag** — `{ _tag: tag }`, `{ failureTag: error._tag }`,
  *   `const { _tag } = error` on its own. Only narrowing reports.
+ * - **Whole-record wire round trips** — deep equality between a real Effect Schema encoder's
+ *   output and the original value decoded through that same schema. Tag projections, partial
+ *   matchers, unrelated expected records and shadowed codec names still report.
  * - **The Effect-native forms themselves**: `Effect.catchTag(s)`, `Match.tag`/`Match.tags`/
  *   `Match.typeTags`, `Match.when({ _tag: 'X' }, …)` object patterns, `Schema.is(TaggedError)(x)`,
  *   `Predicate.isTagged`, `Option.isSome`/`Exit.isFailure` and friends — none compare a tag by hand.
@@ -93,6 +96,7 @@ import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { optionRecord, stringArray } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**'];
 
@@ -861,6 +865,89 @@ const OBJECT_ASSERTION_METHODS = new Set([
   'notDeepStrictEqual',
 ]);
 
+const WIRE_EQUALITY_METHODS = new Set(['toEqual', 'toStrictEqual', 'deepEqual', 'deepStrictEqual']);
+const SCHEMA_ENCODERS = new Set(['encodeEffect', 'encodeSync', 'encodePromise']);
+const SCHEMA_DECODERS = new Set([
+  'decodeEffect',
+  'decodeUnknownEffect',
+  'decodeSync',
+  'decodeUnknownSync',
+  'decodePromise',
+  'decodeUnknownPromise',
+]);
+
+/** Follow immutable values and evaluation wrappers, without accepting projections or transformations. */
+function storedEvaluation(context: Context, input: ESTree.Node): ESTree.Node {
+  let expression = unwrap(input);
+  for (let depth = 0; depth < MAX_DEPTH; depth += 1) {
+    const initialiser = constInitialiser(context, expression);
+    if (initialiser !== null) {
+      expression = unwrap(initialiser);
+    } else if (
+      (expression.type === 'AwaitExpression' || (expression.type === 'YieldExpression' && expression.delegate)) &&
+      expression.argument !== null
+    ) {
+      expression = unwrap(expression.argument);
+    } else {
+      break;
+    }
+  }
+  return expression;
+}
+
+/** The real Effect Schema factory and its curried value application must both be visible. */
+function schemaCodecApplication(
+  context: Context,
+  input: ESTree.Node,
+  members: ReadonlySet<string>,
+  reexports: readonly string[],
+): { readonly schema: ESTree.Node; readonly value: ESTree.Node } | null {
+  const application = storedEvaluation(context, input);
+  if (application.type !== 'CallExpression') return null;
+  const factory = storedEvaluation(context, application.callee);
+  if (factory.type !== 'CallExpression') return null;
+  const member = schemaIdentity(context, factory.callee, reexports);
+  const schema = firstArgument(factory);
+  const value = firstArgument(application);
+  return member !== null && members.has(member) && schema !== null && value !== null ? { schema, value } : null;
+}
+
+/** Compare lexical references, not identifier text, so shadowed codecs cannot qualify. */
+function sameStoredValue(context: Context, left: ESTree.Node, right: ESTree.Node, depth = 0): boolean {
+  if (depth > MAX_DEPTH) return false;
+  const actual = storedEvaluation(context, left);
+  const expected = storedEvaluation(context, right);
+  if (actual === expected) return true;
+  if (actual.type === 'Identifier' && expected.type === 'Identifier') {
+    const variable = resolveVariable(context, actual.name, actual);
+    return variable !== null && variable === resolveVariable(context, expected.name, expected);
+  }
+  if (actual.type !== 'MemberExpression' || expected.type !== 'MemberExpression') return false;
+  const member = memberPropertyName(actual);
+  return (
+    member !== null &&
+    member === memberPropertyName(expected) &&
+    sameStoredValue(context, actual.object, expected.object, depth + 1)
+  );
+}
+
+/** Full encode(decode(wire)) equality proves the wire contract rather than selecting a tag case. */
+function isSchemaWireRoundTrip(
+  context: Context,
+  actual: ESTree.Node,
+  expected: ESTree.Node,
+  reexports: readonly string[],
+): boolean {
+  const encoded = schemaCodecApplication(context, actual, SCHEMA_ENCODERS, reexports);
+  if (encoded === null) return false;
+  const decoded = schemaCodecApplication(context, encoded.value, SCHEMA_DECODERS, reexports);
+  return (
+    decoded !== null &&
+    sameStoredValue(context, encoded.schema, decoded.schema) &&
+    sameStoredValue(context, decoded.value, expected)
+  );
+}
+
 const EXPECTED_WRAPPERS = new Set(['objectContaining', 'arrayContaining']);
 
 type ExpectedShapeVisits = readonly [Set<ESTree.Node>, Set<ESTree.Node>];
@@ -1261,6 +1348,13 @@ export const rule = defineRule({
       if (expected === undefined || expected.type === 'SpreadElement') return false;
       const tags = expectedShapeTags(context, expected);
       if (!tags.some((tag) => !exemptStaticTag(tag))) return false;
+      const actual = assertion.subject === null ? firstArgument(node) : firstArgument(assertion.subject);
+      if (
+        actual !== null &&
+        WIRE_EQUALITY_METHODS.has(assertion.method) &&
+        isSchemaWireRoundTrip(context, actual, expected, options.reexportModules)
+      )
+        return false;
       if (suppressed(node)) return false;
       reportAssertion(node, describe(context, assertion.subject?.arguments[0] ?? node.arguments[0] ?? node));
       return true;

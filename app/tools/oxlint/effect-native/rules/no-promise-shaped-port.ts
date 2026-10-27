@@ -8,6 +8,7 @@
  * route entrypoints, the Modern.js adapter, and private helpers used only by such boundaries.
  * Known SDK/fetch/import provenance can identify a local structural mirror. Nested function-
  * returned records (e.g. Drizzle fluent continuations) are not classified as first-party ports.
+ * Workers email mirrors require the native envelope/receipt, Schema declaration and typed SDK bridge.
  * Owned test callbacks also recognize known Promise constructors, factories, and local returns.
  * Limitations: no cross-file SDK/type inference; other inferred returns, dynamic member names
  * and arbitrary higher-order value flow are not resolved. Name/path options are
@@ -347,15 +348,162 @@ export const rule = defineRule({
         markType(type);
       }
     };
+    /**
+     * Workers send_email is a foreign Promise SDK. Its local mirror has three
+     * independent witnesses: the native envelope/receipt contract, an opaque
+     * Schema function declaration, and that typed receiver at an Effect bridge.
+     * Mark only this member; neither a filename nor a Cloudflare-like type name
+     * makes other first-party Promise ports exempt.
+     */
+    const sdkMembers = new Set<any>();
+    const emailMirrorCandidates = new Map<any, any>();
+    const unannotated = (type: any): any => (type?.type === 'TSTypeAnnotation' ? type.typeAnnotation : type);
+    const typeDeclaration = (raw: any): any => {
+      const type = unannotated(raw);
+      if (type?.type !== 'TSTypeReference' || type.typeName.type !== 'Identifier') return null;
+      return (
+        variableFor(type.typeName, type.typeName.name)?.defs.find((def: any) =>
+          ['TSInterfaceDeclaration', 'TSTypeAliasDeclaration'].includes(def.node.type),
+        )?.node ?? null
+      );
+    };
+    const propertyKey = (property: any): unknown =>
+      property.computed ? computedKey(property.key) : (property.key?.name ?? computedKey(property.key));
+    const stringRecord = (raw: any, required: readonly string[], optional: readonly string[] = []): boolean => {
+      const type = unannotated(raw);
+      if (type?.type !== 'TSTypeLiteral') return false;
+      const seen = new Set<string>();
+      for (const member of type.members) {
+        if (member.type !== 'TSPropertySignature') return false;
+        const key = propertyKey(member);
+        if (typeof key !== 'string' || seen.has(key)) return false;
+        if (!required.includes(key) && !optional.includes(key)) return false;
+        if (Boolean(member.optional) !== optional.includes(key)) return false;
+        if (unannotated(member.typeAnnotation)?.type !== 'TSStringKeyword') return false;
+        seen.add(key);
+      }
+      return required.every((key) => seen.has(key));
+    };
+    const nativeEmailMember = (declaration: any): any => {
+      const members =
+        declaration.type === 'TSInterfaceDeclaration'
+          ? declaration.body.body
+          : declaration.typeAnnotation?.type === 'TSTypeLiteral'
+            ? declaration.typeAnnotation.members
+            : [];
+      const member = members.find(
+        (entry: any) => entry.type === 'TSPropertySignature' && propertyKey(entry) === 'send',
+      );
+      const signature = unannotated(member?.typeAnnotation);
+      if (
+        !member ||
+        member.optional ||
+        signature?.type !== 'TSFunctionType' ||
+        signature.params.length !== 1 ||
+        signature.typeParameters
+      )
+        return null;
+      if (!stringRecord(signature.params[0].typeAnnotation, ['from', 'subject', 'text', 'to'], ['html'])) return null;
+      const result = unannotated(signature.returnType);
+      if (
+        result?.type !== 'TSTypeReference' ||
+        result.typeName.type !== 'Identifier' ||
+        result.typeName.name !== 'Promise' ||
+        variableFor(result.typeName, 'Promise')?.defs.length
+      )
+        return null;
+      const args = result.typeArguments?.params ?? [];
+      return args.length === 1 && stringRecord(args[0], ['messageId']) ? member : null;
+    };
+    const collectEmailMirror = (call: any): void => {
+      if (schemaIdentity(context, call.callee) !== 'declare') return;
+      const [type] = call.typeArguments?.params ?? [];
+      if (
+        type?.type !== 'TSIndexedAccessType' ||
+        type.indexType.type !== 'TSLiteralType' ||
+        computedKey(type.indexType.literal) !== 'send'
+      )
+        return;
+      const declaration = typeDeclaration(type.objectType);
+      if (!declaration) return;
+      const member = nativeEmailMember(declaration);
+      if (!member) return;
+      const predicate = functionBody(call.arguments[0]);
+      if (
+        predicate?.type !== 'CallExpression' ||
+        !/^effect:(?:root\.)?Predicate\.isFunction$/u.test(imported(predicate.callee) ?? '')
+      )
+        return;
+      const property = call.parent;
+      const fields = property?.parent;
+      const struct = fields?.parent;
+      if (
+        property?.type !== 'Property' ||
+        property.value !== call ||
+        propertyKey(property) !== 'send' ||
+        fields?.type !== 'ObjectExpression' ||
+        struct?.type !== 'CallExpression' ||
+        schemaIdentity(context, struct.callee) !== 'Struct' ||
+        struct.arguments[0] !== fields
+      )
+        return;
+      emailMirrorCandidates.set(declaration, member);
+    };
+    const receiverDeclaration = (raw: any): any => {
+      const receiver = unwrap(raw);
+      if (receiver?.type !== 'Identifier') return null;
+      const parameter = variableFor(receiver, receiver.name)?.defs.find((def: any) => def.type === 'Parameter');
+      const type = unannotated(parameter?.name?.typeAnnotation);
+      if (type?.type !== 'TSUnionType') return typeDeclaration(type);
+      const values = type.types.filter((entry: any) => entry.type !== 'TSUndefinedKeyword');
+      return values.length === 1 ? typeDeclaration(values[0]) : null;
+    };
+    const markEmailBridge = (call: any): void => {
+      if (!/^effect:(?:root\.)?Effect\.tryPromise$/u.test(imported(call.callee) ?? '')) return;
+      const options = unwrap(call.arguments[0]);
+      if (options?.type !== 'ObjectExpression') return;
+      const thunk = options.properties.find((entry: any) => entry.type === 'Property' && propertyKey(entry) === 'try');
+      const invoke = unwrap(thunk?.value);
+      const bind = unwrap(invoke?.callee);
+      const send = unwrap(bind?.object);
+      if (
+        invoke?.type !== 'CallExpression' ||
+        invoke.arguments.length !== 2 ||
+        bind?.type !== 'MemberExpression' ||
+        staticMemberKey(bind) !== 'bind' ||
+        send?.type !== 'MemberExpression' ||
+        staticMemberKey(send) !== 'send'
+      )
+        return;
+      const receiver = unwrap(send.object);
+      const thisArg = unwrap(invoke.arguments[0]);
+      if (
+        receiver?.type !== 'Identifier' ||
+        thisArg?.type !== 'Identifier' ||
+        variableFor(receiver, receiver.name) !== variableFor(thisArg, thisArg.name)
+      )
+        return;
+      const declaration = receiverDeclaration(receiver);
+      const member = emailMirrorCandidates.get(declaration);
+      if (member) sdkMembers.add(member);
+    };
     walk(program, (node) => {
       if (node.type === 'VariableDeclarator' && externalValue(node.init)) markType(node.id.typeAnnotation);
       if (node.type === 'AssignmentPattern' && externalValue(node.right)) markType(node.left.typeAnnotation);
       if (FUNCTION_TYPES.has(node.type) && externalValue(node)) markType(node.returnType);
       if (node.type === 'TSSatisfiesExpression' && externalValue(node.expression)) markType(node.typeAnnotation);
-      if (node.type === 'CallExpression') markDecodedDriverTypes(node);
+      if (node.type === 'CallExpression') {
+        markDecodedDriverTypes(node);
+        collectEmailMirror(node);
+      }
     });
+    if (emailMirrorCandidates.size > 0)
+      walk(program, (node) => {
+        if (node.type === 'CallExpression') markEmailBridge(node);
+      });
     const withinMirror = (node: any): boolean => {
-      for (let current = node; current; current = current.parent) if (mirrorTypes.has(current)) return true;
+      for (let current = node; current; current = current.parent)
+        if (mirrorTypes.has(current) || sdkMembers.has(current)) return true;
       return false;
     };
 
@@ -519,8 +667,7 @@ export const rule = defineRule({
         current = parent.parent;
       }
       const call = current.parent;
-      if (call?.type !== 'CallExpression' || call.arguments.length !== 1 || call.arguments[0] !== current)
-        return false;
+      if (call?.type !== 'CallExpression' || call.arguments.length !== 1 || call.arguments[0] !== current) return false;
       const constructor = authConstructor(call.callee);
       const databaseHook =
         ['better-auth:betterAuth', 'better-auth/minimal:betterAuth'].includes(constructor ?? '') &&

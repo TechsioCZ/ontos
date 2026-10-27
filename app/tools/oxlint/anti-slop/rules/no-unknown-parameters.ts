@@ -1,4 +1,5 @@
 import { defineRule } from "@oxlint/plugins";
+import { genericJsonCanonicalizerProof } from "../../shared/generic-json-canonicalizer.ts";
 
 import {
   parameterAnnotation,
@@ -21,7 +22,7 @@ function parameterName(parameter: Parameter, sourceText: string): string {
     : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
 }
 
-/** Disallow unknown inputs except explicitly named error-cause enrichment. */
+/** Disallow unparsed inputs except error causes and proved generic JSON normalization boundaries. */
 export const noUnknownParametersRule = defineRule({
   meta: {
     type: "problem",
@@ -35,7 +36,9 @@ export const noUnknownParametersRule = defineRule({
     },
   },
   createOnce(context) {
+    const canonicalJson = genericJsonCanonicalizerProof(context);
     const checkParameters = (node: ParameterOwner) => {
+      if (canonicalJson.isBoundary(node)) return;
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
         if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;

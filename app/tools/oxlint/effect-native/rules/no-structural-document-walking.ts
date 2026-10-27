@@ -78,6 +78,7 @@ import { resolveVariable } from '../shared/bindings.ts';
 import { importedName } from '../shared/imports.ts';
 import { stringList } from '../shared/options.ts';
 import { isTestFile, matchesAny, workspacePath } from '../shared/paths.ts';
+import { genericJsonCanonicalizerProof } from '../../shared/generic-json-canonicalizer.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -309,6 +310,7 @@ export const rule = defineRule({
     if (!matchesAny(path, options.includePaths)) return {};
     if (matchesAny(path, options.allowPaths)) return {};
     if (options.ignoreTestFiles && isTestFile(path)) return {};
+    const canonicalJson = genericJsonCanonicalizerProof(context);
 
     const documentIdentifier = compilePattern(options.documentIdentifiers);
     const allowedKeys = new Set(options.allowInKeys);
@@ -609,7 +611,12 @@ export const rule = defineRule({
     return {
       LogicalExpression(node) {
         const expression = node as unknown as AnyNode;
-        if (!isOutermostLogical(expression) || inGenericRecursiveTraversal(expression)) return;
+        if (
+          !isOutermostLogical(expression) ||
+          canonicalJson.isCanonicalTraversal(expression) ||
+          inGenericRecursiveTraversal(expression)
+        )
+          return;
         const leaves: AnyNode[] = [];
         logicalLeaves(expression, leaves);
         const objectTargets = new Set<string>();
@@ -645,7 +652,7 @@ export const rule = defineRule({
         report(node, 'documentFieldGuard');
       },
       CallExpression(node) {
-        if (inGenericRecursiveTraversal(node) || reportFieldCall(node)) return;
+        if (reportFieldCall(node)) return;
         const callee = unwrap(node.callee);
         if (callee.type !== 'MemberExpression') return;
         reportMemberCall(node, callee);

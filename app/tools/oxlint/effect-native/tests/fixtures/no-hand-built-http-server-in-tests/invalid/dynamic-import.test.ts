@@ -1,4 +1,4 @@
-// expect-count: 2
+// expect-count: 1
 export async function load(): Promise<unknown> {
 	const httpModule = await import("node:http");
 	const netModule = await import(`node:net`);

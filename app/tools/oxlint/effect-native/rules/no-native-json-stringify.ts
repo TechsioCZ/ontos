@@ -50,6 +50,10 @@
  *     `import { stringify } from "yaml"` / `superjson.stringify`. Only the ambient global reports.
  *   - Type positions (`typeof JSON.stringify`) parse as `TSTypeQuery` + `TSQualifiedName`, never a
  *     `MemberExpression`, so declaring the shape of a serializer stays legal.
+ *   - A proved generic JSON snapshot comparison: both operands use the same locally resolved,
+ *     pure recursive normalizer, which preserves array order and sorts fresh object entries by
+ *     their keys. Native JSON then preserves the snapshot contract's undefined omission/nulls.
+ *     A function name, a cast, an owner-field guess or sorting alone is not this proof.
  *   - Anything under `allowPaths` — empty by default. The audit wants the remaining sites reported
  *     until a carve-out is ratified, not pre-emptively excused.
  *
@@ -77,6 +81,7 @@ import {
 import { isUnshadowedGlobal } from '../shared/bindings.ts';
 import { jsonExpressionSnippet } from '../shared/json-globals.ts';
 import { inJsonRuleScope } from '../shared/json-rule-scope.ts';
+import { genericJsonCanonicalizerProof } from '../../shared/generic-json-canonicalizer.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -252,6 +257,7 @@ export const rule = defineRule({
   },
   create(context) {
     if (!inJsonRuleScope(context.filename, context.options[0], DEFAULT_INCLUDE_PATHS)) return {};
+    const canonicalJson = genericJsonCanonicalizerProof(context);
 
     const report = (node: AnyNode, messageId: string): void => {
       context.report({
@@ -268,6 +274,7 @@ export const rule = defineRule({
       MemberExpression(node) {
         if (staticPropertyName(node) !== 'stringify') return;
         if (!isJsonHost(context, node.object as AnyNode)) return;
+        if (canonicalJson.isCanonicalStringify(node)) return;
         const outcome = classify(node as unknown as AnyNode);
         report(outcome.node, outcome.messageId);
       },

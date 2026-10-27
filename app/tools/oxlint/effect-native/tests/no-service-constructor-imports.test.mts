@@ -8,6 +8,11 @@ import { appRoot, runOxlint } from './oxlint.mts';
 import type { LintRun } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 import { provesDataFactoryImport } from '../../anti-slop/effect/rules/data-factory-proof.ts';
+import {
+  proveDictionaryElementOpenness,
+  proveInheritedPropertyLookups,
+  replaceOpaqueDecodedValue,
+} from '../../anti-slop/tests/fixtures/no-service-constructor-imports/runtime-counterexamples.ts';
 
 const factoryFilename = 'factory.ts';
 const consumerFilename = 'consumer.ts';
@@ -21,6 +26,8 @@ const boundSchemaDeclaration = (bound: string) =>
     bound,
     'export const BoundSchema = S.Finite.check(S.isInt(), S.isLessThanOrEqualTo(ceiling));',
   ].join('\n');
+
+const fixtureExecutable = () => 'executable';
 
 const ruleCode = 'anti-slop-effect(no-service-constructor-imports)';
 const serviceConstructorMessage =
@@ -572,28 +579,7 @@ it('proves closed schema dictionaries without erasing opaque or executable value
 });
 
 it('preserves dictionary element openness through local and parameter destructuring', () => {
-  const codec = Schema.Record(Schema.String, Schema.Struct({ id: Schema.String }));
-  const run = () => 'executable';
-  const value = { item: { id: 'data', run } };
-  const local = (input: typeof codec.Type) => {
-    const { item } = input;
-    return item;
-  };
-  const parameter = ({ item }: typeof codec.Type) => item;
-  expect(local(value)).toBe(value.item);
-  expect(parameter(value)).toBe(value.item);
-  expect(value.item.run()).toBe('executable');
-  let inheritedReads = 0;
-  const prototype = Object.defineProperty({}, 'item', {
-    get: () => {
-      inheritedReads += 1;
-      return value.item;
-    },
-  });
-  const inherited = { __proto__: prototype } as unknown as typeof codec.Type;
-  expect(local(inherited)).toBe(value.item);
-  expect(parameter(inherited)).toBe(value.item);
-  expect(inheritedReads).toBe(2);
+  proveDictionaryElementOpenness(fixtureExecutable);
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
@@ -640,11 +626,11 @@ it('keeps unknown present values unsafe through local, nested, and parameter def
     const { item } = value;
     if ('extra' in item) {
       const { extra = 'safe' } = item;
-      return (decode(extra) as unknown as string).replace('old', 'new');
+      return replaceOpaqueDecodedValue(decode(extra));
     }
     return 'safe';
   };
-  const value = { item: { id: 'data', extra: replacement } };
+  const value = { item: { extra: replacement, id: 'data' } };
   expect(unsafeMakeData(value)).toBe('executed');
   expect(calls).toBe(1);
 
@@ -697,7 +683,7 @@ it('joins every record branch when projecting named fields and dictionary elemen
   });
   const unsafeMakeData = (value: typeof codec.Type, flag: boolean) => {
     const selected = flag ? value : { item: { id: 'safe' } };
-    return (decode(selected.item) as unknown as string).replace('old', 'new');
+    return replaceOpaqueDecodedValue(decode(selected.item));
   };
   expect(unsafeMakeData({ item: replacement }, true)).toBe('executed');
   expect(calls).toBe(1);
@@ -756,7 +742,7 @@ it('preserves uncertainty when later object spreads can overwrite closed named f
   });
   const unsafeMakeData = (value: typeof codec.Type) => {
     const selected = { item: { id: 'safe' }, ...value };
-    return (decode(selected.item) as unknown as string).replace('old', 'new');
+    return replaceOpaqueDecodedValue(decode(selected.item));
   };
   expect(unsafeMakeData({ item: replacement })).toBe('executed');
   expect(calls).toBe(1);
@@ -796,80 +782,7 @@ it('preserves uncertainty when later object spreads can overwrite closed named f
 });
 
 it('does not prove inherited property lookups undefined through defaults, joins, or spreads', () => {
-  const decode = Schema.decodeUnknownSync(Schema.Json);
-  let calls = 0;
-  const replacement = Object.defineProperty({ id: 'data' }, 'replace', {
-    value: () => {
-      calls += 1;
-      return 'executed';
-    },
-  });
-  const execute = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
-  const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Literal('safe')));
-  expect(decodeDictionary({}).label).toBeUndefined();
-  expect(decodeDictionary({ label: 'safe' }).label).toBe('safe');
-  expect(Reflect.get(decodeDictionary({ toString: 'safe' }), 'toString')).toBe('safe');
-  expect(Reflect.get(decodeDictionary({ constructor: 'safe' }), 'constructor')).toBe('safe');
-  expect(Object.getPrototypeOf(decodeDictionary({ __proto__: null }))).toBe(Object.prototype);
-  expect(Object.getPrototypeOf(/(?<name>safe)/u.exec('safe')!.groups)).toBeNull();
-  const variants = [
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      return (dict.toString as unknown) === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      const { constructor = 'safe' } = dict;
-      return (constructor as unknown) === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      const selected = replacement.id === 'data' ? dict : { constructor: 'safe' };
-      return selected.constructor === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const dict = decodeDictionary({});
-      return dict.label === 'safe' ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const empty = {};
-      return empty.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const { toString = undefined } = {};
-      return toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const selected: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
-      return selected.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const selected = { ...{} };
-      return selected.toString === undefined ? 'safe' : execute(value);
-    },
-    (value: { readonly id: string }) => {
-      const branch: { readonly toString?: unknown } = replacement.id === 'data' ? {} : { toString: undefined };
-      const selected = { ...branch };
-      const { toString = undefined } = selected;
-      return toString === undefined ? 'safe' : execute(value);
-    },
-  ];
-  expect(variants.map((makeData) => makeData(replacement))).toEqual(variants.map(() => 'executed'));
-  expect(calls).toBe(variants.length);
-  expect({}.constructor).toBe(Object);
-  expect(Reflect.get({}, '__proto__')).toBe(Object.prototype);
-  let getterCalls = 0;
-  const prototype = Object.defineProperty({ id: 'prototype' }, 'extra', {
-    get: () => {
-      getterCalls += 1;
-      return 'inherited';
-    },
-  });
-  const inherited: { readonly extra?: string } = { __proto__: prototype } as { readonly extra?: string };
-  expect(inherited.extra === undefined ? 'safe' : execute(replacement)).toBe('executed');
-  expect(getterCalls).toBe(1);
-  expect(calls).toBe(variants.length + 1);
-
+  proveInheritedPropertyLookups();
   withTemporaryWorkspace((directory) => {
     const factory = nodePath.join(directory, factoryFilename);
     const consumer = nodePath.join(directory, consumerFilename);
@@ -944,14 +857,13 @@ it('does not prove inherited property lookups undefined through defaults, joins,
 });
 
 it('does not treat Schema.Json validation as closure of opaque object inputs', () => {
-  const run = () => 'executable';
-  const hidden = Object.defineProperty({ id: 'data' }, 'run', { value: run });
+  const hidden = Object.defineProperty({ id: 'data' }, 'run', { value: fixtureExecutable });
   const symbol = Symbol('run');
-  const symbolValue = Object.defineProperty({ id: 'data' }, symbol, { value: run });
+  const symbolValue = Object.defineProperty({ id: 'data' }, symbol, { value: fixtureExecutable });
   const decode = Schema.decodeUnknownSync(Schema.Json);
   expect(decode(hidden)).toBe(hidden);
-  expect(Object.getOwnPropertyDescriptor(decode(hidden), 'run')?.value).toBe(run);
-  expect(Object.getOwnPropertyDescriptor(decode(symbolValue), symbol)?.value).toBe(run);
+  expect(Object.getOwnPropertyDescriptor(decode(hidden), 'run')?.value).toBe(fixtureExecutable);
+  expect(Object.getOwnPropertyDescriptor(decode(symbolValue), symbol)?.value).toBe(fixtureExecutable);
   const dictionary = { item: hidden };
   expect(Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(dictionary).item).toBe(hidden);
   let calls = 0;
@@ -961,11 +873,11 @@ it('does not treat Schema.Json validation as closure of opaque object inputs', (
       return 'executed';
     },
   });
-  const unsafeMakeData = (value: { readonly id: string }) => (decode(value) as unknown as string).replace('old', 'new');
+  const unsafeMakeData = (value: { readonly id: string }) => replaceOpaqueDecodedValue(decode(value));
   expect(unsafeMakeData(replacement)).toBe('executed');
   const decodeDictionary = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json));
   const unsafeDictionaryMakeData = (value: { readonly item: { readonly id: string } }) =>
-    (decodeDictionary(value).item as unknown as string).replace('old', 'new');
+    replaceOpaqueDecodedValue(decodeDictionary(value).item);
   expect(unsafeDictionaryMakeData({ item: replacement })).toBe('executed');
   expect(calls).toBe(2);
 

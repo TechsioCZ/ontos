@@ -1,4 +1,4 @@
-// expect-count: 3
+// expect-count: 2
 import "node:net";
 import { type IncomingMessage, createServer } from "node:http";
 

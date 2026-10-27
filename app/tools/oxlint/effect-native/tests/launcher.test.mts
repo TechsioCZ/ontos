@@ -38,6 +38,7 @@ it('Oxlint launches its JavaScript entry point through Node without a platform s
       );
       expect(args[1].includes(input)).toBe(true);
       expect(args[1].includes(config)).toBe(true);
+      expect(args[1].includes('--threads=2')).toBe(true);
     } finally {
       spawn.mockClear();
     }
