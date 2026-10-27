@@ -86,14 +86,14 @@ it('holds one stage lock across dedicated identity bootstrap, every demo migrati
   expect(positions.every((position) => position >= 0)).toBe(true);
   expect(positions).toEqual(EffectArray.sort(positions, Order.Number));
   expect(steps.find((step) => step.name === BOOTSTRAP_BEFORE)?.run).toBe('mise exec -- pnpm db:bootstrap-runtime-role');
-  expect(steps.find((step) => step.name === 'Migrate every owner schema')?.run).toBe(
+  expect(steps.find((step) => step.name === 'Migrate every owner schema')?.run).toContain(
     'mise exec -- pnpm exec node scripts/stage-demo-migrate.mts',
   );
   const packageScripts = Schema.decodeUnknownSync(
     Schema.fromJsonString(Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) })),
   )(readFileSync(new URL(ROOT_PACKAGE_JSON_PATH, import.meta.url), 'utf-8'));
   expect(packageScripts.scripts['db:migrate:prepared:internal']).toBe(
-    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate && pnpm db:verify',
   );
   expect(readFileSync(new URL('../stage-demo-migrate.mts', import.meta.url), 'utf-8')).toContain(
     "ChildProcess.make('pnpm', ['db:migrate:prepared:internal']",

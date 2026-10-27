@@ -26,6 +26,7 @@ import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import type { applicationCompositionAuthority } from '../../packages/core-runtime/src/db/schema.ts';
 import { ApplicationCompositionAuthorityError } from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import {
+  migratedRevisionForSchemaRetry,
   readApplicationCompositionReadiness,
   withApplicationCompositionReadinessDeadline,
 } from '../application-composition-authority-publication.mts';
@@ -42,10 +43,12 @@ const REVISION = '1'.repeat(64);
 const PUBLICATION_LOCK_QUERY = 'pg_advisory_lock(';
 const READINESS = '--readiness';
 const CONTINUE_PUBLICATION = '--continue-publication';
+const RESUME_MIGRATED = '--resume-migrated-revision';
 const runStageDemoMigration = Command.runWith(stageDemoMigrationCommand, { renderErrors: false, version: '1.0.0' });
 const DURABLE_DRAINED = 'DURABLE DRAINED';
 const CHILD_RELEASED = 'CHILD RELEASED';
 const COMMITTED_MIGRATED = 'COMMITTED migrated';
+const COMMITTED_SEALED = 'COMMITTED sealed';
 const AUTHORITY_CHECK_FAILED = 'authority check failed';
 const PENDING_WORK = 'pending-work';
 const AuthorityChangeSchema = Schema.Literals(['closed', 'draining', 'sealed', 'migrated']);
@@ -196,6 +199,9 @@ const migrationFixture = (options: FixtureOptions = {}) => {
         if (sql.startsWith('update "core"."application_composition_authority"')) {
           expect(transactionDepth).toBe(1);
           expect(params[2]).toBe(REVISION);
+          if (params[3] === 'migrated' && (phase !== 'migrated' || admission !== 'closed')) {
+            return [];
+          }
           pending = Schema.decodeUnknownSync(AuthorityChangeSchema)(params[0]);
           return [{ revision: REVISION }];
         }
@@ -258,7 +264,7 @@ const migrationFixture = (options: FixtureOptions = {}) => {
     ZeropsPublicApiLive.pipe(Layer.provide(noNetwork)),
     ConfigProvider.layer(ConfigProvider.fromUnknown({})),
   );
-  return { commands, events, layer, phase: () => phase, queries };
+  return { admission: () => admission, commands, events, layer, phase: () => phase, queries };
 };
 
 it.effect(
@@ -280,7 +286,7 @@ it.effect(
       yield* Fiber.join(fiber);
       expect(fixture.events.slice(-8)).toEqual([
         DURABLE_DRAINED,
-        'COMMITTED sealed',
+        COMMITTED_SEALED,
         'SPAWN',
         'EXIT 0',
         CHILD_RELEASED,
@@ -359,6 +365,86 @@ it.effect(
 const continuationConfiguration = (revision: string) =>
   ConfigProvider.layer(ConfigProvider.fromUnknown({ ONTOS_RETIRED_COMPOSITION_REVISION: revision }));
 
+it.effect('explicitly reseals the exact closed migrated revision before the verified migration child starts', () =>
+  Effect.gen(function* resumesClosedMigratedAuthority() {
+    const fixture = migrationFixture({ initialPhase: 'migrated' });
+    yield* runStageDemoMigration([RESUME_MIGRATED, REVISION]).pipe(Effect.provide(fixture.layer));
+    expect(fixture.events.indexOf(COMMITTED_SEALED)).toBeLessThan(fixture.events.indexOf('SPAWN'));
+    expect(fixture.events.indexOf(CHILD_RELEASED)).toBeLessThan(fixture.events.indexOf(COMMITTED_MIGRATED));
+    expect(fixture.events.filter((event) => event === 'LOCK')).toHaveLength(1);
+    expect(fixture.events.at(-1)).toBe('UNLOCK');
+    expect(fixture.commands).toHaveLength(1);
+    expect(fixture.phase()).toBe('migrated');
+    expect(fixture.admission()).toBe('closed');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('never falls back to initial or ordinary migration when an explicit retry target no longer matches', () =>
+  Effect.gen(function* refusesStaleSchemaRetries() {
+    const cases: readonly { readonly options: FixtureOptions; readonly revision: string }[] = [
+      { options: { initialized: false, initialPhase: 'migrated' }, revision: REVISION },
+      { options: { authorityMissing: true, initialPhase: 'migrated' }, revision: REVISION },
+      { options: { durableAdmission: 'open', initialPhase: 'migrated' }, revision: REVISION },
+      { options: { initialPhase: 'active' }, revision: REVISION },
+      { options: { initialPhase: 'sealed' }, revision: REVISION },
+      { options: { initialPhase: 'migrated' }, revision: '2'.repeat(64) },
+      { options: { initialPhase: 'migrated' }, revision: 'not-a-revision' },
+      { options: { durableRemainsBlocked: true, initialPhase: 'migrated' }, revision: REVISION },
+      { options: { initialPhase: 'migrated', sealBlocked: true }, revision: REVISION },
+    ];
+    for (const { options, revision } of cases) {
+      const fixture = migrationFixture(options);
+      const failure = yield* runStageDemoMigration([RESUME_MIGRATED, revision]).pipe(
+        Effect.provide(fixture.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(StageDemoMigrationError)(failure)).toBe(true);
+      expect(fixture.commands).toEqual([]);
+      expect(fixture.events).not.toContain(COMMITTED_SEALED);
+      expect(fixture.phase()).toBe(options.initialPhase);
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps the retry sealed and closed when its migration or verification chain fails', () =>
+  Effect.gen(function* retainsFailedRetryFence() {
+    const fixture = migrationFixture({ exitCode: 7, initialPhase: 'migrated' });
+    yield* runStageDemoMigration([RESUME_MIGRATED, REVISION]).pipe(Effect.provide(fixture.layer), Effect.flip);
+    expect(fixture.phase()).toBe('sealed');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.events).not.toContain(COMMITTED_MIGRATED);
+    expect(fixture.events.at(-1)).toBe('UNLOCK');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it('selects a schema retry only from a complete exact closed and empty native readiness observation', () => {
+  const observed = {
+    advisoryOnly: true as const,
+    authority: { durableWorkAdmission: 'closed' as const, phase: 'migrated' as const, revision: REVISION },
+    blockers: { deliveries: 0, durable: 0, messages: 0 },
+    reason: 'replacement-publication-required' as const,
+    status: 'blocked' as const,
+  };
+  expect(migratedRevisionForSchemaRetry(observed, 1)).toBe(REVISION);
+  for (const exitCode of [0, 130, 137]) {
+    expect(migratedRevisionForSchemaRetry(observed, exitCode)).toBeUndefined();
+  }
+  const base = { advisoryOnly: observed.advisoryOnly, reason: observed.reason, status: observed.status };
+  expect(migratedRevisionForSchemaRetry({ ...base, blockers: observed.blockers }, 1)).toBeUndefined();
+  expect(migratedRevisionForSchemaRetry({ ...base, authority: observed.authority }, 1)).toBeUndefined();
+  expect(
+    migratedRevisionForSchemaRetry(
+      { ...observed, authority: { ...observed.authority, durableWorkAdmission: 'open' } },
+      1,
+    ),
+  ).toBeUndefined();
+  for (const kind of ['deliveries', 'durable', 'messages'] as const) {
+    expect(
+      migratedRevisionForSchemaRetry({ ...observed, blockers: { ...observed.blockers, [kind]: 1 } }, 1),
+    ).toBeUndefined();
+  }
+});
+
 it.effect('continues only the exact migrated and closed authority without SQL writes or a migration child', () =>
   Effect.gen(function* continuesCompletedMigration() {
     const fixture = migrationFixture({ initialPhase: 'migrated' });
@@ -421,7 +507,7 @@ it.effect('never starts the runner migration when the native final seal discover
     expect(failure.message.length).toBeGreaterThan(0);
     expect(fixture.phase()).toBe('draining');
     expect(fixture.commands).toEqual([]);
-    expect(fixture.events).not.toContain('COMMITTED sealed');
+    expect(fixture.events).not.toContain(COMMITTED_SEALED);
     expect(fixture.events.at(-1)).toBe('UNLOCK');
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -597,6 +683,8 @@ it.effect('rejects conflicting readiness/continuation and invalid phase budgets 
   Effect.gen(function* rejectsUnsafeFlags() {
     for (const args of [
       [READINESS, CONTINUE_PUBLICATION],
+      [READINESS, RESUME_MIGRATED, REVISION],
+      [CONTINUE_PUBLICATION, RESUME_MIGRATED, REVISION],
       ['--drain-budget-ms', '0'],
       ['--migration-budget-ms', '1200001'],
       ['--total-budget-ms', 'NaN'],

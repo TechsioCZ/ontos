@@ -1,10 +1,10 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { Config, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { parseDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
@@ -21,8 +21,10 @@ import {
   isApplicationCompositionWorkDrained,
   isApplicationCompositionDurableWorkDrained,
   lockApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
   markApplicationCompositionMigrationComplete,
   publishApplicationCompositionAuthority,
+  resealMigratedApplicationCompositionAuthority,
   resumeApplicationCompositionDurableAdmission,
   sealApplicationCompositionAuthority,
 } from '../../src/modules/application-composition-authority.ts';
@@ -33,7 +35,11 @@ import {
 
 const fixture = (drain = true) =>
   Effect.gen(function* sealFixture() {
-    const configuration = yield* loadDatabaseConnectionPair();
+    // Integration runs supply explicit disposable database endpoints, never workspace dotenv.
+    const configuration = yield* Config.all({
+      DATABASE_ADMIN_URL: Config.String('DATABASE_ADMIN_URL'),
+      DATABASE_URL: Config.String('DATABASE_URL'),
+    }).pipe(Effect.flatMap(parseDatabaseConnectionPair));
     const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
     const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
     const crypto = yield* Crypto.Crypto;
@@ -87,6 +93,18 @@ const fixture = (drain = true) =>
     };
   });
 
+const migratedFixture = () =>
+  Effect.gen(function* migratedSealFixture() {
+    const prepared = yield* fixture();
+    yield* prepared.adminDatabase.transaction((transaction) =>
+      sealApplicationCompositionAuthority(transaction, prepared.composition.revision),
+    );
+    yield* prepared.adminDatabase.transaction((transaction) =>
+      markApplicationCompositionMigrationComplete(transaction, prepared.composition.revision),
+    );
+    return prepared;
+  });
+
 const expectPublicationWaiting = Effect.fn('CompositionSealTests.expectPublicationWaiting')(
   function* expectPublicationWaitingEffect(transaction: CoreTransaction, holderPid: number) {
     let blocked = false;
@@ -105,6 +123,196 @@ const expectPublicationWaiting = Effect.fn('CompositionSealTests.expectPublicati
 );
 
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('application composition seal', (suite) => {
+  suite.effect('reseals migrated authority under the publication lock without reopening any old admission', () =>
+    Effect.gen(function* resealsWithoutReactivation() {
+      const { adminDatabase, composition, database, rejectedWorkId } = yield* migratedFixture();
+      const [before] = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      expect(before).toMatchObject({ durableWorkAdmission: 'closed', phase: 'migrated' });
+      const startReseal = yield* Deferred.make<null>();
+      const resealing = yield* Deferred.await(startReseal).pipe(
+        Effect.flatMap(() =>
+          adminDatabase.transaction((transaction) =>
+            resealMigratedApplicationCompositionAuthority(transaction, composition.revision),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* adminDatabase.transaction(
+        Effect.fn(function* holdsPublicationFence(transaction: CoreTransaction) {
+          yield* lockApplicationCompositionPublication(transaction);
+          const [holder] = yield* transaction.execute<{ readonly pid: number }>(
+            sql`select pg_backend_pid() as pid`,
+            'objects',
+          );
+          yield* Deferred.succeed(startReseal, null);
+          yield* expectPublicationWaiting(transaction, Option.getOrThrow(Option.fromNullishOr(holder)).pid);
+          const [stillMigrated] = yield* transaction.select().from(applicationCompositionAuthority);
+          expect(stillMigrated).toEqual(before);
+        }),
+      );
+      yield* Fiber.join(resealing);
+      const [after] = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      expect(after).toEqual({ ...before, phase: 'sealed', updatedAt: after?.updatedAt });
+      expect(after?.durableWorkAdmission).toBe('closed');
+      for (const operation of ['read', 'write', 'match', 'worker'] as const) {
+        const failure = yield* database
+          .transaction((transaction) =>
+            lockApplicationCompositionAuthority(transaction, composition.revision, operation),
+          )
+          .pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(failure).toMatchObject({ reason: expect.stringMatching(/sealed/u) });
+      }
+      expect(
+        Exit.isFailure(
+          yield* adminDatabase
+            .execute(
+              sql`select core.track_application_composition_durable_work('seal.fixture', ${composition.revision}, ${rejectedWorkId}, true)`,
+              'objects',
+            )
+            .pipe(Effect.exit),
+        ),
+      ).toBe(true);
+      expect(yield* adminDatabase.select().from(applicationCompositionDurableWork)).toEqual([]);
+    }),
+  );
+
+  for (const scenario of ['wrong revision', 'open admission', 'active', 'draining', 'sealed'] as const) {
+    suite.effect(`rejects migrated resealing with ${scenario} without changing authority`, () =>
+      Effect.gen(function* rejectsInvalidReseal() {
+        const { adminDatabase, composition } = yield* fixture(false);
+        yield* adminDatabase.transaction((transaction) =>
+          closeApplicationCompositionDurableAdmission(transaction, composition.revision),
+        );
+        if (scenario !== 'active') {
+          yield* adminDatabase.transaction((transaction) =>
+            drainApplicationCompositionAuthority(transaction, composition.revision),
+          );
+        }
+        if (scenario !== 'active' && scenario !== 'draining') {
+          yield* adminDatabase.transaction((transaction) =>
+            sealApplicationCompositionAuthority(transaction, composition.revision),
+          );
+        }
+        if (scenario === 'wrong revision' || scenario === 'open admission') {
+          yield* adminDatabase.transaction((transaction) =>
+            markApplicationCompositionMigrationComplete(transaction, composition.revision),
+          );
+        }
+        if (scenario === 'open admission') {
+          // Deliberately seed an invalid recovery precondition using the fixture's admin identity.
+          yield* adminDatabase.update(applicationCompositionAuthority).set({ durableWorkAdmission: 'open' });
+        }
+        const before = yield* adminDatabase.select().from(applicationCompositionAuthority);
+        const wrongRevision = makeOutboxWorkerComposition([
+          { appId: 'reseal-other', moduleId: 'reseal.other' },
+        ]).revision;
+        expect(wrongRevision).not.toBe(composition.revision);
+        const failure = yield* adminDatabase
+          .transaction((transaction) =>
+            resealMigratedApplicationCompositionAuthority(
+              transaction,
+              scenario === 'wrong revision' ? wrongRevision : composition.revision,
+            ),
+          )
+          .pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(yield* adminDatabase.select().from(applicationCompositionAuthority)).toEqual(before);
+      }),
+    );
+  }
+
+  suite.effect('refuses migrated resealing while durable work remains without changing authority or work', () =>
+    Effect.gen(function* rejectsResealWithDurableWork() {
+      const { adminDatabase, composition, workId } = yield* migratedFixture();
+      // Recovery must detect persisted work even though normal admission is already closed.
+      yield* adminDatabase.insert(applicationCompositionDurableWork).values({
+        originalRevision: composition.revision,
+        ownerModuleKey: 'seal.fixture',
+        workId,
+      });
+      const authorityBefore = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      const workBefore = yield* adminDatabase.select().from(applicationCompositionDurableWork);
+      const failure = yield* adminDatabase
+        .transaction((transaction) => resealMigratedApplicationCompositionAuthority(transaction, composition.revision))
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+      expect(yield* adminDatabase.select().from(applicationCompositionAuthority)).toEqual(authorityBefore);
+      expect(yield* adminDatabase.select().from(applicationCompositionDurableWork)).toEqual(workBefore);
+      yield* adminDatabase
+        .delete(applicationCompositionDurableWork)
+        .where(eq(applicationCompositionDurableWork.workId, workId));
+      yield* adminDatabase.transaction((transaction) =>
+        resealMigratedApplicationCompositionAuthority(transaction, composition.revision),
+      );
+      const [after] = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      expect(after).toMatchObject({ durableWorkAdmission: 'closed', phase: 'sealed', revision: composition.revision });
+    }),
+  );
+
+  suite.effect('refuses migrated resealing until unmatched messages and unfinished deliveries are resolved', () =>
+    Effect.gen(function* rejectsResealWithOutboxWork() {
+      const { adminDatabase, composition, domainEventId, messageId, tenantId } = yield* migratedFixture();
+      yield* adminDatabase.insert(domainEvents).values({
+        domainEventId,
+        eventType: 'seal.fixture.created',
+        payloadJson: {},
+        producerModuleKey: 'seal.fixture',
+        subjectModuleKey: 'seal.fixture',
+        subjectResourceId: messageId,
+        subjectResourceType: 'seal-fixture',
+        tenantId,
+      });
+      yield* adminDatabase.insert(outboxMessages).values({
+        domainEventId,
+        outboxMessageId: messageId,
+        payloadJson: {},
+        producerModuleKey: 'seal.fixture',
+        tenantId,
+        topic: 'seal.fixture.created',
+      });
+      const authorityBefore = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      const messageBefore = yield* adminDatabase.select().from(outboxMessages);
+      const unmatchedFailure = yield* adminDatabase
+        .transaction((transaction) => resealMigratedApplicationCompositionAuthority(transaction, composition.revision))
+        .pipe(Effect.flip);
+      expect(Schema.is(ApplicationCompositionAuthorityError)(unmatchedFailure)).toBe(true);
+      expect(yield* adminDatabase.select().from(applicationCompositionAuthority)).toEqual(authorityBefore);
+      expect(yield* adminDatabase.select().from(outboxMessages)).toEqual(messageBefore);
+      yield* adminDatabase
+        .update(outboxMessages)
+        .set({ matchedAt: yield* DateTime.nowAsDate })
+        .where(eq(outboxMessages.outboxMessageId, messageId));
+      yield* adminDatabase
+        .insert(outboxDeliveries)
+        .values({ consumerModuleKey: 'seal.consumer', outboxMessageId: messageId, workerKey: 'seal.consumer.worker' });
+      for (const status of ['pending', 'processing', 'dead'] as const) {
+        yield* adminDatabase
+          .update(outboxDeliveries)
+          .set({ status })
+          .where(eq(outboxDeliveries.outboxMessageId, messageId));
+        const deliveriesBefore = yield* adminDatabase.select().from(outboxDeliveries);
+        const failure = yield* adminDatabase
+          .transaction((transaction) =>
+            resealMigratedApplicationCompositionAuthority(transaction, composition.revision),
+          )
+          .pipe(Effect.flip);
+        expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
+        expect(yield* adminDatabase.select().from(applicationCompositionAuthority)).toEqual(authorityBefore);
+        expect(yield* adminDatabase.select().from(outboxDeliveries)).toEqual(deliveriesBefore);
+      }
+      yield* adminDatabase
+        .update(outboxDeliveries)
+        .set({ status: 'done' })
+        .where(eq(outboxDeliveries.outboxMessageId, messageId));
+      yield* adminDatabase.transaction((transaction) =>
+        resealMigratedApplicationCompositionAuthority(transaction, composition.revision),
+      );
+      const [after] = yield* adminDatabase.select().from(applicationCompositionAuthority);
+      expect(after).toMatchObject({ durableWorkAdmission: 'closed', phase: 'sealed', revision: composition.revision });
+    }),
+  );
+
   suite.effect('waits for the last old worker transaction before sealing and rejects every later old operation', () =>
     Effect.gen(function* sealsAfterOldWorkerCommit() {
       const { adminDatabase, composition, database, tenantId } = yield* fixture();

@@ -207,6 +207,7 @@ export const ownerVerifierPaths = [
   '../verticals/facility-operations/scripts/verify-db-schema.mts',
   '../verticals/storefront-registry/scripts/verify-db-schema.mts',
   '../verticals/tax/scripts/verify-db-schema.mts',
+  '../verticals/projects/scripts/verify-db-schema.mts',
 ] as const;
 
 const COMMERCE_PORTAL_AUTH_VERIFIER = '../verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts';

@@ -734,7 +734,11 @@ it('builds each unit reference graph before the native Cloudflare build on a fre
 it('runs every owner migration through the native lifecycle on the private network before upload or publication', () => {
   const { steps } = readJobs().release;
   const migrate = steps.find(({ name }) => name === MIGRATE);
-  expect(migrate?.run).toBe('mise exec -- pnpm exec node scripts/stage-demo-migrate.mts');
+  expect(migrate?.run).toContain('mise exec -- pnpm exec node scripts/stage-demo-migrate.mts');
+  expect(migrate?.run).toContain('args+=(--resume-migrated-revision "$RESUME_MIGRATED_REVISION")');
+  expect(migrate?.env?.RESUME_MIGRATED_REVISION).toBe(
+    ['${{', 'steps.migration-readiness.outputs.resume-migrated-revision', '}}'].join(' '),
+  );
   expect(migrate?.['working-directory']).toBe('app');
   expect(migrate?.['timeout-minutes']).toBeGreaterThan(0);
   // Fresh releases migrate; the guarded continuation publishes an already completed migration.
@@ -790,9 +794,13 @@ it('migrates the Commerce portal realm with the runtime and administrator databa
   expect(migrate?.env).toEqual({
     COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: secretReference('DATABASE_ADMIN_URL'),
     COMMERCE_PORTAL_AUTH_DATABASE_URL: secretReference('DATABASE_URL'),
+    RESUME_MIGRATED_REVISION: ['${{', 'steps.migration-readiness.outputs.resume-migrated-revision', '}}'].join(' '),
   });
   const verify = readJobs().release.steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP);
-  expect(verify?.env).toEqual(migrate?.env);
+  expect(verify?.env).toEqual({
+    COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: secretReference('DATABASE_ADMIN_URL'),
+    COMMERCE_PORTAL_AUTH_DATABASE_URL: secretReference('DATABASE_URL'),
+  });
 });
 
 it('checks canonical recovery configuration before database mutation and provisions it before host deployment', () => {
@@ -844,6 +852,65 @@ it('runs this workflow test with the release script tests that gate the release 
     expect(tests?.run).toContain(`scripts/tests/${name}.test.mts`);
   }
 });
+
+it.effect(
+  'the actual workflow emits only an exact closed empty migrated retry target without authorizing publication',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* routesVerifiedSchemaRetry() {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-schema-retry-gate-' });
+        const step = readJobs().release.steps.find(({ name }) => name === READINESS);
+        expect(step?.id).toBe('migration-readiness');
+        const program = step?.run?.match(/<<'NODE'\n(?<program>[\s\S]+)\nNODE/u)?.groups?.program;
+        expect(program).toBeDefined();
+        const revision = 'a'.repeat(64);
+        const observation = {
+          advisoryOnly: true,
+          authority: { durableWorkAdmission: 'closed', phase: 'migrated', revision },
+          blockers: { deliveries: 0, durable: 0, messages: 0 },
+          reason: 'replacement-publication-required',
+          status: 'blocked',
+        };
+        const cases = [
+          { document: observation, exitCode: 1, passes: true },
+          { document: observation, exitCode: 130, passes: false },
+          {
+            document: { ...observation, authority: { ...observation.authority, durableWorkAdmission: 'open' } },
+            exitCode: 1,
+            passes: false,
+          },
+          {
+            document: { ...observation, authority: { ...observation.authority, revision: 'untrusted\nrevision' } },
+            exitCode: 1,
+            passes: false,
+          },
+          {
+            document: { ...observation, blockers: { ...observation.blockers, durable: 1 } },
+            exitCode: 1,
+            passes: false,
+          },
+        ];
+        for (const [index, example] of cases.entries()) {
+          const input = `${directory}/readiness-${index}.json`;
+          const output = `${directory}/output-${index}`;
+          yield* fs.writeFileString(input, `${JSON.stringify(example.document)}\n`);
+          const outcome = yield* runCommand({
+            args: ['--input-type=module', '-', input, String(example.exitCode)],
+            command: 'node',
+            cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+            env: { GITHUB_OUTPUT: Redacted.make(output) },
+            stdin: Redacted.make(program ?? ''),
+          }).pipe(Effect.exit);
+          expect(Exit.isSuccess(outcome)).toBe(example.passes);
+          expect(yield* fs.exists(output)).toBe(example.passes);
+          if (example.passes) {
+            expect(yield* fs.readFileString(output)).toBe(`resume-migrated-revision=${revision}\n`);
+          }
+        }
+      }),
+    ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 for (const example of [
   { exitCode: 0, passes: true, reason: 'drained', status: 'ready' },

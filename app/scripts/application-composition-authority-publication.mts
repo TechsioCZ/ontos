@@ -20,6 +20,7 @@ import {
   isApplicationCompositionWorkDrained,
   markApplicationCompositionMigrationComplete,
   publishApplicationCompositionAuthority,
+  resealMigratedApplicationCompositionAuthority,
   resumeApplicationCompositionDurableAdmission,
   sealApplicationCompositionAuthority,
 } from '../packages/core-runtime/src/modules/application-composition-authority.ts';
@@ -33,6 +34,7 @@ const AUTHORITY_MISSING = 'authority-missing';
 const DURABLE_DRAIN = 'durable-drain';
 const DIAGNOSTIC_TIMEOUT = 'diagnostic-timeout';
 const DIAGNOSTIC_UNAVAILABLE = 'diagnostic-unavailable';
+const REPLACEMENT_PUBLICATION_REQUIRED = 'replacement-publication-required';
 
 /** Phase ceilings do not extend the existing twenty-minute migration envelope. */
 export const APPLICATION_COMPOSITION_PUBLICATION_BUDGETS = {
@@ -96,7 +98,7 @@ export const ApplicationCompositionReadinessSchema = Schema.Struct({
     'pending-work',
     'authority-expired',
     'authority-sealed',
-    'replacement-publication-required',
+    REPLACEMENT_PUBLICATION_REQUIRED,
     AUTHORITY_MISSING,
     DIAGNOSTIC_TIMEOUT,
     DIAGNOSTIC_UNAVAILABLE,
@@ -104,6 +106,23 @@ export const ApplicationCompositionReadinessSchema = Schema.Struct({
   status: Schema.Literals(['ready', 'blocked', 'unknown']),
 });
 export type ApplicationCompositionReadiness = typeof ApplicationCompositionReadinessSchema.Type;
+
+/** An observation selects a retry target; only the locked native CAS can authorize resealing. */
+export const migratedRevisionForSchemaRetry = (
+  result: ApplicationCompositionReadiness,
+  exitCode: number,
+): string | undefined =>
+  exitCode === 1 &&
+  result.status === 'blocked' &&
+  result.reason === REPLACEMENT_PUBLICATION_REQUIRED &&
+  result.authority?.phase === 'migrated' &&
+  result.authority.durableWorkAdmission === 'closed' &&
+  /^[a-f0-9]{64}$/u.test(result.authority.revision) &&
+  result.blockers?.durable === 0 &&
+  result.blockers.messages === 0 &&
+  result.blockers.deliveries === 0
+    ? result.authority.revision
+    : undefined;
 
 const unknownReadiness = (
   reason: typeof DIAGNOSTIC_TIMEOUT | typeof DIAGNOSTIC_UNAVAILABLE,
@@ -175,7 +194,7 @@ export const readApplicationCompositionReadiness = Effect.gen(function* readPubl
   };
   let reason: ApplicationCompositionReadiness['reason'] = 'drained';
   if (row.phase === 'migrated') {
-    reason = 'replacement-publication-required';
+    reason = REPLACEMENT_PUBLICATION_REQUIRED;
   } else if (row.phase === 'sealed') {
     reason = 'authority-sealed';
   } else if (!row.fresh) {
@@ -521,7 +540,11 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
     migration: Effect.Effect<Value, Failure, Requirements>,
     verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
     budgets: ApplicationCompositionMigrationBudgets = {},
+    resumeMigratedRevision?: string,
   ) {
+    if (resumeMigratedRevision !== undefined && !/^[a-f0-9]{64}$/u.test(resumeMigratedRevision)) {
+      return yield* unavailable('A schema retry requires an exact retired composition revision');
+    }
     const drainMs = budgets.drainMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs;
     const migrationMs = budgets.migrationMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.migrationMs;
     const totalMs = budgets.totalMs ?? APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs;
@@ -569,7 +592,16 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
               .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
           : undefined;
         state.authorityPhase = current?.phase ?? 'absent';
-        if (current === undefined) {
+        if (resumeMigratedRevision !== undefined) {
+          if (current?.phase !== 'migrated' || current.revision !== resumeMigratedRevision) {
+            return yield* unavailable('The schema retry no longer identifies the exact migrated authority');
+          }
+          state.phase = 'seal';
+          yield* database.executor.transaction((transaction) =>
+            resealMigratedApplicationCompositionAuthority(transaction, resumeMigratedRevision),
+          );
+          state.authorityPhase = 'sealed';
+        } else if (current === undefined) {
           yield* verifyInitialCutover;
           yield* requireNoLegacyRuntimeTransactions();
         } else if (current.phase === 'migrated') {

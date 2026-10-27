@@ -77,6 +77,7 @@ export const migrateStageDemoOwnerSchemas = Effect.fn('StageDemo.migrateOwnerSch
   function* migrateStageDemoOwnerSchemas(
     budgets: ApplicationCompositionMigrationBudgets = {},
     diagnostics: StageDemoDiagnosticOptions = {},
+    resumeMigratedRevision?: string,
   ) {
     let childStarted: boolean | 'unknown' = false;
     let migrationsCompleted = false;
@@ -115,7 +116,7 @@ export const migrateStageDemoOwnerSchemas = Effect.fn('StageDemo.migrateOwnerSch
         ),
       ),
     );
-    yield* runApplicationCompositionMigration(migration, initialCutover, budgets).pipe(
+    yield* runApplicationCompositionMigration(migration, initialCutover, budgets, resumeMigratedRevision).pipe(
       Effect.catchTag('ApplicationCompositionPublicationTimeout', (failure) =>
         Effect.gen(function* retainMigrationTimeout() {
           timeoutDiagnostic = {
@@ -252,6 +253,12 @@ export const stageDemoMigrationCommand = Command.make(
         'Read-only advisory JSON and sanitized stderr; no lock or settlement; diagnostic deadline 50000ms.',
       ),
     ),
+    resumeMigratedRevision: Flag.String('resume-migrated-revision').pipe(
+      Flag.optional,
+      Flag.withDescription(
+        'Reseal only this exact closed migrated revision, then run and verify the full native migration chain.',
+      ),
+    ),
     totalBudgetMs: Flag.String('total-budget-ms').pipe(
       Flag.withDefault(`${APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.totalMs}`),
       Flag.withDescription(
@@ -259,12 +266,15 @@ export const stageDemoMigrationCommand = Command.make(
       ),
     ),
   },
-  ({ continuePublication, drainBudgetMs, migrationBudgetMs, readiness, totalBudgetMs }) =>
+  ({ continuePublication, drainBudgetMs, migrationBudgetMs, readiness, resumeMigratedRevision, totalBudgetMs }) =>
     Effect.gen(function* runStageMigrationCommand() {
       const diagnostics = yield* configuredDiagnosticOptions;
-      if (readiness && continuePublication) {
+      if (
+        (readiness && continuePublication) ||
+        (Option.isSome(resumeMigratedRevision) && (readiness || continuePublication))
+      ) {
         return yield* new StageDemoMigrationError({
-          message: 'Readiness and completed-migration continuation are mutually exclusive',
+          message: 'Readiness, completed-migration publication and schema retry are mutually exclusive',
         });
       }
       if (readiness) {
@@ -295,6 +305,7 @@ export const stageDemoMigrationCommand = Command.make(
           totalMs: Number(totalBudgetMs),
         },
         diagnostics,
+        Option.getOrUndefined(resumeMigratedRevision),
       );
     }),
 );

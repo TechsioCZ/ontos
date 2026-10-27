@@ -63,12 +63,12 @@ it('standalone migration prepares identities, migrates owners, then verifies gra
   );
 });
 
-it('prepared stage migration retains final grants and portal migration inside the sealed child', () => {
+it('prepared stage migration verifies every owner after final grants and portal migration inside the sealed child', () => {
   expect(databaseScripts['db:migrate:prepared:internal']).toBe(
-    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate',
+    'pnpm db:migrate:owners:internal && pnpm db:bootstrap-runtime-role && pnpm db:portal-auth:migrate && pnpm db:verify',
   );
-  expect(databaseScripts['db:migrate']).toBe(
-    `pnpm db:bootstrap-runtime-role && ${databaseScripts['db:migrate:prepared:internal']}`,
+  expect(databaseScripts['db:migrate:prepared:internal']).toBe(
+    `${databaseScripts['db:migrate']?.replace('pnpm db:bootstrap-runtime-role && ', '')} && pnpm db:verify`,
   );
   expect(databaseScripts['db:migrate:prepared:internal']?.split('pnpm db:bootstrap-runtime-role')).toHaveLength(2);
 });

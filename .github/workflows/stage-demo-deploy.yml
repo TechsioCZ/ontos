@@ -370,6 +370,7 @@ jobs:
           scripts/tests/application-composition-authority-publication.test.mts
           scripts/tests/application-composition-release-lifecycle.test.mts
           scripts/tests/bootstrap-runtime-role.test.mts
+          scripts/tests/application-db-owner-verification.test.mts
           scripts/tests/database-login-roles.test.mts
           scripts/tests/enrollment-recovery-host-config.test.mts
           scripts/tests/recover-admitted-retail-profile.test.mts
@@ -703,6 +704,7 @@ jobs:
       # Advisory only: live pending work may drain, and initial/sealed releases still need their
       # authoritative native guards. Unknown diagnostics fail before any identity or schema mutation.
       - name: Inspect migration readiness before database preparation
+        id: migration-readiness
         if: ${{ !inputs.outbox_only && !inputs.continue_migrated_publication }}
         timeout-minutes: 2
         working-directory: app
@@ -713,7 +715,7 @@ jobs:
           node --input-type=module - "$RUNNER_TEMP/stage-migration-readiness.json" "$status" <<'NODE'
           import { appendFileSync, readFileSync } from 'node:fs';
           import { Schema } from 'effect';
-          import { ApplicationCompositionReadinessSchema } from './scripts/application-composition-authority-publication.mts';
+          import { ApplicationCompositionReadinessSchema, migratedRevisionForSchemaRetry } from './scripts/application-composition-authority-publication.mts';
           import { formatStageDeployDiagnostic } from './scripts/stage-deploy-diagnostics.mts';
 
           const [path, exitCode] = process.argv.slice(2);
@@ -752,7 +754,12 @@ jobs:
           }
           const guardedRetry = exitCode === '1' &&
             ['pending-work', 'authority-missing', 'authority-sealed'].includes(result.reason);
-          if (!(result.status === 'ready' && exitCode === '0') && !guardedRetry) process.exitCode = 1;
+          const retryRevision = migratedRevisionForSchemaRetry(result, Number(exitCode));
+          if (retryRevision !== undefined && process.env.GITHUB_OUTPUT) {
+            appendFileSync(process.env.GITHUB_OUTPUT, `resume-migrated-revision=${retryRevision}\n`);
+          }
+          const guardedSchemaRetry = retryRevision !== undefined && Boolean(process.env.GITHUB_OUTPUT);
+          if (!(result.status === 'ready' && exitCode === '0') && !guardedRetry && !guardedSchemaRetry) process.exitCode = 1;
           NODE
 
       - name: Bootstrap every database identity before migrations
@@ -781,7 +788,13 @@ jobs:
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
-        run: mise exec -- pnpm exec node scripts/stage-demo-migrate.mts
+          RESUME_MIGRATED_REVISION: ${{ steps.migration-readiness.outputs.resume-migrated-revision }}
+        run: |
+          args=()
+          if [[ -n "$RESUME_MIGRATED_REVISION" ]]; then
+            args+=(--resume-migrated-revision "$RESUME_MIGRATED_REVISION")
+          fi
+          mise exec -- pnpm exec node scripts/stage-demo-migrate.mts "${args[@]}"
 
       # This read-only native guard takes the publication lock and requires the exact migrated authority.
       - name: Continue publication of the completed owner migration

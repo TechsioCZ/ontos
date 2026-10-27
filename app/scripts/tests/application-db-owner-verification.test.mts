@@ -9,8 +9,8 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { ownerVerifierPaths, verifyOwnerSchema } from '../verify-application-db-schema.mts';
 
-it('retains all 28 owner verifiers and invokes Core through the application enrollment wrapper', () => {
-  expect(ownerVerifierPaths).toHaveLength(28);
+it('retains all 29 owner verifiers including Projects and invokes Core through the application enrollment wrapper', () => {
+  expect(ownerVerifierPaths).toHaveLength(29);
   expect(ownerVerifierPaths).toEqual([
     './verify-core-db-schema.mts',
     '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
@@ -40,6 +40,7 @@ it('retains all 28 owner verifiers and invokes Core through the application enro
     '../verticals/facility-operations/scripts/verify-db-schema.mts',
     '../verticals/storefront-registry/scripts/verify-db-schema.mts',
     '../verticals/tax/scripts/verify-db-schema.mts',
+    '../verticals/projects/scripts/verify-db-schema.mts',
   ]);
 });
 
