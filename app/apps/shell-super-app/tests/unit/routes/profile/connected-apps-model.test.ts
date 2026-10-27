@@ -1,3 +1,10 @@
+import {
+  AgentAccessClientIdSchema,
+  AgentAccessGrantIdSchema,
+  ConnectionSummarySchema,
+} from '@app/shared-contracts/agent-access';
+import { AgentModuleKeySchema, AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import { Schema } from 'effect';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
 import { expect, test } from 'effect-rstest';
 
@@ -15,40 +22,52 @@ import {
 } from '../../../../src/routes/[lang]/profile/connected-apps-model.ts';
 import type { EditDraft } from '../../../../src/routes/[lang]/profile/connected-apps-model.ts';
 
-const mod = (moduleId: string, label: string, read: boolean, write: boolean) => ({ label, moduleId, read, write });
-
-const connection = (overrides: Partial<ConnectionSummary>): ConnectionSummary => ({
-  acting: { displayName: 'Jana Nováková', kind: 'human', principalId: 'p-1' },
-  allModules: false,
-  client: { clientId: 'c-1', host: 'claude.ai', kind: 'cimd', logoUri: null, name: 'Claude' },
-  createdAt: '2026-10-01T08:00:00.000Z',
-  delegatedBy: null,
-  grantId: 'g-1',
-  granted: {
-    modules: [
-      { access: 'write', moduleId: 'crm' },
-      { access: 'write', moduleId: 'sklad' },
-    ],
-    writePolicy: 'direct',
-  },
-  lastUsedAt: null,
-  legalEntityId: 'le-1',
-  legalName: 'Obchodní firma',
-  limits: {
-    maxWritePolicy: 'direct',
-    modules: [mod('crm', 'CRM', true, true), mod('sklad', 'Sklad', true, true)],
-  },
-  modules: [mod('crm', 'CRM', true, true)],
-  profileId: 'pr-1',
-  revokeNote: null,
-  revokeReason: null,
-  revokedAt: null,
-  status: 'active',
-  tenantId: 't-1',
-  user: { displayName: 'Jana Nováková', principalId: 'p-1' },
-  writePolicy: 'direct',
-  ...overrides,
+const mod = (moduleId: string, label: string, read: boolean, write: boolean) => ({
+  label,
+  moduleId: AgentModuleKeySchema.make(moduleId),
+  read,
+  write,
 });
+
+const connection = (overrides: Partial<typeof ConnectionSummarySchema.Encoded>): ConnectionSummary =>
+  Schema.decodeUnknownSync(ConnectionSummarySchema)({
+    acting: { displayName: 'Jana Nováková', kind: 'human', principalId: AgentPrincipalIdSchema.make('p-1') },
+    allModules: false,
+    client: {
+      clientId: AgentAccessClientIdSchema.make('c-1'),
+      host: 'claude.ai',
+      kind: 'cimd',
+      logoUri: null,
+      name: 'Claude',
+    },
+    createdAt: '2026-10-01T08:00:00.000Z',
+    delegatedBy: null,
+    granted: {
+      modules: [
+        { access: 'write', moduleId: AgentModuleKeySchema.make('crm') },
+        { access: 'write', moduleId: AgentModuleKeySchema.make('sklad') },
+      ],
+      writePolicy: 'direct',
+    },
+    grantId: AgentAccessGrantIdSchema.make('g-1'),
+    lastUsedAt: null,
+    legalEntityId: 'le-1',
+    legalName: 'Obchodní firma',
+    limits: {
+      maxWritePolicy: 'direct',
+      modules: [mod('crm', 'CRM', true, true), mod('sklad', 'Sklad', true, true)],
+    },
+    modules: [mod('crm', 'CRM', true, true)],
+    profileId: 'pr-1',
+    revokedAt: null,
+    revokeNote: null,
+    revokeReason: null,
+    status: 'active',
+    tenantId: 't-1',
+    user: { displayName: 'Jana Nováková', principalId: AgentPrincipalIdSchema.make('p-1') },
+    writePolicy: 'direct',
+    ...overrides,
+  });
 
 test('accessSummary names the modules and counts the rest', () => {
   expect(accessSummary(connection({ allModules: true }))).toBe('Vše');
@@ -64,7 +83,7 @@ test('accessSummary names the modules and counts the rest', () => {
 
 test('policyChoices disables what the agent or the person may not do', () => {
   const agent = connection({
-    acting: { displayName: 'Agent A', kind: 'agent', principalId: 'a-1' },
+    acting: { displayName: 'Agent A', kind: 'agent', principalId: AgentPrincipalIdSchema.make('a-1') },
     limits: { maxWritePolicy: 'approval', modules: [] },
   });
   const agentChoices = policyChoices(agent);
@@ -92,10 +111,10 @@ test('draftFromConnection and draftToRequest round trip the grant', () => {
   expect(draft.modules).toEqual({ crm: 'read', fin: 'none', sklad: 'write' });
   expect(draftToRequest('g-1', draft)).toEqual({
     allModules: false,
-    grantId: 'g-1',
+    grantId: AgentAccessGrantIdSchema.make('g-1'),
     modules: [
-      { access: 'read', moduleId: 'crm' },
-      { access: 'write', moduleId: 'sklad' },
+      { access: 'read', moduleId: AgentModuleKeySchema.make('crm') },
+      { access: 'write', moduleId: AgentModuleKeySchema.make('sklad') },
     ],
     writePolicy: 'approval',
   });
@@ -122,9 +141,11 @@ test('failureText prefers the server detail', () => {
 
 test('the panel never offers more than the connection was approved for', () => {
   const narrowed = connection({
-    granted: { modules: [{ access: 'read', moduleId: 'crm' }], writePolicy: 'read_only' },
+    granted: { modules: [{ access: 'read', moduleId: AgentModuleKeySchema.make('crm') }], writePolicy: 'read_only' },
   });
-  expect(moduleChoices(narrowed)).toEqual([{ canRead: true, canWrite: false, label: 'CRM', moduleId: 'crm' }]);
+  expect(moduleChoices(narrowed)).toEqual([
+    { canRead: true, canWrite: false, label: 'CRM', moduleId: AgentModuleKeySchema.make('crm') },
+  ]);
   const policies = policyChoices(narrowed);
   expect(policies.map((choice) => choice.disabled)).toEqual([false, true, true]);
   // Limited by the approved grant only: the panel description explains it once, no per-option text.
@@ -136,7 +157,7 @@ test('the panel never offers more than the connection was approved for', () => {
 test('endedDetail explains why a connection stopped and shows the admin note', () => {
   expect(endedDetail(connection({}))).toBeUndefined();
   const ended = endedDetail(
-    connection({ revokeNote: 'Odchod z firmy', revokeReason: 'admin', revokedAt: null, status: 'revoked' }),
+    connection({ revokedAt: null, revokeNote: 'Odchod z firmy', revokeReason: 'admin', status: 'revoked' }),
   );
   expect(ended).toEqual({ label: 'Odpojil(a) správce firmy', note: 'Odchod z firmy', when: '' });
   expect(endedDetail(connection({ revokeNote: 'user', revokeReason: 'user', status: 'revoked' }))?.note).toBeNull();

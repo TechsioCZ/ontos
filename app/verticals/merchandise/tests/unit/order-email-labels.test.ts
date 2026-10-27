@@ -1,4 +1,4 @@
-import { describe, expect, test } from '@rstest/core';
+import { describe, expect, it as test } from 'effect-rstest';
 import {
   deliveryLabel,
   emailEventLabels,

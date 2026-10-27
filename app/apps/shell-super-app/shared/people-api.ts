@@ -107,11 +107,9 @@ export const InvitePeopleResponseSchema = Schema.Struct({
   principalRef: PeoplePrincipalRefSchema,
 });
 export type InvitePeopleRequest = typeof InvitePeopleRequestSchema.Type;
-export type InvitePeopleResponse = typeof InvitePeopleResponseSchema.Type;
 export type PeopleListRequest = typeof PeopleListRequestSchema.Type;
 export type PeopleList = typeof PeopleListResponseSchema.Type;
 export type Person = PeopleList['items'][number];
-export type PeopleScope = typeof PeopleScopeSchema.Type;
 export type SetPeopleCompanyMembershipRequest = typeof SetPeopleCompanyMembershipRequestSchema.Type;
 export type SetPeopleCompanyMembershipResponse = typeof SetPeopleCompanyMembershipResponseSchema.Type;
 export type SetPeopleRoleRequest = typeof SetPeopleRoleRequestSchema.Type;

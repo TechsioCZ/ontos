@@ -264,6 +264,148 @@
     "selectPlaceholder": "Select…",
     "sidePanel": {
       "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "financeUi": {
+      "settlement": {
+        "previousDocuments": "Previous advance and partial invoices",
+        "title": "Settlement of previous invoices",
+        "amount": "Apply (CZK)",
+        "note": "Note (e.g. tax document number for a received payment)",
+        "confirm": "I confirm that I have checked the amounts and that they should be applied to this invoice."
+      },
+      "paymentTerms": {
+        "title": "Early payment discount and late payment interest",
+        "discountCondition": "Early payment discount condition",
+        "discountExample": "e.g. 2% for payment within 7 days of issue",
+        "discountAmount": "Manually approved early payment discount (CZK, optional)",
+        "interestCondition": "Agreed late payment interest",
+        "interestExample": "e.g. 0.05% of the outstanding amount per day overdue under Article 7 of the agreement",
+        "interestAmount": "Manually approved interest amount (CZK, optional)"
+      },
+      "documents": {
+        "title": "Documents and attachments"
+      },
+      "payments": {
+        "title": "Payments",
+        "date": "Payment date",
+        "note": "Note (e.g. statement number)",
+        "counterpartyHistory": "Counterparty payment history"
+      },
+      "common": {
+        "amount": "Amount (CZK)",
+        "vatRate": "VAT rate",
+        "edit": "Edit",
+        "delete": "Delete",
+        "type": "Type",
+        "category": "Category",
+        "optional": "optional",
+        "note": "Note",
+        "documentKind": "Document kind",
+        "name": "Name",
+        "selectAll": "Select all"
+      },
+      "reminders": {
+        "title": "Payment reminders",
+        "recipient": "Recipient email",
+        "emailExample": "billing@customer.cz",
+        "message": "Reminder text"
+      },
+      "accounting": {
+        "handover": "Accounting handover",
+        "setup": "Accounting system and approved format",
+        "format": "Format",
+        "newPackage": "New handover package",
+        "onlyNew": "Only invoices not yet handed over",
+        "history": "Handover history",
+        "empty": "Nothing handed over yet",
+        "historyTable": "Accounting handover history",
+        "errorDescription": "Error description",
+        "errorExample": "e.g. POHODA rejected the import – customer VAT ID is missing",
+        "evidence": "Receipt evidence",
+        "evidenceExample": "e.g. email from Ing. Nováková dated 20 October 2026"
+      },
+      "objects": {
+        "property": "Property",
+        "contract": "Agreement",
+        "costCenter": "Cost center"
+      },
+      "priceList": {
+        "unit": "Unit",
+        "title": "Service price list",
+        "empty": "The price list is empty",
+        "approvedDiscounts": "Approved discounts on invoices",
+        "serviceName": "Service name",
+        "serviceExample": "e.g. Parking space – covered parking",
+        "code": "Code (optional)",
+        "unitExamples": "month, m², pcs, hr",
+        "netPrice": "Price excluding VAT (CZK)"
+      },
+      "recurring": {
+        "period": "Period",
+        "title": "Recurring invoices (rent)",
+        "empty": "No templates yet",
+        "templates": "Recurring invoices – templates",
+        "drafts": "Recurring invoice drafts",
+        "selectAll": "Select all drafts",
+        "duplicate": "Possible duplicate",
+        "newTemplate": "New recurring invoice template",
+        "tenant": "Tenant",
+        "tenantPlaceholder": "Select a tenant",
+        "templateName": "Template name",
+        "templateExample": "e.g. Rent – office 2.04",
+        "lineText": "Invoice line text",
+        "monthlyAmount": "Monthly amount excluding VAT (CZK)",
+        "issueDay": "Day of issue in the month (1–28)",
+        "dueDays": "Payment term (days)"
+      },
+      "planning": {
+        "categoryComparison": "Planned and actual amounts by category",
+        "monthlyCashFlow": "Monthly cash flow",
+        "noOpeningBalance": "No opening balance",
+        "budgetObject": "Budget property or cost center",
+        "budgetMonth": "Budget month",
+        "budgetComparison": "Budget – planned and actual amounts",
+        "noBudget": "No budget",
+        "plannedAmount": "Planned amount (CZK)",
+        "manualActual": "Manually entered actual amount (CZK, optional)",
+        "explanation": "Variance explanation",
+        "deleteBudgetItem": "Delete budget item",
+        "openingTitle": "Cash flow opening balance",
+        "openingAmount": "Opening balance (CZK)",
+        "asOf": "As of",
+        "confirmedOpening": "Opening balance (manually confirmed)",
+        "netPaid": "Paid in the period (net)",
+        "netExpected": "Expected invoices (net)"
+      },
+      "incoming": {
+        "title": "Incoming invoice",
+        "supplier": "Supplier",
+        "supplierExample": "e.g. ČEZ Prodej, a.s.",
+        "number": "Supplier document number",
+        "numberExample": "e.g. 2026-1184",
+        "budgetCategory": "Budget category"
+      },
+      "detail": {
+        "anchors": "Related property and links",
+        "customerCorrection": "Customer correction · DEMO"
+      },
+      "plan": {
+        "title": "Financial plan – expected income and expenses",
+        "empty": "The plan is empty",
+        "table": "Financial plan",
+        "titleExample": "e.g. Rent for hall B from December",
+        "expectedDate": "Expected date",
+        "probability": "Probability (%)",
+        "project": "Project (optional)",
+        "projectExample": "e.g. Renovation of hall B",
+        "deleteItem": "Delete plan item"
+      },
+      "line": {
+        "discount": "Discount",
+        "discountReason": "Approved discount reason",
+        "discountExample": "e.g. loyalty discount under the agreement",
+        "fromPriceList": "From the price list"
+      }
     }
   }
 }

@@ -50,6 +50,9 @@
  *     runner's real Clock. Immutable helpers must be reachable exclusively from those
  *     registrations; runner mutation, opaque escapes and unsupported dynamic runner origins
  *     prevent this proof. Native JavaScript timers remain prohibited inside live registrations.
+ *     A genuine SDK `it.layer(layer, { excludeTestServices: true })` suite also selects its
+ *     supplied context instead of injecting TestClock; only its bound `suite.effect` callbacks
+ *     establish this proof. Mutable/opaque options and lookalike runners do not.
  *   - Effect time operators in **production** code: `Effect.repeat(Schedule.spaced(...))` and
  *     `Effect.timeout` are exactly what B1 asks for, so they are only questioned inside tests.
  *   - Locally shadowed or non-timer bindings: a parameter named `setTimeout`, a test double

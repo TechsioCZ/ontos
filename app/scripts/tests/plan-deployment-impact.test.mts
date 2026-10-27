@@ -6,6 +6,7 @@ import path from 'node:path';
 import { NodeServices } from '@effect/platform-node';
 import { Array as EffectArray, Cause, Effect, Exit, Option, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ChildProcess } from 'effect/process';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
 import {
@@ -23,6 +24,7 @@ import {
   StatusPagesJsonSchema,
 } from '../resolve-stage-deployment-base.mts';
 import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts';
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.worker.ts';
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
@@ -1117,6 +1119,7 @@ for (const changedPath of [
   'module-federation.shared.ts',
   'tsconfig.base.json',
   'scripts/generate-ontos-module-contract.mts',
+  'scripts/ontos-mcp-contribution.mts',
 ]) {
   it.live(`conservatively deploys every phase for ${changedPath}`, () =>
     Effect.gen(function* testEffect24() {
@@ -1834,6 +1837,110 @@ const promotionFixture = (): AuthorizationPromotionGateInput => {
     },
   };
 };
+
+const writePromotionCliFixture = (root: string, provisioning = 'principal_self_credentials') =>
+  Effect.gen(function* writePromotionCliFixtureEffect() {
+    const gate = promotionFixture();
+    const reportDirectory = path.join(root, '.codex/reports/authorization');
+    yield* Effect.tryPromise(() => mkdir(reportDirectory, { recursive: true }));
+    const entrypointKey = 'core.identity.bind-self-api-key';
+    const documents = [
+      ['topology/authorization-rollout.json', { ...gate.rollout, compatibilityEligibleEntrypoints: [entrypointKey] }],
+      [
+        '.codex/reports/authorization/protected-entrypoints.json',
+        {
+          ...gate.inventory,
+          entries: [
+            {
+              authorization: { kind: 'action_execution', provisioning },
+              deployment: SHELL_ID,
+              entrypointKey,
+              owner: 'core.identity',
+              surface: 'action',
+            },
+          ],
+        },
+      ],
+      ['.codex/reports/authorization/fail-closed-impact.json', gate.impact],
+      ['.codex/reports/authorization/negative-smoke.stage.json', gate.negativeSmoke],
+      ['.codex/reports/authorization/readiness.json', gate.readiness],
+    ] as const;
+    for (const [relativePath, document] of documents) {
+      yield* Effect.tryPromise(() =>
+        writeFile(path.join(root, relativePath), `${JSON.stringify(document)}\n`, 'utf-8'),
+      );
+    }
+  });
+
+const runPromotionCli = (root: string) =>
+  collectToolingProcess(
+    ChildProcess.make(
+      process.execPath,
+      [
+        path.resolve(import.meta.dirname, '../plan-deployment-impact.mts'),
+        '--authorization-environment',
+        'stage',
+        '--authorization-now',
+        '2026-10-02T00:00:00.000Z',
+        '--changed-path',
+        DOCUMENTATION_PATH,
+        '--outbox-worker-mode',
+        'host',
+      ],
+      { cwd: root, env: { PWD: root, TMPDIR: os.tmpdir() }, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+    ),
+  ).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.live('planner CLI accepts principal_self_credentials with exact enforced promotion evidence', () =>
+  withFixture((root) =>
+    Effect.gen(function* selfCredentialPromotionCli() {
+      yield* writePromotionCliFixture(root);
+      const result = yield* runPromotionCli(root);
+      expect(result.status === 0 ? '' : result.stdout + result.stderr).toBe('');
+      expect(result.status, result.stderr).toBe(0);
+      const plan = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            authorization: Schema.Struct({
+              environment: Schema.Literal('stage'),
+              mode: Schema.Literal('enforced'),
+              status: Schema.Literal('ready'),
+            }),
+          }),
+        ),
+      )(result.stdout);
+      expect(plan.authorization).toEqual({ environment: 'stage', mode: 'enforced', status: 'ready' });
+    }),
+  ),
+);
+
+it.live('planner CLI rejects unknown Action provisioning in the saved inventory', () =>
+  withFixture((root) =>
+    Effect.gen(function* unknownProvisioningPromotionCli() {
+      yield* writePromotionCliFixture(root, 'unknown_provisioning');
+      const result = yield* runPromotionCli(root);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain('SchemaError');
+      expect(result.stdout + result.stderr).toContain('["entries"][0]["authorization"]["provisioning"]');
+    }),
+  ),
+);
+
+for (const fileName of ['fail-closed-impact.json', 'negative-smoke.stage.json', 'readiness.json']) {
+  it.live(`planner CLI still requires ${fileName} for principal_self_credentials promotion`, () =>
+    withFixture((root) =>
+      Effect.gen(function* missingSelfCredentialPromotionEvidence() {
+        yield* writePromotionCliFixture(root);
+        yield* Effect.tryPromise(() => rm(path.join(root, '.codex/reports/authorization', fileName)));
+        const result = yield* runPromotionCli(root);
+        expect(result.status).not.toBe(0);
+        expect(result.stdout + result.stderr).toContain(
+          'enforced authorization promotion requires impact, readiness, and negative-smoke evidence',
+        );
+      }),
+    ),
+  );
+}
 
 const withoutImpactEvidence = (input: AuthorizationPromotionGateInput): AuthorizationPromotionGateInput => {
   const { impact, ...remaining } = input;

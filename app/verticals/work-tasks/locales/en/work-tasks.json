@@ -202,6 +202,23 @@
     "selectPlaceholder": "Select…",
     "sidePanel": {
       "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "history": {
+      "title": "Change history"
+    },
+    "planning": {
+      "projectTitle": "Project name",
+      "plannedStart": "Planned start",
+      "plannedEnd": "Planned end",
+      "responsiblePerson": "Responsible person",
+      "milestoneTitle": "Milestone name",
+      "milestoneDueDate": "Milestone due date",
+      "projects": "Projects",
+      "noProjects": "No projects yet",
+      "plannedCapacity": "Planned capacity",
+      "from": "From",
+      "to": "To",
+      "noAssignedTasks": "No tasks are assigned in this period"
     }
   }
 }

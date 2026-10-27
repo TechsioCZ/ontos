@@ -263,6 +263,7 @@ it.live(
         authenticationNamespaceId: registration.authenticationNamespaceId,
       });
       const oauthAuthenticationLayer = Layer.mergeAll(
+        BetterAuthNativeAdapterLive,
         BetterAuthRuntimeLive,
         BetterAuthNativeAdapterLive,
         OAuthAuthenticationAuditLive,

@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SectionCard } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DateTime } from 'effect';
@@ -51,6 +52,7 @@ export const OccupancyCalendar = ({
   readonly properties: Properties;
   readonly snapshot: RecordsResponse;
 }) => {
+  const { t } = useModernI18n();
   const today = todayInPrague();
   const month = monthValue === '' ? `${today.slice(0, 7)}-01` : monthValue;
   const start = DateTime.makeUnsafe(`${month}T00:00:00Z`);
@@ -66,7 +68,7 @@ export const OccupancyCalendar = ({
         actions={
           <div className="sp-calendar-controls">
             <Button
-              aria-label="Předchozí měsíc obsazenosti"
+              aria-label={t('property-leasing.calendar.previousMonth')}
               onClick={() => shift(-1)}
               size="sm"
               theme="outlined"
@@ -76,7 +78,7 @@ export const OccupancyCalendar = ({
             </Button>
             <strong>{monthFormat.format(DateTime.toEpochMillis(start))}</strong>
             <Button
-              aria-label="Následující měsíc obsazenosti"
+              aria-label={t('property-leasing.calendar.nextMonth')}
               onClick={() => shift(1)}
               size="sm"
               theme="outlined"
@@ -94,7 +96,7 @@ export const OccupancyCalendar = ({
             </Button>
           </div>
         }
-        title="Kalendář obsazenosti jednotek"
+        title={t('property-leasing.calendar.title')}
       >
         <p className="sp-calendar-muted">
           Každý den odkazuje na zdrojový nájem nebo jednotku. Den konce pobytu je volný; koncepty a zrušené rezervace

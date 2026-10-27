@@ -1,6 +1,8 @@
 // Forms of the assets page. Each renders a <form id> whose submit button sits in the SidePanel footer and hands a
 // typed command to `onSubmit`; the page runs it through the governed apply-command Action. Owned by ops-assets.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Option as EffectOption, Schema } from 'effect';
+import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
@@ -12,7 +14,9 @@ import type {
   DepreciationPlan,
   DepreciationType,
   DisposalKind,
+  PermitState,
   ServiceKind,
+  ServiceResult,
 } from '../../../../../shared/domain/assets.ts';
 import {
   acquisitionMethods,
@@ -22,8 +26,11 @@ import {
   indicativeSchedule,
   isActiveAsset,
   manualEventKinds,
+  PermitStateSchema,
   serviceKinds,
+  ServiceResultSchema,
 } from '../../../../../shared/domain/assets.ts';
+import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import { money, parseCzk, todayIsoDate } from './assets-model.ts';
 import {
@@ -48,10 +55,20 @@ export interface FormProps {
 
 const useK = () => {
   const { t } = useModernI18n();
-  return (key: string, options?: Record<string, unknown>) => t(`facility-operations.assets.${key}`, options);
+  return (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
 };
 
 const NONE = 'none';
+const formText = {
+  amountHelp: 'form.amountHelp',
+  date: 'fields.date',
+  documentHelp: 'form.documentHelp',
+  documentRef: 'fields.documentRef',
+  invalidAmount: 'form.invalidAmount',
+  note: 'fields.note',
+  reasonRequired: 'form.reasonRequired',
+  required: 'form.required',
+} as const;
 
 const locationOptions = (tree: PropertyTree, none: string): Option[] => [
   { label: none, value: NONE },
@@ -70,26 +87,26 @@ export const AssetCardForm = ({
 }: FormProps & { readonly asset?: Asset; readonly state: AssetsState }) => {
   const k = useK();
   const tree = usePropertyTree();
-  const [kind, setKind] = useState<AssetKind>(asset?.kind ?? 'equipment');
-  const [inventoryNumber, setInventoryNumber] = useState(asset?.inventoryNumber ?? '');
-  const [name, setName] = useState(asset?.name ?? '');
-  const [category, setCategory] = useState(asset?.category ?? '');
-  const [location, setLocation] = useState(
+  const [kind, setKind] = useState<AssetKind>(() => asset?.kind ?? 'equipment');
+  const [inventoryNumber, setInventoryNumber] = useState(() => asset?.inventoryNumber ?? '');
+  const [name, setName] = useState(() => asset?.name ?? '');
+  const [category, setCategory] = useState(() => asset?.category ?? '');
+  const [location, setLocation] = useState(() =>
     asset?.location === undefined ? NONE : `${asset.location.kind}:${asset.location.id}`,
   );
-  const [responsible, setResponsible] = useState(asset?.responsible ?? '');
-  const [serialNumber, setSerialNumber] = useState(asset?.serialNumber ?? '');
-  const [accountingProduct, setAccountingProduct] = useState(asset?.accountingProduct ?? '');
-  const [note, setNote] = useState(asset?.note ?? '');
+  const [responsible, setResponsible] = useState(() => asset?.responsible ?? '');
+  const [serialNumber, setSerialNumber] = useState(() => asset?.serialNumber ?? '');
+  const [accountingProduct, setAccountingProduct] = useState(() => asset?.accountingProduct ?? '');
+  const [note, setNote] = useState(() => asset?.note ?? '');
   const [acquisitionDate, setAcquisitionDate] = useState('');
   const [acquisitionMethod, setAcquisitionMethod] = useState<AcquisitionMethod>('purchase');
   const [acquisitionValue, setAcquisitionValue] = useState('');
   const [placedInServiceDate, setPlacedInServiceDate] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
 
   const submit = () => {
     if (inventoryNumber.trim() === '' || name.trim() === '' || category.trim() === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     if (
@@ -101,7 +118,7 @@ export const AssetCardForm = ({
     }
     const value = parseCzk(acquisitionValue);
     if (value === null) {
-      setError(k('form.invalidAmount'));
+      setError(k(formText.invalidAmount));
       return;
     }
     setError(undefined);
@@ -115,8 +132,8 @@ export const AssetCardForm = ({
       ...optional('serialNumber', serialNumber),
       ...optional('accountingProduct', accountingProduct),
       ...optional('note', note),
-      ...(picked === undefined ? {} : { location: picked }),
-      ...(propertyId === undefined ? {} : { propertyId }),
+      ...optionalField('location', picked),
+      ...optionalField('propertyId', propertyId),
     };
     if (asset === undefined) {
       onSubmit({
@@ -126,7 +143,7 @@ export const AssetCardForm = ({
         inventoryNumber: inventoryNumber.trim(),
         ...optional('acquisitionDate', acquisitionDate),
         ...optional('placedInServiceDate', placedInServiceDate),
-        ...(value === undefined ? {} : { acquisitionValueMinor: value }),
+        ...optionalField('acquisitionValueMinor', value),
       });
     } else {
       onSubmit({ _tag: 'AssetUpdate', assetId: asset.id, ...card });
@@ -204,7 +221,7 @@ export const AssetCardForm = ({
           </FormGrid>
           <FormGrid>
             <TextField
-              helpText={k('form.amountHelp')}
+              helpText={k(formText.amountHelp)}
               id="asset-acquisition-value"
               inputMode="decimal"
               label={k('fields.acquisitionValue')}
@@ -228,7 +245,7 @@ export const AssetCardForm = ({
         onChange={setAccountingProduct}
         value={accountingProduct}
       />
-      <AreaField id="asset-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="asset-note" label={k(formText.note)} onChange={setNote} value={note} />
     </PanelForm>
   );
 };
@@ -238,18 +255,18 @@ export const AssetCardForm = ({
 export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [value, setValue] = useState('');
-  const [date, setDate] = useState(todayIsoDate());
+  const [date, setDate] = useState(todayIsoDate);
   const [reason, setReason] = useState('');
   const [documentRef, setDocumentRef] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     const parsed = parseCzk(value);
     if (parsed === undefined || parsed === null) {
-      setError(k('form.invalidAmount'));
+      setError(k(formText.invalidAmount));
       return;
     }
     if (reason.trim() === '' || date === '') {
-      setError(k('form.reasonRequired'));
+      setError(k(formText.reasonRequired));
       return;
     }
     setError(undefined);
@@ -270,7 +287,7 @@ export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { reado
       <ErrorLine message={error} />
       <FormGrid>
         <TextField
-          helpText={k('form.amountHelp')}
+          helpText={k(formText.amountHelp)}
           id="value-new"
           inputMode="decimal"
           label={k('fields.newValue')}
@@ -289,9 +306,9 @@ export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { reado
         value={reason}
       />
       <TextField
-        helpText={k('form.documentHelp')}
+        helpText={k(formText.documentHelp)}
         id="value-document"
-        label={k('fields.documentRef')}
+        label={k(formText.documentRef)}
         onChange={setDocumentRef}
         value={documentRef}
       />
@@ -304,13 +321,13 @@ export const ValueChangeForm = ({ asset, formId, onSubmit }: FormProps & { reado
 export const EventForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [kind, setKind] = useState<(typeof manualEventKinds)[number]>('construction');
-  const [date, setDate] = useState(todayIsoDate());
+  const [date, setDate] = useState(todayIsoDate);
   const [note, setNote] = useState('');
   const [documentRef, setDocumentRef] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     if (note.trim() === '' || date === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     setError(undefined);
@@ -334,13 +351,13 @@ export const EventForm = ({ asset, formId, onSubmit }: FormProps & { readonly as
           options={manualEventKinds.map((entry) => ({ label: k(`event.${entry}`), value: entry }))}
           value={kind}
         />
-        <TextField id="event-date" label={k('fields.date')} onChange={setDate} required type="date" value={date} />
+        <TextField id="event-date" label={k(formText.date)} onChange={setDate} required type="date" value={date} />
       </FormGrid>
       <AreaField id="event-note" label={k('fields.description')} onChange={setNote} required value={note} />
       <TextField
-        helpText={k('form.documentHelp')}
+        helpText={k(formText.documentHelp)}
         id="event-document"
-        label={k('fields.documentRef')}
+        label={k(formText.documentRef)}
         onChange={setDocumentRef}
         value={documentRef}
       />
@@ -353,19 +370,19 @@ export const EventForm = ({ asset, formId, onSubmit }: FormProps & { readonly as
 export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
   const k = useK();
   const [kind, setKind] = useState<DisposalKind>('retirement');
-  const [date, setDate] = useState(todayIsoDate());
+  const [date, setDate] = useState(todayIsoDate);
   const [reason, setReason] = useState('');
   const [proceeds, setProceeds] = useState('');
   const [documentRef, setDocumentRef] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     const parsed = parseCzk(proceeds);
     if (parsed === null) {
-      setError(k('form.invalidAmount'));
+      setError(k(formText.invalidAmount));
       return;
     }
     if (reason.trim() === '' || date === '') {
-      setError(k('form.reasonRequired'));
+      setError(k(formText.reasonRequired));
       return;
     }
     setError(undefined);
@@ -376,7 +393,7 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
       kind,
       reason: reason.trim(),
       ...optional('documentRef', documentRef),
-      ...(parsed === undefined || kind !== 'sale' ? {} : { proceedsMinor: parsed }),
+      ...optionalField('proceedsMinor', kind === 'sale' ? parsed : undefined),
     });
   };
   return (
@@ -391,12 +408,12 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
           options={disposalKinds.map((entry) => ({ label: k(`disposal.${entry}`), value: entry }))}
           value={kind}
         />
-        <TextField id="dispose-date" label={k('fields.date')} onChange={setDate} required type="date" value={date} />
+        <TextField id="dispose-date" label={k(formText.date)} onChange={setDate} required type="date" value={date} />
       </FormGrid>
       <AreaField id="dispose-reason" label={k('fields.reason')} onChange={setReason} required value={reason} />
       {kind === 'sale' && (
         <TextField
-          helpText={k('form.amountHelp')}
+          helpText={k(formText.amountHelp)}
           id="dispose-proceeds"
           inputMode="decimal"
           label={k('fields.proceeds')}
@@ -405,9 +422,9 @@ export const DisposeForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
         />
       )}
       <TextField
-        helpText={k('form.documentHelp')}
+        helpText={k(formText.documentHelp)}
         id="dispose-document"
-        label={k('fields.documentRef')}
+        label={k(formText.documentRef)}
         onChange={setDocumentRef}
         value={documentRef}
       />
@@ -421,18 +438,18 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
   const k = useK();
   const [kind, setKind] = useState<ServiceKind>('revision');
   const [title, setTitle] = useState('');
-  const [performedOn, setPerformedOn] = useState(todayIsoDate());
+  const [performedOn, setPerformedOn] = useState(todayIsoDate);
   const [nextDueOn, setNextDueOn] = useState('');
   const [supplier, setSupplier] = useState('');
-  const [responsible, setResponsible] = useState(asset.responsible ?? '');
-  const [result, setResult] = useState('ok');
-  const [permitState, setPermitState] = useState('requested');
+  const [responsible, setResponsible] = useState(() => asset.responsible ?? '');
+  const [result, setResult] = useState<ServiceResult>('ok');
+  const [permitState, setPermitState] = useState<PermitState>('requested');
   const [documentRef, setDocumentRef] = useState('');
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     if (title.trim() === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     if (kind !== 'permit' && performedOn === '' && nextDueOn === '') {
@@ -451,22 +468,8 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
       ...optional('responsible', responsible),
       ...optional('documentRef', documentRef),
       ...optional('note', note),
-      ...(kind === 'permit'
-        ? {
-            permitState:
-              permitState === 'granted'
-                ? 'granted'
-                : permitState === 'in_progress'
-                  ? 'in_progress'
-                  : permitState === 'rejected'
-                    ? 'rejected'
-                    : permitState === 'expired'
-                      ? 'expired'
-                      : 'requested',
-          }
-        : performedOn === ''
-          ? {}
-          : { result: result === 'defects' ? 'defects' : result === 'failed' ? 'failed' : 'ok' }),
+      ...optionalField('permitState', kind === 'permit' ? permitState : undefined),
+      ...optionalField('result', kind !== 'permit' && performedOn !== '' ? result : undefined),
     });
   };
   return (
@@ -484,7 +487,14 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
           <SelectField
             label={k('fields.permitState')}
             name="permitState"
-            onChange={setPermitState}
+            onChange={(value) =>
+              setPermitState(
+                EffectOption.getOrElse(
+                  Schema.decodeUnknownOption(PermitStateSchema)(value),
+                  (): PermitState => 'requested',
+                ),
+              )
+            }
             options={['requested', 'in_progress', 'granted', 'rejected', 'expired'].map((entry) => ({
               label: k(`permit.${entry}`),
               value: entry,
@@ -495,7 +505,14 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
           <SelectField
             label={k('fields.result')}
             name="result"
-            onChange={setResult}
+            onChange={(value) =>
+              setResult(
+                EffectOption.getOrElse(
+                  Schema.decodeUnknownOption(ServiceResultSchema)(value),
+                  (): ServiceResult => 'ok',
+                ),
+              )
+            }
             options={['ok', 'defects', 'failed'].map((entry) => ({ label: k(`result.${entry}`), value: entry }))}
             value={result}
           />
@@ -536,13 +553,13 @@ export const ServiceForm = ({ asset, formId, onSubmit }: FormProps & { readonly 
         />
       </FormGrid>
       <TextField
-        helpText={k('form.documentHelp')}
+        helpText={k(formText.documentHelp)}
         id="service-document"
-        label={k('fields.documentRef')}
+        label={k(formText.documentRef)}
         onChange={setDocumentRef}
         value={documentRef}
       />
-      <AreaField id="service-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="service-note" label={k(formText.note)} onChange={setNote} value={note} />
     </PanelForm>
   );
 };
@@ -561,14 +578,16 @@ export const PlanForm = ({
   const [templateId, setTemplateId] = useState(NONE);
   const [method, setMethod] = useState('Rovnoměrný');
   const [years, setYears] = useState('');
-  const [interval, setPlanInterval] = useState<DepreciationInterval>('yearly');
+  const [planInterval, setPlanInterval] = useState<DepreciationInterval>('yearly');
   const [taxGroup, setTaxGroup] = useState('');
-  const [base, setBase] = useState(
+  const [base, setBase] = useState(() =>
     asset.acquisitionValueMinor === undefined ? '' : String(asset.acquisitionValueMinor / 100),
   );
-  const [startDate, setStartDate] = useState(asset.placedInServiceDate ?? asset.acquisitionDate ?? todayIsoDate());
+  const [startDate, setStartDate] = useState(
+    () => asset.placedInServiceDate ?? asset.acquisitionDate ?? todayIsoDate(),
+  );
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const applyTemplate = (id: string) => {
     setTemplateId(id);
     const template = templates.find((entry) => entry.id === id);
@@ -593,7 +612,7 @@ export const PlanForm = ({
       return;
     }
     if (method.trim() === '' || startDate === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     setError(undefined);
@@ -601,14 +620,14 @@ export const PlanForm = ({
       _tag: 'AssetDepreciationPlanCreate',
       assetId: asset.id,
       baseMinor: parsedBase,
-      interval,
+      interval: planInterval,
       method: method.trim(),
       startDate,
       type,
       years: parsedYears,
       ...optional('taxGroup', type === 'tax' ? taxGroup : ''),
       ...optional('note', note),
-      ...(templateId === NONE ? {} : { templateId }),
+      ...optionalField('templateId', templateId === NONE ? undefined : templateId),
     });
   };
   return (
@@ -650,7 +669,7 @@ export const PlanForm = ({
       </FormGrid>
       <FormGrid>
         <TextField
-          helpText={k('form.amountHelp')}
+          helpText={k(formText.amountHelp)}
           id="plan-base"
           inputMode="decimal"
           label={k('fields.base')}
@@ -685,10 +704,10 @@ export const PlanForm = ({
             { label: k('interval.yearly'), value: 'yearly' },
             { label: k('interval.monthly'), value: 'monthly' },
           ]}
-          value={interval}
+          value={planInterval}
         />
       </FormGrid>
-      <AreaField id="plan-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="plan-note" label={k(formText.note)} onChange={setNote} value={note} />
     </PanelForm>
   );
 };
@@ -706,22 +725,22 @@ export const EntryForm = ({
   plan,
 }: FormProps & { readonly asset: Asset; readonly plan: DepreciationPlan }) => {
   const k = useK();
-  const [period, setPeriod] = useState(nextOpenPeriod(plan));
+  const [period, setPeriod] = useState(() => nextOpenPeriod(plan));
   const [amount, setAmount] = useState('');
   const [documentRef, setDocumentRef] = useState('');
   const [partial, setPartial] = useState(false);
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const remaining = plan.baseMinor - approvedTotal(plan);
   const submit = () => {
     const parsed = parseCzk(amount);
-    const periodPattern = plan.interval === 'monthly' ? /^\d{4}-(0[1-9]|1[0-2])$/ : /^\d{4}$/;
+    const periodPattern = plan.interval === 'monthly' ? /^\d{4}-(?:0[1-9]|1[0-2])$/u : /^\d{4}$/u;
     if (!periodPattern.test(period.trim())) {
       setError(k(plan.interval === 'monthly' ? 'form.periodMonthly' : 'form.periodYearly'));
       return;
     }
     if (parsed === undefined || parsed === null) {
-      setError(k('form.invalidAmount'));
+      setError(k(formText.invalidAmount));
       return;
     }
     if (parsed > remaining) {
@@ -741,13 +760,13 @@ export const EntryForm = ({
       planId: plan.id,
       ...optional('documentRef', documentRef),
       ...optional('note', note),
-      ...(partial ? { partial: true } : {}),
+      ...optionalField('partial', partial ? true : undefined),
     });
   };
   return (
     <PanelForm id={formId} onSubmit={submit}>
       <p className="text-fg-secondary text-sm">
-        {k('form.entryIntro', { type: k(`depreciation.${plan.type}`), remaining: money(remaining, '—') })}
+        {k('form.entryIntro', { remaining: money(remaining, '—'), type: k(`depreciation.${plan.type}`) })}
       </p>
       <ErrorLine message={error} />
       <FormGrid>
@@ -761,7 +780,7 @@ export const EntryForm = ({
           value={period}
         />
         <TextField
-          helpText={k('form.amountHelp')}
+          helpText={k(formText.amountHelp)}
           id="entry-amount"
           inputMode="decimal"
           label={k('fields.approvedAmount')}
@@ -771,14 +790,14 @@ export const EntryForm = ({
         />
       </FormGrid>
       <TextField
-        helpText={k('form.documentHelp')}
+        helpText={k(formText.documentHelp)}
         id="entry-document"
-        label={k('fields.documentRef')}
+        label={k(formText.documentRef)}
         onChange={setDocumentRef}
         value={documentRef}
       />
       <CheckField checked={partial} id="entry-partial" label={k('fields.partial')} onChange={setPartial} />
-      <AreaField id="entry-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="entry-note" label={k(formText.note)} onChange={setNote} value={note} />
     </PanelForm>
   );
 };
@@ -789,10 +808,10 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
   const [type, setType] = useState<DepreciationType>('accounting');
   const [method, setMethod] = useState('Rovnoměrný');
   const [years, setYears] = useState('');
-  const [interval, setPlanInterval] = useState<DepreciationInterval>('yearly');
+  const [planInterval, setPlanInterval] = useState<DepreciationInterval>('yearly');
   const [taxGroup, setTaxGroup] = useState('');
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     const parsedYears = Number(years);
     if (
@@ -808,7 +827,7 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
     setError(undefined);
     onSubmit({
       _tag: 'AssetDepreciationTemplateCreate',
-      interval,
+      interval: planInterval,
       method: method.trim(),
       name: name.trim(),
       type,
@@ -853,13 +872,13 @@ export const TemplateForm = ({ formId, onSubmit }: FormProps) => {
             { label: k('interval.yearly'), value: 'yearly' },
             { label: k('interval.monthly'), value: 'monthly' },
           ]}
-          value={interval}
+          value={planInterval}
         />
       </FormGrid>
       {type === 'tax' && (
         <TextField id="template-tax-group" label={k('fields.taxGroup')} onChange={setTaxGroup} value={taxGroup} />
       )}
-      <AreaField id="template-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="template-note" label={k(formText.note)} onChange={setNote} value={note} />
     </PanelForm>
   );
 };
@@ -871,9 +890,9 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
   const tree = usePropertyTree();
   const [scope, setScope] = useState('');
   const [title, setTitle] = useState('');
-  const [date, setDate] = useState(todayIsoDate());
+  const [date, setDate] = useState(todayIsoDate);
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const properties = tree.status === 'ready' ? tree.nodes : [];
   const picked = properties.find((node) => node.ref.id === scope);
   const candidates = state.assets.filter(
@@ -881,7 +900,7 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
   );
   const submit = () => {
     if (title.trim() === '' || date === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     if (candidates.length === 0) {
@@ -895,7 +914,7 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
       date,
       title: title.trim(),
       ...optional('note', note),
-      ...(picked === undefined ? {} : { scope: picked.ref }),
+      ...optionalField('scope', picked?.ref),
     });
   };
   return (
@@ -910,7 +929,7 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
           const node = properties.find((entry) => entry.ref.id === value);
           if (title.trim() === '' || title.startsWith(k('inventory.defaultTitlePrefix'))) {
             setTitle(
-              `${k('inventory.defaultTitlePrefix')} ${date.slice(0, 4)} – ${node?.ref.label.replace(/ \([^)]*\)$/, '') ?? k('inventory.wholeCompany')}`,
+              `${k('inventory.defaultTitlePrefix')} ${date.slice(0, 4)} – ${node?.ref.label.replace(/ \([^)]*\)$/u, '') ?? k('inventory.wholeCompany')}`,
             );
           }
         }}
@@ -922,9 +941,9 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
       />
       <FormGrid>
         <TextField id="inventory-title" label={k('fields.inventoryTitle')} onChange={setTitle} required value={title} />
-        <TextField id="inventory-date" label={k('fields.date')} onChange={setDate} required type="date" value={date} />
+        <TextField id="inventory-date" label={k(formText.date)} onChange={setDate} required type="date" value={date} />
       </FormGrid>
-      <AreaField id="inventory-note" label={k('fields.note')} onChange={setNote} value={note} />
+      <AreaField id="inventory-note" label={k(formText.note)} onChange={setNote} value={note} />
       <div className={`${surfaceTileClassName} p-150 text-sm`}>
         <p className="font-medium">{k('inventory.candidates', { count: candidates.length })}</p>
         <ul className="mt-100 flex max-h-[14rem] flex-col gap-50 overflow-auto text-fg-secondary">
@@ -940,20 +959,20 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
 };
 
 export const FollowUpForm = ({
+  assetId,
   assetName,
   formId,
-  onSubmit,
-  assetId,
   inventoryId,
+  onSubmit,
 }: FormProps & { readonly assetId: Asset['id']; readonly assetName: string; readonly inventoryId: string }) => {
   const k = useK();
-  const [title, setTitle] = useState(k('inventory.followUpDefault', { name: assetName }));
-  const [dueDate, setDueDate] = useState(todayIsoDate());
+  const [title, setTitle] = useState(() => k('inventory.followUpDefault', { name: assetName }));
+  const [dueDate, setDueDate] = useState(todayIsoDate);
   const [assignee, setAssignee] = useState('');
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const submit = () => {
     if (title.trim() === '' || dueDate === '') {
-      setError(k('form.required'));
+      setError(k(formText.required));
       return;
     }
     setError(undefined);
@@ -981,6 +1000,28 @@ export const FollowUpForm = ({
         />
         <TextField id="followup-assignee" label={k('fields.assignee')} onChange={setAssignee} value={assignee} />
       </FormGrid>
+    </PanelForm>
+  );
+};
+
+export const ArchiveForm = ({ asset, formId, onSubmit }: FormProps & { readonly asset: Asset }) => {
+  const k = useK();
+  const [reason, setReason] = useState(() => k('archive.defaultReason'));
+  const [error, setError] = useState<string | undefined>();
+  return (
+    <PanelForm
+      id={formId}
+      onSubmit={() => {
+        const trimmed = reason.trim();
+        if (trimmed === '') {
+          setError(k(formText.reasonRequired));
+          return;
+        }
+        onSubmit({ _tag: 'AssetArchive', assetId: asset.id, reason: trimmed });
+      }}
+    >
+      <ErrorLine message={error} />
+      <TextField id="asset-archive-reason" label={k('archive.prompt')} onChange={setReason} required value={reason} />
     </PanelForm>
   );
 };

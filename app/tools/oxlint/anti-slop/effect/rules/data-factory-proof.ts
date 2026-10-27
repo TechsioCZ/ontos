@@ -118,6 +118,64 @@ const record = (
 });
 const schema = (payload: Value): Value => ({ kind: 'schema', payload });
 const native = (name: string): Value => ({ kind: 'native', native: name });
+// A named submodule import carries the same SDK provenance as its root namespace.
+// Operations still pass the existing per-operation interpreter; this is not a factory-name grant.
+const EFFECT_DATA_NAMESPACES = new Set(['Schema', 'SchemaGetter', 'DateTime', 'Predicate', 'Result', 'Option', 'Order']);
+const effectDataImport = (source: string, imported: string): string | null => {
+  if (source === 'effect') return EFFECT_DATA_NAMESPACES.has(imported) ? `effect:${imported}` : null;
+  const namespace = /^effect\/(Schema|SchemaGetter|DateTime|Predicate|Result|Option|Order)$/u.exec(source)?.[1];
+  return namespace === undefined ? null : `effect:${namespace}.${imported}`;
+};
+const DEFERRED_SCHEMA_OPERATIONS = new Set([
+  'instanceOf',
+  'is',
+  'Defect',
+  'toEquivalence',
+  'Struct',
+  'TaggedStruct',
+  'Record',
+  'Array',
+  'Union',
+  'Literal',
+  'Literals',
+  'fromJsonString',
+  'decodeUnknownSync',
+  'decodeUnknownResult',
+  'encodeSync',
+  'String',
+  'Trim',
+  'NonEmptyString',
+  'Number',
+  'Boolean',
+  'BigInt',
+  'Finite',
+  'Undefined',
+  'Null',
+  'Never',
+  'Unknown',
+  'tag',
+  'optionalKey',
+  'NullOr',
+  'OptionFromNullOr',
+  'UndefinedOr',
+  'makeFilter',
+  'brand',
+  'isPattern',
+  'isMinLength',
+  'isMaxLength',
+  'isInt',
+  'isGreaterThan',
+  'isGreaterThanOrEqualTo',
+  'isLessThanOrEqualTo',
+  'isBetween',
+  'isFinite',
+  'isTrimmed',
+  'isUUID',
+  'encodeResult',
+  'decodeTo',
+  'check',
+]);
+
 /** Pure byte functions: one data argument in, bytes out. */
 const NOBLE_DATA_FUNCTIONS = new Set(['@noble/hashes/sha2.js:sha256', '@noble/hashes/utils.js:utf8ToBytes']);
 /** Pure `effect/encoding` functions: one data argument in, a string out. */
@@ -460,6 +518,11 @@ class DataFactoryProof {
       const current = unwrap(node);
       if (current.type === 'CallExpression') return deferredOrigin(current.callee);
       if (current.type === 'Identifier') {
+        const imported = model.imports.get(current.name);
+        if (imported?.typeOnly !== true && imported?.source === 'effect/Schema') {
+          if (['TaggedError', 'TaggedClass'].includes(imported.imported)) return 'schema-class';
+          if (DEFERRED_SCHEMA_OPERATIONS.has(imported.imported)) return 'deferred-schema';
+        }
         const local = model.values.get(current.name);
         if (local === undefined || originVisiting.has(current.name)) return null;
         originVisiting.add(current.name);
@@ -485,55 +548,7 @@ class DataFactoryProof {
         if (imported.imported === 'Schema' && ['TaggedError', 'TaggedClass'].includes(property)) return 'schema-class';
         if (
           imported.imported === 'Schema' &&
-          [
-            'instanceOf',
-            'is',
-            'Defect',
-            'toEquivalence',
-            'Struct',
-            'TaggedStruct',
-            'Record',
-            'Array',
-            'Union',
-            'Literal',
-            'Literals',
-            'fromJsonString',
-            'decodeUnknownSync',
-            'decodeUnknownResult',
-            'encodeSync',
-            'String',
-            'Trim',
-            'NonEmptyString',
-            'Number',
-            'Boolean',
-            'BigInt',
-            'Finite',
-            'Undefined',
-            'Null',
-            'Never',
-            'Unknown',
-            'tag',
-            'optionalKey',
-            'NullOr',
-            'OptionFromNullOr',
-            'UndefinedOr',
-            'makeFilter',
-            'brand',
-            'isPattern',
-            'isMinLength',
-            'isMaxLength',
-            'isInt',
-            'isGreaterThan',
-            'isGreaterThanOrEqualTo',
-            'isLessThanOrEqualTo',
-            'isBetween',
-            'isFinite',
-            'isTrimmed',
-            'isUUID',
-            'encodeResult',
-            'decodeTo',
-            'check',
-          ].includes(property)
+          DEFERRED_SCHEMA_OPERATIONS.has(property)
         )
           return 'deferred-schema';
       }
@@ -618,6 +633,7 @@ class DataFactoryProof {
     this.resolving.add(id);
     let result = BAD;
     const imported = model.imports.get(name);
+    const effectImport = imported === undefined ? null : effectDataImport(imported.source, imported.imported);
     if (imported !== undefined && imported.typeOnly !== true) {
       if (imported.source === 'drizzle-orm' && ['sql', 'defineRelations'].includes(imported.imported))
         result = native(`drizzle:${imported.imported}`);
@@ -625,8 +641,8 @@ class DataFactoryProof {
         ['pgPolicy', 'pgTable', 'pgSchema', 'pgSequence', 'check', 'foreignKey', 'primaryKey', 'index', 'uniqueIndex',
           'text', 'uuid', 'integer', 'boolean', 'bigint', 'timestamp', 'jsonb'].includes(imported.imported))
         result = native(`drizzle:${imported.imported}`);
-      else if (imported.source === 'effect' && ['Schema', 'SchemaGetter', 'DateTime', 'Predicate', 'Result', 'Option', 'Order'].includes(imported.imported)) {
-        result = native(`effect:${imported.imported}`);
+      else if (effectImport !== null) {
+        result = this.normalizeNative(native(effectImport));
       } else if (imported.source === 'effect/encoding' && ['Hex', 'Base64Url'].includes(imported.imported))
         result = native(`effect/encoding:${imported.imported}`);
       else if (imported.source === 'node:crypto' && imported.imported === 'createHash')
@@ -701,7 +717,8 @@ class DataFactoryProof {
     );
     if (names.length > 1) {
       const root = model.imports.get(names[0]);
-      if (root?.source === 'effect' && root.imported === 'Schema' && names.at(-1) === 'Type') {
+      if (((root?.source === 'effect' && root.imported === 'Schema') ||
+        (root?.source === 'effect/Schema' && root.imported === 'Schema')) && names.at(-1) === 'Type') {
         const argumentNode = node.typeArguments?.params?.[0] ?? node.typeParameters?.params?.[0];
         const input = this.type(argumentNode, model, generics);
         return input.kind === 'schema' ? (input.payload ?? BAD) : BAD;
@@ -1431,6 +1448,15 @@ class DataFactoryProof {
           return DATA;
         },
       };
+    }
+    if (name === 'schema:make') {
+      const owner = callee.payload;
+      // The installed native maker validates the decoded type side. This lane
+      // proves only the checked string/brand constructor, without MakeOptions,
+      // arbitrary declarations, executable inputs or a name-based `.make` grant.
+      return owner?.kind === 'schema' && owner.payload?.kind === 'data' &&
+        owner.payload.native === 'string' && args.length === 1 && args[0].kind === 'data'
+        ? owner.payload : BAD;
     }
     if (name === 'schema:pipe' || name === 'schema:check') {
       let result = callee.payload ?? BAD;

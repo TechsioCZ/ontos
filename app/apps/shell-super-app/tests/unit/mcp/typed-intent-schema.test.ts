@@ -1,5 +1,6 @@
 // @rstest-environment node
-import { Crypto, Effect } from 'effect';
+import { AgentProposalSubmitResponseSchema } from '@app/shared-contracts/agent-proposals';
+import { Crypto, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
@@ -142,12 +143,12 @@ describe('mutation schemas keep caller intent separate from Action-owned fields'
           submitProposals: (request, intent) =>
             Effect.sync(() => {
               proposals.push([request, intent]);
-              return {
+              return Schema.decodeUnknownSync(AgentProposalSubmitResponseSchema)({
                 batchId: 'batch',
                 proposalIds: ['proposal'],
                 replayed: false,
                 reviewPath: '/cs/sprava/ke-schvaleni',
-              };
+              });
             }),
         },
         collidingCatalog(),

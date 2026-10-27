@@ -1,5 +1,10 @@
-import { ReadHandlerNotFound, ReadHandlerUnavailable, ScopedRoutineInvocationError } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import {
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ScopedRoutineInvocationError,
+  scopedRoutineInvokerFromTransaction,
+} from '@app/core-runtime';
+import { Effect, Option, Record, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -17,12 +22,17 @@ import {
   updateSavedAddress,
 } from '../../src/persistence/address-persistence.ts';
 import type { CustomerContextAddressRoutineInvoker } from '../../src/persistence/address-persistence.ts';
-import { ProfileReconciliationOwnerVerifiedSchema } from '../../shared/actions/resolve-profile-reconciliation.ts';
+import {
+  ProfileReconciliationOwnerConflictSchema,
+  ProfileReconciliationOwnerVerificationRequestSchema,
+  ProfileReconciliationOwnerVerifiedSchema,
+} from '../../shared/actions/resolve-profile-reconciliation.ts';
 import {
   AddressBookDomainErrorSchema,
   AddressBookUnavailable,
   SavedAddressConflictSchema,
 } from '../../shared/domain/address-errors.ts';
+import type { PostalAddress, SavedAddress, SavedAddressDefaults } from '../../shared/domain/address-book.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -702,5 +712,500 @@ it.effect('derives ADDRESS_BOOK reconciliation evidence without accepting caller
       actionInvocationId,
       'address-book-reconciliation.v2',
     ]);
+  }),
+);
+
+// Decode the request through the current contract so native brands, instants, and event versions remain authoritative.
+const nativeReconciliationRequest = Schema.decodeUnknownSync(ProfileReconciliationOwnerVerificationRequestSchema)({
+  caseRef: {
+    moduleId: 'commerce.customer-context',
+    resourceId: '90000000-0000-4000-8000-000000000001',
+    resourceType: 'commerce.customer-context.profile-reconciliation-case',
+    tenantId,
+  },
+  desiredOutcome: { owner: 'ADDRESS_BOOK', status: 'RESOLVED' },
+  effectiveAt: '2026-09-09T12:00:00.000Z',
+  expectedCaseRevision: 2,
+  expectedEventVersion: '3',
+  reason: 'Complete the profile reconciliation',
+  resultingState: 'ACTIVE',
+  survivorProfileRef: { ...profile.profileRef, kind: 'RETAIL' },
+});
+const nativeReconciliationContext = {
+  actionInvocationId,
+  actorPrincipalId: principalId,
+  legalEntityId,
+  tenantId,
+};
+const verifiedReconciliationRow = {
+  correlation_ref: 'address-book-owner:case:2:fingerprint',
+  evidence_ref: 'address-book-reconciliation:case:fingerprint',
+  outcome: 'VERIFIED',
+  status: 'RESOLVED',
+};
+
+// Raw SQL fixtures allow incomplete rows so the native result decoder, not a cast, rejects them.
+interface ReconciliationWireRow {
+  readonly after_facts_sha256?: string | null | undefined;
+  readonly before_facts_sha256?: string | null | undefined;
+  readonly correlation_ref?: string | null | undefined;
+  readonly evidence_ref?: string | null | undefined;
+  readonly outcome?: string;
+  readonly postcondition_sha256?: string | null | undefined;
+  readonly receipt_id?: string | null | undefined;
+  readonly status?: string | null | undefined;
+}
+
+const verifyNativeReconciliation = (rows: readonly ReconciliationWireRow[]) =>
+  addressBookReconciliationOwnerVerifierForTransaction(
+    scopedRoutineInvokerFromTransaction(() => Effect.succeed(rows), scope),
+    scope,
+  ).verify(nativeReconciliationRequest, nativeReconciliationContext);
+
+const undefinedReceiptValue = Option.getOrUndefined(Option.none<string>());
+const reconciliationCodecCases = [
+  { name: 'omitted receipt fields', wire: verifiedReconciliationRow },
+  {
+    name: 'null receipt fields',
+    wire: {
+      ...verifiedReconciliationRow,
+      after_facts_sha256: null,
+      before_facts_sha256: null,
+      postcondition_sha256: null,
+      receipt_id: null,
+    },
+  },
+  {
+    name: 'undefined receipt fields',
+    wire: {
+      ...verifiedReconciliationRow,
+      after_facts_sha256: undefinedReceiptValue,
+      before_facts_sha256: undefinedReceiptValue,
+      postcondition_sha256: undefinedReceiptValue,
+      receipt_id: undefinedReceiptValue,
+    },
+  },
+  {
+    name: 'populated receipt fields',
+    wire: {
+      ...verifiedReconciliationRow,
+      after_facts_sha256: 'a'.repeat(64),
+      before_facts_sha256: 'b'.repeat(64),
+      postcondition_sha256: 'c'.repeat(64),
+      receipt_id: 'receipt-one',
+    },
+  },
+  {
+    name: 'null reconciliation evidence',
+    wire: {
+      correlation_ref: null,
+      evidence_ref: null,
+      outcome: 'CONFLICT',
+      status: null,
+    },
+  },
+];
+
+for (const routine of addressRoutineAllowlist.filter(({ routineKey }) =>
+  routineKey.startsWith('address-book.reconciliation.'),
+)) {
+  for (const { name, wire } of reconciliationCodecCases) {
+    it.effect(`${routine.routineKey} preserves ${name} through its native codec`, () =>
+      Effect.gen(function* preserveReconciliationWire() {
+        const decoded = yield* Schema.decodeUnknownEffect(routine.resultSchema)(wire);
+        const encoded = yield* Schema.encodeUnknownEffect(routine.resultSchema)(decoded);
+        expect(encoded).toStrictEqual(wire);
+      }),
+    );
+  }
+}
+
+for (const status of ['RESOLVED', 'NOT_APPLICABLE'] as const) {
+  it.effect(`maps native ${status} reconciliation evidence without changing the public result`, () =>
+    Effect.gen(function* mapNativeVerifiedReconciliation() {
+      const result = yield* verifyNativeReconciliation([{ ...verifiedReconciliationRow, status }]);
+      expect(Schema.is(ProfileReconciliationOwnerVerifiedSchema)(result)).toBe(true);
+      if (Schema.is(ProfileReconciliationOwnerVerifiedSchema)(result)) {
+        expect(Object.keys(result)).toStrictEqual(['_tag', 'correlationRef', 'durableOutcome']);
+        expect(result.correlationRef).toBe(verifiedReconciliationRow.correlation_ref);
+        expect(result.durableOutcome).toStrictEqual({
+          evidenceRef: verifiedReconciliationRow.evidence_ref,
+          owner: 'ADDRESS_BOOK',
+          status,
+        });
+      }
+    }),
+  );
+}
+
+for (const field of ['correlation_ref', 'evidence_ref', 'status'] as const) {
+  it.effect(`fails closed when native VERIFIED evidence has null ${field}`, () =>
+    Effect.gen(function* rejectIncompleteVerifiedEvidence() {
+      const failure = yield* Effect.flip(verifyNativeReconciliation([{ ...verifiedReconciliationRow, [field]: null }]));
+      expect(failure).toMatchObject({
+        code: 'OUTCOME_INDETERMINATE',
+        owner: 'ADDRESS_BOOK',
+        retryable: false,
+      });
+    }),
+  );
+
+  it.effect(`fails closed when the native routine result omits required ${field}`, () =>
+    Effect.gen(function* rejectMissingNativeEvidence() {
+      const wire = Record.remove(verifiedReconciliationRow, field);
+      const failure = yield* Effect.flip(verifyNativeReconciliation([wire]));
+      expect(failure).toMatchObject({
+        code: 'OWNER_UNAVAILABLE',
+        owner: 'ADDRESS_BOOK',
+        retryable: true,
+      });
+    }),
+  );
+
+  it.effect(`fails closed when the native routine result has undefined ${field}`, () =>
+    Effect.gen(function* rejectUndefinedNativeEvidence() {
+      const failure = yield* Effect.flip(
+        verifyNativeReconciliation([{ ...verifiedReconciliationRow, [field]: undefinedReceiptValue }]),
+      );
+      expect(failure).toMatchObject({
+        code: 'OWNER_UNAVAILABLE',
+        owner: 'ADDRESS_BOOK',
+        retryable: true,
+      });
+    }),
+  );
+}
+
+for (const outcome of ['CONFLICT', 'NOT_FOUND'] as const) {
+  it.effect(`preserves native reconciliation ${outcome} with absent evidence`, () =>
+    Effect.gen(function* preserveNativeConflict() {
+      const result = yield* verifyNativeReconciliation([
+        { correlation_ref: null, evidence_ref: null, outcome, status: null },
+      ]);
+      expect(Schema.is(ProfileReconciliationOwnerConflictSchema)(result)).toBe(true);
+      if (Schema.is(ProfileReconciliationOwnerConflictSchema)(result)) {
+        expect(result.owner).toBe('ADDRESS_BOOK');
+        expect(result.reason).toBe(
+          outcome === 'NOT_FOUND'
+            ? 'The exact reconciliation case and survivor membership were not found'
+            : 'The losing profiles still own Current address-book state',
+        );
+      }
+    }),
+  );
+}
+
+it.effect('preserves native reconciliation unavailability with absent evidence', () =>
+  Effect.gen(function* preserveNativeUnavailability() {
+    const failure = yield* Effect.flip(
+      verifyNativeReconciliation([
+        { correlation_ref: null, evidence_ref: null, outcome: 'OWNER_UNAVAILABLE', status: null },
+      ]),
+    );
+    expect(failure).toMatchObject({ code: 'OWNER_UNAVAILABLE', owner: 'ADDRESS_BOOK', retryable: true });
+  }),
+);
+
+it.effect('rejects a native routine result with an unknown reconciliation status', () =>
+  Effect.gen(function* rejectUnknownNativeStatus() {
+    const failure = yield* Effect.flip(
+      verifyNativeReconciliation([{ ...verifiedReconciliationRow, status: 'UNKNOWN' }]),
+    );
+    expect(failure).toMatchObject({ code: 'OWNER_UNAVAILABLE', owner: 'ADDRESS_BOOK', retryable: true });
+  }),
+);
+
+it.effect('fails closed when the native reconciliation routine returns no row', () =>
+  Effect.gen(function* rejectMissingNativeRow() {
+    const failure = yield* Effect.flip(verifyNativeReconciliation([]));
+    expect(failure).toMatchObject({ code: 'OUTCOME_INDETERMINATE', owner: 'ADDRESS_BOOK', retryable: false });
+  }),
+);
+
+const nullableAddressFields = [
+  'address_line_1',
+  'address_line_2',
+  'administrative_area',
+  'city',
+  'country_code',
+  'label',
+  'lifecycle',
+  'party_contact_point_resource_id',
+  'party_contact_point_revision',
+  'party_resource_id',
+  'postal_code',
+  'saved_address_id',
+  'source_kind',
+] as const;
+const nullableDefaultFields = [
+  'billing_saved_address_id',
+  'cleared_saved_address_id',
+  'delivery_saved_address_id',
+] as const;
+const defaultsWireRow = {
+  billing_saved_address_id: null,
+  cleared_saved_address_id: null,
+  delivery_saved_address_id: null,
+  outcome: 'PRESENT',
+  revision: 2,
+};
+const nativeAddressTransactionReturning = (rows: readonly object[]): CustomerContextAddressRoutineInvoker =>
+  scopedRoutineInvokerFromTransaction(() => Effect.succeed(rows), scope);
+
+for (const routine of addressRoutineAllowlist.filter(
+  ({ routineKey }) => !routineKey.startsWith('address-book.reconciliation.'),
+)) {
+  const isDefaultsRoutine = routine.routineKey.startsWith('address-book.defaults.');
+  const wire: Readonly<Record<string, unknown>> = isDefaultsRoutine ? defaultsWireRow : { ...addressRow() };
+  const nullableFields = isDefaultsRoutine ? nullableDefaultFields : nullableAddressFields;
+  const populatedWire = isDefaultsRoutine
+    ? {
+        ...defaultsWireRow,
+        billing_saved_address_id: addressId,
+        cleared_saved_address_id: addressId,
+        delivery_saved_address_id: addressId,
+      }
+    : addressRow({
+        address_line_2: '',
+        administrative_area: 'Central',
+        party_contact_point_resource_id: 'contact-point-1',
+        party_contact_point_revision: 2,
+        party_resource_id: 'party-1',
+      });
+  const nullWire = { ...wire, ...Record.fromEntries(nullableFields.map((field) => [field, null])) };
+
+  it.effect(`${routine.routineKey} preserves SQL null and populated row bytes through its native codec`, () =>
+    Effect.gen(function* preserveNativeAddressWire() {
+      for (const raw of [wire, populatedWire, nullWire]) {
+        const decoded = yield* Schema.decodeUnknownEffect(routine.resultSchema)(raw);
+        expect(yield* Schema.encodeUnknownEffect(routine.resultSchema)(decoded)).toStrictEqual(raw);
+      }
+    }),
+  );
+
+  it.effect(`${routine.routineKey} rejects omitted, undefined, and malformed nullable SQL columns`, () =>
+    Effect.gen(function* rejectInvalidAddressWire() {
+      for (const field of nullableFields) {
+        for (const raw of [
+          Record.remove(wire, field),
+          { ...wire, [field]: undefinedReceiptValue },
+          { ...wire, [field]: { invalid: true } },
+        ]) {
+          const failure = yield* Effect.flip(Schema.decodeUnknownEffect(routine.resultSchema)(raw));
+          expect(Schema.isSchemaError(failure)).toBe(true);
+        }
+      }
+    }),
+  );
+}
+
+it.effect('keeps malformed address columns in the native typed failure channel', () =>
+  Effect.gen(function* rejectMalformedNativeAddress() {
+    for (const field of nullableAddressFields) {
+      const wire = addressRow({ outcome: 'ADDED' });
+      for (const raw of [
+        Record.remove(wire, field),
+        { ...wire, [field]: undefinedReceiptValue },
+        { ...wire, [field]: { invalid: true } },
+      ]) {
+        const failure = yield* Effect.flip(
+          addSavedAddress(nativeAddressTransactionReturning([raw]), commerceOnlyAddPayload, {
+            actionInvocationId,
+            principalId,
+          }),
+        );
+        expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({
+          dependency: 'commerce.customer-context.persistence:address-book.add',
+          retryable: true,
+        });
+      }
+    }
+  }),
+);
+
+it.effect('preserves absent, empty, and populated optional postal fields and labels', () =>
+  Effect.gen(function* preserveOptionalAddressFields() {
+    for (const addressLine2 of [null, '', 'Second floor']) {
+      for (const region of [null, '', 'Central']) {
+        for (const label of [null, '', 'Office']) {
+          const result = yield* addSavedAddress(
+            nativeAddressTransactionReturning([
+              addressRow({
+                address_line_2: addressLine2,
+                administrative_area: region,
+                label,
+                outcome: 'ADDED',
+              }),
+            ]),
+            commerceOnlyAddPayload,
+            { actionInvocationId, principalId },
+          );
+          let expectedPostal: PostalAddress = { ...postal };
+          if (addressLine2 !== null) {
+            expectedPostal = { ...expectedPostal, addressLine2 };
+          }
+          if (region !== null) {
+            expectedPostal = { ...expectedPostal, region };
+          }
+          let expectedAddress: SavedAddress = {
+            lifecycle: 'ACTIVE',
+            origin: { kind: 'COMMERCE_ONLY', postalAddress: expectedPostal },
+            profile,
+            purposes: ['BILLING', 'DELIVERY'],
+            revision: 1,
+            savedAddressRef: {
+              moduleId: 'commerce.customer-context',
+              resourceId: addressId,
+              resourceType: 'commerce.customer-context.saved-address',
+              tenantId,
+            },
+          };
+          if (label !== null) {
+            expectedAddress = { ...expectedAddress, label };
+          }
+          expect(result).toStrictEqual({ address: expectedAddress, outcome: 'ADDED' });
+        }
+      }
+    }
+  }),
+);
+
+it.effect('fails closed when decoded address rows lack required Commerce-only evidence', () =>
+  Effect.gen(function* rejectNullAddressEvidence() {
+    for (const field of [
+      'address_line_1',
+      'city',
+      'country_code',
+      'lifecycle',
+      'postal_code',
+      'saved_address_id',
+      'source_kind',
+    ]) {
+      const failure = yield* Effect.flip(
+        addSavedAddress(
+          nativeAddressTransactionReturning([{ ...addressRow({ outcome: 'ADDED' }), [field]: null }]),
+          commerceOnlyAddPayload,
+          { actionInvocationId, principalId },
+        ),
+      );
+      expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+      expect(failure).toMatchObject({
+        dependency: 'commerce.customer-context.persistence:invalid-address-row',
+        retryable: true,
+      });
+    }
+  }),
+);
+
+it.effect('preserves native Party provenance and rejects incomplete Party-backed rows', () =>
+  Effect.gen(function* preserveNativePartyAddress() {
+    const row = addressRow({
+      address_line_1: null,
+      city: null,
+      country_code: null,
+      outcome: 'ADDED',
+      party_contact_point_resource_id: 'contact-point-1',
+      party_contact_point_revision: 2,
+      party_resource_id: 'party-1',
+      postal_code: null,
+      source_kind: 'PARTY_BACKED',
+    });
+    const result = yield* addSavedAddress(nativeAddressTransactionReturning([row]), commerceOnlyAddPayload, {
+      actionInvocationId,
+      principalId,
+    });
+    expect(result.address.origin).toStrictEqual({
+      contactPointRef: {
+        moduleId: 'party.registry',
+        resourceId: 'contact-point-1',
+        resourceType: 'party.registry.party-contact-point',
+        tenantId,
+      },
+      kind: 'PARTY_BACKED',
+      partyRef: {
+        moduleId: 'party.registry',
+        resourceId: 'party-1',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      sourceRevision: 2,
+    });
+    for (const field of ['party_contact_point_resource_id', 'party_contact_point_revision', 'party_resource_id']) {
+      const failure = yield* Effect.flip(
+        addSavedAddress(nativeAddressTransactionReturning([{ ...row, [field]: null }]), commerceOnlyAddPayload, {
+          actionInvocationId,
+          principalId,
+        }),
+      );
+      expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+    }
+  }),
+);
+
+it.effect('preserves the exact optional billing and delivery keys from native default rows', () =>
+  Effect.gen(function* preserveNativeDefaultKeys() {
+    for (const billingId of [null, addressId]) {
+      for (const deliveryId of [null, addressId]) {
+        const result = yield* addressReadServicesForTransaction(
+          nativeAddressTransactionReturning([
+            { ...defaultsWireRow, billing_saved_address_id: billingId, delivery_saved_address_id: deliveryId },
+          ]),
+          scope,
+        ).defaults({ profile }, tenantId);
+        const ref = {
+          moduleId: 'commerce.customer-context',
+          resourceId: addressId,
+          resourceType: 'commerce.customer-context.saved-address',
+          tenantId,
+        } as const;
+        let expectedDefaults: SavedAddressDefaults = { profile, revision: 2 };
+        if (billingId !== null) {
+          expectedDefaults = { ...expectedDefaults, billing: ref };
+        }
+        if (deliveryId !== null) {
+          expectedDefaults = { ...expectedDefaults, delivery: ref };
+        }
+        expect(result).toStrictEqual({ defaults: expectedDefaults });
+      }
+    }
+  }),
+);
+
+it.effect('keeps malformed default columns in the native typed read failure channel', () =>
+  Effect.gen(function* rejectMalformedNativeDefaults() {
+    for (const field of nullableDefaultFields) {
+      for (const raw of [
+        Record.remove(defaultsWireRow, field),
+        { ...defaultsWireRow, [field]: undefinedReceiptValue },
+        { ...defaultsWireRow, [field]: { invalid: true } },
+      ]) {
+        const failure = yield* Effect.flip(
+          addressReadServicesForTransaction(nativeAddressTransactionReturning([raw]), scope).defaults(
+            { profile },
+            tenantId,
+          ),
+        );
+        expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      }
+    }
+  }),
+);
+
+it.effect('does not manufacture cleared-default evidence from a native SQL null reference', () =>
+  Effect.gen(function* rejectNullClearedAddress() {
+    const failure = yield* Effect.flip(
+      clearAddressDefault(
+        nativeAddressTransactionReturning([{ ...defaultsWireRow, outcome: 'CLEARED' }]),
+        { expectedDefaultsRevision: 2, profile, reason: 'Clear billing default' },
+        'BILLING',
+        { actionInvocationId, principalId },
+      ),
+    );
+    expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
+    expect(failure).toMatchObject({
+      dependency: 'commerce.customer-context.persistence:missing-default-outcome',
+      retryable: true,
+    });
   }),
 );

@@ -124,7 +124,6 @@ export const eligibleMarketTuplesRead = defineRead(
     resultSchema: EligibleMarketTuplesResponseSchema,
     schemaVersion: '1',
   },
-  // oxlint-disable-next-line perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
   { prepare: (input, context) => prepareEligibleMarketTuples(input, context), load: handleEligibleMarketTuples },
   marketResolutionPersistenceForScope,
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),

@@ -4,9 +4,10 @@
  * configured third-party parser loads/re-exports. Import/global identity is lexical; wrappers
  * and literal computed keys are supported. Node entry indices 0/1 are allowed.
  * Passing full argv directly to a call is an opaque CLI seam, not proof of correct parsing.
- * A slice may be pass-through, so the diagnostic does not claim every hit validates arguments.
+ * A native SDK child argument spread of argv.slice(2) is pass-through when the entire module
+ * leaves raw argv otherwise untouched. Other slices remain migration candidates.
  * B3 prioritizes consequential scripts over trivial wrappers; this syntactic rule cannot
- * infer operational consequence or child-process flag ownership. No cross-file/mutable alias
+ * infer operational consequence beyond that native forwarding shape. No cross-file/mutable alias
  * analysis or arbitrary constant evaluation. Includes workspace-local script segments, not tests.
  * Report-only: no fixers or suggestions.
  */
@@ -15,6 +16,7 @@ import type { ESTree } from '@oxlint/plugins';
 
 import { literalText, propertyText, staticString, unwrap } from '../shared/ast.ts';
 import { importedName } from '../shared/imports.ts';
+import { nativeChildArgvForwardingProof } from '../shared/native-child-argv-forwarding.ts';
 import { stringList } from '../shared/options.ts';
 import { globToRegExp, inScriptScope, scriptScope } from '../shared/paths.ts';
 import { provenance } from '../shared/provenance.ts';
@@ -128,7 +130,7 @@ export const rule = defineRule({
       description:
         'Audit B3/A8: scripts must declare their command line with effect/cli (Args, Options, Command) ' +
         'instead of parsing process.argv by hand. Every member access, index and destructuring of argv under ' +
-        'scripts/** is reported — except the argv[0]/argv[1] entry guard — as are node:util parseArgs and ' +
+        'scripts/** is reported — except the argv[0]/argv[1] entry guard and proven native child argv forwarding — as are node:util parseArgs and ' +
         'third-party argument parsers. Static lexical provenance includes immutable aliases and literal computed keys; opaque call arguments remain permitted as CLI forwarding seams, not proven CLI identities. Copies and slices are syntactic migration candidates, not proof of parsing.',
       url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#b3-convert-consequential-operational-scripts-into-effect-programs',
     },
@@ -226,6 +228,10 @@ export const rule = defineRule({
 
     const isArgvSource = (node: AnyNode | null): boolean =>
       ['process.argv', 'Bun.argv'].includes(provenance(context, node) ?? '');
+    const nativeChildForwarding = nativeChildArgvForwardingProof(context, (member) => {
+      const index = staticIndex(member);
+      return index !== null && allowedIndices.has(index);
+    });
 
     /** Report a binding/assignment target that is fed directly from argv, unless it is the entry guard. */
     const reportPattern = (target: AnyNode, source: AnyNode, whole: AnyNode): void => {
@@ -284,6 +290,7 @@ export const rule = defineRule({
           });
           return;
         }
+        if (nativeChildForwarding(member)) return;
         report(member as unknown as AnyNode, 'argvMemberAccess', {
           expression: printed(member as unknown as AnyNode),
         });

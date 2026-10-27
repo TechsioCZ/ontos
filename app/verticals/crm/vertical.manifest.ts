@@ -39,6 +39,16 @@ const pageContribution = (value: PageContributionInput) =>
 const publicComponentContribution = (value: typeof ShellPublicComponentContributionSchema.Encoded) =>
   Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 
+const moduleAccessPermission = 'module.access';
+const salesNavigationGroup = 'shell.navigation.sales';
+const clientsPageKey = 'demo.crm.page.clients';
+const visitsPageKey = 'demo.crm.page.visits';
+const planPageKey = 'demo.crm.page.plan';
+const importsPageKey = 'demo.crm.page.imports';
+const pairingPageKey = 'demo.crm.page.pairing';
+const reportsPageKey = 'demo.crm.page.reports';
+const aiPageKey = 'demo.crm.page.ai';
+
 const moduleKey = 'demo.crm';
 
 export const crmManifest = defineOntosModuleManifest({
@@ -81,11 +91,11 @@ export const crmManifest = defineOntosModuleManifest({
       'home-summary': HomeSummary,
       'page-ai-approvals': AiApprovalsPage,
       'page-clients': ClientsPage,
-      'page-visits': VisitsPage,
-      'page-plan': PlanPage,
       'page-imports': ImportsPage,
       'page-pairing': PairingPage,
+      'page-plan': PlanPage,
       'page-reports': ReportsPage,
+      'page-visits': VisitsPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -110,106 +120,106 @@ export const crmManifest = defineOntosModuleManifest({
           contributionKey: 'demo.crm.navigation.clients',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.clients',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: clientsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           homeStart: 20,
           icon: 'icon-[mdi--account-tie-outline]',
           label: { cs: 'Klienti', en: 'Clients' },
           order: 400,
-          pageKey: 'demo.crm.page.clients',
+          pageKey: clientsPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.visits',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.visits',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: visitsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           icon: 'icon-[mdi--map-marker-check-outline]',
           label: { cs: 'Návštěvy', en: 'Visits' },
           order: 420,
-          pageKey: 'demo.crm.page.visits',
+          pageKey: visitsPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.plan',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.plan',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: planPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           homeStart: 10,
           icon: 'icon-[mdi--phone-outgoing-outline]',
           label: { cs: 'K oslovení', en: 'To contact' },
           order: 410,
-          pageKey: 'demo.crm.page.plan',
+          pageKey: planPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.imports',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.imports',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: importsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           icon: 'icon-[mdi--file-import-outline]',
           label: { cs: 'Importy objednávek', en: 'Order imports' },
           order: 430,
-          pageKey: 'demo.crm.page.imports',
+          pageKey: importsPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.pairing',
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.crm.read_all' },
-            entrypointKey: 'demo.crm.page.pairing',
+            entrypointKey: pairingPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           icon: 'icon-[mdi--link-variant]',
           label: { cs: 'Párování', en: 'Matching' },
           order: 440,
-          pageKey: 'demo.crm.page.pairing',
+          pageKey: pairingPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.reports',
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.reports',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: reportsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.sales',
+          groupKey: salesNavigationGroup,
           icon: 'icon-[mdi--chart-areaspline]',
           label: { cs: 'Přehled prodejů', en: 'Sales overview' },
           order: 450,
-          pageKey: 'demo.crm.page.reports',
+          pageKey: reportsPageKey,
         }),
         navigationContribution({
           contributionKey: 'demo.crm.navigation.ai',
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.crm.write_all' },
-            entrypointKey: 'demo.crm.page.ai',
+            entrypointKey: aiPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -218,7 +228,7 @@ export const crmManifest = defineOntosModuleManifest({
           icon: 'icon-[mdi--robot-outline]',
           label: { cs: 'AI změny ke schválení', en: 'AI changes for approval' },
           order: 460,
-          pageKey: 'demo.crm.page.ai',
+          pageKey: aiPageKey,
         }),
         // </generated-module-shell-navigation>
       ],
@@ -226,11 +236,11 @@ export const crmManifest = defineOntosModuleManifest({
         // <generated-module-shell-pages>
         pageContribution({
           componentKey: 'demo.crm.page-clients',
-          contributionKey: 'demo.crm.page.clients',
+          contributionKey: clientsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.clients',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: clientsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -240,11 +250,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-visits',
-          contributionKey: 'demo.crm.page.visits',
+          contributionKey: visitsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.visits',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: visitsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -254,11 +264,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-plan',
-          contributionKey: 'demo.crm.page.plan',
+          contributionKey: planPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.plan',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: planPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -268,11 +278,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-imports',
-          contributionKey: 'demo.crm.page.imports',
+          contributionKey: importsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.imports',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: importsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -282,11 +292,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-pairing',
-          contributionKey: 'demo.crm.page.pairing',
+          contributionKey: pairingPageKey,
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.crm.read_all' },
-            entrypointKey: 'demo.crm.page.pairing',
+            entrypointKey: pairingPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -296,11 +306,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-reports',
-          contributionKey: 'demo.crm.page.reports',
+          contributionKey: reportsPageKey,
           entrypoint: {
             access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: 'demo.crm.page.reports',
+            authorization: { kind: 'context_permission', permission: moduleAccessPermission },
+            entrypointKey: reportsPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',
@@ -310,11 +320,11 @@ export const crmManifest = defineOntosModuleManifest({
         }),
         pageContribution({
           componentKey: 'demo.crm.page-ai-approvals',
-          contributionKey: 'demo.crm.page.ai',
+          contributionKey: aiPageKey,
           entrypoint: {
             access: 'read',
             authorization: { kind: 'context_permission', permission: 'demo.crm.write_all' },
-            entrypointKey: 'demo.crm.page.ai',
+            entrypointKey: aiPageKey,
             moduleKey,
             role: 'page',
             scope: 'tenant',

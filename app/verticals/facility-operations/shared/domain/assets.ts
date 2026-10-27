@@ -51,7 +51,6 @@ export const AssetEventKindSchema = Schema.Literals([
   'retirement',
   'liquidation',
 ]);
-export type AssetEventKind = typeof AssetEventKindSchema.Type;
 /** Event kinds a user may record directly (the rest come from dedicated commands). */
 export const manualEventKinds = ['placed_in_service', 'construction', 'ownership', 'note'] as const;
 export const ManualEventKindSchema = Schema.Literals(manualEventKinds);
@@ -101,7 +100,6 @@ export type DepreciationType = typeof DepreciationTypeSchema.Type;
 export const DepreciationIntervalSchema = Schema.Literals(['monthly', 'yearly']);
 export type DepreciationInterval = typeof DepreciationIntervalSchema.Type;
 export const PlanStatusSchema = Schema.Literals(['draft', 'confirmed']);
-export type PlanStatus = typeof PlanStatusSchema.Type;
 export const YearsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100));
 /** `YYYY` (yearly) or `YYYY-MM` (monthly). */
 export const PeriodSchema = Schema.String.check(Schema.isPattern(/^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/u));
@@ -126,7 +124,6 @@ export const PlanHistoryEntrySchema = Schema.Struct({
   change: Schema.Literals(['created', 'confirmed', 'entry_recorded']),
   note: Schema.optionalKey(NoteSchema),
 });
-export type PlanHistoryEntry = typeof PlanHistoryEntrySchema.Type;
 
 export const DepreciationPlanSchema = Schema.Struct({
   baseMinor: MinorAmountSchema,
@@ -155,7 +152,6 @@ export const DisposalSchema = Schema.Struct({
   proceedsMinor: Schema.optionalKey(MinorAmountSchema),
   reason: TextSchema(2000),
 });
-export type Disposal = typeof DisposalSchema.Type;
 
 /**
  * Staff-only archive of a disposed record (S02 demo hygiene, e.g. test records from verification runs): the
@@ -166,7 +162,6 @@ export const AssetArchiveSchema = Schema.Struct({
   by: PrincipalRefSchema,
   reason: TextSchema(2000),
 });
-export type AssetArchive = typeof AssetArchiveSchema.Type;
 
 export const AssetSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
@@ -214,7 +209,6 @@ export const FollowUpSchema = Schema.Struct({
   status: Schema.Literals(['open', 'done']),
   title: TextSchema(200),
 });
-export type FollowUp = typeof FollowUpSchema.Type;
 
 export const InventoryItemSchema = Schema.Struct({
   assetId: AssetIdSchema,

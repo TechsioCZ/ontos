@@ -1,3 +1,8 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Effect } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 // Client card (C01/C02/C04/C05 facts) in a SidePanel over the clients list. Header with key facts and the owner,
 // then tabs Kontakty / Návštěvy / Objednávky / Historie. Návštěvy and Objednávky are rendered by the visits and
 // imports lanes through the ClientCardTabProps contract (./card-tab-props.ts).
@@ -8,16 +13,19 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import type { ReactNode } from 'react';
 import { useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { ReactNode } from 'react';
+
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canWriteClient } from '../../../../../shared/domain/access.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
 import { clientSalesFacts } from '../../../../../shared/domain/reports.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import type { ClientSalesFacts } from '../../../../../shared/domain/reports.ts';
 import { salespersonName } from '../../../../crm/records.ts';
-import { formatDecimalMoney } from '../prehled-prodeju/report-format.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+
+import { useFormatDecimalMoney } from '../prehled-prodeju/report-format.ts';
 import { ClientOrdersTab } from '../importy/client-orders-tab.tsx';
 import { ClientVisitsTab } from '../navstevy/client-visits-tab.tsx';
 import { AssignDialog } from './assign-dialog.tsx';
@@ -34,7 +42,7 @@ interface CardProps {
   readonly clientId: string;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
-  readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
+  readonly submit: CrmCommandSubmit;
 }
 
 const Fact = ({
@@ -59,30 +67,131 @@ const Missing = ({ children = 'údaj neposkytnut' }: { readonly children?: React
   <span className="text-fg-secondary">{children}</span>
 );
 
-const NotVisible = ({ onClose }: { readonly onClose: () => void }) => (
-  <SidePanel
-    actions={
-      <Button onClick={onClose} theme="outlined" variant="secondary">
-        Zavřít
-      </Button>
-    }
-    closeLabel={dialogCloseLabel}
-    onOpenChange={(open) => {
-      if (!open) {
-        onClose();
+const NotVisible = ({ onClose }: { readonly onClose: () => void }) => {
+  const { t } = useModernI18n();
+  return (
+    <SidePanel
+      actions={
+        <Button onClick={onClose} theme="outlined" variant="secondary">
+          Zavřít
+        </Button>
       }
-    }}
-    open
-    resizeLabel="Změnit šířku panelu"
-    size="md"
-    title="Klient nenalezen"
-  >
-    <EmptyState
-      description="Klient neexistuje nebo k němu nemáte přístup. Obchodník vidí jen klienty, které má přidělené."
-      title="Kartu nelze otevřít"
-    />
-  </SidePanel>
-);
+      closeLabel={dialogCloseLabel}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      open
+      resizeLabel="Změnit šířku panelu"
+      size="md"
+      title={t('crm.ciClientsVisits.clients.notFound')}
+    >
+      <EmptyState
+        description="Klient neexistuje nebo k němu nemáte přístup. Obchodník vidí jen klienty, které má přidělené."
+        title={t('crm.ciClientsVisits.clients.cardUnavailable')}
+      />
+    </SidePanel>
+  );
+};
+
+/** Facts remain a pure projection of the same ACL-filtered records as the card. */
+const ClientCardFacts = ({
+  client,
+  facts,
+  owner,
+  writeAll,
+}: {
+  readonly client: Client;
+  readonly facts: ClientSalesFacts;
+  readonly owner: string | undefined;
+  readonly writeAll: boolean;
+}) => {
+  const { t } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
+  return (
+    <dl className={`${surfaceTileClassName} grid grid-cols-1 gap-200 p-200 sm:grid-cols-2 lg:grid-cols-3`}>
+      <Fact icon="icon-[mdi--account-tie-outline]" label={t('crm.ciClientsVisits.fields.salesperson')}>
+        <SalespersonChip name={owner} />
+      </Fact>
+      <Fact icon="icon-[mdi--map-marker-check-outline]" label={t('crm.ciClientsVisits.visits.lastVisit')}>
+        {facts.lastVisitAt === undefined ? (
+          <Missing>bez osobní návštěvy</Missing>
+        ) : (
+          pipe(facts.lastVisitAt, orderDateText, formatDate)
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--calendar-check-outline]" label={t('crm.ciClientsVisits.visits.lastContactAnyType')}>
+        {facts.lastContactAt === undefined ? (
+          <Missing>bez zapsaného kontaktu</Missing>
+        ) : (
+          pipe(facts.lastContactAt, orderDateText, formatDate)
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--receipt-text-outline]" label={t('crm.ciClientsVisits.clients.recordedOrders')}>
+        {facts.orderCount === 0 ? (
+          <Missing>bez dat</Missing>
+        ) : (
+          <>
+            {formatNumber(facts.orderCount)}
+            {facts.lastOrderAt === undefined ? '' : ` · poslední ${pipe(facts.lastOrderAt, orderDateText, formatDate)}`}
+          </>
+        )}
+      </Fact>
+      <Fact
+        icon="icon-[mdi--card-account-details-outline]"
+        label={client.kind === 'organization' ? 'IČO / DIČ' : 'Identifikace'}
+      >
+        {client.regNo === undefined && client.vatNo === undefined ? (
+          <Missing />
+        ) : (
+          [client.regNo, client.vatNo].filter((value) => value !== undefined).join(' / ')
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--phone-outline]" label={t('crm.ciClientsVisits.fields.phone')}>
+        {client.phone === undefined ? (
+          <Missing />
+        ) : (
+          <Link href={`tel:${client.phone.replaceAll(' ', '')}`}>{client.phone}</Link>
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--email-outline]" label={t('crm.ciClientsVisits.fields.email')}>
+        {client.email === undefined ? <Missing /> : <Link href={`mailto:${client.email}`}>{client.email}</Link>}
+      </Fact>
+      <Fact icon="icon-[mdi--map-marker-outline]" label={t('crm.ciClientsVisits.fields.address')}>
+        {client.address ?? <Missing />}
+      </Fact>
+      <Fact icon="icon-[mdi--cash-multiple]" label={t('crm.ciClientsVisits.clients.recordedOrderValue')}>
+        {facts.totals.length === 0 ? (
+          <Missing>bez dat</Missing>
+        ) : (
+          <span className="flex flex-col">
+            {facts.totals.map((total) => (
+              <span className="tabular-nums" key={total.currency}>
+                {formatDecimalMoney(total.amount, total.currency)}
+              </span>
+            ))}
+          </span>
+        )}
+      </Fact>
+      <Fact icon="icon-[mdi--web]" label={t('crm.ciClientsVisits.fields.website')}>
+        {client.website ?? <Missing />}
+      </Fact>
+      <Fact icon="icon-[mdi--database-check-outline]" label={t('crm.ciClientsVisits.clients.registryIdentity')}>
+        {partyLinked(client) ? (
+          <span className="flex flex-col">
+            <span>{client.partyRef?.registryName ?? client.name}</span>
+            <span className="text-fg-secondary text-xs">
+              {`ověřený zákazník${client.partyRef?.linkedAt === undefined ? '' : [' · propojeno ', pipe(client.partyRef.linkedAt, orderDateText, formatDate)].join('')}`}
+            </span>
+          </span>
+        ) : (
+          <Missing>{writeAll ? 'nepropojeno – propojte tlačítkem výše' : 'čeká na propojení vedením obchodu'}</Missing>
+        )}
+      </Fact>
+    </dl>
+  );
+};
 
 const CardBody = ({
   busy,
@@ -119,15 +228,19 @@ const CardBody = ({
     );
   }
 
-  const run = (command: CrmCommand, success: string) =>
-    submit(command).then((outcome) => {
-      toaster.create(
-        outcome.ok
-          ? { title: success, type: 'success' }
-          : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
-      );
-      return outcome.ok;
-    });
+  const run = (command: CrmCommandInput, success: string) =>
+    submit(command).pipe(
+      Effect.tap((outcome) =>
+        Effect.sync(() => {
+          toaster.create(
+            outcome.ok
+              ? { title: success, type: 'success' }
+              : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+          );
+        }),
+      ),
+      Effect.map((outcome) => outcome.ok),
+    );
 
   const tabProps = { busy, client, records, submit };
 
@@ -151,7 +264,7 @@ const CardBody = ({
           )}
           {archived ? (
             <Badge size="sm" variant="warning">
-              {`Archivován ${formatDate(client.archivedAt)}`}
+              {`Archivován ${pipe(client.archivedAt, orderDateText, formatDate)}`}
             </Badge>
           ) : (
             <Badge size="sm" variant="success">
@@ -215,7 +328,9 @@ const CardBody = ({
               <Button
                 icon="icon-[mdi--archive-arrow-up-outline]"
                 isLoading={busy}
-                onClick={() => void run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu')}
+                onClick={() => {
+                  browserRuntime.runFork(run({ _tag: 'RestoreClient', id: client.id }, 'Klient obnoven z archivu'));
+                }}
                 size="sm"
                 theme="outlined"
                 variant="secondary"
@@ -235,86 +350,7 @@ const CardBody = ({
             ))}
         </div>
 
-        <dl className={`${surfaceTileClassName} grid grid-cols-1 gap-200 p-200 sm:grid-cols-2 lg:grid-cols-3`}>
-          <Fact icon="icon-[mdi--account-tie-outline]" label="Obchodník">
-            <SalespersonChip name={owner} />
-          </Fact>
-          <Fact icon="icon-[mdi--map-marker-check-outline]" label="Poslední návštěva">
-            {facts.lastVisitAt === undefined ? <Missing>bez osobní návštěvy</Missing> : formatDate(facts.lastVisitAt)}
-          </Fact>
-          <Fact icon="icon-[mdi--calendar-check-outline]" label="Poslední kontakt (jakýkoli)">
-            {facts.lastContactAt === undefined ? (
-              <Missing>bez zapsaného kontaktu</Missing>
-            ) : (
-              formatDate(facts.lastContactAt)
-            )}
-          </Fact>
-          <Fact icon="icon-[mdi--receipt-text-outline]" label="Evidované objednávky">
-            {facts.orderCount === 0 ? (
-              <Missing>bez dat</Missing>
-            ) : (
-              <>
-                {formatNumber(facts.orderCount)}
-                {facts.lastOrderAt === undefined ? '' : ` · poslední ${formatDate(facts.lastOrderAt)}`}
-              </>
-            )}
-          </Fact>
-          <Fact
-            icon="icon-[mdi--card-account-details-outline]"
-            label={client.kind === 'organization' ? 'IČO / DIČ' : 'Identifikace'}
-          >
-            {client.regNo === undefined && client.vatNo === undefined ? (
-              <Missing />
-            ) : (
-              [client.regNo, client.vatNo].filter((value) => value !== undefined).join(' / ')
-            )}
-          </Fact>
-          <Fact icon="icon-[mdi--phone-outline]" label="Telefon">
-            {client.phone === undefined ? (
-              <Missing />
-            ) : (
-              <Link href={`tel:${client.phone.replaceAll(' ', '')}`}>{client.phone}</Link>
-            )}
-          </Fact>
-          <Fact icon="icon-[mdi--email-outline]" label="E-mail">
-            {client.email === undefined ? <Missing /> : <Link href={`mailto:${client.email}`}>{client.email}</Link>}
-          </Fact>
-          <Fact icon="icon-[mdi--map-marker-outline]" label="Adresa">
-            {client.address ?? <Missing />}
-          </Fact>
-          <Fact icon="icon-[mdi--cash-multiple]" label="Hodnota evidovaných objednávek">
-            {facts.totals.length === 0 ? (
-              <Missing>bez dat</Missing>
-            ) : (
-              <span className="flex flex-col">
-                {facts.totals.map((total) => (
-                  <span className="tabular-nums" key={total.currency}>
-                    {formatDecimalMoney(total.amount, total.currency)}
-                  </span>
-                ))}
-              </span>
-            )}
-          </Fact>
-          <Fact icon="icon-[mdi--web]" label="Web">
-            {client.website ?? <Missing />}
-          </Fact>
-          <Fact icon="icon-[mdi--database-check-outline]" label="Identita v evidenci zákazníků">
-            {partyLinked(client) ? (
-              <span className="flex flex-col">
-                <span>{client.partyRef?.registryName ?? client.name}</span>
-                <span className="text-fg-secondary text-xs">
-                  {`ověřený zákazník${client.partyRef?.linkedAt === undefined ? '' : ` · propojeno ${formatDate(client.partyRef.linkedAt)}`}`}
-                </span>
-              </span>
-            ) : (
-              <Missing>
-                {records.viewer.writeAll
-                  ? 'nepropojeno – propojte tlačítkem výše'
-                  : 'čeká na propojení vedením obchodu'}
-              </Missing>
-            )}
-          </Fact>
-        </dl>
+        <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
         {client.note !== undefined && (
           <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
             <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
@@ -364,13 +400,19 @@ const CardBody = ({
             </Button>
             <Button
               isLoading={busy}
-              onClick={() =>
-                void run({ _tag: 'ArchiveClient', id: client.id }, 'Klient archivován').then((ok) => {
-                  if (ok) {
-                    setArchiving(false);
-                  }
-                })
-              }
+              onClick={() => {
+                browserRuntime.runFork(
+                  run({ _tag: 'ArchiveClient', id: client.id }, 'Klient archivován').pipe(
+                    Effect.tap((ok) =>
+                      Effect.sync(() => {
+                        if (ok) {
+                          setArchiving(false);
+                        }
+                      }),
+                    ),
+                  ),
+                );
+              }}
               variant="primary"
             >
               Archivovat

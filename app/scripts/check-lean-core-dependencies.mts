@@ -216,6 +216,11 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
+  // Public metadata modules of the same pinned Effect dependency; descendants remain unapproved.
+  'effect/Match',
+  'effect/Option',
+  'effect/Result',
+  'effect/Schema',
   'pg',
 ]);
 

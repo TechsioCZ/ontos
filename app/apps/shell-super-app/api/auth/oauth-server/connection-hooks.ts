@@ -21,7 +21,8 @@ export interface OAuthConsentReferenceContext {
 }
 
 export interface OAuthPostLoginContext
-  extends OAuthConsentReferenceContext,
+  extends
+    OAuthConsentReferenceContext,
     Pick<Parameters<NonNullable<McpOptions['postLogin']>['shouldRedirect']>[0], 'isContinuation'> {}
 
 export type OAuthAccessTokenClaimsInput = Pick<

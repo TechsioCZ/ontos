@@ -16,7 +16,6 @@ export type EffectBffOperationContext = typeof EffectBffOperationContextSchema.T
 export interface EffectBffRequestContext {
   readonly locale?: string;
   readonly operationContext?: EffectBffOperationContext;
-  // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- #358 requires this browser client seam to accept and propagate the standard W3C transport field.
   readonly traceparent?: string;
 }
 

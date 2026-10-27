@@ -40,7 +40,6 @@
     "@app/assortment": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*",
     "@app/catalog": "workspace:*",
-    "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",

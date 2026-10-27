@@ -29,7 +29,7 @@ import {
   useCategoryLabel,
 } from '../../../../ui/documents-kit.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
-import { exportCsv } from '../../../../ui/ops-agenda/ui-bits.tsx';
+import { exportCsv, langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
 import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
 import { useTaskOptions } from '../../../../ui/task-options.ts';
@@ -44,7 +44,7 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { changedOn, documentSortKey, DocumentsSearchSchema, selectionForSearch } from './documents-route-state.ts';
 import { DocumentDetailPanel } from './document-detail.tsx';
-import { DocumentFormPanel } from './document-form.tsx';
+import { DocumentFormPanel, documentFormKey } from './document-form.tsx';
 import './documents.css';
 import type { DocumentFormMode } from './document-form.tsx';
 import {
@@ -215,7 +215,7 @@ const useDocumentColumns = (): ColumnDef<DocumentRecord>[] => {
 
 const useDocumentsModel = () => {
   const { language, t } = useModernI18n();
-  const lang = language?.startsWith('en') ? 'en' : 'cs';
+  const lang = langOf(language?.slice(0, 2));
   const financeFiles = useFinanceFiles();
   const categoryLabel = useCategoryLabel();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
@@ -295,12 +295,10 @@ const useDocumentsModel = () => {
         ]),
       ],
     };
-    browserRuntime.runFork(
-      Effect.promise(exportCsv.bind(undefined, input)).pipe(Effect.asVoid, Effect.timeout('30 seconds')),
-    );
+    browserRuntime.runFork(exportCsv(input).pipe(Effect.asVoid, Effect.timeout('30 seconds'), Effect.scoped));
   };
   const retry = () => {
-    browserRuntime.runFork(Effect.promise(ops.reload).pipe(Effect.timeout('30 seconds')));
+    browserRuntime.runFork(ops.reload().pipe(Effect.timeout('30 seconds'), Effect.scoped));
   };
   const { activeContracts, contractDocs, deadlines, expiringSoon, register, versionCount } = documentSummary(
     documents,
@@ -546,7 +544,7 @@ const DocumentsListing = ({ model }: { readonly model: DocumentsModel }) => {
         })}
       </div>
       {financeFiles.status !== 'forbidden' && (
-        <SectionCard title="Soubory faktur z Financí">
+        <SectionCard title={t('facility-operations.ui.financeInvoiceFilesTitle')}>
           <p className="-mt-100 text-fg-secondary text-sm">
             Doklady a přílohy nahrané k fakturám ve Financích. Zobrazují se jen ke čtení podle vašeho oprávnění ve
             Financích; nahrávají a mění se u faktury.
@@ -821,7 +819,7 @@ const DocumentsView = () => {
           <StatCard label={t(`${k}.stats.expiring`)} value={String(expiringSoon)} />
           <StatCard label={t(`${k}.stats.versions`)} value={String(versionCount)} />
           {financeFiles.status === 'ready' && (
-            <StatCard label="Soubory faktur ve Financích" value={String(financeAll.length)} />
+            <StatCard label={t('facility-operations.ui.financeInvoiceFilesCount')} value={String(financeAll.length)} />
           )}
         </StatRow>
 
@@ -869,20 +867,23 @@ const DocumentsView = () => {
           run={ops.run}
         />
       )}
-      <DocumentFormPanel
-        contracts={contractDocs}
-        mode={form ?? { kind: 'create' }}
-        onClose={() => setForm(undefined)}
-        onSaved={(documentId) => {
-          setForm(undefined);
-          if (documentId !== undefined) {
-            setOpenId(documentId);
-          }
-        }}
-        open={form !== undefined}
-        run={ops.run}
-        tasks={tasks}
-      />
+      {form !== undefined && (
+        <DocumentFormPanel
+          contracts={contractDocs}
+          key={documentFormKey(form)}
+          mode={form}
+          onClose={() => setForm(undefined)}
+          onSaved={(documentId) => {
+            setForm(undefined);
+            if (documentId !== undefined) {
+              setOpenId(documentId);
+            }
+          }}
+          open
+          run={ops.run}
+          tasks={tasks}
+        />
+      )}
     </>
   );
 };

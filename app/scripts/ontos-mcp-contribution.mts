@@ -436,7 +436,7 @@ export interface DeriveOntosMcpContributionInput {
   readonly actions: readonly unknown[];
   readonly api: Readonly<Record<string, HttpApi.Constraint>>;
   readonly appId: string;
-  readonly authored: OntosMcpContributionInput | undefined;
+  readonly authored?: OntosMcpContributionInput | undefined;
   readonly moduleId: string;
 }
 

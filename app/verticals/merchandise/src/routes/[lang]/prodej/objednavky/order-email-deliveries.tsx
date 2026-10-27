@@ -1,6 +1,9 @@
-// @effect-diagnostics *:off
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // E-mails sent to the storefront customer for one order (demo e-mail dispatcher, Shell API).
 import { formatDateTime, SectionCard } from '@app/admin-ui';
+import { listEmailDeliveries } from '@app/email-delivery/receipt-client';
+import { DateTime, Effect, Option, Schedule } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { useEffect, useState } from 'react';
 import { deliveryLabel, emailEventLabels, emailStatusVariant } from './order-email-labels.ts';
@@ -8,44 +11,45 @@ import type { EmailDeliveryView } from './order-email-labels.ts';
 
 type OrderEmailState =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable' }
+  | { readonly cause: Effect.Error<ReturnType<typeof listEmailDeliveries>>; readonly kind: 'unavailable' }
   | { readonly deliveries: readonly EmailDeliveryView[]; readonly kind: 'ready' };
-
-const emailApi = '/shell-super-app-api/email';
 
 const useOrderEmailDeliveries = (orderId: string): OrderEmailState => {
   const [state, setState] = useState<OrderEmailState>({ kind: 'loading' });
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const params = new URLSearchParams({ source: 'akros-order', subjectId: orderId });
-        // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
-        const response = await fetch(`${emailApi}/deliveries?${params.toString()}`, {
-          cache: 'no-store',
-          credentials: 'include',
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = (await response.json()) as { readonly deliveries: readonly EmailDeliveryView[] };
-        if (!cancelled) setState({ deliveries: body.deliveries, kind: 'ready' });
-      } catch {
-        if (!cancelled) setState({ kind: 'unavailable' });
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 4000);
+    const load = listEmailDeliveries({ source: 'akros-order', subjectId: orderId }).pipe(
+      Effect.match({
+        onFailure: (cause): OrderEmailState => ({ cause, kind: 'unavailable' }),
+        onSuccess: ({ deliveries }): OrderEmailState => ({
+          deliveries: deliveries.map((delivery) => ({
+            ...delivery,
+            createdAt: DateTime.formatIso(delivery.createdAt),
+            eventAt: DateTime.formatIso(delivery.eventAt),
+            eventLabel: Option.getOrNull(delivery.eventLabel),
+            sentAt: delivery.sentAt.pipe(Option.map(DateTime.formatIso), Option.getOrNull),
+          })),
+          kind: 'ready',
+        }),
+      }),
+      Effect.map(setState),
+    );
+    // Fork each read at the existing four-second cadence; a slow read does not delay the next tick.
+    // The enclosing scope interrupts all pending reads when the order changes or this panel unmounts.
+    const fiber = browserRuntime.runFork(
+      Effect.scoped(Effect.repeat(Effect.forkScoped(load), Schedule.fixed('4 seconds'))),
+    );
     return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+      fiber.interruptUnsafe();
     };
   }, [orderId]);
   return state;
 };
 
 export const OrderEmailDeliveries = ({ orderId }: { readonly orderId: string }) => {
+  const { t } = useModernI18n();
   const state = useOrderEmailDeliveries(orderId);
   return (
-    <SectionCard title="E-maily zákazníkovi">
+    <SectionCard title={t('merchandise.ui.customerEmails')}>
       {state.kind === 'loading' && <p className="text-fg-secondary text-sm">Zjišťuji odeslané e-maily…</p>}
       {state.kind === 'unavailable' && (
         <p className="text-fg-secondary text-sm">Stav e-mailů není dostupný – e-mailová služba neběží.</p>

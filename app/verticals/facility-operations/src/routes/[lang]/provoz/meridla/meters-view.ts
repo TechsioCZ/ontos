@@ -1,28 +1,29 @@
-// @effect-diagnostics globalDate:off
 // Presentation helpers of the meters page (ops-meters lane). Pure functions over the decoded agenda state.
 import { formatNumber, formatPercent } from '@app/admin-ui';
+import { DateTime } from 'effect';
+import type { TOptions } from 'i18next';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import { readingRows, recentAnomalyRow } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 
-export type Translate = (key: string, options?: Record<string, unknown>) => string;
+export type Translate = (key: string, options?: TOptions) => string;
 
-export const mediumVariant: Readonly<Record<MeterMedium, 'warning' | 'info' | 'danger' | 'success' | 'outline'>> = {
+export const mediumVariant = {
   ELECTRICITY: 'warning',
   GAS: 'danger',
   HEAT: 'success',
   OTHER: 'outline',
   WATER: 'info',
-};
+} as const satisfies Readonly<Record<MeterMedium, 'warning' | 'info' | 'danger' | 'success' | 'outline'>>;
 
-export const defaultUnitOf: Readonly<Record<MeterMedium, string>> = {
+export const defaultUnitOf = {
   ELECTRICITY: 'kWh',
   GAS: 'm³',
   HEAT: 'GJ',
   OTHER: '',
   WATER: 'm³',
-};
+} as const satisfies Readonly<Record<MeterMedium, string>>;
 
 /** `1234.5` + `kWh` → `1 234,5 kWh`. */
 export const formatQuantity = (value: number, unit: string): string => `${formatNumber(value)} ${unit}`.trim();
@@ -34,7 +35,7 @@ export const formatRate = (value: number, unit: string): string =>
 /** `0.43` → `+43 %`. */
 export const formatChange = (change: number): string => `${change >= 0 ? '+' : ''}${formatPercent(change)}`;
 
-export const personLabel = (t: Translate, principal: PrincipalRef, actor: PrincipalRef | undefined): string => {
+export const personLabel = (t: Translate, principal: PrincipalRef, actor?: PrincipalRef): string => {
   if (actor !== undefined && actor.tenantId === principal.tenantId && actor.principalId === principal.principalId) {
     return t('facility-operations.meters.people.you');
   }
@@ -53,9 +54,9 @@ export const propertyNameOf = (location: PropertyRef | undefined): string | unde
 };
 
 export interface PlaceOption {
-  readonly value: string;
-  readonly label: string;
   readonly kind: 'site' | 'property' | 'unit';
+  readonly label: string;
+  readonly value: string;
 }
 
 export const SITE = 'site';
@@ -76,7 +77,7 @@ export const placeOptions = (meters: readonly Meter[], siteLabel: string): reado
   const sorted = (entries: Map<string, string>, kind: PlaceOption['kind']) =>
     [...entries.entries()]
       .map(([value, label]): PlaceOption => ({ kind, label, value }))
-      .sort((left, right) => left.label.localeCompare(right.label, 'cs'));
+      .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
   return [{ kind: 'site', label: siteLabel, value: SITE }, ...sorted(properties, 'property'), ...sorted(units, 'unit')];
 };
 
@@ -93,13 +94,13 @@ export const metersAt = (meters: readonly Meter[], place: string): readonly Mete
   return meters.filter((meter) => meter.location?.kind === 'unit' && meter.location.id === unitId);
 };
 
-const todayInPrague = (): string =>
-  new Intl.DateTimeFormat('en-CA', {
-    day: '2-digit',
-    month: '2-digit',
-    timeZone: 'Europe/Prague',
-    year: 'numeric',
-  }).format(Date.now());
+const pragueDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  day: '2-digit',
+  month: '2-digit',
+  timeZone: 'Europe/Prague',
+  year: 'numeric',
+});
+const todayInPrague = (): string => pragueDateFormatter.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 
 /** Latest anomalous period of a meter still within the highlight window (see ANOMALY_WINDOW_DAYS). */
 export const recentAnomaly = (meter: Meter) =>
@@ -128,18 +129,30 @@ export const trendOf = (meter: Meter, count = 6) =>
     .slice(-count)
     .map((row) => ({ anomaly: row.anomaly, rate: row.dailyRate ?? 0 }));
 
+const defaultMonthFormatters = {
+  long: new Intl.DateTimeFormat('cs-CZ', { month: 'long', timeZone: 'UTC', year: 'numeric' }),
+  short: new Intl.DateTimeFormat('cs-CZ', { month: 'short', timeZone: 'UTC', year: 'numeric' }),
+};
+const monthFormatters = new Map([
+  [
+    'en',
+    {
+      long: new Intl.DateTimeFormat('en-GB', { month: 'long', timeZone: 'UTC', year: 'numeric' }),
+      short: new Intl.DateTimeFormat('en-GB', { month: 'short', timeZone: 'UTC', year: 'numeric' }),
+    },
+  ],
+]);
+const monthEpochMillis = (month: string) => DateTime.toEpochMillis(DateTime.makeUnsafe(`${month}-01T00:00:00Z`));
+
 /** `2026-09` → `zář 2026` style short month label in the page language. */
 export const monthLabel = (month: string, language: string): string =>
-  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', {
-    month: 'short',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(Date.parse(`${month}-01T00:00:00Z`));
+  (monthFormatters.get(language) ?? defaultMonthFormatters).short.format(monthEpochMillis(month));
 
 /** `2026-09` → `září 2026` long month label. */
 export const monthLongLabel = (month: string, language: string): string =>
-  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', {
-    month: 'long',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(Date.parse(`${month}-01T00:00:00Z`));
+  (monthFormatters.get(language) ?? defaultMonthFormatters).long.format(monthEpochMillis(month));
+
+const defaultPluralRules = new Intl.PluralRules('cs');
+const pluralRules = new Map([['en', new Intl.PluralRules('en')]]);
+export const pluralCategory = (count: number, language: string) =>
+  (pluralRules.get(language) ?? defaultPluralRules).select(count);

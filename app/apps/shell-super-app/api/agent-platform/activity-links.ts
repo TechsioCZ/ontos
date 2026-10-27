@@ -1,16 +1,24 @@
+import {
+  AgentCommandValueSchema,
+  AgentRecordReferenceSchema,
+  AgentResourceIdSchema,
+  AgentResourceTypeSchema,
+} from '@app/shared-contracts/agent-proposals';
 import type { AgentActivityEntry, AgentCommand } from '@app/shared-contracts/agent-proposals';
-import { Predicate } from 'effect';
+import { Predicate, Schema } from 'effect';
 
 import type { McpModule } from '../mcp/catalog.ts';
 
 type RecordLink = NonNullable<McpModule['recordLinks']>[number];
 type RecordReference = NonNullable<AgentActivityEntry['recordReference']>;
 
-const fieldAt = (value: unknown, path: string): unknown => {
+const fieldAt = (value: Schema.Json | undefined, path: string): Schema.Json | undefined => {
   let current = value;
   for (const segment of path.split('.')) {
-    if (typeof current !== 'object' || current === null || Array.isArray(current)) return undefined;
-    current = Reflect.get(current, segment);
+    if (!Schema.is(Schema.JsonObject)(current)) {
+      return undefined;
+    }
+    current = current[segment];
   }
   return current;
 };
@@ -23,7 +31,12 @@ export const commandRecordReference = (
   for (const link of links) {
     const target = link.commands.find(({ tag }) => Predicate.isTagged(command, tag));
     const resourceId = target === undefined ? undefined : fieldAt(command, target.idField);
-    if (typeof resourceId === 'string' && resourceId !== '') return { resourceId, resourceType: link.resourceType };
+    if (Schema.is(Schema.String)(resourceId) && resourceId !== '') {
+      return AgentRecordReferenceSchema.make({
+        resourceId: AgentResourceIdSchema.make(resourceId),
+        resourceType: AgentResourceTypeSchema.make(link.resourceType),
+      });
+    }
   }
   return undefined;
 };
@@ -32,16 +45,26 @@ export const commandRecordReference = (
 export const resolveActivityRecord = (
   links: readonly RecordLink[],
   reference: RecordReference | undefined,
-  records: unknown,
+  records: Schema.Json | undefined,
 ): AgentActivityEntry['record'] => {
-  if (reference === undefined) return undefined;
+  if (reference === undefined) {
+    return undefined;
+  }
   const link = links.find(({ resourceType }) => resourceType === reference.resourceType);
-  if (link === undefined) return undefined;
+  if (link === undefined) {
+    return undefined;
+  }
   const items = fieldAt(records, link.recordsPath);
-  if (!Array.isArray(items)) return undefined;
-  const record: unknown = items.find((item: unknown) => fieldAt(item, link.idField) === reference.resourceId);
+  if (!Schema.is(Schema.Array(AgentCommandValueSchema))(items)) {
+    return undefined;
+  }
+  const record: Schema.Json | undefined = items.find(
+    (item: Schema.Json) => fieldAt(item, link.idField) === reference.resourceId,
+  );
   const label = fieldAt(record, link.labelField);
-  if (typeof label !== 'string' || label === '') return undefined;
+  if (!Schema.is(Schema.String)(label) || label === '') {
+    return undefined;
+  }
   const query = new URLSearchParams({ [link.queryParam]: reference.resourceId });
   return { label, path: `${link.path}?${query.toString()}` };
 };
@@ -53,22 +76,29 @@ export const proposalActivityPath = (proposal: AgentActivityEntry['proposal']): 
     : `/sprava/ke-schvaleni?${new URLSearchParams({ davka: proposal.batchKey, navrh: proposal.itemKey }).toString()}`;
 
 export interface ActivityLinkAccess {
-  readonly canReviewProposals: boolean;
-  readonly canOpenModule: boolean;
-  readonly canManageAgents: boolean;
   readonly agentExists: boolean;
-  readonly identityPage: string | undefined;
-  readonly module: McpModule | undefined;
-  readonly personExists: boolean;
-  readonly records: unknown;
+  readonly canManageAgents: boolean;
+  readonly canOpenModule: boolean;
+  readonly canReviewProposals: boolean;
   readonly grants: readonly {
     readonly actingKind: string;
     readonly actingPrincipalId: string;
-    readonly grantId: string;
     readonly clientName: string;
+    readonly grantId: string;
     readonly writePolicy: string;
   }[];
+  readonly identityPage: string | undefined;
+  readonly module: McpModule | undefined;
+  readonly personExists: boolean;
+  readonly records: Schema.Json | undefined;
 }
+
+const grantPolicyLabel = (policy: string): string => {
+  if (policy === 'approval') {
+    return 'návrhy ke schválení';
+  }
+  return policy === 'direct' ? 'přímý zápis' : 'jen čtení';
+};
 
 /** All paths are resolved server-side from current permissions and existing targets, never from display labels. */
 export const resolveActivityLinks = (entry: AgentActivityEntry, access: ActivityLinkAccess): AgentActivityEntry => {
@@ -88,19 +118,27 @@ export const resolveActivityLinks = (entry: AgentActivityEntry, access: Activity
     access.canManageAgents && access.identityPage !== undefined && identityKind !== undefined
       ? `${access.identityPage}?${identityKind}=${encodeURIComponent(entry.agentPrincipalId)}`
       : undefined;
-  return {
-    ...entry,
-    ...(actionPath === undefined ? {} : { actionPath }),
-    ...(module?.page === undefined ? {} : { modulePath: module.page }),
-    ...(record === undefined ? {} : { record }),
-    ...(agentPath === undefined ? {} : { agentPath }),
-    ...(grants.length === 0
-      ? {}
-      : {
-          grants: grants.map((grant) => ({
-            label: `${grant.clientName} · ${grant.writePolicy === 'approval' ? 'návrhy ke schválení' : grant.writePolicy === 'direct' ? 'přímý zápis' : 'jen čtení'}`,
-            path: `/sprava/pripojene-aplikace?grant=${encodeURIComponent(grant.grantId)}`,
-          })),
-        }),
-  };
+  let linked = { ...entry };
+  if (actionPath !== undefined) {
+    linked = { ...linked, actionPath };
+  }
+  if (module?.page !== undefined) {
+    linked = { ...linked, modulePath: module.page };
+  }
+  if (record !== undefined) {
+    linked = { ...linked, record };
+  }
+  if (agentPath !== undefined) {
+    linked = { ...linked, agentPath };
+  }
+  if (grants.length > 0) {
+    linked = {
+      ...linked,
+      grants: grants.map((grant) => ({
+        label: `${grant.clientName} · ${grantPolicyLabel(grant.writePolicy)}`,
+        path: `/sprava/pripojene-aplikace?grant=${encodeURIComponent(grant.grantId)}`,
+      })),
+    };
+  }
+  return linked;
 };

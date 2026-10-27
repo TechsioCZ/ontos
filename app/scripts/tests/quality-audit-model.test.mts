@@ -4,13 +4,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Schema } from 'effect';
 import { expect, it, layer } from 'effect-rstest';
 
 import { buildKnipModel, KnipConfigSchema } from '../../quality-audit/knip-model.mts';
 import { runQualityAudit } from '../quality-audit.mts';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
+const nativePlatformModule = '@effect/platform-node';
+const counterfeitModule = './counterfeit.mts';
+const nativeProgramMain = 'NodeRuntime.runMain(program);';
+const nativeVitestReason = 'Native Vitest';
+const fakeMtsImport = "from './counterfeit.mts'";
+const fakeTsImport = "from './counterfeit.ts'";
+const operatorFile = 'scripts/operator.mts';
+const unusedNeighborName = 'unusedNeighbor';
 const rspackPackageName = '@rspack/core';
 const fixtureModuleSource = 'module.exports = {};';
 const packageFile = 'package.json';
@@ -60,6 +68,14 @@ const ReportSchema = Schema.Struct({
     }),
   ),
 });
+const expectPageDuplicatePolicy = (
+  model: { readonly config: typeof KnipConfigSchema.Type },
+  owner: string,
+  allowed: boolean,
+): void => {
+  const ignored = model.config.workspaces?.[owner]?.ignoreIssues?.[String.raw`src/routes/\[lang\]/page.tsx`] ?? [];
+  expect(ignored.includes('duplicates')).toBe(allowed);
+};
 const stringify = (value: Schema.Json) =>
   Effect.gen(function* testEffect1() {
     return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value);
@@ -585,7 +601,9 @@ it.live(
     const consumerPath = path.join(root, auditConsumersFile);
     const model = yield* buildKnipModel(
       root,
-      { workspaces: { '.': { entry: [consumer], node: false, project: ['scripts/**/*.mts', 'verticals/**/*.mts'] } } },
+      {
+        workspaces: { '.': { entry: [consumer], node: false, project: [operatorScriptPattern, 'verticals/**/*.mts'] } },
+      },
       consumerPath,
     ).pipe(Effect.provide(NodeServices.layer));
     const subprocesses = model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason));
@@ -1461,6 +1479,94 @@ it.live(
 
 layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
   testing.effect(
+    'Core module action aliases require the published outbox contract and runtime creator import',
+    Effect.fn(function* coreModuleOutboxAliases() {
+      const root = yield* fixture();
+      const owner = 'packages/core-runtime';
+      const slug = 'change-tenant-module-state';
+      const topic = 'core-modules-tenant-module-state-changed-v1';
+      const action = `${owner}/src/modules/actions/${slug}.action.ts`;
+      const message = `${owner}/src/modules/actions/${slug}-${topic}.outbox-message.ts`;
+      const contract = `${owner}/src/outbox/${topic}.ts`;
+      const manifest = {
+        exports: { [`./outbox/${topic}`]: `./src/outbox/${topic}.ts` },
+        name: '@app/core-runtime',
+        type: 'module',
+      };
+      write(root, `${owner}/package.json`, yield* stringify(manifest));
+      const actionSource = readFileSync(path.join(appRoot, action), 'utf-8');
+      write(
+        root,
+        action,
+        `${actionSource}\nexport const unusedActionNeighbor = 1; export type UnusedActionNeighbor = string;`,
+      );
+      write(
+        root,
+        message,
+        `${readFileSync(path.join(appRoot, message), 'utf-8')}\nexport const unusedMessageNeighbor = 1; export type UnusedMessageNeighbor = string;`,
+      );
+      write(root, contract, readFileSync(path.join(appRoot, contract), 'utf-8'));
+      write(
+        root,
+        `${owner}/src/index.ts`,
+        `import { changeTenantModuleStateAction } from './modules/actions/${slug}.action.ts'; console.log(changeTenantModuleStateAction);`,
+      );
+      const config = {
+        workspaces: {
+          '.': { entry: [], node: false, project: [] },
+          'packages/*': { entry: [indexFile], node: false, project: ['src/**/*.ts'] },
+        },
+      };
+      const consumerPath = path.join(root, auditConsumersFile);
+      const model = yield* buildKnipModel(root, config, consumerPath);
+      const aliases = model.evidence.filter(
+        (fact) =>
+          (fact.source === action || fact.source === message) && fact.reason.startsWith('Generated Outbox Message'),
+      );
+      expect(aliases).toHaveLength(9);
+      const run = yield* runPinnedKnip(root, consumerPath, model);
+      const report = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+      const names = report.issues.flatMap((issue) =>
+        [...issue.exports, ...issue.types].map((item) => `${issue.file}#${item.name}`),
+      );
+      for (const alias of aliases) {
+        expect(names).not.toContain(alias.target);
+      }
+      for (const { bindings, file } of [
+        { bindings: ['unusedActionNeighbor', 'UnusedActionNeighbor'], file: action },
+        { bindings: ['unusedMessageNeighbor', 'UnusedMessageNeighbor'], file: message },
+      ]) {
+        for (const binding of bindings) {
+          expect(names).toContain(`${file}#${binding}`);
+        }
+      }
+      write(root, `${owner}/package.json`, yield* stringify({ ...manifest, exports: {} }));
+      const unpublished = yield* buildKnipModel(root, config, consumerPath);
+      expect(unpublished.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+      write(root, `${owner}/package.json`, yield* stringify(manifest));
+      write(
+        root,
+        action,
+        actionSource.replace(
+          `import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './${slug}-${topic}.outbox-message.ts';`,
+          '',
+        ),
+      );
+      const disconnected = yield* buildKnipModel(root, config, consumerPath);
+      expect(disconnected.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+      const invalidRun = yield* runPinnedKnip(root, consumerPath, disconnected);
+      const invalid = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(invalidRun.stdout);
+      expect(invalid.issues.find((issue) => issue.file === action)?.exports.map((item) => item.name)).toContain(
+        'ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayloadSchema',
+      );
+      write(root, action, actionSource);
+      write(root, `${owner}/package.json`, yield* stringify({ ...manifest, name: '@fixture/not-core' }));
+      const foreignOwner = yield* buildKnipModel(root, config, consumerPath);
+      expect(foreignOwner.evidence.some((fact) => aliases.some((alias) => alias.target === fact.target))).toBe(false);
+    }),
+  );
+
+  testing.effect(
     'named Effect generator subprocess helpers require finite calls and native file URL conversion',
     Effect.fn(function* namedGeneratorSubprocessConsumers() {
       const effectImportSource = "import { Effect } from 'effect';";
@@ -1582,6 +1688,8 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
           'property-leasing',
           'property-portfolio',
           'crm-activities',
+          // The second legal entity has its own fixture invocation of the same owner script.
+          'crm-activities',
           'work-tasks',
         ].map((owner) => `verticals/${owner}/scripts/reset-demo.mts`),
       ];
@@ -1618,9 +1726,8 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       const consumerPath = path.join(root, auditConsumersFile);
       const model = yield* buildKnipModel(root, config, consumerPath);
       const ports = model.evidence.filter((fact) => fact.reason.startsWith('Literal owner port'));
-      expect(ports.map((fact) => fact.target).toSorted()).toEqual(
-        [...valid, 'verticals/crm-activities/scripts/reset-demo.mts'].toSorted(),
-      );
+      expect(ports).toHaveLength(valid.length);
+      expect(ports.filter((fact) => fact.target === 'verticals/crm-activities/scripts/reset-demo.mts')).toHaveLength(2);
       expect(new Set(ports.map((fact) => fact.target))).toEqual(new Set(valid));
       expect(ports.some((fact) => fact.target === dead)).toBe(false);
       for (const target of checked) {
@@ -1675,7 +1782,10 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
     Effect.fn(function* manifestPageAliases() {
       const root = yield* fixture();
       const owner = 'verticals/page-controls';
-      const page = `${owner}/src/routes/page.tsx`;
+      const page = `${owner}/src/routes/[lang]/page.tsx`;
+      const pagePattern = String.raw`src/routes/\[lang\]/page.tsx`;
+      const manifestFile = `${owner}/vertical.manifest.ts`;
+      const pageSource = 'export const RecordsPage = () => null; export default RecordsPage;';
       write(
         root,
         `${owner}/package.json`,
@@ -1684,14 +1794,14 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage } from './src/routes/[lang]/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       write(
         root,
         `${owner}/module-federation.config.ts`,
-        "export default { exposes: { './Page': './src/routes/page.tsx' } };",
+        "import { createModuleFederationConfig } from '@module-federation/modern-js-v3'; const config: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({ exposes: { './Page': './src/routes/[lang]/page.tsx' } }); export default config;",
       );
-      write(root, page, 'export const RecordsPage = () => null; export default RecordsPage;');
+      write(root, page, pageSource);
       const config = {
         workspaces: {
           '.': { entry: [], node: false, project: [] },
@@ -1727,6 +1837,95 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       const run = yield* readKnipReport();
       const validReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
       expect(validReport.issues.some((issue) => issue.file === page)).toBe(false);
+      const manifestWithPreload =
+        "import { RecordsPage, preloadPage } from './src/routes/[lang]/page.tsx'; preloadPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };";
+      write(root, manifestFile, manifestWithPreload);
+      write(
+        root,
+        page,
+        `${pageSource} const modulePagePreload = (load: () => void) => load; export const preloadPage = modulePagePreload(() => undefined);`,
+      );
+      const calledPreload = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(calledPreload, owner, true);
+      yield* runPinnedKnip(root, consumerPath, calledPreload);
+      const calledPreloadRun = yield* readKnipReport();
+      const calledPreloadReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(
+        calledPreloadRun.stdout,
+      );
+      expect(calledPreloadReport.issues.some((issue) => issue.file === page)).toBe(false);
+
+      const loader = `${owner}/src/routes/[lang]/loader.ts`;
+      write(root, loader, 'export const preloadRecords = () => undefined; export const unusedLoaderNeighbor = 1;');
+      const reexport = "export { preloadRecords as preloadPage } from './loader.ts';";
+      write(root, page, `${pageSource} ${reexport}`);
+      const forwardedPreload = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(forwardedPreload, owner, true);
+      yield* runPinnedKnip(root, consumerPath, forwardedPreload);
+      const forwardedRun = yield* readKnipReport();
+      const forwardedReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(forwardedRun.stdout);
+      expect(forwardedReport.issues.some((issue) => issue.file === page)).toBe(false);
+      expect(forwardedReport.issues.find((issue) => issue.file === loader)?.exports.map((item) => item.name)).toContain(
+        'unusedLoaderNeighbor',
+      );
+
+      const importedPreloadSource = "import { preloadRecords } from './loader.ts';";
+      write(root, page, `${importedPreloadSource} ${pageSource} export const preloadPage = preloadRecords;`);
+      const importedPreload = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(importedPreload, owner, true);
+      yield* runPinnedKnip(root, consumerPath, importedPreload);
+      const importedRun = yield* readKnipReport();
+      const importedReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(importedRun.stdout);
+      expect(importedReport.issues.some((issue) => issue.file === page)).toBe(false);
+      expect(importedReport.issues.find((issue) => issue.file === loader)?.exports.map((item) => item.name)).toContain(
+        'unusedLoaderNeighbor',
+      );
+      write(
+        root,
+        page,
+        `${importedPreloadSource} ${pageSource} export const preloadPage = preloadRecords; export const OtherPreload = preloadRecords;`,
+      );
+      const duplicateImportedPreload = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(duplicateImportedPreload, owner, false);
+      yield* runPinnedKnip(root, consumerPath, duplicateImportedPreload);
+      const duplicatedImportRun = yield* readKnipReport();
+      expect(duplicatedImportRun.stdout).toContain('OtherPreload');
+      write(
+        root,
+        page,
+        `${importedPreloadSource} ${pageSource} export const preloadPage = preloadRecords; export { preloadRecords as OtherPreload } from './loader.ts';`,
+      );
+      const mixedForwarding = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(mixedForwarding, owner, false);
+      write(
+        root,
+        page,
+        `${pageSource} export { preloadRecords as preloadPage, preloadRecords as OtherPreload } from './loader.ts';`,
+      );
+      const duplicateReexport = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(duplicateReexport, owner, false);
+      yield* runPinnedKnip(root, consumerPath, duplicateReexport);
+      const duplicateReexportRun = yield* readKnipReport();
+      const duplicateReexportReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(
+        duplicateReexportRun.stdout,
+      );
+      expect(
+        duplicateReexportReport.issues
+          .find((issue) => issue.file === page)
+          ?.duplicates.flat()
+          .map((item) => item.name),
+      ).toEqual(expect.arrayContaining(['RecordsPage', 'default']));
+
+      write(root, page, `${pageSource} ${reexport}`);
+      write(root, loader, "export { RecordsPage as preloadRecords } from './page.tsx';");
+      const indirectPageAlias = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(indirectPageAlias, owner, false);
+      write(root, loader, 'export const original = () => undefined; export const preloadRecords = original;');
+      const remoteAlias = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(remoteAlias, owner, false);
+      write(root, page, `${importedPreloadSource} ${pageSource} export const preloadPage = preloadRecords;`);
+      const importedRemoteAlias = yield* buildKnipModel(root, config, consumerPath);
+      expectPageDuplicatePolicy(importedRemoteAlias, owner, false);
+
       write(
         root,
         page,
@@ -1735,14 +1934,14 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage, projectAgenda } from './src/routes/page.tsx'; projectAgenda(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage, projectAgenda } from './src/routes/[lang]/page.tsx'; projectAgenda(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       const helperModel = yield* buildKnipModel(root, config, consumerPath);
       expect(helperModel.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(helperModel.evidence.some((fact) => fact.target === `${page}#projectAgenda`)).toBe(false);
-      expect(
-        helperModel.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
-      ).toContain('duplicates');
+      expect(helperModel.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).toContain(
+        'duplicates',
+      );
       yield* runPinnedKnip(root, consumerPath, helperModel);
       const helperRun = yield* readKnipReport();
       const helperReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(helperRun.stdout);
@@ -1750,8 +1949,38 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage } from './src/routes/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage } from './src/routes/[lang]/page.tsx'; export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
+      write(root, `${owner}/src/preload.ts`, 'export const load = () => undefined;');
+      const verifyLoaderAliasControls = Effect.fn(function* verifyLoaderAliasControls() {
+        for (const loaderSource of [
+          'const modulePagePreload = (load: () => void) => load; export const preloadPage = modulePagePreload(() => undefined);',
+          "export { load as preloadPage } from '../../preload.ts';",
+        ]) {
+          write(root, page, `export const RecordsPage = () => null; export default RecordsPage; ${loaderSource}`);
+          const withLoader = yield* buildKnipModel(root, config, consumerPath);
+          expect(withLoader.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).toContain(
+            'duplicates',
+          );
+          yield* runPinnedKnip(root, consumerPath, withLoader);
+          const loaderRun = yield* readKnipReport();
+          const loaderReport = yield* Schema.decodeEffect(Schema.fromJsonString(ReportSchema))(loaderRun.stdout);
+          expect(loaderReport.issues.find((issue) => issue.file === page)?.duplicates ?? []).toEqual([]);
+          write(
+            root,
+            page,
+            `export const RecordsPage = () => null; export default RecordsPage; ${loaderSource} export { RecordsPage as HiddenAlias };`,
+          );
+          const extraLoaderAlias = yield* buildKnipModel(root, config, consumerPath);
+          expect(
+            extraLoaderAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
+          ).not.toContain('duplicates');
+          yield* runPinnedKnip(root, consumerPath, extraLoaderAlias);
+          const aliasRun = yield* readKnipReport();
+          expect(aliasRun.stdout).toContain('HiddenAlias');
+        }
+      });
+      yield* verifyLoaderAliasControls();
       write(
         root,
         page,
@@ -1759,9 +1988,9 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       );
       const neighbor = yield* buildKnipModel(root, config, consumerPath);
       expect(neighbor.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
-      expect(
-        neighbor.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
-      ).not.toContain('duplicates');
+      expect(neighbor.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? []).not.toContain(
+        'duplicates',
+      );
       yield* runPinnedKnip(root, consumerPath, neighbor);
       const invalidRun = yield* readKnipReport();
       expect(invalidRun.status).toBe(1);
@@ -1776,7 +2005,7 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(extraPageAlias.evidence.some((fact) => fact.target === `${page}#OtherPage=RecordsPage`)).toBe(false);
       expect(
-        extraPageAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+        extraPageAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
       ).not.toContain('duplicates');
       yield* runPinnedKnip(root, consumerPath, extraPageAlias);
       const extraAliasRun = yield* readKnipReport();
@@ -1785,12 +2014,12 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
       write(
         root,
         `${owner}/vertical.manifest.ts`,
-        "import { RecordsPage, OtherPage } from './src/routes/page.tsx'; OtherPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
+        "import { RecordsPage, OtherPage } from './src/routes/[lang]/page.tsx'; OtherPage(); export const manifest = { publicSurface: { components: { records: RecordsPage } } };",
       );
       const usedExtraAlias = yield* buildKnipModel(root, config, consumerPath);
       expect(usedExtraAlias.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(true);
       expect(
-        usedExtraAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.['src/routes/page.tsx'] ?? [],
+        usedExtraAlias.config.workspaces['verticals/page-controls']?.ignoreIssues?.[pagePattern] ?? [],
       ).not.toContain('duplicates');
       yield* runPinnedKnip(root, consumerPath, usedExtraAlias);
       const usedExtraAliasRun = yield* readKnipReport();
@@ -1804,10 +2033,687 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
           ?.duplicates.flat()
           .map((item) => item.name),
       ).toEqual(expect.arrayContaining(['RecordsPage', 'default']));
-      write(root, page, 'export const RecordsPage = () => null; export default RecordsPage;');
+      write(root, page, pageSource);
       write(root, `${owner}/module-federation.config.ts`, 'export default {};');
       const noExposure = yield* buildKnipModel(root, config, consumerPath);
       expect(noExposure.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(false);
+      write(
+        root,
+        `${owner}/module-federation.config.ts`,
+        "export default { exposes: { './Page': './src/routes/[lang]/page.tsx' } };",
+      );
+      write(
+        root,
+        manifestFile,
+        "import { RecordsPage } from './src/routes/[lang]/page.tsx'; RecordsPage(); export const manifest = { publicSurface: { components: {} } };",
+      );
+      const noPublicComponent = yield* buildKnipModel(root, config, consumerPath);
+      expect(noPublicComponent.evidence.some((fact) => fact.target === `${page}#default=RecordsPage`)).toBe(false);
+      expectPageDuplicatePolicy(noPublicComponent, owner, false);
+      yield* runPinnedKnip(root, consumerPath, noPublicComponent);
+      const noComponentRun = yield* readKnipReport();
+      expect(noComponentRun.status).toBe(1);
+      expect(noComponentRun.stdout).toContain('RecordsPage');
     }),
   );
 });
+
+it.live(
+  'native top-level Effect CLI roots preserve manual operators and reject nearby non-entry source',
+  Effect.fn(function* nativeCliControls() {
+    const root = yield* fixture();
+    const owner = 'verticals/manual-cli';
+    const nativeImport = "import { NodeRuntime } from '@effect/platform-node'; import { Effect, Layer } from 'effect';";
+    const main = 'NodeRuntime.runMain(Effect.scoped(Layer.build(runtimeLive)));';
+    const source = `${nativeImport}\nconst runtimeLive = Layer.empty;\n${main}`;
+    write(root, `${owner}/package.json`, '{"name":"@fixture/manual-cli","type":"module"}');
+    write(root, `${owner}/src/index.ts`, 'export {};');
+    write(root, `${owner}/scripts/operator.mts`, source);
+    write(
+      root,
+      `${owner}/scripts/alias.mts`,
+      source.replaceAll('NodeRuntime', 'Runtime').replace('{ Runtime }', '{ NodeRuntime as Runtime }'),
+    );
+    const invalid = [
+      source.replace(main, `function unused() { ${main} }`),
+      source.replace(main, `const unused = () => { ${main} };`),
+      source.replace(main, `// ${main}`),
+      source.replace(main, `void ${JSON.stringify(main)};`),
+      source.replace(nativePlatformModule, counterfeitModule),
+      source
+        .replace('Effect, Layer', 'Effect as ForeignEffect, Layer')
+        .replace(main, `const Effect = replacement; ${main}`),
+      source.replace(main, `NodeRuntime.runMain = replacement; ${main}`),
+      source.replace('const runtimeLive', 'let runtimeLive'),
+      source.replace('Effect.scoped(Layer.build(runtimeLive))', 'runtimeLive'),
+    ];
+    for (const [index, text] of invalid.entries()) {
+      write(root, `${owner}/scripts/invalid-${index}.mts`, text);
+    }
+    write(root, `${owner}/src/not-an-operator.mts`, source);
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      {
+        workspaces: {
+          '.': { entry: [], project: [] },
+          'verticals/*': { entry: [indexFile], project: ['**/*.{ts,mts}'] },
+        },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect(
+      EffectArray.sort(
+        model.evidence
+          .filter((fact) => fact.reason.startsWith('Native top-level NodeRuntime'))
+          .map((fact) => fact.target),
+        Order.String,
+      ),
+    ).toEqual(['scripts/alias.mts', operatorFile]);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const files = report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file);
+    expect(files).not.toContain(`${owner}/scripts/operator.mts`);
+    expect(files).not.toContain(`${owner}/scripts/alias.mts`);
+    for (const [index] of invalid.entries()) {
+      expect(files).toContain(`${owner}/scripts/invalid-${index}.mts`);
+    }
+    expect(files).toContain(`${owner}/src/not-an-operator.mts`);
+
+    // Real operator bodies are parsed as data. Nothing imports or executes their database behavior.
+    const operators = [
+      'verticals/finance-billing/scripts/repair-demo-rental.mts',
+      'verticals/finance-billing/scripts/repair-demo-v2.mts',
+      'verticals/finance-billing/scripts/repair-invoice-parties.mts',
+      'verticals/finance-billing/scripts/repair-prepared-step.mts',
+      'verticals/work-tasks/scripts/prune-demo-leftovers.mts',
+    ];
+    for (const file of operators) {
+      const workspace = file.split('/').slice(0, 2).join('/');
+      write(root, `${workspace}/package.json`, '{"name":"@fixture/operator","type":"module"}');
+      write(root, file, readFileSync(path.join(appRoot, file), 'utf-8'));
+    }
+    const real = yield* buildKnipModel(root, {
+      workspaces: { '.': { entry: [], project: [] }, 'verticals/*': { entry: [], project: ['**/*.mts'] } },
+    }).pipe(Effect.provide(NodeServices.layer));
+    for (const file of operators) {
+      expect(
+        real.evidence.some(
+          (fact) =>
+            fact.source === file && fact.kind === 'entry' && fact.reason.startsWith('Native top-level NodeRuntime'),
+        ),
+      ).toBe(true);
+    }
+  }),
+);
+
+it.live(
+  'native lint argv and factory parser consume the 34 exact documents without admitting neighboring files or exports',
+  Effect.fn(function* nativeLintConsumers() {
+    const root = yield* fixture();
+    const tests = 'tools/oxlint/effect-native/tests';
+    const parser = 'tools/oxlint/anti-slop/effect/rules/data-factory-proof.ts';
+    const harness = `${tests}/oxlint.mts`;
+    const names = [
+      'decoded-unknown-parameter',
+      'generic-json-canonicalizer',
+      'known-value-widening',
+      'native-service-factory-import',
+      'owner-data-decoder',
+      'schema-value-constructor',
+    ];
+    const anti = 'tools/oxlint/anti-slop/tests/fixtures';
+    const service = `${anti}/no-service-constructor-imports`;
+    const transaction =
+      'tools/oxlint/anti-slop/effect/fixtures/no-service-constructor-imports/transaction-bound-factory';
+    const configs = names.slice(0, 4).map((name) => `${tests}/${name}.config.ts`);
+    const documents = [
+      ...configs,
+      ...['native-effect-boundaries', 'owner-boundaries', 'unproved-boundaries', 'unproved-effect-boundaries'].map(
+        (name) => `${anti}/no-unknown-parameters/${name}.ts`,
+      ),
+      ...[
+        'valid/indexed-owner-types',
+        'valid/owner-contract',
+        'valid/owner-mapped-types',
+        'invalid/open-and-erased-mapped-types',
+      ].map((name) => `${anti}/no-known-value-widening/${name}.ts`),
+      ...[
+        'invalid-constructor',
+        'invalid-eager-argument',
+        'invalid-escape',
+        'invalid-handler-slot',
+        'invalid-lookalike',
+        'owner',
+        'valid-reference',
+      ].map((name) => `${transaction}/${name}.ts`),
+      ...[
+        'ares-snapshot-consumer',
+        'temporal-data-decoder',
+        'temporal-decoder-consumer',
+        'temporal-decoder-effect-transform',
+        'temporal-decoder-effect',
+        'temporal-decoder-executable-transform',
+        'temporal-decoder-fake-datetime',
+        'temporal-decoder-unknown',
+        'branded-constructor-consumer',
+        'branded-constructor-context',
+        'branded-constructor-executable-check',
+        'branded-constructor-executable-input',
+        'branded-constructor-fake-make',
+        'branded-constructor-unchecked',
+        'branded-constructor-unknown',
+      ].map((name) => `${service}/${name}.ts`),
+    ];
+    expect(documents).toHaveLength(34);
+    for (const file of [
+      harness,
+      parser,
+      ...names.map((name) => `${tests}/${name}.test.mts`),
+      ...documents,
+      `${service}/ares-snapshot-owner.ts`,
+      `${service}/branded-string-constructor.ts`,
+    ]) {
+      write(root, file, readFileSync(path.join(appRoot, file), 'utf-8'));
+    }
+    const neighbor = `${service}/unused-neighbor.ts`;
+    write(root, neighbor, unusedNeighborSource);
+    write(root, configs[0], `${readFileSync(path.join(root, configs[0]), 'utf-8')}\n${unusedNeighborSource}`);
+    const producer = `${service}/ares-snapshot-owner.ts`;
+    write(root, producer, `${readFileSync(path.join(root, producer), 'utf-8')}\n${unusedNeighborSource}`);
+    const base = { entry: [`${tests}/*.test.mts`], node: false, project: [toolsPattern] };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(`${root}/`, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    for (const file of documents) {
+      expect(
+        model.evidence.some((fact) => fact.target === file && ['file', 'entry'].includes(fact.kind)),
+        file,
+      ).toBe(true);
+    }
+    for (const [file, name] of [
+      [producer, 'makeAresAppliedEvidence'],
+      [`${service}/branded-string-constructor.ts`, 'makeEntityId'],
+    ]) {
+      expect(
+        model.evidence.some((fact) => fact.target === `${file}#${name}`),
+        `${file}#${name}`,
+      ).toBe(true);
+    }
+    expect(model.evidence.some((fact) => fact.target === neighbor || fact.target.endsWith('#unusedNeighbor'))).toBe(
+      false,
+    );
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file);
+    for (const file of documents) {
+      expect(unusedFiles, file).not.toContain(file);
+    }
+    expect(unusedFiles).toContain(neighbor);
+    for (const file of [configs[0], producer]) {
+      expect(
+        report.issues.find((issue) => issue.file === file)?.exports.map((item) => item.name),
+        file,
+      ).toContain(unusedNeighborName);
+    }
+
+    const actualHarness = readFileSync(path.join(root, harness), 'utf-8');
+    for (const invalid of [
+      actualHarness.replace('node:child_process', counterfeitModule),
+      actualHarness.replace('process.execPath,', "'printf',"),
+      actualHarness.replace("'-c', configPath", "'--unused', configPath"),
+      actualHarness.replace('  const result = spawnSync(', '  const result = () => spawnSync('),
+      actualHarness.replace('export function runOxlint', 'oxlintEntryPoint = replacement;\nexport function runOxlint'),
+    ]) {
+      write(root, harness, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.reason.startsWith('Native Oxlint'))).toBe(false);
+    }
+    write(root, harness, actualHarness);
+    const consumer = `${tests}/decoded-unknown-parameter.test.mts`;
+    const actualConsumer = readFileSync(path.join(root, consumer), 'utf-8');
+    for (const invalid of [
+      actualConsumer.replaceAll(', appRoot)', ", '/wrong-cwd')").replaceAll('    appRoot,', "    '/wrong-cwd',"),
+      actualConsumer.replaceAll("from 'effect-rstest'", fakeMtsImport),
+      actualConsumer.replaceAll('const run = runOxlint(', 'const run = () => runOxlint('),
+      actualConsumer.replaceAll('const run = runOxlint(', 'const runOxlint = replacement; const run = runOxlint('),
+    ]) {
+      write(root, consumer, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.source === consumer && fact.reason.startsWith('Native Oxlint'))).toBe(
+        false,
+      );
+    }
+    write(root, consumer, actualConsumer);
+    const actualParser = readFileSync(path.join(root, parser), 'utf-8');
+    for (const invalid of [
+      actualParser.replace("from 'node:fs'", fakeMtsImport),
+      actualParser.replace(
+        'const consumer = proof.load(filename);',
+        'const consumer = null; void "proof.load(filename)";',
+      ),
+      actualParser.replace(
+        'const owner = proof.imported(consumer, source);',
+        'const owner = null; void "proof.imported(consumer, source)";',
+      ),
+      actualParser.replace('owner?.exports.get(importedName)', 'owner?.exports.get("wrong")'),
+      actualParser.replace('path.resolve(path.dirname(model.filename), source)', 'path.resolve("/wrong", source)'),
+    ]) {
+      write(root, parser, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.reason.startsWith('Native factory parser'))).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'native Vitest importActual reads only explicit members through a proven URL alias and preserves neighboring exports',
+  Effect.fn(function* vitestNamespaceControls() {
+    const root = yield* fixture();
+    const owner = 'akros-storefront';
+    const config = `${owner}/vitest.config.ts`;
+    const consumer = `${owner}/tests/unit/catalog.test.ts`;
+    const producer = `${owner}/src/ontos/catalog-server.ts`;
+    write(
+      root,
+      `${owner}/package.json`,
+      '{"name":"@fixture/storefront","type":"module","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"5.0.2"}}',
+    );
+    symlinkSync(path.join(appRoot, owner, 'node_modules'), path.join(root, owner, 'node_modules'), 'dir');
+    const configuration = [
+      "import { fileURLToPath } from 'node:url'; import { defineConfig } from 'vitest/config';",
+      "export default defineConfig({ resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } }, test: { include: ['tests/unit/*.test.ts'] } });",
+    ].join('\n');
+    const source = [
+      "import { beforeEach, it, expect, vi } from 'vitest';",
+      "type Server = typeof import('@/ontos/catalog-server'); let server: Server;",
+      "beforeEach(async () => { server = await vi.importActual<Server>('@/ontos/catalog-server'); });",
+      "it('uses actual members', () => { expect(server.CATALOG_CACHE_MS + server.CATEGORY_CACHE_MS).toBe(3); server.getCategoryTree(); });",
+    ].join('\n');
+    write(root, config, configuration);
+    write(root, consumer, source);
+    write(
+      root,
+      producer,
+      'export const CATALOG_CACHE_MS = 1; export const CATEGORY_CACHE_MS = 2; export function getCategoryTree() { return []; } export const unusedNeighbor = 1;',
+    );
+    const consumerPath = path.join(root, auditConsumersFile);
+    const base = {
+      workspaces: { '.': { entry: [], project: [] }, [owner]: { entry: ['*.config.ts'], project: ['**/*.ts'] } },
+    };
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const targets = EffectArray.sort(
+      model.evidence.filter((fact) => fact.reason.startsWith(nativeVitestReason)).map((fact) => fact.target),
+      Order.String,
+    );
+    expect(targets).toEqual(
+      EffectArray.sort(
+        ['CATALOG_CACHE_MS', 'CATEGORY_CACHE_MS', 'getCategoryTree'].map((name) => `${producer}#${name}`),
+        Order.String,
+      ),
+    );
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    expect(report.issues.find((issue) => issue.file === producer)?.exports.map((item) => item.name)).toEqual([
+      unusedNeighborName,
+    ]);
+    const disconnected = yield* runPinnedKnip(root, consumerPath, { ...model, consumerSource: '' }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    const disconnectedReport = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(
+      disconnected.stdout,
+    );
+    expect(
+      EffectArray.sort(
+        disconnectedReport.issues.find((issue) => issue.file === producer)?.exports.map((item) => item.name) ?? [],
+        Order.String,
+      ),
+    ).toEqual(
+      EffectArray.sort(['CATALOG_CACHE_MS', 'CATEGORY_CACHE_MS', 'getCategoryTree', unusedNeighborName], Order.String),
+    );
+    for (const invalid of [
+      source.replace("from 'vitest'", fakeTsImport),
+      source.replace('beforeEach(async ()', 'unused(async ()'),
+      source.replace('server = await vi.importActual', 'const server = await vi.importActual'),
+      source.replace("it('uses", "server = replacement; it('uses"),
+      source.replace('server = await vi.importActual', 'vi.importActual = replacement; server = await vi.importActual'),
+      source
+        .replace('server.CATALOG_CACHE_MS + server.CATEGORY_CACHE_MS', '0')
+        .replace('server.getCategoryTree();', ''),
+    ]) {
+      write(root, consumer, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.reason.startsWith(nativeVitestReason))).toBe(false);
+    }
+    write(root, consumer, source);
+    for (const invalid of [
+      configuration.replace("from 'node:url'", fakeTsImport),
+      configuration.replace("from 'vitest/config'", fakeTsImport),
+      configuration.replace("new URL('./src', import.meta.url)", "new URL('./src', unknownBase)"),
+      configuration.replace('export default', 'const URL = replacement; export default'),
+      configuration.replace("['tests/unit/*.test.ts']", "['tests/other/*.test.ts']"),
+    ]) {
+      write(root, config, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.reason.startsWith(nativeVitestReason))).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'native import.meta.main operators require a direct imported Effect runtime, not inert or foreign runners',
+  Effect.fn(function* guardedOperatorControls() {
+    const root = yield* fixture();
+    const main = 'await Effect.runPromise(program);';
+    const source = `import { Effect } from 'effect'; const program = Effect.void; if (import.meta.main) { ${main} }`;
+    write(root, operatorFile, source);
+    write(root, 'scripts/exit.mts', source.replace(main, 'const exit = await Effect.runPromiseExit(program);'));
+    write(
+      root,
+      'scripts/runtime.mts',
+      `import { NodeRuntime } from '@effect/platform-node'; const program = replacement; if (import.meta.main) { NodeRuntime.runMain(program); }`,
+    );
+    const invalid = [
+      source.replace('import.meta.main', '!import.meta.main'),
+      source.replace('import.meta.main', 'options.main'),
+      source.replace(main, `const inert = async () => { ${main} };`),
+      source.replace(main, `void ${JSON.stringify(main)};`),
+      source.replace("from 'effect'", fakeMtsImport),
+      source.replace(main, `Effect.runPromise = replacement; ${main}`),
+      source.replace(main, 'Effect.runPromise(program);'),
+    ];
+    for (const [index, text] of invalid.entries()) {
+      write(root, `scripts/not-main-${index}.mts`, text);
+    }
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      { entry: [], node: false, project: [operatorScriptPattern] },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect(
+      EffectArray.sort(
+        model.evidence.filter((fact) => fact.reason.startsWith('Native import.meta.main')).map((fact) => fact.target),
+        Order.String,
+      ),
+    ).toEqual(['scripts/exit.mts', operatorFile, 'scripts/runtime.mts']);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const files = report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file);
+    for (const [index] of invalid.entries()) {
+      expect(files).toContain(`scripts/not-main-${index}.mts`);
+    }
+    expect(files).not.toContain(operatorFile);
+  }),
+);
+
+it.live(
+  'unguarded native Command CLIs and their documented side-effect wrappers retain nearby invalid controls',
+  Effect.fn(function* nativeCommandCliControls() {
+    const root = yield* fixture();
+    const imports =
+      "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; import { Command } from 'effect/cli';";
+    const command = "const command = Command.make('operator', {}, () => Effect.void);";
+    const pipeline = "Command.run(command, { version: '1' }).pipe(Effect.scoped)";
+    const main = `NodeRuntime.runMain(${pipeline});`;
+    const runMain = `${imports}\n${command}\n${main}`;
+    const awaited = `const exit = await Effect.runPromiseExit(${pipeline}, { signal: abort.signal });`;
+    const signal = `${imports}\n${command}\nconst abort = new AbortController();\n${awaited}`;
+    const commandFile = 'scripts/command-operator.mts';
+    const signalFile = 'scripts/signal-operator.mts';
+    const wrapperFile = 'scripts/command-wrapper.mts';
+    const usage = `// node ${wrapperFile} [--help]\n`;
+    const wrapper = `${usage}import './signal-operator.mts';`;
+    write(root, commandFile, runMain);
+    write(root, signalFile, signal);
+    write(root, wrapperFile, wrapper);
+    write(
+      root,
+      'scripts/command-alias.mts',
+      runMain.replaceAll('NodeRuntime', 'Runtime').replace('{ Runtime }', '{ NodeRuntime as Runtime }'),
+    );
+    const invalid = [
+      runMain.replace(main, `function unused() { ${main} }`),
+      runMain.replace('effect/cli', counterfeitModule),
+      runMain.replace(nativePlatformModule, counterfeitModule),
+      runMain.replace(main, `Command.run = replacement; ${main}`),
+      runMain.replace('Command.make', 'counterfeit.make'),
+      runMain.replace('Effect.scoped)', 'foreign.scoped)'),
+      signal.replace('await Effect.runPromiseExit', 'Effect.runPromiseExit'),
+      signal.replace(awaited, `async function unused() { ${awaited} }`),
+      signal.replace('new AbortController()', 'new ForeignController()'),
+      signal.replace('const abort =', 'const AbortController = replacement; const abort ='),
+      signal.replace('{ signal: abort.signal }', '{ signal: foreign.signal }'),
+      signal.replace('{ signal: abort.signal }', '{ ...options, signal: abort.signal }'),
+      signal.replace(awaited, `abort.signal = replacement; ${awaited}`),
+      signal.replace('const abort =', 'let abort ='),
+      signal.replace(awaited, `Effect.runPromiseExit = replacement; ${awaited}`),
+    ];
+    for (const [index, source] of invalid.entries()) {
+      write(root, `scripts/not-command-${index}.mts`, source);
+    }
+    const consumerPath = path.join(root, auditConsumersFile);
+    const base = { entry: [], node: false, project: [operatorScriptPattern] };
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const roots = model.evidence.filter(
+      (fact) =>
+        fact.reason.startsWith('Native top-level Command CLI') ||
+        fact.reason.startsWith('Documented direct-node wrapper'),
+    );
+    expect(
+      EffectArray.sort(
+        roots.map((fact) => fact.target),
+        Order.String,
+      ),
+    ).toEqual(EffectArray.sort([commandFile, signalFile, wrapperFile, 'scripts/command-alias.mts'], Order.String));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const files = report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file);
+    for (const file of [commandFile, signalFile, wrapperFile]) {
+      expect(files).not.toContain(file);
+    }
+    for (const [index] of invalid.entries()) {
+      expect(files).toContain(`scripts/not-command-${index}.mts`);
+    }
+    for (const source of [
+      wrapper.replace(usage, ''),
+      wrapper.replace(wrapperFile, `${wrapperFile}-other`),
+      wrapper.replace("import './signal-operator.mts'", "import { unused } from './signal-operator.mts'"),
+      `${usage}const inert = "import './signal-operator.mts'";`,
+      `${usage}import './not-command-0.mts';`,
+      `${usage}import './guarded-command.mts';`,
+    ]) {
+      write(root, 'scripts/guarded-command.mts', runMain.replace(main, `if (import.meta.main) { ${main} }`));
+      write(root, wrapperFile, source);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.source === wrapperFile && fact.kind === 'entry')).toBe(false);
+    }
+    // Parse actual operator bodies as source data, never import or execute their behavior.
+    const operators = [
+      'scripts/demo/migrate-domain-regroup-authorization.mts',
+      'scripts/demo/mcp-oauth-e2e/dev-session.mts',
+      'scripts/demo/mcp-oauth-e2e/prove-agent-entity.mts',
+      'scripts/demo/prove-agent-entity.mts',
+    ];
+    for (const file of operators) {
+      write(root, file, readFileSync(path.join(appRoot, file), 'utf-8'));
+    }
+    const actual = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+    for (const file of operators) {
+      expect(
+        actual.evidence.some((fact) => fact.source === file && fact.kind === 'entry'),
+        file,
+      ).toBe(true);
+    }
+  }),
+);
+
+it.live(
+  'route.meta duplicate policy requires native same-binding contracts and the generated named consumer',
+  Effect.fn(function* routeMetadataAliasControls() {
+    const root = yield* fixture();
+    // Replace only this fixture's owned symlink, never the shared installed dependency tree.
+    rmSync(path.join(root, 'node_modules'));
+    const generator = 'node_modules/@modern-js/ultramodern-create/dist/esm/ultramodern-workspace/routes.js';
+    const loader =
+      'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/generate-public-surface-assets.mjs';
+    const owner = 'apps/route-contract';
+    const route = `${owner}/src/routes/[lang]/set-password/route.meta.ts`;
+    const metadata = `${owner}/src/routes/ultramodern-route-metadata.ts`;
+    const source =
+      "export const routeMeta = { id: 'password', ownerAppId: 'route-contract', canonicalPath: '/set-password' }; export default routeMeta;";
+    const consumer =
+      "import { routeMeta as route0 } from './[lang]/set-password/route.meta'; export const ultramodernRouteMetadata = [route0] as const;";
+    const nativeGenerator = readFileSync(path.join(appRoot, generator), 'utf-8');
+    const nativeLoader = readFileSync(path.join(appRoot, loader), 'utf-8');
+    write(root, generator, nativeGenerator);
+    write(root, loader, nativeLoader);
+    write(root, `${owner}/package.json`, '{"name":"@fixture/route-contract","type":"module"}');
+    write(root, route, source);
+    write(root, metadata, consumer);
+    write(root, `${owner}/src/arbitrary.ts`, 'export const arbitrary = { id: 1 }; export default arbitrary;');
+    write(root, `${owner}/src/index.ts`, "import value, { arbitrary } from './arbitrary.ts'; void [value, arbitrary];");
+    const base = {
+      workspaces: {
+        '.': { entry: [], project: [] },
+        'apps/*': { entry: ['src/routes/**/*.ts', indexFile], project: ['src/**/*.ts'] },
+      },
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(model.evidence.some((fact) => fact.source === route && fact.kind === 'alias')).toBe(true);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    expect(report.issues.find((issue) => issue.file === route)?.duplicates ?? []).toEqual([]);
+    expect(report.issues.find((issue) => issue.file === `${owner}/src/arbitrary.ts`)?.duplicates.length).toBe(1);
+    for (const [file, invalid] of [
+      [route, source.replace('export default routeMeta;', 'export default { ...routeMeta };')],
+      [metadata, consumer.replace('[route0]', '[]')],
+      [metadata, consumer.replace('routeMeta as', 'other as')],
+      [generator, nativeGenerator.replace('export default routeMeta;', 'export default other;')],
+      [loader, nativeLoader.replace('module.routeMeta ??', 'module.wrong ??')],
+      [generator, `const inert = ${JSON.stringify(nativeGenerator)};`],
+    ]) {
+      write(root, file, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.source === route && fact.kind === 'alias')).toBe(false);
+      write(root, route, source);
+      write(root, metadata, consumer);
+      write(root, generator, nativeGenerator);
+      write(root, loader, nativeLoader);
+    }
+  }),
+);
+
+it.live(
+  'native runMain accepts an immutable Effect generator program but rejects foreign and inert operator lookalikes',
+  Effect.fn(function* generatorCliControls() {
+    const root = yield* fixture();
+    const source =
+      "import { NodeRuntime } from '@effect/platform-node'; import { Effect } from 'effect'; const program = Effect.gen(function* () { return 1; }); NodeRuntime.runMain(program);";
+    const file = 'scripts/sql-printer.mts';
+    write(root, file, source);
+    const invalid = [
+      source.replace("from 'effect'", fakeMtsImport),
+      source.replace(nativePlatformModule, counterfeitModule),
+      source.replace('const program', 'let program'),
+      source.replace(nativeProgramMain, 'program = replacement; NodeRuntime.runMain(program);'),
+      source.replace(nativeProgramMain, 'function unused() { NodeRuntime.runMain(program); }'),
+      source.replace('Effect.gen(function* () { return 1; })', 'foreign.gen(function* () { return 1; })'),
+      source.replace('Effect.gen(function* () { return 1; })', 'Effect.gen(() => 1)'),
+      source.replace(nativeProgramMain, 'NodeRuntime.runMain = replacement; NodeRuntime.runMain(program);'),
+    ];
+    for (const [index, text] of invalid.entries()) {
+      write(root, `scripts/not-generator-${index}.mts`, text);
+    }
+    const consumerPath = path.join(root, auditConsumersFile);
+    const base = { entry: [], node: false, project: [operatorScriptPattern] };
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(model.evidence.some((fact) => fact.source === file && fact.kind === 'entry')).toBe(true);
+    for (const [index] of invalid.entries()) {
+      expect(
+        model.evidence.some((fact) => fact.source === `scripts/not-generator-${index}.mts` && fact.kind === 'entry'),
+      ).toBe(false);
+    }
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    expect(report.issues.filter((issue) => issue.files.length > 0).map((issue) => issue.file)).not.toContain(file);
+    for (const [index] of invalid.entries()) {
+      expect(run.stdout).toContain(`scripts/not-generator-${index}.mts`);
+    }
+    const actual = 'verticals/facility-operations/scripts/seed/assets-sql.mts';
+    write(root, 'verticals/facility-operations/package.json', '{"name":"@fixture/facility","type":"module"}');
+    write(root, actual, readFileSync(path.join(appRoot, actual), 'utf-8'));
+    const real = yield* buildKnipModel(root, {
+      workspaces: { '.': base, 'verticals/*': { entry: [], project: [operatorScriptPattern] } },
+    }).pipe(Effect.provide(NodeServices.layer));
+    expect(real.evidence.some((fact) => fact.source === actual && fact.kind === 'entry')).toBe(true);
+  }),
+);
+
+it.live(
+  'native Rstest includes admit an exact colocated test and its real schema imports, not adjacent source',
+  Effect.fn(function* nativeRstestIncludeControls() {
+    const root = yield* fixture();
+    const owner = 'verticals/colocated';
+    const manifest = `${owner}/package.json`;
+    const config = `${owner}/rstest.config.ts`;
+    const test = `${owner}/src/routes/[lang]/documents.test.ts`;
+    const declarations = `${owner}/src/documents.ts`;
+    const script = '{"name":"@fixture/colocated","type":"module","scripts":{"test:unit":"rstest --project unit"}}';
+    const source =
+      "import { defineConfig } from '@rstest/core'; export default defineConfig({ name: 'unit', root: new URL('.', import.meta.url).pathname, include: ['src/routes/[[]lang]/documents.test.ts'] });";
+    write(root, manifest, script);
+    write(root, config, source);
+    write(
+      root,
+      declarations,
+      'export const DocumentSchema = 1; export const DocumentVersionSchema = 2; export const unusedNeighbor = 3;',
+    );
+    write(
+      root,
+      test,
+      "import { it } from 'effect-rstest'; import { DocumentSchema, DocumentVersionSchema } from '../../documents.ts'; it('consumes schemas', () => { void [DocumentSchema, DocumentVersionSchema]; });",
+    );
+    write(root, `${owner}/src/routes/[lang]/not-a-test.ts`, unusedNeighborSource);
+    const base = {
+      workspaces: {
+        '.': { entry: [], project: [] },
+        'verticals/*': { entry: [], project: ['**/*.ts'], rstest: { config: [], entry: ['tests/**/*.test.ts'] } },
+      },
+    };
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(
+      model.evidence
+        .filter((fact) => fact.reason.startsWith('Native manifest-invoked Rstest'))
+        .map((fact) => fact.target),
+    ).toEqual(['src/routes/[lang]/documents.test.ts']);
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    expect(report.issues.find((issue) => issue.file === declarations)?.exports.map((item) => item.name)).toEqual([
+      unusedNeighborName,
+    ]);
+    expect(report.issues.find((issue) => issue.file === `${owner}/src/routes/[lang]/not-a-test.ts`)?.files.length).toBe(
+      1,
+    );
+    for (const [file, invalid] of [
+      [config, source.replace('@rstest/core', counterfeitModule)],
+      [config, source.replace("new URL('.',", "new URL('../',")],
+      [config, source.replace('export default defineConfig(', 'const inert = defineConfig(')],
+      [config, source.replace("name: 'unit'", "name: 'other'")],
+      [config, source.replace('include: [', "exclude: ['**/*'], include: [")],
+      [manifest, script.replace('rstest --project unit', 'echo rstest --project unit')],
+    ]) {
+      write(root, file, invalid);
+      const control = yield* buildKnipModel(root, base).pipe(Effect.provide(NodeServices.layer));
+      expect(control.evidence.some((fact) => fact.reason.startsWith('Native manifest-invoked Rstest'))).toBe(false);
+      write(root, config, source);
+      write(root, manifest, script);
+    }
+  }),
+);

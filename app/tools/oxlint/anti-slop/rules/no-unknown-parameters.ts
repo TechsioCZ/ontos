@@ -1,5 +1,6 @@
 import { defineRule } from "@oxlint/plugins";
 import { genericJsonCanonicalizerProof } from "../../shared/generic-json-canonicalizer.ts";
+import { isDecodedUnknownParameter } from "../shared/decoded-unknown-parameter.ts";
 
 import {
   parameterAnnotation,
@@ -22,7 +23,7 @@ function parameterName(parameter: Parameter, sourceText: string): string {
     : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
 }
 
-/** Disallow unparsed inputs except error causes and proved generic JSON normalization boundaries. */
+/** Disallow unparsed inputs except error causes and proved native decoder or JSON normalization boundaries. */
 export const noUnknownParametersRule = defineRule({
   meta: {
     type: "problem",
@@ -44,6 +45,7 @@ export const noUnknownParametersRule = defineRule({
         if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;
         const name = parameterName(parameter, context.sourceCode.getText(parameter));
         if (name === "cause") continue;
+        if (isDecodedUnknownParameter(context, node, parameter)) continue;
         context.report({
           node: annotation.typeAnnotation,
           messageId: "unknownParameter",

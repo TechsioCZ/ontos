@@ -1,21 +1,24 @@
+import { optionalField } from '../../../../../shared/domain/common.ts';
 // Finance remains the owner of incoming invoices; resolve references through its governed public read.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
 import { readFinance } from '../../../../api/finance-reads.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePurchasingT } from './purchasing-model.ts';
 
 import { matchingIncomingInvoice } from './purchase-invoice-match.ts';
 import type { IncomingInvoiceLink } from './purchase-invoice-match.ts';
 
 type FinanceLinks =
-  | { readonly status: 'loading' | 'unavailable' }
+  | { readonly status: 'loading' }
+  | { readonly cause: Effect.Error<ReturnType<typeof readFinance>>; readonly status: 'unavailable' }
   | {
-      readonly status: 'ready';
       /** Finance decides whether this person may create invoice drafts; provoz only mirrors it. */
       readonly canWrite: boolean;
       readonly invoices: readonly IncomingInvoiceLink[];
+      readonly status: 'ready';
     };
 
 export type { FinanceLinks };
@@ -25,27 +28,33 @@ export const useIncomingInvoiceLinks = (refresh = 0): FinanceLinks => {
   useEffect(() => {
     let alive = true;
     void browserRuntime.runPromise(
-      readFinance('facility-operations.purchase-invoice-links').pipe(
+      readFinance(`facility-operations.purchase-invoice-links.${refresh}`).pipe(
         Effect.match({
-          onFailure: (): FinanceLinks => ({ status: 'unavailable' }),
+          onFailure: (cause): FinanceLinks => ({ cause, status: 'unavailable' }),
           onSuccess: (records): FinanceLinks => ({
-            status: 'ready',
             canWrite: records.canWrite,
-            invoices: records.state.invoices
-              .filter((invoice) => invoice.direction === 'INCOMING' && invoice.businessState !== 'VOIDED')
-              .map((invoice) => ({
-                number: invoice.documentNumber,
-                resourceId: invoice.ref.resourceId,
-                supplier: invoice.counterpartyName,
-                ...(invoice.sourceOrder === undefined ? {} : { sourceOrder: invoice.sourceOrder }),
-              })),
+            invoices: records.state.invoices.flatMap((invoice) =>
+              invoice.direction === 'INCOMING' && invoice.businessState !== 'VOIDED'
+                ? [
+                    {
+                      number: invoice.documentNumber,
+                      resourceId: invoice.ref.resourceId,
+                      supplier: invoice.counterpartyName,
+                      ...optionalField('sourceOrder', invoice.sourceOrder),
+                    },
+                  ]
+                : [],
+            ),
+            status: 'ready',
           }),
         }),
-        Effect.map((next) => {
-          if (alive) {
-            setState(next);
-          }
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {
@@ -74,7 +83,7 @@ export const FinanceInvoiceLink = ({
       </span>
     );
   }
-  const lang = language.startsWith('en') ? 'en' : 'cs';
+  const lang = langOf(language.slice(0, 2));
   return (
     <a
       className="font-medium text-fg-primary underline underline-offset-2"

@@ -2,6 +2,8 @@ import path from 'node:path';
 
 import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
+import { parseSync } from 'oxc-parser';
+import type { Declaration, ExportNamedDeclaration } from 'oxc-parser';
 
 import {
   DelimiterDepth,
@@ -3032,9 +3034,6 @@ const publicContractSpecifier = (source: string): string | undefined =>
   /^\/\/ @ontos-public-contract (?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)$/mu.exec(source)?.groups
     ?.specifier;
 
-const isExactPublicContractShim = (source: string, header: string, specifier: string): boolean =>
-  source === `${header}// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`;
-
 const publicContractSpecifierParts = (specifier: string): PublicContractSpecifierParts | undefined => {
   const [scope, packageStem, ...subpathSegments] = specifier.split('/');
   return scope !== '@app' || packageStem === undefined || subpathSegments.length === 0
@@ -3079,6 +3078,200 @@ const publicContractSourceLocation = (
   const sourcePath = path.posix.normalize(path.posix.join(packageDirectory, exportedPath));
   return sourcePath.startsWith(`${packageDirectory}/`) ? { packageDirectory, sourcePath } : undefined;
 };
+
+const resolvePublicContractReexport = (
+  sources: ReadonlyMap<string, string>,
+  specifier: string,
+): ResolvedPublicContract | undefined => {
+  const parts = publicContractSpecifierParts(specifier);
+  if (parts === undefined) {
+    return undefined;
+  }
+  const manifests = publicContractPackageManifests(sources, parts.packageName);
+  const entry = manifests.length === 1 ? manifests[0] : undefined;
+  const location =
+    entry === undefined ? undefined : publicContractSourceLocation(entry[0], entry[1].exports[parts.exportName]);
+  const source = location === undefined ? undefined : sources.get(location.sourcePath);
+  return location === undefined || source === undefined
+    ? undefined
+    : { packagePath: location.packageDirectory, source, sourcePath: location.sourcePath, specifier };
+};
+
+const collectPublicContractDeclaration = (declaration: Declaration | null, exports: Map<string, boolean>): boolean => {
+  if (declaration === null) {
+    return false;
+  }
+  if (declaration.type === 'VariableDeclaration') {
+    for (const binding of declaration.declarations) {
+      if (binding.id.type !== 'Identifier' || exports.has(binding.id.name)) {
+        return false;
+      }
+      exports.set(binding.id.name, false);
+    }
+    return true;
+  }
+  if (
+    declaration.type !== 'FunctionDeclaration' &&
+    declaration.type !== 'ClassDeclaration' &&
+    declaration.type !== 'TSTypeAliasDeclaration' &&
+    declaration.type !== 'TSInterfaceDeclaration'
+  ) {
+    return false;
+  }
+  if (declaration.id === null || exports.has(declaration.id.name)) {
+    return false;
+  }
+  exports.set(
+    declaration.id.name,
+    declaration.type === 'TSTypeAliasDeclaration' || declaration.type === 'TSInterfaceDeclaration',
+  );
+  return true;
+};
+
+const collectPublicContractReexports = (
+  statement: ExportNamedDeclaration,
+  expected: ReadonlyMap<string, boolean>,
+  exports: Map<string, boolean>,
+  unchangedNames: boolean,
+): boolean => {
+  if (statement.attributes.length !== 0) {
+    return false;
+  }
+  for (const binding of statement.specifiers) {
+    const typeOnly = statement.exportKind === 'type' || binding.exportKind === 'type';
+    if (
+      binding.local.type !== 'Identifier' ||
+      binding.exported.type !== 'Identifier' ||
+      (unchangedNames && binding.local.name !== binding.exported.name) ||
+      expected.get(binding.local.name) !== typeOnly ||
+      exports.has(binding.exported.name)
+    ) {
+      return false;
+    }
+    exports.set(binding.exported.name, typeOnly);
+  }
+  return true;
+};
+
+const publicContractExports = (
+  contract: ResolvedPublicContract,
+  sources: ReadonlyMap<string, string>,
+  visited: ReadonlySet<string> = new Set(),
+): ReadonlyMap<string, boolean> | undefined => {
+  if (visited.has(contract.sourcePath)) {
+    return undefined;
+  }
+  const parsed = parseSync(contract.sourcePath, contract.source);
+  if (parsed.errors.length !== 0) {
+    return undefined;
+  }
+  const exports = new Map<string, boolean>();
+  for (const statement of parsed.program.body) {
+    if (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportDefaultDeclaration') {
+      return undefined;
+    }
+    if (statement.type !== 'ExportNamedDeclaration') {
+      continue;
+    }
+    if (statement.source !== null) {
+      const target = resolvePublicContractReexport(sources, statement.source.value);
+      const targetExports =
+        target === undefined
+          ? undefined
+          : publicContractExports(target, sources, new Set([...visited, contract.sourcePath]));
+      if (targetExports === undefined || !collectPublicContractReexports(statement, targetExports, exports, false)) {
+        return undefined;
+      }
+    } else if (!collectPublicContractDeclaration(statement.declaration, exports)) {
+      return undefined;
+    }
+  }
+  return exports.size === 0 ? undefined : exports;
+};
+
+const declaredPublicContractExports = (source: string): ReadonlyMap<string, boolean> | undefined => {
+  const parsed = parseSync('public-contract-producer.ts', source);
+  if (parsed.errors.length !== 0) {
+    return undefined;
+  }
+  const exports = new Map<string, boolean>();
+  for (const statement of parsed.program.body) {
+    if (statement.type === 'ExportAllDeclaration' || statement.type === 'ExportDefaultDeclaration') {
+      return undefined;
+    }
+    if (statement.type === 'ExportNamedDeclaration') {
+      if (statement.source === null) {
+        if (!collectPublicContractDeclaration(statement.declaration, exports)) {
+          return undefined;
+        }
+      } else {
+        if (statement.attributes.length !== 0) {
+          return undefined;
+        }
+        for (const binding of statement.specifiers) {
+          if (
+            binding.local.type !== 'Identifier' ||
+            binding.exported.type !== 'Identifier' ||
+            exports.has(binding.exported.name)
+          ) {
+            return undefined;
+          }
+          exports.set(binding.exported.name, statement.exportKind === 'type' || binding.exportKind === 'type');
+        }
+      }
+    }
+  }
+  return exports.size === 0 ? undefined : exports;
+};
+
+/** Owner facades must forward the producer's exports without adding executable code or changing bindings. */
+const forwardsPublicContractExports = (
+  source: string,
+  specifier: string,
+  expected: ReadonlyMap<string, boolean> | undefined,
+): boolean => {
+  const parsed = parseSync('public-contract-facade.ts', source);
+  if (parsed.errors.length !== 0) {
+    return false;
+  }
+  const statements = parsed.program.body;
+  const onlyStatement = statements.length === 1 ? statements[0] : undefined;
+  if (onlyStatement?.type === 'ExportAllDeclaration') {
+    return (
+      onlyStatement.exported === null &&
+      onlyStatement.exportKind === 'value' &&
+      onlyStatement.attributes.length === 0 &&
+      onlyStatement.source.value === specifier
+    );
+  }
+  if (expected === undefined) {
+    return false;
+  }
+  const forwarded = new Map<string, boolean>();
+  for (const statement of statements) {
+    if (
+      statement.type !== 'ExportNamedDeclaration' ||
+      statement.declaration !== null ||
+      statement.source?.value !== specifier ||
+      !collectPublicContractReexports(statement, expected, forwarded, true)
+    ) {
+      return false;
+    }
+  }
+  return forwarded.size === expected.size;
+};
+
+const hasPublicContractForwarding = (
+  source: string,
+  contract: ResolvedPublicContract,
+  sources: ReadonlyMap<string, string>,
+): boolean => forwardsPublicContractExports(source, contract.specifier, publicContractExports(contract, sources));
+
+/** Scaffold reruns compare the facade with its producer's declared exports; the complete seam also resolves upstream exports. */
+export const hasGeneratedPublicContractFacade = (source: string, specifier: string, producerSource: string): boolean =>
+  source.startsWith(MODULE_API_HEADER) &&
+  publicContractSpecifier(source) === specifier &&
+  forwardsPublicContractExports(source, specifier, declaredPublicContractExports(producerSource));
 
 const resolvePublicContract = (
   sources: ReadonlyMap<string, string>,
@@ -3204,9 +3397,7 @@ const hasValidPublicContributionSourcePaths = (
 ): input is ValidPublicContributionSourceInput =>
   input.contribution.kind === MODULE_API_KIND &&
   input.contractSpecifier !== undefined &&
-  input.clientSpecifier === `${input.contractSpecifier}/client` &&
-  isExactPublicContractShim(input.ownerContractSource, input.header, input.contractSpecifier) &&
-  isExactPublicContractShim(input.candidates.ownerClientSource, input.header, input.clientSpecifier);
+  input.clientSpecifier === `${input.contractSpecifier}/client`;
 
 const resolvePublicContributionSources = (
   input: ValidPublicContributionSourceInput,
@@ -3219,6 +3410,8 @@ const resolvePublicContributionSources = (
     contract.packagePath === client.packagePath &&
     contract.source.startsWith(input.header) &&
     client.source.startsWith(input.header) &&
+    hasPublicContractForwarding(input.ownerContractSource, contract, input.sources) &&
+    hasPublicContractForwarding(input.candidates.ownerClientSource, client, input.sources) &&
     hasActionBoundaryGateway(
       input.sources.get(`${contract.packagePath}/src/api/action-gateway.ts`),
       input.deploymentAppId,
@@ -3478,6 +3671,7 @@ const hasCompleteGeneratedContributions = (
 ): boolean => {
   const contributions = generatedReadContributions(sources, inputs.verticalPath);
   if (contributions.length === 0) {
+    diagnostics?.push('no generated read contracts with valid provenance');
     return false;
   }
   if (!hasMatchingModuleApiSlots(inputs.manifest, inputs.registration, contributions)) {

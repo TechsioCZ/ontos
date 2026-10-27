@@ -52,7 +52,7 @@ export interface CatalogParameter {
   unit: string;
 }
 
-export interface CatalogProductDetail {
+interface CatalogProductDetail {
   descriptionParagraphs: string[];
   parameters: CatalogParameter[];
   priceTiers: CatalogPriceTier[];
@@ -133,7 +133,7 @@ export interface CatalogPromotionItem {
   kind: "action" | "sale";
 }
 
-export type CatalogProductSummaryStock =
+type CatalogProductSummaryStock =
   | {
       kind: "quantity";
       minimumQuantity: number;

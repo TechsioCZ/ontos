@@ -1,5 +1,6 @@
-import { DateTime } from 'effect';
+import { DateTime, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { Invoice } from '../../shared/apis/records.ts';
 import { formatProblemReason, isProblemReason } from '../../shared/domain/problem-reason.ts';
@@ -88,11 +89,11 @@ describe('Finance reference credentials', () => {
   });
 
   it('lets the server read export partners from the party registry itself', () => {
-    const command = {
+    const command = Schema.decodeSync(FinanceCommandSchema)({
       _tag: 'CreateAccountingExport',
       format: 'POHODA_XML',
       invoiceResourceIds: ['a'],
-    } as const satisfies FinanceCommand;
+    });
 
     expect(commandReferenceAudiences(command, [])).toEqual(['party-registry']);
   });

@@ -1,5 +1,18 @@
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Stream } from 'effect';
+import {
+  ConfigProvider,
+  Context,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Schema,
+  Stream,
+} from 'effect';
 import { TestClock } from 'effect/testing';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -379,48 +392,81 @@ it.effect('a recovery layer configuration failure fails the owner entry', () =>
   }),
 );
 
-it.live('the real host SIGTERM boundary waits for outbox and recovery disposal', () =>
-  Effect.scoped(
-    Effect.gen(function* realSignalDisposesBothLoops() {
-      const nodeServices = yield* Layer.build(NodeServices.layer);
-      return yield* Effect.gen(function* signalProof() {
-        const child = yield* ChildProcess.make(
-          process.execPath,
-          ['--experimental-strip-types', 'tests/support/enrollment-recovery-host.fixture.ts'],
-          {
-            cwd: new URL('../..', import.meta.url).pathname,
-            env: { OUTBOX_WORKER_POLL_INTERVAL_MS: '10' },
-            extendEnv: false,
-            forceKillAfter: '1 second',
-            stderr: 'pipe',
-            stdin: 'ignore',
-            stdout: 'pipe',
-          },
-        );
-        const discovered = yield* Deferred.make<null>();
-        const output = yield* child.stdout.pipe(
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.tap((line) =>
-            line === 'recovery-discovered' ? Deferred.succeed(discovered, null).pipe(Effect.asVoid) : Effect.void,
-          ),
-          Stream.runCollect,
-          Effect.forkChild,
-        );
-        const errors = yield* child.stderr.pipe(Stream.decodeText(), Stream.mkString, Effect.forkChild);
-        yield* Deferred.await(discovered).pipe(
-          Effect.raceFirst(child.exitCode.pipe(Effect.andThen(Effect.die('Host exited before recovery discovery')))),
-          Effect.timeout('10 seconds'),
-        );
-        yield* child.kill({ killSignal: 'SIGTERM' });
-        const [code, lines, stderr] = yield* Effect.all([child.exitCode, Fiber.join(output), Fiber.join(errors)], {
-          concurrency: 3,
-        }).pipe(Effect.timeout('3 seconds'));
+const signalHostSetupTimeoutMs = 10_000;
+const signalHostShutdownTimeoutMs = 3000;
+
+const makeRecoverySignalHost = Effect.gen(function* makeRecoverySignalHost() {
+  const nodeServices = yield* Layer.build(NodeServices.layer);
+  return yield* Effect.gen(function* readySignalHost() {
+    const child = yield* ChildProcess.make(
+      process.execPath,
+      ['--experimental-strip-types', 'tests/support/enrollment-recovery-host.fixture.ts'],
+      {
+        cwd: new URL('../..', import.meta.url).pathname,
+        env: { OUTBOX_WORKER_POLL_INTERVAL_MS: '10' },
+        extendEnv: false,
+        forceKillAfter: '1 second',
+        stderr: 'pipe',
+        stdin: 'ignore',
+        stdout: 'pipe',
+      },
+    );
+    const outboxStarted = yield* Deferred.make<null>();
+    const discovered = yield* Deferred.make<null>();
+    const output = yield* child.stdout.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.tap((line) => {
+        if (line === 'outbox-started') {
+          return Deferred.succeed(outboxStarted, null).pipe(Effect.asVoid);
+        }
+        return line === 'recovery-discovered' ? Deferred.succeed(discovered, null).pipe(Effect.asVoid) : Effect.void;
+      }),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    const errors = yield* child.stderr.pipe(Stream.decodeText(), Stream.mkString, Effect.forkScoped);
+    yield* Effect.all([Deferred.await(outboxStarted), Deferred.await(discovered)], {
+      concurrency: 2,
+      discard: true,
+    }).pipe(
+      Effect.raceFirst(
+        child.exitCode.pipe(Effect.andThen(Effect.die('Host exited before outbox and recovery readiness'))),
+      ),
+    );
+    return {
+      shutdown: child.kill({ killSignal: 'SIGTERM' }).pipe(
+        Effect.andThen(
+          Effect.all([child.exitCode, Fiber.join(output), Fiber.join(errors)], {
+            concurrency: 3,
+          }),
+        ),
+        Effect.timeout(signalHostShutdownTimeoutMs),
+      ),
+    };
+  }).pipe(Effect.provideContext(nodeServices));
+}).pipe(Effect.timeout(signalHostSetupTimeoutMs));
+
+class RecoverySignalHost extends Context.Service<RecoverySignalHost, Effect.Success<typeof makeRecoverySignalHost>>()(
+  '@app/commerce-customer-context/tests/unit/enrollment-recovery-runtime.test/RecoverySignalHost',
+) {}
+
+it.layer(Layer.effect(RecoverySignalHost, makeRecoverySignalHost), {
+  excludeTestServices: true,
+  // Only fixture hooks get the existing 10-second setup plus a 3-second cleanup envelope.
+  timeout: signalHostSetupTimeoutMs + signalHostShutdownTimeoutMs,
+})((suite) => {
+  suite.effect(
+    'the real host SIGTERM boundary waits for outbox and recovery disposal',
+    () =>
+      Effect.gen(function* realSignalDisposesBothLoops() {
+        const host = yield* RecoverySignalHost;
+        const [code, lines, stderr] = yield* host.shutdown;
         expect(Number(code), stderr).toBe(0);
         expect(lines.join('\n')).toContain('outbox-disposed');
         expect(lines.join('\n')).toContain('recovery-disposed');
         expect(lines.join('\n')).toContain('Outbox Worker host received SIGTERM; shutting down');
-      }).pipe(Effect.provideContext(nodeServices));
-    }),
-  ),
-);
+      }),
+    5000,
+  );
+});

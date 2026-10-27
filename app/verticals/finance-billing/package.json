@@ -69,7 +69,8 @@
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "@noble/hashes": "2.2.0",
-    "@modern-js/backend-federation-contracts": "catalog:ultramodern"
+    "@modern-js/backend-federation-contracts": "catalog:ultramodern",
+    "@app/email-delivery": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.53.1",

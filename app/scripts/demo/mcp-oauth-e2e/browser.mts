@@ -1,152 +1,315 @@
-import { mkdirSync } from 'node:fs';
+import type {
+  Browser as NativeBrowser,
+  BrowserContext as NativeBrowserContext,
+  BrowserContextOptions as NativeBrowserContextOptions,
+  BrowserType,
+  Page,
+} from 'playwright-core';
+import { Cause, Config, Effect, Exit, FileSystem, Option, Predicate, Redacted, Schema } from 'effect';
 
-// Structural types so this module does not import playwright directly.
+// Native browser capabilities stay owned by the pinned Playwright SDK.
+export type E2ePage = Pick<
+  Page,
+  'click' | 'fill' | 'getByRole' | 'getByText' | 'goto' | 'screenshot' | 'url' | 'waitForURL'
+> & {
+  readonly request: Pick<Page['request'], 'post'>;
+};
 
-export interface E2eLocator {
-  click(options?: { timeout?: number }): Promise<void>;
-  first(): E2eLocator;
-  count(): Promise<number>;
-  waitFor(options?: { timeout?: number }): Promise<void>;
-}
+export class BrowserDriverFailure extends Schema.TaggedError<BrowserDriverFailure>()('BrowserDriverFailure', {
+  cause: Schema.Defect(),
+  operation: Schema.String,
+}) {}
 
-export interface E2eApiResponse {
-  status(): number;
-  text(): Promise<string>;
-}
-
-export interface E2ePage {
-  goto(url: string, options?: { waitUntil?: 'load' | 'domcontentloaded' }): Promise<unknown>;
-  url(): string;
-  fill(selector: string, value: string): Promise<void>;
-  click(selector: string): Promise<void>;
-  getByText(text: string, options?: { exact?: boolean }): E2eLocator;
-  getByRole(role: 'button' | 'radio' | 'link', options: { name: string }): E2eLocator;
-  waitForURL(url: (url: URL) => boolean, options?: { timeout?: number }): Promise<void>;
-  screenshot(options: { path: string; fullPage?: boolean }): Promise<unknown>;
-  request: {
-    post(url: string, options: { data: unknown; headers?: Record<string, string> }): Promise<E2eApiResponse>;
-  };
-}
-
+/** The owned handle exposes Effect cleanup; only the foreign tab has a Promise close method. */
 export interface E2eTab {
+  readonly close: Effect.Effect<void, BrowserDriverFailure>;
   readonly page: E2ePage;
-  close(): Promise<void>;
 }
+
+type BrowserContextOptions = Pick<NativeBrowserContextOptions, 'viewport'>;
+type BrowserContext = Pick<NativeBrowserContext, 'close' | 'newPage'>;
+type Browser = Pick<NativeBrowser, 'close' | 'newContext'>;
+type Launcher = Pick<BrowserType, 'launch'>;
+
+// The external managed bridge has no published declaration. Its page, options and close
+// capabilities come from the SDK; only this bridge-specific entrypoint is declared here.
+type ForeignTab = Pick<NativeBrowserContext, 'close'> & { readonly page: E2ePage };
+interface SharedClient {
+  readonly openTab: (options: BrowserContextOptions) => Promise<ForeignTab>;
+}
+
+const LauncherSchema = Schema.Struct({
+  launch: Schema.declare<Launcher['launch']>((value): value is Launcher['launch'] => Predicate.isFunction(value)),
+});
+const SharedClientSchema = Schema.Struct({
+  openTab: Schema.declare<SharedClient['openTab']>((value): value is SharedClient['openTab'] =>
+    Predicate.isFunction(value),
+  ),
+});
+const BrowserModuleSchema = Schema.Struct({
+  chromium: Schema.optionalKey(LauncherSchema),
+  default: Schema.optionalKey(Schema.Struct({ chromium: LauncherSchema })),
+});
+
+const ownedTab = (page: E2ePage, cleanup: Effect.Effect<void, BrowserDriverFailure>): E2eTab => {
+  let closed = false;
+  return {
+    close: Effect.uninterruptible(
+      Effect.suspend(() => {
+        if (closed) {
+          return Effect.void;
+        }
+        closed = true;
+        return cleanup;
+      }),
+    ),
+    page,
+  };
+};
+
+const closeContextAndBrowser = (context: BrowserContext, browser: Browser) =>
+  Effect.gen(function* closeBrowser() {
+    const contextExit = yield* Effect.exit(
+      Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'context.close' }),
+        try: async () => await context.close(),
+      }),
+    );
+    const browserExit = yield* Effect.exit(
+      Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.close' }),
+        try: async () => await browser.close(),
+      }),
+    );
+    if (Exit.isFailure(contextExit)) {
+      return yield* Effect.failCause(
+        Exit.isFailure(browserExit) ? Cause.combine(contextExit.cause, browserExit.cause) : contextExit.cause,
+      );
+    }
+    if (Exit.isFailure(browserExit)) {
+      return yield* Effect.failCause(browserExit.cause);
+    }
+    return yield* Effect.void;
+  });
 
 export const WRITE_MODE_LABEL = {
-  read_only: 'Jen čtení',
   approval: 'Navrhovat změny ke schválení',
   direct: 'Provádět změny přímo',
+  read_only: 'Jen čtení',
 } as const;
 
-export type ActAs = { readonly kind: 'me' } | { readonly kind: 'agent'; readonly agentName: string };
+export type ActAs = { readonly kind: 'me' } | { readonly agentName: string; readonly kind: 'agent' };
 
-/**
- * Opens one tab on the machine-wide shared headless browser (max 2 sessions; see browser-concurrency-cap).
- * On a CI runner, E2E_PLAYWRIGHT_MODULE names a Playwright module and the proof launches its own headless Chromium.
- */
-export async function openSharedTab(): Promise<E2eTab> {
-  const playwrightModule = process.env.E2E_PLAYWRIGHT_MODULE;
-  if (playwrightModule) {
-    type Launcher = {
-      launch(): Promise<{
-        newContext(options: object): Promise<{ newPage(): Promise<E2ePage>; close(): Promise<void> }>;
-        close(): Promise<void>;
-      }>;
-    };
-    const mod = (await import(playwrightModule)) as { chromium?: Launcher; default?: { chromium: Launcher } };
-    const chromium = mod.chromium ?? mod.default?.chromium;
-    if (!chromium) throw new Error(`${playwrightModule} exports no chromium launcher`);
-    const browser = await chromium.launch();
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const page = await context.newPage();
-    return {
-      page,
-      close: async () => {
-        await context.close();
-        await browser.close();
-      },
-    };
-  }
-  // A string-typed variable keeps TypeScript from resolving the untyped .mjs module.
-  const clientPath: string = '/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs';
-  const mod = (await import(clientPath)) as { openTab: (options?: object) => Promise<E2eTab> };
-  return await mod.openTab({ viewport: { width: 1440, height: 900 } });
-}
+/** Opens one owned shared tab, or a CI-owned Playwright browser when configured. */
+export const openSharedTab = () =>
+  Effect.gen(function* openBrowserTab() {
+    const playwrightModule = yield* Config.String('E2E_PLAYWRIGHT_MODULE').pipe(Config.withDefault(''));
+    const options: BrowserContextOptions = { viewport: { height: 900, width: 1440 } };
+    if (playwrightModule !== '') {
+      const imported = yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import Playwright' }),
+        try: async () => Schema.decodeUnknownResult(BrowserModuleSchema)(await import(playwrightModule)),
+      });
+      const mod = yield* Effect.fromResult(imported);
+      const chromium = mod.chromium ?? mod.default?.chromium;
+      if (chromium === undefined) {
+        return yield* new BrowserDriverFailure({
+          cause: `${playwrightModule} exports no chromium launcher`,
+          operation: 'load Playwright',
+        });
+      }
+      const browser = yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'chromium.launch' }),
+        try: async () => await chromium.launch(),
+      });
+      const context = yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.newContext' }),
+        try: async () => await browser.newContext(options),
+      }).pipe(
+        Effect.onError(() =>
+          Effect.tryPromise({
+            catch: (cause) => new BrowserDriverFailure({ cause, operation: 'browser.close' }),
+            try: async () => await browser.close(),
+          }).pipe(Effect.orDie),
+        ),
+      );
+      const page = yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'context.newPage' }),
+        try: async () => await context.newPage(),
+      }).pipe(Effect.onError(() => closeContextAndBrowser(context, browser).pipe(Effect.orDie)));
+      return ownedTab(page, closeContextAndBrowser(context, browser));
+    }
+    const clientPath = '/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs';
+    const imported = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'import shared browser' }),
+      try: async () => Schema.decodeUnknownResult(SharedClientSchema)(await import(clientPath)),
+    });
+    const client = yield* Effect.fromResult(imported);
+    const tab = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.openTab' }),
+      try: async () => await client.openTab(options),
+    });
+    return ownedTab(
+      tab.page,
+      Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'shared.closeTab' }),
+        try: async () => await tab.close(),
+      }),
+    );
+  });
 
-export async function loginIfNeeded(page: E2ePage, email: string, password: string): Promise<void> {
-  if (!new URL(page.url()).pathname.startsWith('/cs/login')) {
-    return;
-  }
-  await page.fill('input[autocomplete="username"]', email);
-  await page.fill('input[autocomplete="current-password"]', password);
-  await page.click('button[type="submit"]');
-}
+export const loginIfNeeded = (page: E2ePage, email: string, password: Redacted.Redacted) =>
+  Effect.gen(function* login() {
+    const url = yield* Effect.try({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'page.url' }),
+      try: () => new URL(page.url()),
+    });
+    if (!url.pathname.startsWith('/cs/login')) {
+      return;
+    }
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'fill username' }),
+      try: async () => await page.fill('input[autocomplete="username"]', email),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'fill password' }),
+      try: async () => await page.fill('input[autocomplete="current-password"]', Redacted.value(password)),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'submit login' }),
+      try: async () => await page.click('button[type="submit"]'),
+    });
+  });
 
-export async function ensureLoggedIn(page: E2ePage, shellUrl: string, email: string, password: string): Promise<void> {
-  await page.goto(`${shellUrl}/cs/login`, { waitUntil: 'domcontentloaded' });
-  await loginIfNeeded(page, email, password);
-  await page.waitForURL((url) => !url.pathname.startsWith('/cs/login'), { timeout: 30_000 });
-}
+export const ensureLoggedIn = (page: E2ePage, shellUrl: string, email: string, password: Redacted.Redacted) =>
+  Effect.gen(function* ensureLogin() {
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'open login' }),
+      try: async () => await page.goto(`${shellUrl}/cs/login`, { waitUntil: 'domcontentloaded' }),
+    });
+    yield* loginIfNeeded(page, email, password);
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for login' }),
+      try: async () => await page.waitForURL((url) => !url.pathname.startsWith('/cs/login'), { timeout: 30_000 }),
+    });
+  });
 
-/** Drives the consent screens (/cs/pripojit) for one authorization URL; ends when the callback redirect lands. */
-export async function approveConnection(
+/** Drives consent and finishes after the callback redirect lands. */
+export const approveConnection = (
   page: E2ePage,
   authorizationUrl: string,
   opts: {
-    email: string;
-    password: string;
     actAs: ActAs;
-    writeMode: keyof typeof WRITE_MODE_LABEL;
-    shotsDir: string;
+    email: string;
+    password: Redacted.Redacted;
     shotPrefix: string;
+    shotsDir: string;
+    writeMode: keyof typeof WRITE_MODE_LABEL;
   },
-): Promise<void> {
-  mkdirSync(opts.shotsDir, { recursive: true });
-  await page.goto(authorizationUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForURL((u) => u.pathname.startsWith('/cs/login') || u.pathname.startsWith('/cs/pripojit'), {
-    timeout: 30_000,
+) =>
+  Effect.gen(function* approveConsent() {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(opts.shotsDir, { recursive: true });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'open authorization' }),
+      try: async () => await page.goto(authorizationUrl, { waitUntil: 'domcontentloaded' }),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for consent or login' }),
+      try: async () =>
+        await page.waitForURL(
+          (url) => url.pathname.startsWith('/cs/login') || url.pathname.startsWith('/cs/pripojit'),
+          { timeout: 30_000 },
+        ),
+    });
+    yield* loginIfNeeded(page, opts.email, opts.password);
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for identity selection' }),
+      try: async () =>
+        await page.waitForURL((url) => url.pathname.startsWith('/cs/pripojit') && !url.pathname.includes('souhlas'), {
+          timeout: 60_000,
+        }),
+    });
+    const acting = page.getByText(opts.actAs.kind === 'me' ? 'Za mě' : `Za agenta ${opts.actAs.agentName}`).first();
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for identity picker' }),
+      try: async () => await page.getByRole('button', { name: 'Pokračovat' }).waitFor({ timeout: 30_000 }),
+    });
+    if (
+      opts.actAs.kind === 'agent' ||
+      (yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'count identity choices' }),
+        try: async () => await acting.count(),
+      })) > 0
+    ) {
+      yield* Effect.tryPromise({
+        catch: (cause) => new BrowserDriverFailure({ cause, operation: 'select identity' }),
+        try: async () => await acting.click(),
+      });
+    }
+    // Read-only also occurs in agent names, so only that label must match exactly.
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'select write mode' }),
+      try: async () =>
+        await page
+          .getByText(WRITE_MODE_LABEL[opts.writeMode], { exact: opts.writeMode === 'read_only' })
+          .first()
+          .click(),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture identity consent' }),
+      try: async () =>
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png` }),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'continue consent' }),
+      try: async () => await page.getByRole('button', { name: 'Pokračovat' }).click(),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for final consent' }),
+      try: async () =>
+        await page.waitForURL((url) => url.pathname.startsWith('/cs/pripojit/souhlas'), { timeout: 30_000 }),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for approval' }),
+      try: async () => await page.getByRole('button', { name: 'Povolit přístup' }).waitFor({ timeout: 30_000 }),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'capture final consent' }),
+      try: async () =>
+        await page.screenshot({ fullPage: true, path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png` }),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'approve access' }),
+      try: async () => await page.getByRole('button', { name: 'Povolit přístup' }).click(),
+    });
+    yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'wait for callback redirect' }),
+      try: async () => await page.waitForURL((url) => url.pathname === '/callback', { timeout: 30_000 }),
+    });
   });
-  await loginIfNeeded(page, opts.email, opts.password);
-  await page.waitForURL((u) => u.pathname.startsWith('/cs/pripojit') && !u.pathname.includes('souhlas'), {
-    timeout: 60_000,
-  });
-  // The "Za koho bude jednat" picker only renders when the person operates at least one agent; otherwise "Za mě" is implied.
-  const acting = page.getByText(opts.actAs.kind === 'me' ? 'Za mě' : `Za agenta ${opts.actAs.agentName}`).first();
-  await page.getByRole('button', { name: 'Pokračovat' }).waitFor({ timeout: 30_000 });
-  if (opts.actAs.kind === 'agent' || (await acting.count()) > 0) {
-    await acting.click();
-  }
-  // "Jen čtení" is also part of agent names ("AI agent A · jen čtení"), so it must match exactly; the other labels
-  // carry suffixes such as "(doporučeno)" and match as substrings.
-  await page.getByText(WRITE_MODE_LABEL[opts.writeMode], { exact: opts.writeMode === 'read_only' }).first().click();
-  await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png`, fullPage: true });
-  await page.getByRole('button', { name: 'Pokračovat' }).click();
-  await page.waitForURL((u) => u.pathname.startsWith('/cs/pripojit/souhlas'), { timeout: 30_000 });
-  await page.getByRole('button', { name: 'Povolit přístup' }).waitFor({ timeout: 30_000 });
-  await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png`, fullPage: true });
-  await page.getByRole('button', { name: 'Povolit přístup' }).click();
-  await page.waitForURL((u) => u.pathname === '/callback', { timeout: 30_000 });
-}
 
-/** POSTs JSON to the shell through the shared page's request context (same-origin headers). */
-export async function sessionPost(
+/** Uses the foreign page request context to keep its existing session cookies. */
+export const sessionPost = (
   page: E2ePage,
   shellUrl: string,
   path: string,
-  body: unknown,
+  body: Schema.Json,
   headers: Record<string, string> = {},
-): Promise<{ status: number; json: unknown; text: string }> {
-  const response = await page.request.post(`${shellUrl}${path}`, {
-    data: body,
-    headers: { 'content-type': 'application/json', origin: shellUrl, ...headers },
+) =>
+  Effect.gen(function* postSessionJson() {
+    const response = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'session POST' }),
+      try: async () =>
+        await page.request.post(`${shellUrl}${path}`, {
+          data: body,
+          headers: { 'content-type': 'application/json', origin: shellUrl, ...headers },
+        }),
+    });
+    const text = yield* Effect.tryPromise({
+      catch: (cause) => new BrowserDriverFailure({ cause, operation: 'read session response' }),
+      try: async () => await response.text(),
+    });
+    const json = Option.getOrUndefined(Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))(text));
+    return { json, status: response.status(), text };
   });
-  const text = await response.text();
-  let json: unknown = undefined;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = undefined;
-  }
-  return { status: response.status(), json, text };
-}

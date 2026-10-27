@@ -9,11 +9,7 @@ import type {
   RecordPrivacyNoticeProvisionInput,
 } from '@app/consent-authority-contracts';
 
-export {
-  PrivacyNoticeProvisionSchema,
-  PrivacyNoticeAuthorityFactSchema,
-  PrivacyNoticeChannelProofSchema,
-} from '@app/consent-authority-contracts';
+export { PrivacyNoticeProvisionSchema } from '@app/consent-authority-contracts';
 export type {
   PrivacyNoticeChannelProof,
   PrivacyNoticeProvisionDraft,

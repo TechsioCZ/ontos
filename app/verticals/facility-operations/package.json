@@ -36,6 +36,7 @@
   "dependencies": {
     "@app/admin-ui": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/email-delivery": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
@@ -45,7 +46,6 @@
     "@app/property-leasing": "workspace:*",
     "@app/property-portfolio": "workspace:*",
     "@app/work-tasks": "workspace:*",
-    "@app/tagging": "workspace:*",
     "@effect/opentelemetry": "4.0.5",
     "@effect/platform-node": "4.0.5",
     "@effect/sql-pg": "4.0.5",

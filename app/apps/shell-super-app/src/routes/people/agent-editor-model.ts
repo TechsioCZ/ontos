@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 /** Pure draft model of the agent editor side panel: module choices, role presets, validation and request bodies. */
 import type {
   AgentEntity,
@@ -7,7 +7,9 @@ import type {
   AgentRolePreset,
   AgentWritePolicy,
   ManageAgentEntityRequest,
+  PrincipalRef,
 } from '@app/shared-contracts/agent-access';
+import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
 import { AGENT_DESCRIPTION_MAX, AGENT_NAME_MAX } from '@app/shared-contracts/agent-access';
 
 export const ModuleChoiceSchema = Schema.Literals(['none', 'read', 'write']);
@@ -32,11 +34,11 @@ export const emptyAgentDraft: AgentDraft = {
 };
 
 export const draftFromAgent = (agent: AgentEntity): AgentDraft => ({
-  description: agent.description ?? '',
+  description: Option.getOrElse(agent.description, () => ''),
   displayName: agent.displayName,
   modules: Object.fromEntries(agent.modules.map((module) => [module.moduleId, module.access])),
   operatorPrincipalIds: agent.operators.map((person) => person.principalId),
-  ownerPrincipalId: agent.owner?.principalId ?? null,
+  ownerPrincipalId: Option.getOrNull(Option.map((owner: PrincipalRef) => owner.principalId)(agent.owner)),
   writePolicy: agent.hasProfile ? agent.writePolicy : emptyAgentDraft.writePolicy,
 });
 
@@ -106,12 +108,12 @@ const descriptionOf = (draft: AgentDraft): string | null =>
   draft.description.trim() === '' ? null : draft.description.trim();
 
 export const createRequest = (draft: AgentDraft, options: readonly AgentModuleOption[]): ManageAgentEntityRequest => ({
-  description: descriptionOf(draft),
+  description: Option.fromNullOr(descriptionOf(draft)),
   displayName: draft.displayName.trim(),
   modules: [...draftModules(draft, options)],
   operation: 'create',
-  operatorPrincipalIds: [...draft.operatorPrincipalIds],
-  ownerPrincipalId: draft.ownerPrincipalId ?? '',
+  operatorPrincipalIds: draft.operatorPrincipalIds.map((id) => AgentPrincipalIdSchema.make(id)),
+  ownerPrincipalId: AgentPrincipalIdSchema.make(draft.ownerPrincipalId ?? ''),
   writePolicy: draft.writePolicy,
 });
 
@@ -120,11 +122,11 @@ export const configureRequest = (
   options: readonly AgentModuleOption[],
   principalId: string,
 ): ManageAgentEntityRequest => ({
-  description: descriptionOf(draft),
+  description: Option.fromNullOr(descriptionOf(draft)),
   displayName: draft.displayName.trim(),
   modules: [...draftModules(draft, options)],
   operation: 'configure',
-  ownerPrincipalId: draft.ownerPrincipalId ?? '',
-  principalId,
+  ownerPrincipalId: AgentPrincipalIdSchema.make(draft.ownerPrincipalId ?? ''),
+  principalId: AgentPrincipalIdSchema.make(principalId),
   writePolicy: draft.writePolicy,
 });

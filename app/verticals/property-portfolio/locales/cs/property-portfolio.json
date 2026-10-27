@@ -82,7 +82,7 @@
         }
       },
       "records": {
-        "title": "Nemovitosti, jednotky a vybavení",
+        "title": "Nemovitosti",
         "refresh": "Načíst nemovitosti",
         "unavailable": "Nemovitosti nelze načíst. Zkontrolujte oprávnění a zkuste to znovu.",
         "properties": "Nemovitosti",
@@ -111,7 +111,7 @@
         "financialValues": "Výnosy {{revenue}} · Náklady {{cost}} · Neuhrazeno {{outstanding}}",
         "summaryNotLoaded": "Souhrn není načten",
         "outOfService": "Mimo provoz",
-        "availabilityLabel": "Dostupnost k 5. 10. 2026",
+        "availabilityLabel": "Dnešní obsazenost",
         "occupancyRecord": "Obsazenost {{start}} → {{end}}",
         "availability": {
           "AVAILABLE": "Dostupná",
@@ -177,7 +177,14 @@
           "employeesForbidden": "Nemáte oprávnění zobrazit zaměstnance.",
           "employeesUnavailable": "Zaměstnance se nepodařilo načíst.",
           "employeesRetry": "Načíst zaměstnance znovu",
-          "employeeUnknown": "Nedostupný zaměstnanec ({{id}})"
+          "employeeUnknown": "Nedostupný zaměstnanec",
+          "createUnitIn": "Přidat jednotku do {{name}}",
+          "editUnit": "Upravit jednotku {{name}}",
+          "required": "Vyplňte pole {{field}}.",
+          "tooLong": "Nejvýše 300 znaků.",
+          "duplicateCode": "Tento kód už používá jiný záznam.",
+          "alreadyCommitted": "Změna už byla uložena. Obnovte záznamy a zkontrolujte výsledek před další úpravou.",
+          "commitIndeterminate": "Výsledek uložení zatím nelze potvrdit. Neopakujte uložení, nejprve ověřte výsledek."
         },
         "unitStory": {
           "newLease": "Nový nájem",
@@ -209,8 +216,48 @@
             "DONE": "Hotovo",
             "CANCELLED": "Zrušený"
           }
+        },
+        "archived": "Archivováno",
+        "includeClosed": "Zahrnout neaktivní a vyřazené záznamy",
+        "includeArchived_one": "Zahrnout archivované záznamy ({{count}})",
+        "includeArchived_few": "Zahrnout archivované záznamy ({{count}})",
+        "includeArchived_many": "Zahrnout archivované záznamy ({{count}})",
+        "includeArchived_other": "Zahrnout archivované záznamy ({{count}})",
+        "notFound": "Vybraný záznam není dostupný. Vyberte nemovitost z portfolia.",
+        "loading": "Načítání…",
+        "noUnits": "Tato nemovitost nemá v tomto výběru žádné jednotky.",
+        "notProvided": "Neuvedeno",
+        "archiveDetails": "Archivováno {{date}}. {{reason}}",
+        "buildingBlocked": "Nemovitost není v provozu. Její jednotky nelze pronajmout ani rezervovat.",
+        "retiredDescription": "Jednotka je vyřazená. Historie nájmů a smluv zůstává zachována.",
+        "retiredAvailability": "Vyřazena, nenabízí se k pronájmu",
+        "archiveProperty": "Archivovat nemovitost",
+        "archiveUnit": "Archivovat jednotku",
+        "restore": "Obnovit z archivu",
+        "setOutOfService": "Dočasně mimo provoz",
+        "returnToService": "Vrátit do provozu",
+        "retireUnit": "Vyřadit jednotku",
+        "propertyLabel": "nemovitost {{code}}",
+        "unitLabel": "jednotku {{code}}",
+        "financialEmpty": "K této nemovitosti zatím nejsou evidované žádné faktury ani platby.",
+        "retry": "Zkusit znovu",
+        "tabs": {
+          "units": "Jednotky",
+          "leases": "Nájmy a pobyty",
+          "agreements": "Smlouvy",
+          "documents": "Dokumenty",
+          "tasks": "Úkoly",
+          "equipment": "Vybavení",
+          "finance": "Finance",
+          "discussion": "Diskuse"
         }
       }
+    },
+    "overview": {
+      "todaySummary": "Přehled dnešního dne",
+      "searchPlaceholder": "Například R101, Parková nebo revize…",
+      "propertyAgendas": "Agendy nemovitostí",
+      "sourceAvailability": "Dostupnost zdrojů"
     }
   }
 }

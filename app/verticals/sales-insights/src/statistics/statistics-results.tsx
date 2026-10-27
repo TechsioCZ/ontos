@@ -208,7 +208,14 @@ export interface StatisticsResultsProps {
 }
 
 /** Whole-Kč rows that add up to the whole-Kč total, so the table never disagrees with "Celkem" by rounding. */
-const displayedSeries = (result: MetricResult | undefined, unit: MetricUnit): readonly MetricPoint[] => {
+const displayedSeries = (
+  result: MetricResult | undefined,
+  unit: MetricUnit,
+  blocked: boolean,
+): readonly MetricPoint[] => {
+  if (blocked) {
+    return [];
+  }
   const rawSeries = result?.series ?? [];
   return unit === 'CZK' && result !== undefined && result.total !== null
     ? roundSeriesToTotal(rawSeries, result.total, chartScale(unit))
@@ -231,7 +238,7 @@ export const StatisticsResults = ({
   const from = formatPeriodDay(query.from);
   const to = formatPeriodDay(query.to);
   const blocked = !loading && isForbidden(query.metric);
-  const series = blocked ? [] : displayedSeries(result, unit);
+  const series = displayedSeries(result, unit, blocked);
   const pieWarning = pieWarningKey(query, unit);
   const showTable = !loading && series.length > 0;
 

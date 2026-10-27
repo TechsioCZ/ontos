@@ -264,6 +264,148 @@
     "selectPlaceholder": "Vyberte…",
     "sidePanel": {
       "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    },
+    "financeUi": {
+      "settlement": {
+        "previousDocuments": "Předchozí zálohové a dílčí doklady",
+        "title": "Zohlednění předchozích dokladů",
+        "amount": "Zohlednit (Kč)",
+        "note": "Poznámka (např. číslo daňového dokladu k přijaté platbě)",
+        "confirm": "Potvrzuji, že jsem částky zkontroloval(a) a mají se na této faktuře zohlednit."
+      },
+      "paymentTerms": {
+        "title": "Skonto a úrok z prodlení",
+        "discountCondition": "Podmínka skonta",
+        "discountExample": "např. 2 % při úhradě do 7 dnů od vystavení",
+        "discountAmount": "Ručně schválená částka skonta (Kč, nepovinné)",
+        "interestCondition": "Sjednaný úrok z prodlení",
+        "interestExample": "např. 0,05 % z dlužné částky za každý den prodlení dle čl. 7 smlouvy",
+        "interestAmount": "Ručně schválená částka úroku (Kč, nepovinné)"
+      },
+      "documents": {
+        "title": "Doklady a přílohy"
+      },
+      "payments": {
+        "title": "Úhrady",
+        "date": "Datum úhrady",
+        "note": "Poznámka (např. číslo výpisu)",
+        "counterpartyHistory": "Platební historie protistrany"
+      },
+      "common": {
+        "amount": "Částka (Kč)",
+        "vatRate": "Sazba DPH",
+        "edit": "Upravit",
+        "delete": "Smazat",
+        "type": "Typ",
+        "category": "Kategorie",
+        "optional": "nepovinné",
+        "note": "Poznámka",
+        "documentKind": "Druh dokladu",
+        "name": "Název",
+        "selectAll": "Vybrat vše"
+      },
+      "reminders": {
+        "title": "Upomínky",
+        "recipient": "E-mail příjemce",
+        "emailExample": "fakturace@odberatel.cz",
+        "message": "Text upomínky"
+      },
+      "accounting": {
+        "handover": "Účetní předání",
+        "setup": "Účetní systém a schválený formát",
+        "format": "Formát",
+        "newPackage": "Nový předávací balíček",
+        "onlyNew": "Jen dosud nepředané",
+        "history": "Historie předání",
+        "empty": "Zatím nic nepředáno",
+        "historyTable": "Historie účetních předání",
+        "errorDescription": "Popis chyby",
+        "errorExample": "např. POHODA odmítla import – chybí DIČ odběratele",
+        "evidence": "Důkaz převzetí",
+        "evidenceExample": "např. e-mail Ing. Novákové z 20. 10. 2026"
+      },
+      "objects": {
+        "property": "Nemovitost",
+        "contract": "Smlouva",
+        "costCenter": "Středisko"
+      },
+      "priceList": {
+        "unit": "Jednotka",
+        "title": "Ceník služeb",
+        "empty": "Ceník je prázdný",
+        "approvedDiscounts": "Schválené slevy na dokladech",
+        "serviceName": "Název služby",
+        "serviceExample": "např. Parkovací místo – kryté stání",
+        "code": "Kód (nepovinné)",
+        "unitExamples": "měsíc, m², ks, hod",
+        "netPrice": "Cena bez DPH (Kč)"
+      },
+      "recurring": {
+        "period": "Období",
+        "title": "Opakované faktury (nájemné)",
+        "empty": "Zatím žádná šablona",
+        "templates": "Opakované faktury – šablony",
+        "drafts": "Návrhy z opakovaných faktur",
+        "selectAll": "Vybrat všechny návrhy",
+        "duplicate": "Možná duplicita",
+        "newTemplate": "Nová šablona opakované faktury",
+        "tenant": "Nájemce",
+        "tenantPlaceholder": "Vyberte nájemce",
+        "templateName": "Název šablony",
+        "templateExample": "např. Nájem – kancelář 2.04",
+        "lineText": "Text položky na faktuře",
+        "monthlyAmount": "Měsíční částka bez DPH (Kč)",
+        "issueDay": "Den vystavení v měsíci (1–28)",
+        "dueDays": "Splatnost (dní)"
+      },
+      "planning": {
+        "categoryComparison": "Plán a skutečnost podle kategorií",
+        "monthlyCashFlow": "Cash-flow po měsících",
+        "noOpeningBalance": "Bez počátečního stavu",
+        "budgetObject": "Objekt nebo středisko rozpočtu",
+        "budgetMonth": "Měsíc rozpočtu",
+        "budgetComparison": "Rozpočet – plán a skutečnost",
+        "noBudget": "Bez rozpočtu",
+        "plannedAmount": "Plán (Kč)",
+        "manualActual": "Skutečnost zadaná ručně (Kč, nepovinné)",
+        "explanation": "Vysvětlení odchylky",
+        "deleteBudgetItem": "Smazat položku rozpočtu",
+        "openingTitle": "Počáteční stav pro cash-flow",
+        "openingAmount": "Počáteční stav (Kč)",
+        "asOf": "Ke dni",
+        "confirmedOpening": "Počáteční stav (ručně potvrzený)",
+        "netPaid": "Uhrazeno v období (netto)",
+        "netExpected": "Očekávané doklady (netto)"
+      },
+      "incoming": {
+        "title": "Přijatá faktura",
+        "supplier": "Dodavatel",
+        "supplierExample": "např. ČEZ Prodej, a.s.",
+        "number": "Číslo dokladu dodavatele",
+        "numberExample": "např. 2026-1184",
+        "budgetCategory": "Kategorie rozpočtu"
+      },
+      "detail": {
+        "anchors": "Související objekt a vazby",
+        "customerCorrection": "Oprava odběratele · DEMO"
+      },
+      "plan": {
+        "title": "Finanční plán – očekávané příjmy a výdaje",
+        "empty": "Plán je zatím prázdný",
+        "table": "Finanční plán",
+        "titleExample": "např. Nájem haly B od prosince",
+        "expectedDate": "Očekávané datum",
+        "probability": "Pravděpodobnost (%)",
+        "project": "Projekt (nepovinné)",
+        "projectExample": "např. Rekonstrukce haly B",
+        "deleteItem": "Smazat položku plánu"
+      },
+      "line": {
+        "discount": "Sleva",
+        "discountReason": "Důvod schválené slevy",
+        "discountExample": "např. věrnostní sleva podle smlouvy",
+        "fromPriceList": "Z ceníku"
+      }
     }
   }
 }

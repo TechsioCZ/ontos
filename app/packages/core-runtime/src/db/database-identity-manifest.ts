@@ -1,4 +1,20 @@
-import { Option, Result, Schema } from 'effect';
+import { getOrNull as getOptionOrNull } from 'effect/Option';
+import { getOrThrow as getResultOrThrow, mapError as mapResultError } from 'effect/Result';
+import {
+  Array as ArraySchema,
+  Boolean as BooleanSchema,
+  Literals,
+  OptionFromNullOr,
+  String as StringSchema,
+  Struct,
+  TaggedError,
+  Unknown as UnknownSchema,
+  brand,
+  check,
+  decodeUnknownResult,
+  isPattern,
+  optionalKey,
+} from 'effect/Schema';
 
 import { freezeIdentity, SHARED_RUNTIME_IDENTITY, SHELL_GATEWAY_ISSUER_IDENTITY } from './database-identity-data.ts';
 
@@ -78,9 +94,9 @@ export interface DatabaseIdentityEnrollment {
   readonly trustRoutines: readonly TrustRoutine[];
 }
 
-export class DatabaseIdentityEnrollmentError extends Schema.TaggedError<DatabaseIdentityEnrollmentError>()(
+export class DatabaseIdentityEnrollmentError extends TaggedError<DatabaseIdentityEnrollmentError>()(
   'DatabaseIdentityEnrollmentError',
-  { cause: Schema.optionalKey(Schema.Unknown), reason: Schema.String },
+  { cause: optionalKey(UnknownSchema), reason: StringSchema },
 ) {}
 
 /** Routine vocabulary is Core-owned; executor membership comes only from the supplied enrollment. */
@@ -110,37 +126,37 @@ export const trustRoutinesForIdentities = (identities: readonly DatabaseIdentity
   ]);
 };
 
-const IdentifierSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9_]{0,62}$/u)));
-const VariableSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Z][A-Z0-9_]*$/u)));
-const ModuleKeySchema = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)),
-  Schema.brand('DatabaseOwnerModuleKey'),
+const IdentifierSchema = StringSchema.pipe(check(isPattern(/^[a-z][a-z0-9_]{0,62}$/u)));
+const VariableSchema = StringSchema.pipe(check(isPattern(/^[A-Z][A-Z0-9_]*$/u)));
+const ModuleKeySchema = StringSchema.pipe(
+  check(isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)),
+  brand('DatabaseOwnerModuleKey'),
 );
-const AudienceSchema = Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
-const IdentitySchema = Schema.Struct({
-  cloudflareHyperdrive: Schema.OptionFromNullOr(Schema.Struct({ binding: VariableSchema, idVariable: VariableSchema })),
-  gatewayScopeAudiences: Schema.Array(AudienceSchema),
-  handlesBearerAssertions: Schema.Boolean,
+const AudienceSchema = StringSchema.pipe(check(isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u)));
+const IdentitySchema = Struct({
+  cloudflareHyperdrive: OptionFromNullOr(Struct({ binding: VariableSchema, idVariable: VariableSchema })),
+  gatewayScopeAudiences: ArraySchema(AudienceSchema),
+  handlesBearerAssertions: BooleanSchema,
   id: IdentifierSchema,
-  ownerModuleKey: Schema.OptionFromNullOr(ModuleKeySchema),
-  registersGatewayScopeGrants: Schema.Boolean,
+  ownerModuleKey: OptionFromNullOr(ModuleKeySchema),
+  registersGatewayScopeGrants: BooleanSchema,
   role: IdentifierSchema,
-  scopeAuthority: Schema.Literals(DATABASE_SCOPE_AUTHORITIES),
-  urlKey: VariableSchema.pipe(Schema.brand('DatabaseUrlKey')),
+  scopeAuthority: Literals(DATABASE_SCOPE_AUTHORITIES),
+  urlKey: VariableSchema.pipe(brand('DatabaseUrlKey')),
 });
-const DescriptorSchema = Schema.Struct({
+const DescriptorSchema = Struct({
   moduleKey: ModuleKeySchema,
   policyPrefix: IdentifierSchema,
   request: IdentitySchema,
-  schemas: Schema.Array(IdentifierSchema),
+  schemas: ArraySchema(IdentifierSchema),
   worker: IdentitySchema,
 });
-const decodeDescriptors = Schema.decodeUnknownResult(Schema.Array(DescriptorSchema), { onExcessProperty: 'error' });
+const decodeDescriptors = decodeUnknownResult(ArraySchema(DescriptorSchema), { onExcessProperty: 'error' });
 const freezeDecodedIdentity = (identity: typeof IdentitySchema.Type): DatabaseIdentity =>
   freezeIdentity({
     ...identity,
-    cloudflareHyperdrive: Option.getOrNull(identity.cloudflareHyperdrive),
-    ownerModuleKey: Option.getOrNull(identity.ownerModuleKey),
+    cloudflareHyperdrive: getOptionOrNull(identity.cloudflareHyperdrive),
+    ownerModuleKey: getOptionOrNull(identity.ownerModuleKey),
   });
 const invalidEnrollment = (reason: string): never => {
   throw new DatabaseIdentityEnrollmentError({ reason });
@@ -157,9 +173,9 @@ const PLATFORM_SCHEMAS = new Set(['auth', 'core', 'drizzle', 'email', 'informati
 export const defineDatabaseIdentityEnrollment = (
   descriptors: readonly DatabaseOwnerIdentityDescriptor[],
 ): DatabaseIdentityEnrollment => {
-  const decoded = Result.getOrThrow(
+  const decoded = getResultOrThrow(
     decodeDescriptors(descriptors).pipe(
-      Result.mapError(
+      mapResultError(
         (cause) =>
           new DatabaseIdentityEnrollmentError({
             cause,

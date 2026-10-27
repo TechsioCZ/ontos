@@ -2,7 +2,11 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
-import { CatalogCategorySchema, ProductSchema } from '../../shared/domain/merchandise-model.ts';
+import {
+  CatalogCategoryIdSchema,
+  CatalogCategorySchema,
+  ProductSchema,
+} from '../../shared/domain/merchandise-model.ts';
 import {
   assignCategory,
   categoryPathOf,
@@ -43,6 +47,7 @@ const childCategory = Schema.decodeUnknownSync(CatalogCategorySchema)({
   slug: 'metricke',
 });
 const categories = [rootCategory, childCategory];
+const categoryId = Schema.decodeSync(CatalogCategoryIdSchema);
 
 const rawP1 = {
   active: true,
@@ -69,7 +74,7 @@ const state = MerchandiseStateSchema.make({
 });
 
 it('categoryPathOf starts at the id and walks up to the root', () => {
-  expect(categoryPathOf(categories, 'c')).toEqual(['c', 'r']);
+  expect(categoryPathOf(categories, categoryId('c'))).toEqual(['c', 'r']);
 });
 
 it('contentChangeOf lists changed content fields with Czech labels', () => {
@@ -118,7 +123,7 @@ it.effect('updateCategoryCommand updates the category, records history and renam
   Effect.gen(function* catalogContentCase3() {
     const change = yield* updateCategoryCommand(
       state,
-      { _tag: 'UpdateCategory', id: 'c', patch: { name: 'Metrické šrouby', position: 5 } },
+      { _tag: 'UpdateCategory', id: categoryId('c'), patch: { name: 'Metrické šrouby', position: 5 } },
       input,
     );
     const updated = change.state.categories?.find((category) => category.id === 'c');
@@ -135,7 +140,7 @@ it.effect('updateCategoryCommand returns the state unchanged when nothing differ
   Effect.gen(function* catalogContentCase4() {
     const change = yield* updateCategoryCommand(
       state,
-      { _tag: 'UpdateCategory', id: 'c', patch: { name: 'Metrické', position: 2 } },
+      { _tag: 'UpdateCategory', id: categoryId('c'), patch: { name: 'Metrické', position: 2 } },
       input,
     );
     expect(change.state).toBe(state);
@@ -145,7 +150,7 @@ it.effect('updateCategoryCommand returns the state unchanged when nothing differ
 it.effect('updateCategoryCommand fails with not found for an unknown category', () =>
   Effect.gen(function* catalogContentCase5() {
     const error = yield* Effect.flip(
-      updateCategoryCommand(state, { _tag: 'UpdateCategory', id: 'missing', patch: { name: 'X' } }, input),
+      updateCategoryCommand(state, { _tag: 'UpdateCategory', id: categoryId('missing'), patch: { name: 'X' } }, input),
     );
     expect(Schema.is(MerchandiseNotFound)(error)).toBe(true);
   }),

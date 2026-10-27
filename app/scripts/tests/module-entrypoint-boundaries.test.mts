@@ -26,6 +26,8 @@ import {
 import {
   hasGeneratedGovernedClientContract,
   hasGeneratedModuleApiReadContract,
+  hasGeneratedProviderManifest,
+  hasGeneratedProviderReadContract,
   hasGeneratedSourceHeader,
 } from '../generated-module-api-boundary.mts';
 import {
@@ -39,6 +41,8 @@ import {
 
 const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
 const ALIASED_PERMISSION_PROPERTY = 'permission: INVENTORY_READ_PERMISSION';
+const MODULE_ACCESS_PERMISSION = 'module.access';
+const MODULE_ACCESS_PERMISSION_PROPERTY = "permission: 'module.access'";
 const FixtureEntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
 const acceptsTypedGtinBinding = (source: string) =>
   hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
@@ -340,13 +344,99 @@ const PARTY_PACKAGE_NAME = '@app/party-registry';
 
 const INVENTORY_VERTICAL_PATH = 'verticals/inventory-stock';
 const INVENTORY_DEPLOYMENT_ID = 'inventory-stock';
+const INVENTORY_MODULE_ID = 'inventory.stock';
 const SHELL_DEPLOYMENT_ID = 'shell-super-app';
 const SHELL_APPLICATION_PATH = 'apps/shell-super-app';
 const TOPOLOGY_METADATA_FILE = 'topology/reference-topology.json';
 
 const INVENTORY_REGISTRATION_PATH = `${INVENTORY_VERTICAL_PATH}/vertical.registration.ts`;
 
+it.live(
+  'proves provider ownership through immutable manifest constants without accepting mutable or shadowed aliases',
+  () =>
+    Effect.gen(function* manifestOwnerAliases() {
+      const manifest = yield* Effect.promise(() =>
+        readFile(new URL('../../verticals/party-registry/vertical.manifest.ts', import.meta.url), 'utf-8'),
+      );
+      const ownerBinding = 'PARTY_REGISTRY_MODULE_ID';
+      const declaration = `const ${ownerBinding} = '${PARTY_MODULE_ID}' as const;`;
+      expect(manifest).toContain(declaration);
+      const acceptsManifest = (source: string) =>
+        ['counterparties', 'parties'].every((name) =>
+          hasGeneratedProviderManifest(source, PARTY_MODULE_ID, name, 'search'),
+        );
+      expect(acceptsManifest(manifest)).toBe(true);
+      expect(acceptsManifest(manifest.replace(declaration, declaration.replace(' as const', '')))).toBe(true);
+      expect(acceptsManifest(`${manifest}\n// ${ownerBinding} = 'untrusted';`)).toBe(true);
+      for (const [name, source] of [
+        ['wrong owner', manifest.replace(declaration, `const ${ownerBinding} = 'other.owner' as const;`)],
+        ['mutable binding', manifest.replace(declaration, declaration.replace('const ', 'let '))],
+        ['duplicate declaration', `${manifest}\n${declaration}`],
+        ['shadowed parameter', `${manifest}\nconst other = (${ownerBinding}: string) => true;`],
+        ['reassigned binding', `${manifest}\n${ownerBinding} = 'other.owner';`],
+        ['incremented binding', `${manifest}\n${ownerBinding}++;`],
+        ['destructured binding', `${manifest}\nconst { moduleKey: ${ownerBinding} } = other;`],
+        ['expression alias', manifest.replace(declaration, `const ${ownerBinding} = chooseOwner();`)],
+        ['imported alias', manifest.replace(declaration, `import { ${ownerBinding} } from './foreign-owner.ts';`)],
+      ] as const) {
+        expect({ accepted: acceptsManifest(source), name }).toEqual({ accepted: false, name });
+      }
+    }),
+);
+
 const INVENTORY_RUNTIME_ID = 'inventory-runtime';
+
+it.live('proves real provider read ownership through immutable aliases used by native queries', () =>
+  Effect.gen(function* providerReadOwnerAliases() {
+    const provider = yield* Effect.promise(() =>
+      readFile(new URL('../../verticals/party-registry/src/search/parties.provider.ts', import.meta.url), 'utf-8'),
+    );
+    const ownerBinding = 'PARTY_REGISTRY_MODULE_ID';
+    const declaration = `const ${ownerBinding} = '${PARTY_MODULE_ID}' as const;`;
+    expect(provider).toContain(declaration);
+    const acceptsProvider = (source: string) =>
+      hasGeneratedProviderReadContract(source, PARTY_MODULE_ID, 'parties', 'search', {
+        kind: 'context_permission',
+        permission: MODULE_ACCESS_PERMISSION,
+      });
+    expect(acceptsProvider(provider)).toBe(true);
+    expect(acceptsProvider(provider.replace(declaration, declaration.replace(' as const', '')))).toBe(true);
+    expect(
+      acceptsProvider(
+        `${provider}\nconst nativeQuery = condition ? { moduleId: ${ownerBinding} } : { moduleId: ${ownerBinding} };`,
+      ),
+    ).toBe(true);
+    for (const [name, source] of [
+      ['foreign module literal', provider.replace(declaration, `const ${ownerBinding} = 'other.owner' as const;`)],
+      ['mutable provider identity', provider.replace(declaration, declaration.replace('const ', 'let '))],
+      ['duplicated provider identity', `${provider}\n${declaration}`],
+      ['shadowed provider identity', `${provider}\nconst other = (${ownerBinding}: string) => true;`],
+      ['reassigned provider identity', `${provider}\n${ownerBinding} = 'other.owner';`],
+      ['incremented provider identity', `${provider}\n${ownerBinding}++;`],
+      ['destructured provider identity', `${provider}\nconst { moduleKey: ${ownerBinding} } = other;`],
+      [
+        'typed destructured identity',
+        `${provider}\nconst { moduleKey: ${ownerBinding} }: { readonly moduleKey: string } = other;`,
+      ],
+      [
+        'typed parameter identity',
+        `${provider}\nconst other = ({ moduleKey: ${ownerBinding} }: { readonly moduleKey: string }) => true;`,
+      ],
+      ['computed provider identity', provider.replace(declaration, `const ${ownerBinding} = chooseOwner();`)],
+      [
+        'foreign provider import',
+        provider.replace(declaration, `import { ${ownerBinding} } from './foreign-owner.ts';`),
+      ],
+      [
+        'changed provider authorization',
+        provider.replace(MODULE_ACCESS_PERMISSION_PROPERTY, "permission: 'other.permission'"),
+      ],
+      ['mismatched read owner', provider.replace(`owningModuleKey: ${ownerBinding}`, "owningModuleKey: 'other.owner'")],
+    ] as const) {
+      expect({ accepted: acceptsProvider(source), name }).toEqual({ accepted: false, name });
+    }
+  }),
+);
 
 const validAction = `${ACTION_HEADER_FOR_TEST}
 // @ontos-action-owner inventory.stock
@@ -1145,7 +1235,7 @@ it.live('does not grant native self-credential provisioning to ordinary tenant o
     yield* assertRejectedSources(root, ACTION_FILE, [source], /self-credential/u);
     yield* write(root, ACTION_FILE, validAction);
     const coreSource = source
-      .replaceAll('inventory.stock', CORE_IDENTITY_OWNER)
+      .replaceAll(INVENTORY_MODULE_ID, CORE_IDENTITY_OWNER)
       .replace('defineTenantModuleEntrypoint', 'defineSystemModuleEntrypoint');
     yield* assertRejectedSources(
       root,
@@ -1462,6 +1552,197 @@ export const manifest = {
 // </generated-report-registrations>`,
   );
 });
+
+it.live(
+  'resolves named public-contract forwarding while retaining the complete governed boundary',
+  Effect.fn(function* publicContractForwarding() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const files = [
+      'package.json',
+      'shared/api.ts',
+      'shared/apis/stock-list.ts',
+      'src/api/stock-list.read.ts',
+      'src/api/stock-list-client.ts',
+      'api/stock-list-read-server.ts',
+      'api/index.ts',
+      'api/auth/action-principal.ts',
+      'src/api/action-gateway.ts',
+      'vertical.manifest.ts',
+      'vertical.registration.ts',
+    ];
+    const entries = yield* Effect.all(
+      files.map(
+        Effect.fn(function* readPublicContractFixture(file) {
+          const sourcePath = `${INVENTORY_VERTICAL_PATH}/${file}`;
+          const source = yield* Effect.promise(() => readFile(path.join(root, sourcePath), 'utf-8'));
+          return [sourcePath, source] as const;
+        }),
+      ),
+    );
+    const sources = new Map(entries);
+    const contractPath = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
+    const clientPath = `${INVENTORY_VERTICAL_PATH}/src/api/stock-list-client.ts`;
+    const packagePath = 'packages/inventory-public-contracts';
+    const specifier = '@app/inventory-public-contracts/stock-list';
+    const producerPath = `${packagePath}/src/apis/stock-list.ts`;
+    const producerClientPath = `${packagePath}/src/api/stock-list-client.ts`;
+    const gatewayPath = `${packagePath}/src/api/action-gateway.ts`;
+    const domainPackagePath = 'packages/stock-domain-contracts';
+    const domainSpecifier = '@app/stock-domain-contracts/stock';
+    const domainPath = `${domainPackagePath}/src/stock.ts`;
+    const producer = `${moduleContractFixture(STOCK_LIST_STEM, 'StockList', 'stockList')}
+import { Schema } from 'effect';
+export const StockListRequestSchema = Schema.Struct({});
+export const StockListResponseSchema = Schema.Struct({});
+export type StockListRequest = typeof StockListRequestSchema.Type;
+export { StockDomainSchema } from '${domainSpecifier}';
+export type { StockDomain } from '${domainSpecifier}';`;
+    const client = governedClientFixture({
+      apiValue: 'StockListApi',
+      authorizedOperation: 'executeStockListWithAuthorization',
+      clientHelper: 'stockListClient',
+      contractImport: '../apis/stock-list.ts',
+      endpointGroup: 'stockList',
+      generatedHeader: MODULE_API_HEADER,
+      invocationKind: MODULE_API_KIND,
+      publicOperation: 'executeStockList',
+    });
+    const values = [
+      'StockListApi',
+      'StockListRequestSchema',
+      'StockListResponseSchema',
+      'StockDomainSchema',
+      ...problemKinds.map(([, suffix]) => `StockList${suffix}ProblemSchema`),
+    ];
+    const facade = `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}
+export { ${values.join(', ')} } from '${specifier}';
+export type { StockListRequest } from '${specifier}';
+export type { StockDomain } from '${specifier}';`;
+    const clientFacade = `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}/client
+export { executeStockListWithAuthorization, executeStockList } from '${specifier}/client';
+export type { StockListClientOptions } from '${specifier}/client';`;
+    const manifest = JSON.stringify({
+      exports: {
+        './stock-list': './src/apis/stock-list.ts',
+        './stock-list/client': './src/api/stock-list-client.ts',
+      },
+      name: '@app/inventory-public-contracts',
+      ontosContractOwner: {
+        appId: INVENTORY_DEPLOYMENT_ID,
+        moduleApis: [STOCK_LIST_STEM],
+        moduleId: INVENTORY_MODULE_ID,
+        packageName: '@app/inventory-stock',
+      },
+    });
+    sources.set(`${packagePath}/package.json`, manifest);
+    const domainManifest = JSON.stringify({
+      exports: { './stock': './src/stock.ts' },
+      name: '@app/stock-domain-contracts',
+      ontosContractOwner: {
+        appId: 'stock-domain',
+        moduleApis: [],
+        moduleId: 'stock.domain',
+        packageName: '@app/stock-domain',
+      },
+    });
+    sources.set(`${domainPackagePath}/package.json`, domainManifest);
+    sources.set(
+      domainPath,
+      `export const StockDomainSchema = Schema.String;\nexport type StockDomain = typeof StockDomainSchema.Type;`,
+    );
+    sources.set(producerPath, producer);
+    sources.set(producerClientPath, client);
+    sources.set(
+      gatewayPath,
+      yield* Effect.promise(() =>
+        readFile(path.join(root, INVENTORY_VERTICAL_PATH, 'src/api/action-gateway.ts'), 'utf-8'),
+      ),
+    );
+    sources.set(contractPath, facade);
+    sources.set(clientPath, clientFacade);
+    const assess = (changes: readonly (readonly [string, string])[] = []) => {
+      const diagnostics: string[] = [];
+      const accepted = hasCompleteGeneratedModuleApiSeam(
+        new Map([...sources, ...changes]),
+        `${INVENTORY_VERTICAL_PATH}/shared/api.ts`,
+        INVENTORY_DEPLOYMENT_ID,
+        diagnostics,
+      );
+      return { accepted, diagnostics };
+    };
+    expect(assess()).toEqual({ accepted: true, diagnostics: [] });
+    expect(assess([[contractPath, facade.replace(MODULE_API_HEADER, '')]])).toEqual({
+      accepted: false,
+      diagnostics: ['no generated read contracts with valid provenance'],
+    });
+    expect(
+      assess([
+        [contractPath, `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}\nexport * from '${specifier}';\n`],
+        [
+          clientPath,
+          `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}/client\nexport * from '${specifier}/client';\n`,
+        ],
+      ]),
+    ).toEqual({ accepted: true, diagnostics: [] });
+    const apiExport = 'StockListApi,';
+    for (const [name, file, source] of [
+      ['missing value', contractPath, facade.replace(`${apiExport} `, '')],
+      ['missing type', contractPath, facade.replace(`export type { StockListRequest } from '${specifier}';`, '')],
+      ['renamed binding', contractPath, facade.replace(apiExport, 'StockListApi as OtherApi,')],
+      ['type-only value', contractPath, facade.replace(apiExport, 'type StockListApi,')],
+      ['duplicate binding', contractPath, `${facade}\nexport { StockListApi } from '${specifier}';`],
+      ['foreign producer', contractPath, facade.replaceAll(`from '${specifier}'`, "from '@app/foreign/stock-list'")],
+      ['injected code', contractPath, `${facade}\noperationGateway.invoke(untrusted);`],
+      ['missing client operation', clientPath, clientFacade.replace('executeStockListWithAuthorization, ', '')],
+      ['type-only client operation', clientPath, clientFacade.replace('executeStockList }', 'type executeStockList }')],
+      [
+        'missing client options',
+        clientPath,
+        clientFacade.replace(`export type { StockListClientOptions } from '${specifier}/client';`, ''),
+      ],
+      [
+        'namespace export',
+        contractPath,
+        `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}\nexport * as contract from '${specifier}';`,
+      ],
+      [
+        'type-only wildcard',
+        contractPath,
+        `${MODULE_API_HEADER}// @ontos-public-contract ${specifier}\nexport type * from '${specifier}';`,
+      ],
+      ['malformed forwarding', contractPath, `${facade}\nexport {`],
+      ['wrong owner', `${packagePath}/package.json`, manifest.replace(INVENTORY_MODULE_ID, 'other.module')],
+      ['missing upstream export', domainPath, 'export const OtherSchema = Schema.String;'],
+      [
+        'wrong upstream type role',
+        domainPath,
+        'export type StockDomainSchema = string;\nexport type StockDomain = string;',
+      ],
+      [
+        'unresolved upstream source',
+        `${domainPackagePath}/package.json`,
+        domainManifest.replace('./src/stock.ts', './src/missing.ts'),
+      ],
+      [
+        'cyclic upstream export',
+        domainPath,
+        `export { StockDomainSchema } from '${specifier}';\nexport type { StockDomain } from '${specifier}';`,
+      ],
+      ['broken producer endpoint', producerPath, producer.replace('/reads/stock-list', '/reads/other')],
+      ['broken client gateway', producerClientPath, client.replace('operationGateway.invoke(', 'foreign.invoke(')],
+      [
+        'wrong gateway audience',
+        gatewayPath,
+        (sources.get(gatewayPath) ?? '').replaceAll(INVENTORY_DEPLOYMENT_ID, 'other-app'),
+      ],
+    ] as const) {
+      const result = assess([[file, source]]);
+      expect({ accepted: result.accepted, name }).toEqual({ accepted: false, name });
+      expect(result.diagnostics.length).toBeGreaterThan(0);
+    }
+  }),
+);
 
 for (const suffix of ['search', 'report']) {
   it.live(
@@ -3694,10 +3975,10 @@ for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'
 it('resolves only immutable literal permission aliases and preserves exact authorization comparison', () => {
   const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
   const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
-  const aliased = `${declaration}${base.replace("permission: 'module.access'", ALIASED_PERMISSION_PROPERTY)}`;
-  const expectation = { kind: 'context_permission', permission: 'module.access' } as const;
+  const aliased = `${declaration}${base.replace(MODULE_ACCESS_PERMISSION_PROPERTY, ALIASED_PERMISSION_PROPERTY)}`;
+  const expectation = { kind: 'context_permission', permission: MODULE_ACCESS_PERMISSION } as const;
   const accepts = (source: string) =>
-    hasGeneratedModuleApiReadContract(source, 'inventory.stock', STOCK_LIST_STEM, expectation);
+    hasGeneratedModuleApiReadContract(source, INVENTORY_MODULE_ID, STOCK_LIST_STEM, expectation);
   expect(accepts(aliased)).toBe(true);
   expect(accepts(aliased.replace(' as const;', ';'))).toBe(true);
   expect(accepts(aliased.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'))).toBe(false);
@@ -3812,7 +4093,7 @@ it.live(
     const root = yield* makeFixture();
     const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
     const source = `${declaration}${moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList').replace(
-      "permission: 'module.access'",
+      MODULE_ACCESS_PERMISSION_PROPERTY,
       ALIASED_PERMISSION_PROPERTY,
     )}`;
     const inventorySchema = Schema.fromJsonString(
@@ -3825,7 +4106,7 @@ it.live(
         ),
       }),
     );
-    for (const permission of ['module.access', 'module.other']) {
+    for (const permission of [MODULE_ACCESS_PERMISSION, 'module.other']) {
       yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
       yield* checkModuleEntrypointBoundaries(root);
       const report = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8'));

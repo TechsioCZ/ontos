@@ -1,3 +1,9 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, DateTime, Effect } from 'effect';
+import { orderDateText, isOpenDuplicate } from '../../../../../shared/domain/imports.ts';
+import type { ImportedOrder, PairingChange } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 // AREA: imports — owned by the crm-imports lane. Order detail side panel (state history, lines, pairing history,
 // review decisions) and the manual pairing form (C03/C04). Every action is a governed CRM command.
 import { DetailList, SidePanel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
@@ -9,41 +15,59 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { ImportedOrder } from '../../../../../shared/domain/imports.ts';
-import { isOpenDuplicate } from '../../../../../shared/domain/imports.ts';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+
 import { salespersonName } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+
 import { orderStatusLabel, statusReviewReasonLabel } from '../../../../crm/order-status-presentation.ts';
 import {
   NOT_PROVIDED,
   RESIZE_LABEL,
   clientLabel,
-  formatAmount,
+  useFormatAmount,
   orderDate,
+  orderLineDisplayRows,
   orderQueueState,
   orderTitle,
   pairingMeta,
   principalLabel,
 } from './order-model.ts';
 
-type Submit = (command: CrmCommand) => Promise<CrmCommandOutcome>;
+type Submit = CrmCommandSubmit;
+
+const pairingChangeLabel = (records: RecordsResponse, change: PairingChange) => {
+  if (change.toClientId === undefined) {
+    return `Zrušeno přiřazení k ${clientLabel(records, change.fromClientId) ?? '—'}`;
+  }
+  if (change.fromClientId === undefined) {
+    return `Přiřazeno: ${clientLabel(records, change.toClientId) ?? '—'}`;
+  }
+  return `${clientLabel(records, change.fromClientId) ?? '—'} → ${clientLabel(records, change.toClientId) ?? '—'}`;
+};
 
 const useRunner = (submit: Submit) => {
   const toaster = useToast();
-  return (command: CrmCommand, success: string, after?: () => void) =>
-    submit(command).then((outcome) => {
-      toaster.create(
-        outcome.ok
-          ? { title: success, type: 'success' }
-          : { description: outcome.message, title: 'Uložení se nezdařilo', type: 'error' },
-      );
-      if (outcome.ok) {
-        after?.();
-      }
-      return outcome;
-    });
+  return (command: CrmCommandInput, success: string, after?: () => void) => {
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((outcome) =>
+          Effect.sync(() => {
+            toaster.create(
+              outcome.ok
+                ? { title: success, type: 'success' }
+                : { description: outcome.message, title: 'Uložení se nezdařilo', type: 'error' },
+            );
+            if (outcome.ok) {
+              after?.();
+            }
+          }),
+        ),
+      ),
+    );
+  };
 };
 
 const Section = ({ children, title }: { readonly children: ReactNode; readonly title: string }) => (
@@ -106,6 +130,7 @@ export const PairingForm = ({
   readonly records: RecordsResponse;
   readonly submit: Submit;
 }) => {
+  const { t } = useModernI18n();
   const run = useRunner(submit);
   const [clientId, setClientId] = useState(order.candidates?.[0]?.clientId ?? '');
   const [reason, setReason] = useState('');
@@ -119,22 +144,22 @@ export const PairingForm = ({
     .filter((client) => client.status === 'active' && client.id !== order.clientId)
     .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'));
   const candidates = order.candidates ?? [];
-  const save = () =>
-    void run(
-      {
-        _tag: 'PairOrder',
-        clientId,
-        orderId: order.id,
-        reason: reason.trim(),
-        ...(approve ? { approveCustomerLink: true } : {}),
-      },
-      order.clientId === undefined ? 'Objednávka napárována' : 'Přiřazení opraveno',
-      () => {
-        setReason('');
-        setApprove(false);
-        onDone?.();
-      },
-    );
+  const save = () => {
+    const command: Extract<CrmCommandInput, { readonly _tag: 'PairOrder' }> = {
+      _tag: 'PairOrder',
+      clientId,
+      orderId: order.id,
+      reason: reason.trim(),
+    };
+    if (approve) {
+      Object.assign(command, { approveCustomerLink: true });
+    }
+    run(command, order.clientId === undefined ? 'Objednávka napárována' : 'Přiřazení opraveno', () => {
+      setReason('');
+      setApprove(false);
+      onDone?.();
+    });
+  };
   return (
     <div className="flex flex-col gap-150">
       {candidates.length > 0 && (
@@ -168,16 +193,16 @@ export const PairingForm = ({
           label: `${client.name} · ${salespersonName(records, client.ownerSalespersonId) ?? 'nepřiděleno'}`,
           value: client.id,
         }))}
-        label="Cílový klient"
+        label={t('crm.ciWorkflow.targetClient')}
         name="pairing-client"
         onValueChange={(details) => setClientId(details.value[0] ?? '')}
-        placeholder="Vyberte klienta"
+        placeholder={t('crm.ciWorkflow.selectClient')}
         size="sm"
         value={clientId === '' ? [] : [clientId]}
       />
       <ReasonField
         id={`pairing-reason-${order.id}`}
-        label="Důvod přiřazení a zdroj ověření"
+        label={t('crm.ciWorkflow.pairingReason')}
         onChange={setReason}
         value={reason}
       />
@@ -186,7 +211,7 @@ export const PairingForm = ({
           checked={approve}
           id={`pairing-approve-${order.id}`}
           label={`Schválit vazbu: zákazník ${order.externalCustomerId} (${order.source}) je tento klient – další objednávky se napárují samy`}
-          onCheckedChange={(checked) => setApprove(checked === true)}
+          onCheckedChange={(checked) => setApprove(checked)}
           size="sm"
         />
       )}
@@ -213,7 +238,7 @@ const DecisionForm = ({
   id,
   intro,
 }: {
-  readonly actions: readonly { label: string; primary?: boolean; free?: boolean; run: (reason: string) => void }[];
+  readonly actions: readonly { free?: boolean; label: string; primary?: boolean; run: (reason: string) => void }[];
   readonly busy: boolean;
   readonly id: string;
   readonly intro: ReactNode;
@@ -265,7 +290,12 @@ const StatusTimeline = ({
       {events.map(({ event, index }) => {
         const flagged = event.review === true;
         const open = flagged && event.resolution === undefined;
-        const current = !flagged && event.rawStatus === order.rawStatus && event.eventAt === order.lastEventAt;
+        const current =
+          !flagged &&
+          event.rawStatus === order.rawStatus &&
+          (event.eventAt === undefined
+            ? order.lastEventAt === undefined
+            : order.lastEventAt !== undefined && DateTime.Equivalence(event.eventAt, order.lastEventAt));
         return (
           <li
             className={`flex flex-col gap-100 p-150 ${open ? 'rounded-lg bg-bg-light-warning-base' : surfaceTileClassName}`}
@@ -274,7 +304,9 @@ const StatusTimeline = ({
             <div className="flex flex-wrap items-center gap-100">
               <RawStatusBadge status={event.rawStatus} />
               <span className="font-medium text-sm">
-                {event.eventAt === undefined ? 'čas události neposkytnut' : formatDateTime(event.eventAt)}
+                {event.eventAt === undefined
+                  ? 'čas události neposkytnut'
+                  : pipe(event.eventAt, orderDateText, formatDateTime)}
               </span>
               {current && (
                 <Badge size="sm" variant="success">
@@ -294,7 +326,7 @@ const StatusTimeline = ({
             </div>
             <span className="text-fg-secondary text-xs">
               {[
-                `Importováno ${formatDateTime(event.importedAt)}`,
+                `Importováno ${pipe(event.importedAt, orderDateText, formatDateTime)}`,
                 event.source,
                 batchName(event.batchId),
                 event.row === undefined ? undefined : `řádek ${String(event.row)}`,
@@ -308,7 +340,7 @@ const StatusTimeline = ({
             )}
             {event.resolution !== undefined && (
               <span className="text-fg-secondary text-xs">
-                {`Rozhodl(a) ${principalLabel(records, event.resolution.by)}, ${formatDateTime(event.resolution.at)}: ${event.resolution.reason}`}
+                {`Rozhodl(a) ${principalLabel(records, event.resolution.by)}, ${pipe(event.resolution.at, orderDateText, formatDateTime)}: ${event.resolution.reason}`}
               </span>
             )}
             {open && canDecide && (
@@ -316,8 +348,8 @@ const StatusTimeline = ({
                 actions={[
                   {
                     label: 'Ponechat stávající stav',
-                    run: (reason) =>
-                      void run(
+                    run: (reason) => {
+                      run(
                         {
                           _tag: 'ResolveOrderStatusEvent',
                           decision: 'dismiss',
@@ -326,13 +358,14 @@ const StatusTimeline = ({
                           reason,
                         },
                         'Rozhodnutí uloženo',
-                      ),
+                      );
+                    },
                   },
                   {
                     label: 'Použít jako aktuální stav',
                     primary: true,
-                    run: (reason) =>
-                      void run(
+                    run: (reason) => {
+                      run(
                         {
                           _tag: 'ResolveOrderStatusEvent',
                           decision: 'apply',
@@ -341,7 +374,8 @@ const StatusTimeline = ({
                           reason,
                         },
                         'Stav aktualizován',
-                      ),
+                      );
+                    },
                   },
                 ]}
                 busy={busy}
@@ -357,6 +391,7 @@ const StatusTimeline = ({
 };
 
 const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
+  const formatAmount = useFormatAmount();
   if (order.lines === undefined || order.lines.length === 0) {
     return (
       <span className="text-fg-secondary text-sm">Položky neposkytnuty – zdroj je u této objednávky neposlal.</span>
@@ -373,8 +408,8 @@ const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
         </tr>
       </thead>
       <tbody>
-        {order.lines.map((line, index) => (
-          <tr className="border-border-primary border-t" key={`${line.sku ?? line.name}-${String(index)}`}>
+        {orderLineDisplayRows(order.lines).map(({ key, row: line }) => (
+          <tr className="border-border-primary border-t" key={key}>
             <td className="py-50 pr-100 font-mono text-xs">{line.sku ?? '—'}</td>
             <td className="py-50 pr-100">{line.name}</td>
             <td className="py-50 pr-200 text-right tabular-nums">{line.quantity.replace('.', ',')}</td>
@@ -387,6 +422,96 @@ const LinesTable = ({ order }: { readonly order: ImportedOrder }) => {
 };
 
 /** Read-only detail of an imported order with its state history; decision forms for read_all + write_all. */
+const UnpairButton = ({
+  busy,
+  order,
+  run,
+}: {
+  readonly busy: boolean;
+  readonly order: ImportedOrder;
+  readonly run: ReturnType<typeof useRunner>;
+}) => {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <Button onClick={() => setOpen(true)} size="sm" theme="borderless" variant="secondary">
+        Zrušit přiřazení
+      </Button>
+    );
+  }
+  return (
+    <div className="w-full">
+      <DecisionForm
+        actions={[
+          { free: true, label: 'Zpět', run: () => setOpen(false) },
+          {
+            label: 'Vrátit do fronty k napárování',
+            primary: true,
+            run: (reason) => {
+              run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false));
+            },
+          },
+        ]}
+        busy={busy}
+        id={`unpair-${order.id}`}
+        intro="Původní přiřazení zůstane v historii s vaším jménem a důvodem."
+      />
+    </div>
+  );
+};
+
+const renderOrderFacts = (
+  order: ImportedOrder,
+  records: RecordsResponse,
+  formatAmount: ReturnType<typeof useFormatAmount>,
+) => {
+  const customer = [
+    order.customerName,
+    order.externalCustomerId,
+    order.customerRegNo === undefined || order.customerRegNo === '' ? undefined : `IČO ${order.customerRegNo}`,
+    order.customerEmail,
+  ]
+    .filter((part) => part !== undefined && part !== '')
+    .join(' · ');
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-100">
+        <PairingStateBadge order={order} />
+        <RawStatusBadge status={order.rawStatus} />
+        {isOpenDuplicate(order) && (
+          <Badge size="sm" variant="warning">
+            Možná duplicita
+          </Badge>
+        )}
+        {order.duplicateOf !== undefined && !isOpenDuplicate(order) && (
+          <Badge size="sm" variant="outline">
+            Potvrzená duplicita – mimo souhrny
+          </Badge>
+        )}
+        <Badge size="sm" variant="outline">
+          Importováno z CSV
+        </Badge>
+      </div>
+      <DetailList
+        items={[
+          { label: 'Klient v CRM', value: clientLabel(records, order.clientId) ?? 'nenapárováno' },
+          { label: 'Datum objednávky', value: orderDate(order) },
+          { label: 'Částka', value: formatAmount(order.amount, order.currency) },
+          { label: 'Stav ve zdroji (surový)', value: order.rawStatus },
+          {
+            label: 'Poslední událost ve zdroji',
+            value:
+              order.lastEventAt === undefined ? NOT_PROVIDED : pipe(order.lastEventAt, orderDateText, formatDateTime),
+          },
+          { label: 'Poprvé načteno do CRM', value: pipe(order.receivedAt, orderDateText, formatDateTime) },
+          { label: 'Zákazník podle zdroje', value: customer === '' ? NOT_PROVIDED : customer },
+          { label: 'Číslo / ID ve zdroji', value: `${order.number ?? NOT_PROVIDED} / ${order.externalId}` },
+        ]}
+      />
+    </>
+  );
+};
+
 export const OrderDetailPanel = ({
   busy,
   onClose,
@@ -400,6 +525,8 @@ export const OrderDetailPanel = ({
   readonly records: RecordsResponse;
   readonly submit: Submit;
 }) => {
+  const { t } = useModernI18n();
+  const formatAmount = useFormatAmount();
   const run = useRunner(submit);
   const [repairOpen, setRepairOpen] = useState(false);
   const canDecide = records.viewer.writeAll;
@@ -411,14 +538,7 @@ export const OrderDetailPanel = ({
       ? undefined
       : records.state.imports.orders.find((entry) => entry.id === order.duplicateOf);
   const history = records.state.imports.pairingHistory.filter((change) => change.orderId === order.id).toReversed();
-  const customer = [
-    order.customerName,
-    order.externalCustomerId,
-    order.customerRegNo && `IČO ${order.customerRegNo}`,
-    order.customerEmail,
-  ]
-    .filter((part) => part !== undefined && part !== '')
-    .join(' · ');
+
   return (
     <SidePanel
       actions={
@@ -439,40 +559,9 @@ export const OrderDetailPanel = ({
       title={`Objednávka ${orderTitle(order)}`}
     >
       <div className="flex flex-col gap-250">
-        <div className="flex flex-wrap items-center gap-100">
-          <PairingStateBadge order={order} />
-          <RawStatusBadge status={order.rawStatus} />
-          {isOpenDuplicate(order) && (
-            <Badge size="sm" variant="warning">
-              Možná duplicita
-            </Badge>
-          )}
-          {order.duplicateOf !== undefined && !isOpenDuplicate(order) && (
-            <Badge size="sm" variant="outline">
-              Potvrzená duplicita – mimo souhrny
-            </Badge>
-          )}
-          <Badge size="sm" variant="outline">
-            Importováno z CSV
-          </Badge>
-        </div>
-        <DetailList
-          items={[
-            { label: 'Klient v CRM', value: clientLabel(records, order.clientId) ?? 'nenapárováno' },
-            { label: 'Datum objednávky', value: orderDate(order) },
-            { label: 'Částka', value: formatAmount(order.amount, order.currency) },
-            { label: 'Stav ve zdroji (surový)', value: order.rawStatus },
-            {
-              label: 'Poslední událost ve zdroji',
-              value: order.lastEventAt === undefined ? NOT_PROVIDED : formatDateTime(order.lastEventAt),
-            },
-            { label: 'Poprvé načteno do CRM', value: formatDateTime(order.receivedAt) },
-            { label: 'Zákazník podle zdroje', value: customer === '' ? NOT_PROVIDED : customer },
-            { label: 'Číslo / ID ve zdroji', value: `${order.number ?? NOT_PROVIDED} / ${order.externalId}` },
-          ]}
-        />
+        {renderOrderFacts(order, records, formatAmount)}
         {order.duplicateOf !== undefined && (
-          <Section title="Duplicita mezi zdroji">
+          <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
             <span className="text-sm">
               {order.reviewReason ?? 'Stejná objednávka z jiného zdroje.'}
               {twin === undefined
@@ -480,8 +569,8 @@ export const OrderDetailPanel = ({
                 : ` Původní záznam: ${orderTitle(twin)} (${twin.source}, ID ${twin.externalId}).`}
             </span>
             {(order.decisions ?? []).map((decision) => (
-              <span className="text-fg-secondary text-xs" key={decision.at}>
-                {`${decision.decision === 'distinct' ? 'Samostatná objednávka' : 'Potvrzená duplicita'} – ${principalLabel(records, decision.by)}, ${formatDateTime(decision.at)}: ${decision.reason}`}
+              <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
+                {`${decision.decision === 'distinct' ? 'Samostatná objednávka' : 'Potvrzená duplicita'} – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
               </span>
             ))}
             {isOpenDuplicate(order) && canDecide && (
@@ -489,20 +578,22 @@ export const OrderDetailPanel = ({
                 actions={[
                   {
                     label: 'Jde o samostatnou objednávku',
-                    run: (reason) =>
-                      void run(
+                    run: (reason) => {
+                      run(
                         { _tag: 'ResolveOrderDuplicate', decision: 'distinct', orderId: order.id, reason },
                         'Rozhodnutí uloženo',
-                      ),
+                      );
+                    },
                   },
                   {
                     label: 'Potvrdit duplicitu',
                     primary: true,
-                    run: (reason) =>
-                      void run(
+                    run: (reason) => {
+                      run(
                         { _tag: 'ResolveOrderDuplicate', decision: 'confirmed_duplicate', orderId: order.id, reason },
                         'Duplicita potvrzena',
-                      ),
+                      );
+                    },
                   },
                 ]}
                 busy={busy}
@@ -513,10 +604,10 @@ export const OrderDetailPanel = ({
           </Section>
         )}
         {order.reviewReason !== undefined && order.duplicateOf === undefined && (order.decisions ?? []).length > 0 && (
-          <Section title="Duplicita mezi zdroji">
+          <Section title={t('crm.ciWorkflow.crossSourceDuplicate')}>
             {(order.decisions ?? []).map((decision) => (
-              <span className="text-fg-secondary text-xs" key={decision.at}>
-                {`Samostatná objednávka – ${principalLabel(records, decision.by)}, ${formatDateTime(decision.at)}: ${decision.reason}`}
+              <span className="text-fg-secondary text-xs" key={DateTime.formatIso(decision.at)}>
+                {`Samostatná objednávka – ${principalLabel(records, decision.by)}, ${pipe(decision.at, orderDateText, formatDateTime)}: ${decision.reason}`}
               </span>
             ))}
           </Section>
@@ -524,10 +615,10 @@ export const OrderDetailPanel = ({
         <Section title={`Historie stavů (${String(order.statusHistory.length)})`}>
           <StatusTimeline busy={busy} canDecide={canDecide} order={order} records={records} run={run} />
         </Section>
-        <Section title="Položky">
+        <Section title={t('crm.ciWorkflow.items')}>
           <LinesTable order={order} />
         </Section>
-        <Section title="Přiřazení ke klientovi">
+        <Section title={t('crm.ciWorkflow.clientAssignment')}>
           {history.length === 0 ? (
             <span className="text-fg-secondary text-sm">Zatím bez přiřazení.</span>
           ) : (
@@ -535,18 +626,12 @@ export const OrderDetailPanel = ({
               {history.map((change) => (
                 <li className="flex flex-col gap-50 text-sm" key={change.id}>
                   <span>
-                    <span className="font-medium">
-                      {change.toClientId === undefined
-                        ? `Zrušeno přiřazení k ${clientLabel(records, change.fromClientId) ?? '—'}`
-                        : change.fromClientId === undefined
-                          ? `Přiřazeno: ${clientLabel(records, change.toClientId) ?? '—'}`
-                          : `${clientLabel(records, change.fromClientId) ?? '—'} → ${clientLabel(records, change.toClientId) ?? '—'}`}
-                    </span>
+                    <span className="font-medium">{pairingChangeLabel(records, change)}</span>
                     {' · '}
                     {change.via === 'manual' ? 'ručně' : 'schválená vazba ID zákazníka'}
                   </span>
                   <span className="text-fg-secondary text-xs">
-                    {`${principalLabel(records, change.by)}, ${formatDateTime(change.at)} – ${change.reason}`}
+                    {`${principalLabel(records, change.by)}, ${pipe(change.at, orderDateText, formatDateTime)} – ${change.reason}`}
                   </span>
                 </li>
               ))}
@@ -575,42 +660,5 @@ export const OrderDetailPanel = ({
         </Section>
       </div>
     </SidePanel>
-  );
-};
-
-const UnpairButton = ({
-  busy,
-  order,
-  run,
-}: {
-  readonly busy: boolean;
-  readonly order: ImportedOrder;
-  readonly run: ReturnType<typeof useRunner>;
-}) => {
-  const [open, setOpen] = useState(false);
-  if (!open) {
-    return (
-      <Button onClick={() => setOpen(true)} size="sm" theme="borderless" variant="secondary">
-        Zrušit přiřazení
-      </Button>
-    );
-  }
-  return (
-    <div className="w-full">
-      <DecisionForm
-        actions={[
-          { free: true, label: 'Zpět', run: () => setOpen(false) },
-          {
-            label: 'Vrátit do fronty k napárování',
-            primary: true,
-            run: (reason) =>
-              void run({ _tag: 'UnpairOrder', orderId: order.id, reason }, 'Přiřazení zrušeno', () => setOpen(false)),
-          },
-        ]}
-        busy={busy}
-        id={`unpair-${order.id}`}
-        intro="Původní přiřazení zůstane v historii s vaším jménem a důvodem."
-      />
-    </div>
   );
 };

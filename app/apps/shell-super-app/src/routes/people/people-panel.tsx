@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { czechPlural } from '@app/shared-contracts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -99,6 +100,7 @@ const PeopleEditor = ({
   readonly onCommitted: (change: PendingPeopleChange) => void;
   readonly scope: 'company' | 'tenant';
 }) => {
+  const { t } = useModernI18n();
   const { person } = editor;
   const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
@@ -250,7 +252,7 @@ const PeopleEditor = ({
           </>
         )}
         <FormInput
-          label="Důvod změny"
+          label={t('shell.people.changeReason')}
           maxLength={500}
           onChange={(event) => setReason(event.target.value)}
           required

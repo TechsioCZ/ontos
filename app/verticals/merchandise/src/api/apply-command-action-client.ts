@@ -4,7 +4,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
 import { ApplyCommandActionApi, ApplyCommandPayloadSchema } from '../../shared/apis/apply-command-action.ts';
-import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
+import type { ApplyCommandPayloadEncoded } from '../../shared/actions/apply-command.ts';
 import { operationGateway } from './action-gateway.ts';
 
 const traceIdOption = 'traceId' as const;
@@ -44,10 +44,11 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
   );
 
 export const executeApplyCommandWithAuthorization = (
-  payload: ApplyCommandPayload,
+  payload: ApplyCommandPayloadEncoded,
   ...[credential, requestCorrelation, options]: AuthorizedInvocation
 ) =>
-  Schema.encodeUnknownEffect(ApplyCommandPayloadSchema)(payload).pipe(
+  Schema.decodeEffect(ApplyCommandPayloadSchema)(payload).pipe(
+    Effect.flatMap(Schema.encodeEffect(ApplyCommandPayloadSchema)),
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
         Effect.flatMap((client) => client.applyCommandAction.execute({ payload: encoded })),
@@ -56,7 +57,7 @@ export const executeApplyCommandWithAuthorization = (
   );
 
 export const executeApplyCommand = (
-  payload: ApplyCommandPayload,
+  payload: ApplyCommandPayloadEncoded,
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(

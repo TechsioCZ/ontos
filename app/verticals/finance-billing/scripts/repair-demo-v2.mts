@@ -8,6 +8,11 @@ import { FinanceStateSchema } from '../shared/apis/records.ts';
 import { transitionFinance } from '../src/services/persistence.service.ts';
 import { alignRentalTemplates } from './align-rental-templates.ts';
 
+class DemoRepairRejected extends Schema.TaggedError<DemoRepairRejected, { readonly brand: unique symbol }>()(
+  'DemoRepairRejected',
+  { reason: Schema.String },
+) {}
+
 const tenant = '70000000-0000-4000-8000-000000000020';
 const entity = '71000000-0000-4000-8000-000000000021';
 const admin = Layer.effect(
@@ -26,7 +31,7 @@ const program = Effect.gen(function* repair() {
     state: unknown;
   }>`select revision,state from finance_billing.finance_states where tenant_id=${tenant} and legal_entity_id=${entity}`;
   if (row === undefined) {
-    return yield* Effect.die('Missing Siampark finance state');
+    return yield* new DemoRepairRejected({ reason: 'Missing Siampark finance state' });
   }
   const original = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
   let state = alignRentalTemplates(original);
@@ -87,7 +92,7 @@ const program = Effect.gen(function* repair() {
       const updated =
         yield* sql`update finance_billing.finance_states set state=${encoded}::jsonb,revision=revision+1,updated_at=now() where tenant_id=${tenant} and legal_entity_id=${entity} and revision=${row.revision} returning revision`;
       if (updated.length !== 1) {
-        return yield* Effect.die('Finance changed concurrently; retry the scoped repair');
+        return yield* new DemoRepairRejected({ reason: 'Finance changed concurrently; retry the scoped repair' });
       }
       return yield* Effect.forEach(
         writes,

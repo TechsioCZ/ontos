@@ -30,7 +30,7 @@ const isError = (value: unknown): value is Error =>
 const isCheckoutRejectionError = (value: unknown): value is CheckoutRejectionError =>
   value !== null && value !== undefined && CheckoutRejectionError.prototype.isPrototypeOf(value);
 
-export interface PlacedOrder {
+interface PlacedOrder {
   id: string;
   orderId: string;
 }

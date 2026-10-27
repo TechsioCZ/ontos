@@ -6,6 +6,7 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { importCloneEvidence } from '../quality-audit/import-clone-evidence.mts';
+import { workspaceDirectories } from '../quality-audit/knip-runtime-model.mts';
 import { buildKnipModel, KnipConfigSchema, KnipModelEvidenceSchema } from '../quality-audit/knip-model.mts';
 import type { KnipModelEvidence } from '../quality-audit/knip-model.mts';
 import { runQualityCli } from './quality-cli-lifecycle.mts';
@@ -252,7 +253,11 @@ const modeledUsage = (
       return false;
     }
     if (entry.kind === 'resolver') {
-      return entry.line === issue.line && entry.column === issue.col && entry.owningManifest !== undefined;
+      return (
+        entry.line === issue.line &&
+        entry.column === issue.col &&
+        (entry.owningManifest !== undefined || entry.resolved === 'cloudflare:workers')
+      );
     }
     return entry.kind === 'compiler-option' && issue.line === undefined && issue.col === undefined;
   });
@@ -541,9 +546,14 @@ const snapshotConfiguration = Effect.fn('qualityAudit.snapshotConfiguration')(fu
     const relativeOutput = path.relative(root, path.dirname(directory));
     const outputIsInsideRoot =
       relativeOutput !== '..' && !relativeOutput.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOutput);
+    const consumerIgnores = consumerPath === undefined ? [] : [`${path.relative(root, path.dirname(consumerPath))}/**`];
     yield* writeJson(target, {
       ...config,
-      ignorePatterns: outputIsInsideRoot ? [...ignores.ignorePatterns, `${relativeOutput}/**`] : ignores.ignorePatterns,
+      ignorePatterns: [
+        ...ignores.ignorePatterns,
+        ...(outputIsInsideRoot ? [`${relativeOutput}/**`] : []),
+        ...consumerIgnores,
+      ],
     });
   }
   return configs;
@@ -572,19 +582,22 @@ const reconcileFallowCoverage = Effect.fn('qualityAudit.reconcileFallowCoverage'
         FallowFilesSchema,
         yield* fs.readFileString(path.join(fallow.directory, 'report.json')),
       );
-      const discovered = new Set(report.files);
+      const assetFiles = report.files.filter((file) => file.endsWith('.css'));
+      const sourceFiles = report.files.filter((file) => !file.endsWith('.css'));
+      const discovered = new Set(sourceFiles);
       const intended = new Set(files);
       const missing = files.filter((file) => !discovered.has(file));
-      const extra = report.files.filter((file) => !intended.has(file));
+      const extra = sourceFiles.filter((file) => !intended.has(file));
       yield* writeJson(path.join(directory, 'coverage.json'), {
+        assetFiles,
         expectedWorkspaces,
         extra,
         intendedSources: files.length,
         missing,
-        note: 'Fallow additionally discovers CSS; clone statistics count only token-eligible files.',
+        note: 'Fallow CSS assets are listed separately; source coverage compares JS/TS files and clone statistics count only token-eligible files.',
       });
       const counts = yield* verifyFallowCounts(results).pipe(Effect.result);
-      if (missing.length > 0 || extra.some((file) => !file.endsWith('.css'))) {
+      if (missing.length > 0 || extra.length > 0) {
         const diagnostic = [
           'Fallow discovery differs from source inventory; inspect coverage.json',
           Result.isFailure(counts) ? String(counts.failure) : '',
@@ -610,11 +623,7 @@ const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(function* 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const canonicalRoot = yield* fs.realPath(root);
-  const expectedManifests = yield* fs.glob('{apps,verticals,packages,vendor,tools}/*/package.json', {
-    exclude: ['**/node_modules/**'],
-    root,
-  });
-  const expectedWorkspaces = ['.', ...expectedManifests.map((file) => path.dirname(file))];
+  const expectedWorkspaces = yield* workspaceDirectories(root);
   const knip = results.find((result) => result.name === 'knip' && result.status === 'reported');
   if (knip !== undefined) {
     const observed = (knip.coverage.workspaces ?? []).map(
@@ -649,6 +658,12 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
   const startedAt = yield* Clock.currentTimeMillis;
   const binary = path.join(root, 'node_modules', step.tool, TOOL_BINS[step.tool]);
   const command = [process.execPath, binary, ...step.args];
+  // Knip's experimental Oxc raw transfer reserves a 6 GiB buffer per parse. Use its
+  // supported ordinary transfer path; analysis, source scope and report validation stay intact.
+  const environment =
+    step.tool === 'knip'
+      ? { FORCE_COLOR: '0', KNIP_DISABLE_RAW_TRANSFER: '1', NO_COLOR: '1' }
+      : { FORCE_COLOR: '0', NO_COLOR: '1' };
   const execution = yield* Effect.gen(function* launchAnalyzer() {
     if (!(yield* fs.exists(binary))) {
       return yield* failure(`Missing pinned local binary: ${binary}`);
@@ -665,7 +680,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
         cwd: root,
         // Inherited FORCE_COLOR overrides NO_COLOR and makes Node emit a warning.
         // Disable forcing at the subprocess boundary; keep real diagnostics intact.
-        env: { FORCE_COLOR: '0', NO_COLOR: '1' },
+        env: environment,
         extendEnv: true,
         stderr: 'pipe',
         stdin: 'ignore',
@@ -689,6 +704,7 @@ const executeStep = Effect.fn('qualityAudit.executeStep')(function* executeStepE
     command,
     cwd: root,
     endedAt,
+    environment,
     executionError,
     exitCode,
     expectedVersion: TOOL_VERSIONS[step.tool],
@@ -912,11 +928,11 @@ const createConsumerPath = Effect.fn('qualityAudit.createConsumerPath')(function
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const parent = path.join(root, '.codex');
-  yield* fs.makeDirectory(parent, { recursive: true });
+  // Knip applies ancestor gitignore rules even to explicit entry paths. Keep this
+  // scoped consumer in the workspace so it can also resolve its dependencies.
   const directory = yield* fs.makeTempDirectoryScoped({
-    directory: parent,
-    prefix: 'quality-audit-model-',
+    directory: root,
+    prefix: '.quality-audit-model-',
   });
   return path.join(directory, 'consumers.mts');
 });
@@ -985,7 +1001,15 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
   }).pipe(
     Effect.scoped,
     Effect.match({
-      onFailure: (issue) => [errorResult('setup', runDirectory, String(issue))],
+      onFailure: (issue) => [
+        errorResult(
+          'setup',
+          runDirectory,
+          Schema.is(Schema.Struct({ _tag: Schema.String, reason: Schema.String }))(issue)
+            ? `${issue._tag}: ${issue.reason}`
+            : String(issue),
+        ),
+      ],
       onSuccess: (collected) => collected,
     }),
   );

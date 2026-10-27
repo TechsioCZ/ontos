@@ -61,7 +61,6 @@ export const FinanceBudgetLineViewSchema = Schema.Struct({
   propertyRef: Schema.optionalKey(RefSchema),
   unitRef: Schema.optionalKey(RefSchema),
 });
-export type FinanceBudgetLineView = typeof FinanceBudgetLineViewSchema.Type;
 
 /** A file uploaded in Finance (e.g. the supplier's invoice PDF); its bytes are read on demand. */
 export const FinanceFileViewSchema = Schema.Struct({

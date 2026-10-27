@@ -4,7 +4,7 @@
  */
 import type { ConnectionClientKind } from '@app/shared-contracts/oauth-connections';
 import { Context } from 'effect';
-import type { Effect } from 'effect';
+import type { Effect, Option } from 'effect';
 
 import type { ConnectionInvalid, ConnectionUnavailable } from './errors.ts';
 
@@ -31,8 +31,8 @@ export interface OAuthClientInfo {
 export interface OAuthFlowService {
   /** Deletes the grant's Better Auth refresh tokens and consent rows (`reference_id` = grant id). */
   readonly deleteGrantTokens: (grantId: string) => Effect.Effect<void, ConnectionUnavailable>;
-  /** Client metadata Better Auth stored for this client id; undefined when the client is unknown. */
-  readonly findClient: (clientId: string) => Effect.Effect<OAuthClientInfo | undefined, ConnectionUnavailable>;
+  /** Client metadata Better Auth stored for this client id; None when the client is unknown. */
+  readonly findClient: (clientId: string) => Effect.Effect<Option.Option<OAuthClientInfo>, ConnectionUnavailable>;
   /** Fails with `ConnectionInvalid({ code: 'oauth_query_invalid' })` for a forged or expired query. */
   readonly verifyQuery: (
     oauthQuery: string,

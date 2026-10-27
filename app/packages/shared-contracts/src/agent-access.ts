@@ -12,6 +12,14 @@
 //                 signs in and approves; nobody copies a token. Management types follow `CONNECTION_MANAGEMENT_PATHS`.
 import { Schema } from 'effect';
 
+import { AgentLegalEntityIdSchema, AgentModuleKeySchema, AgentPrincipalIdSchema } from './agent-proposals.ts';
+
+export const AgentAccessClientIdSchema = Schema.String.pipe(Schema.brand('OAuthClientId'));
+export const AgentAccessGrantIdSchema = Schema.String.pipe(Schema.brand('OAuthGrantId'));
+export const AgentAccessProfileIdSchema = Schema.String.pipe(Schema.brand('OAuthProfileId'));
+export const AgentAccessTenantIdSchema = Schema.String.pipe(Schema.brand('TenantId'));
+export const AgentAccessAuditEventIdSchema = Schema.String.pipe(Schema.brand('AuditEventId'));
+
 const Text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 
 export const AGENT_WRITE_POLICIES = ['read_only', 'direct', 'approval'] as const;
@@ -24,7 +32,7 @@ export type AgentModuleAccess = typeof AgentModuleAccessSchema.Type;
 /** One module the principal may use; modules that are not listed are not accessible at all. */
 export const AgentModuleGrantSchema = Schema.Struct({
   access: AgentModuleAccessSchema,
-  moduleId: Text(120),
+  moduleId: AgentModuleKeySchema.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
 });
 export type AgentModuleGrant = typeof AgentModuleGrantSchema.Type;
 
@@ -59,16 +67,19 @@ export type ConnectionStatus = typeof ConnectionStatusSchema.Type;
 export const ConnectionClientKindSchema = Schema.Literals(['cimd', 'dcr', 'loopback']);
 export type ConnectionClientKind = typeof ConnectionClientKindSchema.Type;
 
-export const PrincipalRefSchema = Schema.Struct({ displayName: Schema.String, principalId: Schema.String });
+export const PrincipalRefSchema = Schema.Struct({ displayName: Schema.String, principalId: AgentPrincipalIdSchema });
 export type PrincipalRef = typeof PrincipalRefSchema.Type;
 
-export const ConnectionCompanySchema = Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String });
+export const ConnectionCompanySchema = Schema.Struct({
+  legalEntityId: AgentLegalEntityIdSchema,
+  legalName: Schema.String,
+});
 export type ConnectionCompany = typeof ConnectionCompanySchema.Type;
 
 /** One module of a connection, or of the acting principal's live rights. `label` is Czech. */
 export const ConnectionModuleSchema = Schema.Struct({
   label: Schema.String,
-  moduleId: Schema.String,
+  moduleId: AgentModuleKeySchema,
   read: Schema.Boolean,
   write: Schema.Boolean,
 });
@@ -86,24 +97,24 @@ export const ConnectionSummarySchema = Schema.Struct({
   acting: Schema.Struct({
     displayName: Schema.String,
     kind: Schema.Literals(['human', 'agent']),
-    principalId: Schema.String,
+    principalId: AgentPrincipalIdSchema,
   }),
   /** True when the grant covers everything the acting principal may use ("Vše, co smíte"). */
   allModules: Schema.Boolean,
   client: Schema.Struct({
-    clientId: Schema.String,
+    clientId: AgentAccessClientIdSchema,
     /** Redirect host shown as a badge, e.g. `chatgpt.com`, `claude.ai`, `localhost`. */
     host: Schema.String,
     kind: ConnectionClientKindSchema,
-    logoUri: Schema.NullOr(Schema.String),
+    logoUri: Schema.OptionFromNullOr(Schema.String),
     name: Schema.String,
   }),
-  createdAt: Schema.String,
+  createdAt: Schema.DateTimeUtcFromString,
   /** Person who connected an agent; null for a person's own connection. */
-  delegatedBy: Schema.NullOr(PrincipalRefSchema),
-  grantId: Schema.String,
-  lastUsedAt: Schema.NullOr(Schema.String),
-  legalEntityId: Schema.String,
+  delegatedBy: Schema.OptionFromNullOr(PrincipalRefSchema),
+  grantId: AgentAccessGrantIdSchema,
+  lastUsedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  legalEntityId: AgentLegalEntityIdSchema,
   legalName: Schema.String,
   limits: ConnectionLimitsSchema,
   /**
@@ -117,14 +128,14 @@ export const ConnectionSummarySchema = Schema.Struct({
   }),
   /** Effective modules: the grant intersected with the acting principal's live rights. */
   modules: Schema.Array(ConnectionModuleSchema),
-  profileId: Schema.String,
-  revokedAt: Schema.NullOr(Schema.String),
+  profileId: AgentAccessProfileIdSchema,
+  revokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
   /** Revocation code (`user`, `admin`, `superseded`, `operator_removed`, …); null while active. */
-  revokeReason: Schema.NullOr(Schema.String),
+  revokeReason: Schema.OptionFromNullOr(Schema.String),
   /** Free-text reason an administrator gave when revoking (from the `oauth.connection.revoked` audit row). */
-  revokeNote: Schema.NullOr(Schema.String),
+  revokeNote: Schema.OptionFromNullOr(Schema.String),
   status: ConnectionStatusSchema,
-  tenantId: Schema.String,
+  tenantId: AgentAccessTenantIdSchema,
   /** Person who approved the connection. */
   user: PrincipalRefSchema,
   /** Effective write policy: the stricter of the grant and the agent profile. */
@@ -140,11 +151,11 @@ export const ConnectionListResponseSchema = Schema.Struct({
 export type ConnectionListResponse = typeof ConnectionListResponseSchema.Type;
 
 export const ConnectionAdminFilterSchema = Schema.Struct({
-  actingPrincipalId: Schema.optionalKey(Schema.String),
-  clientId: Schema.optionalKey(Schema.String),
+  actingPrincipalId: Schema.optionalKey(AgentPrincipalIdSchema),
+  clientId: Schema.optionalKey(AgentAccessClientIdSchema),
   /** A `ConnectionStatus`; any other value is answered with a Czech 422 problem, not a bare 400. */
   status: Schema.optionalKey(Schema.String),
-  userPrincipalId: Schema.optionalKey(Schema.String),
+  userPrincipalId: Schema.optionalKey(AgentPrincipalIdSchema),
 });
 export type ConnectionAdminFilter = typeof ConnectionAdminFilterSchema.Type;
 
@@ -158,7 +169,7 @@ export const ConnectionAdminListResponseSchema = Schema.Struct({
   /** Choices for the filters, from every connection of the company (not only the filtered ones). */
   filterOptions: Schema.Struct({
     agents: Schema.Array(PrincipalRefSchema),
-    clients: Schema.Array(Schema.Struct({ clientId: Schema.String, name: Schema.String })),
+    clients: Schema.Array(Schema.Struct({ clientId: AgentAccessClientIdSchema, name: Schema.String })),
     people: Schema.Array(PrincipalRefSchema),
   }),
   /** Public environment MCP resource URL for the connection guide; never a credential. */
@@ -170,7 +181,7 @@ export type ConnectionAdminListResponse = typeof ConnectionAdminListResponseSche
 
 export const ConnectionUpdateRequestSchema = Schema.Struct({
   allModules: Schema.Boolean,
-  grantId: Schema.String,
+  grantId: AgentAccessGrantIdSchema,
   /** Complete new module list; must be empty when `allModules` is true. */
   modules: Schema.Array(AgentModuleGrantSchema),
   writePolicy: AgentWritePolicySchema,
@@ -180,7 +191,7 @@ export type ConnectionUpdateRequest = typeof ConnectionUpdateRequestSchema.Type;
 export const CONNECTION_REVOKE_REASON_MAX = 500;
 
 export const ConnectionRevokeRequestSchema = Schema.Struct({
-  grantId: Schema.String,
+  grantId: AgentAccessGrantIdSchema,
   /**
    * Required when an administrator revokes someone else's connection; optional for the owner. At most
    * `CONNECTION_REVOKE_REASON_MAX` characters, checked by the handler so a longer one gets a Czech 422 problem.
@@ -190,20 +201,20 @@ export const ConnectionRevokeRequestSchema = Schema.Struct({
 export type ConnectionRevokeRequest = typeof ConnectionRevokeRequestSchema.Type;
 
 export const ConnectionMutationResponseSchema = Schema.Struct({
-  grantId: Schema.String,
+  grantId: AgentAccessGrantIdSchema,
   status: ConnectionStatusSchema,
 });
 export type ConnectionMutationResponse = typeof ConnectionMutationResponseSchema.Type;
 
 export const AgentOperatorsRequestSchema = Schema.Struct({
-  agentPrincipalId: Schema.String,
+  agentPrincipalId: AgentPrincipalIdSchema,
   /** Complete new operator set (SpiceDB `principal:{agent}#operator`); active people of the agent's company only. */
-  operatorPrincipalIds: Schema.Array(Schema.String),
+  operatorPrincipalIds: Schema.Array(AgentPrincipalIdSchema),
 });
 export type AgentOperatorsRequest = typeof AgentOperatorsRequestSchema.Type;
 
 export const AgentOperatorsResponseSchema = Schema.Struct({
-  agentPrincipalId: Schema.String,
+  agentPrincipalId: AgentPrincipalIdSchema,
   operators: Schema.Array(PrincipalRefSchema),
   /** Active connections revoked because their operator was removed (reason `operator_removed`). */
   revokedConnections: Schema.Finite,
@@ -226,14 +237,14 @@ export const AGENT_DESCRIPTION_MAX = 500;
 export const AGENT_REASON_MAX = 500;
 
 export const AgentAuditEntrySchema = Schema.Struct({
-  actorName: Schema.NullOr(Schema.String),
-  auditEventId: Schema.String,
-  details: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
+  actorName: Schema.OptionFromNullOr(Schema.String),
+  auditEventId: AgentAccessAuditEventIdSchema,
+  details: Schema.Record(Schema.String, Schema.OptionFromNullOr(Schema.String)),
   eventType: Schema.String,
-  occurredAt: Schema.String,
+  occurredAt: Schema.DateTimeUtcFromString,
   outcome: Schema.String,
   outcomeCode: Schema.String,
-  targetName: Schema.NullOr(Schema.String),
+  targetName: Schema.OptionFromNullOr(Schema.String),
 });
 export type AgentAuditEntry = typeof AgentAuditEntrySchema.Type;
 
@@ -241,7 +252,7 @@ export const AgentModuleOptionSchema = Schema.Struct({
   label: Schema.String,
   /** Highest access any role of the company has in this module. */
   maxAccess: AgentModuleAccessSchema,
-  moduleId: Schema.String,
+  moduleId: AgentModuleKeySchema,
 });
 export type AgentModuleOption = typeof AgentModuleOptionSchema.Type;
 
@@ -257,7 +268,7 @@ export const AgentEntitySchema = Schema.Struct({
   /** Active connections acting as this agent. */
   connections: Schema.Array(ConnectionSummarySchema),
   /** What the agent is for (administrator's text); null when left empty. */
-  description: Schema.NullOr(Schema.String),
+  description: Schema.OptionFromNullOr(Schema.String),
   displayName: Schema.String,
   /** Whether an audited agent profile has been configured. */
   hasProfile: Schema.Boolean,
@@ -265,8 +276,8 @@ export const AgentEntitySchema = Schema.Struct({
   /** People allowed to connect the agent (SpiceDB `principal:{agent}#operator`). */
   operators: Schema.Array(PrincipalRefSchema),
   /** Person of the company responsible for the agent; null when no audited profile owner was chosen. */
-  owner: Schema.NullOr(PrincipalRefSchema),
-  principalId: Schema.String,
+  owner: Schema.OptionFromNullOr(PrincipalRefSchema),
+  principalId: AgentPrincipalIdSchema,
   status: AgentStatusSchema,
   writePolicy: AgentWritePolicySchema,
 });
@@ -278,7 +289,7 @@ export const AgentEntityOverviewSchema = Schema.Struct({
   agents: Schema.Array(AgentEntitySchema),
   /** Newest first: agent create/configure/status/delete rows and operator changes of this company. */
   audit: Schema.Array(AgentAuditEntrySchema),
-  company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
+  company: Schema.Struct({ legalEntityId: AgentLegalEntityIdSchema, legalName: Schema.String }),
   /** Active people of the company: the only allowed owners and operators. */
   members: Schema.Array(PrincipalRefSchema),
   /** Modules an agent of this company may get, sorted by label (cs). */
@@ -297,35 +308,35 @@ export type AgentEntityOverview = typeof AgentEntityOverviewSchema.Type;
  */
 export const ManageAgentEntityRequestSchema = Schema.Union([
   Schema.Struct({
-    description: Schema.NullOr(Text(AGENT_DESCRIPTION_MAX)),
+    description: Schema.OptionFromNullOr(Text(AGENT_DESCRIPTION_MAX)),
     displayName: Text(AGENT_NAME_MAX),
     modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('create'),
-    operatorPrincipalIds: Schema.Array(Schema.String),
-    ownerPrincipalId: Schema.String,
+    operatorPrincipalIds: Schema.Array(AgentPrincipalIdSchema),
+    ownerPrincipalId: AgentPrincipalIdSchema,
     writePolicy: AgentWritePolicySchema,
   }),
   Schema.Struct({
-    description: Schema.NullOr(Text(AGENT_DESCRIPTION_MAX)),
+    description: Schema.OptionFromNullOr(Text(AGENT_DESCRIPTION_MAX)),
     displayName: Text(AGENT_NAME_MAX),
     modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('configure'),
-    ownerPrincipalId: Schema.String,
-    principalId: Schema.String,
+    ownerPrincipalId: AgentPrincipalIdSchema,
+    principalId: AgentPrincipalIdSchema,
     writePolicy: AgentWritePolicySchema,
   }),
   Schema.Struct({
     expectedStatus: AgentExpectedStatusSchema,
     newStatus: AgentExpectedStatusSchema,
     operation: Schema.Literal('change-status'),
-    principalId: Schema.String,
+    principalId: AgentPrincipalIdSchema,
     reason: Schema.optionalKey(Text(AGENT_REASON_MAX)),
   }),
   Schema.Struct({
     /** Original expected-before state, retained with the idempotency key even after archive removes the agent. */
     expectedStatus: AgentExpectedStatusSchema,
     operation: Schema.Literal('delete'),
-    principalId: Schema.String,
+    principalId: AgentPrincipalIdSchema,
     reason: Text(AGENT_REASON_MAX),
   }),
 ]);
@@ -335,7 +346,7 @@ export const ManageAgentEntityResponseSchema = Schema.Struct({
   grantsGranted: Schema.Finite,
   grantsRevoked: Schema.Finite,
   operation: Schema.Literals(['create', 'configure', 'change-status', 'delete']),
-  principalId: Schema.String,
+  principalId: AgentPrincipalIdSchema,
   /** Active connections of the agent revoked by this change (deactivation, deletion). */
   revokedConnections: Schema.Finite,
   status: AgentStatusSchema,

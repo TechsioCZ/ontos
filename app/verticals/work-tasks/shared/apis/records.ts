@@ -28,6 +28,12 @@ export const PlannedHoursSchema = Schema.Finite.check(
 export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
   Schema.brand('WorkProjectId'),
 );
+export const StorefrontProductIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+  Schema.brand('StorefrontProductId'),
+);
+export const StorefrontRequestIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('StorefrontInquiryRequestId'),
+);
 export const ProjectStateSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'PAUSED', 'DONE']);
 /** One changed field of a task or project: raw saved values, so the editor can name ids with its own lookups. */
 export const ChangeSchema = Schema.Struct({
@@ -81,12 +87,10 @@ export const StorefrontInquirySchema = Schema.Struct({
   kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
   message: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1500)),
   name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
-  productId: Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand('StorefrontProductId')),
-  ),
+  productId: Schema.optionalKey(StorefrontProductIdSchema),
   productName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
-  requestId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('StorefrontInquiryRequestId')),
+  requestId: StorefrontRequestIdSchema,
   subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
 });
 export type StorefrontInquiry = typeof StorefrontInquirySchema.Type;

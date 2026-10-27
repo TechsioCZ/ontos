@@ -10,6 +10,8 @@
           "apps/*/api/index.ts",
           "verticals/*/api/index.ts",
           "packages/core-runtime/src/outbox/process.ts",
+          "verticals/work-tasks/scripts/prune-demo-leftovers.mts",
+          "**/valid/verticals/work-tasks/scripts/prune-demo-leftovers.mts",
           "**/valid/allowlisted-composition-root.ts"
         ]
       }

@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off -- Browser UI boundary: formats server timestamps for display. expires: 2027-03-31.
+import { DateTime, Option, Schema } from 'effect';
 /** Pure helpers of the "Připojené aplikace" screens: labels, access drafts and the connect guide. */
 import type {
   AgentWritePolicy,
@@ -8,62 +8,80 @@ import type {
   ConnectionUpdateRequest,
 } from '@app/shared-contracts/agent-access';
 
+import { AgentAccessGrantIdSchema } from '@app/shared-contracts/agent-access';
+import { AgentModuleKeySchema } from '@app/shared-contracts/agent-proposals';
+
 import type { ConnectionsFailure } from './connected-apps-client.ts';
 
-export const writePolicyLabel: Record<AgentWritePolicy, string> = {
+export const writePolicyLabel = {
   approval: 'Ke schválení',
   direct: 'Přímo',
   read_only: 'Jen čtení',
-};
+} satisfies Record<AgentWritePolicy, string>;
 
-export const writePolicyBadge: Record<AgentWritePolicy, 'info' | 'outline' | 'warning'> = {
+export const writePolicyBadge = {
   approval: 'info',
   direct: 'warning',
   read_only: 'outline',
-};
+} satisfies Record<AgentWritePolicy, 'info' | 'outline' | 'warning'>;
 
-export const clientKindLabel: Record<ConnectionClientKind, string> = {
+export const clientKindLabel = {
   cimd: 'Ověřená aplikace',
   dcr: 'Registrovaná aplikace',
   loopback: 'Běží na tomto počítači',
-};
+} satisfies Record<ConnectionClientKind, string>;
 
-export const statusLabel: Record<ConnectionStatus, string> = {
+export const statusLabel = {
   active: 'Aktivní',
   denied: 'Zamítnuté',
   revoked: 'Odpojené',
   superseded: 'Nahrazené',
-};
+} satisfies Record<ConnectionStatus, string>;
 
-export const statusBadge: Record<ConnectionStatus, 'outline' | 'success'> = {
+export const statusBadge = {
   active: 'success',
   denied: 'outline',
   revoked: 'outline',
   superseded: 'outline',
-};
+} satisfies Record<ConnectionStatus, 'outline' | 'success'>;
 
-const revokeReasonLabel: Readonly<Record<string, string>> = {
-  admin: 'Odpojil(a) správce firmy',
-  agent_disabled: 'Agent byl vypnut',
-  operator_removed: 'Osoba už nesmí agenta připojit',
-  password_changed: 'Po změně hesla',
-  superseded: 'Nahrazeno novým připojením',
-  user: 'Odpojil(a) uživatel',
-  user_disabled: 'Účet uživatele byl deaktivován',
-};
+const revokeReasonLabel = new Map(
+  Object.entries({
+    admin: 'Odpojil(a) správce firmy',
+    agent_disabled: 'Agent byl vypnut',
+    operator_removed: 'Osoba už nesmí agenta připojit',
+    password_changed: 'Po změně hesla',
+    superseded: 'Nahrazeno novým připojením',
+    user: 'Odpojil(a) uživatel',
+    user_disabled: 'Účet uživatele byl deaktivován',
+  }),
+);
+
+const connectionTimeFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' });
+
+export const formatWhen = (time: DateTime.Utc | Option.Option<DateTime.Utc>): string =>
+  Option.match(Option.isOption(time) ? time : Option.some(time), {
+    onNone: () => 'Zatím nepoužito',
+    onSome: (value) => DateTime.formatIntl(value, connectionTimeFormat),
+  });
+
+interface EndedConnectionDetail {
+  readonly label: string;
+  readonly note: string | null;
+  readonly when: string;
+}
 
 /** Why and when a connection stopped (admin list); undefined while active. */
-export const endedDetail = (
-  c: ConnectionSummary,
-): { readonly label: string; readonly note: string | null; readonly when: string } | undefined => {
+export const endedDetail = (c: ConnectionSummary): EndedConnectionDetail | undefined => {
   if (c.status === 'active') {
     return undefined;
   }
   const fallback = c.status === 'denied' ? 'Souhlas byl zamítnut' : 'Bez uvedeného důvodu';
   return {
-    label: (c.revokeReason === null ? undefined : revokeReasonLabel[c.revokeReason]) ?? fallback,
-    note: c.revokeReason === 'admin' ? c.revokeNote : null,
-    when: c.revokedAt === null ? '' : formatWhen(c.revokedAt),
+    label:
+      Option.getOrUndefined(Option.map((reason: string) => revokeReasonLabel.get(reason))(c.revokeReason)) ?? fallback,
+    note: Option.contains(c.revokeReason, 'admin') ? Option.getOrNull(c.revokeNote) : null,
+    when: Option.match(c.revokedAt, { onNone: () => '', onSome: (time) => formatWhen(time) }),
   };
 };
 
@@ -89,21 +107,14 @@ export const accessSummary = (c: ConnectionSummary): string => {
   return c.modules.length > 3 ? `${labels} a další ${c.modules.length - 3}` : labels;
 };
 
-export const formatWhen = (iso: string | null): string => {
-  if (iso === null) {
-    return 'Zatím nepoužito';
-  }
-  return new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
-};
-
-const failureMessages: Record<ConnectionsFailure, string> = {
+const failureMessages = {
   conflict: 'Připojení se mezitím změnilo.',
   error: 'Služba je nedostupná. Zkuste to znovu.',
   forbidden: 'Tuto akci nemůžete provést.',
   invalid: 'Údaje nejsou platné.',
   notFound: 'Připojení už neexistuje. Načtěte stránku znovu.',
   signedOut: 'Přihlášení vypršelo. Přihlaste se znovu.',
-};
+} satisfies Record<ConnectionsFailure, string>;
 
 export const failureText = (reason: ConnectionsFailure, detail: string | null): string => {
   if (detail !== null) {
@@ -115,7 +126,8 @@ export const failureText = (reason: ConnectionsFailure, detail: string | null): 
 /** Answers meaning the row is stale: the connection was revoked or replaced meanwhile, so the list reloads. */
 export const isStale = (reason: ConnectionsFailure): boolean => reason === 'conflict' || reason === 'notFound';
 
-export type ModuleChoice = 'none' | 'read' | 'write';
+export const ModuleChoiceSchema = Schema.Literals(['none', 'read', 'write']);
+export type ModuleChoice = typeof ModuleChoiceSchema.Type;
 
 export interface EditDraft {
   readonly allModules: boolean;
@@ -145,11 +157,16 @@ export const setModuleChoice = (draft: EditDraft, moduleId: string, choice: Modu
   modules: { ...draft.modules, [moduleId]: choice },
 });
 
-const policyOrder: readonly AgentWritePolicy[] = ['read_only', 'approval', 'direct'];
+const policyOrder = ['read_only', 'approval', 'direct'] satisfies readonly AgentWritePolicy[];
 
-const policyRank: Record<AgentWritePolicy, number> = { approval: 1, direct: 2, read_only: 0 };
+const policyRank = { approval: 1, direct: 2, read_only: 0 } satisfies Record<AgentWritePolicy, number>;
 
-const policyPresentation: Record<AgentWritePolicy, { readonly label: string; readonly description: string }> = {
+interface PolicyPresentation {
+  readonly description: string;
+  readonly label: string;
+}
+
+const policyPresentation = {
   approval: {
     description: 'Každou změnu nejdřív schválí člověk v Nastavení › Ke schválení.',
     label: 'Navrhovat změny ke schválení (doporučeno)',
@@ -159,7 +176,7 @@ const policyPresentation: Record<AgentWritePolicy, { readonly label: string; rea
     label: 'Provádět změny přímo',
   },
   read_only: { description: '', label: 'Jen čtení' },
-};
+} satisfies Record<AgentWritePolicy, PolicyPresentation>;
 
 /** Highest write policy the panel may offer: the approved one, never above the live rights. */
 const policyCeiling = (c: ConnectionSummary): AgentWritePolicy =>
@@ -185,15 +202,15 @@ const policyDisabledReason = (c: ConnectionSummary, value: AgentWritePolicy): st
   return 'Agent smí jen číst (nastavení agenta).';
 };
 
-export const policyChoices = (
-  c: ConnectionSummary,
-): readonly {
-  readonly value: AgentWritePolicy;
-  readonly label: string;
+interface PolicyChoice {
   readonly description: string;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
-}[] =>
+  readonly label: string;
+  readonly value: AgentWritePolicy;
+}
+
+export const policyChoices = (c: ConnectionSummary): readonly PolicyChoice[] =>
   policyOrder.map((value) => {
     const disabled = policyRank[value] > policyRank[policyCeiling(c)];
     return {
@@ -209,14 +226,14 @@ export const policyChoices = (
  * Modules the panel offers, each with what may still be ticked: within the approved grant (all live modules when it
  * was approved for everything) and within the live rights.
  */
-export const moduleChoices = (
-  c: ConnectionSummary,
-): readonly {
-  readonly label: string;
-  readonly moduleId: string;
+interface ConnectionModuleChoice {
   readonly canRead: boolean;
   readonly canWrite: boolean;
-}[] =>
+  readonly label: string;
+  readonly moduleId: string;
+}
+
+export const moduleChoices = (c: ConnectionSummary): readonly ConnectionModuleChoice[] =>
   c.limits.modules.flatMap((limit) => {
     const approved = c.allModules
       ? { access: 'write' as const }
@@ -241,11 +258,13 @@ export const draftProblem = (draft: EditDraft): string | undefined => {
 
 export const draftToRequest = (grantId: string, draft: EditDraft): ConnectionUpdateRequest => ({
   allModules: draft.allModules,
-  grantId,
+  grantId: AgentAccessGrantIdSchema.make(grantId),
   modules: draft.allModules
     ? []
     : Object.entries(draft.modules)
-        .flatMap(([moduleId, choice]) => (choice === 'none' ? [] : [{ access: choice, moduleId }]))
-        .sort((a, b) => a.moduleId.localeCompare(b.moduleId)),
+        .flatMap(([moduleId, choice]) =>
+          choice === 'none' ? [] : [{ access: choice, moduleId: AgentModuleKeySchema.make(moduleId) }],
+        )
+        .toSorted((a, b) => a.moduleId.localeCompare(b.moduleId)),
   writePolicy: draft.writePolicy,
 });

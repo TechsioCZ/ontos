@@ -70,6 +70,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
     'issueDocumentGatewayContexts',
   ]);
+  expect(Object.keys(ShellAuthenticationApi.groups.emailReceipts.endpoints)).toEqual(['list', 'provider']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'configureDemoCompanies',
@@ -132,6 +133,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
+    list: '/email/deliveries',
     listAgentEntities: '/auth/identity/agent-entities/list',
     listCompanyConnections: '/auth/oauth-connections/admin-list',
     listCompanyPeople: '/auth/identity/people/list',
@@ -143,6 +145,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     listTenantPeople: '/auth/identity/people/tenant-list',
     listTenantRoleCatalog: '/auth/identity/people/tenant-role-catalog',
     manageAgentEntity: '/auth/identity/agent-entities',
+    provider: '/email/provider',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
     replaceAgentOperators: '/auth/identity/agent-entities/operators',

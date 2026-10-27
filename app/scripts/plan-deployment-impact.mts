@@ -18,6 +18,7 @@ import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { parse as parseYaml } from 'yaml';
 
+import { ActionProvisioningIntentSchema } from '../packages/core-runtime/src/authorization/entrypoint-classification.ts';
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
 import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -251,7 +252,7 @@ const InventoryAuthorizationSchema = Schema.Union([
   }),
   Schema.Struct({
     kind: Schema.Literal('action_execution'),
-    provisioning: Schema.Literals(['explicit', 'tenant_membership_default']),
+    provisioning: ActionProvisioningIntentSchema,
   }),
   Schema.Struct({
     credential: AuthorizationCredentialSchema,

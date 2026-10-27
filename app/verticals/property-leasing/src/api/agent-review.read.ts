@@ -46,7 +46,6 @@ export const agentReviewRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     // The write right is a SpiceDB round trip: it is decided before the transaction opens.
     prepare: (input: AgentReviewRequest, context) =>
       reviewsLiveProposals(input) ? occupancyWriteCapability(context.scope) : Effect.succeed(false),
@@ -83,7 +82,6 @@ export const agentReviewRead = defineRead(
       );
       return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
     }),
-    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),

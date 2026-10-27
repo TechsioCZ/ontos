@@ -3,8 +3,12 @@
     "title": "CRM",
     "role": "crm",
     "routeSurface": "CRM Velkoobchodu Hanák.",
-    "seo": { "description": "CRM: klienti, návštěvy, importované objednávky a přehled prodejů." },
-    "routes": { "home": "Domů" },
+    "seo": {
+      "description": "CRM: klienti, návštěvy, importované objednávky a přehled prodejů."
+    },
+    "routes": {
+      "home": "Domů"
+    },
     "common": {
       "loading": "Načítání…",
       "errorTitle": "Data CRM se nepodařilo načíst",
@@ -24,13 +28,186 @@
       "scopeNone": "Nemáte přidělené žádné klienty."
     },
     "pages": {
-      "ai": { "title": "AI změny ke schválení", "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky." },
-      "clients": { "title": "Klienti", "description": "Firemní klienti, kontaktní osoby a přidělení obchodníkům." },
-      "visits": { "title": "Návštěvy", "description": "Historie návštěv, telefonátů a e-mailů u klientů." },
-      "plan": { "title": "K oslovení", "description": "Ruční plán dalších kontaktů. Není to doporučení systému." },
-      "imports": { "title": "Import objednávek", "description": "CSV importy objednávek a změn stavů ze zdrojových systémů." },
-      "pairing": { "title": "Párování objednávek", "description": "Objednávky bez jednoznačného klienta čekající na ruční přiřazení." },
-      "reports": { "title": "Přehled prodejů", "description": "Počty a hodnoty evidovaných objednávek po obchodnících, klientech a obdobích." }
+      "ai": {
+        "title": "AI změny ke schválení",
+        "description": "Návrhy AI, lidské schvalování a bezpečné vrácení celé dávky."
+      },
+      "clients": {
+        "title": "Klienti",
+        "description": "Firemní klienti, kontaktní osoby a přidělení obchodníkům."
+      },
+      "visits": {
+        "title": "Návštěvy",
+        "description": "Historie návštěv, telefonátů a e-mailů u klientů."
+      },
+      "plan": {
+        "title": "K oslovení",
+        "description": "Ruční plán dalších kontaktů. Není to doporučení systému."
+      },
+      "imports": {
+        "title": "Import objednávek",
+        "description": "CSV importy objednávek a změn stavů ze zdrojových systémů."
+      },
+      "pairing": {
+        "title": "Párování objednávek",
+        "description": "Objednávky bez jednoznačného klienta čekající na ruční přiřazení."
+      },
+      "reports": {
+        "title": "Přehled prodejů",
+        "description": "Počty a hodnoty evidovaných objednávek po obchodnících, klientech a obdobích."
+      }
+    },
+    "ciWorkflow": {
+      "aiApprovalLog": "Deník AI a schvalování",
+      "approvedLinks": "Schválené vazby",
+      "awaitingPairing": "K napárování",
+      "batchView": "Zobrazení dávek",
+      "businessOverview": "Obchodní přehled",
+      "chartCurrency": "Měna grafu",
+      "client": "Klient",
+      "clientAssignment": "Přiřazení ke klientovi",
+      "clientsWithOrders": "Klienti s objednávkou",
+      "completeContact": "Vyřídit kontakt",
+      "completed30Days": "Vyřízeno za 30 dní",
+      "contactOn": "Ozvat se dne",
+      "contactOutcome": "Jak to dopadlo (krátce)",
+      "contactToday": "K oslovení dnes",
+      "crmClient": "Klient v CRM",
+      "crossSourceDuplicate": "Duplicita mezi zdroji",
+      "csvContents": "Obsah CSV (první řádek je hlavička)",
+      "csvFile": "Soubor CSV",
+      "csvImport": "Import objednávek z CSV",
+      "decisionNote": "Poznámka k rozhodnutí (nepovinná)",
+      "decisionNotePlaceholder": "Např. ověřeno s obchodníkem",
+      "emptyQueue": "Fronta je prázdná",
+      "excludedFromReport": "Vyloučeno z přehledu",
+      "groupBy": "Seskupit podle",
+      "importBatches": "Importní dávky",
+      "importedSkuItems": "Importované položky (SKU)",
+      "items": "Položky",
+      "itemsNotProvided": "Položky neposkytnuty — bez dat",
+      "managementApprovalsOnly": "Schvalování je vyhrazeno vedení",
+      "managementPairingOnly": "Párování provádí vedení obchodu",
+      "monthlyOrderCounts": "Počet objednávek po měsících",
+      "monthlyOrderValue": "Hodnota objednávek tento měsíc",
+      "monthlyTrend": "Vývoj po měsících",
+      "needsReview": "Vyžaduje kontrolu",
+      "newApprovedLink": "Nová schválená vazba",
+      "noCompletedContacts": "Zatím žádné vyřízené kontakty",
+      "noData": "Bez dat",
+      "noImportsYet": "Zatím žádný import",
+      "noOrders": "Bez objednávek",
+      "noOrdersYet": "Zatím žádné objednávky",
+      "note": "Poznámka",
+      "nothingToReview": "Nic ke kontrole",
+      "openContacts": "Otevřené kontakty",
+      "orderChartData": "Vývoj objednávek a dostupná data grafů",
+      "ordersToResolve": "Objednávky k dořešení",
+      "overdue": "Po termínu",
+      "pairingReason": "Důvod přiřazení a zdroj ověření",
+      "period": "Období",
+      "planNotePlaceholder": "např. zeptat se na zimní nabídku",
+      "recordVisit": "Zároveň zapsat návštěvu / telefonát do historie",
+      "recordedOrderValue": "Hodnota evidovaných objednávek",
+      "recordedOrders": "Evidované objednávky",
+      "responsibleSalesperson": "Odpovědný obchodník",
+      "salesAtAGlance": "Prodeje v kostce",
+      "salesperson": "Obchodník",
+      "sampleFiles": "Vzorové soubory",
+      "searchClient": "Vyhledejte klienta",
+      "searchOrder": "Hledat objednávku",
+      "searchOrderPlaceholder": "Číslo, ID, zákazník, IČO, stav",
+      "selectClient": "Vyberte klienta",
+      "show": "Zobrazit",
+      "source": "Zdroj",
+      "sourceCustomerId": "ID zákazníka ve zdroji",
+      "sourceSystem": "Zdrojový systém",
+      "status": "Stav",
+      "targetClient": "Cílový klient",
+      "today": "Dnes",
+      "uncertainClient": "Nejistý klient",
+      "unpaired": "Nenapárované",
+      "within14Days": "Do 14 dní"
+    },
+    "ciClientsVisits": {
+      "clients": {
+        "active": "Aktivní klienti",
+        "assignedSalesperson": "Přidělený obchodník",
+        "assignedToMe": "Přidělení mně",
+        "cannotDisplay": "Klienta nelze zobrazit",
+        "cardUnavailable": "Kartu nelze otevřít",
+        "contactedLast30Days": "Kontaktováno za 30 dní",
+        "customerRegistry": "Evidence zákazníků",
+        "existingRegistryCustomer": "Existující zákazník v evidenci zákazníků",
+        "exportDescription": "Klienti a kontaktní osoby podle aktuálních filtrů; jen záznamy, které smíte vidět",
+        "linkedToRegistry": "Propojeno s evidencí zákazníků",
+        "newSalesperson": "Nový obchodník",
+        "notFound": "Klient nenalezen",
+        "recordedOrders": "Evidované objednávky",
+        "recordedOrderValue": "Hodnota evidovaných objednávek",
+        "registryIdentity": "Identita v evidenci zákazníků",
+        "salespeople": "Obchodníci",
+        "searchLabel": "Hledat klienta",
+        "searchPlaceholder": "Název, IČO, telefon, e-mail, kontaktní osoba",
+        "withoutContact": "Klienti bez kontaktu",
+        "withoutSalesperson": "Bez obchodníka"
+      },
+      "contacts": {
+        "empty": "Bez kontaktních osob",
+        "primary": "Hlavní kontakt klienta",
+        "removeFromForm": "Odebrat osobu z formuláře",
+        "roleExample": "např. Nákupčí",
+        "rolesExample": "např. Nákupčí, Provozní",
+        "title": "Kontaktní osoby"
+      },
+      "fields": {
+        "address": "Adresa",
+        "addressPlaceholder": "Ulice a číslo, PSČ Město",
+        "client": "Klient",
+        "date": "Datum",
+        "dueDate": "Termín",
+        "email": "E-mail",
+        "fullName": "Jméno a příjmení",
+        "jobRole": "Pracovní role",
+        "note": "Poznámka",
+        "period": "Období",
+        "phone": "Telefon",
+        "registrationNumber": "IČO",
+        "salesperson": "Obchodník",
+        "segment": "Segment",
+        "status": "Stav",
+        "taxId": "DIČ",
+        "time": "Čas",
+        "type": "Typ",
+        "website": "Web"
+      },
+      "history": {
+        "empty": "Bez historie"
+      },
+      "visits": {
+        "addNextStepToMyPlan": "Zařadit další krok do mého plánu K oslovení",
+        "addNextStepToPlan": "Zařadit další krok do plánu K oslovení",
+        "clientPlaceholder": "Vyhledejte klienta",
+        "contactOnDate": "Ozvat se dne",
+        "contactsLast30Days": "Kontakty za 30 dní",
+        "correctedRecords": "Opravené záznamy",
+        "correctionExample": "např. překlep, upřesnění po telefonu",
+        "correctionReason": "Důvod opravy",
+        "correctRecord": "Opravit záznam",
+        "empty": "Bez návštěv",
+        "inPersonLast30Days": "Osobní návštěvy za 30 dní",
+        "lastContact": "Poslední kontakt",
+        "lastContactAnyType": "Poslední kontakt (jakýkoli)",
+        "lastVisit": "Poslední návštěva",
+        "nextPlannedContact": "Příští plánovaný kontakt",
+        "nextStep": "Co udělat",
+        "recordedContacts": "Zapsané kontakty",
+        "recordVisit": "Zapsat návštěvu",
+        "responsibleSalesperson": "Odpovědný obchodník",
+        "result": "Výsledek",
+        "searchLabel": "Hledat v návštěvách",
+        "searchPlaceholder": "Hledat v záznamech"
+      }
     }
   }
 }

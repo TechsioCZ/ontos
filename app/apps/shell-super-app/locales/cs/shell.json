@@ -360,7 +360,15 @@
       "menu": "Můj profil",
       "seoDescription": "Profil přihlášeného účtu a připojené aplikace (ChatGPT, Claude).",
       "identity": "Přihlášený účet",
-      "loading": "Načítám…"
+      "loading": "Načítám…",
+      "connections": {
+        "title": "Připojené aplikace",
+        "acting": "Jako",
+        "access": "Přístup",
+        "connected": "Připojeno",
+        "lastUsed": "Naposledy použito"
+      },
+      "href": "/cs/profil"
     },
     "connectedAppsGuide": {
       "title": "Jak připojit",
@@ -432,9 +440,15 @@
           "save": "Uložit",
           "saving": "Ukládám…",
           "saved": "Seznam lidí pro {{name}} je uložený",
-          "revoked": "Odpojená připojení: {{count}}",
+          "revoked_one": "Odpojená připojení: {{count}}",
+          "revoked_few": "Odpojená připojení: {{count}}",
+          "revoked_many": "Odpojená připojení: {{count}}",
+          "revoked_other": "Odpojená připojení: {{count}}",
           "confirmTitle": "Odebrat a odpojit?",
-          "confirmDescription": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_one": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_few": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_many": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirmDescription_other": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
           "confirm": "Uložit a odpojit",
           "cancel": "Zrušit"
         },
@@ -580,7 +594,10 @@
           "deactivated": "Agent {{name}} je deaktivovaný",
           "activated": "Agent {{name}} je znovu aktivní",
           "deleted": "Agent {{name}} je smazaný",
-          "revoked": "Odpojená připojení: {{count}}"
+          "revoked_one": "Odpojená připojení: {{count}}",
+          "revoked_few": "Odpojená připojení: {{count}}",
+          "revoked_many": "Odpojená připojení: {{count}}",
+          "revoked_other": "Odpojená připojení: {{count}}"
         },
         "audit": {
           "title": "Historie změn agentů",
@@ -595,7 +612,10 @@
           "reason": "Důvod: {{reason}}",
           "system": "Systém",
           "unknownAgent": "agenta",
-          "operatorsRevoked": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_one": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_few": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_many": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsRevoked_other": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
           "operatorsCreated": "určil(a), kdo smí připojit agenta {{target}}",
           "deniedAction": {
             "create": "vytvořit agenta",
@@ -621,7 +641,33 @@
     },
     "invitation": {
       "title": "Nastavení hesla",
-      "description": "Jednorázové nastavení hesla z pozvánky."
+      "description": "Jednorázové nastavení hesla z pozvánky.",
+      "newPassword": "Nové heslo",
+      "confirmPassword": "Zopakujte nové heslo"
+    },
+    "demoGuide": {
+      "title": "Průvodce ukázkou",
+      "resize": "Změnit šířku průvodce. Šipky vlevo a vpravo mění šířku, Home vrátí výchozí.",
+      "close": "Zavřít průvodce",
+      "progress": "Postup ukázky",
+      "publicDemoSignInHint": "Heslo všech ukázkových účtů: password1234. Pro jinou personu použijte samostatný profil prohlížeče, nebo se odhlaste a přihlaste znovu."
+    },
+    "people": {
+      "invite": "Pozvat člověka",
+      "fullName": "Jméno a příjmení",
+      "tabs": "Lidé a agenti",
+      "title": "Lidé a role",
+      "changeReason": "Důvod změny"
+    },
+    "agentPlatform": {
+      "approvals": {
+        "note": "Poznámka k rozhodnutí (nepovinná)",
+        "notePlaceholder": "Např. ověřeno s obchodníkem",
+        "filters": "Zobrazení dávek"
+      },
+      "activity": {
+        "table": "Aktivita agentů"
+      }
     }
   }
 }

@@ -1,13 +1,13 @@
 // Local after-commit host. Receipts/provider reads use the Shell API in every runtime;
 // this loop keeps Mailpit SMTP and a loopback-only health endpoint for demo/up.sh.
 import { createServer } from 'node:http';
-import { NodeHttpServer, NodeRuntime } from '@effect/platform-node';
+import { NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Console, Effect, Layer, Option, Schedule, Schema } from 'effect';
-import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { Config, Console, Effect, Exit, Layer, Option, Ref, Schema, Scope } from 'effect';
+import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
-import { dispatchEmailBatch } from '../../../packages/email-delivery/src/dispatcher/dispatch.ts';
-import { emailTransport } from '../../../packages/email-delivery/src/transport.ts';
+import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import { emailTransport } from '@app/email-delivery/transport';
 
 const healthSchema = Schema.Struct({
   ok: Schema.Literal(true),
@@ -19,8 +19,9 @@ const responseHeaders = { 'cache-control': 'no-store' };
 export const healthResponse = Effect.gen(function* healthResponse() {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (request.method === 'GET' && request.url === '/healthz') {
+    const transport = yield* emailTransport;
     return yield* HttpServerResponse.schemaJson(healthSchema)(
-      { ok: true, provider: { ...emailTransport.provider, label: Option.fromNullOr(emailTransport.provider.label) } },
+      { ok: true, provider: { ...transport.provider, label: Option.fromNullOr(transport.provider.label) } },
       { headers: responseHeaders },
     );
   }
@@ -36,28 +37,54 @@ const DatabaseLive = Layer.effect(
     return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_URL') });
   }),
 ).pipe(Layer.provide(Reactivity.layer));
-const ServerLive = NodeHttpServer.layerConfig(createServer, {
-  host: Config.succeed('127.0.0.1'),
-  port: Config.Int('EMAIL_DISPATCHER_PORT').pipe(Config.withDefault(3096)),
+const waitForStop = Effect.callback((resume: (effect: Effect.Effect<void>) => void) => {
+  const stop = (): void => {
+    resume(Effect.void);
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  return Effect.sync(() => {
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+  });
 });
 
-// Catch failed cycles, including defects, without overlapping or retrying an individual send.
-const dispatchCycle = dispatchEmailBatch.pipe(Effect.catchCause(() => Console.error('[email] cycle failed')));
-const program = Effect.gen(function* main() {
+const program = Effect.gen(function* runLocalDispatcher() {
+  const transport = yield* emailTransport;
+  const port = yield* Config.Int('EMAIL_DISPATCHER_PORT').pipe(Config.withDefault(3096));
   const intervalMs = yield* Config.Int('EMAIL_DISPATCHER_INTERVAL_MS').pipe(Config.withDefault(2000));
-  yield* HttpServer.serveEffect(healthResponse);
-  yield* Console.log(
-    `[email] local dispatcher; ${emailTransport.provider.label ?? 'NO provider'}; receipts at /shell-super-app-api/email/deliveries`,
+  const databaseScope = yield* Effect.acquireRelease(Scope.make(), (scope, exit) => Scope.close(scope, exit));
+  const healthScope = yield* Effect.acquireRelease(Scope.make(), (scope, exit) => Scope.close(scope, exit));
+  const server = yield* NodeHttpServer.make(() => createServer(), { host: '127.0.0.1', port }).pipe(
+    Scope.provide(healthScope),
   );
-  yield* dispatchCycle.pipe(Effect.repeat(Schedule.spaced(intervalMs)));
-});
+  yield* server.serve(healthResponse).pipe(Scope.provide(healthScope));
+  yield* Console.log(
+    `[email] local dispatcher; ${transport.provider.label ?? 'NO provider'}; receipts at /shell-super-app-api/email/deliveries`,
+  );
+  // Keep the database scope alive until the last active cycle has finished.
+  const database = yield* Effect.cached(Layer.buildWithScope(DatabaseLive, databaseScope));
+  const stopping = yield* Ref.make(false);
+  yield* waitForStop.pipe(
+    Effect.tap(() => Ref.set(stopping, true)),
+    Effect.andThen(Scope.close(healthScope, Exit.void)),
+    Effect.forkChild,
+  );
+  while (!(yield* Ref.get(stopping))) {
+    // Catch failed cycles, including defects, without overlapping or retrying an individual send.
+    yield* database.pipe(
+      Effect.flatMap((context) => Effect.provideContext(dispatchEmailBatch, context)),
+      Effect.catchCause(() => Console.error('[email] cycle failed')),
+    );
+    yield* Effect.sleep(intervalMs);
+  }
+}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 if (import.meta.main) {
-  NodeRuntime.runMain(
-    program.pipe(
-      Effect.provide(Layer.mergeAll(DatabaseLive, ServerLive)),
-      Effect.scoped,
-      Effect.tapError(() => Console.error('[email] dispatcher failed to start')),
-    ),
+  const exit = await Effect.runPromiseExit(
+    program.pipe(Effect.tapCause(() => Console.error('[email] dispatcher failed to start'))),
   );
+  if (Exit.isFailure(exit)) {
+    process.exitCode = 1;
+  }
 }

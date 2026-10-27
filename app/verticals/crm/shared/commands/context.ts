@@ -1,8 +1,12 @@
 // Shared command plumbing (owned by crm-scaffold). Area reducers receive a CommandContext and return a
 // CommandChange or fail with one of the CRM domain errors via the helpers below.
-import { Effect } from 'effect';
-import type { CrmViewer } from '../domain/access.ts';
+import { Effect, Schema } from 'effect';
 import { canWriteAnything, canWriteClient } from '../domain/access.ts';
+import type { CrmViewer } from '../domain/access.ts';
+
+import { EntityIdSchema, makeEntityId } from '../domain/common.ts';
+import type { IsoTimeSchema, EntityId } from '../domain/common.ts';
+
 import type { Client } from '../domain/clients.ts';
 import type { CrmState } from '../domain/state.ts';
 import { CrmLifecycleConflict } from '../errors/crm-lifecycle-conflict.ts';
@@ -11,17 +15,18 @@ import { CrmPermissionDenied } from '../errors/crm-permission-denied.ts';
 import { CrmReferenceIneligible } from '../errors/crm-reference-ineligible.ts';
 
 /** A Counterparty the server read from Party Registry for this command (CUSTOMER of the scoped company). */
-export interface VerifiedParty {
-  readonly counterpartyId: string;
-  readonly displayName?: string;
-  readonly partyId: string;
-}
+export const VerifiedPartySchema = Schema.Struct({
+  counterpartyId: EntityIdSchema,
+  displayName: Schema.optionalKey(Schema.String),
+  partyId: EntityIdSchema,
+});
+export type VerifiedParty = typeof VerifiedPartySchema.Type;
 
 export interface CommandContext {
   /** Core action invocation id; unique per command. */
   readonly invocationId: string;
   /** ISO timestamp of the command. */
-  readonly now: string;
+  readonly now: typeof IsoTimeSchema.Type;
   /**
    * Party Registry links verified by the server before the reducer runs, keyed by counterpartyId. A command that
    * carries a partyRef without a verified entry is refused (the browser's claim alone is never stored).
@@ -32,7 +37,7 @@ export interface CommandContext {
 
 export interface CommandChange {
   /** Ids created or touched, returned to the caller (first = primary entity). */
-  readonly entityIds: readonly string[];
+  readonly entityIds: readonly EntityId[];
   readonly state: CrmState;
 }
 
@@ -44,7 +49,8 @@ export type Reducer<C> = (
 ) => Effect.Effect<CommandChange, CrmCommandFailure>;
 
 /** Deterministic new id for the n-th entity a command creates. */
-export const newId = (context: CommandContext, suffix: string | number = 0) => `${context.invocationId}-${suffix}`;
+export const newId = (context: CommandContext, suffix: string | number = 0) =>
+  makeEntityId(`${context.invocationId}-${suffix}`);
 
 export const notFound = (reason: string) => Effect.fail(new CrmNotFound({ code: 'crm_not_found', reason }));
 export const denied = (reason: string) =>
@@ -78,7 +84,12 @@ export const requireAnyWrite = (context: CommandContext) =>
   canWriteAnything(context.viewer) ? Effect.void : denied('Nemáte oprávnění k zápisu v CRM');
 
 /** Copy optional keys only when they carry a value (keeps exactOptionalPropertyTypes happy). */
-export const definedOnly = <T extends Record<string, unknown>>(value: T) =>
-  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== '')) as {
-    [K in keyof T]?: Exclude<T[K], undefined>;
-  };
+export const definedOnly = <T extends object>(value: T) => {
+  const defined: { [K in keyof T]?: Exclude<T[K], undefined> } = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined && entry !== '') {
+      Object.defineProperty(defined, key, { configurable: true, enumerable: true, value: entry, writable: true });
+    }
+  }
+  return defined;
+};

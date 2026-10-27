@@ -1,43 +1,64 @@
-import { DatabaseConfig } from '@app/core-runtime';
-import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
-import type { DispatchResult } from '@app/email-delivery/dispatcher';
-import { emailDeliverySources } from '@app/email-delivery/contract';
-import type { EmailDeliveriesResponse, EmailProviderView } from '@app/email-delivery/contract';
-import { listDeliveries } from '@app/email-delivery/deliveries';
-import type { DeliveryReadScope } from '@app/email-delivery/deliveries';
+import type { DatabaseConfigError } from '@app/core-runtime';
+import type { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
+import type { DeliveryReadScope, listDeliveries } from '@app/email-delivery/deliveries';
 import { emailEnvironment, emailTransport } from '@app/email-delivery/transport';
-import { PgClient } from '@effect/sql-pg';
-import { Effect, Layer, Redacted } from 'effect';
-import { Cookies, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import {
+  EmailDeliveryReceiptsResponseSchema,
+  EmailDeliverySourceSchema,
+  EmailProviderViewSchema,
+  EmailReceiptsApi,
+  EmailReceiptsAuthenticationProblemSchema,
+  EmailReceiptsForbiddenProblemSchema,
+  EmailReceiptsInvalidProblemSchema,
+} from '@app/email-delivery/receipt-api';
+import { Context, Effect, Option, Redacted, Schema } from 'effect';
+import type { Crypto } from 'effect';
+import { Cookies, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
+import { HttpApiBuilder } from 'effect/http-api';
+import { withEmailDispatchFailure, withEmailProviderFailure, withEmailReceiptFailure } from './http-error-seam.ts';
 import { AuthenticationService } from '../auth/service.ts';
+import { ShellAuthenticationApi } from '../../shared/api.ts';
 
-// The composition root owns the request scope, DatabaseConfig and Reactivity dependencies.
-export const EmailDatabaseLive = Layer.effect(
-  PgClient.PgClient,
-  Effect.gen(function* makeEmailDatabase() {
-    const config = yield* DatabaseConfig;
-    return yield* PgClient.makeClient({ url: Redacted.make(config.connectionString) });
-  }),
-);
+export type EmailDeliveryQuery = Parameters<typeof listDeliveries>[0];
+type EmailDeliveryRead = ReturnType<typeof listDeliveries>;
 
-type EmailResponseBody =
-  | EmailProviderView
-  | EmailDeliveriesResponse
-  | DispatchResult
-  | {
-      readonly error: 'invalid_query' | 'authentication_required' | 'forbidden' | 'unauthorized' | 'email_unavailable';
-    };
+interface EmailDeliveryRequestOperations {
+  readonly dispatch: Effect.Effect<
+    Effect.Success<typeof dispatchEmailBatch>,
+    Effect.Error<typeof dispatchEmailBatch> | DatabaseConfigError,
+    Crypto.Crypto
+  >;
+  readonly list: (
+    query: EmailDeliveryQuery,
+  ) => Effect.Effect<Effect.Success<EmailDeliveryRead>, Effect.Error<EmailDeliveryRead> | DatabaseConfigError>;
+}
 
-const json = (body: EmailResponseBody, status = 200, cookies: readonly string[] = []) =>
-  HttpServerResponse.json(body, {
+/** The application root supplies delivery operations scoped to each request; acquiring the service opens no database pool. */
+export class EmailDeliveryRequests extends Context.Service<EmailDeliveryRequests, EmailDeliveryRequestOperations>()(
+  '@app/shell-super-app/api/email/transport/EmailDeliveryRequests',
+) {}
+
+type ResponseStatus = NonNullable<HttpServerResponse.Options['status']>;
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
+const json = Effect.fn('EmailTransport.json')(function* jsonResponse(
+  body: Schema.Json,
+  status: ResponseStatus = 200,
+  cookies: readonly string[] = [],
+) {
+  const encoded = yield* encodeJson(body);
+  return HttpServerResponse.text(encoded, {
+    contentType: 'application/json; charset=utf-8',
     cookies: Cookies.fromSetCookie(cookies),
-    headers: { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' },
+    headers: { 'cache-control': 'no-store' },
     status,
   });
+});
 
 export const parseDeliveryQuery = (url: URL) => {
-  const sourceValue = url.searchParams.get('source');
-  const source = emailDeliverySources.find((candidate) => candidate === sourceValue);
+  const source = Option.getOrUndefined(
+    Schema.decodeUnknownOption(EmailDeliverySourceSchema)(url.searchParams.get('source')),
+  );
   const subjectIds = url.searchParams.getAll('subjectId');
   const subjectNumbers = url.searchParams.getAll('subjectNumber');
   const all = [...subjectIds, ...subjectNumbers];
@@ -64,24 +85,50 @@ export const parseDeliveryQuery = (url: URL) => {
 };
 
 /** No query/body token, no disabled-auth mode. Unconfigured dispatch fails closed. */
-export const isDispatchAuthorized = (headers: Headers, secret: Redacted.Redacted | undefined): boolean =>
-  secret !== undefined &&
-  Redacted.value(secret).trim() !== '' &&
-  headers.get('authorization') === `Bearer ${Redacted.value(secret)}`;
+export const isDispatchAuthorized = (headers: Headers, secret: Redacted.Redacted | undefined): boolean => {
+  if (secret === undefined) {
+    return false;
+  }
+  const value = Redacted.value(secret);
+  return value.trim() !== '' && headers.get('authorization') === `Bearer ${value}`;
+};
 
-const receipts = Effect.fn('EmailTransport.receipts')(function* readReceipts(request: Request) {
+const invalidReceiptQuery = EmailReceiptsInvalidProblemSchema.make({
+  detail: 'Select bounded delivery subjects from one supported source.',
+  error: 'invalid_query',
+  status: EmailReceiptsInvalidProblemSchema.fields.status.literal,
+  title: 'Invalid email receipt query',
+  type: 'https://ontos.dev/problems/email-receipts-invalid',
+});
+const receiptAuthenticationRequired = EmailReceiptsAuthenticationProblemSchema.make({
+  detail: 'An authenticated company session is required.',
+  error: 'authentication_required',
+  status: EmailReceiptsAuthenticationProblemSchema.fields.status.literal,
+  title: 'Email receipt authentication required',
+  type: 'https://ontos.dev/problems/email-receipts-authentication',
+});
+const receiptForbidden = EmailReceiptsForbiddenProblemSchema.make({
+  detail: 'These delivery receipts are outside the authenticated scope.',
+  error: 'forbidden',
+  status: EmailReceiptsForbiddenProblemSchema.fields.status.literal,
+  title: 'Email receipt access denied',
+  type: 'https://ontos.dev/problems/email-receipts-forbidden',
+});
+
+const receipts = Effect.fn('EmailTransport.receipts')(function* receiptsEffect(request: Request) {
   const query = parseDeliveryQuery(new URL(request.url));
   if (query === null) {
-    return yield* json({ error: 'invalid_query' }, 400);
+    return yield* Effect.fail(invalidReceiptQuery);
   }
   let scope: DeliveryReadScope;
-  let cookies: readonly string[] = [];
   if (query.recipient === null) {
     const auth = yield* AuthenticationService;
     const session = yield* auth.resolveShellContext(request.headers);
-    cookies = session.setCookieHeaders;
+    yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(HttpServerResponse.mergeCookies(response, Cookies.fromSetCookie(session.setCookieHeaders))),
+    );
     if (session.state !== 'authenticated') {
-      return yield* json({ error: 'authentication_required' }, 401, cookies);
+      return yield* Effect.fail(receiptAuthenticationRequired);
     }
     scope = {
       kind: 'company',
@@ -98,44 +145,47 @@ const receipts = Effect.fn('EmailTransport.receipts')(function* readReceipts(req
       query.subjectNumbers.length > 0 ||
       query.subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))
   ) {
-    return yield* json({ error: 'forbidden' }, 403, cookies);
+    return yield* Effect.fail(receiptForbidden);
   }
-  const deliveries = yield* listDeliveries({ ...query, scope });
-  return yield* json({ deliveries }, 200, cookies);
+  const deliveries = yield* (yield* EmailDeliveryRequests).list({ ...query, scope });
+  return yield* Schema.decodeEffect(EmailDeliveryReceiptsResponseSchema)({ deliveries });
 });
-const dispatch = (request: Request) => {
-  const configuredSecret = emailEnvironment['ONTOS_EMAIL_DISPATCH_SECRET'];
-  const secret = configuredSecret === undefined ? undefined : Redacted.make(configuredSecret);
-  if (!isDispatchAuthorized(request.headers, secret)) {
-    return json({ error: 'unauthorized' }, 401);
-  }
-  return dispatchEmailBatch.pipe(Effect.flatMap((result) => json(result, result.configured ? 200 : 503)));
-};
-const route = <E, R>(
-  method: 'GET' | 'POST',
-  path: `/${string}`,
-  handler: (request: Request) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-) =>
-  HttpRouter.add(method, path, (request) =>
-    HttpServerRequest.toWeb(request).pipe(
-      Effect.flatMap(handler),
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.logError('Email request failed', error).pipe(
-            Effect.andThen(json({ error: 'email_unavailable' }, 503)),
-          ),
-        onSuccess: Effect.succeed,
-      }),
-    ),
-  );
 
-// Keep provider discovery independent of the database-backed routes at the composition root.
-export const EmailProviderTransportLive = route('GET', '/email/provider', () => json(emailTransport.provider));
-
-// Expected failures keep the established 503 body. Defects belong to the outer HTTP error seam.
-export const EmailDeliveryTransportLive = Layer.mergeAll(
-  route('GET', '/email/deliveries', receipts),
-  route('POST', '/email/dispatch', dispatch),
+const listReceipts = Effect.fn('EmailTransport.listReceipts')((request: HttpServerRequest.HttpServerRequest) =>
+  HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
+  ).pipe(Effect.andThen(HttpServerRequest.toWeb(request)), Effect.flatMap(receipts), withEmailReceiptFailure),
 );
 
-export const EmailTransportLive = Layer.mergeAll(EmailProviderTransportLive, EmailDeliveryTransportLive);
+const readProvider = Effect.fn('EmailTransport.readProvider')(() =>
+  HttpEffect.appendPreResponseHandler((_request, response) =>
+    Effect.succeed(HttpServerResponse.setHeader(response, 'cache-control', 'no-store')),
+  ).pipe(
+    Effect.andThen(emailTransport),
+    Effect.flatMap((transport) => Schema.decodeEffect(EmailProviderViewSchema)(transport.provider)),
+    withEmailProviderFailure,
+  ),
+);
+
+export const EmailReceiptHandlersLive = HttpApiBuilder.group(EmailReceiptsApi, 'emailReceipts', (handlers) =>
+  handlers.handle('list', ({ request }) => listReceipts(request)).handle('provider', () => readProvider()),
+);
+
+export const ShellEmailReceiptHandlersLive = HttpApiBuilder.group(ShellAuthenticationApi, 'emailReceipts', (handlers) =>
+  handlers.handle('list', ({ request }) => listReceipts(request)).handle('provider', () => readProvider()),
+);
+export const EmailReceiptTransportLive = HttpApiBuilder.layer(EmailReceiptsApi);
+const dispatch = Effect.fn('EmailTransport.dispatch')(function* dispatch(request: Request) {
+  const environment = yield* emailEnvironment;
+  const credential = environment.ONTOS_EMAIL_DISPATCH_SECRET;
+  if (!isDispatchAuthorized(request.headers, credential)) {
+    return yield* json({ error: 'unauthorized' }, 401);
+  }
+  return yield* EmailDeliveryRequests.pipe(
+    Effect.flatMap((requests) => requests.dispatch),
+    Effect.flatMap((result) => json({ ...result }, result.configured ? 200 : 503)),
+  );
+});
+export const EmailTransportLive = HttpRouter.add('POST', '/email/dispatch', (request) =>
+  HttpServerRequest.toWeb(request).pipe(Effect.flatMap(dispatch), withEmailDispatchFailure),
+);

@@ -1,11 +1,17 @@
-import { Link as LocalizedLink } from '@modern-js/plugin-i18n/runtime';
+import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { agentItemStatusLabel, agentRiskLabel } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentBatchKeySchema,
+  AgentItemKeySchema,
+  AgentModuleKeySchema,
+  agentItemStatusLabel,
+  agentRiskLabel,
+} from '@app/shared-contracts/agent-proposals';
 import type {
   AgentQueueBatch,
   AgentQueueItem,
@@ -18,7 +24,8 @@ import type {
 } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Effect, Match, Result, Schema } from 'effect';
+import { Effect, Match, Option, Result, Schema } from 'effect';
+import { Url } from 'effect/http';
 import type { HttpClient } from 'effect/http';
 import type { ComponentProps } from 'react';
 
@@ -33,7 +40,7 @@ import {
 } from './agent-platform-client.ts';
 import type { AgentMutationIntent } from './agent-platform-client.ts';
 import { agentQueueData } from './platform-page-data.ts';
-import { batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
+import { AgentReviewSearchQuerySchema, batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
 
 type Decision = AgentDecideRequest['decision'];
 type ReviewIntent =
@@ -257,6 +264,7 @@ const BatchCard = ({
   readonly onRevert: (batch: AgentQueueBatch, note: string) => void;
   readonly targetItemKey: string | undefined;
 }) => {
+  const { t } = useModernI18n();
   const [note, setNote] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = batch.items.filter((item) => item.status === 'pending');
@@ -296,9 +304,9 @@ const BatchCard = ({
           <>
             <FormInput
               id={`note-${batch.key}`}
-              label="Poznámka k rozhodnutí (nepovinná)"
+              label={t('shell.agentPlatform.approvals.note')}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Např. ověřeno s obchodníkem"
+              placeholder={t('shell.agentPlatform.approvals.notePlaceholder')}
               size="sm"
               value={note}
             />
@@ -391,13 +399,13 @@ const queueRequest = (
 ): AgentQueueRequest => {
   let request: AgentQueueRequest = { pendingOnly: filter === 'pending' };
   if (moduleKey !== '') {
-    request = { ...request, moduleKey };
+    request = { ...request, moduleKey: AgentModuleKeySchema.make(moduleKey) };
   }
   if (cursor !== undefined) {
     request = { ...request, cursor };
   }
   if (batchKey !== undefined) {
-    request = { ...request, batchKey };
+    request = { ...request, batchKey: AgentBatchKeySchema.make(batchKey) };
   }
   return request;
 };
@@ -480,7 +488,11 @@ const useReviewActions = (refresh: () => void) => {
     );
   };
   const handleDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
-    let payload: AgentDecideRequest = { batchKey: batch.key, decision, itemKeys: [...keys].toSorted() };
+    let payload: AgentDecideRequest = {
+      batchKey: batch.key,
+      decision,
+      itemKeys: [...keys].toSorted().map((key) => AgentItemKeySchema.make(key)),
+    };
     if (note !== '') {
       payload = { ...payload, note };
     }
@@ -607,39 +619,42 @@ const QueueFilters = ({
   readonly modules: NonNullable<AgentQueueResponse['modules']>;
   readonly onFilter: (filter: 'all' | 'pending') => void;
   readonly onModuleFilter: (moduleKey: string) => void;
-}) => (
-  <fieldset aria-label="Zobrazení dávek" className="ai-review-actions agent-filters">
-    <Button
-      aria-pressed={filter === 'pending'}
-      onClick={() => onFilter('pending')}
-      size="sm"
-      theme={filter === 'pending' ? 'solid' : 'outlined'}
-      variant={filter === 'pending' ? 'primary' : 'secondary'}
-    >
-      Čeká na schválení
-    </Button>
-    <Button
-      aria-pressed={filter === 'all'}
-      onClick={() => onFilter('all')}
-      size="sm"
-      theme={filter === 'all' ? 'solid' : 'outlined'}
-      variant={filter === 'all' ? 'primary' : 'secondary'}
-    >
-      Všechny dávky
-    </Button>
-    <label>
-      <span>Modul</span>
-      <select onChange={(event) => onModuleFilter(event.target.value)} value={moduleFilter}>
-        <option value="">Všechny moduly</option>
-        {modules.map((module) => (
-          <option key={module.moduleKey} value={module.moduleKey}>
-            {module.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  </fieldset>
-);
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <fieldset aria-label={t('shell.agentPlatform.approvals.filters')} className="ai-review-actions agent-filters">
+      <Button
+        aria-pressed={filter === 'pending'}
+        onClick={() => onFilter('pending')}
+        size="sm"
+        theme={filter === 'pending' ? 'solid' : 'outlined'}
+        variant={filter === 'pending' ? 'primary' : 'secondary'}
+      >
+        Čeká na schválení
+      </Button>
+      <Button
+        aria-pressed={filter === 'all'}
+        onClick={() => onFilter('all')}
+        size="sm"
+        theme={filter === 'all' ? 'solid' : 'outlined'}
+        variant={filter === 'all' ? 'primary' : 'secondary'}
+      >
+        Všechny dávky
+      </Button>
+      <label>
+        <span>Modul</span>
+        <select onChange={(event) => onModuleFilter(event.target.value)} value={moduleFilter}>
+          <option value="">Všechny moduly</option>
+          {modules.map((module) => (
+            <option key={module.moduleKey} value={module.moduleKey}>
+              {module.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </fieldset>
+  );
+};
 
 const ApprovalsQueue = ({
   targetItemKey,
@@ -778,6 +793,10 @@ const ApprovalsQueue = ({
 };
 
 export const ApprovalsPanel = () => {
-  const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const searchStr = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const search = Option.getOrElse(
+    Schema.decodeOption(AgentReviewSearchQuerySchema)(Url.urlParams(new URL(searchStr, 'https://shell.invalid/'))),
+    () => ({}),
+  );
   return <ApprovalsQueue targetItemKey={itemKeyFromSearch(search)} targetKey={batchKeyFromSearch(search)} />;
 };

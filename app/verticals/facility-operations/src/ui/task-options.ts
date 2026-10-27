@@ -7,8 +7,8 @@ import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 export type TaskOptionsState =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
-  | { readonly status: 'ready'; readonly options: readonly SubjectRef[] };
+  | { readonly error: Effect.Error<ReturnType<typeof executeWorkRecords>>; readonly status: 'failed' }
+  | { readonly options: readonly SubjectRef[]; readonly status: 'ready' };
 
 /** The work gateway filters this list to the current principal and legal entity. */
 export const useTaskOptions = (): TaskOptionsState => {
@@ -18,15 +18,19 @@ export const useTaskOptions = (): TaskOptionsState => {
     void browserRuntime.runPromise(
       executeWorkRecords({}, 'facility-operations.document-task-options').pipe(
         Effect.match({
-          onFailure: (): TaskOptionsState => ({ status: 'failed' }),
+          onFailure: (error): TaskOptionsState => ({ error, status: 'failed' }),
           onSuccess: (response): TaskOptionsState => ({
+            options: response.items.map((task) => ({ id: task.ref.resourceId, kind: 'task', label: task.title })),
             status: 'ready',
-            options: response.items.map((task) => ({ kind: 'task', id: task.ref.resourceId, label: task.title })),
           }),
         }),
-        Effect.map((next) => {
-          if (alive) setState(next);
-        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setState(next);
+            }
+          }),
+        ),
       ),
     );
     return () => {

@@ -126,7 +126,6 @@ export const currentRelevantStockPositionSetRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (input: RelevantStockPositionSetRequest, context) =>
       prepareRelevantStockPositionSet(input, context.scope).pipe(Effect.mapError(mapPositionSetReadFailure)),
     load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
@@ -156,7 +155,6 @@ export const currentRelevantStockPositionSetRead = defineRead(
       })),
       Effect.mapError(mapPositionSetReadFailure),
     ),
-    // oxlint-enable perfectionist/sort-objects
   },
   (transaction, scope) =>
     Effect.succeed({

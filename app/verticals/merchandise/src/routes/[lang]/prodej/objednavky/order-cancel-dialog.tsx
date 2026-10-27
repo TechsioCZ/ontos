@@ -35,13 +35,13 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
           </Button>
           <Button
             className="shrink-0 whitespace-nowrap"
-            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             isLoading={busy}
             loadingText={t(key('create.submitting'))}
             onClick={() => {
               onConfirm(orders ?? [], trimmed === '' ? undefined : trimmed);
               setReason('');
             }}
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
             variant="danger"
           >
             {single === undefined ? t(key('confirm.cancelBulkAction')) : t(key('confirm.cancelAction'))}
@@ -68,11 +68,11 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
     >
       <FormInput
         id="order-cancel-reason"
-        label="Důvod storna (nepovinný, zapíše se do historie)"
+        label={t('merchandise.ui.cancellationReason')}
         maxLength={500}
         name="reason"
         onChange={(event) => setReason(event.target.value)}
-        placeholder="Např. zákazník objednávku telefonicky zrušil"
+        placeholder={t('merchandise.ui.cancellationReasonPlaceholder')}
         value={reason}
         {...(storefront ? { helpText: 'Zákazník z e-shopu uvidí důvod v e-mailu o stornování.' } : {})}
       />

@@ -6,7 +6,6 @@ export const crmMcpContribution = defineOntosMcpContribution({
   approvalReview: { privateRecords: true, read: 'agent-review' },
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v CRM', en: 'Open in CRM' }, path: '/crm/schvalovani-ai' },
-  ownProposalEngine: true,
   commandFieldLabels: {
     address: 'Adresa',
     dueDate: 'Termín',
@@ -72,6 +71,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
   keywords:
     'zákazník klient kontakt kontaktní osoba návštěva schůzka obchodník plán kontaktů objednávka crm customer client visit salesperson order',
   label: { cs: 'CRM – klienti a obchodníci', en: 'CRM – clients and salespeople' },
+  ownProposalEngine: true,
   page: '/crm/klienti',
   reads: {
     'agent-review': OntosMcpHidden,
@@ -79,13 +79,6 @@ export const crmMcpContribution = defineOntosMcpContribution({
   },
   recordLinks: [
     {
-      resourceType: 'demo.crm.client',
-      proposalTargetKind: 'client',
-      path: '/crm/klienti',
-      queryParam: 'klient',
-      recordsPath: 'state.clients.items',
-      idField: 'id',
-      labelField: 'name',
       commands: [
         ...[
           'AddContactPerson',
@@ -94,9 +87,16 @@ export const crmMcpContribution = defineOntosMcpContribution({
           'LinkExternalCustomer',
           'PlanContact',
           'RecordVisit',
-        ].map((tag) => ({ tag, idField: 'clientId' })),
-        ...['ArchiveClient', 'RestoreClient', 'UpdateClient'].map((tag) => ({ tag, idField: 'id' })),
+        ].map((tag) => ({ idField: 'clientId', tag })),
+        ...['ArchiveClient', 'RestoreClient', 'UpdateClient'].map((tag) => ({ idField: 'id', tag })),
       ],
+      idField: 'id',
+      labelField: 'name',
+      path: '/crm/klienti',
+      proposalTargetKind: 'client',
+      queryParam: 'klient',
+      recordsPath: 'state.clients.items',
+      resourceType: 'demo.crm.client',
     },
   ],
   revision: { read: 'records' },

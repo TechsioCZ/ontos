@@ -7,9 +7,7 @@ import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSc
 import { StoredFileRefSchema } from './documents.ts';
 
 export const SecurityDeviceIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityDeviceId'));
-export type SecurityDeviceId = typeof SecurityDeviceIdSchema.Type;
 export const SecurityIncidentIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySecurityIncidentId'));
-export type SecurityIncidentId = typeof SecurityIncidentIdSchema.Type;
 
 /** S11: camera / access control / alarm / other. */
 export const SecurityDeviceTypeSchema = Schema.Literals(['camera', 'access', 'alarm', 'other']);
@@ -40,7 +38,6 @@ export const SecurityAttachmentSchema = Schema.Struct({
   file: StoredFileRefSchema,
   kind: SecurityAttachmentKindSchema,
 });
-export type SecurityAttachment = typeof SecurityAttachmentSchema.Type;
 
 /** Append-only change log of one device (S00: history of sensitive changes is never lost). */
 export const SecurityHistoryEntrySchema = Schema.Struct({
@@ -88,7 +85,6 @@ export const LinkedTaskSchema = Schema.Struct({
   tenantId: TextSchema(64),
   title: TextSchema(200),
 });
-export type LinkedTask = typeof LinkedTaskSchema.Type;
 
 export const SecurityIncidentSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,

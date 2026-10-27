@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Device card (S11): facts, faults with their linked service task, attachments and the change history.
 import { SectionCard, SidePanel, formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -7,11 +7,11 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { DateTime } from 'effect';
+import { DateTime, Effect, Predicate, Result, Schema } from 'effect';
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';
-import { securityAttachmentKinds } from '../../../../../shared/domain/security.ts';
+import { SecurityAttachmentKindSchema, securityAttachmentKinds } from '../../../../../shared/domain/security.ts';
 import type {
   SecurityAttachmentKind,
   SecurityDevice,
@@ -59,16 +59,19 @@ const Missing = () => {
 };
 
 const tasksHref = (resourceId: string) => {
-  const lang = typeof window === 'undefined' ? 'cs' : (window.location.pathname.split('/')[1] ?? 'cs');
+  const lang = Predicate.isUndefined(globalThis.window) ? 'cs' : (window.location.pathname.split('/')[1] ?? 'cs');
   return `/${lang === '' ? 'cs' : lang}/ukoly?resourceId=${encodeURIComponent(resourceId)}`;
 };
 
-const formatSize = (bytes: number) =>
-  bytes < 1024
-    ? `${bytes} B`
-    : bytes < 1024 * 1024
-      ? `${(bytes / 1024).toFixed(0)} kB`
-      : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const formatSize = (bytes: number) => {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(0)} kB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
 
 const IncidentCard = ({
   busy,
@@ -172,6 +175,280 @@ const IncidentCard = ({
   );
 };
 
+const DeviceAttachments = ({
+  attachments,
+  busy,
+  canWrite,
+  kind,
+  onDownload,
+  onKindChange,
+  onUpload,
+}: {
+  readonly attachments: NonNullable<SecurityDevice['attachments']>;
+  readonly busy: boolean;
+  readonly canWrite: boolean;
+  readonly kind: SecurityAttachmentKind;
+  readonly onDownload: (fileId: string) => void;
+  readonly onKindChange: (kind: SecurityAttachmentKind) => void;
+  readonly onUpload: (file: File) => void;
+}) => {
+  const k = useSecurityLabel();
+  const fileInput = useRef<HTMLInputElement>(null);
+  return (
+    <SectionCard
+      actions={
+        canWrite ? (
+          <div className="flex flex-wrap items-end gap-100">
+            <div className="w-48">
+              <Select
+                items={securityAttachmentKinds.map((value) => ({
+                  displayValue: k(`attachmentKind.${value}`),
+                  label: k(`attachmentKind.${value}`),
+                  value,
+                }))}
+                label={k('fields.attachmentKind')}
+                name="attachmentKind"
+                onValueChange={({ value }) => {
+                  const parsed = Schema.decodeUnknownResult(SecurityAttachmentKindSchema)(
+                    value[0] ?? 'revision_protocol',
+                  );
+                  if (Result.isSuccess(parsed)) {
+                    onKindChange(parsed.success);
+                  }
+                }}
+                size="sm"
+                value={[kind]}
+              />
+            </div>
+            <input
+              aria-label={k('fields.file')}
+              className="hidden"
+              data-testid="security-file-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file !== undefined) {
+                  onUpload(file);
+                }
+              }}
+              ref={fileInput}
+              type="file"
+            />
+            <Button
+              disabled={busy}
+              icon="icon-[mdi--paperclip]"
+              onClick={() => fileInput.current?.click()}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {k('actions.upload')}
+            </Button>
+          </div>
+        ) : undefined
+      }
+      title={k('detail.attachments')}
+    >
+      {attachments.length === 0 ? (
+        <p className="text-fg-secondary text-sm">{k('detail.noAttachments')}</p>
+      ) : (
+        <ul className="flex flex-col divide-y divide-border-primary">
+          {attachments.map((attachment) => (
+            <li className="flex flex-wrap items-center justify-between gap-100 py-100" key={attachment.file.id}>
+              <div className="flex min-w-0 items-center gap-100">
+                <span aria-hidden className="icon-[mdi--file-document-outline] size-5 shrink-0 text-fg-secondary" />
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate font-medium text-sm">{attachment.file.name}</span>
+                  <span className="text-fg-secondary text-xs">
+                    {k(`attachmentKind.${attachment.kind}`)} · {formatSize(attachment.file.size)} ·{' '}
+                    {stamp(attachment.addedAt)}
+                  </span>
+                </div>
+              </div>
+              <Button
+                icon="icon-[mdi--download]"
+                onClick={() => {
+                  onDownload(attachment.file.id);
+                }}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {k('actions.download')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canWrite && <p className="text-fg-secondary text-xs">{k('detail.maxSize')}</p>}
+    </SectionCard>
+  );
+};
+
+interface ChangeSecurityIncidentStateInput {
+  readonly incident: SecurityIncident;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly state: SecurityIncident['state'];
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const changeSecurityIncidentState = Effect.fn('Facility.changeSecurityIncidentState')(
+  function* changeSecurityIncidentState({
+    incident,
+    k,
+    run,
+    setBusy,
+    state,
+    t,
+    toast,
+  }: ChangeSecurityIncidentStateInput) {
+    setBusy(true);
+    const outcome = yield* run({ _tag: 'SecurityIncidentChangeState', incidentId: incident.id, state });
+    setBusy(false);
+    toast.create(
+      outcome.ok
+        ? { title: k('stateSaved'), type: 'success' }
+        : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
+    );
+  },
+);
+
+interface CreateSecurityIncidentTaskInput {
+  readonly device: SecurityDevice;
+  readonly incident: SecurityIncident;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly onReload: () => Effect.Effect<void>;
+  readonly revision: number;
+  readonly setBusy: (busy: boolean) => void;
+  readonly tenantId: string;
+  readonly toast: ReturnType<typeof useToast>;
+  readonly today: SecurityIncident['occurredOn'];
+}
+
+const createSecurityIncidentTask = Effect.fn('Facility.createSecurityIncidentTask')(
+  function* createSecurityIncidentTask({
+    device,
+    incident,
+    k,
+    onReload,
+    revision,
+    setBusy,
+    tenantId,
+    toast,
+    today,
+  }: CreateSecurityIncidentTaskInput) {
+    setBusy(true);
+    const ok = yield* linkNewTask({
+      description: incident.description ?? '',
+      device,
+      dueDate: addDays(today, 3),
+      incidentId: incident.id,
+      label: k,
+      revision,
+      severity: incident.severity,
+      severityLabel: k(`severity.${incident.severity}`),
+      tenantId,
+      title: incident.title,
+    });
+    yield* onReload();
+    setBusy(false);
+    toast.create(ok ? { title: k('taskCreated'), type: 'success' } : { title: k('report.taskFailed'), type: 'error' });
+  },
+);
+
+interface UploadSecurityAttachmentInput {
+  readonly device: SecurityDevice;
+  readonly file: File;
+  readonly k: ReturnType<typeof useSecurityLabel>;
+  readonly kind: SecurityAttachmentKind;
+  readonly run: RunCommand;
+  readonly setBusy: (busy: boolean) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+
+const uploadSecurityAttachment = Effect.fn('Facility.uploadSecurityAttachment')(function* uploadSecurityAttachment({
+  device,
+  file,
+  k,
+  kind,
+  run,
+  setBusy,
+  t,
+  toast,
+}: UploadSecurityAttachmentInput) {
+  if (file.size > MAX_UPLOAD_BYTES) {
+    toast.create({ title: k('uploadFailed'), type: 'error' });
+    return;
+  }
+  setBusy(true);
+  const uploaded = yield* uploadFile(file);
+  if (!uploaded.ok) {
+    setBusy(false);
+    toast.create({ title: k('uploadFailed'), type: 'error' });
+    return;
+  }
+  const outcome = yield* run({ _tag: 'SecurityDeviceAttach', deviceId: device.id, file: uploaded.file, kind });
+  setBusy(false);
+  toast.create(
+    outcome.ok
+      ? { title: k('uploaded'), type: 'success' }
+      : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
+  );
+});
+
+const DeviceFacts = ({ device, overdue }: { readonly device: SecurityDevice; readonly overdue: boolean }) => {
+  const k = useSecurityLabel();
+  return (
+    <SectionCard title={k('detail.card')}>
+      <dl className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+        <Fact icon="icon-[mdi--office-building-outline]" label={k('fields.location')}>
+          {device.location?.label ?? <Missing />}
+        </Fact>
+        <Fact icon="icon-[mdi--map-marker-check-outline]" label={k('fields.locationDetail')}>
+          {device.locationDetail ?? <Missing />}
+        </Fact>
+        <Fact icon="icon-[mdi--account-tie-outline]" label={k('fields.administrator')}>
+          {device.administrator ?? <Missing />}
+        </Fact>
+        <Fact icon="icon-[mdi--truck-delivery-outline]" label={k('fields.supplier')}>
+          {device.supplier ?? <Missing />}
+        </Fact>
+        <Fact icon="icon-[mdi--key-variant]" label={k('fields.serialNumber')}>
+          {device.serialNumber ?? <Missing />}
+        </Fact>
+        <Fact icon="icon-[mdi--shield-check-outline]" label={k('fields.state')}>
+          {k(`state.${device.state}`)}
+        </Fact>
+        <Fact icon="icon-[mdi--history]" label={k('fields.lastInspectionDate')}>
+          {device.lastInspectionDate === undefined ? <Missing /> : formatDate(device.lastInspectionDate)}
+        </Fact>
+        <Fact icon="icon-[mdi--calendar-account-outline]" label={k('fields.nextInspectionDate')}>
+          {device.nextInspectionDate === undefined ? (
+            <Missing />
+          ) : (
+            <span className={overdue ? 'font-semibold text-fg-danger' : ''}>
+              {formatDate(device.nextInspectionDate)}
+              {overdue ? ` · ${k('detail.overdue')}` : ''}
+            </span>
+          )}
+        </Fact>
+      </dl>
+      {device.note !== undefined && device.note !== '' && (
+        <p className="whitespace-pre-line rounded-md bg-surface-secondary p-150 text-sm">{device.note}</p>
+      )}
+      <p className="text-fg-secondary text-xs">
+        {k('detail.createdInfo', { at: stamp(device.createdAt) })}
+        {' · '}
+        {k('detail.updatedInfo', { at: stamp(device.updatedAt) })}
+      </p>
+    </SectionCard>
+  );
+};
+
 export const DeviceDetailPanel = ({
   canWrite,
   device,
@@ -192,7 +469,7 @@ export const DeviceDetailPanel = ({
   readonly onClose: () => void;
   readonly onEdit: () => void;
   readonly onInspection: () => void;
-  readonly onReload: () => Promise<void>;
+  readonly onReload: () => Effect.Effect<void>;
   readonly onReport: () => void;
   readonly onResolve: (incident: SecurityIncident) => void;
   readonly revision: number;
@@ -204,7 +481,6 @@ export const DeviceDetailPanel = ({
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<SecurityAttachmentKind>('revision_protocol');
-  const fileInput = useRef<HTMLInputElement>(null);
   const own = incidents
     .filter((incident) => incident.deviceId === device?.id)
     .toSorted((left, right) => right.occurredOn.localeCompare(left.occurredOn));
@@ -228,56 +504,13 @@ export const DeviceDetailPanel = ({
     return k('detail.taskLive', { state: k(`taskState.${state.state}`) });
   };
 
-  const changeState = async (incident: SecurityIncident, state: SecurityIncident['state']) => {
-    setBusy(true);
-    const outcome = await run({ _tag: 'SecurityIncidentChangeState', incidentId: incident.id, state });
-    setBusy(false);
-    toast.create(
-      outcome.ok
-        ? { title: k('stateSaved'), type: 'success' }
-        : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
-    );
-  };
+  const changeState = (incident: SecurityIncident, state: SecurityIncident['state']) =>
+    changeSecurityIncidentState({ incident, k, run, setBusy, state, t, toast });
 
-  const createTask = async (incident: SecurityIncident) => {
-    setBusy(true);
-    const ok = await linkNewTask({
-      description: incident.description ?? '',
-      device,
-      dueDate: addDays(today, 3),
-      incidentId: incident.id,
-      label: k,
-      revision,
-      severity: incident.severity,
-      severityLabel: k(`severity.${incident.severity}`),
-      tenantId,
-      title: incident.title,
-    });
-    await onReload();
-    setBusy(false);
-    toast.create(ok ? { title: k('taskCreated'), type: 'success' } : { title: k('report.taskFailed'), type: 'error' });
-  };
+  const createTask = (incident: SecurityIncident) =>
+    createSecurityIncidentTask({ device, incident, k, onReload, revision, setBusy, tenantId, toast, today });
 
-  const upload = async (file: File) => {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      toast.create({ title: k('uploadFailed'), type: 'error' });
-      return;
-    }
-    setBusy(true);
-    const uploaded = await uploadFile(file);
-    if (!uploaded.ok) {
-      setBusy(false);
-      toast.create({ title: k('uploadFailed'), type: 'error' });
-      return;
-    }
-    const outcome = await run({ _tag: 'SecurityDeviceAttach', deviceId: device.id, file: uploaded.file, kind });
-    setBusy(false);
-    toast.create(
-      outcome.ok
-        ? { title: k('uploaded'), type: 'success' }
-        : { title: t(`facility-operations.common.errors.${outcome.reason}`), type: 'error' },
-    );
-  };
+  const upload = (file: File) => uploadSecurityAttachment({ device, file, k, kind, run, setBusy, t, toast });
 
   const overdue = isInspectionOverdue(device, today);
   const attachments = device.attachments ?? [];
@@ -339,49 +572,7 @@ export const DeviceDetailPanel = ({
           </div>
         )}
 
-        <SectionCard title={k('detail.card')}>
-          <dl className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-            <Fact icon="icon-[mdi--office-building-outline]" label={k('fields.location')}>
-              {device.location?.label ?? <Missing />}
-            </Fact>
-            <Fact icon="icon-[mdi--map-marker-check-outline]" label={k('fields.locationDetail')}>
-              {device.locationDetail ?? <Missing />}
-            </Fact>
-            <Fact icon="icon-[mdi--account-tie-outline]" label={k('fields.administrator')}>
-              {device.administrator ?? <Missing />}
-            </Fact>
-            <Fact icon="icon-[mdi--truck-delivery-outline]" label={k('fields.supplier')}>
-              {device.supplier ?? <Missing />}
-            </Fact>
-            <Fact icon="icon-[mdi--key-variant]" label={k('fields.serialNumber')}>
-              {device.serialNumber ?? <Missing />}
-            </Fact>
-            <Fact icon="icon-[mdi--shield-check-outline]" label={k('fields.state')}>
-              {k(`state.${device.state}`)}
-            </Fact>
-            <Fact icon="icon-[mdi--history]" label={k('fields.lastInspectionDate')}>
-              {device.lastInspectionDate === undefined ? <Missing /> : formatDate(device.lastInspectionDate)}
-            </Fact>
-            <Fact icon="icon-[mdi--calendar-account-outline]" label={k('fields.nextInspectionDate')}>
-              {device.nextInspectionDate === undefined ? (
-                <Missing />
-              ) : (
-                <span className={overdue ? 'font-semibold text-fg-danger' : ''}>
-                  {formatDate(device.nextInspectionDate)}
-                  {overdue ? ` · ${k('detail.overdue')}` : ''}
-                </span>
-              )}
-            </Fact>
-          </dl>
-          {device.note !== undefined && device.note !== '' && (
-            <p className="whitespace-pre-line rounded-md bg-surface-secondary p-150 text-sm">{device.note}</p>
-          )}
-          <p className="text-fg-secondary text-xs">
-            {k('detail.createdInfo', { at: stamp(device.createdAt) })}
-            {' · '}
-            {k('detail.updatedInfo', { at: stamp(device.updatedAt) })}
-          </p>
-        </SectionCard>
+        <DeviceFacts device={device} overdue={overdue} />
 
         <SectionCard title={`${k('detail.incidents')} (${own.length})`}>
           {own.length === 0 ? (
@@ -395,8 +586,12 @@ export const DeviceDetailPanel = ({
                   incident={incident}
                   key={incident.id}
                   liveState={incident.task === undefined ? '' : liveLabel(incident.task.resourceId)}
-                  onChangeState={(state) => void changeState(incident, state)}
-                  onCreateTask={() => void createTask(incident)}
+                  onChangeState={(state) => {
+                    void browserRuntime.runPromise(changeState(incident, state));
+                  }}
+                  onCreateTask={() => {
+                    void browserRuntime.runPromise(createTask(incident));
+                  }}
                   onResolve={() => onResolve(incident)}
                 />
               ))}
@@ -404,92 +599,29 @@ export const DeviceDetailPanel = ({
           )}
         </SectionCard>
 
-        <SectionCard
-          actions={
-            canWrite ? (
-              <div className="flex flex-wrap items-end gap-100">
-                <div className="w-48">
-                  <Select
-                    items={securityAttachmentKinds.map((value) => ({
-                      displayValue: k(`attachmentKind.${value}`),
-                      label: k(`attachmentKind.${value}`),
-                      value,
-                    }))}
-                    label={k('fields.attachmentKind')}
-                    name="attachmentKind"
-                    onValueChange={({ value }) =>
-                      setKind((value[0] as SecurityAttachmentKind | undefined) ?? 'revision_protocol')
+        <DeviceAttachments
+          attachments={attachments}
+          busy={busy}
+          canWrite={canWrite}
+          kind={kind}
+          onDownload={(fileId) => {
+            void browserRuntime.runPromise(
+              downloadFile(fileId).pipe(
+                Effect.tap((result) =>
+                  Effect.sync(() => {
+                    if (!result.ok) {
+                      toast.create({ title: k('downloadFailed'), type: 'error' });
                     }
-                    size="sm"
-                    value={[kind]}
-                  />
-                </div>
-                <input
-                  aria-label={k('fields.file')}
-                  className="hidden"
-                  data-testid="security-file-input"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = '';
-                    if (file !== undefined) {
-                      void upload(file);
-                    }
-                  }}
-                  ref={fileInput}
-                  type="file"
-                />
-                <Button
-                  disabled={busy}
-                  icon="icon-[mdi--paperclip]"
-                  onClick={() => fileInput.current?.click()}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  {k('actions.upload')}
-                </Button>
-              </div>
-            ) : undefined
-          }
-          title={k('detail.attachments')}
-        >
-          {attachments.length === 0 ? (
-            <p className="text-fg-secondary text-sm">{k('detail.noAttachments')}</p>
-          ) : (
-            <ul className="flex flex-col divide-y divide-border-primary">
-              {attachments.map((attachment) => (
-                <li className="flex flex-wrap items-center justify-between gap-100 py-100" key={attachment.file.id}>
-                  <div className="flex min-w-0 items-center gap-100">
-                    <span aria-hidden className="icon-[mdi--file-document-outline] size-5 shrink-0 text-fg-secondary" />
-                    <div className="flex min-w-0 flex-col">
-                      <span className="truncate font-medium text-sm">{attachment.file.name}</span>
-                      <span className="text-fg-secondary text-xs">
-                        {k(`attachmentKind.${attachment.kind}`)} · {formatSize(attachment.file.size)} ·{' '}
-                        {stamp(attachment.addedAt)}
-                      </span>
-                    </div>
-                  </div>
-                  <Button
-                    icon="icon-[mdi--download]"
-                    onClick={() =>
-                      void downloadFile(attachment.file.id).then((result) => {
-                        if (!result.ok) {
-                          toast.create({ title: k('downloadFailed'), type: 'error' });
-                        }
-                      })
-                    }
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {k('actions.download')}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {canWrite && <p className="text-fg-secondary text-xs">{k('detail.maxSize')}</p>}
-        </SectionCard>
+                  }),
+                ),
+              ),
+            );
+          }}
+          onKindChange={setKind}
+          onUpload={(file) => {
+            void browserRuntime.runPromise(upload(file));
+          }}
+        />
 
         <SectionCard title={k('detail.linkedDocuments')}>
           <LinkedDocuments subject={{ id: device.id, kind: 'device', label: device.name }} />

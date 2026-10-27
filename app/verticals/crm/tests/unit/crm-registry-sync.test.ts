@@ -1,14 +1,17 @@
 import { NodePath } from '@effect/platform-node';
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 import { ApplyCommandResponseSchema } from '../../shared/apis/apply-command-action.ts';
 import type { ApplyCommandResponse, ClientPartySync } from '../../shared/apis/apply-command-action.ts';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
 import type { CrmCommandFailure, VerifiedParty } from '../../shared/commands/context.ts';
+import { ClientSchema } from '../../shared/domain/clients.ts';
 import type { Client } from '../../shared/domain/clients.ts';
 import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
 import { RecordsRequestSchema } from '../../shared/apis/records.ts';
+import { CrmViewerSchema } from '../../shared/domain/access.ts';
 import { CrmStateSchema, initialCrmState } from '../../shared/domain/state.ts';
 import { commandResultOutcome } from '../../src/crm/client-party-sync-outcome.ts';
 import {
@@ -20,33 +23,43 @@ import {
 import type { IntakeCrmClient } from '../../src/services/party-intake.ts';
 
 const at = '2026-10-27T09:00:00.000Z';
-const viewer = {
+const viewer = Schema.decodeSync(CrmViewerSchema)({
   assign: true,
   principalId: 'crm-registry-sync-test',
   readAll: true,
   readAssigned: false,
   writeAll: true,
   writeAssigned: false,
-};
-const client = (id: string): Client => ({
-  createdAt: at,
-  createdBy: viewer.principalId,
-  id,
-  kind: 'organization',
-  name: `Client ${id}`,
-  status: 'active',
-  updatedAt: at,
 });
-const party = (entry: IntakeCrmClient): VerifiedParty => ({
-  counterpartyId: `counterparty-${entry.id}`,
-  partyId: `party-${entry.id}`,
-});
+const client = (id: string, extra: Partial<typeof ClientSchema.Encoded> = {}): Client =>
+  Schema.decodeSync(ClientSchema)({
+    createdAt: at,
+    createdBy: viewer.principalId,
+    id,
+    kind: 'organization',
+    name: `Client ${id}`,
+    status: 'active',
+    updatedAt: at,
+    ...extra,
+  });
+const party = (entry: IntakeCrmClient): VerifiedParty =>
+  Schema.decodeSync(VerifiedPartySchema)({
+    counterpartyId: `counterparty-${entry.id}`,
+    partyId: `party-${entry.id}`,
+  });
 const identify = (entry: IntakeCrmClient) => Effect.succeedSome(party(entry));
 const failure = () => new CrmReferenceUnavailable({ code: 'crm_reference_unavailable', reason: 'Fixture unavailable' });
 const noWrite = (_id: string, _party: VerifiedParty, revision: number) => Effect.succeed(revision + 1);
 
 /** Writes run the real verified-link reducer and re-read the serialized canonical CRM aggregate. */
 const persistence = (items: readonly Client[]) => {
+  const fixtureClientId = (id: string) => {
+    const entry = items.find((candidate) => candidate.id === id);
+    if (entry === undefined) {
+      throw new Error(`Missing client fixture ${id}`);
+    }
+    return entry.id;
+  };
   let revision = 7;
   let state = { ...initialCrmState, clients: { ...initialCrmState.clients, items } };
   const writes: string[] = [];
@@ -63,10 +76,10 @@ const persistence = (items: readonly Client[]) => {
     expect(expectedRevision).toBe(revision);
     const result = yield* dispatchCrmCommand(
       state,
-      { _tag: 'LinkClientParty', clientId, partyRef: verified },
+      { _tag: 'LinkClientParty', clientId: fixtureClientId(clientId), partyRef: verified },
       {
         invocationId: `link-${clientId}`,
-        now: at,
+        now: DateTime.makeUnsafe(at),
         verifiedParties: new Map([[verified.counterpartyId, verified]]),
         viewer,
       },
@@ -78,11 +91,12 @@ const persistence = (items: readonly Client[]) => {
   });
   return { link, read, writes };
 };
-const resultOf = (clientPartySync: ClientPartySync): ApplyCommandResponse => ({
-  clientPartySync,
-  entityIds: ['a'],
-  revision: 8,
-});
+const resultOf = (clientPartySync: ClientPartySync): ApplyCommandResponse =>
+  Schema.decodeSync(ApplyCommandResponseSchema)({
+    clientPartySync,
+    entityIds: ['a'],
+    revision: 8,
+  });
 const translate = (key: string, values: { readonly linked: number; readonly remaining: number }) =>
   `${key}:${values.linked}:${values.remaining}`;
 const outcomeOf = (result: ApplyCommandResponse) =>
@@ -145,7 +159,7 @@ describe('CRM registry-link completion', () => {
       const selection = yield* dispatchCrmCommand(
         before.state,
         { _tag: 'SyncClientParties' },
-        { invocationId: 'sync', now: at, viewer },
+        { invocationId: 'sync', now: DateTime.makeUnsafe(at), viewer },
       );
       expect(selection.entityIds).toHaveLength(6);
       expect(selection.state.clients.items.filter((entry) => entry.partyRef === undefined)).toHaveLength(6);
@@ -200,9 +214,9 @@ describe('CRM registry-link completion', () => {
   it.effect('repairs a Party-only reference and respects explicit targets, including an empty selection', () =>
     Effect.gen(function* preservesSelection() {
       const db = persistence([
-        { ...client('partial'), partyRef: { partyId: 'party-partial' } },
+        client('partial', { partyRef: { partyId: 'party-partial' } }),
         client('untouched'),
-        { ...client('archived'), status: 'archived' },
+        client('archived', { status: 'archived' }),
       ]);
       const empty = yield* reconcileClientPartyBatch(db.read, identify, db.link, []);
       expect(empty).toMatchObject({ linked: 0, remaining: 0, status: 'unchanged' });
@@ -291,7 +305,7 @@ describe('CRM registry-link completion', () => {
         return Response.json({
           assignmentCandidates: [],
           departedPrincipalIds: [],
-          now: at,
+          now: DateTime.makeUnsafe(at),
           revision: 7,
           state: initialCrmState,
           viewer,
@@ -390,7 +404,7 @@ describe('CRM registry-link completion', () => {
   );
 
   it('rejects absent, contradictory and unknown completion evidence instead of trusting HTTP 200', () => {
-    expect(outcomeOf({ entityIds: ['a'], revision: 8 }).ok).toBe(false);
+    expect(outcomeOf(Schema.decodeSync(ApplyCommandResponseSchema)({ entityIds: ['a'], revision: 8 })).ok).toBe(false);
     const evidence: ClientPartySync = { failed: 0, linked: 0, remaining: 0, review: 0, status: 'complete' };
     expect(outcomeOf(resultOf(evidence)).ok).toBe(false);
     expect(outcomeOf(resultOf({ ...evidence, linked: 1, remaining: 1 })).ok).toBe(false);

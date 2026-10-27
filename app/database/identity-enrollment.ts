@@ -7,10 +7,4 @@ export const APP_DATABASE_IDENTITY_ENROLLMENT = defineDatabaseIdentityEnrollment
 ]);
 
 export const DATABASE_IDENTITIES = APP_DATABASE_IDENTITY_ENROLLMENT.identities;
-export const DEDICATED_IDENTITY_MODULE_KEYS = APP_DATABASE_IDENTITY_ENROLLMENT.dedicatedModuleKeys;
 export const TRUST_ROUTINES = APP_DATABASE_IDENTITY_ENROLLMENT.trustRoutines;
-
-export {
-  PARTY_REGISTRY_REQUEST_IDENTITY,
-  PARTY_REGISTRY_WORKER_IDENTITY,
-} from '@app/party-registry/database-identities';

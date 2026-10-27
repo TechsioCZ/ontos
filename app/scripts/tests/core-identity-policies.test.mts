@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 import { NodeServices } from '@effect/platform-node';
 import { is } from 'drizzle-orm';
@@ -109,7 +110,7 @@ for (const { enrollment, name } of enrollments) {
     Effect.gen(function* verifyDrizzlePolicyCollection() {
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault('/private/tmp'));
+      const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault(tmpdir()));
       const directory = yield* fs.makeTempDirectoryScoped({ directory: temporaryRoot });
       const fixturePath = `${directory}/core-schema.cts`;
       yield* fs.writeFileString(fixturePath, fixtureSource);

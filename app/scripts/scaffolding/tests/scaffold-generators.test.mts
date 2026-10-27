@@ -6467,6 +6467,8 @@ it.live(
           writeFile(
             fixtureTsconfig,
             json({
+              // Use the same strictness as Core and the owning verticals, including
+              // exact optional-property semantics for schema-decoded union inputs.
               compilerOptions: {
                 paths: {
                   ...coreRuntimePaths,
@@ -6488,8 +6490,6 @@ it.live(
                 skipLibCheck: true,
                 types: ['node', 'react'],
               },
-              // Use the same strictness as Core and the owning verticals, including
-              // exact optional-property semantics for schema-decoded union inputs.
               extends: path.join(appRoot, 'tsconfig.base.json'),
               include: [
                 modernAppEnvironmentTypes,

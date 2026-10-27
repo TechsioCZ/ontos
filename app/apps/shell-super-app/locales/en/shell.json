@@ -360,7 +360,15 @@
       "menu": "My profile",
       "seoDescription": "Your signed-in account and connected apps (ChatGPT, Claude).",
       "identity": "Signed-in account",
-      "loading": "Loading…"
+      "loading": "Loading…",
+      "connections": {
+        "title": "Connected apps",
+        "acting": "Acting as",
+        "access": "Access",
+        "connected": "Connected",
+        "lastUsed": "Last used"
+      },
+      "href": "/en/profile"
     },
     "connectedAppsGuide": {
       "title": "How to connect",
@@ -432,9 +440,11 @@
           "save": "Save",
           "saving": "Saving…",
           "saved": "People for {{name}} saved",
-          "revoked": "Disconnected connections: {{count}}",
+          "revoked_one": "Disconnected connections: {{count}}",
+          "revoked_other": "Disconnected connections: {{count}}",
           "confirmTitle": "Remove and disconnect?",
-          "confirmDescription": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirmDescription_one": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirmDescription_other": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
           "confirm": "Save and disconnect",
           "cancel": "Cancel"
         },
@@ -580,7 +590,8 @@
           "deactivated": "Agent {{name}} was deactivated",
           "activated": "Agent {{name}} is active again",
           "deleted": "Agent {{name}} was deleted",
-          "revoked": "Revoked connections: {{count}}"
+          "revoked_one": "Revoked connections: {{count}}",
+          "revoked_other": "Revoked connections: {{count}}"
         },
         "audit": {
           "title": "Agent change history",
@@ -595,7 +606,8 @@
           "reason": "Reason: {{reason}}",
           "system": "System",
           "unknownAgent": "agent",
-          "operatorsRevoked": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsRevoked_one": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsRevoked_other": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
           "operatorsCreated": "set who may connect agent {{target}}",
           "deniedAction": {
             "create": "create an agent",
@@ -621,7 +633,33 @@
     },
     "invitation": {
       "title": "Set your password",
-      "description": "Set your own password using your invitation."
+      "description": "Set your own password using your invitation.",
+      "newPassword": "New password",
+      "confirmPassword": "Repeat the new password"
+    },
+    "demoGuide": {
+      "title": "Demo guide",
+      "resize": "Resize the guide. Left and Right arrow keys change the width. Home restores the default.",
+      "close": "Close the guide",
+      "progress": "Demo progress",
+      "publicDemoSignInHint": "Password for all demo accounts: password1234. To use a different persona, use a separate browser profile, or sign out and sign in again."
+    },
+    "people": {
+      "invite": "Invite a person",
+      "fullName": "Full name",
+      "tabs": "People and agents",
+      "title": "People and roles",
+      "changeReason": "Reason for change"
+    },
+    "agentPlatform": {
+      "approvals": {
+        "note": "Decision note (optional)",
+        "notePlaceholder": "For example, verified with the salesperson",
+        "filters": "Batch view"
+      },
+      "activity": {
+        "table": "Agent activity"
+      }
     }
   }
 }

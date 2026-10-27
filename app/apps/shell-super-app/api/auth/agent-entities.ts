@@ -20,11 +20,20 @@ import {
 import type { DemoAccountGrants, ManageAgentStatusPayload, OperationalScopeRequest } from '@app/core-runtime';
 import type {
   AgentEntity,
-  AgentEntityOverview,
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
-import { Effect, Match, Predicate, Redacted } from 'effect';
+import {
+  AgentEntitySchema,
+  AgentEntityOverviewSchema,
+  AgentAuditEntrySchema,
+} from '@app/shared-contracts/agent-access';
+import {
+  AgentLegalEntityIdSchema,
+  AgentModuleKeySchema,
+  AgentPrincipalIdSchema,
+} from '@app/shared-contracts/agent-proposals';
+import { Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { ActionAuthorizationLifecycle } from '@app/core-runtime/outbox/core-system-worker';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
@@ -92,8 +101,8 @@ const fromActionError = (error: { readonly _tag: string }) =>
     Match.orElse((failure) => new ConnectionsUnavailable({ cause: failure })),
   );
 
-const cleanDescription = (value: string | null) => {
-  const trimmed = value?.trim() ?? '';
+const cleanDescription = (value: Option.Option<string>) => {
+  const trimmed = Option.getOrElse(value, () => '').trim();
   return trimmed === '' ? null : trimmed;
 };
 
@@ -126,9 +135,21 @@ export const companyCatalog = Effect.fn('AgentEntities.companyCatalog')(function
     ),
     labelOf,
     legalEntityWriteRelations: legalEntityWriteRelationsOf(installed.composition),
-    options: agentModuleOptions(agentModuleAccessOf(union, legalEntityId), labelOf),
+    options: agentModuleOptions(
+      agentModuleAccessOf(union, legalEntityId).map((module) => ({
+        ...module,
+        moduleId: AgentModuleKeySchema.make(module.moduleId),
+      })),
+      labelOf,
+    ),
     presets: templates.map(({ relationships, role }) =>
-      agentRolePreset(role, agentModuleAccessOf(relationships, legalEntityId)),
+      agentRolePreset(
+        role,
+        agentModuleAccessOf(relationships, legalEntityId).map((module) => ({
+          ...module,
+          moduleId: AgentModuleKeySchema.make(module.moduleId),
+        })),
+      ),
     ),
     union,
   };
@@ -164,26 +185,31 @@ export const listAgentEntities = Effect.fn('AgentEntities.listAgentEntities')(fu
   );
   // Connection summaries have their own live-authority reads; do not overlap them with role/operator fan-out.
   const active = yield* deps.grants.list({ legalEntityId, statuses: ['active'], tenantId });
-  const entries = agents.map((agent): AgentEntity => ({
-    connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
-    description: agent.description,
-    displayName: agent.displayName,
-    hasProfile: agent.hasProfile,
-    modules: agent.modules,
-    operators: people.filter((person) => agent.operatorPrincipalIds.includes(person.principalId)),
-    owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
-    principalId: agent.principalId,
-    status: agent.status,
-    writePolicy: agent.writePolicy,
-  }));
-  const overview: AgentEntityOverview = {
+  const entries = agents.map((agent): AgentEntity =>
+    AgentEntitySchema.make({
+      connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
+      description: Option.fromNullOr(agent.description),
+      displayName: agent.displayName,
+      hasProfile: agent.hasProfile,
+      modules: agent.modules,
+      operators: people.filter((person) => agent.operatorPrincipalIds.includes(person.principalId)),
+      owner: Option.fromUndefinedOr(people.find((person) => person.principalId === agent.ownerPrincipalId)),
+      principalId: AgentPrincipalIdSchema.make(agent.principalId),
+      status: agent.status,
+      writePolicy: agent.writePolicy,
+    }),
+  );
+  const decodedAudit = yield* Schema.decodeEffect(Schema.Array(AgentAuditEntrySchema))(audit).pipe(
+    Effect.mapError(unavailable),
+  );
+  const overview = AgentEntityOverviewSchema.make({
     agents: entries,
-    audit,
-    company: { legalEntityId, legalName: caller.legalName },
+    audit: decodedAudit,
+    company: { legalEntityId: AgentLegalEntityIdSchema.make(legalEntityId), legalName: caller.legalName },
     members: people,
     modules: catalog.options,
     presets: catalog.presets,
-  };
+  });
   return overview;
 }, Effect.scoped);
 
@@ -314,7 +340,7 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
       grantsGranted: 0,
       grantsRevoked: 0,
       operation: 'create',
-      principalId: result.principalId,
+      principalId: AgentPrincipalIdSchema.make(result.principalId),
       revokedConnections: 0,
       status: 'active',
     };
@@ -373,7 +399,7 @@ const changeAgent = Effect.fn('AgentEntities.changeAgent')(function* applyAgentC
       grantsGranted: 0,
       grantsRevoked: 0,
       operation: 'configure',
-      principalId: agent.principalId,
+      principalId: AgentPrincipalIdSchema.make(agent.principalId),
       revokedConnections: 0,
       status: result.status === 'active' ? 'active' : 'disabled',
     };

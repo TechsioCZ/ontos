@@ -3,8 +3,9 @@ import { loadAssignmentPreflightSnapshot, resolveAssignee } from '@app/core-runt
 import { and, eq } from 'drizzle-orm';
 import { Effect, Match, Schema } from 'effect';
 import type { ApplyCommandPayload, CrmCommand } from '../../shared/actions/apply-command.ts';
-import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, withDefaultSlices } from '../../shared/domain/state.ts';
+import type { CrmState } from '../../shared/domain/state.ts';
+
 import { crmStates } from '../database/schema.ts';
 
 export const crmAssignmentPermission = { moduleId: 'demo.crm', permission: 'module.access' } as const;

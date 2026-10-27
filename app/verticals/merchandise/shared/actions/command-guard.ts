@@ -59,8 +59,9 @@ export const assertCommandAllowed = (
 
 /** The e-shop demo company (Kavárna Doma). Its non-human principal is the storefront BFF key. */
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
-const isStorefrontCompany = (id: string | undefined) => id === ESHOP_LEGAL_ENTITY_ID || id === AKROS_LEGAL_ENTITY_ID;
 export const ESHOP_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000023';
+const isStorefrontCompany = (id: string | undefined) => id === ESHOP_LEGAL_ENTITY_ID || id === AKROS_LEGAL_ENTITY_ID;
+
 /** Only the storefront BFF's API key is limited to the storefront; people, MCP connections and agents use their grants. */
 export const isStorefrontServiceKey = (
   authMethod: TrustedPrincipalContext['authMethod'],
@@ -95,9 +96,9 @@ export const storefrontReadRequest = <Request extends { readonly view?: { readon
   legalEntityId: string | undefined,
   request: Request,
 ): Request =>
-  !isStorefrontServiceKey(authMethod, legalEntityId)
-    ? request
-    : { ...request, view: { ...request.view, storefront: true } };
+  isStorefrontServiceKey(authMethod, legalEntityId)
+    ? { ...request, view: { ...request.view, storefront: true } }
+    : request;
 
 /** Wraps the apply-command handler: the guard runs before any state is loaded. */
 export const withCommandGuard =
@@ -124,12 +125,17 @@ export const withCommandGuard =
     );
 
 /** AKROS dispatch is operational only; catalog and money edits require a trusted administrator decision. */
-export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean =>
-  commandTag === 'ResetDemoData'
-    ? administrator && legalEntityId === AKROS_LEGAL_ENTITY_ID
-    : commandTag === 'RemoveDemoOrder' || commandTag === 'ArchiveDemoProduct'
-      ? administrator
-      : legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
-        administrator ||
-        commandTag === 'RecordStockMovement' ||
-        commandTag === 'ChangeOrderStatus';
+export const staffCommandAllowed = (legalEntityId: string, administrator: boolean, commandTag: string): boolean => {
+  if (commandTag === 'ResetDemoData') {
+    return administrator && legalEntityId === AKROS_LEGAL_ENTITY_ID;
+  }
+  if (commandTag === 'RemoveDemoOrder' || commandTag === 'ArchiveDemoProduct') {
+    return administrator;
+  }
+  return (
+    legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
+    administrator ||
+    commandTag === 'RecordStockMovement' ||
+    commandTag === 'ChangeOrderStatus'
+  );
+};

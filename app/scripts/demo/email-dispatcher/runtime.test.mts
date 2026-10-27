@@ -158,6 +158,7 @@ it.effect('interrupts a stalled Mailpit request after its timeout', () =>
 
 it.effect('serves the same provider JSON only for the exact GET health path', () =>
   Effect.gen(function* healthEndpoint() {
+    const transport = yield* emailTransport;
     const response = yield* healthResponse.pipe(
       Effect.provideService(
         HttpServerRequest.HttpServerRequest,
@@ -172,8 +173,8 @@ it.effect('serves the same provider JSON only for the exact GET health path', ()
         provider: Schema.Struct({ configured: Schema.Boolean, label: Schema.OptionFromNullOr(Schema.String) }),
       }),
     )(HttpServerResponse.toClientResponse(response));
-    expect(provider.provider.configured).toBe(emailTransport.provider.configured);
-    expect(Option.getOrNull(provider.provider.label)).toBe(emailTransport.provider.label);
+    expect(provider.provider.configured).toBe(transport.provider.configured);
+    expect(Option.getOrNull(provider.provider.label)).toBe(transport.provider.label);
     for (const request of [
       new Request(`${mailpit}/healthz`, { method: 'POST' }),
       new Request(`${mailpit}/healthz?query=1`),

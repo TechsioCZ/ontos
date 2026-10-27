@@ -202,6 +202,58 @@
       "summaryUpcoming": "Upcoming",
       "summaryEnded": "Ended",
       "summaryMonthly": "Agreed monthly rent"
+    },
+    "documents": {
+      "tenantTitle": "Tenant documents",
+      "filesTitle": "Documents and files",
+      "historyTitle": "Change history"
+    },
+    "booking": {
+      "peopleCount": "Number of people",
+      "note": "Booking note"
+    },
+    "calendar": {
+      "previousMonth": "Previous occupancy month",
+      "nextMonth": "Next occupancy month",
+      "title": "Unit occupancy calendar"
+    },
+    "registration": {
+      "title": "Guest registration form",
+      "fullName": "Full name",
+      "birthDate": "Date of birth",
+      "nationality": "Nationality",
+      "identityDocument": "Identity document number",
+      "permanentAddress": "Permanent address",
+      "purpose": "Purpose of stay",
+      "optionalNote": "Note (optional)"
+    },
+    "notices": {
+      "template": "Notification template",
+      "channel": "Notification channel",
+      "body": "Notification text",
+      "title": "Email or SMS notifications"
+    },
+    "dossier": {
+      "contactRole": "Role in the company",
+      "contactEmail": "Contact email",
+      "contactPhone": "Contact phone",
+      "caseSubject": "Case subject",
+      "caseOwner": "Case owner",
+      "caseDeadline": "Case deadline",
+      "optionalCaseValue": "Estimated value (CZK, optional)",
+      "caseState": "Case status",
+      "communicationKind": "Communication type",
+      "communicationSummary": "Communication summary",
+      "communicationPlaceholder": "For example, arranging a unit handover date",
+      "title": "Contacts and relationship history",
+      "optionalCompanyId": "Company ID (optional)",
+      "optionalEmail": "Email (optional)",
+      "optionalPhone": "Phone (optional)",
+      "optionalTimelineNote": "Timeline note (optional)",
+      "timelinePlaceholder": "For example, first contact at a trade fair, interested in an office from spring",
+      "directoryTitle": "Tenants, prospects and contacts",
+      "search": "Search for a counterparty or contact",
+      "detailsTitle": "Counterparty details"
     }
   }
 }

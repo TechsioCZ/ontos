@@ -5,6 +5,11 @@ import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 
+class InvoicePartyRepairRejected extends Schema.TaggedError<
+  InvoicePartyRepairRejected,
+  { readonly brand: unique symbol }
+>()('InvoicePartyRepairRejected', { reason: Schema.String }) {}
+
 const tenant = '70000000-0000-4000-8000-000000000020';
 const entity = '71000000-0000-4000-8000-000000000021';
 const admin = Layer.effect(
@@ -22,7 +27,7 @@ const program = Effect.gen(function* repair() {
       select revision, state from finance_billing.finance_states
       where tenant_id=${tenant} and legal_entity_id=${entity}`;
       if (row === undefined) {
-        return yield* Effect.die('Missing Siampark finance state');
+        return yield* new InvoicePartyRepairRejected({ reason: 'Missing Siampark finance state' });
       }
       const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
       const parties = yield* sql<{ counterparty_id: string; party_id: string }>`
@@ -56,7 +61,9 @@ const program = Effect.gen(function* repair() {
       where tenant_id=${tenant} and legal_entity_id=${entity} and revision=${row.revision}
       returning revision`;
       if (updated.length !== 1) {
-        return yield* Effect.die('Concurrent finance change; retry scoped identity repair');
+        return yield* new InvoicePartyRepairRejected({
+          reason: 'Concurrent finance change; retry scoped identity repair',
+        });
       }
       return yield* Console.log(
         `Repaired ${repaired} invoice Party links at revision ${row.revision + 1}; money and history unchanged.`,

@@ -1,3 +1,4 @@
+import { SHARED_RUNTIME_IDENTITY } from '@app/core-runtime/db/database-identity-manifest';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,6 @@ import {
   ContextAccess,
   GatewayScopeGrantRegistrarLive,
   LegalEntityContext,
-  SHARED_RUNTIME_IDENTITY,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
   TrustedPrincipalContextSchema,

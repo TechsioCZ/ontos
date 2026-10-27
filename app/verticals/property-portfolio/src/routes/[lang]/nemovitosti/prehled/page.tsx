@@ -309,6 +309,7 @@ const portfolioDescription = (view: OverviewView) => {
 };
 
 const OverviewStats = ({ view }: { readonly view: OverviewView }) => {
+  const { t } = useModernI18n();
   const {
     activeLeases,
     attention,
@@ -323,7 +324,7 @@ const OverviewStats = ({ view }: { readonly view: OverviewView }) => {
     units,
   } = view;
   return (
-    <section aria-label="Přehled dnešního dne" className="sp-stats">
+    <section aria-label={t('property-portfolio.overview.todaySummary')} className="sp-stats">
       <button
         className="sp-stat"
         disabled={property === undefined || occupancy === undefined}
@@ -371,10 +372,11 @@ const OverviewSelection = ({
   readonly selection: string;
   readonly view: OverviewView;
 }) => {
+  const { t } = useModernI18n();
   const { attention, setSelection } = view;
   return (
     selection !== '' && (
-      <section aria-label="Zdrojové záznamy" className="sp-panel">
+      <section aria-label={t('property-portfolio.pages.overview.sourceRecords')} className="sp-panel">
         <div className="sp-heading">
           <h2>{selectionTitle(selection)}</h2>
           <Button onClick={() => setSelection('')} size="sm" theme="borderless" variant="secondary">
@@ -524,36 +526,39 @@ const OverviewSearch = ({
   readonly query: string;
   readonly setIncludeClosed: (value: boolean) => void;
   readonly setQuery: (query: string) => void;
-}) => (
-  <section className="sp-panel">
-    <h2>Najít v nemovitostech</h2>
-    <label className="sp-stack">
-      <span className="sp-muted">Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol</span>
-      <input
-        className="sp-search"
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="Například R101, Parková nebo revize…"
-        type="search"
-        value={query}
-      />
-    </label>
-    <label className="sp-muted">
-      <input checked={includeClosed} onChange={(event) => setIncludeClosed(event.target.checked)} type="checkbox" />{' '}
-      Zahrnout ukončené a archivované
-    </label>
-    {hits.map((hit) => (
-      <a className="sp-attention" href={hit.href} key={hit.id}>
-        <strong>
-          {hit.kind} · {hit.label}
-        </strong>
-        <span className="sp-muted">{hit.detail}</span>
-      </a>
-    ))}
-    {query.trim().length >= 2 && hits.length === 0 && (
-      <p className="sp-muted">Žádné výsledky v agendách, ke kterým máte oprávnění.</p>
-    )}
-  </section>
-);
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <section className="sp-panel">
+      <h2>Najít v nemovitostech</h2>
+      <label className="sp-stack">
+        <span className="sp-muted">Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol</span>
+        <input
+          className="sp-search"
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t('property-portfolio.overview.searchPlaceholder')}
+          type="search"
+          value={query}
+        />
+      </label>
+      <label className="sp-muted">
+        <input checked={includeClosed} onChange={(event) => setIncludeClosed(event.target.checked)} type="checkbox" />{' '}
+        Zahrnout ukončené a archivované
+      </label>
+      {hits.map((hit) => (
+        <a className="sp-attention" href={hit.href} key={hit.id}>
+          <strong>
+            {hit.kind} · {hit.label}
+          </strong>
+          <span className="sp-muted">{hit.detail}</span>
+        </a>
+      ))}
+      {query.trim().length >= 2 && hits.length === 0 && (
+        <p className="sp-muted">Žádné výsledky v agendách, ke kterým máte oprávnění.</p>
+      )}
+    </section>
+  );
+};
 
 const overviewOverdueCount = ({ finance, work }: OverviewPortfolio, today: string) => {
   const overdueCount =
@@ -573,7 +578,7 @@ const overviewNavigation = (sources: OverviewSources | undefined) => {
 };
 
 const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
-  const { language } = useModernI18n();
+  const { language, t } = useModernI18n();
   const lang = language ?? 'cs';
   const snapshot = useSyncExternalStore(
     overviewData.subscribe,
@@ -638,7 +643,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
             Obnovit přehled
           </Button>
         </header>
-        <nav aria-label="Agendy nemovitostí" className="sp-quicklinks">
+        <nav aria-label={t('property-portfolio.overview.propertyAgendas')} className="sp-quicklinks">
           {nav.flatMap((item) =>
             item.source?.status === 'ready'
               ? [
@@ -684,7 +689,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
               setIncludeClosed={setIncludeClosed}
               setQuery={setQuery}
             />
-            <footer aria-label="Dostupnost zdrojů" className="sp-sources">
+            <footer aria-label={t('property-portfolio.overview.sourceAvailability')} className="sp-sources">
               {EffectRecord.keys(sourceLabels).map((key) => (
                 <span className="sp-muted" key={key}>
                   {sourceLabels[key]}: {sourceMessages[sources[key].status]}

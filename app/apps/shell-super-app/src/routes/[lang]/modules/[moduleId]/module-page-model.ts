@@ -204,11 +204,12 @@ export const loadModulePageModel: (
 );
 
 export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
-  browserRuntime
-    .runPromise(
-      loadModulePageModel(input).pipe(
-        Effect.tap((model) => prepareModuleTarget(model, input.request)),
-      ),
-      { signal: input.request.signal },
-    )
-    .then((model) => requireSignedIn(input.request, model));
+  browserRuntime.runPromise(
+    loadModulePageModel(input).pipe(
+      Effect.tap((model) => prepareModuleTarget(model, input.request)),
+      Effect.map((model) => requireSignedIn(input.request, model)),
+    ),
+    {
+      signal: input.request.signal,
+    },
+  );

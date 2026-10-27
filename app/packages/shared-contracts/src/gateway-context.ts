@@ -12,6 +12,7 @@ import {
 import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/http';
+import { BadRequestNoContent } from 'effect/http-api/HttpApiError';
 
 import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
@@ -139,13 +140,18 @@ export const ApiKeyGatewayContextRequestSchema = Schema.Struct({
 });
 export type ApiKeyGatewayContextRequest = typeof ApiKeyGatewayContextRequestSchema.Encoded;
 
-/** A credential-authenticated first read uses the same assertion and owner admission as subsequent reads. */
-export const ApiKeyGatewayReadRequestSchema = Schema.Struct({
-  audience: GatewayAudienceSchema,
-  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  query: Schema.Unknown,
-  readName: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u), Schema.isMaxLength(200)),
-});
+/**
+ * Whole HTTP JSON body for the credential-authenticated owner proxy. Typed clients send bytes, not a
+ * shared owner DTO. Shell decodes routing metadata privately; the receiving owner validates its query.
+ */
+export const ApiKeyGatewayReadRequestSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
+
+/** Owner response bytes, without a shared JSON wrapper or a second JSON serialization. */
+const ApiKeyGatewayReadResponseSchema = Schema.Uint8Array.pipe(
+  HttpApiSchema.asUint8Array({ contentType: 'application/json' }),
+);
 
 /** Server-only response metadata; never exposed through CORS or persisted by an intermediary. */
 export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
@@ -255,6 +261,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(
     HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
       error: [
+        BadRequestNoContent,
         GatewayAuthenticationRequiredProblemSchema,
         GatewayAudienceInvalidProblemSchema,
         GatewayReloadRequiredProblemSchema,
@@ -265,7 +272,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
       ],
       headers: ApiKeyGatewayHeadersSchema,
       payload: ApiKeyGatewayReadRequestSchema,
-      success: Schema.Unknown,
+      success: ApiKeyGatewayReadResponseSchema,
     }),
   );
 

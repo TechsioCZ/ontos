@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { DetailList, SectionCard, formatDate } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -38,31 +39,34 @@ const historyLabels = {
 } as const;
 
 /** S10-02: every state change of the stay or lease with its author and time; cancelled records keep it. */
-export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly OccupancyHistoryEntry[] }) => (
-  <div className="sp-tenant">
-    <SectionCard title="Historie změn">
-      {entries.length === 0 ? (
-        <p className="sp-tenant-muted">
-          Záznam vznikl před zavedením historie změn. Další změny stavu se zde zobrazí s autorem a časem.
-        </p>
-      ) : (
-        timelineEntries(entries).map(({ entry, key }) => (
-          <article className="sp-tenant-event" key={key}>
-            <div className="sp-tenant-heading">
-              <Badge size="sm" variant={entry.kind === 'CANCELLED' ? 'danger' : 'outline'}>
-                {historyLabels[entry.kind]}
-              </Badge>
-              <span className="sp-tenant-muted">
-                {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
-              </span>
-            </div>
-            <p>{entry.summary}</p>
-          </article>
-        ))
-      )}
-    </SectionCard>
-  </div>
-);
+export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly OccupancyHistoryEntry[] }) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="sp-tenant">
+      <SectionCard title={t('property-leasing.documents.historyTitle')}>
+        {entries.length === 0 ? (
+          <p className="sp-tenant-muted">
+            Záznam vznikl před zavedením historie změn. Další změny stavu se zde zobrazí s autorem a časem.
+          </p>
+        ) : (
+          timelineEntries(entries).map(({ entry, key }) => (
+            <article className="sp-tenant-event" key={key}>
+              <div className="sp-tenant-heading">
+                <Badge size="sm" variant={entry.kind === 'CANCELLED' ? 'danger' : 'outline'}>
+                  {historyLabels[entry.kind]}
+                </Badge>
+                <span className="sp-tenant-muted">
+                  {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
+                </span>
+              </div>
+              <p>{entry.summary}</p>
+            </article>
+          ))
+        )}
+      </SectionCard>
+    </div>
+  );
+};
 
 const purposes = ['Rekreace', 'Služební cesta', 'Bydlení – nájem', 'Podnikání – nájem', 'Jiný účel'] as const;
 const emptyOccupant = (name = ''): RegistrationOccupant => ({
@@ -136,6 +140,7 @@ export const RegistrationSheetCard = ({
   readonly onCommand: (command: OccupancyCommand) => void;
   readonly sheets: readonly RegistrationSheet[];
 }) => {
+  const { t } = useModernI18n();
   const { record } = context;
   const initialCount = Math.min(Math.max(record.peopleCount ?? 1, 1), 20);
   const [open, setOpen] = useState(false);
@@ -207,7 +212,7 @@ export const RegistrationSheetCard = ({
             </Button>
           ) : undefined
         }
-        title="Evidenční list"
+        title={t('property-leasing.registration.title')}
       >
         <p className="sp-tenant-muted">
           Evidenční list přebírá jednotku, období a počet osob z této{' '}
@@ -261,7 +266,7 @@ export const RegistrationSheetCard = ({
                 <div className="sp-tenant-fields">
                   <FormInput
                     id={`sheet-name-${index}`}
-                    label="Jméno a příjmení"
+                    label={t('property-leasing.registration.fullName')}
                     maxLength={200}
                     onChange={(event) => update(index, 'name', event.target.value)}
                     value={occupant.name}
@@ -270,26 +275,26 @@ export const RegistrationSheetCard = ({
                       : { helpText: nameError(occupant), validateStatus: 'error' as const })}
                   />
                   <FormInput
-                    label="Datum narození"
+                    label={t('property-leasing.registration.birthDate')}
                     onChange={(event) => update(index, 'birthDate', event.target.value)}
                     type="date"
                     value={Option.getOrElse(occupant.birthDate, () => '')}
                   />
                   <FormInput
-                    label="Státní občanství"
+                    label={t('property-leasing.registration.nationality')}
                     maxLength={200}
                     onChange={(event) => update(index, 'nationality', event.target.value)}
                     value={occupant.nationality}
                   />
                   <FormInput
-                    label="Číslo dokladu totožnosti"
+                    label={t('property-leasing.registration.identityDocument')}
                     maxLength={200}
                     onChange={(event) => update(index, 'identityDocument', event.target.value)}
                     value={occupant.identityDocument}
                   />
                 </div>
                 <FormInput
-                  label="Adresa trvalého pobytu"
+                  label={t('property-leasing.registration.permanentAddress')}
                   maxLength={300}
                   onChange={(event) => update(index, 'address', event.target.value)}
                   value={occupant.address}
@@ -318,7 +323,11 @@ export const RegistrationSheetCard = ({
               </Button>
               <label className="sp-tenant-stack">
                 <span>Účel pobytu</span>
-                <select aria-label="Účel pobytu" onChange={(event) => setPurpose(event.target.value)} value={purpose}>
+                <select
+                  aria-label={t('property-leasing.registration.purpose')}
+                  onChange={(event) => setPurpose(event.target.value)}
+                  value={purpose}
+                >
                   {purposes.map((value) => (
                     <option key={value} value={value}>
                       {value}
@@ -328,7 +337,7 @@ export const RegistrationSheetCard = ({
               </label>
             </div>
             <FormInput
-              label="Poznámka (nepovinné)"
+              label={t('property-leasing.registration.optionalNote')}
               maxLength={500}
               onChange={(event) => setNote(event.target.value)}
               value={note}
@@ -454,6 +463,7 @@ const NoticeEditor = ({
     template,
     templates,
   } = editor;
+  const { t } = useModernI18n();
   if (template === undefined) {
     return null;
   }
@@ -491,7 +501,7 @@ const NoticeEditor = ({
         <label className="sp-tenant-stack">
           <span>Šablona</span>
           <select
-            aria-label="Šablona oznámení"
+            aria-label={t('property-leasing.notices.template')}
             onChange={(event) => applyTemplate(event.target.value, channel)}
             value={template.key}
           >
@@ -505,7 +515,7 @@ const NoticeEditor = ({
         <label className="sp-tenant-stack">
           <span>Kanál</span>
           <select
-            aria-label="Kanál oznámení"
+            aria-label={t('property-leasing.notices.channel')}
             onChange={(event) => {
               const next = event.target.value === 'SMS' ? 'SMS' : 'EMAIL';
               setRecipientDraft(undefined);
@@ -529,7 +539,7 @@ const NoticeEditor = ({
       />
       {channel === 'EMAIL' && (
         <FormInput
-          label="Předmět"
+          label={t('property-leasing.related.contractSubject')}
           maxLength={200}
           onChange={(event) => setSubject(event.target.value)}
           value={subject}
@@ -539,7 +549,7 @@ const NoticeEditor = ({
         <span>Text oznámení</span>
         <textarea
           aria-invalid={submitted && bodyError !== undefined}
-          aria-label="Text oznámení"
+          aria-label={t('property-leasing.notices.body')}
           className="sp-notice-text"
           maxLength={2000}
           onChange={(event) => {
@@ -624,11 +634,12 @@ export const NoticeCard = ({
   readonly notices: readonly PreparedNotice[];
   readonly onCommand: (command: OccupancyCommand) => void;
 }) => {
+  const { t } = useModernI18n();
   const editor = useNoticeEditor(context, defaultEmail, defaultPhone);
   const { templates } = editor;
   return (
     <div className="sp-tenant">
-      <SectionCard title="Oznámení e-mailem nebo SMS">
+      <SectionCard title={t('property-leasing.notices.title')}>
         <p className="sp-tenant-muted">
           Text připravíte ze šablony a upravíte. Uložený text zůstane u záznamu s autorem a časem. Nic se odsud
           automaticky neodesílá; SMS lze odesílat až po napojení potvrzeného poskytovatele.

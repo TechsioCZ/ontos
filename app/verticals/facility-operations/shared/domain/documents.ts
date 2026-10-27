@@ -15,10 +15,8 @@ import {
 } from './common.ts';
 
 export const DocumentIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityDocumentId'));
-export type DocumentId = typeof DocumentIdSchema.Type;
 
 export const CommentIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityCommentId'));
-export type CommentId = typeof CommentIdSchema.Type;
 
 /** Snapshot of a stored file, as returned by the FileUpload command (`result.file`). */
 export const StoredFileRefSchema = Schema.Struct({
@@ -49,7 +47,6 @@ export const DocumentVersionSchema = Schema.Struct({
   uploadedBy: PrincipalRefSchema,
   version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });
-export type DocumentVersion = typeof DocumentVersionSchema.Type;
 
 /** Contract lifecycle shown on the contract register (S12.R1). Draft parameters, not a legal statement. */
 export const ContractStatusSchema = Schema.Literals(['draft', 'active', 'terminated', 'expired']);
@@ -85,7 +82,6 @@ export const SignatureRecordSchema = Schema.Struct({
   signedOn: IsoDateSchema,
   version: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });
-export type SignatureRecord = typeof SignatureRecordSchema.Type;
 
 export const DocumentSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
@@ -112,7 +108,6 @@ export const CommentEditSchema = Schema.Struct({
   editedAt: Schema.DateTimeUtcFromString,
   editedBy: PrincipalRefSchema,
 });
-export type CommentEditEntry = typeof CommentEditSchema.Type;
 
 /** Comment or message in a thread attached to any record or channel (S14). */
 export const CommentSchema = Schema.Struct({

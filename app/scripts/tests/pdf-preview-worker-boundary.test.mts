@@ -69,7 +69,10 @@ const compiler = rspack({
   output: { filename: 'preview.mjs', library: { type: 'module' }, module: true, path: directory },
   plugins: [new DefinePlugin({ 'import.meta.env.MODERN_TARGET': JSON.stringify(target) })],
   resolve: {
-    alias: { '../runtime/browser-effect-runtime.ts': path.join(owner, 'src/runtime/browser-effect-runtime.ts') },
+    alias: {
+      '../runtime/browser-effect-runtime.ts': path.join(owner, 'src/runtime/browser-effect-runtime.ts'),
+      './pdf-render-lifecycle.ts': path.join(owner, 'src/ui/pdf-render-lifecycle.ts'),
+    },
     extensions: ['.tsx', '.ts', '.js', '.mjs'],
     modules: [path.join(owner, 'node_modules'), 'node_modules'],
   },

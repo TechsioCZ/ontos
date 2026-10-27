@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
 // Facility operations — přehled (S15). OWNED BY THE `agenda` LANE (ops-agenda).
 // Every KPI is computed from a governed source read (definition, source and read time shown on the tile); a source
 // the person may not read or that is down shows „bez oprávnění“ / „zdroj nedostupný“, never a zero. Clicking a tile
@@ -8,16 +7,20 @@ import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Array as EffectArray, Effect, Option, Order, Schema } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
-import { currentAgendaState, buildDeadlines, buildKpis, buildSearchIndex } from '../../../../ui/ops-agenda/model.ts';
-import type { KpiId } from '../../../../ui/ops-agenda/model.ts';
 import {
-  allSettled,
-  preloadRentalOverviewSources,
-  useRentalOverviewSources,
-} from '../../../../ui/ops-agenda/sources.ts';
+  currentAgendaState,
+  buildDeadlines,
+  buildKpis,
+  buildSearchIndex,
+  KpiIdSchema,
+} from '../../../../ui/ops-agenda/model.ts';
+import type { KpiId } from '../../../../ui/ops-agenda/model.ts';
+import { allSettled, sourceKeys, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { Icon, fmt, langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import {
@@ -30,39 +33,31 @@ import {
   UpcomingTimeline,
 } from './dashboard-parts.tsx';
 
-const kpiIds: readonly KpiId[] = [
-  'occupancy',
-  'properties',
-  'leases',
-  'overdueInvoices',
-  'openTasks',
-  'incidents',
-  'deadlines',
-  'contracts',
-  'salesCases',
-  'planActual',
-];
+// The Shell supplies this raw query string on both server and client renders.
+const overviewSearchSchema = Schema.Struct({ kpi: Schema.OptionFromNullOr(KpiIdSchema) });
+const decodeSearchParams = Schema.decodeOption(Schema.toCodecJson(Schema.URLSearchParams));
+const decodeOverviewSearch = Schema.decodeUnknownOption(overviewSearchSchema);
+const readKpiParam = (search: string): KpiId | undefined =>
+  decodeSearchParams(search).pipe(
+    Option.flatMap((params) => decodeOverviewSearch({ kpi: params.get('kpi') })),
+    Option.flatMap(({ kpi }) => kpi),
+    Option.getOrUndefined,
+  );
 
-const readKpiParam = (): KpiId | undefined => {
-  if (typeof window === 'undefined') {
-    return undefined;
-  }
-  const value = new URLSearchParams(window.location.search).get('kpi');
-  return kpiIds.find((id) => id === value);
-};
-
-const OverviewView = ({ displayName }: { readonly displayName: string | undefined }) => {
+const OverviewView = ({
+  displayName,
+  search,
+}: {
+  readonly displayName: string | undefined;
+  readonly search: string;
+}) => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
   const { loadSearch, names, reload, sources } = useRentalOverviewSources();
-  const [today] = useState(() => pragueToday());
-  const [selected, setSelected] = useState<KpiId | undefined>(undefined);
+  const [view, setView] = useState(() => ({ selected: readKpiParam(search), today: pragueToday() }));
+  const { selected, today } = view;
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    setSelected(readKpiParam());
-  }, []);
 
   // Search rows of the provoz records are fetched only when someone actually searches.
   useEffect(() => {
@@ -71,24 +66,23 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
     }
   }, [query, loadSearch]);
 
-  const deadlines = useMemo(() => buildDeadlines(sources, names), [sources, names]);
-  const kpis = useMemo(() => buildKpis(sources, names, deadlines, today), [sources, names, deadlines, today]);
-  const index = useMemo(() => buildSearchIndex(sources, names), [sources, names]);
-  const agendaState = useMemo(() => currentAgendaState(sources, deadlines, today), [sources, deadlines, today]);
+  const deadlines = buildDeadlines(sources, names);
+  const kpis = buildKpis({ deadlines, names, sources, today });
+  const index = buildSearchIndex(sources, names);
+  const agendaState = currentAgendaState(sources, deadlines, today);
   const me = sources.ops.data?.actorPrincipalRef.principalId ?? sources.work.data?.actorPrincipalRef.principalId;
   const unread = (agendaState?.notifications ?? []).filter(
     (entry) => entry.recipient.principalId === me && entry.readAt === undefined,
   ).length;
   const settled = allSettled(sources);
-  const lastRead = Object.values(sources)
-    .map((source) => source.loadedAt)
-    .filter((value): value is string => value !== undefined)
-    .toSorted()
-    .at(-1);
+  const lastRead = EffectArray.sort(
+    sourceKeys.map((key) => sources[key].loadedAt).filter((value): value is string => value !== undefined),
+    Order.String,
+  ).at(-1);
 
-  const select = (id: KpiId | undefined) => {
-    setSelected(id);
-    if (typeof window !== 'undefined') {
+  const select = (id?: KpiId) => {
+    setView((current) => ({ ...current, selected: id }));
+    if ('window' in globalThis) {
       const url = new URL(window.location.href);
       if (id === undefined) {
         url.searchParams.delete('kpi');
@@ -98,16 +92,15 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
       window.history.replaceState(window.history.state, '', url);
       if (id !== undefined) {
         window.requestAnimationFrame(() =>
-          document.getElementById('ops-overview-drilldown')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+          document.querySelector('#ops-overview-drilldown')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
         );
       }
     }
   };
 
-  const refresh = async () => {
+  const refresh = () => {
     setRefreshing(true);
-    await reload();
-    setRefreshing(false);
+    browserRuntime.runFork(reload().pipe(Effect.ensuring(Effect.sync(() => setRefreshing(false)))));
   };
 
   const selectedKpi = kpis.find((kpi) => kpi.id === selected);
@@ -129,7 +122,7 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
             <Button
               isLoading={refreshing}
               loadingText={t('facility-operations.common.loading')}
-              onClick={() => void refresh()}
+              onClick={refresh}
               size="sm"
               theme="outlined"
               variant="secondary"
@@ -149,8 +142,8 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
         title={t('facility-operations.agenda.overview.title')}
       />
       <Hero
-        displayName={displayName}
         deadlines={deadlines}
+        displayName={displayName}
         kpis={kpis}
         onQuery={setQuery}
         query={query}
@@ -179,7 +172,7 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
           agendaRevision={agendaEnvelope?.revision ?? 0}
           canLog={agendaEnvelope?.canWrite === true}
           kpi={selectedKpi}
-          onClose={() => select(undefined)}
+          onClose={() => select()}
         />
       )}
       <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
@@ -195,13 +188,13 @@ const OverviewView = ({ displayName }: { readonly displayName: string | undefine
   );
 };
 
-export const OverviewPage = ({ context }: Partial<ModulePageProps>) => (
+export const OverviewPage = ({ context, search = '' }: Partial<ModulePageProps>) => (
   <AgendaFrame>
     <UltramodernRouteHead titleKey="facility-operations.agenda.overview.title" />
-    <OverviewView displayName={context?.displayName} />
+    <OverviewView displayName={context?.displayName} search={search} />
   </AgendaFrame>
 );
 
 /** The Shell awaits this before it reveals the page, so the KPI tiles render values in the first commit. */
-export const preloadPage = preloadRentalOverviewSources;
+export { preloadRentalOverviewSources as preloadPage } from '../../../../ui/ops-agenda/sources.ts';
 export default OverviewPage;

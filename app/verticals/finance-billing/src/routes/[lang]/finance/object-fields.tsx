@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { COST_CENTERS } from './use-rental-objects.ts';
 import type { ContractRef, PropertyRef, RentalObjects, UnitRef } from './use-rental-objects.ts';
@@ -16,26 +17,32 @@ export interface ObjectSelection {
 export const emptyObjectSelection: ObjectSelection = { contractId: '', costCenter: '', propertyId: '', unitId: '' };
 
 /** Selection → command anchors, without empty keys. Unknown ids (stale lists) are dropped. */
-export const objectAnchors = (
-  objects: RentalObjects,
-  selection: ObjectSelection,
-): {
-  readonly contractRef?: ContractRef;
-  readonly costCenter?: string;
-  readonly propertyRef?: PropertyRef;
-  readonly unitRef?: UnitRef;
-} => {
+export interface InvoiceObjectAnchors {
+  contractRef?: ContractRef;
+  costCenter?: string;
+  propertyRef?: PropertyRef;
+  unitRef?: UnitRef;
+}
+export const objectAnchors = (objects: RentalObjects, selection: ObjectSelection): InvoiceObjectAnchors => {
   const property = objects.properties.find((entry) => entry.ref.resourceId === selection.propertyId);
   const unit = objects.units.find(
     (entry) => entry.ref.resourceId === selection.unitId && entry.propertyId === selection.propertyId,
   );
   const contract = objects.contracts.find((entry) => entry.ref.resourceId === selection.contractId);
-  return {
-    ...(contract === undefined ? {} : { contractRef: contract.ref }),
-    ...(selection.costCenter === '' ? {} : { costCenter: selection.costCenter }),
-    ...(property === undefined ? {} : { propertyRef: property.ref }),
-    ...(property === undefined || unit === undefined ? {} : { unitRef: unit.ref }),
-  };
+  const anchors: InvoiceObjectAnchors = {};
+  if (contract !== undefined) {
+    anchors.contractRef = contract.ref;
+  }
+  if (selection.costCenter !== '') {
+    anchors.costCenter = selection.costCenter;
+  }
+  if (property !== undefined) {
+    anchors.propertyRef = property.ref;
+  }
+  if (property !== undefined && unit !== undefined) {
+    anchors.unitRef = unit.ref;
+  }
+  return anchors;
 };
 
 /** Readable "Hala B (HB) · B-101 – Kancelář · Správa areálu" for an assigned object. */
@@ -75,6 +82,7 @@ export const ObjectFields = ({
   showCostCenter = true,
   value,
 }: ObjectFieldsProps) => {
+  const { t } = useModernI18n();
   const units = objects.units.filter((entry) => entry.propertyId === value.propertyId);
   return (
     <div className="grid grid-cols-1 gap-200 md:grid-cols-2" data-finance-object-fields={idPrefix}>
@@ -89,7 +97,7 @@ export const ObjectFields = ({
                 value: entry.ref.resourceId,
               })),
             ]}
-            label="Nemovitost"
+            label={t('finance-billing.financeUi.objects.property')}
             labelProps={labelProps}
             name={`${idPrefix}-property`}
             onValueChange={({ value: next }) => {
@@ -105,7 +113,7 @@ export const ObjectFields = ({
               { displayValue: 'Celá nemovitost', label: 'Celá nemovitost', value: NONE },
               ...units.map((entry) => ({ displayValue: entry.label, label: entry.label, value: entry.ref.resourceId })),
             ]}
-            label="Jednotka"
+            label={t('finance-billing.financeUi.priceList.unit')}
             labelProps={labelProps}
             name={`${idPrefix}-unit`}
             onValueChange={({ value: next }) => {
@@ -127,7 +135,7 @@ export const ObjectFields = ({
               value: entry.ref.resourceId,
             })),
           ]}
-          label="Smlouva"
+          label={t('finance-billing.financeUi.objects.contract')}
           labelProps={labelProps}
           name={`${idPrefix}-contract`}
           onValueChange={({ value: next }) => {
@@ -144,7 +152,7 @@ export const ObjectFields = ({
             { displayValue: 'Bez střediska', label: 'Bez střediska', value: NONE },
             ...COST_CENTERS.map((entry) => ({ displayValue: entry, label: entry, value: entry })),
           ]}
-          label="Středisko"
+          label={t('finance-billing.financeUi.objects.costCenter')}
           labelProps={labelProps}
           name={`${idPrefix}-cost-center`}
           onValueChange={({ value: next }) => {

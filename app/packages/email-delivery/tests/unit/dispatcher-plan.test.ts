@@ -1,5 +1,5 @@
-// @effect-diagnostics *:off
-import { describe, expect, test } from '@rstest/core';
+import { Effect, Option } from 'effect';
+import { describe, expect, it as test } from 'effect-rstest';
 import type { AgendaRecipientInput, AkrosOrderInput, RentReminderInput } from '../../src/dispatcher/contract.ts';
 import {
   deliveryOutcomeOf,
@@ -23,35 +23,35 @@ const planOptions = {
 };
 
 const baseOrder: AkrosOrderInput = {
-  id: orderId,
-  number: 'OBJ-2026-0030',
   channel: 'STOREFRONT',
-  status: 'DELIVERED',
+  contact: { email: 'pavel@zakaznik.example', name: 'Pavel Dvořák' },
   createdAt: '2026-10-21T08:00:00.000Z',
-  updatedAt: '2026-10-21T08:05:00.000Z',
-  contact: { name: 'Pavel Dvořák', email: 'pavel@zakaznik.example' },
-  deliveryAddress: { street: 'Průmyslová 1420', city: 'Praha 10', postalCode: '102 00', country: 'CZ' },
-  pricesIncludeVat: true,
-  shipping: { label: 'Osobní odběr – AKROS (simulace)', method: 'OSOBNI_ODBER', priceMinor: 0 },
-  totalMinor: 54000,
-  totalVatMinor: 9372,
+  deliveryAddress: { city: 'Praha 10', country: 'CZ', postalCode: '102 00', street: 'Průmyslová 1420' },
+  history: [
+    { at: '2026-10-21T08:00:00.000Z', kind: 'CREATED' },
+    { after: 'Zpracovává se', at: '2026-10-21T08:01:00.000Z', kind: 'STATUS' },
+    { after: 'Připravená k předání', at: '2026-10-21T08:02:00.000Z', kind: 'STATUS' },
+    { after: 'Předáno dopravci (simulace)', at: '2026-10-21T08:03:00.000Z', kind: 'STATUS' },
+    { after: 'Dokončená', at: '2026-10-21T08:04:00.000Z', kind: 'STATUS' },
+  ],
+  id: orderId,
   lines: [
     {
       productName: 'ŠROUBY DIN 912/A2',
-      variantName: 'šroub M 1.6 x 4',
-      sku: '10091200010004',
       quantity: 500,
+      sku: '10091200010004',
       unitPriceMinor: 108,
+      variantName: 'šroub M 1.6 x 4',
       vatRate: 21,
     },
   ],
-  history: [
-    { kind: 'CREATED', at: '2026-10-21T08:00:00.000Z' },
-    { kind: 'STATUS', after: 'Zpracovává se', at: '2026-10-21T08:01:00.000Z' },
-    { kind: 'STATUS', after: 'Připravená k předání', at: '2026-10-21T08:02:00.000Z' },
-    { kind: 'STATUS', after: 'Předáno dopravci (simulace)', at: '2026-10-21T08:03:00.000Z' },
-    { kind: 'STATUS', after: 'Dokončená', at: '2026-10-21T08:04:00.000Z' },
-  ],
+  number: 'OBJ-2026-0030',
+  pricesIncludeVat: true,
+  shipping: { label: 'Osobní odběr – AKROS (simulace)', method: 'OSOBNI_ODBER', priceMinor: 0 },
+  status: 'DELIVERED',
+  totalMinor: 54_000,
+  totalVatMinor: 9372,
+  updatedAt: '2026-10-21T08:05:00.000Z',
 };
 
 const reminder: RentReminderInput = {
@@ -87,11 +87,11 @@ describe('AKROS order e-mail planning', () => {
   test('renders the cancellation reason from history into the CANCELLED e-mail', () => {
     const order: AkrosOrderInput = {
       ...baseOrder,
-      status: 'CANCELLED',
       history: [
-        { kind: 'CREATED', at: '2026-10-21T08:00:00.000Z' },
-        { kind: 'STATUS', after: 'Stornovaná', at: '2026-10-21T08:06:00.000Z', reason: 'Zákazník zrušil' },
+        { at: '2026-10-21T08:00:00.000Z', kind: 'CREATED' },
+        { after: 'Stornovaná', at: '2026-10-21T08:06:00.000Z', kind: 'STATUS', reason: 'Zákazník zrušil' },
       ],
+      status: 'CANCELLED',
     };
     const emails = planAkrosOrderEmails(order, planOptions);
     const cancelled = emails.find((e) => e.event === 'CANCELLED');
@@ -129,9 +129,13 @@ describe('AKROS order e-mail planning', () => {
   });
 
   test('escapes product names in the HTML body', () => {
+    const [line] = baseOrder.lines;
+    if (line === undefined) {
+      expect.unreachable('The order fixture must include its product line');
+    }
     const order: AkrosOrderInput = {
       ...baseOrder,
-      lines: [{ ...baseOrder.lines[0]!, productName: '<b>Šroub</b>' }],
+      lines: [{ ...line, productName: '<b>Šroub</b>' }],
     };
     const emails = planAkrosOrderEmails(order, planOptions);
     const html = emails[0]?.html ?? '';
@@ -140,7 +144,7 @@ describe('AKROS order e-mail planning', () => {
   });
 
   test('formats minor units as Czech koruna with decimals', () => {
-    expect(formatCzk(54000).replace(/\s/gu, ' ')).toBe('540,00 Kč');
+    expect(formatCzk(54_000).replaceAll(/\s/gu, ' ')).toBe('540,00 Kč');
   });
 
   test('renders the order e-mail directly with the storefront link in the footer', () => {
@@ -163,7 +167,7 @@ describe('AKROS order e-mail planning', () => {
   test('a carrier order is „předána dopravci“ with the label without the staff-side marker', () => {
     const order: AkrosOrderInput = {
       ...baseOrder,
-      shipping: { label: 'PPL – doručení na adresu (simulace)', method: 'PPL', priceMinor: 12900 },
+      shipping: { label: 'PPL – doručení na adresu (simulace)', method: 'PPL', priceMinor: 12_900 },
     };
     const shipped = planAkrosOrderEmails(order, planOptions).find((e) => e.event === 'SHIPPED');
     expect(shipped?.subject).toBe('AKROS – objednávka OBJ-2026-0030 byla předána dopravci');
@@ -217,25 +221,29 @@ describe('reminders in the name of the issuing company', () => {
     expect(planned?.text.includes('jménem společnosti Obchodní firma')).toBe(true);
   });
 
-  test('each company sends from its own address; env overrides it; SMTP_FROM supplies the fallback address', () => {
-    expect(senderFor(obchodni, 'Obchodní firma', {})).toBe('Obchodní firma – účtárna <ucetni@demo.ontos>');
-    expect(senderFor(reminder, 'Siampark', {})).toBe('Siampark – finanční oddělení <finance@siampark.demo>');
-    expect(senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000024' }, 'AKROS', {})).toBe(
-      'AKROS e-shop <eshop@akros.demo>',
-    );
-    expect(senderFor(reminder, 'Siampark', { SIAMPARK_EMAIL_FROM: 'Siampark <fakturace@siampark.cz>' })).toBe(
-      'Siampark <fakturace@siampark.cz>',
-    );
-    expect(senderFor(obchodni, 'Obchodní firma', { SMTP_FROM: 'OntOS <noreply@vase-domena.cz>' })).toBe(
-      'Obchodní firma – účtárna <noreply@vase-domena.cz>',
-    );
-    expect(senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000022' }, 'Velkoobchod Hanák s.r.o.', {})).toBe(
-      'Velkoobchod Hanák s.r.o. – finanční oddělení <oznameni@ontos.demo>',
-    );
-    expect(addressOf('Name <a@b.cz>')).toBe('a@b.cz');
-    expect(addressOf('a@b.cz')).toBe('a@b.cz');
-    expect(addressOf('bez adresy')).toBeNull();
-  });
+  test.effect(
+    'each company sends from its own address; env overrides it; SMTP_FROM supplies the fallback address',
+    () =>
+      Effect.gen(function* companySenders() {
+        expect(yield* senderFor(obchodni, 'Obchodní firma', {})).toBe('Obchodní firma – účtárna <ucetni@demo.ontos>');
+        expect(yield* senderFor(reminder, 'Siampark', {})).toBe('Siampark – finanční oddělení <finance@siampark.demo>');
+        expect(yield* senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000024' }, 'AKROS', {})).toBe(
+          'AKROS e-shop <eshop@akros.demo>',
+        );
+        expect(
+          yield* senderFor(reminder, 'Siampark', { SIAMPARK_EMAIL_FROM: 'Siampark <fakturace@siampark.cz>' }),
+        ).toBe('Siampark <fakturace@siampark.cz>');
+        expect(yield* senderFor(obchodni, 'Obchodní firma', { SMTP_FROM: 'OntOS <noreply@vase-domena.cz>' })).toBe(
+          'Obchodní firma – účtárna <noreply@vase-domena.cz>',
+        );
+        expect(
+          yield* senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000022' }, 'Velkoobchod Hanák s.r.o.', {}),
+        ).toBe('Velkoobchod Hanák s.r.o. – finanční oddělení <oznameni@ontos.demo>');
+        expect(addressOf('Name <a@b.cz>')).toBe('a@b.cz');
+        expect(addressOf('a@b.cz')).toBe('a@b.cz');
+        expect(addressOf('bez adresy')).toBeNull();
+      }),
+  );
 });
 
 describe('delivery outcome classification', () => {
@@ -266,14 +274,6 @@ describe('agenda notification e-mails', () => {
     email: 'operations@siampark.demo',
     legalEntityId: '71000000-0000-4000-8000-000000000021',
     legalName: 'Siampark',
-    principalId: '72000000-0000-4000-8000-000000000022',
-    tenantId: '70000000-0000-4000-8000-000000000020',
-    preference: {
-      emailCategories: [],
-      emailOptIn: true,
-      emailSince: '2026-10-21T08:00:00.000Z',
-      updatedAt: '2026-10-21T08:00:00.000Z',
-    },
     notifications: [
       {
         category: 'ASSIGNED',
@@ -306,13 +306,24 @@ describe('agenda notification e-mails', () => {
         title: 'Před zapnutím e-mailu',
       },
     ],
+    preference: {
+      emailCategories: [],
+      emailOptIn: true,
+      emailSince: '2026-10-21T08:00:00.000Z',
+      updatedAt: '2026-10-21T08:00:00.000Z',
+    },
+    principalId: '72000000-0000-4000-8000-000000000022',
+    tenantId: '70000000-0000-4000-8000-000000000020',
   };
   const options = { appUrl: 'http://localhost:3020', enabledSince: '2026-10-21T06:00:00.000Z' };
 
   test('mandatory categories always, optional only when chosen, never before e-mail was switched on', () => {
     const planned = planAgendaEmails(person, options);
     expect(planned).toHaveLength(1);
-    const email = planned[0]!;
+    const [email] = planned;
+    if (email === undefined) {
+      expect.unreachable('The opted-in person must receive the mandatory notification batch');
+    }
     expect(email.dedupeKey).toBe('facility-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
     expect(email.subject).toBe('Siampark – 2 nová upozornění v agendě');
     expect(email.text).toContain('Přiřazeno vám: Zkontrolovat osvětlení');
@@ -327,22 +338,32 @@ describe('agenda notification e-mails', () => {
       { ...person, preference: { ...person.preference, emailCategories: ['DEADLINE'] } },
       options,
     );
-    expect(chosen[0]!.text).toContain('Blíží se termín: Konec smlouvy');
-    expect(chosen[0]!.text).toContain('Termín: 31. 10. 2026');
+    const [chosenEmail] = chosen;
+    if (chosenEmail === undefined) {
+      expect.unreachable('The chosen category must produce an email');
+    }
+    expect(chosenEmail.text).toContain('Blíží se termín: Konec smlouvy');
+    expect(chosenEmail.text).toContain('Termín: 31. 10. 2026');
     const legacy = planAgendaEmails(
       { ...person, preference: { emailOptIn: true, updatedAt: '2026-10-21T08:00:00.000Z' } },
       options,
     );
-    expect(legacy[0]!.text).toContain('Konec smlouvy');
+    const [legacyEmail] = legacy;
+    if (legacyEmail === undefined) {
+      expect.unreachable('Legacy preferences must retain optional categories');
+    }
+    expect(legacyEmail.text).toContain('Konec smlouvy');
   });
 
-  test('nothing without opt-in or without an address; sender names the company', () => {
-    expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual(
-      [],
-    );
-    expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
-    expect(agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
-  });
+  test.effect('nothing without opt-in or without an address; sender names the company', () =>
+    Effect.gen(function* agendaSender() {
+      expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual(
+        [],
+      );
+      expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
+      expect(yield* agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
+    }),
+  );
 });
 
 describe('test recipients go to the separate test capture, never the demo inbox', () => {
@@ -371,31 +392,37 @@ describe('test recipients go to the separate test capture, never the demo inbox'
       expect(isTestRecipient(address)).toBe(false);
     }
   });
-  test('test capture defaults to the second Mailpit and can be switched off', () => {
-    expect(testCaptureFromEnvironment({})).toEqual({ host: '127.0.0.1', port: 1026 });
-    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'mail-test', EMAIL_TEST_SMTP_PORT: '2525' })).toEqual({
-      host: 'mail-test',
-      port: 2525,
-    });
-    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'none' })).toBeNull();
-  });
+  test.effect('test capture defaults to the second Mailpit and can be switched off', () =>
+    Effect.gen(function* testCaptureConfiguration() {
+      expect(yield* testCaptureFromEnvironment({})).toEqual(Option.some({ host: '127.0.0.1', port: 1026 }));
+      expect(
+        yield* testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'mail-test', EMAIL_TEST_SMTP_PORT: '2525' }),
+      ).toEqual(
+        Option.some({
+          host: 'mail-test',
+          port: 2525,
+        }),
+      );
+      expect(Option.isNone(yield* testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'none' }))).toBe(true);
+    }),
+  );
 });
 
 describe('storefront inquiry notification', () => {
   const task = {
-    ref: { resourceId: 'task-42' },
-    title: 'Kontaktní dotaz: Materiál',
     createdAt: '2026-10-23T08:00:00Z',
+    ref: { resourceId: 'task-42' },
     storefrontInquiry: {
-      requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
-      kind: 'CONTACT' as const,
-      name: '<Pavel>',
       email: 'pavel@example.com',
-      subject: 'Materiál',
+      kind: 'CONTACT' as const,
       message: 'Potřebuji <4> kusy & výkres.',
+      name: '<Pavel>',
+      requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
+      subject: 'Materiál',
     },
+    title: 'Kontaktní dotaz: Materiál',
   };
-  const options = { ...planOptions, recipient: 'podpora@example.com', appUrl: 'http://localhost:3020' };
+  const options = { ...planOptions, appUrl: 'http://localhost:3020', recipient: 'podpora@example.com' };
   test('plans one staff message from the retained contact task, never a marketing subscription', () => {
     const planned = planStorefrontInquiryEmail(task, options);
     expect(planned?.dedupeKey).toBe('storefront-inquiry:task-42');

@@ -49038,9 +49038,7 @@
       "isSale": false,
       "isNew": false,
       "detail": {
-        "descriptionParagraphs": [
-          "Kompletní sortiment pro fotovoltaické panely"
-        ],
+        "descriptionParagraphs": ["Kompletní sortiment pro fotovoltaické panely"],
         "parameters": [],
         "priceTiers": [
           {
@@ -166138,9 +166136,7 @@
       "isSale": false,
       "isNew": false,
       "detail": {
-        "descriptionParagraphs": [
-          "Ostatní spojovací prvky FVE"
-        ],
+        "descriptionParagraphs": ["Ostatní spojovací prvky FVE"],
         "parameters": [],
         "priceTiers": [
           {

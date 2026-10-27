@@ -4,8 +4,10 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices, NodeRuntime } from '@effect/platform-node';
-import { Effect, Equal, FileSystem, Layer, Schema } from 'effect';
+import { Effect, Equal, FileSystem, Layer, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
+import { parseSync, Visitor } from 'oxc-parser';
+import type { Argument, Expression } from 'oxc-parser';
 
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
@@ -128,44 +130,145 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     return files.flat();
   });
 
-const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
-  Effect.gen(function* checkSharedSource() {
-    const content = yield* fileSystem.readFileString(filePath);
-    if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:vertical\.manifest|vertical\.registration)(?:\.ts)?['"]/u.test(
-        content,
-      )
-    ) {
-      yield* failure(`${filePath} imports a private deployment manifest or registration`);
+const staticModuleSource = (node: Expression | Argument | undefined): string | undefined => {
+  if (node?.type === 'Literal' && Predicate.isString(node.value)) {
+    return node.value;
+  }
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return node.quasis[0]?.value.cooked ?? undefined;
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const left = staticModuleSource(node.left);
+    const right = staticModuleSource(node.right);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+};
+
+// Keep known path prefixes in computed sources too. The previous checker rejected, for example,
+// require('../verticals/crm/src/' + name); changing discovery must not lose that enforcement.
+const moduleSourceCandidates = (node: Expression | Argument | undefined): readonly string[] => {
+  const resolved = staticModuleSource(node);
+  const candidates = resolved === undefined ? [] : [resolved];
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    // Only the leading path is a standalone prefix. Treating a right-hand filename fragment as
+    // its own import would incorrectly reject an owner's '../' + 'vertical.manifest.ts'.
+    return [...candidates, ...moduleSourceCandidates(node.left)];
+  }
+  if (node?.type === 'ConditionalExpression') {
+    return [...moduleSourceCandidates(node.consequent), ...moduleSourceCandidates(node.alternate)];
+  }
+  if (
+    node?.type === 'TSAsExpression' ||
+    node?.type === 'TSTypeAssertion' ||
+    node?.type === 'TSNonNullExpression' ||
+    node?.type === 'TSSatisfiesExpression' ||
+    node?.type === 'ParenthesizedExpression'
+  ) {
+    return moduleSourceCandidates(node.expression);
+  }
+  return candidates;
+};
+
+export const moduleImportSources = (filePath: string, content: string) =>
+  Effect.gen(function* discoverModuleImports() {
+    const parseFailure = () => failure(`${filePath} could not be parsed for module-boundary import checks`);
+    const parsed = yield* Effect.try({
+      catch: parseFailure,
+      try: () => parseSync(filePath, content, { astType: 'ts', sourceType: 'unambiguous' }),
+    });
+    if (parsed.errors.length > 0) {
+      return yield* parseFailure();
     }
-    if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:verticals\/|@app\/(?!core-runtime(?:\/|['"])))[^'"]*\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|['"])/u.test(
-        content,
-      )
-    ) {
-      yield* failure(`${filePath} imports production vertical private source`);
-    }
+    return yield* Effect.try({
+      catch: parseFailure,
+      try: () => {
+        const sources: string[] = [];
+        new Visitor({
+          CallExpression: (node) => {
+            const { callee } = node;
+            const isRequire =
+              (callee.type === 'Identifier' && callee.name === 'require') ||
+              (callee.type === 'MemberExpression' &&
+                ((!callee.computed && callee.property.type === 'Identifier' && callee.property.name === 'require') ||
+                  (callee.computed && staticModuleSource(callee.property) === 'require')));
+            if (isRequire) {
+              sources.push(...moduleSourceCandidates(node.arguments[0]));
+            }
+          },
+          ExportAllDeclaration: (node) => {
+            sources.push(node.source.value);
+          },
+          ExportNamedDeclaration: (node) => {
+            if (node.source !== null) {
+              sources.push(node.source.value);
+            }
+          },
+          ImportDeclaration: (node) => {
+            sources.push(node.source.value);
+          },
+          ImportExpression: (node) => {
+            sources.push(...moduleSourceCandidates(node.source));
+          },
+          TSImportEqualsDeclaration: (node) => {
+            if (node.moduleReference.type === 'TSExternalModuleReference') {
+              sources.push(node.moduleReference.expression.value);
+            }
+          },
+          TSImportType: (node) => {
+            sources.push(node.source.value);
+          },
+        }).visit(parsed.program);
+        return [...new Set(sources)];
+      },
+    });
   });
 
-const checkOwnerSourceFile = (fileSystem: FileSystem.FileSystem, ownerRoot: string, filePath: string) =>
-  Effect.gen(function* checkOwnerSource() {
-    const content = yield* fileSystem.readFileString(filePath);
-    const imports = [...content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu)];
-    const hasPrivateOwnerImportViolation = imports.some((match) => {
-      const specifier = match.groups?.specifier;
-      if (specifier === undefined || !/vertical\.(?:manifest|registration)(?:\.ts)?$/u.test(specifier)) {
-        return false;
+/** Inspect executable/type import syntax, never strings or comments containing fixture source. */
+export const checkModuleContractSourceImports = (filePath: string, content: string, ownerRoot?: string) =>
+  Effect.gen(function* checkModuleContractImports() {
+    const sources = yield* moduleImportSources(filePath, content);
+    const privateOwnerFile = /vertical\.(?:manifest|registration)(?:\.ts)?$/u;
+    if (ownerRoot !== undefined) {
+      const hasPrivateOwnerImportViolation = sources.some((specifier) => {
+        if (!privateOwnerFile.test(specifier)) {
+          return false;
+        }
+        if (!specifier.startsWith('.')) {
+          return true;
+        }
+        const resolved = path.resolve(path.dirname(filePath), specifier);
+        return !resolved.startsWith(`${ownerRoot}${path.sep}`);
+      });
+      if (hasPrivateOwnerImportViolation) {
+        return yield* failure(`${filePath} imports another deployment's private owner file`);
       }
-      if (!specifier.startsWith('.')) {
-        return true;
-      }
-      const resolved = path.resolve(path.dirname(filePath), specifier);
-      return !resolved.startsWith(`${ownerRoot}${path.sep}`);
-    });
-    if (hasPrivateOwnerImportViolation) {
-      yield* failure(`${filePath} imports another deployment's private owner file`);
+      return yield* Effect.void;
     }
+    if (sources.some((specifier) => privateOwnerFile.test(specifier))) {
+      return yield* failure(`${filePath} imports a private deployment manifest or registration`);
+    }
+    if (
+      sources.some((specifier) =>
+        /(?:verticals\/|@app\/(?!core-runtime(?:\/|$)))[\s\S]*\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|$)/u.test(
+          specifier,
+        ),
+      )
+    ) {
+      return yield* failure(`${filePath} imports production vertical private source`);
+    }
+    return yield* Effect.void;
   });
+
+const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
+  fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.flatMap((content) => checkModuleContractSourceImports(filePath, content)));
+
+const checkOwnerSourceFile = (fileSystem: FileSystem.FileSystem, ownerRoot: string, filePath: string) =>
+  fileSystem
+    .readFileString(filePath)
+    .pipe(Effect.flatMap((content) => checkModuleContractSourceImports(filePath, content, ownerRoot)));
 
 const checkOwnerDirectory = (fileSystem: FileSystem.FileSystem, ownerRoot: string) =>
   walkSourceFiles(ownerRoot).pipe(

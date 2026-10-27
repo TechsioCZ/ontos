@@ -219,6 +219,13 @@ const authzedPublicMessagesSource = [
   "export { ReadSchemaRequest } from '@authzed/authzed-node/v1/schema';",
 ].join('\n');
 
+const effectMetadataPublicImports = {
+  'effect/Match': "export { value } from 'effect/Match';",
+  'effect/Option': "export { getOrNull } from 'effect/Option';",
+  'effect/Result': "export { getOrThrow } from 'effect/Result';",
+  'effect/Schema': "export { String } from 'effect/Schema';",
+};
+
 const hostGraphControls: readonly HostGraphControl[] = [
   {
     name: 'allows the three explicit Authzed message exports in shared Core source',
@@ -230,13 +237,33 @@ const hostGraphControls: readonly HostGraphControl[] = [
     rejected: false,
     sources: { 'src/transport.worker.ts': authzedPublicMessagesSource },
   },
+  ...Object.entries(effectMetadataPublicImports).flatMap(([specifier, source]): HostGraphControl[] => [
+    {
+      name: `allows the pinned public metadata module ${specifier} in shared Core source`,
+      rejected: false,
+      sources: { 'src/shared.ts': source },
+    },
+    {
+      name: `allows the pinned public metadata module ${specifier} in the Workerd branch`,
+      rejected: false,
+      sources: { 'src/transport.worker.ts': source },
+    },
+  ]),
   ...[
     '@authzed/authzed-node/v1/debug',
     '@authzed/authzed-node/v1/core/private',
     '@authzed/authzed-node/dist/src/authzedapi/authzed/api/v1/core.js',
     '@authzed/authzed-node/package.json',
     'effect/Effect',
-    'effect/Schema',
+    'effect/Match/internal',
+    'effect/Option/private',
+    'effect/Result.js',
+    'effect/Schema/internal',
+    'effect/internal/schema',
+    'effect/unstable/schema',
+    'effect/UnknownModule',
+    'effect/match',
+    '@foreign/Schema',
   ].map((specifier) => ({
     name: `rejects unpinned Core external specifier ${specifier}`,
     rejected: true,
@@ -499,7 +526,7 @@ for (const control of hostGraphControls) {
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const manifest = {
-        dependencies: { '@effect/platform-node': '4.0.0-rc.117', effect: '4.0.0-rc.117' },
+        dependencies: { '@effect/platform-node': '4.0.5', effect: '4.0.5' },
         exports: control.exports ?? hostExports,
         imports: control.imports ?? hostImports,
       };

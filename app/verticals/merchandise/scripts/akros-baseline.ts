@@ -1,97 +1,148 @@
 // Pure AKROS baseline builder: the seed CLI (akros-catalog.mts) and the in-app admin reset build the same state.
+import { Effect, Option, Schema } from 'effect';
 import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
+import type { VatRate } from '../shared/domain/merchandise-model.ts';
+import {
+  CatalogSourceIdSchema,
+  CatalogCategoryIdSchema,
+  ProductIdReferenceSchema,
+  SourceGroupIdSchema,
+  VariantIdReferenceSchema,
+} from '../shared/domain/merchandise-model.ts';
 import { decodeCategoryText, orderCategoryPositions, stripUnbackedDiscount } from './akros-merge.ts';
 import { akrosSampleContacts } from './order-presentation.ts';
 import { applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 export type AkrosEncodedState = typeof MerchandiseStateSchema.Encoded;
-type Encoded = AkrosEncodedState;
-interface Tier {
-  minimumQuantity: number;
-  priceExcludingVatMinor: number;
-  priceMinor: number;
+interface BaselineStockSource {
+  readonly id?: string;
+  readonly stockCount: number;
 }
-interface Parameter {
-  label: string;
-  unit: string;
-  value: string;
-}
-interface Variant {
-  id: string;
-  imageSrc?: string;
-  isAction: boolean;
-  isNew: boolean;
-  isRecommended: boolean;
-  isSale: boolean;
-  label: string;
-  minimumQuantity: number;
-  packageQuantity?: number;
-  parameters: Parameter[];
-  priceMinor: number;
-  priceTiers: Tier[];
-  sku: string;
-  sourceId: string;
-  stockCount: number;
-  unit: string;
-}
-export interface SourceProduct {
-  categoryId: string;
-  description: string;
-  detail: { descriptionParagraphs: string[]; parameters: Parameter[]; priceTiers: Tier[]; variants: Variant[] };
-  featuredPosition: number | null;
-  id: string;
-  imageAlt: string;
-  imageSrc: string;
-  isAction: boolean;
-  isNew: boolean;
-  isRecommended: boolean;
-  isSale: boolean;
-  minimumQuantity: number;
-  name: string;
-  packageQuantity?: number;
-  priceMinor: number;
-  secondaryImageSrc?: string;
-  sku: string;
-  slug: string;
-  sourceGroupId: string;
-  stockCount: number;
-  unit: string;
-}
-export interface Category {
-  description?: string;
-  hasChildren?: boolean;
-  heading?: string;
-  id: string;
-  imageAlt?: string;
-  imageSrc?: string;
-  longDescription?: string;
-  name: string;
-  parentId: string | null;
-  position?: number;
-  slug: string;
-}
+type BaselineMovementIdentity = Pick<AkrosEncodedState['movements'][number], 'id' | 'productId' | 'variantId'>;
+const tierFields = { minimumQuantity: Schema.Finite };
+const TierSchema = Schema.Struct(
+  Object.assign(tierFields, { priceMinor: Schema.Finite }, { priceExcludingVatMinor: Schema.Finite }),
+);
+const ParameterSchema = Schema.Struct({ label: Schema.String, unit: Schema.String, value: Schema.String });
+/** The feed and bundled baseline serialize each parameter as label, value, then unit. */
+const parameterForBaseline = (parameter: typeof ParameterSchema.Type) => {
+  const label = { label: parameter.label };
+  return Object.assign(label, { value: parameter.value }, { unit: parameter.unit });
+};
+const VariantSchema = Schema.Struct({
+  id: VariantIdReferenceSchema,
+  imageSrc: Schema.optionalKey(Schema.String),
+  isAction: Schema.Boolean,
+  isNew: Schema.Boolean,
+  isRecommended: Schema.Boolean,
+  isSale: Schema.Boolean,
+  label: Schema.String,
+  minimumQuantity: Schema.Finite,
+  packageQuantity: Schema.optionalKey(Schema.Finite),
+  parameters: Schema.Array(ParameterSchema),
+  priceMinor: Schema.Finite,
+  priceTiers: Schema.NonEmptyArray(TierSchema),
+  sku: Schema.String,
+  sourceId: CatalogSourceIdSchema,
+  stockCount: Schema.Finite,
+  unit: Schema.String,
+});
+export const SourceProductSchema = Schema.Struct({
+  categoryId: CatalogCategoryIdSchema,
+  description: Schema.String,
+  detail: Schema.Struct({
+    descriptionParagraphs: Schema.Array(Schema.String),
+    parameters: Schema.Array(ParameterSchema),
+    priceTiers: Schema.Array(TierSchema),
+    variants: Schema.Array(VariantSchema),
+  }),
+  featuredPosition: Schema.OptionFromNullOr(Schema.Finite),
+  id: ProductIdReferenceSchema,
+  imageAlt: Schema.String,
+  imageSrc: Schema.String,
+  isAction: Schema.Boolean,
+  isNew: Schema.Boolean,
+  isRecommended: Schema.Boolean,
+  isSale: Schema.Boolean,
+  minimumQuantity: Schema.Finite,
+  name: Schema.String,
+  packageQuantity: Schema.optionalKey(Schema.Finite),
+  priceMinor: Schema.Finite,
+  secondaryImageSrc: Schema.optionalKey(Schema.String),
+  sku: Schema.String,
+  slug: Schema.String,
+  sourceGroupId: SourceGroupIdSchema,
+  stockCount: Schema.Finite,
+  unit: Schema.String,
+});
+export type SourceProduct = typeof SourceProductSchema.Type;
+// Field order is part of the bundled baseline's byte contract.
+const categoryFields = { id: CatalogCategoryIdSchema };
+const categoryIdentityFields = Object.assign(
+  categoryFields,
+  { parentId: Schema.OptionFromNullOr(CatalogCategoryIdSchema) },
+  { slug: Schema.String },
+);
+const categoryNameFields = Object.assign(
+  categoryIdentityFields,
+  { name: Schema.String },
+  { heading: Schema.optionalKey(Schema.String) },
+);
+const categoryDescriptionFields = Object.assign(
+  categoryNameFields,
+  { description: Schema.optionalKey(Schema.String) },
+  { longDescription: Schema.optionalKey(Schema.String) },
+);
+const categoryPositionFields = Object.assign(
+  categoryDescriptionFields,
+  { position: Schema.optionalKey(Schema.Finite) },
+  { imageSrc: Schema.optionalKey(Schema.String) },
+);
+export const CategorySchema = Schema.Struct(
+  Object.assign(
+    categoryPositionFields,
+    { imageAlt: Schema.optionalKey(Schema.String) },
+    { hasChildren: Schema.optionalKey(Schema.Boolean) },
+  ),
+);
+export type Category = typeof CategorySchema.Type;
+export const AkrosCatalogSchema = Schema.Struct({
+  homepageFeaturedProductIds: Schema.Array(ProductIdReferenceSchema),
+  products: Schema.NonEmptyArray(SourceProductSchema),
+});
 export interface AkrosSource {
-  readonly catalog: { homepageFeaturedProductIds: string[]; products: SourceProduct[] };
-  readonly categories: Category[];
+  readonly catalog: typeof AkrosCatalogSchema.Type;
+  readonly categories: readonly Category[];
 }
 /** Deterministic fixture identity, `demoId(namespace, key)` from scripts/demo/fixture-ids.mts. */
 export type DemoId = (namespace: string, key: string) => string;
-const productUnitOf = (unit: string): Encoded['products'][number]['unit'] =>
+const productUnitOf = (unit: string): AkrosEncodedState['products'][number]['unit'] =>
   unit === 'm' || unit === 'tab' || unit === 'set' ? unit : 'ks';
 const at = '2026-10-19T08:00:00.000Z';
-const fieldsFor = (source: {
-  minimumQuantity: number;
-  packageQuantity?: number;
-  parameters: Parameter[];
-  priceTiers: Tier[];
-  unit: string;
-}) => ({
-  minimumQuantity: source.minimumQuantity,
-  ...(source.packageQuantity === undefined ? {} : { packageQuantity: source.packageQuantity }),
-  parameters: source.parameters,
-  priceTiers: source.priceTiers,
-  sourceUnit: source.unit,
-});
+const vatRate: VatRate = 21;
+type SourceCatalogFields = {
+  -readonly [
+    Key in 'minimumQuantity' | 'packageQuantity' | 'parameters' | 'priceTiers' | 'sourceUnit'
+  ]?: AkrosEncodedState['products'][number][Key];
+};
+const fieldsFor = (
+  source: Pick<SourceProduct, 'minimumQuantity' | 'packageQuantity' | 'unit'> & {
+    readonly parameters: readonly (typeof ParameterSchema.Type)[];
+    readonly priceTiers: readonly (typeof TierSchema.Type)[];
+  },
+) => {
+  const packageFields: Pick<SourceCatalogFields, 'packageQuantity'> = {};
+  if (source.packageQuantity !== undefined) {
+    packageFields.packageQuantity = source.packageQuantity;
+  }
+  return {
+    minimumQuantity: source.minimumQuantity,
+    ...packageFields,
+    parameters: source.parameters.map(parameterForBaseline),
+    priceTiers: source.priceTiers,
+    sourceUnit: source.unit,
+  };
+};
 /** Feed root branches AKROS keeps out of the storefront navigation (internal „Mimo menu“, UNC thread nuts). */
 export const AKROS_HIDDEN_CATEGORY_IDS: ReadonlySet<string> = new Set(['322', '3504']);
 
@@ -99,21 +150,25 @@ export const AKROS_HIDDEN_CATEGORY_IDS: ReadonlySet<string> = new Set(['322', '3
 export const akrosMinimumStock = (stock: number): number =>
   stock <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(stock / 5)));
 
-export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Encoded => {
+export const buildAkrosEncodedFrom = Effect.fn('Akros.buildEncodedBaseline')(function* buildEncodedBaseline(
+  source: AkrosSource,
+  demoId: DemoId,
+): Effect.fn.Return<AkrosEncodedState, Schema.SchemaError> {
   const { catalog, categories } = source;
   // Import every source group; never silently curate the live owner catalog.
   const akrosSourceProducts = catalog.products;
-  const byCategory = new Map(categories.map((category) => [category.id, category]));
+  const byCategory = new Map<string, Category>(categories.map((category) => [category.id, category]));
   const pathFor = (id: string): string[] => {
     const path: string[] = [];
     let next: string | null = id;
     while (next !== null && !path.includes(next)) {
       path.push(next);
-      next = byCategory.get(next)?.parentId ?? null;
+      const parent: Category['parentId'] | undefined = byCategory.get(next)?.parentId;
+      next = parent === undefined ? null : Option.getOrNull(parent);
     }
     return path;
   };
-  const sourceProducts: Encoded['products'] = akrosSourceProducts.map((product) => ({
+  const sourceProducts: AkrosEncodedState['products'] = akrosSourceProducts.map((product) => ({
     ...fieldsFor({ ...product, ...product.detail }),
     active: true,
     category: byCategory.get(product.categoryId)?.name ?? 'Spojovací materiál',
@@ -122,7 +177,7 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
     createdAt: at,
     currentPriceMinor: product.detail.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(product.priceMinor / 1.21),
     description: stripUnbackedDiscount(product.detail.descriptionParagraphs.join('\n\n') || product.description),
-    featuredPosition: product.featuredPosition,
+    featuredPosition: Option.getOrNull(product.featuredPosition),
     id: product.id,
     imageAlt: product.imageAlt.slice(0, 300),
     images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
@@ -147,109 +202,146 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
     stockTracked: true,
     unit: productUnitOf(product.unit),
     updatedAt: at,
-    variants: product.detail.variants.map((variant) => ({
-      ...fieldsFor(variant),
-      unit: variant.unit,
-      id: variant.id,
-      sourceId: variant.sourceId,
-      sku: variant.sku,
-      name: variant.label,
-      active: true,
-      attributes: variant.parameters
-        .map((parameter) => `${parameter.label}: ${parameter.value} ${parameter.unit}`)
-        .join('; ')
-        .slice(0, 1000),
-      imageSrc: variant.imageSrc ?? product.imageSrc,
-      priceMinor: variant.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(variant.priceMinor / 1.21),
-      priceHistory: [],
-      isAction: variant.isAction,
-      isRecommended: variant.isRecommended,
-      isSale: variant.isSale,
-      isNew: variant.isNew,
-    })),
-    vatRate: 21,
+    variants: product.detail.variants.map((variant) => {
+      const identity = Object.assign(fieldsFor(variant), { unit: variant.unit }, { id: variant.id });
+      const sourceIdentity = Object.assign(identity, { sourceId: variant.sourceId }, { sku: variant.sku });
+      const description = Object.assign(
+        sourceIdentity,
+        { name: variant.label },
+        {
+          active: true,
+          attributes: variant.parameters
+            .map((parameter) => `${parameter.label}: ${parameter.value} ${parameter.unit}`)
+            .join('; ')
+            .slice(0, 1000),
+          imageSrc: variant.imageSrc ?? product.imageSrc,
+        },
+      );
+      const price = Object.assign(
+        description,
+        { priceMinor: variant.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(variant.priceMinor / 1.21) },
+        { priceHistory: [] },
+      );
+      return Object.assign(
+        price,
+        { isAction: variant.isAction, isRecommended: variant.isRecommended, isSale: variant.isSale },
+        { isNew: variant.isNew },
+      );
+    }),
+    vatRate,
   }));
   const products = sourceProducts.map(applyDemoPriceTiers);
-  const movements: Encoded['movements'] = akrosSourceProducts.flatMap((product) => {
-    const units = product.detail.variants.length > 0 ? product.detail.variants : [{ ...product, id: undefined }];
+  const movements: AkrosEncodedState['movements'] = akrosSourceProducts.flatMap((product) => {
+    const units: readonly BaselineStockSource[] =
+      product.detail.variants.length > 0 ? product.detail.variants : [{ stockCount: product.stockCount }];
     return units
       .filter((unit) => unit.stockCount !== 0)
-      .map((unit) => ({
-        id: demoId('akros.receipt', unit.id ?? product.id),
-        productId: product.id,
-        ...(unit.id === undefined ? {} : { variantId: unit.id }),
-        at,
-        delta: unit.stockCount,
-        note: 'Výchozí sklad AKROS (demo)',
-        reason: 'RECEIPT' as const,
-      }));
+      .map((unit) => {
+        const identity: { -readonly [Key in keyof BaselineMovementIdentity]: BaselineMovementIdentity[Key] } = {
+          id: demoId('akros.receipt', unit.id ?? product.id),
+          productId: product.id,
+        };
+        if (unit.id !== undefined) {
+          identity.variantId = unit.id;
+        }
+        return {
+          ...identity,
+          at,
+          delta: unit.stockCount,
+          note: 'Výchozí sklad AKROS (demo)',
+          reason: 'RECEIPT' as const,
+        };
+      });
   });
   const statuses = ['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED', 'DELIVERED', 'CANCELLED'] as const;
-  const orders: Encoded['orders'] = statuses.map((status, index) => {
-    const source =
-      akrosSourceProducts.find(
-        (product, position) =>
-          position >= index && product.detail.variants.some((variant) => variant.stockCount >= variant.minimumQuantity),
-      ) ?? akrosSourceProducts[0]!;
-    const variant =
-      source.detail.variants.find((entry) => entry.stockCount >= entry.minimumQuantity) ?? source.detail.variants[0]!;
-    const quantity =
-      variant.packageQuantity === undefined
-        ? Math.max(variant.minimumQuantity, 1)
-        : Math.ceil(Math.max(variant.minimumQuantity, 1) / variant.packageQuantity) * variant.packageQuantity;
-    const tier =
-      variant.priceTiers.filter((entry) => entry.minimumQuantity <= quantity).at(-1) ?? variant.priceTiers[0]!;
-    const totalMinor = Math.round(quantity * tier.priceMinor);
-    return {
-      channel: 'STOREFRONT',
-      clientRequestId: `akros-sample-order-${index}`,
-      contact: akrosSampleContacts[index]!,
-      createdAt: at,
-      deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12', country: 'CZ' },
-      demo: true,
-      history: [{ kind: 'CREATED', at, actorLabel: 'Zákazník – AKROS (DEMO)', after: status }],
-      id: demoId('akros.order', String(index)),
-      lines: [
-        {
-          productId: source.id,
-          productName: source.name,
-          variantId: variant.id,
-          variantName: variant.label,
-          sku: variant.sku,
-          quantity,
-          unitPriceMinor: tier.priceMinor,
-          vatRate: 21,
-        },
-      ],
-      number: `OBJ-2026-${String(index + 1).padStart(4, '0')}`,
-      partyId: 'storefront-guest',
-      pricesIncludeVat: true,
-      shipping: { method: 'OSOBNI_ODBER', label: 'Osobní odběr – AKROS (simulace)', priceMinor: 0, vatRate: 21 },
-      status,
-      totalMinor,
-      totalVatMinor: totalMinor - Math.round(totalMinor / 1.21),
-      updatedAt: at,
-    };
-  });
+  const orders: AkrosEncodedState['orders'] = yield* Effect.forEach(
+    statuses,
+    Effect.fn(function* buildSampleOrder(
+      status: (typeof statuses)[number],
+      index: number,
+    ): Effect.fn.Return<AkrosEncodedState['orders'][number], Schema.SchemaError> {
+      const sampleProduct =
+        akrosSourceProducts.find(
+          (product, position) =>
+            position >= index &&
+            product.detail.variants.some((variant) => variant.stockCount >= variant.minimumQuantity),
+        ) ?? akrosSourceProducts[0];
+      const variant =
+        sampleProduct.detail.variants.find((entry) => entry.stockCount >= entry.minimumQuantity) ??
+        (yield* Schema.decodeUnknownEffect(VariantSchema)(sampleProduct.detail.variants[0]));
+      const quantity =
+        variant.packageQuantity === undefined
+          ? Math.max(variant.minimumQuantity, 1)
+          : Math.ceil(Math.max(variant.minimumQuantity, 1) / variant.packageQuantity) * variant.packageQuantity;
+      const tier = variant.priceTiers.findLast((entry) => entry.minimumQuantity <= quantity) ?? variant.priceTiers[0];
+      const totalMinor = Math.round(quantity * tier.priceMinor);
+      const contact = yield* Schema.decodeUnknownEffect(Schema.Struct({ email: Schema.String, name: Schema.String }))(
+        akrosSampleContacts[index],
+      );
+      const contactFields = { name: contact.name };
+      const deliveryAddress = { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' };
+      const createdHistory = { kind: 'CREATED' as const };
+      const lineIdentity = { productId: sampleProduct.id, productName: sampleProduct.name };
+      const lineVariant = Object.assign(
+        lineIdentity,
+        { variantId: variant.id, variantName: variant.label },
+        { sku: variant.sku },
+      );
+      const shippingMethod = { method: 'OSOBNI_ODBER' as const };
+      return {
+        channel: 'STOREFRONT',
+        clientRequestId: `akros-sample-order-${index}`,
+        contact: Object.assign(contactFields, { email: contact.email }),
+        createdAt: at,
+        deliveryAddress: Object.assign(deliveryAddress, { country: 'CZ' }),
+        demo: true,
+        history: [Object.assign(createdHistory, { at }, { actorLabel: 'Zákazník – AKROS (DEMO)', after: status })],
+        id: demoId('akros.order', String(index)),
+        lines: [
+          {
+            ...lineVariant,
+            quantity,
+            unitPriceMinor: tier.priceMinor,
+            vatRate,
+          },
+        ],
+        number: `OBJ-2026-${String(index + 1).padStart(4, '0')}`,
+        partyId: 'storefront-guest',
+        pricesIncludeVat: true,
+        shipping: Object.assign(shippingMethod, { label: 'Osobní odběr – AKROS (simulace)', priceMinor: 0, vatRate }),
+        status,
+        totalMinor,
+        totalVatMinor: totalMinor - Math.round(totalMinor / 1.21),
+        updatedAt: at,
+      };
+    }),
+    { concurrency: 1 },
+  );
   return {
     categories: orderCategoryPositions(
       categories
-        .map((source) => decodeCategoryText(source))
-        .map((category) => ({
-          ...category,
-          heading: category.heading ?? category.name,
-          description: category.description ?? '',
-          longDescription: category.longDescription ?? '',
-          position: category.position ?? 0,
-          imageSrc: category.imageSrc ?? '',
-          imageAlt: category.imageAlt ?? category.name,
-          hasChildren: category.hasChildren ?? false,
-          ...(AKROS_HIDDEN_CATEGORY_IDS.has(category.id) ? { published: false } : {}),
-        })),
+        .map((category) => decodeCategoryText(category))
+        .map((category) => {
+          const result: NonNullable<AkrosEncodedState['categories']>[number] = {
+            ...category,
+            description: category.description ?? '',
+            hasChildren: category.hasChildren ?? false,
+            heading: category.heading ?? category.name,
+            imageAlt: category.imageAlt ?? category.name,
+            imageSrc: category.imageSrc ?? '',
+            longDescription: category.longDescription ?? '',
+            parentId: Option.getOrNull(category.parentId),
+            position: category.position ?? 0,
+          };
+          if (AKROS_HIDDEN_CATEGORY_IDS.has(category.id)) {
+            return { ...result, published: false };
+          }
+          return result;
+        }),
     ),
     homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
     movements,
     orders,
     products,
   };
-};
+});

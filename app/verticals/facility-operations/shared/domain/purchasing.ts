@@ -19,17 +19,11 @@ export type StockWarehouseId = typeof StockWarehouseIdSchema.Type;
 export const StockItemIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityStockItemId'));
 export type StockItemId = typeof StockItemIdSchema.Type;
 export const StockMovementIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityStockMovementId'));
-export type StockMovementId = typeof StockMovementIdSchema.Type;
 export const StockPlannedIssueIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityStockPlannedIssueId'));
-export type StockPlannedIssueId = typeof StockPlannedIssueIdSchema.Type;
 export const SupplierIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySupplierId'));
-export type SupplierId = typeof SupplierIdSchema.Type;
 export const SupplierQuoteIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySupplierQuoteId'));
-export type SupplierQuoteId = typeof SupplierQuoteIdSchema.Type;
 export const PurchaseOrderIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityPurchaseOrderId'));
-export type PurchaseOrderId = typeof PurchaseOrderIdSchema.Type;
 export const PurchaseLineIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityPurchaseLineId'));
-export type PurchaseLineId = typeof PurchaseLineIdSchema.Type;
 
 /** Whole units (ks, l, kg, bal …). Positive. */
 export const QuantitySchema = Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1_000_000));
@@ -39,13 +33,10 @@ export const LeadTimeDaysSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo
 export const SerialNumberSchema = TextSchema(100);
 export const BatchSchema = TextSchema(100);
 export const CurrencySchema = Schema.Literals(['CZK', 'EUR']);
-export type Currency = typeof CurrencySchema.Type;
 
 export const StockItemCategorySchema = Schema.Literals(['consumable', 'spare_part', 'cleaning', 'chemical', 'tool']);
-export type StockItemCategory = typeof StockItemCategorySchema.Type;
 /** `batch` = šarže (receipt needs a batch code), `serial` = every unit has its own serial number. */
 export const StockTrackingSchema = Schema.Literals(['none', 'batch', 'serial']);
-export type StockTracking = typeof StockTrackingSchema.Type;
 
 export const StockWarehouseSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
@@ -96,7 +87,6 @@ export type StockItem = typeof StockItemSchema.Type;
 
 /** Traceability link of a movement or planned issue: order, task, unit/property/asset, document. Display snapshot. */
 export const StockRefKindSchema = Schema.Literals(['purchase_order', 'task', 'unit', 'property', 'asset', 'document']);
-export type StockRefKind = typeof StockRefKindSchema.Type;
 export const StockRefSchema = Schema.Struct({
   id: TextSchema(300),
   kind: StockRefKindSchema,
@@ -105,7 +95,6 @@ export const StockRefSchema = Schema.Struct({
 export type StockRef = typeof StockRefSchema.Type;
 
 export const StockMovementKindSchema = Schema.Literals(['receipt', 'issue', 'transfer', 'adjustment']);
-export type StockMovementKind = typeof StockMovementKindSchema.Type;
 
 /**
  * Ledger row. `quantity` is the signed change in `warehouseId` for receipt (+), issue (−) and adjustment (±).
@@ -131,7 +120,6 @@ export const StockMovementSchema = Schema.Struct({
 export type StockMovement = typeof StockMovementSchema.Type;
 
 export const PlannedIssueStatusSchema = Schema.Literals(['planned', 'issued', 'cancelled']);
-export type PlannedIssueStatus = typeof PlannedIssueStatusSchema.Type;
 export const StockPlannedIssueSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
   date: IsoDateSchema,
@@ -151,10 +139,8 @@ export const QuoteLineSchema = Schema.Struct({
   quantity: QuantitySchema,
   unitPriceMinor: MinorAmountSchema,
 });
-export type QuoteLine = typeof QuoteLineSchema.Type;
 
 export const SupplierQuoteStatusSchema = Schema.Literals(['received', 'accepted', 'rejected']);
-export type SupplierQuoteStatus = typeof SupplierQuoteStatusSchema.Type;
 export const SupplierQuoteSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
   currency: CurrencySchema,
@@ -179,7 +165,6 @@ export const PurchaseOrderStatusSchema = Schema.Literals([
   'completed',
   'cancelled',
 ]);
-export type PurchaseOrderStatus = typeof PurchaseOrderStatusSchema.Type;
 
 export const PurchaseOrderLineSchema = Schema.Struct({
   description: TextSchema(300),
@@ -199,7 +184,6 @@ export const DeliveryLineSchema = Schema.Struct({
   quantity: QuantitySchema,
   serialNumbers: Schema.optionalKey(Schema.Array(SerialNumberSchema)),
 });
-export type DeliveryLine = typeof DeliveryLineSchema.Type;
 
 export const PurchaseDeliverySchema = Schema.Struct({
   date: IsoDateSchema,
@@ -221,7 +205,6 @@ export const PurchaseInvoiceRefSchema = Schema.Struct({
   note: Schema.optionalKey(NoteSchema),
   number: TextSchema(64),
 });
-export type PurchaseInvoiceRef = typeof PurchaseInvoiceRefSchema.Type;
 
 const OrderHistoryEventSchema = Schema.Literals([
   'created',
@@ -264,9 +247,7 @@ export type PurchaseOrder = typeof PurchaseOrderSchema.Type;
 // ── Prodej (S06): customer quotes → sales orders → issued invoice draft in Finance ───────────────────────────────
 
 export const SalesQuoteIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySalesQuoteId'));
-export type SalesQuoteId = typeof SalesQuoteIdSchema.Type;
 export const SalesOrderIdSchema = OpsIdSchema.pipe(Schema.brand('FacilitySalesOrderId'));
-export type SalesOrderId = typeof SalesOrderIdSchema.Type;
 
 /** Customer = a party-registry counterparty; snapshot of its identity and name taken when the quote was made. */
 export const SalesCustomerSchema = Schema.Struct({
@@ -292,7 +273,6 @@ export const SalesLineSchema = Schema.Struct({
 export type SalesLine = typeof SalesLineSchema.Type;
 
 export const SalesQuoteStatusSchema = Schema.Literals(['draft', 'sent', 'accepted', 'rejected']);
-export type SalesQuoteStatus = typeof SalesQuoteStatusSchema.Type;
 export const SalesQuoteSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
   currency: CurrencySchema,
@@ -314,7 +294,6 @@ export const SalesOrderLineSchema = Schema.Struct({
   deliveredQuantity: LevelSchema,
   quoteLineId: Schema.optionalKey(PurchaseLineIdSchema),
 });
-export type SalesOrderLine = typeof SalesOrderLineSchema.Type;
 
 export const SalesDeliverySchema = Schema.Struct({
   date: IsoDateSchema,
@@ -324,7 +303,6 @@ export const SalesDeliverySchema = Schema.Struct({
   recordedAt: Schema.DateTimeUtcFromString,
   recordedBy: PrincipalRefSchema,
 });
-export type SalesDelivery = typeof SalesDeliverySchema.Type;
 
 /** Issued invoice (draft) that Finance created from this order; Finance owns the invoice itself. */
 export const SalesInvoiceLinkSchema = Schema.Struct({
@@ -334,7 +312,6 @@ export const SalesInvoiceLinkSchema = Schema.Struct({
   number: TextSchema(64),
   totalMinor: Schema.optionalKey(MinorAmountSchema),
 });
-export type SalesInvoiceLink = typeof SalesInvoiceLinkSchema.Type;
 
 export const SalesOrderHistorySchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,

@@ -4,6 +4,7 @@
 // Depreciation commands only RECORD approved values; nothing here computes legal/tax depreciation (S03).
 import { DateTime, Effect, Match, Schema } from 'effect';
 import {
+  optionalField,
   IsoDateSchema,
   MinorAmountSchema,
   NoteSchema,
@@ -17,7 +18,7 @@ import {
   opsConflict,
   opsNotFound,
 } from '../domain/common.ts';
-import type { EntityId, OpsCommandInput } from '../domain/common.ts';
+import type { AgendaChange, OpsCommandCall, OpsCommandInput } from '../domain/common.ts';
 import {
   AcquisitionMethodSchema,
   AssetIdSchema,
@@ -211,14 +212,16 @@ type CommandOf<Tag extends AssetsCommand['_tag']> = Extract<AssetsCommand, { rea
 
 // ── helpers ──────────────────────────────────────────────────────────────────────────────────────────────
 
-const findAsset = (state: AssetsState, assetId: string) =>
-  Effect.gen(function* findAssetEffect() {
-    const asset = state.assets.find((entry) => entry.id === assetId);
-    if (asset === undefined) {
-      return yield* opsNotFound('Asset not found');
-    }
-    return asset;
-  });
+const findAsset = Effect.fn('FacilityOperations.Assets.findAsset')(function* findAsset(
+  state: AssetsState,
+  assetId: string,
+) {
+  const asset = state.assets.find((entry) => entry.id === assetId);
+  if (asset === undefined) {
+    return yield* opsNotFound('Asset not found');
+  }
+  return asset;
+});
 
 const requireActive = (asset: Asset) =>
   isActiveAsset(asset) ? Effect.void : opsConflict('The asset is disposed; its history is read-only');
@@ -229,14 +232,13 @@ const replaceAsset = (state: AssetsState, next: Asset): AssetsState => ({
 });
 
 const changed = (state: AssetsState, entityId: string) =>
-  Effect.map(entityIdOf(entityId), (entity): { entityIds: readonly EntityId[]; state: AssetsState } => ({
+  Effect.map(entityIdOf(entityId), (entity): AgendaChange<AssetsState> => ({
     entityIds: [entity],
     state,
   }));
 
 const makeEvent = (
-  input: OpsCommandInput,
-  suffix: string,
+  { input, suffix }: { readonly input: OpsCommandInput; readonly suffix: string },
   fields: Omit<AssetEvent, 'at' | 'by' | 'id'>,
 ): AssetEvent => ({ ...fields, at: input.now, by: input.actor, id: `${input.resourceId}:${suffix}` });
 
@@ -245,12 +247,12 @@ const cardOf = (value: CommandOf<'AssetCreate'> | CommandOf<'AssetUpdate'>) => (
   category: value.category,
   kind: value.kind,
   name: value.name,
-  ...(value.accountingProduct === undefined ? {} : { accountingProduct: value.accountingProduct }),
-  ...(value.location === undefined ? {} : { location: value.location }),
-  ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
-  ...(value.propertyId === undefined ? {} : { propertyId: value.propertyId }),
-  ...(value.responsible === undefined ? {} : { responsible: value.responsible }),
-  ...(value.serialNumber === undefined ? {} : { serialNumber: value.serialNumber }),
+  ...optionalField('accountingProduct', value.accountingProduct),
+  ...optionalField('location', value.location),
+  ...optionalField('note', value.note === '' ? undefined : value.note),
+  ...optionalField('propertyId', value.propertyId),
+  ...optionalField('responsible', value.responsible),
+  ...optionalField('serialNumber', value.serialNumber),
 });
 
 const withoutCard = (asset: Asset) => {
@@ -266,23 +268,27 @@ const withoutCard = (asset: Asset) => {
   return rest;
 };
 
-const findInventory = (state: AssetsState, inventoryId: string) =>
-  Effect.gen(function* findInventoryEffect() {
-    const inventory = (state.inventories ?? []).find((entry) => entry.id === inventoryId);
-    if (inventory === undefined) {
-      return yield* opsNotFound('Inventory not found');
-    }
-    return inventory;
-  });
+const findInventory = Effect.fn('FacilityOperations.Assets.findInventory')(function* findInventory(
+  state: AssetsState,
+  inventoryId: string,
+) {
+  const inventory = (state.inventories ?? []).find((entry) => entry.id === inventoryId);
+  if (inventory === undefined) {
+    return yield* opsNotFound('Inventory not found');
+  }
+  return inventory;
+});
 
-const findItem = (inventory: Inventory, assetId: string) =>
-  Effect.gen(function* findItemEffect() {
-    const item = inventory.items.find((entry) => entry.assetId === assetId);
-    if (item === undefined) {
-      return yield* opsNotFound('The asset is not on this inventory list');
-    }
-    return item;
-  });
+const findItem = Effect.fn('FacilityOperations.Assets.findItem')(function* findItem(
+  inventory: Inventory,
+  assetId: string,
+) {
+  const item = inventory.items.find((entry) => entry.assetId === assetId);
+  if (item === undefined) {
+    return yield* opsNotFound('The asset is not on this inventory list');
+  }
+  return item;
+});
 
 const replaceItem = (
   state: AssetsState,
@@ -301,14 +307,13 @@ const replaceItem = (
   ),
 });
 
-const findPlan = (asset: Asset, planId: string) =>
-  Effect.gen(function* findPlanEffect() {
-    const plan = (asset.depreciationPlans ?? []).find((entry) => entry.id === planId);
-    if (plan === undefined) {
-      return yield* opsNotFound('Depreciation plan not found');
-    }
-    return plan;
-  });
+const findPlan = Effect.fn('FacilityOperations.Assets.findPlan')(function* findPlan(asset: Asset, planId: string) {
+  const plan = (asset.depreciationPlans ?? []).find((entry) => entry.id === planId);
+  if (plan === undefined) {
+    return yield* opsNotFound('Depreciation plan not found');
+  }
+  return plan;
+});
 
 const replacePlan = (asset: Asset, next: DepreciationPlan): DepreciationPlan[] =>
   (asset.depreciationPlans ?? []).map((entry) => (entry.id === next.id ? next : entry));
@@ -317,8 +322,7 @@ const replacePlan = (asset: Asset, next: DepreciationPlan): DepreciationPlan[] =
 
 const createAsset = Effect.fn('FacilityOperations.Assets.create')(function* createAsset(
   state: AssetsState,
-  value: CommandOf<'AssetCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AssetCreate'>>,
 ) {
   if (state.assets.some((entry) => entry.inventoryNumber.toLowerCase() === value.inventoryNumber.toLowerCase())) {
     return yield* opsConflict('An asset with this inventory number already exists');
@@ -327,16 +331,21 @@ const createAsset = Effect.fn('FacilityOperations.Assets.create')(function* crea
   const events: AssetEvent[] = [];
   if (value.acquisitionDate !== undefined) {
     events.push(
-      makeEvent(input, 'acquisition', {
-        date: value.acquisitionDate,
-        kind: 'acquisition',
-        note: '',
-        ...(value.acquisitionValueMinor === undefined ? {} : { newValueMinor: value.acquisitionValueMinor }),
-      }),
+      makeEvent(
+        { input, suffix: 'acquisition' },
+        {
+          date: value.acquisitionDate,
+          kind: 'acquisition',
+          note: '',
+          ...optionalField('newValueMinor', value.acquisitionValueMinor),
+        },
+      ),
     );
   }
   if (value.placedInServiceDate !== undefined) {
-    events.push(makeEvent(input, 'service', { date: value.placedInServiceDate, kind: 'placed_in_service', note: '' }));
+    events.push(
+      makeEvent({ input, suffix: 'service' }, { date: value.placedInServiceDate, kind: 'placed_in_service', note: '' }),
+    );
   }
   const currentValue = value.currentValueMinor ?? value.acquisitionValueMinor;
   const record: Asset = {
@@ -348,16 +357,15 @@ const createAsset = Effect.fn('FacilityOperations.Assets.create')(function* crea
     inventoryNumber: value.inventoryNumber,
     services: [],
     status: 'active',
-    ...(value.acquisitionDate === undefined ? {} : { acquisitionDate: value.acquisitionDate }),
-    ...(value.acquisitionMethod === undefined ? {} : { acquisitionMethod: value.acquisitionMethod }),
-    ...(value.acquisitionValueMinor === undefined ? {} : { acquisitionValueMinor: value.acquisitionValueMinor }),
-    ...(currentValue === undefined
-      ? {}
-      : {
-          currentValueDate: value.acquisitionDate ?? DateTime.formatIso(input.now).slice(0, 10),
-          currentValueMinor: currentValue,
-        }),
-    ...(value.placedInServiceDate === undefined ? {} : { placedInServiceDate: value.placedInServiceDate }),
+    ...optionalField('acquisitionDate', value.acquisitionDate),
+    ...optionalField('acquisitionMethod', value.acquisitionMethod),
+    ...optionalField('acquisitionValueMinor', value.acquisitionValueMinor),
+    ...optionalField(
+      'currentValueDate',
+      currentValue === undefined ? undefined : (value.acquisitionDate ?? DateTime.formatIso(input.now).slice(0, 10)),
+    ),
+    ...optionalField('currentValueMinor', currentValue),
+    ...optionalField('placedInServiceDate', value.placedInServiceDate),
   };
   return yield* changed({ ...state, assets: [...state.assets, record] }, id);
 });
@@ -383,14 +391,17 @@ const changeValue = Effect.fn('FacilityOperations.Assets.changeValue')(function*
   if (asset.currentValueMinor === value.newValueMinor) {
     return yield* opsConflict('The new value equals the current value');
   }
-  const event = makeEvent(input, 'value', {
-    date: value.date,
-    kind: 'value_change',
-    newValueMinor: value.newValueMinor,
-    note: value.reason,
-    ...(asset.currentValueMinor === undefined ? {} : { previousValueMinor: asset.currentValueMinor }),
-    ...(value.documentRef === undefined ? {} : { documentRef: value.documentRef }),
-  });
+  const event = makeEvent(
+    { input, suffix: 'value' },
+    {
+      date: value.date,
+      kind: 'value_change',
+      newValueMinor: value.newValueMinor,
+      note: value.reason,
+      ...optionalField('previousValueMinor', asset.currentValueMinor),
+      ...optionalField('documentRef', value.documentRef),
+    },
+  );
   const next: Asset = auditUpdated(
     {
       ...asset,
@@ -409,17 +420,20 @@ const recordEvent = Effect.fn('FacilityOperations.Assets.recordEvent')(function*
   input: OpsCommandInput,
 ) {
   const asset = yield* findAsset(state, value.assetId);
-  const event = makeEvent(input, 'event', {
-    date: value.date,
-    kind: value.kind,
-    note: value.note,
-    ...(value.documentRef === undefined ? {} : { documentRef: value.documentRef }),
-  });
+  const event = makeEvent(
+    { input, suffix: 'event' },
+    {
+      date: value.date,
+      kind: value.kind,
+      note: value.note,
+      ...optionalField('documentRef', value.documentRef),
+    },
+  );
   const next: Asset = auditUpdated(
     {
       ...asset,
       events: [...(asset.events ?? []), event],
-      ...(value.kind === 'placed_in_service' ? { placedInServiceDate: value.date } : {}),
+      ...optionalField('placedInServiceDate', value.kind === 'placed_in_service' ? value.date : undefined),
     },
     input,
   );
@@ -433,14 +447,17 @@ const disposeAsset = Effect.fn('FacilityOperations.Assets.dispose')(function* di
 ) {
   const asset = yield* findAsset(state, value.assetId);
   yield* requireActive(asset);
-  const event = makeEvent(input, 'disposal', {
-    date: value.date,
-    kind: value.kind,
-    note: value.reason,
-    ...(value.proceedsMinor === undefined ? {} : { newValueMinor: value.proceedsMinor }),
-    ...(asset.currentValueMinor === undefined ? {} : { previousValueMinor: asset.currentValueMinor }),
-    ...(value.documentRef === undefined ? {} : { documentRef: value.documentRef }),
-  });
+  const event = makeEvent(
+    { input, suffix: 'disposal' },
+    {
+      date: value.date,
+      kind: value.kind,
+      note: value.reason,
+      ...optionalField('newValueMinor', value.proceedsMinor),
+      ...optionalField('previousValueMinor', asset.currentValueMinor),
+      ...optionalField('documentRef', value.documentRef),
+    },
+  );
   const next: Asset = auditUpdated(
     {
       ...asset,
@@ -448,8 +465,8 @@ const disposeAsset = Effect.fn('FacilityOperations.Assets.dispose')(function* di
         date: value.date,
         kind: value.kind,
         reason: value.reason,
-        ...(value.proceedsMinor === undefined ? {} : { proceedsMinor: value.proceedsMinor }),
-        ...(value.documentRef === undefined ? {} : { documentRef: value.documentRef }),
+        ...optionalField('proceedsMinor', value.proceedsMinor),
+        ...optionalField('documentRef', value.documentRef),
       },
       events: [...(asset.events ?? []), event],
       status: 'disposed',
@@ -471,11 +488,14 @@ const archiveAsset = Effect.fn('FacilityOperations.Assets.archive')(function* ar
   if (asset.archive !== undefined) {
     return yield* opsConflict('The asset is already archived');
   }
-  const event = makeEvent(input, 'archive', {
-    date: DateTime.formatIso(input.now).slice(0, 10),
-    kind: 'note',
-    note: `Archivováno: ${value.reason}`,
-  });
+  const event = makeEvent(
+    { input, suffix: 'archive' },
+    {
+      date: DateTime.formatIso(input.now).slice(0, 10),
+      kind: 'note',
+      note: `Archivováno: ${value.reason}`,
+    },
+  );
   const next: Asset = auditUpdated(
     {
       ...asset,
@@ -498,11 +518,14 @@ const restoreArchivedAsset = Effect.fn('FacilityOperations.Assets.restoreArchive
   }
   const { archive: _archive, ...rest } = asset;
   void _archive;
-  const event = makeEvent(input, 'archive-restore', {
-    date: DateTime.formatIso(input.now).slice(0, 10),
-    kind: 'note',
-    note: 'Obnoveno z archivu.',
-  });
+  const event = makeEvent(
+    { input, suffix: 'archive-restore' },
+    {
+      date: DateTime.formatIso(input.now).slice(0, 10),
+      kind: 'note',
+      note: 'Obnoveno z archivu.',
+    },
+  );
   const next: Asset = auditUpdated({ ...rest, events: [...(asset.events ?? []), event] }, input);
   return yield* changed(replaceAsset(state, next), asset.id);
 });
@@ -526,8 +549,7 @@ const recordService = Effect.fn('FacilityOperations.Assets.recordService')(funct
 
 const createPlan = Effect.fn('FacilityOperations.Assets.createPlan')(function* createPlan(
   state: AssetsState,
-  value: CommandOf<'AssetDepreciationPlanCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AssetDepreciationPlanCreate'>>,
 ) {
   const asset = yield* findAsset(state, value.assetId);
   yield* requireActive(asset);
@@ -571,7 +593,7 @@ const confirmPlan = Effect.fn('FacilityOperations.Assets.confirmPlan')(function*
         at: input.now,
         by: input.actor,
         change: 'confirmed',
-        ...(value.note === undefined ? {} : { note: value.note }),
+        ...optionalField('note', value.note),
       },
     ],
     status: 'confirmed',
@@ -588,7 +610,7 @@ const recordEntry = Effect.fn('FacilityOperations.Assets.recordEntry')(function*
   const asset = yield* findAsset(state, value.assetId);
   yield* requireActive(asset);
   const plan = yield* findPlan(asset, value.planId);
-  const monthly = /^\d{4}-\d{2}$/.test(value.period);
+  const monthly = /^\d{4}-\d{2}$/u.test(value.period);
   if (monthly !== (plan.interval === 'monthly')) {
     return yield* opsConflict('The period does not match the plan interval');
   }
@@ -604,9 +626,9 @@ const recordEntry = Effect.fn('FacilityOperations.Assets.recordEntry')(function*
     by: input.actor,
     id: `${input.resourceId}:entry`,
     period: value.period,
-    ...(value.documentRef === undefined ? {} : { documentRef: value.documentRef }),
-    ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
-    ...(value.partial === true ? { partial: true } : {}),
+    ...optionalField('documentRef', value.documentRef),
+    ...optionalField('note', value.note === '' ? undefined : value.note),
+    ...optionalField<'partial', true>('partial', value.partial === true ? true : undefined),
   };
   const updated: DepreciationPlan = {
     ...plan,
@@ -619,8 +641,7 @@ const recordEntry = Effect.fn('FacilityOperations.Assets.recordEntry')(function*
 
 const createTemplate = Effect.fn('FacilityOperations.Assets.createTemplate')(function* createTemplate(
   state: AssetsState,
-  value: CommandOf<'AssetDepreciationTemplateCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AssetDepreciationTemplateCreate'>>,
 ) {
   if ((state.templates ?? []).some((entry) => entry.name.toLowerCase() === value.name.toLowerCase())) {
     return yield* opsConflict('A template with this name already exists');
@@ -638,16 +659,23 @@ const createTemplate = Effect.fn('FacilityOperations.Assets.createTemplate')(fun
 
 const createInventory = Effect.fn('FacilityOperations.Assets.createInventory')(function* createInventory(
   state: AssetsState,
-  value: CommandOf<'AssetInventoryCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AssetInventoryCreate'>>,
 ) {
   const unique = [...new Set(value.assetIds)];
-  const items: InventoryItem[] = [];
-  for (const assetId of unique) {
-    const asset = yield* findAsset(state, assetId);
-    yield* requireActive(asset);
-    items.push({ assetId: asset.id, inventoryNumber: asset.inventoryNumber, name: asset.name, result: 'pending' });
-  }
+  const items = yield* Effect.forEach(
+    unique,
+    Effect.fn('FacilityOperations.Assets.inventoryItem')(function* inventoryItem(assetId: string) {
+      const asset = yield* findAsset(state, assetId);
+      yield* requireActive(asset);
+      return {
+        assetId: asset.id,
+        inventoryNumber: asset.inventoryNumber,
+        name: asset.name,
+        result: 'pending' as const,
+      };
+    }),
+    { concurrency: 1 },
+  );
   const inventory: Inventory = {
     ...auditCreated(input),
     date: value.date,
@@ -655,8 +683,8 @@ const createInventory = Effect.fn('FacilityOperations.Assets.createInventory')(f
     items,
     status: 'open',
     title: value.title,
-    ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
-    ...(value.scope === undefined ? {} : { scope: value.scope }),
+    ...optionalField('note', value.note === '' ? undefined : value.note),
+    ...optionalField('scope', value.scope),
   };
   return yield* changed({ ...state, inventories: [...(state.inventories ?? []), inventory] }, inventory.id);
 });
@@ -681,7 +709,7 @@ const markInventory = Effect.fn('FacilityOperations.Assets.markInventory')(funct
     checkedAt: input.now,
     checkedBy: input.actor,
     result: value.result,
-    ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
+    ...optionalField('note', value.note === '' ? undefined : value.note),
   };
   return yield* changed(replaceItem(state, inventory, next, input), inventory.id);
 });
@@ -706,7 +734,7 @@ const followUp = Effect.fn('FacilityOperations.Assets.followUp')(function* follo
     id: `${input.resourceId}:task`,
     status: 'open' as const,
     title: value.title,
-    ...(value.assignee === undefined ? {} : { assignee: value.assignee }),
+    ...optionalField('assignee', value.assignee),
   };
   return yield* changed(replaceItem(state, inventory, { ...item, followUp: task }, input), task.id);
 });
@@ -729,7 +757,7 @@ const resolveFollowUp = Effect.fn('FacilityOperations.Assets.resolveFollowUp')(f
     resolvedAt: input.now,
     resolvedBy: input.actor,
     status: 'done' as const,
-    ...(value.resolution === undefined || value.resolution === '' ? {} : { resolution: value.resolution }),
+    ...optionalField('resolution', value.resolution === '' ? undefined : value.resolution),
   };
   return yield* changed(replaceItem(state, inventory, { ...item, followUp: done }, input), done.id);
 });
@@ -751,30 +779,39 @@ const closeInventory = Effect.fn('FacilityOperations.Assets.closeInventory')(fun
   );
 });
 
-const investmentOf = (value: CommandOf<'AssetInvestmentCreate'> | CommandOf<'AssetInvestmentUpdate'>) => {
-  const fields = Object.entries(value).filter(
-    ([key, entry]) => key !== '_tag' && key !== 'investmentId' && entry !== undefined,
-  );
-  return Object.fromEntries(fields) as Omit<
-    Investment,
-    'createdAt' | 'createdBy' | 'id' | 'updatedAt' | 'updatedBy'
-  >;
-};
+type InvestmentFields = Omit<Investment, 'createdAt' | 'createdBy' | 'id' | 'updatedAt' | 'updatedBy'>;
+const investmentOf = (
+  value: CommandOf<'AssetInvestmentCreate'> | CommandOf<'AssetInvestmentUpdate'>,
+): InvestmentFields => ({
+  plannedAmountMinor: value.plannedAmountMinor,
+  plannedDate: value.plannedDate,
+  priority: value.priority,
+  status: value.status,
+  title: value.title,
+  ...optionalField('actualAmountMinor', value.actualAmountMinor),
+  ...optionalField('actualDate', value.actualDate),
+  ...optionalField('description', value.description),
+  ...optionalField('location', value.location),
+  ...optionalField('propertyId', value.propertyId),
+  ...optionalField('assetId', value.assetId),
+  ...optionalField('responsible', value.responsible),
+});
 
-const requireInvestmentRules = (fields: ReturnType<typeof investmentOf>, state: AssetsState) =>
-  Effect.gen(function* requireInvestmentRulesEffect() {
+const requireInvestmentRules = Effect.fn('FacilityOperations.Assets.requireInvestmentRules')(
+  function* requireInvestmentRules(fields: ReturnType<typeof investmentOf>, state: AssetsState) {
     if (fields.status === 'done' && fields.actualAmountMinor === undefined) {
       return yield* opsConflict('A completed investment needs its actual amount');
     }
     if (fields.assetId !== undefined && !state.assets.some((asset) => asset.id === fields.assetId)) {
       return yield* opsNotFound('Asset not found');
     }
-  });
+    return yield* Effect.void;
+  },
+);
 
 const createInvestment = Effect.fn('FacilityOperations.Assets.createInvestment')(function* createInvestment(
   state: AssetsState,
-  value: CommandOf<'AssetInvestmentCreate'>,
-  input: OpsCommandInput,
+  { input, value }: OpsCommandCall<CommandOf<'AssetInvestmentCreate'>>,
 ) {
   const fields = investmentOf(value);
   yield* requireInvestmentRules(fields, state);
@@ -813,7 +850,7 @@ const updateInvestment = Effect.fn('FacilityOperations.Assets.updateInvestment')
 /** Pure reducer: applies one command to the `assets` state. Persistence decides when it is saved. */
 export const evolveAssets = (state: AssetsState, command: AssetsCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
-    Match.tag('AssetCreate', (value) => createAsset(state, value, input)),
+    Match.tag('AssetCreate', (value) => createAsset(state, { input, value })),
     Match.tag('AssetUpdate', (value) => updateAsset(state, value, input)),
     Match.tag('AssetValueChange', (value) => changeValue(state, value, input)),
     Match.tag('AssetEventRecord', (value) => recordEvent(state, value, input)),
@@ -821,16 +858,16 @@ export const evolveAssets = (state: AssetsState, command: AssetsCommand, input: 
     Match.tag('AssetArchive', (value) => archiveAsset(state, value, input)),
     Match.tag('AssetArchiveRestore', (value) => restoreArchivedAsset(state, value, input)),
     Match.tag('AssetServiceRecord', (value) => recordService(state, value, input)),
-    Match.tag('AssetDepreciationPlanCreate', (value) => createPlan(state, value, input)),
+    Match.tag('AssetDepreciationPlanCreate', (value) => createPlan(state, { input, value })),
     Match.tag('AssetDepreciationPlanConfirm', (value) => confirmPlan(state, value, input)),
     Match.tag('AssetDepreciationEntryRecord', (value) => recordEntry(state, value, input)),
-    Match.tag('AssetDepreciationTemplateCreate', (value) => createTemplate(state, value, input)),
-    Match.tag('AssetInventoryCreate', (value) => createInventory(state, value, input)),
+    Match.tag('AssetDepreciationTemplateCreate', (value) => createTemplate(state, { input, value })),
+    Match.tag('AssetInventoryCreate', (value) => createInventory(state, { input, value })),
     Match.tag('AssetInventoryMark', (value) => markInventory(state, value, input)),
     Match.tag('AssetInventoryFollowUp', (value) => followUp(state, value, input)),
     Match.tag('AssetInventoryFollowUpResolve', (value) => resolveFollowUp(state, value, input)),
     Match.tag('AssetInventoryClose', (value) => closeInventory(state, value, input)),
-    Match.tag('AssetInvestmentCreate', (value) => createInvestment(state, value, input)),
+    Match.tag('AssetInvestmentCreate', (value) => createInvestment(state, { input, value })),
     Match.tag('AssetInvestmentUpdate', (value) => updateInvestment(state, value, input)),
     Match.exhaustive,
   );

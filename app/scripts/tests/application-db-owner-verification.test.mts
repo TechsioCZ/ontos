@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
@@ -45,7 +46,7 @@ it('retains all 28 owner verifiers and invokes Core through the application enro
 const ownerFixture = (source: string) =>
   Effect.gen(function* createOwnerFixture() {
     const fs = yield* FileSystem.FileSystem;
-    const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault('/private/tmp'));
+    const temporaryRoot = yield* Config.String('OWNED_TEMP_DIR').pipe(Config.withDefault(tmpdir()));
     const directory = yield* fs.makeTempDirectoryScoped({ directory: temporaryRoot });
     const file = path.join(directory, 'verify-owner.mjs');
     yield* fs.writeFileString(file, source);

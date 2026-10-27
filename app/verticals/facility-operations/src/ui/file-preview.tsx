@@ -1,4 +1,3 @@
-// @effect-diagnostics asyncFunction:off globalTimers:off
 // File preview dialog + download button for stored files (documents lane). Both go through the governed records
 // read, so the server checks `documents` read access on every open (S12-03).
 import { dialogCloseLabel } from '@app/admin-ui';
@@ -7,6 +6,8 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { useEffect, useState } from 'react';
+import { Effect } from 'effect';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { StoredFileRef } from '../../shared/domain/documents.ts';
 import { fetchFileObjectUrl, fileKindOf, formatBytes } from './documents-kit.tsx';
 import { downloadFile } from './use-agenda.ts';
@@ -21,8 +22,8 @@ export const canPreview = (file: StoredFileRef) => {
 
 type PreviewState =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
-  | { readonly status: 'ready'; readonly url: string; readonly mime: string };
+  | { readonly error: Effect.Error<ReturnType<typeof fetchFileObjectUrl>>; readonly status: 'failed' }
+  | { readonly mime: string; readonly status: 'ready'; readonly url: string };
 
 /** Inline preview body (PDF in an iframe, image, plain text) for one stored file. */
 export const FilePreviewBody = ({
@@ -33,25 +34,38 @@ export const FilePreviewBody = ({
   readonly height?: string;
 }) => {
   const { t } = useModernI18n();
-  const [state, setState] = useState<PreviewState>({ status: 'loading' });
+  const [preview, setPreview] = useState<{ readonly fileId: string; readonly state: PreviewState }>({
+    fileId: file.id,
+    state: { status: 'loading' },
+  });
+  if (preview.fileId !== file.id) {
+    setPreview({ fileId: file.id, state: { status: 'loading' } });
+  }
+  const state: PreviewState = preview.fileId === file.id ? preview.state : { status: 'loading' };
   useEffect(() => {
     let alive = true;
     let url: string | undefined;
-    setState({ status: 'loading' });
-    void fetchFileObjectUrl(file.id).then((outcome) => {
-      if (!alive) {
-        if (outcome.ok) {
-          URL.revokeObjectURL(outcome.url);
-        }
-        return;
-      }
-      if (outcome.ok) {
-        url = outcome.url;
-        setState({ mime: outcome.mime, status: 'ready', url: outcome.url });
-      } else {
-        setState({ status: 'failed' });
-      }
-    });
+    browserRuntime.runFork(
+      fetchFileObjectUrl(file.id).pipe(
+        Effect.matchEffect({
+          onFailure: (error) =>
+            Effect.sync(() => {
+              if (alive) {
+                setPreview({ fileId: file.id, state: { error, status: 'failed' } });
+              }
+            }),
+          onSuccess: (outcome) =>
+            Effect.sync(() => {
+              if (!alive) {
+                URL.revokeObjectURL(outcome.url);
+                return;
+              }
+              ({ url } = outcome);
+              setPreview({ fileId: file.id, state: { mime: outcome.mime, status: 'ready', url: outcome.url } });
+            }),
+        }),
+      ),
+    );
     return () => {
       alive = false;
       if (url !== undefined) {
@@ -81,6 +95,7 @@ export const FilePreviewBody = ({
     return (
       <iframe
         className="w-full rounded-md border border-border-primary bg-surface"
+        sandbox=""
         src={state.url}
         style={{ height }}
         title={file.name}
@@ -105,12 +120,18 @@ export const DownloadButton = ({
       isLoading={busy}
       onClick={() => {
         setBusy(true);
-        void downloadFile(file.id).then((outcome) => {
-          setBusy(false);
-          if (!outcome.ok) {
-            toast.create({ title: t(`${k}.downloadFailed`), type: 'error' });
-          }
-        });
+        browserRuntime.runFork(
+          downloadFile(file.id).pipe(
+            Effect.tap((outcome) =>
+              Effect.sync(() => {
+                if (!outcome.ok) {
+                  toast.create({ title: t(`${k}.downloadFailed`), type: 'error' });
+                }
+              }),
+            ),
+            Effect.ensuring(Effect.sync(() => setBusy(false))),
+          ),
+        );
       }}
       size={size}
       theme="outlined"

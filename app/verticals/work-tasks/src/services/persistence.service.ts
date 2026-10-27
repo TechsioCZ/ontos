@@ -1166,9 +1166,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       if (Schema.is(BulkWorkCommandSchema)(command)) {
         return yield* applyBulk(command, expectedRevision);
       }
-      return yield* Schema.is(PlanningCommandSchema)(command)
-        ? applyPlanning(command, expectedRevision, resourceId)
-        : applySingle(command, expectedRevision, resourceId);
+      if (Schema.is(PlanningCommandSchema)(command)) {
+        return yield* applyPlanning(command, expectedRevision, resourceId);
+      }
+      return yield* applySingle(command, expectedRevision, resourceId);
     });
     return { apply, loadRecords };
   },

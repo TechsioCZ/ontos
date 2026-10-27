@@ -67,10 +67,12 @@ const state: FinanceState = {
   invoices: [invoice],
 };
 const validators: FinanceValidators = { invoice: () => Effect.void };
-const run = (snapshot: FinanceState, command: FinanceCommand) =>
-  transitionFinance(snapshot, command, scope, validators, input);
-const fails = (snapshot: FinanceState, command: FinanceCommand) =>
-  transitionFinance(snapshot, command, scope, validators, input).pipe(
+const run = (snapshot: FinanceState, command: typeof FinanceCommandSchema.Encoded) =>
+  Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap((decoded) => transitionFinance(snapshot, decoded, scope, validators, input)),
+  );
+const fails = (snapshot: FinanceState, command: typeof FinanceCommandSchema.Encoded) =>
+  run(snapshot, command).pipe(
     Effect.exit,
     Effect.tap((exit) => Effect.sync(() => expect(Exit.isFailure(exit)).toBe(true))),
     Effect.asVoid,
@@ -98,21 +100,27 @@ describe('Finance owner transitions', () => {
         totalMinor: 420_000,
       };
       const draft = yield* run(state, create);
-      expect(draft.invoice!.businessState).toBe('DRAFT');
-      expect(draft.invoice!.accountingSyncState).toBe('NOT_SYNCED');
+      if (draft.invoice === undefined) {
+        expect.unreachable('The draft transition must return its invoice');
+      }
+      expect(draft.invoice.businessState).toBe('DRAFT');
+      expect(draft.invoice.accountingSyncState).toBe('NOT_SYNCED');
       const updated = yield* run(draft.state, {
         ...create,
         _tag: 'UpdateInvoiceDraft',
-        invoiceRef: draft.invoice!.ref,
+        invoiceRef: draft.invoice.ref,
         propertyRef,
       });
-      const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice!);
+      if (updated.invoice === undefined) {
+        expect.unreachable('The updated transition must return its invoice');
+      }
+      const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice);
       const edited = yield* run(updated.state, {
         ...editFields,
         _tag: 'UpdateInvoiceDraft',
         documentNumber: 'SUP-EDITED',
         dueDate: '2026-10-20',
-        invoiceRef: updated.invoice!.ref,
+        invoiceRef: updated.invoice.ref,
         issueDate: '2026-10-06',
         totalMinor: 425_000,
       });
@@ -130,13 +138,16 @@ describe('Finance owner transitions', () => {
         propertyRef,
         totalMinor: 425_000,
       });
-      const prepared = yield* run(edited.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] });
-      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
-      expect(confirmed.invoice!.businessState).toBe('CONFIRMED');
+      const prepared = yield* run(edited.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice.ref] });
+      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref });
+      if (confirmed.invoice === undefined) {
+        expect.unreachable('The confirmed transition must return its invoice');
+      }
+      expect(confirmed.invoice.businessState).toBe('CONFIRMED');
       yield* fails(confirmed.state, {
         ...create,
         _tag: 'UpdateInvoiceDraft',
-        invoiceRef: draft.invoice!.ref,
+        invoiceRef: draft.invoice.ref,
         propertyRef,
       });
       yield* fails(state, {
@@ -325,7 +336,7 @@ it.layer(
   );
 });
 
-const connection = (input: unknown) => Schema.decodeUnknownSync(OAuthConnectionContextSchema)(input);
+const connection = Schema.decodeUnknownSync(OAuthConnectionContextSchema);
 
 it.layer(
   Layer.succeed(ActionPermission, {
@@ -394,12 +405,12 @@ it('never substitutes a Counterparty ID for a missing Party ID in related invoic
 
 it('keeps legacy Party-filtered balances identical to Counterparty entry points without crossing identities', () => {
   const partyId = 'party-linked';
-  const partial = { ...invoice, totalMinor: 100_000, paidMinor: 40_000, paymentState: 'PARTIALLY_PAID' as const };
+  const partial = { ...invoice, paidMinor: 40_000, paymentState: 'PARTIALLY_PAID' as const, totalMinor: 100_000 };
   const fixture: FinanceState = {
     ...state,
     invoices: [
       partial,
-      { ...invoice, partyId, businessState: 'DRAFT', ref: { ...ref, resourceId: 'linked-draft' } },
+      { ...invoice, businessState: 'DRAFT', partyId, ref: { ...ref, resourceId: 'linked-draft' } },
       { ...invoice, counterpartyRef: { ...counterpartyRef, tenantId: 'other-tenant' } },
       { ...invoice, counterpartyRef: { ...counterpartyRef, resourceId: 'other-counterparty' } },
       { ...invoice, partyId: 'explicitly-other-party', ref: { ...ref, resourceId: 'different-party' } },
@@ -414,8 +425,8 @@ it('keeps legacy Party-filtered balances identical to Counterparty entry points 
   expect(projectFinanceRecords(fixture, 1, { partyId, resourceId: ref.resourceId }).state.invoices).toEqual([partial]);
   expect(
     projectFinanceRecords(fixture, 1, {
-      partyId,
       counterpartyRef: { ...counterpartyRef, resourceId: 'other-counterparty' },
+      partyId,
     }).state.invoices,
   ).toEqual([]);
 });

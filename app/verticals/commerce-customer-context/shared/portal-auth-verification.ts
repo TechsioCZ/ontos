@@ -59,8 +59,6 @@ export const CommercePortalAuthVerificationHeadersSchema = Schema.StructWithRest
   ],
 );
 
-export type CommercePortalAuthVerificationHeaders = typeof CommercePortalAuthVerificationHeadersSchema.Type;
-
 export const CommercePortalAuthVerificationInvalidProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthVerificationInvalidProblem',
   400,
@@ -99,5 +97,3 @@ export const CommercePortalAuthVerificationApi = HttpApi.make('CommercePortalAut
     }),
   ),
 );
-
-export type { VerifyExternalAuthenticationResult } from './portal-auth-contracts.ts';

@@ -1,16 +1,14 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Match, Schema } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Tables of the sales report (crm-reports lane): grouped summary, order rows, status mapping, items by SKU.
 import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import type { CrmState } from '../../../../../shared/domain/state.ts';
-import type {
-  ReportGroup,
-  ReportOrderRow,
-  SalesReport,
-  StatusMeaningOrUnmapped,
-} from '../../../../../shared/domain/reports.ts';
 import {
   UNASSIGNED,
   clientSalesFacts,
@@ -20,31 +18,36 @@ import {
   statusMeaningLabels,
   unitsToDecimal,
 } from '../../../../../shared/domain/reports.ts';
+import type {
+  ReportGroup,
+  ReportOrderRow,
+  SalesReport,
+  StatusMeaningOrUnmapped,
+} from '../../../../../shared/domain/reports.ts';
+
 import { crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
-import { downloadCsv, formatDecimalMoney, totalIn } from './report-format.ts';
+import { downloadCsv, useFormatDecimalMoney, totalIn } from './report-format.ts';
 
-export type GroupingKey = 'salesperson' | 'client' | 'month' | 'status';
+const groupingKeys = ['client', 'month', 'salesperson', 'status'] as const;
+export const GroupingKeySchema = Schema.Literals(groupingKeys);
+export type GroupingKey = typeof GroupingKeySchema.Type;
 
-export const groupingLabels: Record<GroupingKey, string> = {
+export const groupingLabels = {
   client: 'Klient',
   month: 'Měsíc',
   salesperson: 'Obchodník',
   status: 'Stav',
-};
+} satisfies Record<GroupingKey, string>;
 
-export const groupsOf = (report: SalesReport, grouping: GroupingKey): readonly ReportGroup[] => {
-  switch (grouping) {
-    case 'client':
-      return report.byClient;
-    case 'month':
-      return report.byMonth.toReversed();
-    case 'salesperson':
-      return report.bySalesperson;
-    case 'status':
-      return report.byStatus;
-  }
-};
+export const groupsOf = (report: SalesReport, grouping: GroupingKey): readonly ReportGroup[] =>
+  Match.value(grouping).pipe(
+    Match.when('client', () => report.byClient),
+    Match.when('month', () => report.byMonth.toReversed()),
+    Match.when('salesperson', () => report.bySalesperson),
+    Match.when('status', () => report.byStatus),
+    Match.exhaustive,
+  );
 
 // Match the summary's displayed columns and order, including absent values (never invented zeroes).
 export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: CrmState) =>
@@ -60,24 +63,24 @@ export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: Cr
       group.label,
       group.count,
       ...report.currencies.map((currency) => totalIn(group.totals, currency)?.amount.replace('.', ',') ?? '—'),
-      group.lastOrderAt === undefined ? '—' : formatDate(group.lastOrderAt),
+      group.lastOrderAt === undefined ? '—' : pipe(group.lastOrderAt, orderDateText, formatDate),
       ...(grouping === 'client'
         ? [
             clientSalesFacts(state, group.key).lastVisitAt === undefined
               ? 'bez návštěvy'
-              : formatDate(clientSalesFacts(state, group.key).lastVisitAt),
+              : pipe(clientSalesFacts(state, group.key).lastVisitAt, orderDateText, formatDate),
           ]
         : []),
     ]),
   );
 
-const meaningVariant: Record<StatusMeaningOrUnmapped, 'outline' | 'info' | 'success' | 'warning' | 'danger'> = {
+const meaningVariant = {
   cancelled: 'outline',
   fulfilled: 'success',
   open: 'info',
   paid: 'success',
   unmapped: 'warning',
-};
+} satisfies Record<StatusMeaningOrUnmapped, 'outline' | 'info' | 'success' | 'warning' | 'danger'>;
 
 export const MeaningBadge = ({ meaning }: { readonly meaning: StatusMeaningOrUnmapped }) => (
   <Badge size="sm" variant={meaningVariant[meaning]}>
@@ -103,6 +106,40 @@ export interface SummaryTableProps {
   readonly state: CrmState;
 }
 
+/** Link or drill down for one group label. */
+const GroupLabel = ({
+  group,
+  grouping,
+  lang,
+  onPick,
+}: {
+  readonly group: ReportGroup;
+  readonly grouping: GroupingKey;
+  readonly lang: string;
+  readonly onPick: (grouping: GroupingKey, key: string) => void;
+}) => {
+  if (grouping === 'client') {
+    return (
+      <a className={linkClass} href={clientCardHref(lang, group.key)}>
+        {group.label}
+      </a>
+    );
+  }
+  if (grouping === 'month' && group.count === 0) {
+    return <span>{group.label}</span>;
+  }
+  return (
+    <button
+      aria-label={`${group.label}: Zúžit přehled na tuto skupinu`}
+      className={`${linkClass} cursor-pointer text-left ${group.key === UNASSIGNED ? 'text-fg-secondary' : ''}`}
+      onClick={() => onPick(grouping, group.key)}
+      type="button"
+    >
+      {group.label}
+    </button>
+  );
+};
+
 /** Summary by salesperson / client / month / status, one value column per currency. */
 export const SummaryTable = ({
   grouping,
@@ -113,14 +150,19 @@ export const SummaryTable = ({
   report,
   state,
 }: SummaryTableProps) => {
+  const { t } = useModernI18n();
+  const formatDecimalMoney = useFormatDecimalMoney();
   const groups = groupsOf(report, grouping);
   const maxCount = Math.max(1, ...groups.map((group) => group.count));
   return (
     <SectionCard
       actions={
         <>
-          <fieldset aria-label="Seskupit podle" className="inline-flex flex-wrap rounded-button-sm bg-surface p-50">
-            {(Object.keys(groupingLabels) as GroupingKey[]).map((key) => (
+          <fieldset
+            aria-label={t('crm.ciWorkflow.groupBy')}
+            className="inline-flex flex-wrap rounded-button-sm bg-surface p-50"
+          >
+            {groupingKeys.map((key) => (
               <Button
                 aria-pressed={key === grouping}
                 key={key}
@@ -149,7 +191,10 @@ export const SummaryTable = ({
       title={`Souhrn podle: ${groupingLabels[grouping].toLowerCase()}`}
     >
       {groups.length === 0 ? (
-        <EmptyState description="Pro zvolené filtry neexistuje žádná započtená objednávka." title="Bez dat" />
+        <EmptyState
+          description="Pro zvolené filtry neexistuje žádná započtená objednávka."
+          title={t('crm.ciWorkflow.noData')}
+        />
       ) : (
         <div className="overflow-x-auto px-250 pb-250">
           <table className="w-full min-w-[40rem] border-collapse text-sm">
@@ -171,12 +216,9 @@ export const SummaryTable = ({
                   Poslední objednávka
                 </th>
                 {grouping === 'client' && (
-                  <th
-                    className="py-100 text-right font-medium"
-                    scope="col"
-                    title="Jen osobní návštěvy; telefonáty a e-maily se nepočítají"
-                  >
+                  <th className="py-100 text-right font-medium" scope="col">
                     Poslední návštěva
+                    <span className="sr-only"> · Jen osobní návštěvy; telefonáty a e-maily se nepočítají</span>
                   </th>
                 )}
               </tr>
@@ -187,26 +229,9 @@ export const SummaryTable = ({
                 return (
                   <tr className="border-border-primary/60 border-b last:border-b-0" key={group.key}>
                     <th className="py-100 pr-200 text-left font-normal" scope="row">
-                      {grouping === 'client' ? (
-                        <a className={linkClass} href={clientCardHref(lang, group.key)}>
-                          {group.label}
-                        </a>
-                      ) : grouping === 'month' && group.count === 0 ? (
-                        <span>{group.label}</span>
-                      ) : (
-                        <button
-                          className={`${linkClass} cursor-pointer text-left ${
-                            group.key === UNASSIGNED ? 'text-fg-secondary' : ''
-                          }`}
-                          onClick={() => onPick(grouping, group.key)}
-                          title="Zúžit přehled na tuto skupinu"
-                          type="button"
-                        >
-                          {group.label}
-                        </button>
-                      )}
+                      <GroupLabel group={group} grouping={grouping} lang={lang} onPick={onPick} />
                     </th>
-                    <td className="py-100 pr-200">
+                    <td aria-label={formatNumber(group.count)} className="py-100 pr-200">
                       <span className="flex items-center gap-150">
                         <span className="w-8 text-right tabular-nums">{formatNumber(group.count)}</span>
                         <span aria-hidden className="h-2 w-28 rounded-sm bg-surface-secondary">
@@ -236,7 +261,7 @@ export const SummaryTable = ({
                       {group.lastOrderAt === undefined ? (
                         <span className="text-fg-secondary">—</span>
                       ) : (
-                        formatDate(group.lastOrderAt)
+                        pipe(group.lastOrderAt, orderDateText, formatDate)
                       )}
                     </td>
                     {grouping === 'client' && (
@@ -244,7 +269,7 @@ export const SummaryTable = ({
                         {clientFacts?.lastVisitAt === undefined ? (
                           <span className="text-fg-secondary">bez návštěvy</span>
                         ) : (
-                          formatDate(clientFacts.lastVisitAt)
+                          pipe(clientFacts.lastVisitAt, orderDateText, formatDate)
                         )}
                       </td>
                     )}
@@ -268,8 +293,10 @@ export const SummaryTable = ({
                     </td>
                   );
                 })}
-                <td className="py-100 pr-200 text-right tabular-nums">{formatDate(report.lastOrderAt)}</td>
-                {grouping === 'client' && <td />}
+                <td className="py-100 pr-200 text-right tabular-nums">
+                  {pipe(report.lastOrderAt, orderDateText, formatDate)}
+                </td>
+                {grouping === 'client' && <td>—</td>}
               </tr>
             </tfoot>
           </table>
@@ -287,21 +314,25 @@ export const SummaryTable = ({
 
 // ---------------------------------------------------------------------------------------------------------------
 
-const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
+const orderColumns = (
+  lang: string,
+  formatDecimalMoney: ReturnType<typeof useFormatDecimalMoney>,
+): ColumnDef<ReportOrderRow>[] => [
   {
-    accessorKey: 'date',
+    accessorFn: (row) => orderDateText(row.date),
     cell: (info) => (
       <span className="tabular-nums">
-        {formatDate(info.row.original.date)}
+        {pipe(info.row.original.date, orderDateText, formatDate)}
         {info.row.original.dateSource === 'received' && (
-          <span className="text-fg-secondary" title="Zdroj neposkytl datum objednávky; použit čas přijetí">
-            {' '}
-            *
+          <span className="text-fg-secondary">
+            <span aria-hidden> *</span>
+            <span className="sr-only"> · Zdroj neposkytl datum objednávky; použit čas přijetí</span>
           </span>
         )}
       </span>
     ),
     header: 'Datum',
+    id: 'date',
     meta: { type: 'string', width: 120 },
   },
   {
@@ -376,102 +407,108 @@ export const OrdersTable = ({
   readonly fileName: string;
   readonly lang: string;
   readonly report: SalesReport;
-}) => (
-  <DataTable
-    columns={orderColumns(lang)}
-    data={[...report.rows]}
-    enablePagination
-    enableSorting
-    getRowId={(row) => row.order.id}
-    getRowLabel={(row) => row.original.order.number ?? row.original.order.externalId}
-    pageSizeOptions={[25, 50, 100]}
-    paginationProps={crmPaginationProps}
-    renderToolbar={(table) => (
-      <div className="flex flex-wrap items-center justify-between gap-150">
-        <span className="text-fg-secondary text-sm">
-          CSV obsahuje pouze aktuální stránku, ve zvoleném pořadí. Pro všechny řádky zvyšte počet na stránku.
-        </span>
-        <Button
-          disabled={table.getRowModel().rows.length === 0}
-          icon="icon-[mdi--download]"
-          onClick={() =>
-            downloadCsv(ordersCsv({ ...report, rows: table.getRowModel().rows.map((row) => row.original) }), fileName)
-          }
-          size="sm"
-          theme="outlined"
-          variant="secondary"
-        >
-          Export objednávek (CSV)
-        </Button>
-      </div>
-    )}
-    size="sm"
-    tableLayout="fixed"
-    translations={{
-      ...crmTableTranslations,
-      emptyDescription: 'Pro zvolené filtry neexistuje žádná započtená objednávka.',
-      emptyTitle: 'Bez dat',
-    }}
-  />
-);
+}) => {
+  const formatDecimalMoney = useFormatDecimalMoney();
+  return (
+    <DataTable
+      columns={orderColumns(lang, formatDecimalMoney)}
+      data={[...report.rows]}
+      enablePagination
+      enableSorting
+      getRowId={(row) => row.order.id}
+      getRowLabel={(row) => row.original.order.number ?? row.original.order.externalId}
+      pageSizeOptions={[25, 50, 100]}
+      paginationProps={crmPaginationProps}
+      renderToolbar={(table) => (
+        <div className="flex flex-wrap items-center justify-between gap-150">
+          <span className="text-fg-secondary text-sm">
+            CSV obsahuje pouze aktuální stránku, ve zvoleném pořadí. Pro všechny řádky zvyšte počet na stránku.
+          </span>
+          <Button
+            disabled={table.getRowModel().rows.length === 0}
+            icon="icon-[mdi--download]"
+            onClick={() =>
+              downloadCsv(ordersCsv({ ...report, rows: table.getRowModel().rows.map((row) => row.original) }), fileName)
+            }
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Export objednávek (CSV)
+          </Button>
+        </div>
+      )}
+      size="sm"
+      tableLayout="fixed"
+      translations={{
+        ...crmTableTranslations,
+        emptyDescription: 'Pro zvolené filtry neexistuje žádná započtená objednávka.',
+        emptyTitle: 'Bez dat',
+      }}
+    />
+  );
+};
 
 // ---------------------------------------------------------------------------------------------------------------
 
 /** Item sales by SKU — only from orders whose source really sent lines (C05-03: otherwise "bez dat", never 0). */
-export const ItemsCard = ({ report }: { readonly report: SalesReport }) => (
-  <SectionCard title="Importované položky (SKU)">
-    {report.items.ordersWithLines === 0 ? (
-      <EmptyState
-        description="Zdroj u započtených objednávek položky neposkytl. Nejde o nulový prodej."
-        title="Položky neposkytnuty — bez dat"
-      />
-    ) : (
-      <div className="flex flex-col gap-150">
-        <p className="text-fg-secondary text-sm">
-          Položky dodal zdroj u {formatNumber(report.items.ordersWithLines)} z {formatNumber(report.count)} započtených
-          objednávek; u ostatních položky chybí. Množství odpovídá importovaným řádkům objednávek, nikoli čistému
-          prodeji po odečtení vratek a dobropisů.
-        </p>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[30rem] border-collapse text-sm">
-            <caption className="sr-only">Importované množství podle SKU, nikoli potvrzený prodej</caption>
-            <thead>
-              <tr className="border-border-primary border-b text-left text-fg-secondary">
-                <th className="py-100 pr-200 font-medium" scope="col">
-                  SKU
-                </th>
-                <th className="py-100 pr-200 font-medium" scope="col">
-                  Položka
-                </th>
-                <th className="py-100 pr-200 text-right font-medium" scope="col">
-                  Množství
-                </th>
-                <th className="py-100 text-right font-medium" scope="col">
-                  V objednávkách
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {report.items.rows.map((item) => (
-                <tr className="border-border-primary/60 border-b last:border-b-0" key={item.key}>
-                  <td className="py-100 pr-200">
-                    {item.sku === undefined ? (
-                      <span className="text-fg-secondary">neuvedeno</span>
-                    ) : (
-                      <code className="text-xs">{item.sku}</code>
-                    )}
-                  </td>
-                  <th className="py-100 pr-200 text-left font-normal" scope="row">
-                    {item.name}
+export const ItemsCard = ({ report }: { readonly report: SalesReport }) => {
+  const { t } = useModernI18n();
+  return (
+    <SectionCard title={t('crm.ciWorkflow.importedSkuItems')}>
+      {report.items.ordersWithLines === 0 ? (
+        <EmptyState
+          description="Zdroj u započtených objednávek položky neposkytl. Nejde o nulový prodej."
+          title={t('crm.ciWorkflow.itemsNotProvided')}
+        />
+      ) : (
+        <div className="flex flex-col gap-150">
+          <p className="text-fg-secondary text-sm">
+            Položky dodal zdroj u {formatNumber(report.items.ordersWithLines)} z {formatNumber(report.count)}{' '}
+            započtených objednávek; u ostatních položky chybí. Množství odpovídá importovaným řádkům objednávek, nikoli
+            čistému prodeji po odečtení vratek a dobropisů.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[30rem] border-collapse text-sm">
+              <caption className="sr-only">Importované množství podle SKU, nikoli potvrzený prodej</caption>
+              <thead>
+                <tr className="border-border-primary border-b text-left text-fg-secondary">
+                  <th className="py-100 pr-200 font-medium" scope="col">
+                    SKU
                   </th>
-                  <td className="py-100 pr-200 text-right tabular-nums">{item.quantity.replace('.', ',')}</td>
-                  <td className="py-100 text-right tabular-nums">{formatNumber(item.orders)}</td>
+                  <th className="py-100 pr-200 font-medium" scope="col">
+                    Položka
+                  </th>
+                  <th className="py-100 pr-200 text-right font-medium" scope="col">
+                    Množství
+                  </th>
+                  <th className="py-100 text-right font-medium" scope="col">
+                    V objednávkách
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {report.items.rows.map((item) => (
+                  <tr className="border-border-primary/60 border-b last:border-b-0" key={item.key}>
+                    <td className="py-100 pr-200">
+                      {item.sku === undefined ? (
+                        <span className="text-fg-secondary">neuvedeno</span>
+                      ) : (
+                        <code className="text-xs">{item.sku}</code>
+                      )}
+                    </td>
+                    <th className="py-100 pr-200 text-left font-normal" scope="row">
+                      {item.name}
+                    </th>
+                    <td className="py-100 pr-200 text-right tabular-nums">{item.quantity.replace('.', ',')}</td>
+                    <td className="py-100 text-right tabular-nums">{formatNumber(item.orders)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
-    )}
-  </SectionCard>
-);
+      )}
+    </SectionCard>
+  );
+};

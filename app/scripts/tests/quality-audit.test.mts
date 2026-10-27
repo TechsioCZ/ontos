@@ -16,6 +16,7 @@ import { Config, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
+import { KnipConfigSchema } from '../../quality-audit/knip-model.mts';
 import { auditSteps, runQualityAudit, validateReport } from '../quality-audit.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
@@ -30,10 +31,29 @@ const GITIGNORE_FILE = '.gitignore';
 const KNIP_CONFIG = 'quality-audit/knip.json';
 const PACKAGE_JSON = 'package.json';
 const CALLER_OWNED_FILE = 'caller-owned.txt';
+const SCRIPT_ENTRY = 'scripts/index.ts';
+const TEST_PACKAGE = 'quality-test';
+const KNIP_REPORT = 'knip/report.ndjson';
+const STOREFRONT_WORKSPACE = 'akros-storefront';
+const STOREFRONT_STYLESHEET = 'akros-storefront/src/storefront.css';
+const COVERAGE_REPORT = 'coverage.json';
 const ProvenanceSchema = Schema.fromJsonString(
   Schema.Struct({
     sourceState: Schema.String,
     workingTreeChanges: Schema.Array(Schema.String),
+  }),
+);
+const AnalyzerMetadataSchema = Schema.fromJsonString(
+  Schema.Struct({
+    environment: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+const SourceInventorySchema = Schema.fromJsonString(Schema.Struct({ files: Schema.Array(Schema.String) }));
+const SourceCoverageSchema = Schema.fromJsonString(
+  Schema.Struct({
+    assetFiles: Schema.Array(Schema.String),
+    extra: Schema.Array(Schema.String),
+    missing: Schema.Array(Schema.String),
   }),
 );
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -200,7 +220,7 @@ const createFixture = () =>
     writeFileSync(
       path.join(root, KNIP_CONFIG),
       yield* encodeReport({
-        entry: ['scripts/index.ts'],
+        entry: [SCRIPT_ENTRY],
         lefthook: false,
         node: false,
         project: ['scripts/**/*.ts'],
@@ -210,7 +230,7 @@ const createFixture = () =>
       '\n',
     );
     const body = `export function calculate(input: number) {\nlet result = input;\n${branches}\nreturn result;\n}\n`;
-    writeFileSync(path.join(root, 'scripts/index.ts'), body);
+    writeFileSync(path.join(root, SCRIPT_ENTRY), body);
     writeFileSync(path.join(root, 'scripts/dead.ts'), body.replace('calculate', 'unusedCalculation'));
     return root;
   });
@@ -265,10 +285,262 @@ const summary = (output: string) =>
   );
 
 it.live(
+  'native Fallow covers standalone storefront and database sources while CSS remains an allowed extra',
+  Effect.fn(function* standaloneSourceCoverage() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const sources = [
+      'akros-storefront/src/page.tsx',
+      'akros-storefront/tests/page.test.tsx',
+      'database/core-schema.cts',
+      'database/identity-enrollment.ts',
+    ];
+    for (const file of sources) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), 'export const authoredSource = 1;\n');
+    }
+    const css = 'akros-storefront/src/globals.css';
+    writeFileSync(path.join(root, css), 'body { color: red; }\n');
+    yield* runFixture(root, output, 'fallow');
+    const result = yield* summary(output);
+    const inventory = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(Schema.Struct({ files: Schema.Array(Schema.String) })),
+    )(readFileSync(path.join(result.runDirectory, 'source-inventory.json'), 'utf-8'));
+    expect(sources.every((file) => inventory.files.includes(file))).toBe(true);
+    const coverage = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          assetFiles: Schema.Array(Schema.String),
+          extra: Schema.Array(Schema.String),
+          intendedSources: Schema.Number,
+          missing: Schema.Array(Schema.String),
+        }),
+      ),
+    )(readFileSync(path.join(result.runDirectory, COVERAGE_REPORT), 'utf-8'));
+    expect(coverage).toEqual({ assetFiles: [css], extra: [], intendedSources: 7, missing: [] });
+    expect(result.results.every((row) => row.status === 'reported')).toBe(true);
+
+    // An unmodeled source root must still fail, rather than treating all extras like CSS.
+    mkdirSync(path.join(root, 'unmodeled'));
+    writeFileSync(path.join(root, 'unmodeled/source.ts'), 'export const outsideInventory = 1;\n');
+    const issue = yield* Effect.flip(runFixture(root, output, 'fallow'));
+    expect(issue.message).toMatch(/analysis failed/u);
+    const rejected = yield* summary(output);
+    expect(rejected.results.at(-1)?.diagnostic).toMatch(/Fallow discovery differs/u);
+    expect(readFileSync(path.join(rejected.runDirectory, COVERAGE_REPORT), 'utf-8')).toContain('unmodeled/source.ts');
+  }),
+);
+
+it.live(
+  'native Knip audits the declared standalone workspace and database without hiding nearby unused code',
+  Effect.fn(function* standaloneWorkspaceCoverage() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const storefront = STOREFRONT_WORKSPACE;
+    writeFileSync(
+      path.join(root, PACKAGE_JSON),
+      yield* encodeReport({ name: TEST_PACKAGE, private: true, type: 'module', workspaces: [storefront] }),
+    );
+    mkdirSync(path.join(root, storefront, 'src/app'), { recursive: true });
+    writeFileSync(
+      path.join(root, storefront, PACKAGE_JSON),
+      yield* encodeReport({ dependencies: { next: '16.3.8' }, name: storefront, private: true, type: 'module' }),
+    );
+    writeFileSync(
+      path.join(root, storefront, 'src/app/page.tsx'),
+      "import { live } from '../values.ts'; export default function Page() { return live; }\n",
+    );
+    writeFileSync(
+      path.join(root, storefront, 'src/values.ts'),
+      'export const live = 1; export const unusedStorefrontExport = 2;\n',
+    );
+    const deadStorefront = `${storefront}/src/dead.ts`;
+    writeFileSync(path.join(root, deadStorefront), 'export const unusedStorefrontFile = 1;\n');
+    mkdirSync(path.join(root, 'database'));
+    const deadDatabase = 'database/dead.cts';
+    writeFileSync(path.join(root, deadDatabase), 'export const unusedDatabaseFile = 1;\n');
+    const checkedConfig = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(KnipConfigSchema))(
+      readFileSync(path.join(appRoot, KNIP_CONFIG), 'utf-8'),
+    );
+    const coreWorker = 'scripts/core-system-outbox-worker.generated.mts';
+    const deadWorker = 'scripts/unused-worker-neighbor.mts';
+    for (const file of ['scripts/outbox-worker-delivery.mjs', 'scripts/materialize-outbox-worker.mjs']) {
+      copyFileSync(path.join(appRoot, file), path.join(root, file));
+    }
+    writeFileSync(path.join(root, coreWorker), "import { consume } from './core-worker-runtime.mts'; consume();\n");
+    writeFileSync(
+      path.join(root, 'scripts/core-worker-runtime.mts'),
+      'export const consume = () => 1; export const unusedWorkerExport = 2;\n',
+    );
+    writeFileSync(path.join(root, deadWorker), 'export const unusedWorkerFile = 1;\n');
+    const rootConfig = {
+      ...checkedConfig.workspaces?.['.'],
+      entry: [...(checkedConfig.workspaces?.['.']?.entry ?? []), SCRIPT_ENTRY],
+      node: false,
+    };
+    const storefrontConfig = checkedConfig.workspaces?.[storefront];
+    expect(storefrontConfig).toBeDefined();
+    if (storefrontConfig === undefined) {
+      throw new Error('Missing standalone workspace configuration');
+    }
+    writeFileSync(
+      path.join(root, KNIP_CONFIG),
+      yield* encodeReport({ workspaces: { '.': rootConfig, [storefront]: storefrontConfig } }),
+    );
+    yield* runFixture(root, output, 'knip');
+    const result = yield* summary(output);
+    expect(result.status).toBe('reported');
+    const native = readFileSync(path.join(result.runDirectory, KNIP_REPORT), 'utf-8');
+    expect(native).toContain(deadStorefront);
+    expect(native).toContain(deadDatabase);
+    expect(native).toContain('unusedStorefrontExport');
+    expect(native).toContain(deadWorker);
+    expect(native).toContain('unusedWorkerExport');
+    expect(native).not.toContain(`"name":"${coreWorker}"`);
+    expect(native).not.toContain('"name":"live"');
+    expect(native).toContain(`${storefront}"`);
+
+    const effective = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(KnipConfigSchema))(
+      readFileSync(path.join(result.runDirectory, 'configs/knip.json'), 'utf-8'),
+    );
+    expect(effective.workspaces?.[storefront]?.project).toEqual(storefrontConfig.project);
+  }),
+);
+
+it.live(
+  'model syntax failures retain the failing source path and reason in the audit summary',
+  Effect.fn(function* modelSyntaxDiagnostics() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    writeFileSync(path.join(root, SCRIPT_ENTRY), 'export const broken = ;\n');
+    const issue = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(issue.message).toMatch(/analysis failed/u);
+    const result = yield* summary(output);
+    expect(result.results[0]?.diagnostic).toMatch(/Invalid quality model source scripts\/index.ts/u);
+  }),
+);
+
+it.live(
+  'native workerd imports are calibrated by exact conditional source and location, not by package name',
+  Effect.fn(function* workerdBuiltinConsumers() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const selected = 'scripts/selected.workerd.ts';
+    const dormant = 'scripts/dormant.workerd.ts';
+    const direct = 'scripts/direct-cloudflare.ts';
+    writeFileSync(
+      path.join(root, SCRIPT_ENTRY),
+      "import './selected.workerd.ts'; import './dormant.workerd.ts'; import './direct-cloudflare.ts';\n",
+    );
+    for (const file of [selected, dormant]) {
+      writeFileSync(path.join(root, file), "import { env } from 'cloudflare:workers'; void env;\n");
+    }
+    writeFileSync(path.join(root, direct), "import { missing } from 'cloudflare'; void missing;\n");
+    const manifest = {
+      imports: { '#configuration': { default: './scripts/node.ts', workerd: `./${selected}` } },
+      name: TEST_PACKAGE,
+      private: true,
+      scripts: { build: 'modern build --deploy-target cloudflare' },
+      type: 'module',
+    };
+    writeFileSync(path.join(root, PACKAGE_JSON), yield* encodeReport(manifest));
+    yield* runFixture(root, output, 'knip');
+    const result = yield* summary(output);
+    expect(result.results[0]?.coverage.modeledUsages).toBe(1);
+    const modeled = readFileSync(path.join(result.runDirectory, 'knip/modeled-usages.json'), 'utf-8');
+    expect(modeled).toContain(selected);
+    expect(modeled).not.toContain(dormant);
+    expect(modeled).not.toContain(direct);
+    const native = readFileSync(path.join(result.runDirectory, KNIP_REPORT), 'utf-8');
+    expect(native).toContain(dormant);
+    expect(native).toContain(direct);
+    expect(result.results[0]?.coverage.findingCounts).toMatchObject({ unlisted: 2 });
+
+    writeFileSync(
+      path.join(root, PACKAGE_JSON),
+      yield* encodeReport({ ...manifest, scripts: { build: 'modern build --deploy-target node' } }),
+    );
+    yield* runFixture(root, output, 'knip');
+    const control = yield* summary(output);
+    expect(control.results[0]?.coverage.modeledUsages).toBe(0);
+    expect(control.results[0]?.coverage.findingCounts).toMatchObject({ unlisted: 3 });
+  }),
+);
+
+it.live(
+  'native package URLs prove the declared installed alias without hiding a direct undeclared import',
+  Effect.fn(function* nativePackageAliasConsumers() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const owner = 'apps/probe';
+    const alias = '@fixture/adapter';
+    const actual = '@fixture/actual';
+    const testFile = 'scripts/tests/package-url.test.mts';
+    const installed = path.join(root, owner, 'node_modules/.store/actual/node_modules', actual);
+    mkdirSync(installed, { recursive: true });
+    mkdirSync(path.join(root, owner, 'node_modules/@fixture'), { recursive: true });
+    symlinkSync(installed, path.join(root, owner, 'node_modules', alias), 'dir');
+    mkdirSync(path.join(root, 'scripts/tests'));
+    writeFileSync(
+      path.join(root, owner, PACKAGE_JSON),
+      yield* encodeReport({ dependencies: { [alias]: `npm:${actual}@1` }, name: 'probe', private: true }),
+    );
+    writeFileSync(
+      path.join(root, owner, 'node_modules', alias, PACKAGE_JSON),
+      yield* encodeReport({ exports: './index.js', name: actual, version: '1' }),
+    );
+    writeFileSync(path.join(root, owner, 'node_modules', alias, 'index.js'), 'export const adapter = 1;');
+    writeFileSync(
+      path.join(root, PACKAGE_JSON),
+      yield* encodeReport({ name: TEST_PACKAGE, private: true, scripts: { test: 'rstest' }, type: 'module' }),
+    );
+    writeFileSync(
+      path.join(root, testFile),
+      `const packageRoot = new URL('../../${owner}/node_modules/${alias}/', import.meta.url); void packageRoot;\n`,
+    );
+    writeFileSync(path.join(root, SCRIPT_ENTRY), `import './tests/package-url.test.mts'; import '${actual}';\n`);
+    const rootConfig = { entry: [SCRIPT_ENTRY], lefthook: false, node: false, project: ['scripts/**/*.{ts,mts}'] };
+    writeFileSync(
+      path.join(root, KNIP_CONFIG),
+      yield* encodeReport({ workspaces: { '.': rootConfig, 'apps/*': { entry: [], project: ['src/**/*.ts'] } } }),
+    );
+    yield* runFixture(root, output, 'knip');
+    const result = yield* summary(output);
+    expect(
+      result.results[0]?.coverage.modeledUsages,
+      readFileSync(path.join(result.runDirectory, KNIP_REPORT), 'utf-8'),
+    ).toBe(1);
+    expect(result.results[0]?.coverage.findingCounts).toMatchObject({ unlisted: 1 });
+    const modeled = readFileSync(path.join(result.runDirectory, 'knip/modeled-usages.json'), 'utf-8');
+    expect(modeled).toContain(testFile);
+    expect(modeled).not.toContain(`"file": "${SCRIPT_ENTRY}"`);
+
+    // A shadowed constructor cannot establish native URL resolution.
+    writeFileSync(
+      path.join(root, testFile),
+      `function lookup(URL: typeof globalThis.URL) { return new URL('../../${owner}/node_modules/${alias}/', import.meta.url); } void lookup;\n`,
+    );
+    yield* runFixture(root, output, 'knip');
+    const shadowed = yield* summary(output);
+    expect(shadowed.results[0]?.coverage.modeledUsages).toBe(0);
+  }),
+);
+
+it.live(
   'real Fallow separates UI penalties from control-flow complexity without hiding branches',
   Effect.fn(function* testEffect9() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
+    const storefrontSource = 'akros-storefront/src/storefront.ts';
+    const databaseSource = 'database/storage.cts';
+    mkdirSync(path.join(root, 'akros-storefront/src'), { recursive: true });
+    mkdirSync(path.join(root, 'akros-storefront/.next'), { recursive: true });
+    mkdirSync(path.join(root, 'database'));
+    writeFileSync(path.join(root, storefrontSource), 'export const storefront = 1;');
+    writeFileSync(path.join(root, STOREFRONT_STYLESHEET), '.storefront { color: red; }');
+    writeFileSync(path.join(root, databaseSource), 'export const storage = 1;');
+    writeFileSync(path.join(root, 'akros-storefront/.next/generated.ts'), 'export const generated = 1;');
+
     const props = Array.from({ length: 22 }, (_, index) => `p${index + 1}`).join(', ');
     const branches = Array.from({ length: 11 }, (_, index) => `if (value === ${index + 1}) return ${index + 1};`).join(
       '\n',
@@ -290,6 +562,20 @@ export function branchHeavy(value: number) {
     );
     yield* runFixture(root, output, 'fallow');
     const result = yield* summary(output);
+    const inventory = yield* Schema.decodeEffect(SourceInventorySchema)(
+      readFileSync(path.join(result.runDirectory, 'source-inventory.json'), 'utf-8'),
+    );
+    expect(inventory.files).toContain(storefrontSource);
+    expect(inventory.files).toContain(databaseSource);
+    expect(inventory.files).not.toContain('akros-storefront/.next/generated.ts');
+    expect(inventory.files).not.toContain(STOREFRONT_STYLESHEET);
+    const coverage = yield* Schema.decodeEffect(SourceCoverageSchema)(
+      readFileSync(path.join(result.runDirectory, COVERAGE_REPORT), 'utf-8'),
+    );
+    expect(coverage.assetFiles).toContain(STOREFRONT_STYLESHEET);
+    expect(coverage.extra).toEqual([]);
+    expect(coverage.missing).toEqual([]);
+
     const healthDirectory = path.join(result.runDirectory, FALLOW_HEALTH);
     const rows = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(
@@ -401,6 +687,13 @@ it.live(
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(first.status).toBe('reported');
     expect(first.results.length).toBe(6);
+    for (const result of first.results) {
+      const metadata = yield* Schema.decodeEffect(AnalyzerMetadataSchema)(
+        readFileSync(path.join(result.directory, 'metadata.json'), 'utf-8'),
+      );
+      expect(metadata.environment.KNIP_DISABLE_RAW_TRANSFER).toBe(result.name === 'knip' ? '1' : undefined);
+    }
+
     for (const name of ['knip', 'jscpd', FALLOW_CLONES, FALLOW_HEALTH]) {
       expect(
         first.results.some((row) => row.name === name && row.findings > 0),
@@ -419,7 +712,61 @@ it.live(
     expect(readdirSync(path.join(root, '.codex'))).toEqual([CALLER_OWNED_FILE]);
     expect(readFileSync(path.join(root, '.codex/caller-owned.txt'), 'utf-8')).toBe('keep');
     expect(readFileSync(path.join(output, 'summary.md'), 'utf-8')).toMatch(/Malformed .*configs\/knip\.json/u);
-    expect(readFileSync(path.join(first.runDirectory, 'knip/report.ndjson'), 'utf-8').length > 0).toBe(true);
+    expect(readFileSync(path.join(first.runDirectory, KNIP_REPORT), 'utf-8').length > 0).toBe(true);
+  }),
+);
+
+it.live(
+  'native Knip admits scoped consumers outside ignored reports without hiding unused neighbors',
+  Effect.fn(function* scopedConsumerAdmission() {
+    const root = yield* createFixture();
+    const output = path.join(root, REPORT_DIRECTORY);
+    const workspace = 'verticals/admission';
+    const gateway = `${workspace}/src/api/action-gateway.ts`;
+    mkdirSync(path.join(root, workspace, 'src/api'), { recursive: true });
+    writeFileSync(path.join(root, GITIGNORE_FILE), 'node_modules/\n.codex/\n');
+    writeFileSync(path.join(root, '.codex/ignored-neighbor.ts'), 'export const ignoredNeighbor = 1;');
+    writeFileSync(path.join(root, workspace, PACKAGE_JSON), '{"name":"@fixture/admission","type":"module"}');
+    writeFileSync(
+      path.join(root, gateway),
+      '// @generated by OntOS Codesmith MicroVertical Action Boundary v1\nexport const ACTION_GATEWAY_AUDIENCE = "admission"; export const unusedNeighbor = 1;',
+    );
+    writeFileSync(path.join(root, SCRIPT_ENTRY), `import '../${gateway}';`);
+    writeFileSync(
+      path.join(root, KNIP_CONFIG),
+      yield* encodeReport({
+        workspaces: {
+          '.': { entry: [SCRIPT_ENTRY], lefthook: false, node: false, project: ['scripts/**/*.ts'] },
+          'verticals/*': { entry: [], lefthook: false, node: false, project: ['src/**/*.ts'] },
+        },
+      }),
+    );
+    yield* runFixture(root, output, 'all');
+    const report = yield* summary(output);
+    expect(report.results.every((result) => result.status === 'reported')).toBe(true);
+    const [issues, coverage] = readFileSync(path.join(report.runDirectory, KNIP_REPORT), 'utf-8').trim().split('\n');
+    const native = yield* Schema.decodeEffect(
+      Schema.fromJsonString(
+        Schema.Struct({
+          issues: Schema.Array(
+            Schema.Struct({
+              exports: Schema.Array(Schema.Struct({ name: Schema.String })),
+              file: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    )(issues ?? '');
+    expect(native.issues.find((issue) => issue.file === gateway)?.exports.map((item) => item.name)).toEqual([
+      'unusedNeighbor',
+    ]);
+    expect(coverage).not.toContain('entry-empty');
+    expect(issues).not.toContain('ignored-neighbor');
+    expect(readdirSync(root).filter((name) => name.startsWith('.quality-audit-model-'))).toEqual([]);
+    expect(readFileSync(path.join(root, '.codex/ignored-neighbor.ts'), 'utf-8')).toContain('ignoredNeighbor');
+    writeFileSync(path.join(root, KNIP_CONFIG), '{invalid');
+    yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(readdirSync(root).filter((name) => name.startsWith('.quality-audit-model-'))).toEqual([]);
   }),
 );
 
@@ -497,6 +844,7 @@ it.live(
           CI: 'true',
           FORCE_COLOR: '1',
           GITHUB_ACTIONS: 'true',
+          KNIP_DISABLE_RAW_TRANSFER: '0',
           NO_COLOR: '1',
           PATH: `/usr/bin:${yield* Config.String('PATH')}`,
         },
@@ -611,6 +959,11 @@ it.live(
   Effect.fn(function* testEffect18() {
     const root = yield* createFixture();
     const output = path.join(root, REPORT_DIRECTORY);
+    mkdirSync(path.join(root, STOREFRONT_WORKSPACE));
+    writeFileSync(
+      path.join(root, 'akros-storefront/package.json'),
+      yield* encodeReport({ name: STOREFRONT_WORKSPACE, private: true }),
+    );
     mkdirSync(path.join(root, 'packages/omitted'), { recursive: true });
     writeFileSync(
       path.join(root, 'packages/omitted/package.json'),
@@ -622,6 +975,7 @@ it.live(
     expect(narrowed.results[0]?.status).toBe('reported');
     expect(narrowed.results.at(-1)?.name).toBe('coverage');
     expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/Knip workspace coverage mismatch/u);
+    expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/akros-storefront/u);
     expect(narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
     mkdirSync(path.join(root, 'vendor/omitted'), { recursive: true });
     writeFileSync(
@@ -642,7 +996,7 @@ it.live(
     expect(omittedSourceError.message).toMatch(/analysis failed/u);
     const omitted = yield* summary(output);
     expect(omitted.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
-    expect(readFileSync(path.join(omitted.runDirectory, 'coverage.json'), 'utf-8')).toMatch(/scripts\/index.ts/u);
+    expect(readFileSync(path.join(omitted.runDirectory, COVERAGE_REPORT), 'utf-8')).toMatch(/scripts\/index.ts/u);
   }),
 );
 
@@ -744,7 +1098,7 @@ it.live('external report directories preserve valid Fallow exclusions and source
           missing: Schema.Array(Schema.String),
         }),
       ),
-    )(readFileSync(path.join(result.runDirectory, 'coverage.json'), 'utf-8'));
+    )(readFileSync(path.join(result.runDirectory, COVERAGE_REPORT), 'utf-8'));
     // Two authored fixture sources plus the copied Knip reporter, not remote declarations.
     expect(coverage).toEqual({ extra: [], intendedSources: 3, missing: [] });
     expect(result.results.some((row) => row.name === FALLOW_HEALTH && row.findings > 0)).toBeTruthy();

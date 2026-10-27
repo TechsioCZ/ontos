@@ -1,24 +1,36 @@
+import { pipe, DateTime, Effect, Schema } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 // AREA: clients (C00/C01) — owned by the crm-clients lane.
 // Klienti (Správce, Vedoucí) / Mí klienti (Obchodník): search, filters, list, and the client card in a SidePanel
 // opened from `?klient=<id>` (drill-down links from other CRM pages use the same param).
 import { PageHeader, StatCard, StatRow, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import { useState } from 'react';
+import type { ComponentProps } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 import { uncorrelatedCustomerLinks } from '../../../../../shared/commands/clients.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { salespersonName, useCrmRecords } from '../../../../crm/records.ts';
-import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
+import {
+  CrmScopeNote,
+  CrmStateGate,
+  useCrmRouteSelection,
+  crmPaginationProps,
+  crmTableTranslations,
+} from '../../../../crm/ui.tsx';
 import { CrmSalesKpiStrip } from '../prehled-prodeju/sales-kpi-strip.tsx';
 import { ClientCard } from './client-card.tsx';
 import { ClientFormDialog } from './client-form-dialog.tsx';
@@ -41,8 +53,10 @@ import { downloadCsv } from '../prehled-prodeju/report-format.ts';
 
 const ALL = 'all';
 const UNASSIGNED = 'none';
-type StatusFilter = 'active' | 'archived' | 'all';
-type RegistryFilter = 'all' | 'linked' | 'unlinked';
+const StatusFilterSchema = Schema.Literals(['active', 'archived', 'all']);
+type StatusFilter = typeof StatusFilterSchema.Type;
+const RegistryFilterSchema = Schema.Literals(['all', 'linked', 'unlinked']);
+type RegistryFilter = typeof RegistryFilterSchema.Type;
 
 const DAY_MS = 86_400_000;
 
@@ -50,7 +64,7 @@ interface ClientRow {
   readonly city: string | undefined;
   readonly client: Client;
   readonly contactCount: number;
-  readonly lastVisit: string | undefined;
+  readonly lastVisit: DateTime.Utc | undefined;
   readonly owner: string | undefined;
   readonly primaryContact: { readonly name: string; readonly role?: string } | undefined;
 }
@@ -145,13 +159,13 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
   },
   ...(showOwner ? [ownerColumn] : []),
   {
-    accessorFn: (row) => row.lastVisit ?? '',
+    accessorFn: (row) => orderDateText(row.lastVisit) ?? '',
     cell: (info) => {
-      const value = info.getValue<string>();
-      return value === '' ? (
+      const value = info.row.original.lastVisit;
+      return value === undefined ? (
         <span className="text-fg-secondary">bez kontaktu</span>
       ) : (
-        <span className="tabular-nums">{formatDate(value)}</span>
+        <span className="tabular-nums">{pipe(value, orderDateText, formatDate)}</span>
       );
     },
     header: 'Poslední kontakt',
@@ -162,13 +176,8 @@ const columns = (showOwner: boolean): ColumnDef<ClientRow>[] => [
 
 /** `?klient=<id>` of the current URL. */
 const useClientParam = () => {
-  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-  const fromUrl = useMemo(() => new URLSearchParams(searchStr).get('klient') ?? undefined, [searchStr]);
-  const [openId, setOpenId] = useState<string | undefined>(fromUrl);
-  useEffect(() => {
-    setOpenId(fromUrl);
-  }, [fromUrl]);
-  const setClient = useCallback((id: string | undefined) => {
+  const [openId, setOpenId] = useCrmRouteSelection('klient');
+  const setClient = (id: string | undefined) => {
     setOpenId(id);
     const url = new URL(globalThis.location.href);
     if (id === undefined) {
@@ -177,27 +186,28 @@ const useClientParam = () => {
       url.searchParams.set('klient', id);
     }
     globalThis.history.replaceState(globalThis.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, []);
+  };
   return [openId, setClient] as const;
 };
 
 const buildRows = (records: RecordsResponse): ClientRow[] =>
   records.state.clients.items.map((client) => {
     const primary = primaryContactOf(records, client.id);
+    const primaryContact: ClientRow['primaryContact'] = primary === undefined ? undefined : { name: primary.name };
+    if (primary !== undefined && primary.role !== undefined && primaryContact !== undefined) {
+      Object.assign(primaryContact, { role: primary.role });
+    }
     return {
       city: cityOf(client.address),
       client,
       contactCount: activeContactsOf(records, client.id).length,
       lastVisit: lastVisitOf(records, client.id),
       owner: salespersonName(records, client.ownerSalespersonId),
-      primaryContact:
-        primary === undefined
-          ? undefined
-          : { name: primary.name, ...(primary.role === undefined ? {} : { role: primary.role }) },
+      primaryContact,
     };
   });
 
-const ClientsList = ({
+const useClientsList = ({
   busy,
   onOpen,
   records,
@@ -219,12 +229,13 @@ const ClientsList = ({
 
   const manager = canSeeEverything(records.viewer);
   const canCreate = records.viewer.writeAll || records.viewer.writeAssigned;
-  const rows = useMemo(() => buildRows(records), [records]);
+  const rows = buildRows(records);
   const active = rows.filter((row) => row.client.status === 'active');
   const archivedCount = rows.length - active.length;
-  const nowMs = Date.parse(records.now);
   const visitedRecently = active.filter(
-    (row) => row.lastVisit !== undefined && nowMs - Date.parse(row.lastVisit) <= 30 * DAY_MS,
+    (row) =>
+      row.lastVisit !== undefined &&
+      DateTime.toEpochMillis(records.now) - DateTime.toEpochMillis(row.lastVisit) <= 30 * DAY_MS,
   ).length;
   const visible = rows.filter(
     (row) =>
@@ -239,89 +250,185 @@ const ClientsList = ({
   );
   const filtered =
     search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active' || registry !== 'all';
+  let emptyDescription = manager
+    ? 'Založte prvního klienta tlačítkem Nový klient.'
+    : 'Zatím vám nebyl přidělen žádný klient.';
+  if (filtered) {
+    emptyDescription = 'Upravte hledání nebo filtry.';
+  }
   const linkedCount = active.filter((row) => partyLinked(row.client)).length;
   const pendingCorrelations = uncorrelatedCustomerLinks(records.state);
   const toaster = useToast();
   const mine = records.viewer.salespersonId;
-  const summaries = (
-    <>
-      <StatRow>
+  const activeClientHint: Pick<ComponentProps<typeof StatCard>, 'hint'> = {};
+  if (archivedCount > 0) {
+    activeClientHint.hint = `${formatNumber(archivedCount)} v archivu`;
+  }
+
+  return {
+    active,
+    activeClientHint,
+    busy,
+    canCreate,
+    createOpen,
+    emptyDescription,
+    filtered,
+    linkedCount,
+    manager,
+    mine,
+    onOpen,
+    owner,
+    pendingCorrelations,
+    records,
+    registry,
+    search,
+    segment,
+    setCreateOpen,
+    setOwner,
+    setRegistry,
+    setSearch,
+    setSegment,
+    setStatus,
+    setTeamOpen,
+    status,
+    submit,
+    t,
+    teamOpen,
+    toaster,
+    visible,
+    visitedRecently,
+  };
+};
+
+const renderClientSummaries = ({
+  active,
+  activeClientHint,
+  busy,
+  linkedCount,
+  manager,
+  mine,
+  pendingCorrelations,
+  records,
+  submit,
+  t,
+  toaster,
+  visitedRecently,
+}: ReturnType<typeof useClientsList>) => (
+  <>
+    <StatRow>
+      <StatCard
+        {...activeClientHint}
+        label={t('crm.ciClientsVisits.clients.active')}
+        value={formatNumber(active.length)}
+      />
+      {manager ? (
         <StatCard
-          {...(archivedCount > 0 ? { hint: `${formatNumber(archivedCount)} v archivu` } : {})}
-          label="Aktivní klienti"
+          hint="Vidí je jen vedení a správce"
+          label={t('crm.ciClientsVisits.clients.withoutSalesperson')}
+          value={formatNumber(active.filter((row) => row.client.ownerSalespersonId === undefined).length)}
+        />
+      ) : (
+        <StatCard
+          hint={salespersonName(records, mine) ?? 'bez záznamu obchodníka'}
+          label={t('crm.ciClientsVisits.clients.assignedToMe')}
           value={formatNumber(active.length)}
         />
-        {manager ? (
-          <StatCard
-            hint="Vidí je jen vedení a správce"
-            label="Bez obchodníka"
-            value={formatNumber(active.filter((row) => row.client.ownerSalespersonId === undefined).length)}
-          />
-        ) : (
-          <StatCard
-            hint={salespersonName(records, mine) ?? 'bez záznamu obchodníka'}
-            label="Přidělení mně"
-            value={formatNumber(active.length)}
-          />
-        )}
-        <StatCard
-          label="Kontaktní osoby"
-          value={formatNumber(active.reduce((sum, row) => sum + row.contactCount, 0))}
-        />
-        <StatCard
-          hint="podle zapsaných kontaktů"
-          label="Kontaktováno za 30 dní"
-          value={formatNumber(visitedRecently)}
-        />
-        {manager && (
-          <StatCard
-            hint={
-              linkedCount === active.length
-                ? 'všichni aktivní klienti mají ověřenou identitu'
-                : `${formatNumber(active.length - linkedCount)} bez přiřazeného zákazníka`
-            }
-            label="Propojeno s evidencí zákazníků"
-            value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
-          />
-        )}
-      </StatRow>
-      {records.viewer.writeAll && (active.length > linkedCount || pendingCorrelations > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
-          <p className="text-sm">
-            {active.length > linkedCount
-              ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v evidenci zákazníků.`
-              : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na evidenci zákazníků.`}{' '}
-            Systém je založí nebo dohledá podle IČO a názvu a propojí.
-          </p>
-          <Button
-            disabled={busy}
-            icon="icon-[mdi--link-variant]"
-            onClick={() =>
-              void submit({ _tag: 'SyncClientParties' }).then((outcome) =>
-                toaster.create(
-                  outcome.ok
-                    ? { title: 'Klienti propojeni s evidencí zákazníků', type: 'success' }
-                    : {
-                        description: outcome.message ?? 'Zkuste to prosím znovu.',
-                        title: 'Propojení se nezdařilo',
-                        type: 'error',
-                      },
-                ),
-              )
-            }
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            Propojit s evidencí zákazníků
-          </Button>
-        </div>
       )}
-      {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
-          Siampark, never sees the wholesale "Prodeje v kostce" block. */}
-      {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
-    </>
-  );
+      <StatCard
+        label={t('crm.ciClientsVisits.contacts.title')}
+        value={formatNumber(active.reduce((sum, row) => sum + row.contactCount, 0))}
+      />
+      <StatCard
+        hint="podle zapsaných kontaktů"
+        label={t('crm.ciClientsVisits.clients.contactedLast30Days')}
+        value={formatNumber(visitedRecently)}
+      />
+      {manager && (
+        <StatCard
+          hint={
+            linkedCount === active.length
+              ? 'všichni aktivní klienti mají ověřenou identitu'
+              : `${formatNumber(active.length - linkedCount)} bez přiřazeného zákazníka`
+          }
+          label={t('crm.ciClientsVisits.clients.linkedToRegistry')}
+          value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
+        />
+      )}
+    </StatRow>
+    {records.viewer.writeAll && (active.length > linkedCount || pendingCorrelations > 0) && (
+      <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
+        <p className="text-sm">
+          {active.length > linkedCount
+            ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v evidenci zákazníků.`
+            : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na evidenci zákazníků.`}{' '}
+          Systém je založí nebo dohledá podle IČO a názvu a propojí.
+        </p>
+        <Button
+          disabled={busy}
+          icon="icon-[mdi--link-variant]"
+          onClick={() => {
+            browserRuntime.runFork(
+              submit({ _tag: 'SyncClientParties' }).pipe(
+                Effect.tap((outcome) =>
+                  Effect.sync(() =>
+                    toaster.create(
+                      outcome.ok
+                        ? { title: 'Klienti propojeni s evidencí zákazníků', type: 'success' }
+                        : {
+                            description: outcome.message ?? 'Zkuste to prosím znovu.',
+                            title: 'Propojení se nezdařilo',
+                            type: 'error',
+                          },
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Propojit s evidencí zákazníků
+        </Button>
+      </div>
+    )}
+    {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
+        Siampark, never sees the wholesale "Prodeje v kostce" block. */}
+    {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
+  </>
+);
+
+const ClientsList = (props: Parameters<typeof useClientsList>[0]) => {
+  const model = useClientsList(props);
+  const {
+    active,
+    busy,
+    canCreate,
+    createOpen,
+    emptyDescription,
+    filtered,
+    manager,
+    onOpen,
+    owner,
+    records,
+    registry,
+    search,
+    segment,
+    setCreateOpen,
+    setOwner,
+    setRegistry,
+    setSearch,
+    setSegment,
+    setStatus,
+    setTeamOpen,
+    status,
+    submit,
+    t,
+    teamOpen,
+    visible,
+  } = model;
+  const summaries = renderClientSummaries(model);
 
   return (
     <>
@@ -337,12 +444,12 @@ const ClientsList = ({
                     records,
                     visible.map((row) => row.client),
                   ),
-                  `kontakty-${records.now.slice(0, 10)}.csv`,
+                  `kontakty-${DateTime.formatIsoDateUtc(records.now)}.csv`,
                 )
               }
               size="sm"
               theme="outlined"
-              title="Klienti a kontaktní osoby podle aktuálních filtrů; jen záznamy, které smíte vidět"
+              title={t('crm.ciClientsVisits.clients.exportDescription')}
               variant="secondary"
             >
               Exportovat kontakty (CSV)
@@ -382,10 +489,10 @@ const ClientsList = ({
       </details>
       <div className="flex flex-wrap items-end gap-150">
         <Input
-          aria-label="Hledat klienta"
+          aria-label={t('crm.ciClientsVisits.clients.searchLabel')}
           className="w-full sm:w-80"
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Název, IČO, telefon, e-mail, kontaktní osoba"
+          placeholder={t('crm.ciClientsVisits.clients.searchPlaceholder')}
           size="sm"
           type="search"
           value={search}
@@ -393,7 +500,6 @@ const ClientsList = ({
         {manager && (
           <div className="w-full sm:w-52">
             <SelectTemplate
-              label="Obchodník"
               items={[
                 { label: 'Všichni obchodníci', value: ALL },
                 ...records.state.salespeople.map((person) => ({
@@ -402,6 +508,7 @@ const ClientsList = ({
                 })),
                 { label: 'Bez obchodníka', value: UNASSIGNED },
               ]}
+              label={t('crm.ciClientsVisits.fields.salesperson')}
               name="owner"
               onValueChange={(details) => setOwner(details.value[0] ?? ALL)}
               size="sm"
@@ -411,11 +518,11 @@ const ClientsList = ({
         )}
         <div className="w-full sm:w-52">
           <SelectTemplate
-            label="Segment"
             items={[
               { label: 'Všechny segmenty', value: ALL },
               ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
             ]}
+            label={t('crm.ciClientsVisits.fields.segment')}
             name="segment"
             onValueChange={(details) => setSegment(details.value[0] ?? ALL)}
             size="sm"
@@ -424,15 +531,15 @@ const ClientsList = ({
         </div>
         <div className="w-full sm:w-44">
           <SelectTemplate
-            label="Stav"
             items={[
               { label: 'Aktivní', value: 'active' },
               { label: 'Archivovaní', value: 'archived' },
               { label: 'Aktivní i archiv', value: 'all' },
             ]}
+            label={t('crm.ciClientsVisits.fields.status')}
             name="status"
             onValueChange={(details) => {
-              const next = details.value[0];
+              const [next] = details.value;
               if (next === 'active' || next === 'archived' || next === 'all') {
                 setStatus(next);
               }
@@ -444,15 +551,15 @@ const ClientsList = ({
         {manager && (
           <div className="w-full sm:w-52">
             <SelectTemplate
-              label="Evidence zákazníků"
               items={[
                 { label: 'Propojení i nepropojení', value: 'all' },
                 { label: 'Propojení s registrem', value: 'linked' },
                 { label: 'Čeká na propojení', value: 'unlinked' },
               ]}
+              label={t('crm.ciClientsVisits.clients.customerRegistry')}
               name="registry"
               onValueChange={(details) => {
-                const next = details.value[0];
+                const [next] = details.value;
                 if (next === 'all' || next === 'linked' || next === 'unlinked') {
                   setRegistry(next);
                 }
@@ -514,7 +621,9 @@ const ClientsList = ({
                   <span className="tabular-nums">{row.client.phone ?? ''}</span>
                 )}
                 <span className="text-fg-secondary text-xs">
-                  {row.lastVisit === undefined ? 'bez kontaktu' : `kontakt ${formatDate(row.lastVisit)}`}
+                  {row.lastVisit === undefined
+                    ? 'bez kontaktu'
+                    : `kontakt ${pipe(row.lastVisit, orderDateText, formatDate)}`}
                 </span>
               </span>
             </button>
@@ -538,11 +647,7 @@ const ClientsList = ({
           tableLayout="fixed"
           translations={{
             ...crmTableTranslations,
-            emptyDescription: filtered
-              ? 'Upravte hledání nebo filtry.'
-              : manager
-                ? 'Založte prvního klienta tlačítkem Nový klient.'
-                : 'Zatím vám nebyl přidělen žádný klient.',
+            emptyDescription,
             emptyTitle: filtered ? 'Žádný klient neodpovídá' : 'Zatím žádní klienti',
           }}
         />

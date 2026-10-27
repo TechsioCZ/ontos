@@ -13,8 +13,6 @@ export const StoredChoiceSchema = Schema.Struct({
   requestId: CustomerConsentRequestIdSchema,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 });
-export type StoredChoice = typeof StoredChoiceSchema.Type;
-
 interface ChoiceScope {
   readonly legalEntityId: string;
   readonly partyId: string;

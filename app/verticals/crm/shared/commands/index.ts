@@ -1,6 +1,7 @@
 // Central command union + dispatcher (owned by crm-scaffold). Feature lanes never edit this file: they add
 // commands to their own shared/commands/<area>.ts arrays, which are spread in here.
-import { Effect, Match, Schema } from 'effect';
+import { Match, Schema } from 'effect';
+import type { Effect } from 'effect';
 import type { CommandChange, CommandContext, CrmCommandFailure } from './context.ts';
 import type { PartyLinkInput } from '../domain/clients.ts';
 import type { CrmState } from '../domain/state.ts';
@@ -24,6 +25,7 @@ export const CrmCommandSchema = Schema.Union([
   ...customerInputsCommandSchemas,
 ]);
 export type CrmCommand = typeof CrmCommandSchema.Type;
+export type CrmCommandInput = typeof CrmCommandSchema.Encoded;
 
 const isClientsCommand = Schema.is(ClientsCommandSchema);
 const isVisitsCommand = Schema.is(VisitsCommandSchema);
@@ -44,24 +46,13 @@ export const dispatchCrmCommand = (
   state: CrmState,
   command: CrmCommand,
   context: CommandContext,
-): Effect.Effect<CommandChange, CrmCommandFailure> => {
-  if (isClientsCommand(command)) {
-    return applyClientsCommand(state, command, context);
-  }
-  if (isVisitsCommand(command)) {
-    return applyVisitsCommand(state, command, context);
-  }
-  if (isImportsCommand(command)) {
-    return applyImportsCommand(state, command, context);
-  }
-  if (isAiChangesCommand(command)) {
-    return applyAiChangesCommand(state, command, context);
-  }
-  if (isTeamCommand(command)) {
-    return applyTeamCommand(state, command, context);
-  }
-  if (isCustomerInputsCommand(command)) {
-    return applyCustomerInputsCommand(state, command, context);
-  }
-  return Effect.die(new Error(`Unrouted CRM command ${String((command as { readonly _tag?: unknown })._tag)}`));
-};
+): Effect.Effect<CommandChange, CrmCommandFailure> =>
+  Match.value(command).pipe(
+    Match.when(isClientsCommand, (value) => applyClientsCommand(state, value, context)),
+    Match.when(isVisitsCommand, (value) => applyVisitsCommand(state, value, context)),
+    Match.when(isImportsCommand, (value) => applyImportsCommand(state, value, context)),
+    Match.when(isAiChangesCommand, (value) => applyAiChangesCommand(state, value, context)),
+    Match.when(isTeamCommand, (value) => applyTeamCommand(state, value, context)),
+    Match.when(isCustomerInputsCommand, (value) => applyCustomerInputsCommand(state, value, context)),
+    Match.exhaustive,
+  );

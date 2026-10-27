@@ -279,12 +279,10 @@ export const currentPricingDecisionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
     prepare: prepareCurrentPricingDecision,
     // The Read's transaction admits the composition and checks owner authorization; the evaluation reads after it.
     load: () => Effect.void,
     finish: makeFinishCurrentPricingDecision(),
-    // oxlint-enable perfectionist/sort-objects
   },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),

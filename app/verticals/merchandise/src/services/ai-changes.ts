@@ -4,19 +4,27 @@
 //
 // Revert keeps the stock ledger honest: an order goes back to its previous values (its audit history keeps the
 // reverted step plus the return), and every stock movement the change wrote gets a compensating movement.
-import { decideAiChanges, proposeAiChanges, revertAiBatch } from '@app/shared-contracts/ai-approvals';
+import {
+  AiAdapterFailure,
+  AiContextSchema,
+  AiFailure,
+  decideAiChanges,
+  proposeAiChanges,
+  revertAiBatch,
+} from '@app/shared-contracts/ai-approvals';
 import type {
   AiApprovalAdapter,
   AiContext,
+  AiEntity,
   AiDescribed,
   AiDiffLine,
-  AiFailure,
   AiRisk,
   AiSnapshot,
 } from '@app/shared-contracts/ai-approvals';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
-import { DateTime, Effect, Exit, Match, Result, Schema } from 'effect';
-import { merchandiseAiCommandSchemas } from '../../shared/actions/apply-command.ts';
+import { Effect, Exit, Match, Schema } from 'effect';
+import type { DateTime } from 'effect';
+import { merchandiseAiCommandSchemas, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseAiOperation } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { OrderSchema, StockMovementIdSchema, StockMovementSchema } from '../../shared/domain/merchandise-model.ts';
@@ -110,9 +118,9 @@ const orderDiff = (before: Order, after: Order, helpers: AiOrderHelpers): readon
   ...diffLine('note', 'Poznámka', before.note ?? NO_NOTE, after.note ?? NO_NOTE),
 ];
 
-const encodeOrder = Schema.encodeUnknownResult(OrderSchema);
+const encodeOrder = Schema.encodeEffect(OrderSchema);
 const decodeOrder = Schema.decodeUnknownEffect(OrderSchema);
-const encodeMovement = Schema.encodeUnknownResult(StockMovementSchema);
+const encodeMovement = Schema.encodeEffect(StockMovementSchema);
 const decodeMovement = Schema.decodeUnknownEffect(StockMovementSchema);
 
 const previewOrders = Effect.fn('MerchandiseAi.previewOrders')(function* previewOrders(
@@ -121,7 +129,7 @@ const previewOrders = Effect.fn('MerchandiseAi.previewOrders')(function* preview
   context: AiCommandContext,
   helpers: AiOrderHelpers,
 ) {
-  // Prepare the synchronous adapter's descriptions inside the caller's Effect, without another runtime.
+  // Compute owner previews once in the caller's Effect; descriptions reuse those exact results.
   const previews = yield* Effect.forEach(
     changes,
     (entry) =>
@@ -155,29 +163,45 @@ const adapterFor = (
   const run = (state: MerchandiseState, operation: MerchandiseAiOperation, invocationId: string) =>
     helpers.evolveMerchandiseState(state, operation, { actor, now, resourceId: invocationId }).pipe(
       Effect.map((change) => ({ entityIds: change.entityIds, state: change.state })),
-      Effect.mapError((failure) => czechReason(failure.reason)),
+      Effect.mapError((cause) => new AiAdapterFailure({ cause, message: czechReason(cause.reason) })),
     );
-  const describe = (state: MerchandiseState, operation: MerchandiseAiOperation): AiDescribed => {
-    const before = state.orders.find((order) => order.id === operation.id);
-    const summary = Match.value(operation).pipe(
-      Match.tagsExhaustive({
-        ChangeOrderStatus: () => 'Změna stavu objednávky',
-        EditOrder: () => 'Úprava objednávky',
+  const describe = Effect.fn('MerchandiseAi.describe')(
+    (state: MerchandiseState, operation: MerchandiseAiOperation): Effect.Effect<AiDescribed> =>
+      Effect.sync(() => {
+        const before = state.orders.find((order) => order.id === operation.id);
+        const summary = Match.value(operation).pipe(
+          Match.tagsExhaustive({
+            ChangeOrderStatus: () => 'Změna stavu objednávky',
+            EditOrder: () => 'Úprava objednávky',
+          }),
+        );
+        const target = { id: operation.id, kind: 'order', label: orderLabel(before) };
+        const after = previewedOrders.get(operation);
+        return {
+          diff: before === undefined || after === undefined ? [] : orderDiff(before, after, helpers),
+          summary,
+          target,
+        };
       }),
-    );
-    const target = { id: operation.id, kind: 'order', label: orderLabel(before) };
-    const after = previewedOrders.get(operation);
-    return {
-      diff: before === undefined || after === undefined ? [] : orderDiff(before, after, helpers),
-      summary,
-      target,
-    };
-  };
+  );
   return {
     creates: () => false,
     describe,
-    encode: (kind, entity) =>
-      kind === 'order' ? Result.getOrThrow(encodeOrder(entity)) : Result.getOrThrow(encodeMovement(entity)),
+    encode: Effect.fn('MerchandiseAi.encodeSnapshot')(function* encodeSnapshot(
+      kind: string,
+      entity: AiEntity,
+    ): Effect.fn.Return<Schema.Json, AiAdapterFailure> {
+      if (kind === 'order') {
+        return yield* Schema.decodeUnknownEffect(Schema.toType(OrderSchema))(entity).pipe(
+          Effect.flatMap(encodeOrder),
+          Effect.mapError((cause) => new AiAdapterFailure({ cause, message: 'Uložený stav objednávky nelze zapsat.' })),
+        );
+      }
+      return yield* Schema.decodeUnknownEffect(Schema.toType(StockMovementSchema))(entity).pipe(
+        Effect.flatMap(encodeMovement),
+        Effect.mapError((cause) => new AiAdapterFailure({ cause, message: 'Skladový pohyb změny nelze zapsat.' })),
+      );
+    }),
     entities: (state, kind) => (kind === 'order' ? state.orders : state.movements),
     getSlice: (state) => state.aiChanges,
     kinds: ['order', 'movement'],
@@ -186,14 +210,14 @@ const adapterFor = (
       snapshot: AiSnapshot,
       context: AiContext & { readonly suffix: string },
       note: string,
-    ) {
+    ): Effect.fn.Return<MerchandiseState, AiAdapterFailure> {
       if (snapshot.kind === 'movement') {
         if (snapshot.before !== undefined || snapshot.after === undefined) {
           return state;
         }
         // Ledger rows are never removed: a compensating movement cancels the one the change wrote.
         const written = yield* decodeMovement(snapshot.after).pipe(
-          Effect.catchTag('SchemaError', () => Effect.fail('Skladový pohyb změny nelze přečíst.')),
+          Effect.mapError((cause) => new AiAdapterFailure({ cause, message: 'Skladový pohyb změny nelze přečíst.' })),
         );
         const delta = -written.delta;
         const stock =
@@ -201,12 +225,24 @@ const adapterFor = (
             ? stockOnHandOf(state.movements, written.productId)
             : variantStockOf(state.movements, written.productId, written.variantId);
         if (stock + delta < 0) {
-          return yield* Effect.fail('Na skladě už není dost kusů, aby šlo vrátit stav objednávky.');
+          return yield* new AiAdapterFailure({
+            cause: new MerchandiseLifecycleConflict({
+              code: 'merchandise_lifecycle_conflict',
+              reason: 'Na skladě už není dost kusů, aby šlo vrátit stav objednávky.',
+            }),
+            message: 'Na skladě už není dost kusů, aby šlo vrátit stav objednávky.',
+          });
         }
         const compensation: StockMovement = {
           at: now,
           delta,
-          id: StockMovementIdSchema.make(`${context.invocationId}:ai-revert:${context.suffix}`),
+          id: yield* Schema.decodeEffect(StockMovementIdSchema)(
+            `${context.invocationId}:ai-revert:${context.suffix}`,
+          ).pipe(
+            Effect.mapError(
+              (cause) => new AiAdapterFailure({ cause, message: 'Identitu skladového pohybu změny nelze vytvořit.' }),
+            ),
+          ),
           note: `Vrácení schválené změny AI: ${note}`.slice(0, 2000),
           productId: written.productId,
           reason: written.reason,
@@ -220,7 +256,7 @@ const adapterFor = (
         return state;
       }
       const before = yield* decodeOrder(snapshot.before).pipe(
-        Effect.catchTag('SchemaError', () => Effect.fail('Uložený stav objednávky nelze obnovit.')),
+        Effect.mapError((cause) => new AiAdapterFailure({ cause, message: 'Uložený stav objednávky nelze obnovit.' })),
       );
       const current = state.orders.find((order) => order.id === snapshot.id);
       const reason = `Vrácení změny AI: ${note}`.slice(0, 500);
@@ -261,19 +297,24 @@ const adapterFor = (
 };
 
 /** Runs one AI approval command against the state. Permission checks happen in persistence before this. */
-export const applyMerchandiseAiCommand = (
+export const applyMerchandiseAiCommand = Effect.fn('Merchandise.applyAiCommand')(function* applyAiCommand(
   state: MerchandiseState,
   command: AiCommand,
   context: AiCommandContext,
   helpers: AiOrderHelpers,
-): Effect.Effect<{ readonly entityIds: readonly string[]; readonly state: MerchandiseState }, AiFailure> => {
+): Effect.fn.Return<{ readonly entityIds: readonly string[]; readonly state: MerchandiseState }, AiFailure> {
   const adapter = adapterFor(context.actor, context.now, helpers);
-  const aiContext: AiContext = {
+  const aiContext: AiContext = yield* Schema.decodeEffect(AiContextSchema)({
     invocationId: context.invocationId,
-    now: DateTime.formatIso(context.now),
+    now: context.now,
     principalId: context.actor.principalId,
-  };
-  return Match.value(command).pipe(
+  }).pipe(
+    Effect.mapError((cause) => {
+      const message = 'Kontext schvalování AI nelze přečíst.';
+      return new AiFailure({ cause: new AiAdapterFailure({ cause, message }), kind: 'invalid', message });
+    }),
+  );
+  return yield* Match.value(command).pipe(
     Match.tagsExhaustive({
       AiDecideChanges: (value) =>
         decideAiChanges(
@@ -299,4 +340,4 @@ export const applyMerchandiseAiCommand = (
       AiRevertBatch: (value) => revertAiBatch(adapter, state, { batchId: value.batchId, note: value.note }, aiContext),
     }),
   );
-};
+});

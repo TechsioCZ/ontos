@@ -1,9 +1,10 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Building blocks of the Siampark overview dashboard (S15). Owned by the ops-agenda lane.
 import { EmptyState, SectionCard, formatMoney, formatNumber, formatPercent } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { DateTime, Effect, Match } from 'effect';
 import type { ReactNode } from 'react';
 import { agendaIds } from '../../../../../shared/agendas.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
@@ -30,6 +31,7 @@ import {
 import type { IconName } from '../../../../ui/ops-agenda/ui-bits.tsx';
 
 const k = 'facility-operations.agenda';
+const trackBackground = 'var(--color-neutral-200, #e5e7eb)';
 const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 const card = {
   background: 'var(--color-surface)',
@@ -45,10 +47,33 @@ const linkTo = (lang: string, href: string) => `/${lang}${href}`;
 
 // ---- Hero ----------------------------------------------------------------------------------------------------------
 
-const pragueHour = () =>
-  Number(
-    new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Europe/Prague' }).format(new Date()),
+const pragueHourFormat = new Intl.DateTimeFormat('en-GB', {
+  hour: 'numeric',
+  hour12: false,
+  timeZone: 'Europe/Prague',
+});
+const greetingForHour = (hour: number) => {
+  if (hour < 10) {
+    return 'morning';
+  }
+  if (hour < 18) {
+    return 'day';
+  }
+  return 'evening';
+};
+
+/** Quiet inline placeholder of a value whose source has not settled yet (no loading text). */
+const PendingBar = () => {
+  const { t } = useLang();
+  return (
+    <span
+      className="facilityoperations:inline-block facilityoperations:h-3 facilityoperations:w-16 facilityoperations:animate-pulse facilityoperations:rounded"
+      style={{ background: trackBackground }}
+    >
+      <span className="facilityoperations:sr-only">{t('facility-operations.common.loading')}</span>
+    </span>
   );
+};
 
 const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   const { t } = useLang();
@@ -69,15 +94,15 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
       </strong>
       {ready ? (
         <>
-          <div
+          <meter
             aria-label={t(`${k}.kpi.occupancy.label`)}
-            aria-valuemax={total}
-            aria-valuemin={0}
-            aria-valuenow={occupied}
-            aria-valuetext={t(`${k}.kpi.occupancy.secondary`, { occupied, total, reserved })}
-            role="meter"
-            style={{ background: '#fef3c7', borderRadius: 4, height: 10, overflow: 'hidden' }}
-          >
+            aria-valuetext={t(`${k}.kpi.occupancy.secondary`, { occupied, reserved, total })}
+            className="facilityoperations:sr-only"
+            max={total}
+            min={0}
+            value={occupied}
+          />
+          <div aria-hidden="true" style={{ background: '#fef3c7', borderRadius: 4, height: 10, overflow: 'hidden' }}>
             <span
               style={{
                 background: 'var(--color-primary-500, #ffc627)',
@@ -109,9 +134,56 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   );
 };
 
+const HeroStat = ({ label, tone, value }: { readonly label: string; readonly tone: Tone; readonly value: number }) => {
+  const colors = toneColors(tone);
+  return (
+    <span
+      className="facilityoperations:inline-flex facilityoperations:items-baseline facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2"
+      style={{ background: colors.bg, color: 'var(--color-fg-primary, #111827)' }}
+    >
+      <span className="facilityoperations:text-xl facilityoperations:font-semibold facilityoperations:tabular-nums">
+        {formatNumber(value)}
+      </span>
+      <span className="facilityoperations:text-xs facilityoperations:font-medium">{label}</span>
+    </span>
+  );
+};
+
+export const SourceHealth = ({ sources }: { readonly sources: RentalOverviewSources }) => {
+  const { lang, t } = useLang();
+  return (
+    <div
+      className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-x-3 facilityoperations:gap-y-1 facilityoperations:text-xs"
+      style={muted}
+    >
+      <span className="facilityoperations:font-medium">{t(`${k}.overview.sourcesLabel`)}</span>
+      {sourceKeys.map((key) => {
+        const source = sources[key];
+        const when = source.loadedAt === undefined ? '' : ` · ${fmt.clock(lang, source.loadedAt)}`;
+        const sourceLabel = t(`${k}.sources.${key}`);
+        const stateLabel = t(`${k}.state.${source.status}`);
+        return (
+          <fieldset
+            aria-label={`${sourceLabel}: ${stateLabel}${when}`}
+            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1"
+            data-source={key}
+            data-status={source.status}
+            key={key}
+            style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
+          >
+            <Dot tone={statusTone[source.status]} />
+            {sourceLabel}
+            {source.status === 'ready' || source.status === 'loading' ? '' : ` (${stateLabel})`}
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+};
+
 export const Hero = ({
-  displayName,
   deadlines,
+  displayName,
   kpis,
   onQuery,
   query,
@@ -119,8 +191,8 @@ export const Hero = ({
   today,
   unread,
 }: {
-  readonly displayName: string | undefined;
   readonly deadlines: readonly Deadline[];
+  readonly displayName: string | undefined;
   readonly kpis: readonly Kpi[];
   readonly onQuery: (value: string) => void;
   readonly query: string;
@@ -130,8 +202,8 @@ export const Hero = ({
 }) => {
   const { lang, t } = useLang();
   const personalName = personalGreetingName(displayName);
-  const hour = pragueHour();
-  const greeting = hour < 10 ? 'morning' : hour < 18 ? 'day' : 'evening';
+  const hour = browserRuntime.runSync(DateTime.now).pipe(DateTime.formatIntl(pragueHourFormat), Number);
+  const greeting = greetingForHour(hour);
   const open = deadlines.filter((row) => !row.done);
   const todayCount = open.filter((row) => row.date === today).length;
   const overdue = open.filter((row) => row.date < today && daysUntil(row.date, today) >= -60).length;
@@ -203,53 +275,9 @@ export const Hero = ({
   );
 };
 
-const HeroStat = ({ label, tone, value }: { readonly label: string; readonly tone: Tone; readonly value: number }) => {
-  const colors = toneColors(tone);
-  return (
-    <span
-      className="facilityoperations:inline-flex facilityoperations:items-baseline facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2"
-      style={{ background: colors.bg, color: 'var(--color-fg-primary, #111827)' }}
-    >
-      <span className="facilityoperations:text-xl facilityoperations:font-semibold facilityoperations:tabular-nums">
-        {formatNumber(value)}
-      </span>
-      <span className="facilityoperations:text-xs facilityoperations:font-medium">{label}</span>
-    </span>
-  );
-};
-
-export const SourceHealth = ({ sources }: { readonly sources: RentalOverviewSources }) => {
-  const { lang, t } = useLang();
-  return (
-    <div
-      className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-x-3 facilityoperations:gap-y-1 facilityoperations:text-xs"
-      style={muted}
-    >
-      <span className="facilityoperations:font-medium">{t(`${k}.overview.sourcesLabel`)}</span>
-      {sourceKeys.map((key) => {
-        const source = sources[key];
-        const when = source.loadedAt === undefined ? '' : ` · ${fmt.clock(lang, source.loadedAt)}`;
-        return (
-          <span
-            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1"
-            data-source={key}
-            data-status={source.status}
-            key={key}
-            title={`${t(`${k}.sources.${key}`)}: ${t(`${k}.state.${source.status}`)}${when}`}
-          >
-            <Dot tone={statusTone[source.status]} />
-            {t(`${k}.sources.${key}`)}
-            {source.status === 'ready' || source.status === 'loading' ? '' : ` (${t(`${k}.state.${source.status}`)})`}
-          </span>
-        );
-      })}
-    </div>
-  );
-};
-
 // ---- KPI grid ------------------------------------------------------------------------------------------------------
 
-const kpiIcon: Record<KpiId, IconName> = {
+const kpiIcon = {
   contracts: 'timer',
   deadlines: 'calendar',
   incidents: 'shield',
@@ -260,37 +288,30 @@ const kpiIcon: Record<KpiId, IconName> = {
   planActual: 'clipboard',
   properties: 'building',
   salesCases: 'contract',
-};
+} satisfies Record<KpiId, IconName>;
 
-const secondaryValues = (kpi: Kpi): Record<string, string | number> => {
-  const values: Record<string, string | number> = { ...kpi.secondary };
-  if (typeof values['amountMinor'] === 'number') {
-    values['amount'] = formatMoney(values['amountMinor']);
-  }
-  return values;
-};
-
-/** Quiet inline placeholder of a value whose source has not settled yet (no loading text). */
-const PendingBar = () => {
-  const { t } = useLang();
-  return (
-    <span
-      className="facilityoperations:inline-block facilityoperations:h-3 facilityoperations:w-16 facilityoperations:animate-pulse facilityoperations:rounded"
-      style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
-    >
-      <span className="facilityoperations:sr-only">{t('facility-operations.common.loading')}</span>
-    </span>
+const secondaryValues = (kpi: Kpi) => {
+  const values = { ...kpi.secondary };
+  return Match.value(values['amountMinor']).pipe(
+    Match.when(Match.number, (amountMinor) => ({ ...values, amount: formatMoney(amountMinor) })),
+    Match.orElse(() => values),
   );
 };
+
+const kpiStateIcon = {
+  forbidden: 'lock',
+  noData: 'info',
+  unavailable: 'alert',
+} satisfies Record<Exclude<Kpi['status'], 'loading' | 'ready'> | 'noData', IconName>;
 
 const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
   const { t } = useLang();
   if (kpi.status === 'loading') {
     return (
-      <span
+      <output
         aria-label={t('facility-operations.common.loading')}
         className="facilityoperations:block facilityoperations:h-9 facilityoperations:w-24 facilityoperations:animate-pulse facilityoperations:rounded-lg"
-        style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+        style={{ background: trackBackground }}
       />
     );
   }
@@ -301,7 +322,7 @@ const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
         className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-lg facilityoperations:font-semibold"
         style={muted}
       >
-        <Icon name={state === 'forbidden' ? 'lock' : state === 'unavailable' ? 'alert' : 'info'} size={18} />
+        <Icon name={kpiStateIcon[state]} size={18} />
         {t(`${k}.state.${state}`)}
       </span>
     );
@@ -337,6 +358,7 @@ export const KpiGrid = ({
         const ready = kpi.status === 'ready' && kpi.value !== undefined;
         return (
           <button
+            aria-describedby={`kpi-${kpi.id}-definition`}
             aria-pressed={active}
             className="facilityoperations:group facilityoperations:flex facilityoperations:min-h-[184px] facilityoperations:cursor-pointer facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:rounded-2xl facilityoperations:p-4 facilityoperations:text-left facilityoperations:transition-shadow facilityoperations:hover:shadow-lg"
             data-kpi={kpi.id}
@@ -350,9 +372,11 @@ export const KpiGrid = ({
               color: 'inherit',
               font: 'inherit',
             }}
-            title={t(`${k}.kpi.${kpi.id}.definition`)}
             type="button"
           >
+            <span hidden id={`kpi-${kpi.id}-definition`}>
+              {t(`${k}.kpi.${kpi.id}.definition`)}
+            </span>
             <div className="facilityoperations:flex facilityoperations:items-start facilityoperations:justify-between facilityoperations:gap-2">
               <IconBadge name={kpiIcon[kpi.id]} tone={ready ? kpi.tone : 'neutral'} />
               <span
@@ -370,7 +394,7 @@ export const KpiGrid = ({
             {kpi.kind === 'percent' && ready && (
               <span
                 className="facilityoperations:block facilityoperations:h-1.5 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
-                style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+                style={{ background: trackBackground }}
               >
                 <span
                   className="facilityoperations:block facilityoperations:h-full facilityoperations:rounded-full"
@@ -404,86 +428,6 @@ export const KpiGrid = ({
 const statusLabel = (t: (key: string) => string, status: string | undefined) =>
   status === undefined ? '' : t(`${k}.status.${status}`);
 
-export const DrillDown = ({
-  agendaRevision,
-  canLog,
-  kpi,
-  onClose,
-}: {
-  readonly agendaRevision: number;
-  readonly canLog: boolean;
-  readonly kpi: Kpi;
-  readonly onClose: () => void;
-}) => {
-  const { lang, t } = useLang();
-  const label = t(`${k}.kpi.${kpi.id}.label`);
-  const csv = () =>
-    void exportCsv({
-      fileName: `provoz-${kpi.id}-${new Date().toISOString().slice(0, 10)}.csv`,
-      filter: `kpi=${kpi.id}`,
-      header: [
-        t(`${k}.columns.title`),
-        t(`${k}.columns.detail`),
-        t(`${k}.columns.date`),
-        t(`${k}.columns.status`),
-        t(`${k}.columns.amount`),
-        t(`${k}.columns.link`),
-      ],
-      list: `overview:${kpi.id}`,
-      log: canLog,
-      revision: agendaRevision,
-      rows: kpi.rows.map((row) => [
-        row.title,
-        row.subtitle,
-        row.date,
-        statusLabel(t, row.status),
-        row.amountMinor === undefined ? undefined : (row.amountMinor / 100).toFixed(2).replace('.', ','),
-        `${window.location.origin}${linkTo(lang, row.href)}`,
-      ]),
-    });
-  return (
-    <div id="ops-overview-drilldown" style={{ scrollMarginTop: 16 }}>
-      <SectionCard
-        actions={
-          <>
-            {kpi.status === 'ready' && kpi.rows.length > 0 && (
-              <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
-                {t(`${k}.export.csv`)}
-              </Button>
-            )}
-            <Button onClick={onClose} size="sm" theme="borderless" variant="secondary">
-              {t('facility-operations.common.close')}
-            </Button>
-          </>
-        }
-        title={`${label} — ${kpi.status === 'ready' ? t(`${k}.overview.records`, { count: kpi.rows.length }) : t(`${k}.state.${kpi.status}`)}`}
-      >
-        <div
-          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:text-sm"
-          style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
-        >
-          <span>
-            <strong>{t(`${k}.overview.definition`)}:</strong> {t(`${k}.kpi.${kpi.id}.definition`)}
-          </span>
-          <span style={muted}>
-            {t(`${k}.overview.sourceLine`, {
-              sources: kpi.sources.map((source) => t(`${k}.sources.${source}`)).join(', ') || '—',
-              time: kpi.loadedAt === undefined ? '—' : fmt.stamp(lang, kpi.loadedAt),
-            })}
-          </span>
-        </div>
-        {kpi.status !== 'ready' ? (
-          <EmptyState description={t(`${k}.state.${kpi.status}Description`)} title={t(`${k}.state.${kpi.status}`)} />
-        ) : kpi.rows.length === 0 ? (
-          <EmptyState description={t(`${k}.overview.zeroConfirmed`)} title={t(`${k}.overview.noRecords`)} />
-        ) : (
-          <RecordTable rows={kpi.rows} />
-        )}
-      </SectionCard>
-    </div>
-  );
-};
-
 const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
   const { lang, t } = useLang();
   return (
@@ -506,7 +450,9 @@ const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
             <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:text-right facilityoperations:font-medium">
               {t(`${k}.columns.amount`)}
             </th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2" />
+            <th className="facilityoperations:px-3 facilityoperations:py-2">
+              <span className="facilityoperations:sr-only">{t(`${k}.columns.link`)}</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -550,9 +496,100 @@ const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
   );
 };
 
+export const DrillDown = ({
+  agendaRevision,
+  canLog,
+  kpi,
+  onClose,
+}: {
+  readonly agendaRevision: number;
+  readonly canLog: boolean;
+  readonly kpi: Kpi;
+  readonly onClose: () => void;
+}) => {
+  const { lang, t } = useLang();
+  const label = t(`${k}.kpi.${kpi.id}.label`);
+  const detail =
+    kpi.status === 'ready' ? t(`${k}.overview.records`, { count: kpi.rows.length }) : t(`${k}.state.${kpi.status}`);
+  let body: ReactNode;
+  if (kpi.status !== 'ready') {
+    body = <EmptyState description={t(`${k}.state.${kpi.status}Description`)} title={t(`${k}.state.${kpi.status}`)} />;
+  } else if (kpi.rows.length === 0) {
+    body = <EmptyState description={t(`${k}.overview.zeroConfirmed`)} title={t(`${k}.overview.noRecords`)} />;
+  } else {
+    body = <RecordTable rows={kpi.rows} />;
+  }
+  const csv = () => {
+    browserRuntime.runFork(
+      DateTime.now.pipe(
+        Effect.flatMap((now) =>
+          exportCsv({
+            fileName: `provoz-${kpi.id}-${now.pipe(DateTime.formatIsoDateUtc)}.csv`,
+            filter: `kpi=${kpi.id}`,
+            header: [
+              t(`${k}.columns.title`),
+              t(`${k}.columns.detail`),
+              t(`${k}.columns.date`),
+              t(`${k}.columns.status`),
+              t(`${k}.columns.amount`),
+              t(`${k}.columns.link`),
+            ],
+            list: `overview:${kpi.id}`,
+            log: canLog,
+            revision: agendaRevision,
+            rows: kpi.rows.map((row) => [
+              row.title,
+              row.subtitle,
+              row.date,
+              statusLabel(t, row.status),
+              row.amountMinor === undefined ? undefined : (row.amountMinor / 100).toFixed(2).replace('.', ','),
+              `${window.location.origin}${linkTo(lang, row.href)}`,
+            ]),
+          }),
+        ),
+      ),
+    );
+  };
+  return (
+    <div id="ops-overview-drilldown" style={{ scrollMarginTop: 16 }}>
+      <SectionCard
+        actions={
+          <>
+            {kpi.status === 'ready' && kpi.rows.length > 0 && (
+              <Button onClick={csv} size="sm" theme="outlined" variant="secondary">
+                {t(`${k}.export.csv`)}
+              </Button>
+            )}
+            <Button onClick={onClose} size="sm" theme="borderless" variant="secondary">
+              {t('facility-operations.common.close')}
+            </Button>
+          </>
+        }
+        title={`${label} — ${detail}`}
+      >
+        <div
+          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:text-sm"
+          style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
+        >
+          <span>
+            <strong>{t(`${k}.overview.definition`)}:</strong> {t(`${k}.kpi.${kpi.id}.definition`)}
+          </span>
+          <span style={muted}>
+            {t(`${k}.overview.sourceLine`, {
+              sources: kpi.sources.map((source) => t(`${k}.sources.${source}`)).join(', ') || '—',
+              time: kpi.loadedAt === undefined ? '—' : fmt.stamp(lang, kpi.loadedAt),
+            })}
+          </span>
+        </div>
+        {body}
+      </SectionCard>
+    </div>
+  );
+};
+
 // ---- Search --------------------------------------------------------------------------------------------------------
 
-const kindTone: Record<SearchKind, Tone> = {
+const kindTone = {
   asset: 'neutral',
   contract: 'warning',
   event: 'primary',
@@ -563,7 +600,7 @@ const kindTone: Record<SearchKind, Tone> = {
   property: 'success',
   task: 'primary',
   unit: 'success',
-};
+} satisfies Record<SearchKind, Tone>;
 
 export const SearchResults = ({
   agendaRevision,
@@ -581,32 +618,39 @@ export const SearchResults = ({
   readonly sources: RentalOverviewSources;
 }) => {
   const { lang, t } = useLang();
-  const results = useMemo(() => searchRows(index, query, 80), [index, query]);
+  const results = searchRows(index, query, 80);
   const hidden = sourceKeys.filter(
     (key) => sources[key].status === 'forbidden' || sources[key].status === 'unavailable',
   );
-  const csv = () =>
-    void exportCsv({
-      fileName: `provoz-hledani-${new Date().toISOString().slice(0, 10)}.csv`,
-      filter: `q=${query}`,
-      header: [
-        t(`${k}.columns.type`),
-        t(`${k}.columns.title`),
-        t(`${k}.columns.detail`),
-        t(`${k}.columns.source`),
-        t(`${k}.columns.link`),
-      ],
-      list: 'search',
-      log: canLog,
-      revision: agendaRevision,
-      rows: results.map((row) => [
-        t(`${k}.search.kind.${row.kind}`),
-        row.title,
-        row.subtitle,
-        t(`${k}.sources.${row.source}`),
-        `${window.location.origin}${linkTo(lang, row.href)}`,
-      ]),
-    });
+  const csv = () => {
+    browserRuntime.runFork(
+      DateTime.now.pipe(
+        Effect.flatMap((now) =>
+          exportCsv({
+            fileName: `provoz-hledani-${now.pipe(DateTime.formatIsoDateUtc)}.csv`,
+            filter: `q=${query}`,
+            header: [
+              t(`${k}.columns.type`),
+              t(`${k}.columns.title`),
+              t(`${k}.columns.detail`),
+              t(`${k}.columns.source`),
+              t(`${k}.columns.link`),
+            ],
+            list: 'search',
+            log: canLog,
+            revision: agendaRevision,
+            rows: results.map((row) => [
+              t(`${k}.search.kind.${row.kind}`),
+              row.title,
+              row.subtitle,
+              t(`${k}.sources.${row.source}`),
+              `${window.location.origin}${linkTo(lang, row.href)}`,
+            ]),
+          }),
+        ),
+      ),
+    );
+  };
   return (
     <SectionCard
       actions={
@@ -625,8 +669,9 @@ export const SearchResults = ({
     >
       <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
         {t(`${k}.search.scope`, { count: index.length })}
+        {hidden.length > 0 && ' '}
         {hidden.length > 0 &&
-          ` ${t(`${k}.search.hidden`, { sources: hidden.map((key) => t(`${k}.sources.${key}`)).join(', ') })}`}
+          t(`${k}.search.hidden`, { sources: hidden.map((key) => t(`${k}.sources.${key}`)).join(', ') })}
       </p>
       {results.length === 0 ? (
         <EmptyState description={t(`${k}.search.emptyDescription`)} title={t(`${k}.search.empty`)} />
@@ -740,7 +785,7 @@ export const UpcomingTimeline = ({
                       className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:no-underline facilityoperations:hover:shadow-sm"
                       href={linkTo(lang, row.href)}
                       key={row.key}
-                      style={{ color: 'inherit', background: 'var(--color-surface-subtle, #f8fafc)' }}
+                      style={{ background: 'var(--color-surface-subtle, #f8fafc)', color: 'inherit' }}
                     >
                       <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
                       <span className="facilityoperations:truncate facilityoperations:text-sm facilityoperations:font-medium">
@@ -773,7 +818,11 @@ export const UpcomingTimeline = ({
         <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
           {t(`${k}.calendar.missingSources`, {
             sources: missing
-              .map((key) => `${t(`${k}.sources.${key}`)} (${t(`${k}.state.${sources[key].status}`)})`)
+              .map((key) => {
+                const sourceLabel = t(`${k}.sources.${key}`);
+                const stateLabel = t(`${k}.state.${sources[key].status}`);
+                return `${sourceLabel} (${stateLabel})`;
+              })
               .join(', '),
           })}
         </p>
@@ -796,7 +845,7 @@ export const OccupancyByBuilding = ({
   const occupancy = sources.occupancy.data;
   let body: ReactNode;
   if (property === undefined || occupancy === undefined) {
-    const status = sources.property.status !== 'ready' ? sources.property.status : sources.occupancy.status;
+    const status = sources.property.status === 'ready' ? sources.occupancy.status : sources.property.status;
     body =
       status === 'loading' ? (
         <LoadingSkeleton rows={3} />
@@ -804,14 +853,16 @@ export const OccupancyByBuilding = ({
         <EmptyState description={t(`${k}.state.${status}Description`)} title={t(`${k}.state.${status}`)} />
       );
   } else {
-    const buildings = property.properties
-      .filter((entry) => entry.lifecycleState === 'ACTIVE')
-      .map((entry) => {
-        const units = property.units.filter(
-          (unit) => unit.propertyRef.resourceId === entry.propertyRef.resourceId && unit.lifecycleState === 'ACTIVE',
-        );
-        const states = units.map((unit) => unitAvailability(unit.unitRef.resourceId, occupancy.occupancies, today));
-        return {
+    const buildings = property.properties.flatMap((entry) => {
+      if (entry.lifecycleState !== 'ACTIVE') {
+        return [];
+      }
+      const units = property.units.filter(
+        (unit) => unit.propertyRef.resourceId === entry.propertyRef.resourceId && unit.lifecycleState === 'ACTIVE',
+      );
+      const states = units.map((unit) => unitAvailability(unit.unitRef.resourceId, occupancy.occupancies, today));
+      return [
+        {
           code: entry.code,
           free: states.filter((state) => state === 'AVAILABLE').length,
           id: entry.propertyRef.resourceId,
@@ -819,8 +870,9 @@ export const OccupancyByBuilding = ({
           occupied: states.filter((state) => state === 'OCCUPIED').length,
           reserved: states.filter((state) => state === 'RESERVED').length,
           total: units.length,
-        };
-      });
+        },
+      ];
+    });
     body =
       buildings.length === 0 ? (
         <EmptyState description={t(`${k}.overview.noBuildingsDescription`)} title={t(`${k}.state.noData`)} />
@@ -846,7 +898,7 @@ export const OccupancyByBuilding = ({
               </div>
               <div
                 className="facilityoperations:flex facilityoperations:h-3 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
-                style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+                style={{ background: trackBackground }}
               >
                 {building.total > 0 && (
                   <>
@@ -882,24 +934,36 @@ export const OccupancyByBuilding = ({
 
 // ---- Provoz agendas ----------------------------------------------------------------------------------------------
 
-const agendaIcon: Record<string, IconName> = {
+const agendaIcon = {
   agenda: 'calendar',
   assets: 'building',
   documents: 'contract',
   meters: 'timer',
   purchasing: 'clipboard',
   security: 'shield',
-};
+} satisfies Record<(typeof agendaIds)[number], IconName>;
 
 export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSources }) => {
   const { lang, t } = useLang();
-  const ops = sources.ops;
+  const { ops } = sources;
   return (
     <SectionCard title={t(`${k}.overview.opsTitle`)}>
       <div className="facilityoperations:grid facilityoperations:grid-cols-2 facilityoperations:gap-3 facilityoperations:md:grid-cols-3 facilityoperations:xl:grid-cols-6">
         {agendaIds.map((agenda) => {
           const envelope = ops.data?.agendas.find((entry) => entry.agenda === agenda);
           const locked = ops.status === 'ready' && envelope === undefined;
+          let summary: ReactNode;
+          if (ops.status === 'loading') {
+            summary = <PendingBar />;
+          } else if (locked || ops.status === 'forbidden') {
+            summary = t(`${k}.state.forbidden`);
+          } else if (envelope === undefined) {
+            summary = t(`${k}.state.unavailable`);
+          } else if (envelope.revision === 0 && envelope.records === 0) {
+            summary = t(`${k}.state.noData`);
+          } else {
+            summary = t(`${k}.overview.records`, { count: envelope.records });
+          }
           return (
             <a
               className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:no-underline facilityoperations:hover:shadow-md"
@@ -917,17 +981,7 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
                 {t(`facility-operations.${agenda}.title`)}
               </span>
               <span className="facilityoperations:text-xs" style={muted}>
-                {ops.status === 'loading' ? (
-                  <PendingBar />
-                ) : locked || ops.status === 'forbidden' ? (
-                  t(`${k}.state.forbidden`)
-                ) : envelope === undefined ? (
-                  t(`${k}.state.unavailable`)
-                ) : envelope.revision === 0 && envelope.records === 0 ? (
-                  t(`${k}.state.noData`)
-                ) : (
-                  t(`${k}.overview.records`, { count: envelope.records })
-                )}
+                {summary}
               </span>
             </a>
           );

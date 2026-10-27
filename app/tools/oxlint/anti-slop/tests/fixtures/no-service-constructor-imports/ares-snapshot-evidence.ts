@@ -58,7 +58,6 @@ export const AresRegisteredAddressSchema = Schema.Struct({
   postalCode: Schema.OptionFromNullOr(Schema.Trim.check(Schema.isPattern(/^\d{5}$/u))),
   street: Schema.OptionFromNullOr(boundedText(200)),
 });
-export type AresRegisteredAddress = typeof AresRegisteredAddressSchema.Type;
 
 const AresSubjectObservationSchema = Schema.Struct({
   businessName: Schema.OptionFromNullOr(boundedText(500)),
@@ -87,4 +86,3 @@ export const AresSubjectEvidenceSchema = Schema.Struct({
       : [{ issue: 'servedAt must not precede observedAt', path: ['servedAt'] }],
   ),
 );
-export type AresSubjectEvidence = typeof AresSubjectEvidenceSchema.Type;

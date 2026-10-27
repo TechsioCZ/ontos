@@ -261,7 +261,9 @@ try {
 
   await page.goto(
     new URL("/produkt/vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2", baseUrl).href,
-    { waitUntil: "networkidle" },
+    {
+      waitUntil: "networkidle",
+    },
   );
   const detailBadge = page.locator(".akros-product-detail__variant-badge");
   await probe(

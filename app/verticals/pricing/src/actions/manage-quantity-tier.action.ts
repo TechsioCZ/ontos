@@ -123,19 +123,32 @@ const acknowledgementMatches = (
   );
 };
 
+const quantityTierScopeMatches = (
+  identityKey: ManageQuantityTierPayload['identityKey'],
+  trusted: ManageQuantityTierTrustedContext,
+): boolean =>
+  trusted.legalEntityId !== undefined &&
+  identityKey.priceRef.tenantId === trusted.tenantId &&
+  identityKey.quantityBasis.catalogQuantityBasis.targetRef.tenantId === trusted.tenantId &&
+  identityKey.quantityBasis.catalogQuantityBasis.unitRef.tenantId === trusted.tenantId &&
+  identityKey.quantityBasis.priceUnitBasis.unitRef.tenantId === trusted.tenantId;
+
+const quantityTierEditFitsCurrent = (
+  payload: Extract<ManageQuantityTierPayload, { readonly intent: 'RETIRE_CURRENT' | 'VALUE_ONLY_CURRENT' }>,
+): boolean => {
+  const { effectiveFrom, effectiveTo } = payload.expectedCurrent.effectivePeriod;
+  return payload.intent === 'RETIRE_CURRENT'
+    ? payload.effectiveTo > effectiveFrom && (effectiveTo === null || payload.effectiveTo <= effectiveTo)
+    : payload.effectiveFrom >= effectiveFrom && (effectiveTo === null || payload.effectiveFrom < effectiveTo);
+};
+
 export const applyQuantityTierManagement = Effect.fn('ManageQuantityTierAction.apply')(
   function* applyQuantityTierManagement(
     payload: ManageQuantityTierPayload,
     trusted: ManageQuantityTierTrustedContext,
     services: ManageQuantityTierActionServices,
   ) {
-    if (
-      trusted.legalEntityId === undefined ||
-      payload.identityKey.priceRef.tenantId !== trusted.tenantId ||
-      payload.identityKey.quantityBasis.catalogQuantityBasis.targetRef.tenantId !== trusted.tenantId ||
-      payload.identityKey.quantityBasis.catalogQuantityBasis.unitRef.tenantId !== trusted.tenantId ||
-      payload.identityKey.quantityBasis.priceUnitBasis.unitRef.tenantId !== trusted.tenantId
-    ) {
+    if (!quantityTierScopeMatches(payload.identityKey, trusted)) {
       return yield* new ManageQuantityTierRejected({
         code: 'manage_quantity_tier_scope_mismatch',
         reason: 'Quantity Tier management must match the trusted Tenant and Selling Legal Entity scope',
@@ -150,23 +163,13 @@ export const applyQuantityTierManagement = Effect.fn('ManageQuantityTierAction.a
         reason: 'Expected Current evidence must bind the exact Price, threshold, and Quantity basis',
       });
     }
-    if (
-      payload.intent === 'RETIRE_CURRENT' &&
-      (payload.effectiveTo <= payload.expectedCurrent.effectivePeriod.effectiveFrom ||
-        (payload.expectedCurrent.effectivePeriod.effectiveTo !== null &&
-          payload.effectiveTo > payload.expectedCurrent.effectivePeriod.effectiveTo))
-    ) {
+    if (payload.intent === 'RETIRE_CURRENT' && !quantityTierEditFitsCurrent(payload)) {
       return yield* new ManageQuantityTierRejected({
         code: 'manage_quantity_tier_target_mismatch',
         reason: 'Retirement must shorten the explicitly targeted Current interval without extending it',
       });
     }
-    if (
-      payload.intent === 'VALUE_ONLY_CURRENT' &&
-      (payload.effectiveFrom < payload.expectedCurrent.effectivePeriod.effectiveFrom ||
-        (payload.expectedCurrent.effectivePeriod.effectiveTo !== null &&
-          payload.effectiveFrom >= payload.expectedCurrent.effectivePeriod.effectiveTo))
-    ) {
+    if (payload.intent === 'VALUE_ONLY_CURRENT' && !quantityTierEditFitsCurrent(payload)) {
       return yield* new ManageQuantityTierRejected({
         code: 'manage_quantity_tier_target_mismatch',
         reason: 'Value-only effectivity must start within the explicitly targeted Current interval',

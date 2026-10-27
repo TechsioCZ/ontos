@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { RecordsRequest } from '../../shared/apis/records.ts';
 import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { AKROS_LEGAL_ENTITY_ID, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
@@ -90,7 +90,6 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (input: RecordsRequest, context) =>
       akrosServiceKeyGuard(input, context.scope).pipe(
         Effect.andThen(
@@ -107,7 +106,6 @@ export const recordsRead = defineRead(
           Effect.mapError(readFailure),
           Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
         ),
-    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

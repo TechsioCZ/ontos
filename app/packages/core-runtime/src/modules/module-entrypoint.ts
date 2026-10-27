@@ -1,4 +1,22 @@
-import { Match, Result, Schema } from 'effect';
+import {
+  exhaustive as matchExhaustive,
+  value as matchValue,
+  when as matchWhen,
+  whenOr as matchWhenOr,
+} from 'effect/Match';
+import { getOrThrow as getResultOrThrow } from 'effect/Result';
+import {
+  Literals,
+  String as StringSchema,
+  Struct,
+  TaggedError,
+  brand,
+  decodeUnknownResult,
+  isMaxLength,
+  isMinLength,
+  isPattern,
+} from 'effect/Schema';
+import type { Schema } from 'effect/Schema';
 
 import { EntrypointAuthorizationSchema } from '../authorization/entrypoint-classification.ts';
 import type { EntrypointAuthorization } from '../authorization/entrypoint-classification.ts';
@@ -15,20 +33,20 @@ export const MODULE_ENTRYPOINT_ROLES = [
 export const MODULE_ENTRYPOINT_ACCESSES = ['read', 'historical_read', 'write', 'background'] as const;
 export const MODULE_ENTRYPOINT_SCOPES = ['tenant', 'system'] as const;
 
-export const ModuleEntrypointRoleSchema = Schema.Literals(MODULE_ENTRYPOINT_ROLES);
-export const ModuleEntrypointAccessSchema = Schema.Literals(MODULE_ENTRYPOINT_ACCESSES);
-export const ModuleEntrypointScopeSchema = Schema.Literals(MODULE_ENTRYPOINT_SCOPES);
-export type ModuleEntrypointRole = Schema.Schema.Type<typeof ModuleEntrypointRoleSchema>;
-export type ModuleEntrypointAccess = Schema.Schema.Type<typeof ModuleEntrypointAccessSchema>;
-export type ModuleEntrypointScope = Schema.Schema.Type<typeof ModuleEntrypointScopeSchema>;
+export const ModuleEntrypointRoleSchema = Literals(MODULE_ENTRYPOINT_ROLES);
+export const ModuleEntrypointAccessSchema = Literals(MODULE_ENTRYPOINT_ACCESSES);
+export const ModuleEntrypointScopeSchema = Literals(MODULE_ENTRYPOINT_SCOPES);
+export type ModuleEntrypointRole = Schema.Type<typeof ModuleEntrypointRoleSchema>;
+export type ModuleEntrypointAccess = Schema.Type<typeof ModuleEntrypointAccessSchema>;
+export type ModuleEntrypointScope = Schema.Type<typeof ModuleEntrypointScopeSchema>;
 
-const stableKeySchema = Schema.String.check(
-  Schema.isMinLength(3),
-  Schema.isMaxLength(200),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-).pipe(Schema.brand('StableKey'));
+const stableKeySchema = StringSchema.check(
+  isMinLength(3),
+  isMaxLength(200),
+  isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+).pipe(brand('StableKey'));
 
-export const ModuleEntrypointSchema = Schema.Struct({
+export const ModuleEntrypointSchema = Struct({
   access: ModuleEntrypointAccessSchema,
   authorization: EntrypointAuthorizationSchema,
   entrypointKey: stableKeySchema,
@@ -72,16 +90,16 @@ export type SystemModuleEntrypoint<
 > = ModuleEntrypointDescriptor<Role, Access, ModuleKey, 'system'>;
 
 const roleAllowsAccess = (role: ModuleEntrypointRole, access: ModuleEntrypointAccess): boolean =>
-  Match.value(role).pipe(
-    Match.when('action', () => access === 'write'),
-    Match.when('worker', () => access === 'background'),
-    Match.whenOr('api', 'report', () => access === 'read' || access === 'historical_read' || access === 'write'),
-    Match.whenOr('page', 'public_component', 'search', () => access === 'read' || access === 'historical_read'),
-    Match.exhaustive,
+  matchValue(role).pipe(
+    matchWhen('action', () => access === 'write'),
+    matchWhen('worker', () => access === 'background'),
+    matchWhenOr('api', 'report', () => access === 'read' || access === 'historical_read' || access === 'write'),
+    matchWhenOr('page', 'public_component', 'search', () => access === 'read' || access === 'historical_read'),
+    matchExhaustive,
   );
 
-const ModuleEntrypointInvariantError = Schema.TaggedError<Error>()('ModuleEntrypointInvariantError', {
-  message: Schema.String,
+const ModuleEntrypointInvariantError = TaggedError<Error>()('ModuleEntrypointInvariantError', {
+  message: StringSchema,
 });
 
 const failModuleEntrypointInvariant = (message: string): never => {
@@ -114,8 +132,8 @@ const defineEntrypoint = <
     ...input,
     scope,
   };
-  const validatedDescriptor = Result.getOrThrow(
-    Schema.decodeUnknownResult(ModuleEntrypointSchema, {
+  const validatedDescriptor = getResultOrThrow(
+    decodeUnknownResult(ModuleEntrypointSchema, {
       onExcessProperty: 'error',
     })(descriptor),
   );
@@ -132,8 +150,8 @@ const defineEntrypoint = <
 };
 
 export const decodeTenantModuleEntrypoint = <Input>(input: Input): TenantModuleEntrypoint => {
-  const descriptor = Result.getOrThrow(
-    Schema.decodeUnknownResult(ModuleEntrypointSchema, {
+  const descriptor = getResultOrThrow(
+    decodeUnknownResult(ModuleEntrypointSchema, {
       onExcessProperty: 'error',
     })({
       ...input,

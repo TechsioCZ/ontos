@@ -446,6 +446,19 @@ const commandFingerprint = (payload: ManageQuotationPayload) =>
     }),
   );
 
+const quotationRequestBindsTrustedCandidate = (
+  issuanceRequest: PricingQuotationIssuanceRequest,
+  payload: ManageQuotationPayload,
+  trusted: ManageQuotationTrustedContext,
+  currentDecision: CurrentPricingDecisionRequest,
+): boolean =>
+  Schema.is(PricingQuotationIssuanceRequestSchema)(issuanceRequest) &&
+  issuanceRequest.binding.candidateRef === payload.candidateRef &&
+  issuanceRequest.binding.tenantId === trusted.tenantId &&
+  issuanceRequest.binding.commercialScope.sellingLegalEntityId === trusted.legalEntityId &&
+  sameDecision(issuanceRequest.currentResult.commercialTotal.decision, currentDecision.decision) &&
+  quotationSubjectMatchesRequest(currentDecision, issuanceRequest.binding);
+
 export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')(function* applyQuotationManagement(
   payload: ManageQuotationPayload,
   trusted: ManageQuotationTrustedContext,
@@ -481,14 +494,7 @@ export const applyQuotationManagement = Effect.fn('ManageQuotationAction.apply')
     currentDecision,
     trusted,
   });
-  if (
-    !Schema.is(PricingQuotationIssuanceRequestSchema)(issuanceRequest) ||
-    issuanceRequest.binding.candidateRef !== payload.candidateRef ||
-    issuanceRequest.binding.tenantId !== trusted.tenantId ||
-    issuanceRequest.binding.commercialScope.sellingLegalEntityId !== trusted.legalEntityId ||
-    !sameDecision(issuanceRequest.currentResult.commercialTotal.decision, currentDecision.decision) ||
-    !quotationSubjectMatchesRequest(currentDecision, issuanceRequest.binding)
-  ) {
+  if (!quotationRequestBindsTrustedCandidate(issuanceRequest, payload, trusted, currentDecision)) {
     return yield* issuerMismatch('Fresh Current authority did not preserve the exact trusted issuance request');
   }
   const onIssuanceRejected = (failure: PricingQuotationIssuanceRejected) =>

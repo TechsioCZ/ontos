@@ -13,8 +13,33 @@ export interface PropertyNode {
 
 export type PropertyTree =
   | { readonly status: 'loading' }
-  | { readonly status: 'failed' }
+  | { readonly cause: Effect.Error<ReturnType<typeof executePropertyRecords>>; readonly status: 'failed' }
   | { readonly nodes: readonly PropertyNode[]; readonly status: 'ready' };
+
+const propertyNodes = (response: Effect.Success<ReturnType<typeof executePropertyRecords>>): PropertyTree => {
+  const nodes: PropertyNode[] = [];
+  for (const property of response.properties) {
+    const units: PropertyRef[] = [];
+    for (const unit of response.units) {
+      if (unit.propertyRef.resourceId === property.propertyRef.resourceId) {
+        units.push({
+          id: unit.unitRef.resourceId,
+          kind: 'unit',
+          label: `${property.name} › ${unit.name} (${unit.code})`,
+        });
+      }
+    }
+    nodes.push({
+      ref: {
+        id: property.propertyRef.resourceId,
+        kind: 'property',
+        label: `${property.name} (${property.code})`,
+      },
+      units,
+    });
+  }
+  return { nodes, status: 'ready' };
+};
 
 export const usePropertyTree = (): PropertyTree => {
   const [tree, setTree] = useState<PropertyTree>({ status: 'loading' });
@@ -23,30 +48,16 @@ export const usePropertyTree = (): PropertyTree => {
     void browserRuntime.runPromise(
       executePropertyRecords({}, 'facility-operations.assets.property-tree').pipe(
         Effect.match({
-          onFailure: (): PropertyTree => ({ status: 'failed' }),
-          onSuccess: (response): PropertyTree => ({
-            nodes: response.properties.map((property) => ({
-              ref: {
-                id: property.propertyRef.resourceId,
-                kind: 'property' as const,
-                label: `${property.name} (${property.code})`,
-              },
-              units: response.units
-                .filter((unit) => unit.propertyRef.resourceId === property.propertyRef.resourceId)
-                .map((unit) => ({
-                  id: unit.unitRef.resourceId,
-                  kind: 'unit' as const,
-                  label: `${property.name} › ${unit.name} (${unit.code})`,
-                })),
-            })),
-            status: 'ready',
+          onFailure: (cause): PropertyTree => ({ cause, status: 'failed' }),
+          onSuccess: propertyNodes,
+        }),
+        Effect.tap((next) =>
+          Effect.sync(() => {
+            if (alive) {
+              setTree(next);
+            }
           }),
-        }),
-        Effect.map((next) => {
-          if (alive) {
-            setTree(next);
-          }
-        }),
+        ),
       ),
     );
     return () => {

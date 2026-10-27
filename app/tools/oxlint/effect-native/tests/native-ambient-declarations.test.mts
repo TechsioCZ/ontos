@@ -21,8 +21,8 @@ it('runs native CFG plugins across bare ambient declarations and still reports v
           { name: 'perfectionist', specifier: applicationRequire.resolve('eslint-plugin-perfectionist') },
         ],
         rules: {
-          // This listener-based rule forces the native JS bridge through prepareSteps/traverseNode.
           'perfectionist/sort-interfaces': 'error',
+          // This listener-based rule forces the native JS bridge through prepareSteps/traverseNode.
           'sonarjs/no-invariant-returns': 'error',
         },
       }),

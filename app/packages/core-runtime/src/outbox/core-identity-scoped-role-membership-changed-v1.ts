@@ -54,7 +54,6 @@ export const OutboxPayloadSchema = Schema.Struct({
     scope: ScopedRoleScopeSchema,
   }),
 });
-export type OutboxPayload = typeof OutboxPayloadSchema.Type;
 export const outboxTopic = 'core.identity.scoped-role-membership-changed.v1';
 export const outboxProducerModuleKey = 'core.identity';
 export const scopedRoleMembershipSubjectId = (role: ScopedRoleIdentity, principalId: string): string =>

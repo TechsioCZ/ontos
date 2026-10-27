@@ -70,14 +70,12 @@ const reusingBrowserAssertions = <Audience extends string, IssuerFailure>(
   };
 };
 
-/* oxlint-disable effect-native/no-hand-built-problem-details -- the issuer's own declared 403, built through its schema so callers keep one failure vocabulary. */
 const deniedAudienceProblem = GatewayForbiddenProblemSchema.make({
   detail: 'The authenticated principal cannot open this module in the current company.',
   status: 403,
   title: 'Gateway context forbidden',
   type: 'https://ontos.dev/problems/gateway-forbidden',
 });
-/* oxlint-enable effect-native/no-hand-built-problem-details */
 
 /**
  * The document session's issuer. An audience the shell's composition found definitely denied fails as the issuer's

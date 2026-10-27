@@ -6,6 +6,7 @@ import { Config, Console, Effect, FileSystem, Layer, Path, Schema } from 'effect
 import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
+import { moduleImportSources } from './check-ontos-module-contracts.mts';
 import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
@@ -204,18 +205,22 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     );
   };
 
-  const assertPrivateOwnerImports = (file: string, content: string): void => {
-    const imports = content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu);
-    for (const match of imports) {
-      const specifier = match.groups?.specifier;
-      if (specifier !== undefined) {
+  const assertPrivateOwnerImports = (file: string, content: string) =>
+    Effect.gen(function* inspectPrivateOwnerImports() {
+      const imports = yield* moduleImportSources(file, content);
+      for (const specifier of imports) {
         const violation = privateOwnerImportViolation(workspaceRoot, file, specifier);
         if (violation !== undefined) {
           fail(`${file}: ${violation}. Discover other deployments as allowlisted data.`);
         }
+        assertNotContains(
+          file,
+          specifier,
+          /^@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
+          'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
+        );
       }
-    }
-  };
+    });
 
   const allVerticalDirectories = yield* listDirectories('verticals');
 
@@ -232,13 +237,9 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
 
     for (const [file, content] of sourceByFile) {
-      assertPrivateOwnerImports(file, content);
-      assertNotContains(
-        file,
-        content,
-        /(?:from\s+|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
-        'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
-      );
+      if (/\.[cm]?[jt]sx?$/u.test(file)) {
+        yield* assertPrivateOwnerImports(file, content);
+      }
     }
   });
   yield* inspectGeneratedSources;

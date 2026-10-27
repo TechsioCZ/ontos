@@ -1262,7 +1262,7 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
       )}
       {isLease && <InvoicesCard invoices={state.related.invoices} language={language} t={t} />}
       {isLease && selected.customerCounterpartyRef !== null && (
-        <SectionCard title="Dokumenty nájemce">
+        <SectionCard title={t('property-leasing.documents.tenantTitle')}>
           <PartyDocuments
             counterpartyId={selected.customerCounterpartyRef.resourceId}
             label={tenant?.displayName ?? customerLabel}
@@ -1639,7 +1639,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             </Select>
             <FormInput
               id="stay-people-count"
-              label="Počet osob"
+              label={t('property-leasing.booking.peopleCount')}
               min={1}
               onChange={(event) => state.setPeopleCount(event.target.value)}
               required
@@ -1648,7 +1648,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             />
             <FormInput
               id="stay-note"
-              label="Poznámka k rezervaci"
+              label={t('property-leasing.booking.note')}
               maxLength={500}
               onChange={(event) => state.setStayNote(event.target.value)}
               value={state.stayNote}

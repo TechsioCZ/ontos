@@ -5,20 +5,25 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import { Option, Schema } from 'effect';
+import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
+  AssetId,
   AssetsState,
   Investment,
   InvestmentPriority,
   InvestmentStatus,
 } from '../../../../../shared/domain/assets.ts';
 import {
+  AssetIdSchema,
   investmentDifference,
   investmentPriorities,
   investmentStatuses,
   isActiveAsset,
 } from '../../../../../shared/domain/assets.ts';
+import { optionalField } from '../../../../../shared/domain/common.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { isoDateLabel, parseCzk } from './assets-model.ts';
 import type { Translate } from './assets-model.ts';
@@ -26,16 +31,27 @@ import { AreaField, ErrorLine, FormGrid, PanelForm, SelectField, TextField, opti
 import { locationItems, owningPropertyId, usePropertyTree } from './property-tree.ts';
 
 const NONE = 'none';
+const PRIORITY_LABEL = 'investments.fields.priority';
+const STATUS_LABEL = 'investments.fields.status';
 const ALL = 'all';
 
-const priorityVariant = (priority: InvestmentPriority) =>
-  priority === 'high' ? ('danger' as const) : priority === 'medium' ? ('warning' as const) : ('outline' as const);
-const statusVariant = (status: InvestmentStatus) =>
-  status === 'done'
-    ? ('success' as const)
-    : status === 'in_progress' || status === 'approved'
-      ? ('info' as const)
-      : ('outline' as const);
+const priorityVariants = { high: 'danger', low: 'outline', medium: 'warning' } as const;
+const priorityVariant = (priority: InvestmentPriority) => priorityVariants[priority];
+const statusVariants = {
+  approved: 'info',
+  cancelled: 'outline',
+  done: 'success',
+  in_progress: 'info',
+  planned: 'outline',
+} as const;
+const statusVariant = (status: InvestmentStatus) => statusVariants[status];
+
+const differenceClass = (difference: number | undefined): string => {
+  if (difference === undefined) {
+    return '';
+  }
+  return difference > 0 ? 'text-danger' : 'text-success';
+};
 
 const amountInput = (minor: number | undefined) =>
   minor === undefined ? '' : (minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, useGrouping: true });
@@ -54,22 +70,22 @@ export const InvestmentForm = ({
   readonly state: AssetsState;
 }) => {
   const { t } = useModernI18n();
-  const k = (key: string, options?: Record<string, unknown>) => t(`facility-operations.assets.${key}`, options);
+  const k = (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
   const tree = usePropertyTree();
-  const [title, setTitle] = useState(investment?.title ?? '');
-  const [description, setDescription] = useState(investment?.description ?? '');
-  const [planned, setPlanned] = useState(amountInput(investment?.plannedAmountMinor));
-  const [plannedDate, setPlannedDate] = useState(investment?.plannedDate ?? '');
-  const [priority, setPriority] = useState<InvestmentPriority>(investment?.priority ?? 'medium');
-  const [status, setStatus] = useState<InvestmentStatus>(investment?.status ?? 'planned');
-  const [actual, setActual] = useState(amountInput(investment?.actualAmountMinor));
-  const [actualDate, setActualDate] = useState(investment?.actualDate ?? '');
-  const [responsible, setResponsible] = useState(investment?.responsible ?? '');
-  const [location, setLocation] = useState(
+  const [title, setTitle] = useState(() => investment?.title ?? '');
+  const [description, setDescription] = useState(() => investment?.description ?? '');
+  const [planned, setPlanned] = useState(() => amountInput(investment?.plannedAmountMinor));
+  const [plannedDate, setPlannedDate] = useState(() => investment?.plannedDate ?? '');
+  const [priority, setPriority] = useState<InvestmentPriority>(() => investment?.priority ?? 'medium');
+  const [status, setStatus] = useState<InvestmentStatus>(() => investment?.status ?? 'planned');
+  const [actual, setActual] = useState(() => amountInput(investment?.actualAmountMinor));
+  const [actualDate, setActualDate] = useState(() => investment?.actualDate ?? '');
+  const [responsible, setResponsible] = useState(() => investment?.responsible ?? '');
+  const [location, setLocation] = useState(() =>
     investment?.location === undefined ? NONE : `${investment.location.kind}:${investment.location.id}`,
   );
-  const [assetId, setAssetId] = useState(investment?.assetId ?? NONE);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [assetId, setAssetId] = useState<AssetId | typeof NONE>(() => investment?.assetId ?? NONE);
+  const [error, setError] = useState<string | undefined>();
 
   const submit = () => {
     if (title.trim() === '' || plannedDate === '' || planned.trim() === '') {
@@ -88,7 +104,9 @@ export const InvestmentForm = ({
     }
     setError(undefined);
     const picked =
-      location === NONE ? undefined : (locationItems(tree).find((item) => item.value === location)?.ref ?? investment?.location);
+      location === NONE
+        ? undefined
+        : (locationItems(tree).find((item) => item.value === location)?.ref ?? investment?.location);
     const propertyId =
       owningPropertyId(tree, picked) ?? (picked === investment?.location ? investment?.propertyId : undefined);
     const fields = {
@@ -99,11 +117,11 @@ export const InvestmentForm = ({
       title: title.trim(),
       ...optional('description', description),
       ...optional('responsible', responsible),
-      ...(actualMinor === undefined ? {} : { actualAmountMinor: actualMinor }),
-      ...(actualDate === '' ? {} : { actualDate }),
-      ...(picked === undefined ? {} : { location: picked }),
-      ...(propertyId === undefined ? {} : { propertyId }),
-      ...(assetId === NONE ? {} : { assetId: assetId as Investment['assetId'] & string }),
+      ...optionalField('actualAmountMinor', actualMinor),
+      ...optionalField('actualDate', actualDate === '' ? undefined : actualDate),
+      ...optionalField('location', picked),
+      ...optionalField('propertyId', propertyId),
+      ...optionalField('assetId', assetId === NONE ? undefined : assetId),
     };
     onSubmit(
       investment === undefined
@@ -116,7 +134,13 @@ export const InvestmentForm = ({
   return (
     <PanelForm id={formId} onSubmit={submit}>
       <ErrorLine message={error} />
-      <TextField id="investment-title" label={k('investments.fields.title')} onChange={setTitle} required value={title} />
+      <TextField
+        id="investment-title"
+        label={k('investments.fields.title')}
+        onChange={setTitle}
+        required
+        value={title}
+      />
       <AreaField
         id="investment-description"
         label={k('investments.fields.description')}
@@ -144,14 +168,14 @@ export const InvestmentForm = ({
       </FormGrid>
       <FormGrid>
         <SelectField
-          label={k('investments.fields.priority')}
+          label={k(PRIORITY_LABEL)}
           name="investment-priority"
           onChange={(value) => setPriority(investmentPriorities.find((entry) => entry === value) ?? 'medium')}
           options={investmentPriorities.map((entry) => ({ label: k(`investments.priority.${entry}`), value: entry }))}
           value={priority}
         />
         <SelectField
-          label={k('investments.fields.status')}
+          label={k(STATUS_LABEL)}
           name="investment-status"
           onChange={(value) => setStatus(investmentStatuses.find((entry) => entry === value) ?? 'planned')}
           options={investmentStatuses.map((entry) => ({ label: k(`investments.status.${entry}`), value: entry }))}
@@ -188,7 +212,11 @@ export const InvestmentForm = ({
       <SelectField
         label={k('investments.fields.asset')}
         name="investment-asset"
-        onChange={(value) => setAssetId(value === '' ? NONE : value)}
+        onChange={(value) =>
+          setAssetId(
+            Option.getOrElse(Schema.decodeOption(AssetIdSchema)(value === '' ? NONE : value), (): typeof NONE => NONE),
+          )
+        }
         options={[
           { label: k('investments.form.noAsset'), value: NONE },
           ...assets.map((asset) => ({ label: `${asset.inventoryNumber} · ${asset.name}`, value: asset.id })),
@@ -232,7 +260,9 @@ export const InvestmentPlan = ({
     .filter(
       (investment) =>
         (statusFilter === ALL ||
-          (statusFilter === 'open' ? investment.status !== 'done' && investment.status !== 'cancelled' : investment.status === statusFilter)) &&
+          (statusFilter === 'open'
+            ? investment.status !== 'done' && investment.status !== 'cancelled'
+            : investment.status === statusFilter)) &&
         (priorityFilter === ALL || investment.priority === priorityFilter),
     )
     .toSorted((left, right) => left.plannedDate.localeCompare(right.plannedDate));
@@ -245,10 +275,7 @@ export const InvestmentPlan = ({
   const yearPlanned = live
     .filter((investment) => investment.plannedDate.startsWith(thisYear))
     .reduce((sum, investment) => sum + investment.plannedAmountMinor, 0);
-  const overdue = live.filter(
-    (investment) => investment.status !== 'done' && investment.plannedDate < today,
-  ).length;
-  const filterItems = (items: readonly { label: string; value: string }[]) => items;
+  const overdue = live.filter((investment) => investment.status !== 'done' && investment.plannedDate < today).length;
 
   return (
     <div className="flex flex-col gap-200">
@@ -285,20 +312,20 @@ export const InvestmentPlan = ({
       <div className="flex flex-wrap items-end gap-150">
         <div className="w-[12rem]">
           <SelectField
-            label={k('investments.fields.status')}
+            label={k(STATUS_LABEL)}
             name="investment-status-filter"
             onChange={(value) => setStatusFilter(value === '' ? ALL : value)}
-            options={filterItems([
+            options={[
               { label: k('filters.allStatuses'), value: ALL },
               { label: k('investments.filters.open'), value: 'open' },
               ...investmentStatuses.map((entry) => ({ label: k(`investments.status.${entry}`), value: entry })),
-            ])}
+            ]}
             value={statusFilter}
           />
         </div>
         <div className="w-[14rem]">
           <SelectField
-            label={k('investments.fields.priority')}
+            label={k(PRIORITY_LABEL)}
             name="investment-priority-filter"
             onChange={(value) => setPriorityFilter(value === '' ? ALL : value)}
             options={[
@@ -318,12 +345,12 @@ export const InvestmentPlan = ({
               <Table.Header>
                 <Table.Row>
                   <Table.ColumnHeader>{k('investments.fields.title')}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{k('investments.fields.priority')}</Table.ColumnHeader>
+                  <Table.ColumnHeader>{k(PRIORITY_LABEL)}</Table.ColumnHeader>
                   <Table.ColumnHeader>{k('investments.fields.plannedDate')}</Table.ColumnHeader>
                   <Table.ColumnHeader className="text-right">{k('investments.fields.planned')}</Table.ColumnHeader>
                   <Table.ColumnHeader className="text-right">{k('investments.fields.actual')}</Table.ColumnHeader>
                   <Table.ColumnHeader className="text-right">{k('investments.fields.difference')}</Table.ColumnHeader>
-                  <Table.ColumnHeader>{k('investments.fields.status')}</Table.ColumnHeader>
+                  <Table.ColumnHeader>{k(STATUS_LABEL)}</Table.ColumnHeader>
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -339,7 +366,7 @@ export const InvestmentPlan = ({
                         <span className="flex min-w-[14rem] flex-col">
                           <span className="font-medium">{investment.title}</span>
                           <span className="text-fg-secondary text-xs">
-                            {investment.location?.label.replace(/ \([^)]*\)$/, '') ?? k('notProvided')}
+                            {investment.location?.label.replace(/ \([^)]*\)$/u, '') ?? k('notProvided')}
                           </span>
                         </span>
                       </Table.Cell>
@@ -358,9 +385,9 @@ export const InvestmentPlan = ({
                         {investment.actualAmountMinor === undefined ? '—' : formatMoney(investment.actualAmountMinor)}
                       </Table.Cell>
                       <Table.Cell
-                        className={`whitespace-nowrap text-right font-medium tabular-nums ${
-                          difference === undefined ? '' : difference > 0 ? 'text-danger' : 'text-success'
-                        }`}
+                        className={`whitespace-nowrap text-right font-medium tabular-nums ${differenceClass(
+                          difference,
+                        )}`}
                       >
                         {difference === undefined ? '—' : signedMoney(difference)}
                       </Table.Cell>
@@ -377,7 +404,9 @@ export const InvestmentPlan = ({
           </div>
         )}
       </SectionCard>
-      <p className="text-fg-secondary text-xs">{k('investments.footnote', { count: formatNumber(rows.length) })}</p>
+      <p className="text-fg-secondary text-xs">
+        {k('investments.footnote', { replace: { count: formatNumber(rows.length) } })}
+      </p>
     </div>
   );
 };

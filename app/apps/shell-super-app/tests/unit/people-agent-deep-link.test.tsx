@@ -1,6 +1,7 @@
+import { Effect, Schema } from 'effect';
+import { AgentEntitySchema } from '@app/shared-contracts/agent-access';
 import type { AgentEntity } from '@app/shared-contracts/agent-access';
 import { cleanup, render, screen } from '@testing-library/react';
-import { Effect } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
 import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-section.tsx';
@@ -41,7 +42,7 @@ rstest.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
           refreshing: false,
           state: 'ready',
           value: {
-            agents: [fixture.agent],
+            agents: [Schema.decodeUnknownSync(AgentEntitySchema)(fixture.agent)],
             audit: [],
             company: { legalEntityId: 'company', legalName: 'Firma' },
             members: [],

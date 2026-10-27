@@ -34,6 +34,9 @@
  * - `ManagedRuntime`/`Runtime` entry points — `runtime.runPromise(...)`, `Runtime.runPromise(handle)(p)`
  *   and their named-import form `import { runPromise } from "effect/Runtime"` — which are the prescribed
  *   A1 replacement rather than the anti-pattern;
+ * - an exported Promise preload adapter that only joins a bounded native Effect.forEach of
+ *   context-free Effect<void> steps through suspend/ignoreCause. The step, helper and adapter
+ *   bindings must have exactly their expected uses. Other roots in the same file still report;
  * - type positions: `typeof Effect.runSync`, `import type { runSync } from "effect/Effect"`, interface and
  *   type-literal members, class property/method *declaration* keys named `runSync`, and re-exports
  *   (`export { runPromise }`), none of which start a fiber.
@@ -42,7 +45,8 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { keyName, unwrapNode, walk as walkAst } from '../shared/ast.ts';
-import { isTrackedReference } from '../shared/bindings.ts';
+import { isTrackedReference, lookupVariable } from '../shared/bindings.ts';
+import { bindingPath } from '../shared/effect-identity.ts';
 import { bindingsFor, effectMember, type EffectBindings } from '../shared/effect-imports.ts';
 import { importedName } from '../shared/imports.ts';
 import { globToRegExp, isScriptFile, isTestFile, normalisePath, matchesGlobs } from '../shared/paths.ts';
@@ -449,6 +453,249 @@ function isDeclarationPosition(node: ESTree.Node): boolean {
   });
 }
 
+function preloadType(node: ESTree.Node | null | undefined): ESTree.Node | null {
+  if (!node) return null;
+  if (node.type === 'TSTypeAnnotation' || node.type === 'TSParenthesizedType') return preloadType(node.typeAnnotation);
+  return node;
+}
+
+function nativePreloadEffect(context: Context, node: ESTree.Node | null): boolean {
+  if (node?.type !== 'TSTypeReference' || node.typeName.type !== 'TSQualifiedName') return false;
+  return (
+    node.typeName.right.name === 'Effect' &&
+    bindingPath(context, node.typeName.left)?.join('.') === 'Effect' &&
+    node.typeArguments?.params.length === 1 &&
+    node.typeArguments.params[0]?.type === 'TSVoidKeyword'
+  );
+}
+
+function preloadInputType(node: ESTree.Node | null): string | null {
+  return node?.type === 'TSTypeReference' && node.typeName.type === 'Identifier' && node.typeArguments === null
+    ? node.typeName.name
+    : null;
+}
+
+function preloadParameterType(node: ESTree.Node | undefined): ESTree.Node | null {
+  return node?.type === 'Identifier' ? preloadType(node.typeAnnotation) : null;
+}
+
+function preloadStepInput(context: Context, parameter: ESTree.Node | undefined): string | null {
+  if (parameter?.type !== 'RestElement' || parameter.argument.type !== 'Identifier') return null;
+  const annotation = preloadType(parameter.typeAnnotation ?? parameter.argument.typeAnnotation);
+  if (annotation?.type !== 'TSTypeOperator' || annotation.operator !== 'readonly') return null;
+  const array = preloadType(annotation.typeAnnotation);
+  const callback = array?.type === 'TSArrayType' ? preloadType(array.elementType) : null;
+  return callback?.type === 'TSFunctionType' &&
+    callback.params.length === 1 &&
+    callback.typeParameters === null &&
+    nativePreloadEffect(context, preloadType(callback.returnType))
+    ? preloadInputType(preloadParameterType(callback.params[0]))
+    : null;
+}
+
+function samePreloadBinding(context: Context, use: ESTree.Node | undefined, declaration: ESTree.Node): boolean {
+  return (
+    use?.type === 'Identifier' &&
+    lookupVariable(context, use) !== null &&
+    lookupVariable(context, use) === lookupVariable(context, declaration)
+  );
+}
+
+function nativePreloadCall(context: Context, input: ESTree.Node, member: string): input is ESTree.CallExpression {
+  return (
+    input.type === 'CallExpression' &&
+    !input.optional &&
+    bindingPath(context, input.callee)?.join('.') === `Effect.${member}`
+  );
+}
+
+function immutablePreloadUses(context: Context, binding: ESTree.Node, expected: readonly ESTree.Node[]): boolean {
+  const variable = lookupVariable(context, binding);
+  if (!variable || variable.defs.length !== 1) return false;
+  const uses = variable.references.filter((reference) => !reference.init);
+  return (
+    uses.length === expected.length &&
+    uses.every((reference) => !reference.isWrite() && expected.includes(reference.identifier))
+  );
+}
+
+/** A bounded, context-free batch joins owner-provided steps without inventing an application runtime. */
+function nativePreloadBatch(
+  context: Context,
+  helper: ESTree.ArrowFunctionExpression,
+  steps: ESTree.Node,
+  inputType: string,
+): boolean {
+  if (
+    helper.async ||
+    helper.params.length !== 1 ||
+    preloadInputType(preloadParameterType(helper.params[0])) !== inputType ||
+    !nativePreloadEffect(context, preloadType(helper.returnType)) ||
+    !nativePreloadCall(context, helper.body, 'forEach') ||
+    helper.body.arguments.length !== 3 ||
+    !samePreloadBinding(context, helper.body.arguments[0], steps)
+  )
+    return false;
+  const [, callback, options] = helper.body.arguments;
+  if (
+    callback?.type !== 'ArrowFunctionExpression' ||
+    callback.async ||
+    callback.params.length !== 1 ||
+    callback.body.type !== 'CallExpression' ||
+    callback.body.arguments.length !== 1 ||
+    bindingPath(context, callback.body.arguments[0]!)?.join('.') !== 'Effect.ignoreCause' ||
+    callback.body.callee.type !== 'MemberExpression' ||
+    callback.body.callee.computed ||
+    callback.body.callee.property.type !== 'Identifier' ||
+    callback.body.callee.property.name !== 'pipe'
+  )
+    return false;
+  const suspended = callback.body.callee.object;
+  if (!nativePreloadCall(context, suspended, 'suspend') || suspended.arguments.length !== 1) return false;
+  const thunk = suspended.arguments[0];
+  if (
+    thunk?.type !== 'ArrowFunctionExpression' ||
+    thunk.async ||
+    thunk.params.length !== 0 ||
+    thunk.body.type !== 'CallExpression' ||
+    thunk.body.arguments.length !== 1 ||
+    !samePreloadBinding(context, thunk.body.callee, callback.params[0]!) ||
+    !samePreloadBinding(context, thunk.body.arguments[0], helper.params[0]!) ||
+    options?.type !== 'ObjectExpression' ||
+    options.properties.length !== 2
+  )
+    return false;
+  const bounded = options.properties.every((property) => {
+    if (property.type !== 'Property' || property.computed || property.method || property.kind !== 'init') return false;
+    const name = staticName(property.key, false);
+    let value = property.value;
+    if (name === 'concurrency' && value.type === 'Identifier') {
+      const definition = lookupVariable(context, value)?.defs[0];
+      if (
+        definition?.node.type !== 'VariableDeclarator' ||
+        definition.parent?.type !== 'VariableDeclaration' ||
+        definition.parent.kind !== 'const' ||
+        definition.node.init === null
+      )
+        return false;
+      value = definition.node.init;
+    }
+    return (
+      value.type === 'Literal' &&
+      ((name === 'discard' && value.value === true) ||
+        (name === 'concurrency' && typeof value.value === 'number' && Number.isInteger(value.value) && value.value > 0))
+    );
+  });
+  const keys = new Set(
+    options.properties.map((property) => (property.type === 'Property' ? staticName(property.key, false) : null)),
+  );
+  return (
+    bounded &&
+    keys.size === 2 &&
+    immutablePreloadUses(context, callback.params[0]!, [thunk.body.callee]) &&
+    immutablePreloadUses(context, helper.params[0]!, [thunk.body.arguments[0]!])
+  );
+}
+
+function nativePreloadPromiseType(context: Context, output: ESTree.Node | null, inputType: string): boolean {
+  if (output?.type !== 'TSTypeReference' || output.typeName.type !== 'Identifier') return false;
+  const name = output.typeName.name;
+  const alias = context.sourceCode.ast.body.flatMap((statement) => {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : null;
+    return declaration?.type === 'TSTypeAliasDeclaration' && declaration.id.name === name
+      ? [declaration.typeAnnotation]
+      : [];
+  });
+  const callback = alias.length === 1 ? alias[0] : null;
+  const result = callback?.type === 'TSFunctionType' ? preloadType(callback.returnType) : null;
+  return (
+    callback?.type === 'TSFunctionType' &&
+    callback.params.length === 1 &&
+    preloadInputType(preloadParameterType(callback.params[0])) === inputType &&
+    result?.type === 'TSTypeReference' &&
+    result.typeName.type === 'Identifier' &&
+    result.typeName.name === 'Promise' &&
+    (lookupVariable(context, result.typeName)?.defs.length ?? 0) === 0 &&
+    result.typeArguments?.params.length === 1 &&
+    result.typeArguments.params[0]?.type === 'TSVoidKeyword'
+  );
+}
+
+/** Only the exported Promise adapter around this exact native preload batch is an outer framework root. */
+function isNativePreloadRoot(context: Context, reference: ESTree.Node): boolean {
+  const run = reference.parent;
+  const awaited = run?.parent;
+  const statement = awaited?.parent;
+  const body = statement?.parent;
+  const adapter = body?.parent;
+  const returned = adapter?.parent;
+  const factoryBody = returned?.parent;
+  const factory = factoryBody?.parent;
+  if (
+    run?.type !== 'CallExpression' ||
+    run.callee !== reference ||
+    run.optional ||
+    run.arguments.length !== 1 ||
+    !nativePreloadCall(context, run, 'runPromise') ||
+    awaited?.type !== 'AwaitExpression' ||
+    statement?.type !== 'ExpressionStatement' ||
+    body?.type !== 'BlockStatement' ||
+    body.body.length !== 1 ||
+    adapter?.type !== 'ArrowFunctionExpression' ||
+    !adapter.async ||
+    adapter.params.length !== 1 ||
+    returned?.type !== 'ReturnStatement' ||
+    factoryBody?.type !== 'BlockStatement' ||
+    factoryBody.body.length !== 2 ||
+    factory?.type !== 'ArrowFunctionExpression' ||
+    factory.async ||
+    factory.params.length !== 1 ||
+    factory.typeParameters !== null
+  )
+    return false;
+  const declaration = factory.parent;
+  if (
+    declaration?.type !== 'VariableDeclarator' ||
+    declaration.id.type !== 'Identifier' ||
+    declaration.parent?.type !== 'VariableDeclaration' ||
+    declaration.parent.kind !== 'const' ||
+    declaration.parent.parent?.type !== 'ExportNamedDeclaration' ||
+    declaration.parent.parent.parent?.type !== 'Program'
+  )
+    return false;
+  const inputType = preloadStepInput(context, factory.params[0]);
+  const [helperDeclaration] = factoryBody.body;
+  if (
+    !inputType ||
+    !nativePreloadPromiseType(context, preloadType(factory.returnType), inputType) ||
+    helperDeclaration?.type !== 'VariableDeclaration' ||
+    helperDeclaration.kind !== 'const' ||
+    helperDeclaration.declarations.length !== 1
+  )
+    return false;
+  const [helper] = helperDeclaration.declarations;
+  const invoked = run.arguments[0];
+  const rest = factory.params[0];
+  if (
+    helper?.id.type !== 'Identifier' ||
+    helper.init?.type !== 'ArrowFunctionExpression' ||
+    invoked?.type !== 'CallExpression' ||
+    invoked.arguments.length !== 1 ||
+    !samePreloadBinding(context, invoked.callee, helper.id) ||
+    !samePreloadBinding(context, invoked.arguments[0], adapter.params[0]!) ||
+    rest?.type !== 'RestElement'
+  )
+    return false;
+  return (
+    nativePreloadBatch(context, helper.init, rest.argument, inputType) &&
+    immutablePreloadUses(context, rest.argument, [
+      helper.init.body.type === 'CallExpression' ? helper.init.body.arguments[0]! : helper.init.body,
+    ]) &&
+    immutablePreloadUses(context, helper.id, [invoked.callee]) &&
+    immutablePreloadUses(context, adapter.params[0]!, [invoked.arguments[0]!])
+  );
+}
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -523,6 +770,7 @@ export const rule = defineRule({
         if (isDeclarationPosition(node) || isInTypePosition(node)) return;
         if (!isTrackedReference(context, node, tracked.declaration)) return;
         if (isInsideEffectOwnedCode(node, active, sharedBindings())) return;
+        if (isNativePreloadRoot(context, node)) return;
         report(node, tracked.member);
       },
       MemberExpression(node) {
@@ -532,6 +780,7 @@ export const rule = defineRule({
         if (member === null) return;
         if (isInTypePosition(node)) return;
         if (isInsideEffectOwnedCode(node, active, sharedBindings())) return;
+        if (isNativePreloadRoot(context, node)) return;
         report(node, member);
       },
     };

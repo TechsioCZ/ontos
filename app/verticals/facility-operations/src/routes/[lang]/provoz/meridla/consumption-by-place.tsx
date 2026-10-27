@@ -28,11 +28,11 @@ export const ConsumptionByPlace = ({
   const [place, setPlace] = useState(SITE);
   const selected = metersAt(meters, place);
   const media = meterMedia.filter((medium) => selected.some((meter) => meter.medium === medium));
-  const [chosenMedium, setMedium] = useState<MeterMedium | undefined>(undefined);
+  const [chosenMedium, setChosenMedium] = useState<MeterMedium | undefined>();
   const medium = chosenMedium !== undefined && media.includes(chosenMedium) ? chosenMedium : media[0];
   const points = monthlySeries(selected.filter((meter) => meter.medium === medium));
   const units = [...new Set(points.map((point) => point.unit))];
-  const unit = units[0];
+  const [unit] = units;
   const series = points.filter((point) => point.unit === unit);
   const placeLabel = places.find((option) => option.value === place)?.label ?? '';
   const counted = selected.filter((meter) => meter.medium === medium).length;
@@ -59,7 +59,7 @@ export const ConsumptionByPlace = ({
               <Button
                 aria-pressed={entry === medium}
                 key={entry}
-                onClick={() => setMedium(entry)}
+                onClick={() => setChosenMedium(entry)}
                 size="sm"
                 theme={entry === medium ? 'solid' : 'borderless'}
                 variant={entry === medium ? 'primary' : 'secondary'}
@@ -112,7 +112,7 @@ export const ConsumptionByPlace = ({
                 </Table.Row>
               </Table.Header>
               <Table.Body>
-                {[...series].reverse().map((point) => (
+                {series.toReversed().map((point) => (
                   <Table.Row key={point.month}>
                     <Table.Cell>
                       <div className="flex flex-wrap items-center gap-100">

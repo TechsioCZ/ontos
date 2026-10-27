@@ -4,7 +4,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import type { FormEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 export interface Option {
   readonly label: string;
@@ -14,6 +14,8 @@ export interface Option {
 export const TextField = (props: {
   readonly helpText?: string;
   readonly id: string;
+  readonly inputMode?: 'decimal' | 'numeric' | 'text';
+  readonly invalid?: boolean;
   readonly label: string;
   readonly maxLength?: number;
   readonly onChange: (value: string) => void;
@@ -21,8 +23,6 @@ export const TextField = (props: {
   readonly required?: boolean;
   readonly type?: 'text' | 'date';
   readonly value: string;
-  readonly invalid?: boolean;
-  readonly inputMode?: 'decimal' | 'numeric' | 'text';
 }) => (
   <FormInput
     autoComplete="off"
@@ -42,12 +42,12 @@ export const TextField = (props: {
 );
 
 export const AreaField = (props: {
+  readonly helpText?: string;
   readonly id: string;
   readonly label: string;
   readonly onChange: (value: string) => void;
   readonly required?: boolean;
   readonly value: string;
-  readonly helpText?: string;
 }) => (
   <FormTextarea
     id={props.id}
@@ -107,7 +107,7 @@ export const PanelForm = (props: {
     className="flex flex-col gap-200 py-200"
     id={props.id}
     noValidate
-    onSubmit={(event: FormEvent) => {
+    onSubmit={(event) => {
       event.preventDefault();
       props.onSubmit();
     }}
@@ -119,5 +119,9 @@ export const PanelForm = (props: {
 /** Optional trimmed text: empty string → omitted key. */
 export const optional = <Key extends string>(key: Key, value: string) => {
   const trimmed = value.trim();
-  return (trimmed === '' ? {} : { [key]: trimmed }) as Partial<Record<Key, string>>;
+  const fields: Partial<Record<Key, string>> = {};
+  if (trimmed !== '') {
+    fields[key] = trimmed;
+  }
+  return fields;
 };

@@ -382,7 +382,7 @@ const adminDatabaseConfigLive = Layer.effect(
     Effect.flatMap((url) => parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) })),
   ),
 );
-const servicesLive = Layer.mergeAll(
+export const commercePortalServicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
   ActiveApplicationCompositionConfigLive.pipe(
@@ -393,7 +393,7 @@ const servicesLive = Layer.mergeAll(
 
 /** Compose once at the caller's executable root; both services and the program share the explicit configuration. */
 export const commercePortalProvisionLive = (environment: Readonly<Record<string, string>>) =>
-  servicesLive.pipe(Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))));
+  commercePortalServicesLive.pipe(Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))));
 
 /** Provision without dotenv I/O; callers supply commercePortalProvisionLive(environment) at their executable root. */
 export const provisionCommercePortal = (
@@ -420,7 +420,7 @@ const command = Command.make(
   ({ envFile }) =>
     Layer.build(
       Layer.effectDiscard(persistConfiguration(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(
-        Layer.provide(servicesLive),
+        Layer.provide(commercePortalServicesLive),
       ),
     ).pipe(
       Effect.scoped,

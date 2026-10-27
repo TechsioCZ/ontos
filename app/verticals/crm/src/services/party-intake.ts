@@ -41,9 +41,11 @@ import {
 } from 'effect';
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
 
-import { CrmReferenceUnavailable } from '../../shared/actions/apply-command.ts';
+import { CrmReferenceUnavailable, ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
+import { VerifiedPartySchema } from '../../shared/commands/context.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
-import type { Client } from '../../shared/domain/clients.ts';
+import type { ClientSchema } from '../../shared/domain/clients.ts';
+import { EntityIdSchema, IcoSchema, RegistryCompanyIdSchema } from '../../shared/domain/common.ts';
 import type { ClientPartySync } from '../../shared/apis/apply-command-action.ts';
 import { executeApplyCommandWithAuthorization } from '../api/apply-command-action-client.ts';
 import { executeRecordsWithAuthorization } from '../api/records-client.ts';
@@ -55,7 +57,10 @@ const KEY_VARIABLE = 'ONTOS_CRM_PARTY_INTAKE_API_KEY';
 const BATCH = 20;
 const PROVENANCE_SOURCE = 'demo.crm.client-intake';
 
-export type IntakeClient = Pick<Client, 'address' | 'email' | 'id' | 'kind' | 'name' | 'phone' | 'regNo' | 'vatNo'>;
+export type IntakeClient = Pick<
+  typeof ClientSchema.Encoded,
+  'address' | 'email' | 'id' | 'kind' | 'name' | 'phone' | 'regNo' | 'vatNo'
+>;
 
 const unavailable = (reason: string, cause?: unknown) =>
   Object.defineProperty(new CrmReferenceUnavailable({ code: 'crm_reference_unavailable', reason }), 'cause', {
@@ -75,14 +80,6 @@ const fold = (value: string) =>
     .trim();
 
 /** Czech IČO checksum; the registry refuses an invalid one, so such a value is not sent as an identifier. */
-const IcoSchema = Schema.String.check(
-  Schema.isPattern(/^\d{8}$/u),
-  Schema.makeFilter((value) => {
-    const digits = Array.from(value, Number);
-    const sum = digits.slice(0, 7).reduce((total, digit, index) => total + digit * (8 - index), 0);
-    return (11 - (sum % 11)) % 10 === digits[7];
-  }),
-).pipe(Schema.brand('Ico'));
 export const validIco = Schema.is(IcoSchema);
 
 /** "Ulice 12, 602 00 Brno" -> the registry ADDRESS Contact Point (only when street and PSČ + city are present). */
@@ -118,13 +115,14 @@ const contactPointsOf = (client: IntakeClient) => [
   ...addressContactPoint(client.address),
 ];
 
-export interface RegistryCustomer {
-  readonly companyId: string | null;
-  readonly counterpartyId: string;
-  readonly displayName: string | null;
-  readonly partyId: string;
-  readonly status: string;
-}
+export const RegistryCustomerSchema = Schema.Struct({
+  companyId: Schema.OptionFromNullOr(RegistryCompanyIdSchema),
+  counterpartyId: EntityIdSchema,
+  displayName: Schema.OptionFromNullOr(Schema.String),
+  partyId: EntityIdSchema,
+  status: Schema.String,
+});
+export type RegistryCustomer = typeof RegistryCustomerSchema.Type;
 
 /** IČO without inner whitespace ("270 82 440" = "27082440"); empty = none. */
 export const normalizedIco = (value: string | null | undefined) => (value ?? '').replaceAll(/\s+/gu, '');
@@ -146,13 +144,13 @@ export const matchingRegistryCustomer = (
       return false;
     }
     if (ico !== '') {
-      return normalizedIco(customer.companyId) === ico;
+      return normalizedIco(Option.getOrElse(customer.companyId, () => '')) === ico;
     }
     return (
       !taken.has(customer.counterpartyId) &&
       !taken.has(customer.partyId) &&
-      customer.displayName !== null &&
-      fold(customer.displayName) === fold(client.name)
+      Option.isSome(customer.displayName) &&
+      fold(customer.displayName.value) === fold(client.name)
     );
   });
 };
@@ -482,13 +480,9 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
       correlationId,
       options,
     ).pipe(Effect.mapError(registryDown));
-    return list.items.map((item): RegistryCustomer => ({
-      companyId: item.companyId,
-      counterpartyId: item.counterpartyId,
-      displayName: item.displayName,
-      partyId: item.partyId,
-      status: item.status,
-    }));
+    return yield* Schema.decodeEffect(Schema.Array(RegistryCustomerSchema))(list.items).pipe(
+      Effect.mapError(registryDown),
+    );
   });
 
   const createCustomer = Effect.fn('Crm.partyIntake.create')(function* createCustomer(
@@ -613,11 +607,13 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
       (effect) => Effect.ignore(effect),
     );
     yield* Effect.forEach(contactPoints, addContact, { concurrency: 1, discard: true });
-    return Option.some<VerifiedParty>({
-      counterpartyId: onboarded.counterpartyRef.resourceId,
-      displayName: client.name,
-      partyId: partyRef.resourceId,
-    });
+    return Option.some(
+      yield* Schema.decodeEffect(VerifiedPartySchema)({
+        counterpartyId: onboarded.counterpartyRef.resourceId,
+        displayName: client.name,
+        partyId: partyRef.resourceId,
+      }).pipe(Effect.mapError(registryDown)),
+    );
   });
 
   /**
@@ -637,7 +633,7 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
     if (existing !== undefined) {
       const party: VerifiedParty = { counterpartyId: existing.counterpartyId, partyId: existing.partyId };
       return Option.some<VerifiedParty>(
-        existing.displayName === null ? party : { ...party, displayName: existing.displayName },
+        Option.isNone(existing.displayName) ? party : { ...party, displayName: existing.displayName.value },
       );
     }
     return yield* createCustomer(client, operationKey);
@@ -668,23 +664,19 @@ const makePartyIntake = (scope: PartyIntakeRequest) => {
     const referenceCredentials = yield* Schema.encodeEffect(ReferenceCredentialsJsonSchema)([
       { audience: REGISTRY, authorization: registry.authorization },
     ]).pipe(Effect.mapError(registryDown));
-    const response = yield* executeApplyCommandWithAuthorization(
-      {
-        command: {
-          _tag: 'LinkClientParty',
-          clientId,
-          partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId },
-        },
-        expectedRevision,
+    const payload = yield* Schema.decodeEffect(ApplyCommandPayloadSchema)({
+      command: {
+        _tag: 'LinkClientParty',
+        clientId,
+        partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId },
       },
-      crm.credential,
-      correlationId,
-      {
-        ...crm.options,
-        idempotencyKey: `${operationKey}:link`,
-        referenceCredentials: Redacted.make(referenceCredentials),
-      },
-    ).pipe(Effect.timeout('20 seconds'), Effect.mapError(registryDown));
+      expectedRevision,
+    }).pipe(Effect.mapError(registryDown));
+    const response = yield* executeApplyCommandWithAuthorization(payload, crm.credential, correlationId, {
+      ...crm.options,
+      idempotencyKey: `${operationKey}:link`,
+      referenceCredentials: Redacted.make(referenceCredentials),
+    }).pipe(Effect.timeout('20 seconds'), Effect.mapError(registryDown));
     return response.revision;
   });
 

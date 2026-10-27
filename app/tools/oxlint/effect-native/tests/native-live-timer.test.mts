@@ -36,6 +36,119 @@ const expectTimerFixtures = (fixtures: readonly TimerFixture[]): void => {
   });
 };
 
+it('proves only SDK layer suites that explicitly exclude the injected test services', () => {
+  expectTimerFixtures([
+    {
+      expected: 0,
+      name: 'sdk-explicit-live-layer-suite',
+      source: `${liveImports}
+declare const layer: unknown;
+it.layer(layer, { excludeTestServices: true })((suite) => {
+  suite.effect('coordinates a real external race', () => Effect.gen(function* () {
+    yield* Effect.sleep('20 millis');
+  }));
+});`,
+    },
+    {
+      expected: 0,
+      name: 'sdk-aliased-live-layer-suite-options',
+      source: `${effectImport}
+import { it as sdk } from 'effect-rstest';
+declare const layer: unknown;
+const options = { excludeTestServices: true };
+sdk.layer(layer, options)('external race', (suite) => {
+  const register = suite.effect;
+  register('wait', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-default-test-services',
+      source: `${liveImports}
+declare const layer: unknown;
+it.layer(layer, { excludeTestServices: false })((suite) => {
+  suite.effect('ordinary unit timing', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-without-explicit-clock-selection',
+      source: `${liveImports}
+declare const layer: unknown;
+it.layer(layer)((suite) => {
+  suite.effect('ordinary unit timing', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'lookalike-layer-runner',
+      source: `${effectImport}
+declare const layer: unknown;
+const it = { layer: (...args: unknown[]) => (register: any) => register({ effect: (...args: unknown[]) => {} }) };
+it.layer(layer, { excludeTestServices: true })((suite) => {
+  suite.effect('not the SDK', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-shadowed-options',
+      source: `${liveImports}
+declare const layer: unknown;
+const options = { excludeTestServices: true };
+function register(options: { excludeTestServices: boolean }) {
+  it.layer(layer, options)((suite) => {
+    suite.effect('unknown clock', () => Effect.sleep('20 millis'));
+  });
+}`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-mutated-options',
+      source: `${liveImports}
+declare const layer: unknown;
+const options = { excludeTestServices: true };
+options.excludeTestServices = false;
+it.layer(layer, options)((suite) => {
+  suite.effect('unit clock', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-opaque-options-escape',
+      source: `${liveImports}
+declare const layer: unknown;
+declare function configure(options: unknown): void;
+const options = { excludeTestServices: true };
+configure(options);
+it.layer(layer, options)((suite) => {
+  suite.effect('unknown clock', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-mutated-suite-method',
+      source: `${liveImports}
+declare const layer: unknown;
+it.layer(layer, { excludeTestServices: true })((suite) => {
+  suite.effect = it.effect;
+  suite.effect('unit clock', () => Effect.sleep('20 millis'));
+});`,
+    },
+    {
+      expected: 1,
+      name: 'sdk-layer-native-timer-remains-forbidden',
+      source: `${liveImports}
+declare const layer: unknown;
+it.layer(layer, { excludeTestServices: true })((suite) => {
+  suite.effect('native timer', () => {
+    setTimeout(() => {}, 20);
+    return Effect.void;
+  });
+});`,
+    },
+  ]);
+});
+
 it('allows Effect sleep and timeoutOrElse inside genuine native live callbacks', () => {
   expectTimerFixtures([
     {

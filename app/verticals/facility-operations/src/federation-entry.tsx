@@ -19,7 +19,9 @@ const FacilityOperationsRouteContent = () => {
       data-modern-mf-expose="./Route"
     >
       <h2 className="facilityoperations:text-2xl facilityoperations:font-black">{t('facility-operations.title')}</h2>
-      <p className="facilityoperations:mt-2 facilityoperations:text-stone-600">{t('facility-operations.routeSurface')}</p>
+      <p className="facilityoperations:mt-2 facilityoperations:text-stone-600">
+        {t('facility-operations.routeSurface')}
+      </p>
     </section>
   );
 };

@@ -6,7 +6,7 @@ import { ActionTransportMetadataSchema } from '@app/core-runtime';
 import { Context, Crypto, Effect, Option, Predicate, Schema } from 'effect';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
-import { MCP_BFF_ROUTE, MCP_METADATA_BFF_ROUTE, mcpMetadataUrlOf } from '../../shared/mcp-resource.ts';
+import { mcpMetadataUrlOf } from '../../shared/mcp-resource.ts';
 import type { AgentPlatformCaller } from '../agent-platform/caller.ts';
 import { callModuleAs } from '../agent-platform/module-call.ts';
 import { listOwnAgentBatches, submitAgentProposals } from '../agent-platform/service-queue.ts';
@@ -215,11 +215,11 @@ export const serveMcpHttpAdapter =
     );
 
 /** Native routes borrow the same request-scoped services as the platform's other authenticated handlers. */
-export const McpEndpointTransportLive = HttpRouter.add('*', MCP_BFF_ROUTE, serveMcpHttpAdapter(serveMcpRequest));
+const mcpEndpointHandler = serveMcpHttpAdapter(serveMcpRequest);
+export const McpEndpointTransportLive = HttpRouter.add('*', '/mcp', (request) => mcpEndpointHandler(request));
 
 /** Public metadata does not require a correlation or an Action identity. */
-export const McpMetadataTransportLive = HttpRouter.add(
-  '*',
-  MCP_METADATA_BFF_ROUTE,
-  serveMcpHttpAdapter(serveMcpMetadata(deps)),
+const mcpMetadataHandler = serveMcpHttpAdapter(serveMcpMetadata(deps));
+export const McpMetadataTransportLive = HttpRouter.add('*', '/mcp-resource-metadata', (request) =>
+  mcpMetadataHandler(request),
 );

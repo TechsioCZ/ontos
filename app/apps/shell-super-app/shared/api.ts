@@ -1,4 +1,5 @@
 import { GatewayContextApiGroup } from '@app/shared-contracts';
+import { EmailReceiptsApi } from '@app/email-delivery/receipt-api';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
@@ -1268,6 +1269,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(DocumentGatewayApiGroup)
   .add(ShellDocumentContextApiGroup)
   .add(ExternalIdentityApiGroup)
+  .add(EmailReceiptsApi.groups.emailReceipts)
   .add(OAuthConnectApiGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>

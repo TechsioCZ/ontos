@@ -29,23 +29,23 @@ const handlers = HttpApiBuilder.group(api, 'fixture', (group) =>
     .handle('fail', () => Effect.die('fixture handler defect')),
 );
 
-const assembleFixtureRuntime = assembleEffectBffRuntime<
-  typeof api.identifier,
-  typeof api.groups.fixture,
-  Layer.Services<typeof handlers>,
-  Greeting,
-  HttpRouter.HttpRouter
->;
-
 const makeRuntime = (greeting: string) =>
-  assembleFixtureRuntime({
-    api,
-    handlers,
-    services: Layer.succeed(Greeting, { value: greeting }),
-  });
+  assembleEffectBffRuntime<typeof api.identifier, typeof api.groups.fixture, Layer.Services<typeof handlers>, Greeting>(
+    {
+      api,
+      handlers,
+      services: Layer.succeed(Greeting, { value: greeting }),
+    },
+  );
 
 const makeCorsRuntime = (greeting: string) =>
-  assembleFixtureRuntime({
+  assembleEffectBffRuntime<
+    typeof api.identifier,
+    typeof api.groups.fixture,
+    Layer.Services<typeof handlers>,
+    Greeting,
+    HttpRouter.HttpRouter
+  >({
     api,
     handlers,
     services: Layer.succeed(Greeting, { value: greeting }),
@@ -57,7 +57,12 @@ const makeCorsRuntime = (greeting: string) =>
     }),
   });
 
-const failingStartupRuntime = assembleFixtureRuntime({
+const failingStartupRuntime = assembleEffectBffRuntime<
+  typeof api.identifier,
+  typeof api.groups.fixture,
+  Layer.Services<typeof handlers>,
+  Greeting
+>({
   api,
   handlers,
   services: Layer.effect(Greeting, Effect.die('fixture layer startup defect')),
@@ -131,7 +136,12 @@ it.live('preserves caller-owned Layer startup defects', () =>
 it.live('builds the services for every request when the edge asks for request lifetime', () =>
   Effect.gen(function* requestServicesEffect() {
     let builds = 0;
-    const runtime = assembleFixtureRuntime({
+    const runtime = assembleEffectBffRuntime<
+      typeof api.identifier,
+      typeof api.groups.fixture,
+      Layer.Services<typeof handlers>,
+      Greeting
+    >({
       api,
       handlers,
       services: Layer.effect(

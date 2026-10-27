@@ -1,4 +1,5 @@
 import { Effect, Option, Redacted, Schema } from 'effect';
+import { HttpServerResponse } from 'effect/http';
 
 import {
   classifyOAuthPath,
@@ -21,6 +22,7 @@ const ERROR_PATH = `${OAUTH_BASE_PATH}/error`;
 const REVOKE_PATH = `${OAUTH_BASE_PATH}/oauth2/revoke`;
 const TOKEN_PATH = `${OAUTH_BASE_PATH}/oauth2/token`;
 const BODY_READ_TIMEOUT = '10 seconds';
+const CONTENT_TYPE_HEADER = 'content-type';
 
 /** The request Better Auth sees: full issuer-prefixed path on the configured issuer origin (never X-Forwarded-*). */
 export const toBetterAuthRequest = (issuer: string, request: Request, body?: ArrayBuffer): Request => {
@@ -41,7 +43,10 @@ export const toBetterAuthRequest = (issuer: string, request: Request, body?: Arr
 };
 
 const serverError = (): Response =>
-  Response.json({ error: 'server_error' }, { headers: { 'cache-control': 'no-store' }, status: 500 });
+  HttpServerResponse.raw('{"error":"server_error"}', {
+    headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
+    status: 500,
+  }).pipe(HttpServerResponse.toWeb);
 
 // Only the fields owned by the pre-dispatch guards are decoded here. Better Auth owns the rest of the request.
 const GuardBody = Schema.Struct({
@@ -74,7 +79,7 @@ const guardRequest = Effect.fn('OAuth.guardRequest')(function* guardRequest(
     return Option.none<Response>();
   }
   const text = decodeText(body);
-  const fields = yield* request.headers.get('content-type')?.includes('application/json') === true
+  const fields = yield* request.headers.get(CONTENT_TYPE_HEADER)?.includes('application/json') === true
     ? decodeGuardJson(text)
     : decodeGuardForm(Object.fromEntries(new URLSearchParams(text)));
   // Better Auth's refresh-reuse reaction deletes tokens across companies. The guard limits it to this grant.
@@ -97,7 +102,11 @@ const guardRequest = Effect.fn('OAuth.guardRequest')(function* guardRequest(
     const verdict = yield* guards.refreshTokenStatus(credential, { revokeOnReuse: false });
     return verdict === 'pass'
       ? Option.none<Response>()
-      : Option.some(new Response(null, { headers: { 'cache-control': 'no-store' }, status: 200 }));
+      : Option.some(
+          HttpServerResponse.empty({ headers: { 'cache-control': 'no-store' }, status: 200 }).pipe(
+            HttpServerResponse.toWeb,
+          ),
+        );
   }
   if (fields.accept !== true && fields.accept !== 'true') {
     return Option.none<Response>();
@@ -122,11 +131,20 @@ const rewriteMetadata = Effect.fn('OAuth.rewriteMetadata')(function* rewriteMeta
   }
   const headers = new Headers(response.headers);
   headers.delete('content-length');
-  return Response.json(publicMetadataDocument(parsed.value), {
+  const body = yield* Schema.encodeEffect(Schema.fromJsonString(OAuthMetadataDocumentSchema))(
+    publicMetadataDocument(parsed.value),
+  );
+  headers.set(CONTENT_TYPE_HEADER, headers.get(CONTENT_TYPE_HEADER) ?? 'application/json');
+  const adapted = HttpServerResponse.raw(body, {
     headers,
     status: response.status,
     statusText: response.statusText,
-  });
+  }).pipe(HttpServerResponse.toWeb);
+  adapted.headers.delete('set-cookie');
+  for (const cookie of headers.getSetCookie()) {
+    adapted.headers.append('set-cookie', cookie);
+  }
+  return adapted;
 });
 
 /** Authorize errors without a safe client redirect go to the Czech error card, never the client's redirect. */

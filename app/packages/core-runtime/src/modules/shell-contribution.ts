@@ -158,7 +158,6 @@ const navigationText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLe
 
 /** Czech and English text the Shell shows for a contribution; the Shell never names a module's destinations. */
 export const ShellContributionLabelSchema = Schema.Struct({ cs: navigationText, en: navigationText });
-export type ShellContributionLabel = typeof ShellContributionLabelSchema.Type;
 
 /** Iconify utility class of the destination, e.g. `icon-[mdi--home-outline]`. */
 export const ShellContributionIconSchema = Schema.TemplateLiteral(['icon-[', Schema.String, ']']).check(

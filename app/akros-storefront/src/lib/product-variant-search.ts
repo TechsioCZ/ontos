@@ -7,7 +7,7 @@ export const normalizeCatalogSearchTerm = (value: string) =>
     .toLocaleLowerCase("cs-CZ")
     .trim();
 
-export const formatCatalogParametersForSearch = (parameters: CatalogParameter[]) =>
+const formatCatalogParametersForSearch = (parameters: CatalogParameter[]) =>
   parameters.map(({ label, value, unit }) => `${label} ${value} ${unit}`).join(" ");
 
 export const matchesProductVariantSearch = (

@@ -11,15 +11,15 @@ import {
 } from "@/features/cart/cart-state";
 import { formatPrice } from "@/lib/format";
 
-export const cartLabel = "Aktuální ceny a dostupnost z OntOS";
+const cartLabel = "Aktuální ceny a dostupnost z OntOS";
 
-export interface QuoteLineIssue {
+interface QuoteLineIssue {
   productId: string;
   variantId?: string;
   code: string;
   message: string;
 }
-export interface QuoteTotals {
+interface QuoteTotals {
   totalMinor: number;
   totalVatMinor: number;
   netMinor: number;

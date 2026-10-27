@@ -82,7 +82,7 @@
     "database-trust:audit": "node ./scripts/audit-database-trust-boundaries.mts",
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
     "local:initialize": "node ./scripts/initialize-local-development.mts",
-    "test:unit": "pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:unit --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency=1 --if-present run test:component --pool.maxWorkers 1",
+    "test:unit": "pnpm -r --no-sort --workspace-concurrency=1 --filter '!@app/shared-contracts' --filter '!akros-storefront' --if-present run test:unit --pool.maxWorkers 1 && pnpm --filter @app/shared-contracts exec rstest --project unit --pool.maxWorkers 1 && pnpm --filter @app/shared-contracts test:types && pnpm --filter akros-storefront test:unit --maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency=1 --filter '!akros-storefront' --if-present run test:component --pool.maxWorkers 1 && pnpm --filter akros-storefront test:component --maxWorkers 1",
     "test:integration": "rstest --project integration --pool.maxWorkers 1 && pnpm -r --no-sort --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1",
     "test:scripts": "rstest --project scripts --pool.maxWorkers 1",
     "test:lint-rules": "rstest --project lint-rules --pool.maxWorkers 1",
@@ -169,7 +169,11 @@
     "@app/work-tasks": "workspace:*",
     "@app/finance-billing": "workspace:*",
     "@app/crm-activities": "workspace:*",
-    "uuid": "14.0.3"
+    "uuid": "14.0.3",
+    "@app/email-delivery": "workspace:*",
+    "@app/workforce": "workspace:*",
+    "@app/crm": "workspace:*",
+    "@app/shared-contracts": "workspace:*"
   },
   "devDependencies": {
     "@babel/types": "8.0.6",
@@ -210,6 +214,7 @@
     "oxlint": "1.81.0",
     "oxlint-plugin-react-doctor": "0.9.12",
     "oxlint-tsgolint": "7.0.2001",
+    "playwright-core": "1.64.0",
     "ultracite": "7.11.0",
     "yaml": "2.9.1",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern"

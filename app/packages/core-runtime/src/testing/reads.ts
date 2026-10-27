@@ -53,6 +53,7 @@ const fencedScopeValuesSchema = Schema.Tuple([Schema.String, Schema.String, Sche
 const installReadScopeSql =
   "select current_user::text as role, set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at";
 const installFencedReadScopeSql = `${installReadScopeSql}, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $3 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock`;
+const readFenceValuesSchema = Schema.Tuple([Schema.Literal(readCommittedIsolation)]);
 
 /**
  * Scripted SQL transport for the real Core Read lifecycle and the registration's original owner
@@ -79,6 +80,15 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     const scope = { legalEntityId: '', tenantId: '' };
     // The connected role: the shared runtime until a gateway scope is established.
     const connection = { role: SHARED_RUNTIME_IDENTITY.role };
+    const installedReadScopeRows = (fencedScope: boolean) => {
+      const installed = {
+        legal_entity_id: scope.legalEntityId,
+        operation_at: options.operationTime,
+        role: connection.role,
+        tenant_id: scope.tenantId,
+      };
+      return [fencedScope ? { ...installed, isolation: readCommittedIsolation } : installed];
+    };
     const execute = Effect.fn('ReadTestHarness.executeQuery')(function* executeReadTestQuery(
       sql: string,
       params: readonly unknown[],
@@ -165,13 +175,16 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
         [scope.tenantId, scope.legalEntityId] = yield* fencedScope
           ? Schema.decodeUnknownEffect(fencedScopeValuesSchema)(params).pipe(Effect.orDie)
           : Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(Effect.orDie);
-        const installed = {
-          legal_entity_id: scope.legalEntityId,
-          operation_at: options.operationTime,
-          role: connection.role,
-          tenant_id: scope.tenantId,
-        };
-        return [fencedScope ? { ...installed, isolation: readCommittedIsolation } : installed];
+        return installedReadScopeRows(fencedScope);
+      }
+      // The lock statement installs/verifies scope but cannot serve the authority read: admission
+      // must use a separate post-lock snapshot. Match both exact native scope-authority protocols.
+      if (
+        text ===
+        "select current_user::text as role, coalesce(trust.current_tenant_id()::text, '') as tenant_id, coalesce(trust.current_legal_entity_id()::text, '') as legal_entity_id, transaction_timestamp() as operation_at, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = $1 then pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0)) end as publication_lock"
+      ) {
+        yield* Schema.decodeUnknownEffect(readFenceValuesSchema)(params).pipe(Effect.orDie);
+        return installedReadScopeRows(true);
       }
       if (text === 'select transaction_timestamp() as operation_at') {
         return [{ operation_at: options.operationTime }];

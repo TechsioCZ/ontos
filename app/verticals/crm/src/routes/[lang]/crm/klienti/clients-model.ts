@@ -1,15 +1,15 @@
 // Pure view helpers of the clients area (owned by crm-clients). Security filtering is done on the server; these
 // only search, sort and label what the signed-in principal already may see.
+import { DateTime } from 'effect';
 import { matchesSearch } from '@app/admin-ui';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { toCsv } from '../../../../../shared/domain/reports.ts';
-import type { Client, ClientEventKind, ContactPerson } from '../../../../../shared/domain/clients.ts';
-import { clientSegments } from '../../../../../shared/domain/clients.ts';
+import type { Client, ClientEventKind, ContactPerson, clientSegments } from '../../../../../shared/domain/clients.ts';
 
 export type ClientSegment = (typeof clientSegments)[number];
-export { clientSegments };
+export { clientSegments } from '../../../../../shared/domain/clients.ts';
 
-export const segmentLabels: Record<ClientSegment, string> = {
+export const segmentLabels = {
   bakery: 'Pekárna / výrobna',
   cafe: 'Kavárna / cukrárna',
   catering: 'Catering',
@@ -18,21 +18,25 @@ export const segmentLabels: Record<ClientSegment, string> = {
   restaurant: 'Restaurace',
   retail: 'Maloobchod',
   wholesale: 'Velkoobchod',
-};
+} satisfies Record<ClientSegment, string>;
+
+const segmentLabelByKey = new Map(Object.entries(segmentLabels));
 
 export const segmentLabel = (segment: string | undefined) =>
-  segment === undefined ? undefined : (segmentLabels[segment as ClientSegment] ?? segment);
+  segment === undefined ? undefined : (segmentLabelByKey.get(segment) ?? segment);
 
 export const kindLabels = { organization: 'Firma', person: 'Fyzická osoba' } as const;
 
 /** Known demo principals of Velkoobchod Hanák (companies lane personas) for readable history rows. */
-const knownPrincipals: Record<string, string> = {
-  '72000000-0000-4000-8000-000000000021': 'Vedení Siampark',
-  '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
-  '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
-  // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.
-  'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do evidence zákazníků)',
-};
+const knownPrincipals = new Map(
+  Object.entries({
+    '72000000-0000-4000-8000-000000000021': 'Vedení Siampark',
+    '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
+    '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
+    // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.
+    'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do evidence zákazníků)',
+  }),
+);
 
 /** Display name of whoever ran a command: salesperson, known persona, or a neutral label. */
 export const principalLabel = (records: RecordsResponse, principalId: string) => {
@@ -40,7 +44,7 @@ export const principalLabel = (records: RecordsResponse, principalId: string) =>
   if (salesperson !== undefined) {
     return salesperson.name;
   }
-  const known = knownPrincipals[principalId];
+  const known = knownPrincipals.get(principalId);
   if (known !== undefined) {
     return known;
   }
@@ -58,18 +62,20 @@ export const activeContactsOf = (records: RecordsResponse, clientId: string): re
 export const primaryContactOf = (records: RecordsResponse, clientId: string): ContactPerson | undefined =>
   activeContactsOf(records, clientId)[0];
 
-export const lastVisitOf = (records: RecordsResponse, clientId: string) =>
-  records.state.visits.items
-    .filter((visit) => visit.clientId === clientId)
-    .reduce<string | undefined>(
-      (latest, visit) => (latest === undefined || visit.occurredAt > latest ? visit.occurredAt : latest),
-      undefined,
-    );
+export const lastVisitOf = (records: RecordsResponse, clientId: string) => {
+  let latest: DateTime.Utc | undefined;
+  for (const visit of records.state.visits.items) {
+    if (visit.clientId === clientId && (latest === undefined || DateTime.isGreaterThan(visit.occurredAt, latest))) {
+      latest = visit.occurredAt;
+    }
+  }
+  return latest;
+};
 
 /** City from a free-text address "Ulice 12, 602 00 Brno" -> "Brno". */
 export const cityOf = (address: string | undefined) => {
   if (address === undefined) {
-    return undefined;
+    return address;
   }
   const last = address.split(',').at(-1)?.trim() ?? '';
   const withoutZip = last.replace(/^\d{3}\s?\d{2}\s+/u, '').trim();
@@ -103,7 +109,7 @@ export const clientMatches = (records: RecordsResponse, client: Client, query: s
   return /^\+?\d{3,}$/u.test(digits) && haystack.replaceAll(/\s/gu, '').includes(digits);
 };
 
-export const eventLabels: Record<ClientEventKind, string> = {
+export const eventLabels = {
   assigned: 'Změna obchodníka',
   client_archived: 'Klient archivován',
   client_created: 'Klient založen',
@@ -113,26 +119,24 @@ export const eventLabels: Record<ClientEventKind, string> = {
   contact_removed: 'Odebrána kontaktní osoba',
   contact_updated: 'Upravena kontaktní osoba',
   party_linked: 'Propojeno s evidencí zákazníků',
-};
+} satisfies Record<ClientEventKind, string>;
 
-export const fieldLabels: Record<string, string> = {
-  address: 'adresa',
-  email: 'e-mail',
-  kind: 'typ klienta',
-  name: 'název',
-  note: 'poznámka',
-  phone: 'telefon',
-  primary: 'hlavní kontakt',
-  regNo: 'IČO',
-  role: 'pracovní role',
-  segment: 'segment',
-  vatNo: 'DIČ',
-  website: 'web',
-};
-
-/** Builds `?klient=<id>` on the current list URL (drill-down links from other pages use the same param). */
-export const clientHref = (language: string, clientId: string) =>
-  `/${language}/crm/klienti?klient=${encodeURIComponent(clientId)}`;
+export const fieldLabels = new Map(
+  Object.entries({
+    address: 'adresa',
+    email: 'e-mail',
+    kind: 'typ klienta',
+    name: 'název',
+    note: 'poznámka',
+    phone: 'telefon',
+    primary: 'hlavní kontakt',
+    regNo: 'IČO',
+    role: 'pracovní role',
+    segment: 'segment',
+    vatNo: 'DIČ',
+    website: 'web',
+  }),
+);
 
 /**
  * Contacts export (S15-02, C01): one row per active contact person of the given clients, a client without contact

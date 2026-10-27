@@ -1,11 +1,19 @@
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
+import { presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';
 import { Effect, FileSystem, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
+import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../verticals/party-registry/shared/database-identity-data.ts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
+
+rstest.mock('@modern-js/app-tools-extensions/config', () => ({
+  getBuildConfigEnvironment: rstest.fn<(name: string) => string | undefined>(),
+  resolveDeployTarget: () => ({ explicit: true, target: 'node' }),
+}));
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const partyDirectory = 'verticals/party-registry';
@@ -87,3 +95,103 @@ it.live(
     Effect.provide(NodeServices.layer),
   ),
 );
+
+it.layer(NodeServices.layer)('Party development discovery', (suite) => {
+  // Compose the actual development fragment with the native preset; i18n stands behind its middleware.
+  suite.effect('serves the generated OntOS module contract before i18n redirects in development', () =>
+    Effect.gen(function* developmentContractRouting() {
+      const fs = yield* FileSystem.FileSystem;
+      const modernConfigUrl = new URL('../../verticals/party-registry/modern.config.ts', import.meta.url);
+      const modernConfigSource = yield* fs.readFileString(fileURLToPath(modernConfigUrl));
+      expect(modernConfigSource).toMatch(
+        /createWorkspaceModernConfig\(\{\s*appId,\s*cloudflareHyperdrives: \[[^\]]+\],\s*moduleUrl: import\.meta\.url,/u,
+      );
+      expect(modernConfigSource).toContain('presetUltramodernWorkspace(');
+      expect(modernConfigSource).toMatch(/ignoreRedirectRoutes: \[\s*'\/\.well-known'/u);
+
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'party-contract-routing-' });
+      yield* fs.makeDirectory(`${directory}/.dev-public/.well-known`, { recursive: true });
+      const artifacts = [
+        { body: '{"moduleKey":"party.registry"}', path: '/.well-known/ontos-module-manifest.json' },
+        { body: '{"tools":[]}', path: '/.well-known/ontos-module-mcp-tools.json' },
+      ];
+      for (const artifact of artifacts) {
+        yield* fs.writeFileString(`${directory}/.dev-public${artifact.path}`, artifact.body);
+      }
+      const authored = createWorkspaceModernConfig({
+        appId: 'party-registry',
+        cloudflareHyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
+        moduleUrl: pathToFileURL(`${directory}/modern.config.ts`).href,
+      });
+      const native = presetUltramodernWorkspace(
+        { dev: authored.dev, server: authored.server },
+        {
+          appId: 'party-registry',
+          deployTarget: 'node',
+          environment: {},
+          from: modernConfigUrl,
+        },
+      );
+      expect(authored.dev.setupMiddlewares).toHaveLength(1);
+      expect(native.dev?.setupMiddlewares).toEqual(authored.dev.setupMiddlewares);
+      expect(native.server?.publicDir).toEqual(expect.arrayContaining(['./locales', './assets', './.dev-public']));
+
+      const localeRedirect = rstest.fn(
+        (
+          _request: { url?: string | undefined },
+          _response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void },
+          next: () => void,
+        ) => {
+          next();
+        },
+      );
+      const middlewares: ((...args: Parameters<typeof localeRedirect>) => void)[] = [localeRedirect];
+      for (const setup of authored.dev.setupMiddlewares) {
+        setup({
+          unshift: (middleware) => {
+            middlewares.unshift(middleware);
+          },
+        });
+      }
+      expect(middlewares.at(-1)).toBe(localeRedirect);
+      for (const artifact of artifacts) {
+        for (const suffix of ['', '?cache=refresh']) {
+          const headers = new Map<string, string>();
+          let body = '';
+          const response = {
+            end: (value: Buffer) => {
+              body = value.toString('utf-8');
+            },
+            setHeader: (name: string, value: string) => {
+              headers.set(name, value);
+            },
+          };
+          const next = rstest.fn<() => void>();
+          middlewares[0]?.({ url: `${artifact.path}${suffix}` }, response, next);
+          expect(body).toBe(artifact.body);
+          expect(headers.get('Content-Type')).toBe('application/json');
+          expect(headers.get('Cache-Control')).toBe('no-cache');
+          expect(headers.get('Content-Length')).toBe(String(Buffer.byteLength(artifact.body)));
+          expect(next).not.toHaveBeenCalled();
+          expect(localeRedirect).not.toHaveBeenCalled();
+        }
+      }
+      for (const url of [
+        undefined,
+        '/cs/prodej/zakaznici',
+        '/.well-known/other.json',
+        '/.well-known/ontos-module-manifest.json/extra',
+      ]) {
+        const response = {
+          end: rstest.fn<(body: Buffer) => void>(),
+          setHeader: rstest.fn<(name: string, value: string) => void>(),
+        };
+        const next = rstest.fn<() => void>();
+        middlewares[0]?.({ url }, response, next);
+        expect(next).toHaveBeenCalledOnce();
+        expect(response.end).not.toHaveBeenCalled();
+        expect(response.setHeader).not.toHaveBeenCalled();
+      }
+    }).pipe(Effect.scoped),
+  );
+});

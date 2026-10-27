@@ -1,6 +1,10 @@
 import { expect, test } from 'effect-rstest';
 
-import { clientNameFrom, readOAuthLoginError, readOAuthLoginRequest } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
+import {
+  clientNameFrom,
+  readOAuthLoginError,
+  readOAuthLoginRequest,
+} from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
 
 const claudeHref =
   'http://localhost:3020/cs/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A53682%2Fcallback&scope=openid+offline_access+ontos&state=xyz&code_challenge=abc&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A3020%2Fmcp&prompt=login+consent&exp=999&ba_iat=1&ba_param=client_id&sig=SIG';

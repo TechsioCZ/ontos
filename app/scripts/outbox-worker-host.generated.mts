@@ -9,8 +9,6 @@ import { outboxWorkerEntry as inventoryOutboxWorkerEntry } from '@app/inventory/
 import { outboxWorkerEntry as privacyOutboxWorkerEntry } from '@app/privacy/outbox-worker-host';
 import { outboxWorkerEntry as financeBillingOutboxWorkerEntry } from '@app/finance-billing/outbox-worker-host';
 
-startEmailDispatchTrigger();
-
 startOutboxWorkerHost({
   entries: [
     coreSystemOutboxWorkerEntry,
@@ -22,4 +20,5 @@ startOutboxWorkerHost({
     financeBillingOutboxWorkerEntry,
   ],
   health: true,
+  startup: startEmailDispatchTrigger,
 });

@@ -1,6 +1,6 @@
 {
   "patterns": [
-    "{apps,verticals,packages,scripts,tools,quality-audit}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+    "{akros-storefront,apps,database,verticals,packages,scripts,tools,quality-audit}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
     "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"
   ],
   "exclude": [
@@ -16,6 +16,13 @@
     "**/routeTree.gen.*",
     "tools/oxlint/effect-native/tests/fixtures/**",
     "**/.env",
-    "**/.env.*"
+    "**/.env.*",
+    "**/.next/**",
+    "**/.open-next/**",
+    "**/.wrangler/**",
+    "**/.vercel/**",
+    "**/coverage/**",
+    "**/playwright-report/**",
+    "**/test-results/**"
   ]
 }

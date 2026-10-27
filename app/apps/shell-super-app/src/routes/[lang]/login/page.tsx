@@ -6,14 +6,15 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Function as Fn, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
+import { useBrowserLocationHref } from '../../browser-location.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { openSignedInPage, signInReason, signInReturnPath } from '../../sign-in-return.ts';
@@ -41,14 +42,8 @@ const SignInFormSchema = Schema.fromFormData(
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
 
-const subscribeToLoginLocation = (onChange: () => void) => {
-  window.addEventListener('popstate', onChange);
-  return () => window.removeEventListener('popstate', onChange);
-};
-const browserLoginHref = () => window.location.href;
-const serverLoginHref = () => '';
-const loginReason = (href: string, language: string): SignInReason | 'sign_in_required' | undefined =>
-  href === ''
+const loginReason = (href: string | undefined, language: string): SignInReason | 'sign_in_required' | undefined =>
+  href === undefined
     ? undefined
     : (signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'));
 
@@ -62,7 +57,7 @@ const readOAuthClientName = Effect.fn('Login.readOAuthClientName')(function* rea
   );
   return yield* HttpClient.execute(clientRequest).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.json),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Json)),
     Effect.map(clientNameFrom),
     Effect.timeout('10 seconds'),
   );
@@ -95,6 +90,39 @@ const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
     Match.exhaustive,
   );
 
+/** The active URL owns its client-name lookup; leaving it cancels the request and hides stale names. */
+const useOAuthLoginLocation = () => {
+  const href = useBrowserLocationHref();
+  const oauthRequest = href === undefined ? undefined : readOAuthLoginRequest(href);
+  const oauthError = href === undefined ? undefined : readOAuthLoginError(href);
+  const [clientNameResult, setClientNameResult] = useState<{
+    readonly href: string;
+    readonly name: string | undefined;
+  }>();
+  const clientName = clientNameResult?.href === href ? clientNameResult?.name : undefined;
+  useEffect(() => {
+    if (href === undefined) {
+      return Fn.constVoid;
+    }
+    const request = readOAuthLoginRequest(href);
+    return request === undefined
+      ? Fn.constVoid
+      : browserRuntime.runCallback(
+          readOAuthClientName(request).pipe(
+            Effect.matchEffect({
+              onFailure: (error) =>
+                Match.value(error).pipe(
+                  Match.tag('HttpBodyError', 'HttpClientError', 'SchemaError', 'TimeoutError', () => Effect.void),
+                  Match.exhaustive,
+                ),
+              onSuccess: (name) => Effect.sync(() => setClientNameResult({ href, name })),
+            }),
+          ),
+        );
+  }, [href]);
+  return { clientName, href, oauthError, oauthRequest };
+};
+
 const LoginPage = () => {
   const { language, t } = useModernI18n();
   const router = useRouter();
@@ -112,29 +140,9 @@ const LoginPage = () => {
   // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
   // A protected page opened without signing in arrives with only the page to return to: "not signed in".
   // The server snapshot keeps hydration's first render free of browser-only notices.
-  const href = useSyncExternalStore(subscribeToLoginLocation, browserLoginHref, serverLoginHref);
+  const { clientName, href, oauthError, oauthRequest } = useOAuthLoginLocation();
   const reason = loginReason(href, language);
-  const oauthRequest = readOAuthLoginRequest(href);
-  const oauthError = readOAuthLoginError(href);
-  const [clientName, setClientName] = useState<string>();
   const oauthBanner = oauthBannerText(oauthRequest, clientName, t);
-  useEffect(() => {
-    const request = readOAuthLoginRequest(href);
-    return request === undefined
-      ? undefined
-      : browserRuntime.runCallback(
-          readOAuthClientName(request).pipe(
-            Effect.matchEffect({
-              onFailure: (error) =>
-                Match.value(error).pipe(
-                  Match.tag('HttpBodyError', 'HttpClientError', 'TimeoutError', () => Effect.void),
-                  Match.exhaustive,
-                ),
-              onSuccess: (name) => Effect.sync(() => setClientName(name)),
-            }),
-          ),
-        );
-  }, [href]);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;

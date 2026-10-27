@@ -1,4 +1,3 @@
-/* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical database contract; expires: 2027-03-31. */
 import { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '@app/core-runtime';
 import type { PriceGroupSelector, PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import type { PriceScheduleAcknowledgement } from '@app/pricing-contracts/domain/price-schedule';

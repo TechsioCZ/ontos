@@ -24,6 +24,13 @@ it.live(
         'apps/shell/api/auth/db/client.ts':
           "import { drizzle } from 'drizzle-orm/node-postgres';\nimport { Pool } from 'pg';\n",
         'apps/shell/api/auth/db/types.ts': "import type { Pool } from 'pg';\n",
+        'apps/shell/api/database-identity-enrollment.ts':
+          "import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';\n",
+        'apps/shell/api/routes/identity-lookalike.ts':
+          "import { database } from '@app/core-runtime/db/database-identity-manifest/client';\n",
+        'apps/shell/api/routes/identity-multiline.ts':
+          "const database = import(\n  '@app/core-runtime/db/database-identity-manifest-extra'\n);\n",
+        'apps/shell/api/routes/identity-private.ts': "import { database } from '@app/core-runtime/db/client';\n",
         'apps/shell/api/routes/private.ts': "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
         'packages/core-runtime/src/testing/actions.ts': 'export const makeActionTestHarness = () => undefined;\n',
         'verticals/stock/api/index.ts': secondDriverSource,
@@ -81,6 +88,9 @@ it.live(
       expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
         'apps/shell/api/auth/db/client.ts:1',
         'apps/shell/api/auth/db/client.ts:2',
+        'apps/shell/api/routes/identity-lookalike.ts:1',
+        'apps/shell/api/routes/identity-multiline.ts:1',
+        'apps/shell/api/routes/identity-private.ts:1',
         'apps/shell/api/routes/private.ts:1',
         'verticals/stock/api/index.ts:1',
         'verticals/stock/api/routes/export.ts:1',

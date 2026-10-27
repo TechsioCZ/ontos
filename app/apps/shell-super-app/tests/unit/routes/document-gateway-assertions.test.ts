@@ -52,7 +52,7 @@ const askAssertion = (body: Readonly<Record<string, string>>) =>
     return { body: await response.json(), status: response.status };
   });
 
-const isGatewayUrl = Schema.is(Schema.String.check(Schema.isEndsWith('/auth/gateway-context')));
+const isGatewayUrl = Schema.is(Schema.String.check(Schema.isEndingWith('/auth/gateway-context')));
 const gatewayRequests = () => platformFetch.mock.calls.filter(([input]) => isGatewayUrl(input));
 
 beforeAll(() => {

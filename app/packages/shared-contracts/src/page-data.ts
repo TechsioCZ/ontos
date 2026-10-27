@@ -279,7 +279,6 @@ export const modulePagePreload = (
       discard: true,
     });
   return async (props) => {
-    // eslint-disable-next-line effect-native/no-bare-effect-run -- MF boundary: each step's load already runs on its module's runtime; this only joins them. expires: 2027-03-31.
     await Effect.runPromise(preloadAll(props));
   };
 };

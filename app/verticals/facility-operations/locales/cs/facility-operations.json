@@ -67,7 +67,10 @@
         "items_few": "{{count}} položky",
         "items_many": "{{count}} položek",
         "items_other": "{{count}} položek",
-        "more": "Zobrazit starší ({{count}})"
+        "more_one": "Zobrazit starší ({{count}})",
+        "more_few": "Zobrazit starší ({{count}})",
+        "more_many": "Zobrazit starší ({{count}})",
+        "more_other": "Zobrazit starší ({{count}})"
       }
     },
     "property": {
@@ -77,6 +80,35 @@
       "none": "Bez vazby",
       "loadFailed": "Seznam nemovitostí se nepodařilo načíst.",
       "pick": "Vyberte nemovitost nebo jednotku"
+    },
+    "ui": {
+      "recommendedReplenishment": "Doporučené doplnění zásob",
+      "prepareIncomingInvoice": "Připravit návrh přijaté faktury",
+      "issueDate": "Datum vystavení",
+      "dueDate": "Datum splatnosti",
+      "supplierDocumentVat": "DPH podle dokladu dodavatele",
+      "selectVatRate": "Vyberte sazbu DPH",
+      "leaseAgreement": "Nájemní smlouva",
+      "financeInvoiceFilesTitle": "Soubory faktur z Financí",
+      "financeInvoiceFilesCount": "Soubory faktur ve Financích"
+    },
+    "propertyEquipment": {
+      "active": "Aktivní",
+      "columns": {
+        "inventoryNumber": "Inventární číslo",
+        "name": "Název",
+        "location": "Umístění",
+        "currentValue": "Aktuální hodnota",
+        "status": "Stav"
+      },
+      "disposed": "Vyřazeno · historie zachována",
+      "empty": "V tomto umístění není evidován žádný majetek.",
+      "failed": "Vybavení se nepodařilo načíst.",
+      "forbidden": "Nemáte oprávnění zobrazit vybavení.",
+      "loading": "Načítání vybavení…",
+      "notProvided": "Neuvedeno",
+      "retry": "Zkusit znovu",
+      "title": "Evidované vybavení a majetek"
     }
   }
 }

@@ -14,6 +14,11 @@ import { Reactivity } from 'effect/reactivity';
 import { FinanceStateSchema } from '../shared/apis/records.ts';
 import type { FinanceState, Invoice } from '../shared/apis/records.ts';
 
+class PreparedStepRepairRejected extends Schema.TaggedError<
+  PreparedStepRepairRejected,
+  { readonly brand: unique symbol }
+>()('PreparedStepRepairRejected', { reason: Schema.String }) {}
+
 const TENANT = '70000000-0000-4000-8000-000000000020';
 const IMPORT_LABEL = 'Úvodní import dokladů';
 
@@ -73,7 +78,9 @@ const repair = Effect.fn('Finance.repairPreparedStep')(function* repairPreparedS
         const updated =
           yield* sql`update finance_billing.finance_states set state=${encoded}::jsonb,revision=revision+1,updated_at=now() where tenant_id=${TENANT} and legal_entity_id=${row.legal_entity_id} and revision=${row.revision} returning revision`;
         if (updated.length !== 1) {
-          return yield* Effect.die(`Finance ${row.legal_entity_id} changed concurrently; rerun`);
+          return yield* new PreparedStepRepairRejected({
+            reason: `Finance ${row.legal_entity_id} changed concurrently; rerun`,
+          });
         }
         return yield* Console.log(`  applied -> rev ${row.revision + 1}`);
       }),

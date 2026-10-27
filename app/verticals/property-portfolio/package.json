@@ -62,7 +62,6 @@
     "@app/property-leasing": "workspace:*",
     "@app/finance-billing": "workspace:*",
     "@app/work-tasks": "workspace:*",
-    "@app/crm-activities": "workspace:*",
     "@app/workforce": "workspace:*",
     "@modern-js/backend-federation-contracts": "catalog:ultramodern"
   },

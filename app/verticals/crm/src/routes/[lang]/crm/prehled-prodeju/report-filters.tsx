@@ -6,6 +6,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Schema } from 'effect';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
 import type { ReportFilters } from '../../../../../shared/domain/reports.ts';
 import {
   UNASSIGNED,
@@ -31,7 +32,7 @@ const isStatusMeaning = Schema.is(Schema.Literals(statusMeanings));
 export const reportPeriodOptions = (records: RecordsResponse) =>
   periodOptions(
     records.now,
-    records.state.imports.orders.map((order) => orderDate(order).slice(0, 7)),
+    records.state.imports.orders.map((order) => orderDateText(orderDate(order)).slice(0, 7)),
   );
 
 /** Query -> domain filters. Unknown values fall back to "all" (e.g. a client the viewer may not see). */
@@ -150,7 +151,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
         <SelectTemplate
           id="crm-report-period"
           items={periodItems}
-          label="Období"
+          label={t('crm.ciWorkflow.period')}
           labelProps={labelProps}
           onValueChange={(details) => onChange({ period: details.value[0] ?? ALL })}
           size="sm"
@@ -182,7 +183,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
           <SelectTemplate
             id="crm-report-salesperson"
             items={salespeopleItems}
-            label="Obchodník"
+            label={t('crm.ciWorkflow.salesperson')}
             labelProps={labelProps}
             onValueChange={(details) => onChange({ salesperson: details.value[0] ?? ALL })}
             size="sm"
@@ -199,7 +200,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
         <SelectTemplate
           id="crm-report-client"
           items={clientItems}
-          label="Klient"
+          label={t('crm.ciWorkflow.client')}
           labelProps={labelProps}
           onValueChange={(details) => onChange({ client: details.value[0] ?? ALL })}
           size="sm"
@@ -210,7 +211,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
         <SelectTemplate
           id="crm-report-status"
           items={statusItems}
-          label="Stav"
+          label={t('crm.ciWorkflow.status')}
           labelProps={labelProps}
           onValueChange={(details) => onChange({ status: details.value[0] ?? ALL })}
           size="sm"

@@ -13,13 +13,11 @@ import { Schema } from 'effect';
 import { AuditFieldsSchema, IsoDateSchema, NoteSchema, PropertyRefSchema, TextSchema, OpsIdSchema } from './common.ts';
 
 export const CalendarEventIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityCalendarEventId'));
-export type CalendarEventId = typeof CalendarEventIdSchema.Type;
 
 export const CalendarEventKindSchema = Schema.Literals(['DEADLINE', 'INSPECTION', 'MEETING', 'REMINDER']);
 export type CalendarEventKind = typeof CalendarEventKindSchema.Type;
 
 export const CalendarEventStatusSchema = Schema.Literals(['PLANNED', 'DONE', 'CANCELLED']);
-export type CalendarEventStatus = typeof CalendarEventStatusSchema.Type;
 
 export const CalendarEventSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
@@ -38,7 +36,6 @@ export const CalendarEventSchema = Schema.Struct({
 export type CalendarEvent = typeof CalendarEventSchema.Type;
 
 export const NotificationIdSchema = OpsIdSchema.pipe(Schema.brand('FacilityNotificationId'));
-export type NotificationId = typeof NotificationIdSchema.Type;
 
 /** ASSIGNED = someone assigned me; DEADLINE = approaching; OVERDUE = past due; CHANGE = significant change. */
 export const NotificationCategorySchema = Schema.Literals(['ASSIGNED', 'DEADLINE', 'OVERDUE', 'CHANGE']);

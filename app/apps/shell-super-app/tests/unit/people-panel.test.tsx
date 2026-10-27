@@ -1,10 +1,31 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { getI18nInstance as createModernI18n } from '@modern-js/plugin-i18n/i18n';
+import type { I18nInstance } from '@modern-js/plugin-i18n/runtime';
+import { ModernI18nProvider } from '@modern-js/plugin-i18n/runtime/consumer';
+import { cleanup, render as renderView, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
-import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
+import { afterEach, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
+import type { PropsWithChildren, ReactElement } from 'react';
 
+import csResource from '../../locales/cs/shell.json';
 import { InvitePersonButton } from '../../src/routes/people/invite-person-button.tsx';
 import { PeoplePanel } from '../../src/routes/people/people-panel.tsx';
+
+let i18nInstance: I18nInstance;
+beforeAll(async () => {
+  i18nInstance = await createModernI18n();
+  await i18nInstance.init({
+    defaultNS: 'shell',
+    lng: 'cs',
+    ns: ['shell'],
+    resources: { cs: { shell: csResource } },
+    supportedLngs: ['cs', 'en'],
+  });
+});
+const I18nProvider = ({ children }: PropsWithChildren) => (
+  <ModernI18nProvider value={{ i18nInstance, language: 'cs', languages: ['cs', 'en'] }}>{children}</ModernI18nProvider>
+);
+const render = (ui: ReactElement) => renderView(ui, { wrapper: I18nProvider });
 
 const { commands } = rstest.hoisted(() => ({
   commands: {

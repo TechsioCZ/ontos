@@ -40,6 +40,9 @@
  * - Every call into `Cookies` / `HttpServerResponse` (`HttpServerResponse.setCookie(…)`,
  *   `HttpServerResponse.mergeCookies(Cookies.fromSetCookie(…))`), including aliased and namespace
  *   imports (`import * as Cookies from "effect/http/Cookies"`).
+ * - An immutable local `for...of` forwarding native `Headers.getSetCookie()` values unchanged into
+ *   a native Effect-to-Web response adapter. This preserves repeated same-name cookies with
+ *   different paths; it does not construct cookies or transform serialized values.
  * - Test files (`ignoreTestFiles: true` by default) — the audit's D tier keeps hand-written cookie
  *   strings inside test fixtures and assertions.
  * - Anything outside `paths`, matching `allowPaths`, or matching `exclude` (generated output).
@@ -51,8 +54,8 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 
-import { unwrap as unwrapExpression, staticString, keyName } from '../shared/ast.ts';
-import { lookupVariable } from '../shared/bindings.ts';
+import { unwrap as unwrapExpression, staticString, keyName, walk } from '../shared/ast.ts';
+import { isUnshadowedGlobal, lookupVariable } from '../shared/bindings.ts';
 import { collectEffectBindings, type EffectBindings } from '../shared/effect-imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { stringArray } from '../shared/options.ts';
@@ -83,6 +86,8 @@ const COOKIE_ATTRIBUTE =
 
 /** `__Secure-` / `__Host-` cookie name prefixes carry an attribute contract in the name. */
 const COOKIE_NAME_PREFIX = /^__(?:Secure|Host)-/u;
+
+type LocalIdentifier = Extract<ESTree.Node, { type: 'Identifier' }>;
 
 interface RuleOptions {
   readonly paths: readonly string[];
@@ -337,6 +342,282 @@ function isReadOnlyCookiePrefix(context: Context, node: ESTree.Node): boolean {
   return reads.length > 0 && reads.every((reference) => inspectsCookiePrefix(reference.identifier));
 }
 
+/** No name-only/type-only proof: the value must have one immutable local declaration. */
+function localConstant(context: Context, node: LocalIdentifier): ESTree.VariableDeclarator | null {
+  const variable = lookupVariable(context, node);
+  if (variable?.defs.length !== 1 || variable.references.some((reference) => reference.isWrite() && !reference.init))
+    return null;
+  const definition = variable.defs[0];
+  if (
+    definition?.type !== 'Variable' ||
+    definition.node.type !== 'VariableDeclarator' ||
+    definition.node.id.type !== 'Identifier' ||
+    definition.node.parent?.type !== 'VariableDeclaration' ||
+    definition.node.parent.kind !== 'const' ||
+    definition.node.parent.parent?.type === 'ExportNamedDeclaration'
+  )
+    return null;
+  return definition.node;
+}
+
+/** Forwarding uses direct native methods, not computed, optional or extracted callbacks. */
+function directMember(node: ESTree.Node | null | undefined, name: string): ESTree.MemberExpression | null {
+  return node?.type === 'MemberExpression' &&
+    !node.computed &&
+    !node.optional &&
+    node.property.type === 'Identifier' &&
+    node.property.name === name
+    ? node
+    : null;
+}
+
+function directCall(member: ESTree.MemberExpression): ESTree.CallExpression | null {
+  const call = member.parent;
+  return call?.type === 'CallExpression' && call.callee === member && !call.optional ? call : null;
+}
+
+function nativeGlobalObject(context: Context, node: ESTree.Node): boolean {
+  return ['globalThis', 'self', 'window'].some((name) => isUnshadowedGlobal(context, node, name));
+}
+
+function isNonReferenceKey(node: ESTree.Node): boolean {
+  const parent = node.parent;
+  return (
+    (parent?.type === 'MemberExpression' && !parent.computed && parent.property === node) ||
+    (parent?.type === 'Property' && !parent.computed && parent.key === node && parent.value !== node)
+  );
+}
+
+/** Constructor aliases/escapes and prototype replacement invalidate native method provenance. */
+function stableNativeHeaders(context: Context): boolean {
+  let stable = true;
+  walk(context.sourceCode.ast, context.sourceCode.visitorKeys, (node) => {
+    if (node.type === 'Identifier' && !isNonReferenceKey(node) && isUnshadowedGlobal(context, node, 'Headers')) {
+      const parent = node.parent;
+      if (
+        !(parent?.type === 'NewExpression' && parent.callee === node) &&
+        parent?.type !== 'TSTypeReference' &&
+        parent?.type !== 'TSTypeQuery'
+      )
+        stable = false;
+    }
+    if (
+      node.type === 'MemberExpression' &&
+      nativeGlobalObject(context, node.object) &&
+      (node.computed ? constantString(context, node.property) : memberName(node)) === 'Headers'
+    )
+      stable = false;
+    if (
+      node.type === 'Identifier' &&
+      !isNonReferenceKey(node) &&
+      nativeGlobalObject(context, node) &&
+      (node.parent?.type === 'VariableDeclarator' || node.parent?.type === 'AssignmentExpression')
+    )
+      stable = false;
+    // A different instance/alias can still replace the shared native prototype method.
+    if (node.type === 'MemberExpression' && memberName(node) === 'getSetCookie' && directCall(node) === null)
+      stable = false;
+    if (node.type === 'Property' && propertyKeyName(node) === 'getSetCookie') stable = false;
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      ['defineProperty', 'defineProperties', 'assign', 'set'].includes(memberName(node.callee) ?? '') &&
+      (node.arguments.some((argument) => constantString(context, argument) === 'getSetCookie') ||
+        (node.arguments[0] !== undefined && nativeGlobalObject(context, node.arguments[0])))
+    )
+      stable = false;
+  });
+  return stable;
+}
+
+/** Exact native response import and non-escaping namespace binding, including aliased imports. */
+function nativeResponseMember(context: Context, node: ESTree.Node, name: string): Variable | null {
+  const member = directMember(node, name);
+  if (member?.object.type !== 'Identifier') return null;
+  const variable = lookupVariable(context, member.object);
+  if (variable?.defs.length !== 1) return null;
+  const definition = variable.defs[0];
+  if (
+    definition?.type !== 'ImportBinding' ||
+    definition.parent?.type !== 'ImportDeclaration' ||
+    definition.parent.importKind === 'type'
+  )
+    return null;
+  const specifier = definition.node;
+  const source = definition.parent.source.value;
+  const native =
+    (source === 'effect/http' &&
+      specifier.type === 'ImportSpecifier' &&
+      specifier.importKind !== 'type' &&
+      keyName(specifier.imported, false) === 'HttpServerResponse') ||
+    (source === 'effect/http/HttpServerResponse' && specifier.type === 'ImportNamespaceSpecifier');
+  if (!native) return null;
+  return variable.references.every((reference) => {
+    if (!reference.isRead() || reference.isWrite()) return false;
+    const access = reference.identifier.parent;
+    if (
+      access?.type !== 'MemberExpression' ||
+      access.object !== reference.identifier ||
+      access.computed ||
+      access.optional
+    )
+      return false;
+    if (directCall(access) !== null) return true;
+    const call = access.parent;
+    return (
+      directMember(access, 'toWeb') !== null &&
+      call?.type === 'CallExpression' &&
+      directMember(call.callee, 'pipe') !== null &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === access
+    );
+  })
+    ? variable
+    : null;
+}
+
+/** The source Headers may enter only the real Effect response options, not an opaque producer. */
+function nativeHeaderOptions(context: Context, node: LocalIdentifier): ESTree.CallExpression | null {
+  const property = node.parent;
+  const options = property?.parent;
+  const call = options?.parent;
+  if (
+    property?.type !== 'Property' ||
+    property.value !== node ||
+    property.computed ||
+    property.kind !== 'init' ||
+    keyName(property.key, false) !== 'headers' ||
+    options?.type !== 'ObjectExpression' ||
+    options.properties.some((entry) => entry.type !== 'Property' || entry.computed || entry.kind !== 'init') ||
+    call?.type !== 'CallExpression' ||
+    call.optional
+  )
+    return null;
+  const index = directMember(call.callee, 'raw') !== null ? 1 : 0;
+  const method = index === 1 ? 'raw' : 'empty';
+  return call.arguments[index] === options && nativeResponseMember(context, call.callee, method) !== null ? call : null;
+}
+
+function stableHeaderSource(context: Context, source: LocalIdentifier): boolean {
+  const declaration = localConstant(context, source);
+  const initializer = declaration?.init;
+  if (
+    initializer?.type !== 'NewExpression' ||
+    !isUnshadowedGlobal(context, initializer.callee, 'Headers') ||
+    initializer.arguments.length !== 1 ||
+    initializer.arguments[0]?.type === 'SpreadElement'
+  )
+    return false;
+  return lookupVariable(context, source)!.references.every((reference) => {
+    if (!reference.isRead()) return reference.init;
+    const identifier = reference.identifier;
+    if (nativeHeaderOptions(context, identifier) !== null) return true;
+    const member = identifier.parent;
+    if (
+      member?.type !== 'MemberExpression' ||
+      member.object !== identifier ||
+      member.computed ||
+      member.optional ||
+      member.property.type !== 'Identifier' ||
+      !['getSetCookie', 'get', 'has', 'delete', 'set', 'append'].includes(member.property.name)
+    )
+      return false;
+    return directCall(member) !== null;
+  });
+}
+
+/** The receiving response is the native adapter of these same Headers, with no opaque escapes. */
+function nativeForwardTarget(context: Context, write: ESTree.CallExpression, source: LocalIdentifier): boolean {
+  const writer = directMember(write.callee, 'append');
+  const headers = directMember(writer?.object, 'headers');
+  if (headers?.object.type !== 'Identifier') return false;
+  const target = headers.object;
+  const initializer = localConstant(context, target)?.init;
+  if (initializer?.type !== 'CallExpression' || initializer.optional || initializer.arguments.length !== 1)
+    return false;
+  const pipe = directMember(initializer.callee, 'pipe');
+  const toWeb = initializer.arguments[0];
+  if (pipe?.object.type !== 'CallExpression' || toWeb?.type !== 'MemberExpression') return false;
+  const namespace = nativeResponseMember(context, toWeb, 'toWeb');
+  const options = pipe.object.arguments.find((argument) => argument.type === 'ObjectExpression');
+  if (namespace === null || options?.type !== 'ObjectExpression') return false;
+  const sourceVariable = lookupVariable(context, source);
+  const inputs = options.properties.filter(
+    (property) => property.type === 'Property' && keyName(property.key, property.computed) === 'headers',
+  );
+  const input = inputs.length === 1 && inputs[0]?.type === 'Property' ? inputs[0].value : null;
+  if (
+    input?.type !== 'Identifier' ||
+    lookupVariable(context, input) !== sourceVariable ||
+    nativeHeaderOptions(context, input) !== pipe.object
+  )
+    return false;
+  const method = directMember(pipe.object.callee, 'raw') !== null ? 'raw' : 'empty';
+  if (nativeResponseMember(context, pipe.object.callee, method) !== namespace) return false;
+  return lookupVariable(context, target)!.references.every((reference) => {
+    if (!reference.isRead()) return reference.init;
+    const identifier = reference.identifier;
+    const parent = identifier.parent;
+    if (parent?.type === 'ReturnStatement' && parent.argument === identifier) return true;
+    const access = directMember(parent, 'headers');
+    const member = access?.parent;
+    if (access?.object !== identifier || member?.type !== 'MemberExpression') return false;
+    if (directMember(member, 'append') !== null && directCall(member) === write) return true;
+    const call = directMember(member, 'delete') !== null ? directCall(member) : null;
+    const argument = call?.arguments[0];
+    return (
+      call?.arguments.length === 1 &&
+      argument?.type !== 'SpreadElement' &&
+      argument !== undefined &&
+      constantString(context, argument)?.toLowerCase() === SET_COOKIE_HEADER
+    );
+  });
+}
+
+/** Only the actual static header name or its immutable literal constant, never a disguised name. */
+function nativeCookieHeader(context: Context, node: ESTree.Node): boolean {
+  const value = node.type === 'Identifier' ? localConstant(context, node)?.init : node;
+  return (
+    value?.type === 'Literal' && typeof value.value === 'string' && value.value.toLowerCase() === SET_COOKIE_HEADER
+  );
+}
+
+/** One const loop binding, one append, one native array; no transformations or extra cookie uses. */
+function isNativeCookieForward(context: Context, write: ESTree.CallExpression): boolean {
+  if (write.optional || write.arguments.length !== 2 || directMember(write.callee, 'append') === null) return false;
+  const name = write.arguments[0];
+  if (name === undefined || !nativeCookieHeader(context, name)) return false;
+  const cookie = write.arguments[1];
+  const statement = write.parent;
+  const body = statement?.parent;
+  const loop = body?.parent;
+  if (
+    cookie?.type !== 'Identifier' ||
+    statement?.type !== 'ExpressionStatement' ||
+    body?.type !== 'BlockStatement' ||
+    body.body.length !== 1 ||
+    loop?.type !== 'ForOfStatement' ||
+    loop.body !== body ||
+    loop.await
+  )
+    return false;
+  const declaration = localConstant(context, cookie);
+  if (declaration?.parent !== loop.left || loop.left.type !== 'VariableDeclaration') return false;
+  const variable = lookupVariable(context, cookie)!;
+  if (
+    variable.references.filter((reference) => reference.isRead()).some((reference) => reference.identifier !== cookie)
+  )
+    return false;
+  const getter = loop.right;
+  if (getter.type !== 'CallExpression' || getter.optional || getter.arguments.length !== 0) return false;
+  const member = directMember(getter.callee, 'getSetCookie');
+  return (
+    member?.object.type === 'Identifier' &&
+    stableHeaderSource(context, member.object) &&
+    nativeForwardTarget(context, write, member.object)
+  );
+}
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -409,6 +690,7 @@ export const rule = defineRule({
 
     const bindings = collectEffectBindings(context.sourceCode.ast);
     const reported = new Set<ESTree.Node>();
+    let nativeHeadersStable: boolean | undefined;
 
     /**
      * `true` when an enclosing node already reports this hand-built cookie: the `set-cookie`
@@ -461,6 +743,10 @@ export const rule = defineRule({
         const write = headerWrite(context, node);
         if (write === null) return;
         if (isCookieOwnedValue(context, write.value, bindings, options.cookieNamespaces)) return;
+        if (isNativeCookieForward(context, node)) {
+          nativeHeadersStable ??= stableNativeHeaders(context);
+          if (nativeHeadersStable) return;
+        }
         const callee = unwrap(node.callee);
         const method = callee !== null && callee.type === 'MemberExpression' ? memberName(callee) : null;
         reported.add(node);

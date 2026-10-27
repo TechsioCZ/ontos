@@ -1,102 +1,138 @@
-import {
-  auth,
-  discoverAuthorizationServerMetadata,
-  refreshAuthorization,
-  type OAuthClientInformationMixed,
-  type StoredOAuthTokens,
-} from '@modelcontextprotocol/client';
-import type { E2eOAuthProvider } from './provider.mts';
+import { auth, discoverAuthorizationServerMetadata, refreshAuthorization } from '@modelcontextprotocol/client';
+import { Effect, FiberSet, Option, Redacted, Schema } from 'effect';
+import type { Cause } from 'effect';
+import { E2eOAuthProvider } from './provider.mts';
+import type { E2eOAuthProviderOptions } from './provider.mts';
 import type { LoopbackCallback } from './loopback.mts';
 import { OAUTH_SCOPES } from './env.mts';
 
-export async function runOAuthFlow(opts: {
-  serverUrl: string;
-  provider: E2eOAuthProvider;
+class OAuthFlowInvalid extends Schema.TaggedError<OAuthFlowInvalid>()('OAuthFlowInvalid', {
+  message: Schema.String,
+}) {}
+
+export const runOAuthFlow = <E, R>(opts: {
+  approve: (authorizationUrl: URL) => Effect.Effect<void, E, R>;
   loopback: LoopbackCallback;
-}): Promise<{ accessToken: string; refreshToken: string | undefined; iss: string | null; state: string | null; code: string }> {
-  // onRedirect drives the browser consent, so the callback may already have arrived.
-  const first = await auth(opts.provider, { scope: OAUTH_SCOPES, serverUrl: opts.serverUrl });
-  if (first !== 'REDIRECT') {
-    throw new Error(`Očekáván REDIRECT, přišlo ${String(first)}`);
-  }
-  const params = await opts.loopback.waitForCallback(180_000);
-  const error = params.get('error');
-  if (error !== null) {
-    throw new Error(`authorization error ${error}`);
-  }
-  const code = params.get('code');
-  if (code === null) {
-    throw new Error('Callback neobsahuje code.');
-  }
-  const second = await auth(opts.provider, {
-    authorizationCode: code,
-    iss: params.get('iss') ?? undefined,
-    serverUrl: opts.serverUrl,
+  providerOptions: E2eOAuthProviderOptions;
+  serverUrl: string;
+}) =>
+  Effect.gen(function* authorize() {
+    const runtime = yield* FiberSet.makeRuntimePromise<never, string, Cause.NoSuchElementError>();
+    const provider = new E2eOAuthProvider(opts.providerOptions, runtime);
+    const first = yield* Effect.tryPromise(
+      async () => await auth(provider, { scope: OAUTH_SCOPES, serverUrl: opts.serverUrl }),
+    );
+    if (first !== 'REDIRECT') {
+      return yield* new OAuthFlowInvalid({ message: `Očekáván REDIRECT, přišlo ${first}` });
+    }
+    const authorizationUrl = provider.lastAuthorizationUrl;
+    if (authorizationUrl === undefined) {
+      return yield* new OAuthFlowInvalid({ message: 'SDK neuložilo autorizační URL.' });
+    }
+    // Consent runs in this fiber, rather than starting a second runtime inside the SDK callback.
+    yield* opts.approve(authorizationUrl);
+    const params = yield* opts.loopback.waitForCallback(180_000);
+    const error = params.get('error');
+    if (error !== null) {
+      return yield* new OAuthFlowInvalid({ message: `authorization error ${error}` });
+    }
+    const code = params.get('code');
+    if (code === null) {
+      return yield* new OAuthFlowInvalid({ message: 'Callback neobsahuje code.' });
+    }
+    const second = yield* Effect.tryPromise(
+      async () =>
+        await auth(provider, {
+          authorizationCode: code,
+          iss: params.get('iss') ?? undefined,
+          serverUrl: opts.serverUrl,
+        }),
+    );
+    if (second !== 'AUTHORIZED') {
+      return yield* new OAuthFlowInvalid({ message: `Očekáván AUTHORIZED, přišlo ${second}` });
+    }
+    const tokens = yield* provider.currentTokens();
+    return {
+      accessToken: Redacted.make(tokens.access_token),
+      code,
+      iss: Option.fromNullOr(params.get('iss')),
+      provider,
+      refreshToken: Option.map(Option.fromUndefinedOr(tokens.refresh_token), Redacted.make),
+      state: Option.fromNullOr(params.get('state')),
+    };
   });
-  if (second !== 'AUTHORIZED') {
-    throw new Error(`Očekáván AUTHORIZED, přišlo ${String(second)}`);
-  }
-  const tokens = opts.provider.currentTokens();
-  return {
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    iss: params.get('iss'),
-    state: params.get('state'),
-    code,
-  };
-}
 
-function clientInformationFor(provider: E2eOAuthProvider): OAuthClientInformationMixed {
-  const info = provider.clientInformation() ?? (provider.clientMetadataUrl ? { client_id: provider.clientMetadataUrl } : undefined);
-  if (info === undefined) {
-    throw new Error('Chybí informace o klientovi.');
-  }
-  return info as OAuthClientInformationMixed;
-}
-
-export async function rotateRefreshToken(opts: {
-  issuer: string;
-  resource: string;
-  provider: E2eOAuthProvider;
-}): Promise<{ oldRefreshToken: string; newRefreshToken: string | undefined; accessToken: string }> {
-  const metadata = await discoverAuthorizationServerMetadata(opts.issuer);
-  const clientInformation = clientInformationFor(opts.provider);
-  const oldRefreshToken = opts.provider.currentTokens().refresh_token;
-  if (oldRefreshToken === undefined) {
-    throw new Error('Chybí refresh token (offline_access nebyl udělen).');
-  }
-  const next = await refreshAuthorization(opts.issuer, {
-    clientInformation,
-    metadata,
-    refreshToken: oldRefreshToken,
-    resource: new URL(opts.resource),
+const clientInformationFor = (provider: E2eOAuthProvider) =>
+  Effect.gen(function* clientInformation() {
+    const info =
+      provider.clientInformation() ??
+      (provider.clientMetadataUrl !== undefined && provider.clientMetadataUrl !== ''
+        ? { client_id: provider.clientMetadataUrl }
+        : undefined);
+    if (info === undefined) {
+      return yield* new OAuthFlowInvalid({ message: 'Chybí informace o klientovi.' });
+    }
+    return info;
   });
-  opts.provider.saveTokens(next as StoredOAuthTokens);
-  return {
-    accessToken: next.access_token,
-    newRefreshToken: next.refresh_token,
-    oldRefreshToken,
-  };
-}
 
-/** Replays a refresh token and reports whether the server rejects it. Does NOT save tokens. */
-export async function refreshIsRejected(opts: {
+export const rotateRefreshToken = (opts: { issuer: string; provider: E2eOAuthProvider; resource: string }) =>
+  Effect.gen(function* rotateToken() {
+    const metadata = yield* Effect.tryPromise(async () => await discoverAuthorizationServerMetadata(opts.issuer));
+    const clientInformation = yield* clientInformationFor(opts.provider);
+    const stored = yield* opts.provider.currentTokens();
+    if (stored.refresh_token === undefined) {
+      return yield* new OAuthFlowInvalid({ message: 'Chybí refresh token (offline_access nebyl udělen).' });
+    }
+    const oldRefreshToken = Redacted.make(stored.refresh_token);
+    const next = yield* Effect.tryPromise(
+      async () =>
+        await refreshAuthorization(opts.issuer, {
+          clientInformation,
+          metadata,
+          refreshToken: Redacted.value(oldRefreshToken),
+          resource: new URL(opts.resource),
+        }),
+    );
+    opts.provider.saveTokens(next);
+    return {
+      accessToken: Redacted.make(next.access_token),
+      newRefreshToken: Option.map(Option.fromUndefinedOr(next.refresh_token), Redacted.make),
+      oldRefreshToken,
+    };
+  });
+
+const InvalidGrantSchema = Schema.Struct({
+  code: Schema.Literal('invalid_grant'),
+  name: Schema.Literal('OAuthError'),
+});
+
+/** Only invalid_grant proves rejection. Transport/provider failures remain typed failures. Does NOT save tokens. */
+export const refreshIsRejected = (opts: {
   issuer: string;
-  resource: string;
   provider: E2eOAuthProvider;
-  refreshToken: string;
-}): Promise<boolean> {
-  const metadata = await discoverAuthorizationServerMetadata(opts.issuer);
-  const clientInformation = clientInformationFor(opts.provider);
-  try {
-    await refreshAuthorization(opts.issuer, {
-      clientInformation,
-      metadata,
-      refreshToken: opts.refreshToken,
-      resource: new URL(opts.resource),
-    });
-    return false;
-  } catch {
-    return true;
-  }
-}
+  refreshToken: Redacted.Redacted;
+  resource: string;
+}) =>
+  Effect.gen(function* replayRefreshToken() {
+    const metadata = yield* Effect.tryPromise(async () => await discoverAuthorizationServerMetadata(opts.issuer));
+    const clientInformation = yield* clientInformationFor(opts.provider);
+    return yield* Effect.tryPromise(
+      async () =>
+        await refreshAuthorization(opts.issuer, {
+          clientInformation,
+          metadata,
+          refreshToken: Redacted.value(opts.refreshToken),
+          resource: new URL(opts.resource),
+        }),
+    ).pipe(
+      Effect.matchEffect({
+        onFailure: ({ cause }) =>
+          Schema.is(InvalidGrantSchema)(cause)
+            ? Effect.succeed(true)
+            : Effect.fail(
+                new OAuthFlowInvalid({ message: 'Refresh replay did not produce an OAuth invalid_grant rejection.' }),
+              ),
+        onSuccess: () => Effect.succeed(false),
+      }),
+    );
+  });

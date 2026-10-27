@@ -6,7 +6,13 @@ import type {
   ConnectionRevokeRequest,
   ConnectionUpdateRequest,
 } from '@app/shared-contracts/agent-access';
-import { CONNECTION_REVOKE_REASON_MAX, CONNECTION_STATUSES } from '@app/shared-contracts/agent-access';
+import {
+  CONNECTION_REVOKE_REASON_MAX,
+  CONNECTION_STATUSES,
+  ConnectionAdminListResponseSchema,
+  AgentOperatorsResponseSchema,
+} from '@app/shared-contracts/agent-access';
+import { AgentLegalEntityIdSchema } from '@app/shared-contracts/agent-proposals';
 import { Effect, Option } from 'effect';
 
 import { ConnectionsForbidden } from './connections-forbidden.ts';
@@ -45,13 +51,13 @@ export const listForAdmin = Effect.fn('ConnectionsAdmin.listForAdmin')(function*
     statuses: CONNECTION_STATUSES,
     tenantId: caller.tenantId,
   });
-  return {
-    company: { legalEntityId: caller.legalEntityId, legalName: caller.legalName },
+  return ConnectionAdminListResponseSchema.make({
+    company: { legalEntityId: AgentLegalEntityIdSchema.make(caller.legalEntityId), legalName: caller.legalName },
     connections: all.filter((connection) => matchesAdminFilter(connection, request.filter)),
     filterOptions: adminFilterOptions(all),
     mcpUrl: deps.mcpUrl,
     stats: adminStats(all),
-  };
+  });
 });
 
 export const updateConnection = Effect.fn('ConnectionsAdmin.updateConnection')(function* updateConnectionEffect<R>(
@@ -144,7 +150,7 @@ export const replaceAgentOperators = Effect.fn('ConnectionsAdmin.replaceAgentOpe
     }
     const wanted = uniqueIds(request.operatorPrincipalIds);
     const wantedIds = new Set(wanted);
-    const personIds = new Set(people.map((person) => person.principalId));
+    const personIds = new Set<string>(people.map((person) => person.principalId));
     if (wanted.some((id) => !personIds.has(id))) {
       return yield* new ConnectionsInvalid({
         reason: `Agenta mohou připojit jen aktivní lidé z firmy ${caller.legalName.replace(/\.$/u, '')}.`,
@@ -158,7 +164,7 @@ export const replaceAgentOperators = Effect.fn('ConnectionsAdmin.replaceAgentOpe
     });
     // Include unfinished revocations from an earlier committed projection, not only today's graph delta.
     const affected = agentGrants.filter(
-      (connection) => connection.delegatedBy !== null && !wantedIds.has(connection.delegatedBy.principalId),
+      (connection) => Option.isSome(connection.delegatedBy) && !wantedIds.has(connection.delegatedBy.value.principalId),
     );
     yield* deps.directory.replaceOperators({
       agentPrincipalId,
@@ -179,10 +185,10 @@ export const replaceAgentOperators = Effect.fn('ConnectionsAdmin.replaceAgentOpe
       // Keep the established revocation order, and never revoke before confirmed projection.
       { concurrency: 1, discard: true },
     );
-    return {
+    return AgentOperatorsResponseSchema.make({
       agentPrincipalId,
       operators: people.filter((person) => wantedIds.has(person.principalId)),
       revokedConnections: affected.length,
-    };
+    });
   },
 );

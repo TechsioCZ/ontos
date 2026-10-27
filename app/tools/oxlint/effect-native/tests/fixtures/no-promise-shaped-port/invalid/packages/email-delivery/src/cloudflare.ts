@@ -1,7 +1,7 @@
-// expect-count: 2
+// expect-count: 3
 import { Effect, Predicate, Schema } from 'effect';
 
-// The foreign member alone is recognized. This sibling first-party port still fails.
+// Local Promise members remain first-party even when one matches the native email shape.
 export interface CloudflareEmailBinding {
   readonly send: (message: {
     readonly from: string;

@@ -1,6 +1,6 @@
-// @effect-diagnostics asyncFunction:off
-// @effect-diagnostics newPromise:off
-// @effect-diagnostics globalDate:off
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { Effect } from 'effect';
 import { dialogCloseLabel, EmptyState, formatDate, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -13,15 +13,15 @@ import { useState } from 'react';
 import type { PlanItem } from '../../../../shared/apis/records.ts';
 import { planItemWeightedMinor } from '../../../../shared/domain/finance-planning.ts';
 import { minorToInput, outcomeMessage, parseAmountMinor } from './finance-ui.tsx';
-import type { FinanceViewModel } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
 
 interface PlanDraft {
   readonly amount: string;
-  readonly expectedDate: string;
-  readonly id: string | undefined;
+  readonly expectedDate: PlanItem['expectedDate'];
+  readonly id?: string;
   readonly kind: PlanItem['kind'];
   readonly note: string;
   readonly object: ObjectSelection;
@@ -33,7 +33,6 @@ interface PlanDraft {
 const newPlanDraft = (date: string): PlanDraft => ({
   amount: '',
   expectedDate: date,
-  id: undefined,
   kind: 'REVENUE',
   note: '',
   object: emptyObjectSelection,
@@ -54,56 +53,85 @@ const relationText = (vm: FinanceViewModel, item: PlanItem) =>
     .join(' · ');
 
 /** S09 item 1: expected income/expense with amount, currency, expected date, optional probability and relation. */
-export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
-  const items = [...(vm.snapshot?.state.planItems ?? [])].sort((left, right) =>
+const planItemsSaveProgram = Effect.fn('Finance.save')(function* planItemsSaveProgram(
+  context: Pick<ReturnType<typeof usePlanItems>, 'draft' | 'setDraft' | 'setError' | 'vm'>,
+) {
+  const { draft, setDraft, setError, vm } = context;
+  if (draft === undefined) {
+    return;
+  }
+  const amountMinor = parseAmountMinor(draft.amount);
+  const probability = draft.probability.trim() === '' ? undefined : Number(draft.probability.replace('%', '').trim());
+  if (draft.title.trim() === '' || amountMinor === undefined || amountMinor === 0 || draft.expectedDate === '') {
+    setError('Vyplňte název, kladnou částku a očekávané datum.');
+    return;
+  }
+  if (probability !== undefined && (!Number.isInteger(probability) || probability < 1 || probability > 100)) {
+    setError('Pravděpodobnost zadejte jako celé číslo 1–100 %, nebo ji nechte prázdnou.');
+    return;
+  }
+  const upsertPlanItemCommand: FinanceCommandDraft<'UpsertPlanItem'> = {
+    _tag: 'UpsertPlanItem',
+    amountMinor,
+    currency: 'CZK',
+    expectedDate: draft.expectedDate,
+    kind: draft.kind,
+    title: draft.title.trim(),
+    ...(({ costCenter: _costCenter, ...anchors }) => anchors)(objectAnchors(vm.objects, draft.object)),
+  };
+  if (vm.actorLabel !== undefined) {
+    upsertPlanItemCommand.actorLabel = vm.actorLabel;
+  }
+  if (draft.id !== undefined) {
+    upsertPlanItemCommand.id = draft.id;
+  }
+  if (draft.note.trim() !== '') {
+    upsertPlanItemCommand.note = draft.note.trim();
+  }
+  if (probability !== undefined) {
+    upsertPlanItemCommand.probabilityPercent = probability;
+  }
+  if (draft.projectName.trim() !== '') {
+    upsertPlanItemCommand.projectName = draft.projectName.trim();
+  }
+  const outcome = yield* vm.execute(
+    upsertPlanItemCommand,
+    draft.id === undefined ? 'Položka finančního plánu přidána' : 'Položka finančního plánu uložena',
+  );
+  if (outcome.ok) {
+    setDraft(undefined);
+    setError(undefined);
+  } else {
+    setError(outcomeMessage(vm, outcome));
+  }
+});
+
+const usePlanItems = ({ vm }: { readonly vm: FinanceViewModel }) => {
+  const items = (vm.snapshot?.state.planItems ?? []).toSorted((left, right) =>
     left.expectedDate.localeCompare(right.expectedDate),
   );
   const today = vm.referenceDate === '' ? '2026-10-21' : vm.referenceDate;
   const [draft, setDraft] = useState<PlanDraft>();
   const [deleteTarget, setDeleteTarget] = useState<PlanItem>();
   const [error, setError] = useState<string>();
-  const totalIn = items.filter((item) => item.kind === 'REVENUE').reduce((sum, item) => sum + planItemWeightedMinor(item), 0);
-  const totalOut = items.filter((item) => item.kind === 'COST').reduce((sum, item) => sum + planItemWeightedMinor(item), 0);
+  const totalIn = items
+    .filter((item) => item.kind === 'REVENUE')
+    .reduce((sum, item) => sum + planItemWeightedMinor(item), 0);
+  const totalOut = items
+    .filter((item) => item.kind === 'COST')
+    .reduce((sum, item) => sum + planItemWeightedMinor(item), 0);
 
-  const save = async () => {
-    if (draft === undefined) {
-      return;
-    }
-    const amountMinor = parseAmountMinor(draft.amount);
-    const probability = draft.probability.trim() === '' ? undefined : Number(draft.probability.replace('%', '').trim());
-    if (draft.title.trim() === '' || amountMinor === undefined || amountMinor === 0 || draft.expectedDate === '') {
-      setError('Vyplňte název, kladnou částku a očekávané datum.');
-      return;
-    }
-    if (probability !== undefined && (!Number.isInteger(probability) || probability < 1 || probability > 100)) {
-      setError('Pravděpodobnost zadejte jako celé číslo 1–100 %, nebo ji nechte prázdnou.');
-      return;
-    }
-    const outcome = await vm.execute(
-      {
-        _tag: 'UpsertPlanItem',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        amountMinor,
-        currency: 'CZK',
-        expectedDate: draft.expectedDate,
-        ...(draft.id === undefined ? {} : { id: draft.id }),
-        kind: draft.kind,
-        ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
-        ...(probability === undefined ? {} : { probabilityPercent: probability }),
-        ...(draft.projectName.trim() === '' ? {} : { projectName: draft.projectName.trim() }),
-        title: draft.title.trim(),
-        ...(({ costCenter: _costCenter, ...anchors }) => anchors)(objectAnchors(vm.objects, draft.object)),
-      },
-      draft.id === undefined ? 'Položka finančního plánu přidána' : 'Položka finančního plánu uložena',
-    );
-    if (outcome.ok) {
-      setDraft(undefined);
-      setError(undefined);
-    } else {
-      setError(outcomeMessage(vm, outcome));
-    }
+  const save = (): void => {
+    void financeBrowserRuntime.runPromise(planItemsSaveProgram({ draft, setDraft, setError, vm }));
   };
 
+  return { deleteTarget, draft, error, items, save, setDeleteTarget, setDraft, setError, today, totalIn, totalOut, vm };
+};
+
+export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
+  const { t } = useModernI18n();
+  const { deleteTarget, draft, error, items, save, setDeleteTarget, setDraft, setError, today, totalIn, totalOut, vm } =
+    usePlanItems(props);
   return (
     <SectionCard
       actions={
@@ -121,14 +149,17 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
           </Button>
         ) : undefined
       }
-      title="Finanční plán – očekávané příjmy a výdaje"
+      title={t('finance-billing.financeUi.plan.title')}
     >
       <p className="text-fg-secondary text-sm">
         Ruční plán mimo vystavené doklady, např. očekávaný nájem nové haly nebo plánovaná oprava. Do cash-flow se
         započítá v měsíci očekávaného data, vážený pravděpodobností. Nejde o účetní skutečnost.
       </p>
       {items.length === 0 ? (
-        <EmptyState description="Přidejte očekávaný příjem nebo výdaj." title="Plán je zatím prázdný" />
+        <EmptyState
+          description="Přidejte očekávaný příjem nebo výdaj."
+          title={t('finance-billing.financeUi.plan.empty')}
+        />
       ) : (
         <>
           <div className="flex flex-wrap gap-300 text-sm">
@@ -139,7 +170,7 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
               Očekávané výdaje (vážené) <strong className="tabular-nums">{formatMoney(totalOut)}</strong>
             </span>
           </div>
-          <FinanceTableScroll label="Finanční plán">
+          <FinanceTableScroll label={t('finance-billing.financeUi.plan.table')}>
             <Table size="sm" variant="line">
               <Table.Header>
                 <Table.Row>
@@ -198,7 +229,8 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
                                   propertyId: item.propertyRef?.resourceId ?? '',
                                   unitId: item.unitRef?.resourceId ?? '',
                                 },
-                                probability: item.probabilityPercent === undefined ? '' : String(item.probabilityPercent),
+                                probability:
+                                  item.probabilityPercent === undefined ? '' : String(item.probabilityPercent),
                                 projectName: item.projectName ?? '',
                                 title: item.title,
                               });
@@ -231,7 +263,13 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
             <Button onClick={() => setDraft(undefined)} theme="outlined" variant="secondary">
               Zrušit
             </Button>
-            <Button isLoading={vm.busy} onClick={() => void save()} variant="primary">
+            <Button
+              isLoading={vm.busy}
+              onClick={() => {
+                save();
+              }}
+              variant="primary"
+            >
               Uložit
             </Button>
           </>
@@ -262,7 +300,7 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
                   { displayValue: 'Příjem', label: 'Příjem', value: 'REVENUE' },
                   { displayValue: 'Výdaj', label: 'Výdaj', value: 'COST' },
                 ]}
-                label="Typ"
+                label={t('finance-billing.financeUi.common.type')}
                 labelProps={{ className: 'font-label text-label-md' }}
                 onValueChange={({ value }) => {
                   const [next] = value;
@@ -275,9 +313,9 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
               />
               <FormInput
                 id="plan-title"
-                label="Název"
+                label={t('finance-billing.financeUi.common.name')}
                 onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                placeholder="např. Nájem haly B od prosince"
+                placeholder={t('finance-billing.financeUi.plan.titleExample')}
                 size="sm"
                 value={draft.title}
               />
@@ -286,14 +324,14 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
               <FormInput
                 id="plan-amount"
                 inputMode="decimal"
-                label="Částka (Kč)"
+                label={t('finance-billing.financeUi.common.amount')}
                 onChange={(event) => setDraft({ ...draft, amount: event.target.value })}
                 size="sm"
                 value={draft.amount}
               />
               <FormInput
                 id="plan-date"
-                label="Očekávané datum"
+                label={t('finance-billing.financeUi.plan.expectedDate')}
                 onChange={(event) => setDraft({ ...draft, expectedDate: event.target.value })}
                 size="sm"
                 type="date"
@@ -303,7 +341,7 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 helpText="Nepovinné, 1–100"
                 id="plan-probability"
                 inputMode="numeric"
-                label="Pravděpodobnost (%)"
+                label={t('finance-billing.financeUi.plan.probability')}
                 onChange={(event) => setDraft({ ...draft, probability: event.target.value })}
                 size="sm"
                 value={draft.probability}
@@ -319,15 +357,15 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
             />
             <FormInput
               id="plan-project"
-              label="Projekt (nepovinné)"
+              label={t('finance-billing.financeUi.plan.project')}
               onChange={(event) => setDraft({ ...draft, projectName: event.target.value })}
-              placeholder="např. Rekonstrukce haly B"
+              placeholder={t('finance-billing.financeUi.plan.projectExample')}
               size="sm"
               value={draft.projectName}
             />
             <FormInput
               id="plan-note"
-              label="Poznámka"
+              label={t('finance-billing.financeUi.common.note')}
               onChange={(event) => setDraft({ ...draft, note: event.target.value })}
               size="sm"
               value={draft.note}
@@ -344,7 +382,9 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
             <Button
               onClick={() => {
                 if (deleteTarget !== undefined) {
-                  void vm.execute({ _tag: 'DeletePlanItem', id: deleteTarget.id }, 'Položka plánu smazána');
+                  void financeBrowserRuntime.runPromise(
+                    vm.execute({ _tag: 'DeletePlanItem', id: deleteTarget.id }, 'Položka plánu smazána'),
+                  );
                 }
                 setDeleteTarget(undefined);
               }}
@@ -366,7 +406,7 @@ export const PlanItemsSection = ({ vm }: { readonly vm: FinanceViewModel }) => {
         placement="center"
         role="alertdialog"
         size="sm"
-        title="Smazat položku plánu"
+        title={t('finance-billing.financeUi.plan.deleteItem')}
       />
     </SectionCard>
   );

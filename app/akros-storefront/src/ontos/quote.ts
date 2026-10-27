@@ -34,7 +34,7 @@ export function assertCart(value: unknown): asserts value is CartState {
 }
 
 /** Why one cart line cannot continue. `code` mirrors the owner's storefront issue codes where one exists. */
-export interface QuoteLineIssue {
+interface QuoteLineIssue {
   productId: string;
   variantId?: string;
   code:
@@ -50,7 +50,7 @@ export interface QuoteLineIssue {
 }
 
 /** Totals computed by OntOS itself (PlaceStorefrontOrder dry run): the browser never recomputes VAT. */
-export interface QuoteTotals {
+interface QuoteTotals {
   totalMinor: number;
   totalVatMinor: number;
   netMinor: number;

@@ -1,5 +1,22 @@
 {
   "sales-pipeline": {
+    "detail": {
+      "title": "Obchodní případ",
+      "relatedRecords": "Navazující záznamy",
+      "tasks": "Úkoly",
+      "contracts": "Smlouvy",
+      "orders": "Objednávky z případu",
+      "offerLinesTitle": "Nabídka – položky případu",
+      "offerLinesLabel": "Položky nabídky",
+      "stageHistory": "Historie fází"
+    },
+    "aiReview": {
+      "decisionNote": "Poznámka k rozhodnutí (nepovinná)",
+      "decisionNotePlaceholder": "Např. ověřeno se zákazníkem",
+      "logTitle": "Deník AI a schvalování",
+      "unavailableTitle": "Návrhy AI nejsou dostupné",
+      "batchDisplayLabel": "Zobrazení dávek"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

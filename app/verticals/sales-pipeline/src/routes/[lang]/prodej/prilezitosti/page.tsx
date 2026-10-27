@@ -16,7 +16,10 @@ import { useReducer, useState } from 'react';
 import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
 import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
-import { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import {
+  OpportunityIdSchema,
+  PartyIdSchema,
+} from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -129,11 +132,11 @@ interface PipelineTableProps {
   readonly loadError: RecordsLoadError | undefined;
   readonly loading: boolean;
   readonly lookups: PipelineLookups;
+  readonly onArchive: (opportunity: Opportunity) => void;
   readonly onClearFilters: () => void;
   readonly onCreate: () => void;
-  readonly onArchive: (opportunity: Opportunity) => void;
-  readonly onOpen: (opportunity: Opportunity) => void;
   readonly onEdit: (opportunity: Opportunity) => void;
+  readonly onOpen: (opportunity: Opportunity) => void;
   readonly onOwner: (opportunity: Opportunity) => void;
   readonly onRetry: () => void;
   readonly onSelection: Dispatch<SetStateAction<Selection>>;
@@ -150,9 +153,9 @@ const PipelineTable = ({
   loadError,
   loading,
   lookups,
+  onArchive,
   onClearFilters,
   onCreate,
-  onArchive,
   onEdit,
   onOpen,
   onOwner,
@@ -167,8 +170,8 @@ const PipelineTable = ({
   const writeActions: DataTableRowAction<Opportunity>[] = canWrite
     ? [
         {
-          icon: 'icon-[mdi--pencil-outline]',
           disabled: (row) => !isOpenStage(row.original.stage),
+          icon: 'icon-[mdi--pencil-outline]',
           id: 'edit',
           label: t(`${K}.actions.edit`),
           onAction: (row) => onEdit(row.original),
@@ -180,17 +183,17 @@ const PipelineTable = ({
           onAction: (row) => onStage(row.original),
         },
         {
-          icon: 'icon-[mdi--account-arrow-right-outline]',
           disabled: (row) => !isOpenStage(row.original.stage),
+          icon: 'icon-[mdi--account-arrow-right-outline]',
           id: 'owner',
           label: t(`${K}.actions.assignOwner`),
           onAction: (row) => onOwner(row.original),
         },
         {
+          disabled: (row) => isOpenStage(row.original.stage),
           icon: 'icon-[mdi--archive-outline]',
           id: 'archive',
           label: t(`${K}.actions.archive`),
-          disabled: (row) => isOpenStage(row.original.stage),
           onAction: (row) => onArchive(row.original),
         },
       ]
@@ -302,6 +305,57 @@ const reduceViewFilters = (current: PipelineViewFilters, patch: Partial<Pipeline
   ...patch,
 });
 
+/** `Přeskočeno: 2 (uzavřené: 1, beze změny: 1)`, or nothing when every requested id changed. */
+const skippedText = (tally: SkipTally, t: ReturnType<typeof useModernI18n>['t']): string | undefined => {
+  const reasons = [
+    ['closed', tally.closed],
+    ['invalidTransition', tally.invalidTransition],
+    ['notFound', tally.notFound],
+    ['other', tally.other],
+  ] as const;
+  const parts = reasons.flatMap(([reason, total]) =>
+    total > 0 ? [t(`${K}.toasts.skipReasons.${reason}`, { total })] : [],
+  );
+  return tally.total === 0 ? undefined : t(`${K}.toasts.skipped`, { reasons: parts.join(', '), total: tally.total });
+};
+
+/** Executes a pipeline command and keeps its pending/error state with the dialog that invoked it. */
+const usePipelineCommands = (revision: number, reload: () => void) => {
+  const { t } = useModernI18n();
+  const toaster = useToast();
+  const [busy, setBusy] = useState(false);
+  const [dialogError, setDialogError] = useState<string>();
+  const runCommand = (command: PipelineCommand, onDone: (result: ApplyCommandResult) => void) => {
+    setBusy(true);
+    setDialogError(undefined);
+    void browserRuntime.runPromise(
+      applyPipelineCommand(command, revision).pipe(
+        Effect.match({
+          onFailure: (error) => {
+            setBusy(false);
+            const message = Match.value(error).pipe(
+              Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
+              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
+              Match.orElse(() => t(`${K}.errors.generic`)),
+            );
+            setDialogError(message);
+            if (Predicate.isTagged(command, 'ArchiveOpportunity')) {
+              toaster.create({ title: message, type: 'error' });
+            }
+            reload();
+          },
+          onSuccess: (result) => {
+            setBusy(false);
+            onDone(result);
+            reload();
+          },
+        }),
+      ),
+    );
+  };
+  return { busy, dialogError, runCommand, setDialogError };
+};
+
 const RecordsPageContent = ({
   initialOpportunityId,
   initialPartyId,
@@ -331,15 +385,13 @@ const RecordsPageContent = ({
   const [selection, setSelection] = useState<Selection>({});
   const [dialog, setDialog] = useState<DialogState>();
   const [detailId, setDetailId] = useState<string | undefined>(initialOpportunityId);
-  const [busy, setBusy] = useState(false);
-  const [dialogError, setDialogError] = useState<string>();
-
   const { loadError, pending, reload, response } = usePipelineRecords(
     { customer: customerFilter, legalEntityId, owner: ownerFilter, stage: stageFilter },
     !invalidFilter,
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
+  const { busy, dialogError, runCommand, setDialogError } = usePipelineCommands(revision, reload);
 
   const items = response?.items ?? [];
   const { refetch: refetchTags, tagsBySubject } = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
@@ -372,49 +424,6 @@ const RecordsPageContent = ({
     setDialog(undefined);
   };
 
-  const runCommand = (command: PipelineCommand, onDone: (result: ApplyCommandResult) => void) => {
-    setBusy(true);
-    setDialogError(undefined);
-    void browserRuntime.runPromise(
-      applyPipelineCommand(command, revision).pipe(
-        Effect.match({
-          onFailure: (error) => {
-            setBusy(false);
-            const message = Match.value(error).pipe(
-              Match.tag('ApplyCommandActionConflictProblem', (problem) => t(pipelineConflictKey(problem.code))),
-              Match.tag('ApplyCommandActionForbiddenProblem', () => t(`${K}.errors.forbidden`)),
-              Match.orElse(() => t(`${K}.errors.generic`)),
-            );
-            setDialogError(message);
-            if (Predicate.isTagged(command, 'ArchiveOpportunity')) {
-              toaster.create({ title: message, type: 'error' });
-            }
-            reload();
-          },
-          onSuccess: (result) => {
-            setBusy(false);
-            onDone(result);
-            reload();
-          },
-        }),
-      ),
-    );
-  };
-
-  /** `Přeskočeno: 2 (uzavřené: 1, beze změny: 1)`, or nothing when every requested id changed. */
-  const skippedText = (tally: SkipTally): string | undefined => {
-    const reasons = [
-      ['closed', tally.closed],
-      ['invalidTransition', tally.invalidTransition],
-      ['notFound', tally.notFound],
-      ['other', tally.other],
-    ] as const;
-    const parts = reasons.flatMap(([reason, total]) =>
-      total > 0 ? [t(`${K}.toasts.skipReasons.${reason}`, { total })] : [],
-    );
-    return tally.total === 0 ? undefined : t(`${K}.toasts.skipped`, { reasons: parts.join(', '), total: tally.total });
-  };
-
   const submitForm = (command: FormCommand) =>
     runCommand(command, () => {
       closeDialog();
@@ -432,7 +441,7 @@ const RecordsPageContent = ({
         setSelection({});
       }
       toaster.create({
-        description: skippedText(skipTally(requestedCount(target), result)),
+        description: skippedText(skipTally(requestedCount(target), result), t),
         title: t(`${K}.toasts.stageChanged`),
         type: 'success',
       });
@@ -450,7 +459,7 @@ const RecordsPageContent = ({
         setSelection({});
       }
       toaster.create({
-        description: skippedText(skipTally(requestedCount(target), result)),
+        description: skippedText(skipTally(requestedCount(target), result), t),
         title: owner === null ? t(`${K}.toasts.ownerRemoved`) : t(`${K}.toasts.ownerAssigned`),
         type: 'success',
       });
@@ -462,7 +471,7 @@ const RecordsPageContent = ({
     setSelection({});
     reload();
     toaster.create({
-      description: skippedText(result.skipped),
+      description: skippedText(result.skipped, t),
       title: t(`${K}.toasts.bulkChanged`, { changed: result.changed, skipped: result.skipped.total }),
       type: 'success',
     });
@@ -547,7 +556,7 @@ const RecordsPageContent = ({
             openStage({
               ids: selectedIds,
               mode: 'bulk',
-              stages: rows.filter((row) => selection[row.id]).map((row) => row.stage),
+              stages: rows.flatMap((row) => (selection[row.id] === true ? [row.stage] : [])),
             })
           }
           onTags={() => openDialog({ ids: selectedIds, kind: 'tags' })}
@@ -563,13 +572,7 @@ const RecordsPageContent = ({
         loadError={loadError}
         loading={(response === undefined && loadError === undefined) || pending || tagState?.status === 'loading'}
         lookups={lookups}
-        onArchive={(opportunity) => {
-          if (!window.confirm(t(`${K}.archiveConfirm`, { title: opportunity.title }))) return;
-          runCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, () => {
-            setSelection({});
-            toaster.create({ title: t(`${K}.toasts.archived`), type: 'success' });
-          });
-        }}
+        onArchive={(opportunity) => openDialog({ kind: 'archive', opportunity })}
         onClearFilters={clearFilters}
         onCreate={openCreate}
         onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
@@ -605,6 +608,13 @@ const RecordsPageContent = ({
         dialog={dialog}
         employees={employees}
         error={dialogError}
+        onArchiveSubmit={(opportunity) => {
+          runCommand({ _tag: 'ArchiveOpportunity', id: opportunity.id }, () => {
+            closeDialog();
+            setSelection({});
+            toaster.create({ title: t(`${K}.toasts.archived`), type: 'success' });
+          });
+        }}
         onBulkByTagDone={finishBulkByTag}
         onBulkTagsDone={finishBulkTags}
         onClose={closeDialog}
@@ -618,7 +628,7 @@ const RecordsPageContent = ({
 };
 
 const customerSearchSchema = Schema.Struct({
-  opportunityId: Schema.optional(Schema.String),
+  opportunityId: Schema.optional(OpportunityIdSchema),
   partyId: Schema.optional(PartyIdSchema),
 });
 

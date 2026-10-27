@@ -86,8 +86,8 @@ const resolveCommitForScope = Effect.fn('PriceResultLookupRead.resolveCommitForS
       Effect.catchTags({
         ActionAlreadyCommitted: () => Effect.succeed('COMMITTED' as const),
         ActionCommitIndeterminate: () => Effect.succeed('UNAVAILABLE' as const),
-        ActionInvocationPersistenceError: () => Effect.succeed('UNAVAILABLE' as const),
         ActionInvocationNotFound: () => Effect.succeed('ABSENT' as const),
+        ActionInvocationPersistenceError: () => Effect.succeed('UNAVAILABLE' as const),
         ActionInvocationStateError: () => Effect.succeed('UNAVAILABLE' as const),
         ActionPayloadValidationError: () => Effect.succeed('UNAVAILABLE' as const),
         ActionTrustedContextValidationError: () => Effect.succeed('UNAVAILABLE' as const),
@@ -114,7 +114,6 @@ export const priceResultLookupRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
     prepare: (input, context) =>
       resolveCommitForScope(context.scope).pipe(
         Effect.flatMap((resolveCommit) =>
@@ -128,7 +127,6 @@ export const priceResultLookupRead = defineRead(
           result,
         })),
       ),
-    // oxlint-enable perfectionist/sort-objects
   },
   pricePersistenceForScope,
   () => ({ kind: 'module', moduleId: MODULE_KEY }),

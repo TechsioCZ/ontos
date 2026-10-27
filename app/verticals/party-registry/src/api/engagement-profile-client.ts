@@ -14,18 +14,6 @@ import {
 } from './party-registry-http-client.ts';
 import type { PartyRegistryHttpClient } from './party-registry-http-client.ts';
 
-export {
-  executeOrganizationEngagementProfileWithAuthorization,
-  executeOrganizationEngagementProfile,
-} from './organization-engagement-profile-client.ts';
-export type { OrganizationEngagementProfileClientOptions } from './organization-engagement-profile-client.ts';
-export {
-  executePersonEngagementProfileWithAuthorization,
-  executePersonEngagementProfile,
-} from './person-engagement-profile-client.ts';
-export type { PersonEngagementProfileClientOptions } from './person-engagement-profile-client.ts';
-export { Effect } from '@modern-js/bff-effect/effect-client';
-
 export type ContactsClient = PartyRegistryHttpClient;
 export type ContactsClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError>;

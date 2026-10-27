@@ -223,13 +223,13 @@ it('keeps default task view when storage is blocked or a snapshot is malformed',
 });
 
 it('context deep links use the registered property and agreement owner routes', () => {
-  const tenantId = '20000000-0000-4000-8000-000000000001';
+  const contextTenantId = '20000000-0000-4000-8000-000000000001';
   expect(
     taskContextHref({
       moduleId: 'legal.agreements',
       resourceId: 'contract-id',
       resourceType: 'legal.agreements.contract',
-      tenantId,
+      tenantId: contextTenantId,
     }),
   ).toBe('/cs/smlouvy?resourceId=contract-id');
   expect(
@@ -237,7 +237,7 @@ it('context deep links use the registered property and agreement owner routes', 
       moduleId: 'property.portfolio',
       resourceId: 'unit-id',
       resourceType: 'property.portfolio.unit',
-      tenantId,
+      tenantId: contextTenantId,
     }),
   ).toBe('/cs/nemovitosti?resourceId=unit-id');
 });

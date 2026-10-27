@@ -153,7 +153,6 @@ export const resolveCommerceMarketRead = defineRead(
     resultSchema: ResolveCommerceMarketResponseSchema,
     schemaVersion: '1',
   },
-  // oxlint-disable-next-line perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
   { prepare: (input, context) => prepareResolveCommerceMarket(input, context), load: handleResolveCommerceMarket },
   marketResolutionPersistenceForScope,
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),

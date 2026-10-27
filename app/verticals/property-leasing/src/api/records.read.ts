@@ -81,7 +81,6 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => occupancyWriteCapability(context.scope),
     load: (input, context: ReadLoadContext<Services, boolean>) =>
       context.services.load().pipe(
@@ -108,7 +107,6 @@ export const recordsRead = defineRead(
             : Effect.succeed({ evidence: { resultCount }, result: { ...result, canWrite: context.prepared } });
         }),
       ),
-    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),

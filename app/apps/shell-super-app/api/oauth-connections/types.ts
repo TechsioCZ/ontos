@@ -58,13 +58,6 @@ export interface OAuthRefreshGuardRow {
   readonly rotationReplayExpiresAt: Date | null;
 }
 
-/** Who performs a management change (for the audit row); null for system-initiated revocation. */
-export interface ConnectionActor {
-  readonly authBindingId: string | undefined;
-  readonly authMethod: string;
-  readonly principalId: string;
-}
-
 export interface GrantListFilter {
   readonly actingPrincipalId?: string;
   readonly clientId?: string;

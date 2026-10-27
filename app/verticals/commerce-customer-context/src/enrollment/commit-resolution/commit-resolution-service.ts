@@ -241,6 +241,11 @@ export const makeCommerceEnrollmentCommitResolutionService = (
       Effect.catchTags({
         ActionAlreadyCommitted: onAlreadyCommitted,
         ActionCommitIndeterminate: onCommitIndeterminate,
+        ActionInvocationNotFound: rejectWith(
+          originalInvocationId,
+          'commit_resolution_invocation_not_found',
+          'The original invocation is unknown to the Action runtime',
+        ),
         ActionInvocationPersistenceError: (failure) =>
           Effect.fail(
             unavailable(
@@ -250,11 +255,6 @@ export const makeCommerceEnrollmentCommitResolutionService = (
               failure,
             ),
           ),
-        ActionInvocationNotFound: rejectWith(
-          originalInvocationId,
-          'commit_resolution_invocation_not_found',
-          'The original invocation is unknown to the Action runtime',
-        ),
         ActionInvocationStateError: onInvocationStateError,
         ActionPayloadValidationError: rejectWith(
           originalInvocationId,

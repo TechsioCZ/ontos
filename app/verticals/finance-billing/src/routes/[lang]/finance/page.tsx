@@ -16,7 +16,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useState } from 'react';
-import { Option } from 'effect';
+import { Option, Schema, SchemaGetter } from 'effect';
 import csResource from '../../../../locales/cs/finance-billing.json';
 import enResource from '../../../../locales/en/finance-billing.json';
 import '../../index.css';
@@ -49,153 +49,19 @@ const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
 
 const TABS = ['faktury', 'opakovane', 'cenik', 'predani', 'plan'] as const;
 type FinanceTab = (typeof TABS)[number];
-const initialTab = (): FinanceTab => {
-  if (typeof window === 'undefined') {
-    return 'faktury';
-  }
-  const value = new URL(window.location.href).searchParams.get('tab');
-  return TABS.find((tab) => tab === value) ?? 'faktury';
-};
+const TabSearchSchema = Schema.Struct({ tab: Schema.String });
+const tabQueryString = Schema.toCodecJson(Schema.URLSearchParams);
+const TabQuerySchema = tabQueryString.pipe(
+  Schema.decodeTo<typeof TabSearchSchema, typeof tabQueryString>(TabSearchSchema, {
+    decode: SchemaGetter.transform((params) => ({ tab: params.get('tab') ?? 'faktury' })),
+    encode: SchemaGetter.transform((search) => new URLSearchParams({ tab: search.tab })),
+  }),
+);
 
-const RecordsPageContent = () => {
-  const vm = useFinanceRecords();
-  const {
-    busy,
-    cancelConfirm,
-    cancelVoid,
-    canWrite,
-    confirmPending,
-    confirmTarget,
-    confirmVoid,
-    feedback,
-    indicators,
-    references,
-    selected,
-    t,
-    voidTarget,
-  } = vm;
-  const [createOpen, setCreateOpen] = useState(false);
-  const [incomingOpen, setIncomingOpen] = useState(false);
-  const [tab, setTabState] = useState<FinanceTab>(initialTab);
-  const setTab = (next: string) => {
-    const value = TABS.find((entry) => entry === next) ?? 'faktury';
-    setTabState(value);
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', value);
-    window.history.replaceState(window.history.state, '', url);
-  };
-  const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
-    indicators === undefined ? '—' : value(indicators);
-
+const FinanceConfirmations = ({ vm }: { readonly vm: ReturnType<typeof useFinanceRecords> }) => {
+  const { busy, cancelConfirm, cancelVoid, confirmPending, confirmTarget, confirmVoid, t, voidTarget } = vm;
   return (
     <>
-      <UltramodernRouteHead />
-      <Toaster />
-      <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
-        {selected === undefined ? (
-          <>
-            <PageHeader
-              actions={
-                canWrite ? (
-                  <div className="flex flex-wrap gap-100">
-                    <Button
-                      className="whitespace-nowrap"
-                      icon="icon-[mdi--file-download-outline]"
-                      onClick={() => setIncomingOpen(true)}
-                      size="sm"
-                      theme="outlined"
-                      variant="secondary"
-                    >
-                      Přijatá faktura
-                    </Button>
-                    <Button
-                      className="whitespace-nowrap"
-                      disabled={references.productsReadable === undefined}
-                      icon="icon-[mdi--plus]"
-                      onClick={() => setCreateOpen(true)}
-                      size="sm"
-                      variant="primary"
-                    >
-                      {t(`${ns}.newInvoice`)}
-                    </Button>
-                  </div>
-                ) : undefined
-              }
-              description={t(`${ns}.${references.productsReadable === false ? 'rentalDescription' : 'description'}`)}
-              title={t(`${ns}.title`)}
-            />
-            {vm.relatedCustomer && (
-              <p className="text-fg-secondary text-sm">
-                {t(`${ns}.relatedFilter`)}{' '}
-                <a className="underline" href="?">
-                  {t(`${ns}.clearRelatedFilter`)}
-                </a>
-              </p>
-            )}
-            <StatRow>
-              <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => wholeKc(source.revenueMinor))} />
-              <StatCard
-                label={t(`${ns}.kpi.outstanding`)}
-                value={kpi((source) => wholeKc(source.grossOutstandingMinor))}
-              />
-              <StatCard
-                label={
-                  vm.referenceDate === ''
-                    ? t(`${ns}.kpi.overdue`)
-                    : `${t(`${ns}.kpi.overdue`)} k ${formatDate(vm.referenceDate)}`
-                }
-                value={kpi((source) => formatNumber(source.overdueInvoices))}
-              />
-              <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />
-            </StatRow>
-            <p className="text-fg-secondary text-sm">{t(`${ns}.kpi.revenuePeriod`)}</p>
-            {(feedback === 'forbidden' ||
-              feedback === 'conflict' ||
-              feedback === 'unavailable' ||
-              feedback === 'validation') && (
-              <StatusText showIcon status="error">
-                {t(`finance-billing.demo.feedback.${feedback}`)}
-              </StatusText>
-            )}
-            {references.referencesFailed && (
-              <StatusText showIcon status="error">
-                {t(`${ns}.referencesError`)}
-              </StatusText>
-            )}
-            <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
-              <Tabs.List>
-                <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
-                <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>
-                <Tabs.Trigger value="cenik">Ceník a slevy</Tabs.Trigger>
-                <Tabs.Trigger value="predani">Účetní předání</Tabs.Trigger>
-                <Tabs.Trigger value="plan">Rozpočet a cash-flow</Tabs.Trigger>
-                <Tabs.Indicator />
-              </Tabs.List>
-              <Tabs.Content className="flex flex-col gap-250 pt-250" value="faktury">
-                <FinanceInvoiceTable vm={vm} />
-              </Tabs.Content>
-              <Tabs.Content className="pt-250" value="opakovane">
-                {tab === 'opakovane' && vm.snapshot !== undefined && <RecurringPanel vm={vm} />}
-              </Tabs.Content>
-              <Tabs.Content className="pt-250" value="cenik">
-                {tab === 'cenik' && vm.snapshot !== undefined && <PriceListPanel vm={vm} />}
-              </Tabs.Content>
-              <Tabs.Content className="pt-250" value="predani">
-                {tab === 'predani' && vm.snapshot !== undefined && <AccountingPanel vm={vm} />}
-              </Tabs.Content>
-              <Tabs.Content className="pt-250" value="plan">
-                {tab === 'plan' && vm.snapshot !== undefined && <PlanningPanel vm={vm} />}
-              </Tabs.Content>
-            </Tabs>
-          </>
-        ) : (
-          <FinanceInvoiceDetail invoice={selected} vm={vm} />
-        )}
-      </section>
-      {references.productsReadable !== undefined && (
-        <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
-      )}
-      {canWrite && <IncomingInvoiceDialog onOpenChange={setIncomingOpen} open={incomingOpen} vm={vm} />}
       <Dialog
         actions={
           <>
@@ -246,6 +112,144 @@ const RecordsPageContent = () => {
         size="sm"
         title={t(`${ns}.voidTitle`, { number: voidTarget?.number ?? voidTarget?.documentNumber ?? '' })}
       />
+    </>
+  );
+};
+
+const overdueKpiLabel = (t: ReturnType<typeof useFinanceRecords>['t'], referenceDate: string) => {
+  const label = t(`${ns}.kpi.overdue`);
+  return referenceDate === '' ? label : `${label} k ${formatDate(referenceDate)}`;
+};
+
+const RecordsPageContent = () => {
+  const vm = useFinanceRecords();
+  const { canWrite, feedback, indicators, references, selected, t } = vm;
+  const [createOpen, setCreateOpen] = useState(false);
+  const [incomingOpen, setIncomingOpen] = useState(false);
+  const openingTab = useRouterState({
+    select: (state) =>
+      Schema.decodeOption(TabQuerySchema)(state.location.searchStr).pipe(
+        Option.flatMap((value) => Schema.decodeUnknownOption(Schema.Literals(TABS))(value.tab)),
+        Option.getOrElse(() => 'faktury' as const),
+      ),
+  });
+  const [tab, setTab] = useState<FinanceTab>(openingTab);
+  const changeTab = (next: string) => {
+    const value = TABS.find((entry) => entry === next) ?? 'faktury';
+    setTab(value);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', value);
+    window.history.replaceState(window.history.state, '', url);
+  };
+  const kpi = (value: (source: NonNullable<typeof indicators>) => string) =>
+    indicators === undefined ? '—' : value(indicators);
+
+  return (
+    <>
+      <UltramodernRouteHead />
+      <Toaster />
+      <section className="flex min-w-0 flex-col gap-250 text-fg-primary">
+        {selected === undefined ? (
+          <>
+            <PageHeader
+              actions={
+                canWrite ? (
+                  <div className="flex flex-wrap gap-100">
+                    <Button
+                      className="whitespace-nowrap"
+                      icon="icon-[mdi--file-download-outline]"
+                      onClick={() => setIncomingOpen(true)}
+                      size="sm"
+                      theme="outlined"
+                      variant="secondary"
+                    >
+                      Přijatá faktura
+                    </Button>
+                    <Button
+                      className="whitespace-nowrap"
+                      disabled={references.productsReadable === undefined}
+                      icon="icon-[mdi--plus]"
+                      onClick={() => setCreateOpen(true)}
+                      size="sm"
+                      variant="primary"
+                    >
+                      {t(`${ns}.newInvoice`)}
+                    </Button>
+                  </div>
+                ) : undefined
+              }
+              description={t(references.productsReadable === false ? `${ns}.rentalDescription` : `${ns}.description`)}
+              title={t(`${ns}.title`)}
+            />
+            {vm.relatedCustomer && (
+              <p className="text-fg-secondary text-sm">
+                {t(`${ns}.relatedFilter`)}{' '}
+                <a className="underline" href="?">
+                  {t(`${ns}.clearRelatedFilter`)}
+                </a>
+              </p>
+            )}
+            <StatRow>
+              <StatCard label={t(`${ns}.kpi.revenue`)} value={kpi((source) => wholeKc(source.revenueMinor))} />
+              <StatCard
+                label={t(`${ns}.kpi.outstanding`)}
+                value={kpi((source) => wholeKc(source.grossOutstandingMinor))}
+              />
+              <StatCard
+                label={overdueKpiLabel(t, vm.referenceDate)}
+                value={kpi((source) => formatNumber(source.overdueInvoices))}
+              />
+              <StatCard label={t(`${ns}.kpi.drafts`)} value={kpi((source) => formatNumber(source.draftCount))} />
+            </StatRow>
+            <p className="text-fg-secondary text-sm">{t(`${ns}.kpi.revenuePeriod`)}</p>
+            {(feedback === 'forbidden' ||
+              feedback === 'conflict' ||
+              feedback === 'unavailable' ||
+              feedback === 'validation') && (
+              <StatusText showIcon status="error">
+                {t(`finance-billing.demo.feedback.${feedback}`)}
+              </StatusText>
+            )}
+            {references.referencesFailed && (
+              <StatusText showIcon status="error">
+                {t(`${ns}.referencesError`)}
+              </StatusText>
+            )}
+            <Tabs onValueChange={changeTab} size="sm" value={tab} variant="line">
+              <Tabs.List>
+                <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
+                <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>
+                <Tabs.Trigger value="cenik">Ceník a slevy</Tabs.Trigger>
+                <Tabs.Trigger value="predani">Účetní předání</Tabs.Trigger>
+                <Tabs.Trigger value="plan">Rozpočet a cash-flow</Tabs.Trigger>
+                <Tabs.Indicator />
+              </Tabs.List>
+              <Tabs.Content className="flex flex-col gap-250 pt-250" value="faktury">
+                <FinanceInvoiceTable vm={vm} />
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="opakovane">
+                {tab === 'opakovane' && vm.snapshot !== undefined && <RecurringPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="cenik">
+                {tab === 'cenik' && vm.snapshot !== undefined && <PriceListPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="predani">
+                {tab === 'predani' && vm.snapshot !== undefined && <AccountingPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="plan">
+                {tab === 'plan' && vm.snapshot !== undefined && <PlanningPanel vm={vm} />}
+              </Tabs.Content>
+            </Tabs>
+          </>
+        ) : (
+          <FinanceInvoiceDetail invoice={selected} vm={vm} />
+        )}
+      </section>
+      {references.productsReadable !== undefined && (
+        <CreateInvoiceDialog onOpenChange={setCreateOpen} open={createOpen} vm={vm} />
+      )}
+      {canWrite && <IncomingInvoiceDialog onOpenChange={setIncomingOpen} open={incomingOpen} vm={vm} />}
+      <FinanceConfirmations vm={vm} />
     </>
   );
 };

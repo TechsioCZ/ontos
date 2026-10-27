@@ -11,9 +11,14 @@ import type { McpModule } from '../../../api/mcp/catalog.ts';
 
 const modules = composedModulesOf(buildMcpModules(fixtureComposition));
 
+const fixtureModuleContribution = modules.byAppId(FIXTURE_APP_ID);
+if (fixtureModuleContribution === undefined) {
+  throw new Error('Fixture contribution is missing');
+}
+
 /** A module with one revision per part, declared in its contribution (prefix -> field). */
 const partitioned: McpModule = {
-  ...(modules.byAppId(FIXTURE_APP_ID) as McpModule),
+  ...fixtureModuleContribution,
   revision: {
     field: 'revision',
     fieldsByCommandPrefix: [
@@ -41,14 +46,16 @@ it('reads the revision where the contribution says', () => {
   expect(commandRevisionFrom(partitioned, body, { _tag: 'Other' })).toBe(1);
   expect(commandRevisionFrom(partitioned, { parts: {} }, { _tag: 'AlphaUpdate' })).toBeUndefined();
   expect(revisionQueryOf(partitioned)).toEqual({ view: {} });
-  expect(revisionQueryOf(undefined)).toEqual({});
+  expect(revisionQueryOf()).toEqual({});
 });
 
 it('decodes and projects module-owned activity destinations, rejecting non-local routes', () => {
   const source = modules.byAppId(FIXTURE_APP_ID);
-  if (source === undefined) throw new Error('Fixture contribution is missing');
+  if (source === undefined) {
+    throw new Error('Fixture contribution is missing');
+  }
   const recordLink = {
-    commands: [{ tag: 'UpdateNote', idField: 'noteId' }],
+    commands: [{ idField: 'noteId', tag: 'UpdateNote' }],
     idField: 'id',
     labelField: 'title',
     path: '/notes',
@@ -58,7 +65,6 @@ it('decodes and projects module-owned activity destinations, rejecting non-local
   };
   const directory = (path: string) =>
     buildMcpModules({
-      revision: fixtureComposition.revision,
       modules: [
         fixtureModule(
           FIXTURE_MODULE_ID,
@@ -83,6 +89,7 @@ it('decodes and projects module-owned activity destinations, rejecting non-local
           'http://127.0.0.1:9',
         ),
       ],
+      revision: fixtureComposition.revision,
     });
   const projected = directory('/notes');
   expect(projected.warnings).toEqual([]);

@@ -193,7 +193,7 @@ const serveNativePartyContract = (compositionRevision: string) =>
     const gatewayHandlers = HttpApiBuilder.group(api, 'gatewayContext', (handlers) =>
       handlers
         .handle('issueGatewayContext', () => issue)
-        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(null))
+        .handle('readWithApiKeyGatewayContext', () => Effect.succeed(new TextEncoder().encode('null')))
         .handle('issueApiKeyGatewayContext', ({ payload, request: incoming }) => {
           requests.push({ body: JSON.stringify(payload), headers: new Headers(incoming.headers), path: incoming.url });
           return issue;

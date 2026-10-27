@@ -102,7 +102,6 @@ export const counterpartyCommerceAccessCheckRead = defineRead(
     schemaVersion: '1',
   },
   {
-    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (input, context) => counterpartyCommerceAccessCoreDecision(input, context.scope),
     load: (input, context: ReadLoadContext<CounterpartyCommerceAccessCheckServices, CounterpartyAccessDecision>) =>
       checkCounterpartyCommerceAccessFromServices(
@@ -112,7 +111,6 @@ export const counterpartyCommerceAccessCheckRead = defineRead(
         context.prepared,
         context.services,
       ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
-    // oxlint-enable perfectionist/sort-objects
   },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ check: port.check }))),

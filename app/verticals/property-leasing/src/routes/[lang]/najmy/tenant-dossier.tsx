@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { DetailList, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -57,6 +58,7 @@ interface ContactsSectionProps extends DossierSectionProps {
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
 }
 const DossierContacts = ({ busy, canWrite, dossier, newContactId, onUpdate }: ContactsSectionProps) => {
+  const { t } = useModernI18n();
   const [contacts, setContacts] = useState<readonly TenantContact[]>(dossier?.contacts ?? []);
   const [editing, setEditing] = useState(false);
   const editLabel = contacts.length === 0 ? 'Přidat kontaktní osoby' : 'Upravit kontakty';
@@ -103,24 +105,24 @@ const DossierContacts = ({ busy, canWrite, dossier, newContactId, onUpdate }: Co
               <legend>Kontakt {index + 1}</legend>
               <div className="sp-tenant-fields">
                 <FormInput
-                  label="Jméno a příjmení"
+                  label={t('property-leasing.registration.fullName')}
                   onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
                   required
                   value={contact.name}
                 />
                 <FormInput
-                  label="Role ve firmě"
+                  label={t('property-leasing.dossier.contactRole')}
                   onChange={(event) => updateContact(contact.id, 'role', event.target.value)}
                   value={contact.role}
                 />
                 <FormInput
-                  label="E-mail kontaktu"
+                  label={t('property-leasing.dossier.contactEmail')}
                   onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
                   type="email"
                   value={contact.email}
                 />
                 <FormInput
-                  label="Telefon kontaktu"
+                  label={t('property-leasing.dossier.contactPhone')}
                   onChange={(event) => updateContact(contact.id, 'phone', event.target.value)}
                   type="tel"
                   value={contact.phone}
@@ -213,6 +215,7 @@ const DossierCase = ({
   onUpdate,
   taskHref,
 }: CaseSectionProps) => {
+  const { t } = useModernI18n();
   const {
     caseDeadline,
     caseOwner,
@@ -252,21 +255,21 @@ const DossierCase = ({
         <>
           <div className="sp-tenant-fields">
             <FormInput
-              label="Předmět případu"
+              label={t('property-leasing.dossier.caseSubject')}
               maxLength={500}
               onChange={(event) => setCaseSubject(event.target.value)}
               required
               value={caseSubject}
             />
             <FormInput
-              label="Vlastník případu"
+              label={t('property-leasing.dossier.caseOwner')}
               maxLength={500}
               onChange={(event) => setCaseOwner(event.target.value)}
               required
               value={caseOwner}
             />
             <FormInput
-              label="Termín případu"
+              label={t('property-leasing.dossier.caseDeadline')}
               onChange={(event) => setCaseDeadline(event.target.value)}
               required
               type="date"
@@ -274,7 +277,7 @@ const DossierCase = ({
             />
             <FormInput
               inputMode="decimal"
-              label="Odhadovaná hodnota (Kč, nepovinné)"
+              label={t('property-leasing.dossier.optionalCaseValue')}
               onChange={(event) => setCaseValue(event.target.value)}
               value={caseValue}
             />
@@ -283,7 +286,7 @@ const DossierCase = ({
             <label className="sp-tenant-stack">
               <span>Stav případu</span>
               <select
-                aria-label="Stav případu"
+                aria-label={t('property-leasing.dossier.caseState')}
                 onChange={(event) => {
                   const selected = Schema.decodeUnknownOption(TenantCaseStateSchema)(event.target.value);
                   if (Option.isSome(selected)) {
@@ -362,6 +365,7 @@ const DossierCommunication = ({
   canWrite,
   onUpdate,
 }: Pick<DossierSectionProps, 'busy' | 'canWrite' | 'onUpdate'>) => {
+  const { t } = useModernI18n();
   const [kind, setKind] = useState<'CALL' | 'EMAIL' | 'MEETING' | 'NOTE'>('CALL');
   const [summary, setSummary] = useState('');
   if (!canWrite) {
@@ -374,7 +378,7 @@ const DossierCommunication = ({
         <label className="sp-tenant-stack">
           <span>Druh komunikace</span>
           <select
-            aria-label="Druh komunikace"
+            aria-label={t('property-leasing.dossier.communicationKind')}
             onChange={(event) => {
               const selected = Schema.decodeUnknownOption(TenantActivityInputSchema.fields.kind)(event.target.value);
               if (Option.isSome(selected)) {
@@ -391,10 +395,10 @@ const DossierCommunication = ({
           </select>
         </label>
         <FormInput
-          label="Shrnutí komunikace"
+          label={t('property-leasing.dossier.communicationSummary')}
           maxLength={500}
           onChange={(event) => setSummary(event.target.value)}
-          placeholder="Například domluva termínu předání jednotky"
+          placeholder={t('property-leasing.dossier.communicationPlaceholder')}
           value={summary}
         />
       </div>
@@ -432,75 +436,78 @@ export const TenantDossierCard = ({
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
   readonly onUpdate: (changes: DossierChanges) => void;
   readonly taskHref?: string | undefined;
-}) => (
-  <div className="sp-tenant" id="tenant">
-    <SectionCard
-      actions={
-        <Badge size="sm" variant={dossier?.archived === true ? 'outline' : 'info'}>
-          {dossier?.archived === true ? 'Archivovaná protistrana' : 'Evidence protistrany'}
-        </Badge>
-      }
-      title="Kontaktní osoby a historie vztahu"
-    >
-      <p className="sp-tenant-muted">
-        Kontakty, komunikace a stav obchodního případu této protistrany, sdílené napříč všemi jejími nájmy. Zápisy se
-        ukládají s autorem a časem.
-      </p>
-      <DossierContacts
-        busy={busy}
-        canWrite={canWrite}
-        dossier={dossier}
-        newContactId={newContactId}
-        onUpdate={onUpdate}
-      />
-      <DossierCase
-        busy={busy}
-        canWrite={canWrite}
-        contractHref={contractHref}
-        counterpartyName={counterpartyName}
-        dossier={dossier}
-        leaseHref={leaseHref}
-        onUpdate={onUpdate}
-        taskHref={taskHref}
-      />
-      <DossierCommunication busy={busy} canWrite={canWrite} onUpdate={onUpdate} />
-      <h3>Časová osa</h3>
-      {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
-        <article className="sp-tenant-event" key={key}>
-          <div className="sp-tenant-heading">
-            <Badge size="sm" variant="outline">
-              {activityLabels[entry.kind]}
-            </Badge>
-            <span className="sp-tenant-muted">
-              {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
-            </span>
-          </div>
-          <p>{entry.summary}</p>
-        </article>
-      ))}
-      {(dossier?.history.length ?? 0) === 0 && (
-        <p className="sp-tenant-muted">Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.</p>
-      )}
-      <div className="sp-tenant-heading">
+}) => {
+  const { t } = useModernI18n();
+  return (
+    <div className="sp-tenant" id="tenant">
+      <SectionCard
+        actions={
+          <Badge size="sm" variant={dossier?.archived === true ? 'outline' : 'info'}>
+            {dossier?.archived === true ? 'Archivovaná protistrana' : 'Evidence protistrany'}
+          </Badge>
+        }
+        title={t('property-leasing.dossier.title')}
+      >
         <p className="sp-tenant-muted">
-          Archivace skryje protistranu pouze z běžného přehledu kontaktů. Platné smlouvy, nájmy i historie zůstávají
-          zachovány.
+          Kontakty, komunikace a stav obchodního případu této protistrany, sdílené napříč všemi jejími nájmy. Zápisy se
+          ukládají s autorem a časem.
         </p>
-        {canWrite && (
-          <Button
-            disabled={busy}
-            onClick={() => onUpdate({ archived: dossier?.archived !== true })}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {dossier?.archived === true ? 'Obnovit evidenci protistrany' : 'Archivovat evidenci protistrany'}
-          </Button>
+        <DossierContacts
+          busy={busy}
+          canWrite={canWrite}
+          dossier={dossier}
+          newContactId={newContactId}
+          onUpdate={onUpdate}
+        />
+        <DossierCase
+          busy={busy}
+          canWrite={canWrite}
+          contractHref={contractHref}
+          counterpartyName={counterpartyName}
+          dossier={dossier}
+          leaseHref={leaseHref}
+          onUpdate={onUpdate}
+          taskHref={taskHref}
+        />
+        <DossierCommunication busy={busy} canWrite={canWrite} onUpdate={onUpdate} />
+        <h3>Časová osa</h3>
+        {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
+          <article className="sp-tenant-event" key={key}>
+            <div className="sp-tenant-heading">
+              <Badge size="sm" variant="outline">
+                {activityLabels[entry.kind]}
+              </Badge>
+              <span className="sp-tenant-muted">
+                {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
+              </span>
+            </div>
+            <p>{entry.summary}</p>
+          </article>
+        ))}
+        {(dossier?.history.length ?? 0) === 0 && (
+          <p className="sp-tenant-muted">Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.</p>
         )}
-      </div>
-    </SectionCard>
-  </div>
-);
+        <div className="sp-tenant-heading">
+          <p className="sp-tenant-muted">
+            Archivace skryje protistranu pouze z běžného přehledu kontaktů. Platné smlouvy, nájmy i historie zůstávají
+            zachovány.
+          </p>
+          {canWrite && (
+            <Button
+              disabled={busy}
+              onClick={() => onUpdate({ archived: dossier?.archived !== true })}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              {dossier?.archived === true ? 'Obnovit evidenci protistrany' : 'Archivovat evidenci protistrany'}
+            </Button>
+          )}
+        </div>
+      </SectionCard>
+    </div>
+  );
+};
 
 export interface NewCounterpartyInput {
   readonly companyId: string;
@@ -564,6 +571,7 @@ const NewCounterpartyForm = ({
   readonly onCancel: () => void;
   readonly onCreate: (input: NewCounterpartyInput) => void;
 }) => {
+  const { t } = useModernI18n();
   const [input, setInput] = useState<NewCounterpartyInput>(emptyCounterparty);
   const [submitted, setSubmitted] = useState(false);
   const [duplicateHref, setDuplicateHref] = useState<string>();
@@ -623,7 +631,7 @@ const NewCounterpartyForm = ({
           <FormInput
             id="counterparty-ico"
             inputMode="numeric"
-            label="IČO (nepovinné)"
+            label={t('property-leasing.dossier.optionalCompanyId')}
             onChange={(event) => set('companyId', event.target.value)}
             value={input.companyId}
             {...(errors.companyId === undefined ? {} : { helpText: errors.companyId, validateStatus: 'error' })}
@@ -631,7 +639,7 @@ const NewCounterpartyForm = ({
         )}
         <FormInput
           id="counterparty-email"
-          label="E-mail (nepovinné)"
+          label={t('property-leasing.dossier.optionalEmail')}
           onChange={(event) => set('email', event.target.value)}
           type="email"
           value={input.email}
@@ -639,7 +647,7 @@ const NewCounterpartyForm = ({
         />
         <FormInput
           id="counterparty-phone"
-          label="Telefon (nepovinné)"
+          label={t('property-leasing.dossier.optionalPhone')}
           onChange={(event) => set('phone', event.target.value)}
           type="tel"
           value={input.phone}
@@ -648,10 +656,10 @@ const NewCounterpartyForm = ({
       </div>
       <FormInput
         id="counterparty-note"
-        label="Poznámka do časové osy (nepovinné)"
+        label={t('property-leasing.dossier.optionalTimelineNote')}
         maxLength={500}
         onChange={(event) => set('note', event.target.value)}
-        placeholder="Například první kontakt na veletrhu, zájem o kancelář od jara"
+        placeholder={t('property-leasing.dossier.timelinePlaceholder')}
         value={input.note}
         {...(errors.note === undefined ? {} : { helpText: errors.note, validateStatus: 'error' })}
       />
@@ -708,6 +716,7 @@ export const TenantDirectory = ({
   readonly snapshot: RecordsResponse;
   readonly unitName: (id: string) => string;
 }) => {
+  const { t } = useModernI18n();
   const [query, setQuery] = useState('');
   const [archived, setArchived] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -752,7 +761,7 @@ export const TenantDirectory = ({
             </LinkButton>
           </div>
         }
-        title="Nájemci, zájemci a kontaktní osoby"
+        title={t('property-leasing.dossier.directoryTitle')}
       >
         <p className="sp-tenant-muted">
           Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Seznam obsahuje
@@ -768,7 +777,7 @@ export const TenantDirectory = ({
           />
         )}
         <FormInput
-          label="Hledat protistranu nebo kontakt"
+          label={t('property-leasing.dossier.search')}
           onChange={(event) => setQuery(event.target.value)}
           type="search"
           value={query}

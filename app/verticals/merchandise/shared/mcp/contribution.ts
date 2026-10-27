@@ -5,7 +5,6 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   approvalReview: { read: 'agent-review' },
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
-  ownProposalEngine: true,
   commandFieldLabels: {
     category: 'Kategorie',
     description: 'Popis',
@@ -65,6 +64,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   keywords:
     'produkt zboží katalog cena ceník kategorie sklad zásoby objednávka expedice e-shop product price stock order catalog category storefront',
   label: { cs: 'E-shop – katalog, sklad a objednávky', en: 'E-commerce – catalog, stock and orders' },
+  ownProposalEngine: true,
   page: '/prodej/objednavky',
   reads: {
     'agent-review': OntosMcpHidden,

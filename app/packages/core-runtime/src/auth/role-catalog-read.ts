@@ -18,7 +18,7 @@ import { defineRead } from '../reads/definition.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
 
 /** Presentation only. These names never grant access; the live graph owns the catalog and all permissions. */
-export const namedRolePresentation = (
+const namedRolePresentation = (
   roleKey: string,
 ): Option.Option<{ readonly description: string; readonly name: string }> =>
   Match.value(roleKey)

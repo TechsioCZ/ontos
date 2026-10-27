@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -24,11 +25,12 @@ const PeopleWorkspace = ({
   readonly linkedAgent?: string | undefined;
   readonly linkedPerson?: string | undefined;
 }) => {
+  const { t } = useModernI18n();
   const [tab, setTab] = useState(linkedAgent === undefined ? 'people' : 'agents');
   const [notification, setNotification] = useState('');
   return (
     <div className="grid gap-250">
-      <fieldset aria-label="Lidé a agenti" className="flex gap-100">
+      <fieldset aria-label={t('shell.people.tabs')} className="flex gap-100">
         <Button
           aria-pressed={tab === 'people'}
           onClick={() => setTab('people')}
@@ -66,6 +68,7 @@ const PeopleWorkspace = ({
 };
 
 export const PeopleView = ({ model }: { readonly model: PeoplePageModel }) => {
+  const { t } = useModernI18n();
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   const search = useRouterState({
     select: (state) => Option.getOrUndefined(Schema.decodeOption(DetailSearchSchema)(state.location.search)),
@@ -85,7 +88,7 @@ export const PeopleView = ({ model }: { readonly model: PeoplePageModel }) => {
       controls={controls}
       currentEntrypointKey="shell-super-app.page.people"
       shell={model.shell}
-      title="Lidé a role"
+      title={t('shell.people.title')}
     >
       <PeopleWorkspace
         companyId={model.shell.selectedLegalEntityId}

@@ -202,6 +202,58 @@
       "summaryUpcoming": "Nadcházející",
       "summaryEnded": "Ukončené",
       "summaryMonthly": "Sjednané nájemné měsíčně"
+    },
+    "documents": {
+      "tenantTitle": "Dokumenty nájemce",
+      "filesTitle": "Dokumenty a soubory",
+      "historyTitle": "Historie změn"
+    },
+    "booking": {
+      "peopleCount": "Počet osob",
+      "note": "Poznámka k rezervaci"
+    },
+    "calendar": {
+      "previousMonth": "Předchozí měsíc obsazenosti",
+      "nextMonth": "Následující měsíc obsazenosti",
+      "title": "Kalendář obsazenosti jednotek"
+    },
+    "registration": {
+      "title": "Evidenční list",
+      "fullName": "Jméno a příjmení",
+      "birthDate": "Datum narození",
+      "nationality": "Státní občanství",
+      "identityDocument": "Číslo dokladu totožnosti",
+      "permanentAddress": "Adresa trvalého pobytu",
+      "purpose": "Účel pobytu",
+      "optionalNote": "Poznámka (nepovinné)"
+    },
+    "notices": {
+      "template": "Šablona oznámení",
+      "channel": "Kanál oznámení",
+      "body": "Text oznámení",
+      "title": "Oznámení e-mailem nebo SMS"
+    },
+    "dossier": {
+      "contactRole": "Role ve firmě",
+      "contactEmail": "E-mail kontaktu",
+      "contactPhone": "Telefon kontaktu",
+      "caseSubject": "Předmět případu",
+      "caseOwner": "Vlastník případu",
+      "caseDeadline": "Termín případu",
+      "optionalCaseValue": "Odhadovaná hodnota (Kč, nepovinné)",
+      "caseState": "Stav případu",
+      "communicationKind": "Druh komunikace",
+      "communicationSummary": "Shrnutí komunikace",
+      "communicationPlaceholder": "Například domluva termínu předání jednotky",
+      "title": "Kontaktní osoby a historie vztahu",
+      "optionalCompanyId": "IČO (nepovinné)",
+      "optionalEmail": "E-mail (nepovinné)",
+      "optionalPhone": "Telefon (nepovinné)",
+      "optionalTimelineNote": "Poznámka do časové osy (nepovinné)",
+      "timelinePlaceholder": "Například první kontakt na veletrhu, zájem o kancelář od jara",
+      "directoryTitle": "Nájemci, zájemci a kontaktní osoby",
+      "search": "Hledat protistranu nebo kontakt",
+      "detailsTitle": "Údaje protistrany"
     }
   }
 }

@@ -121,6 +121,7 @@ const CategoryEditor = ({
   serverError,
   siblings,
 }: CategoryEditorProps) => {
+  const { t } = useModernI18n();
   if (selected === undefined || draft === null) {
     return null;
   }
@@ -141,7 +142,7 @@ const CategoryEditor = ({
       </Switch>
       <FormInput
         id="category-name"
-        label="Název"
+        label={t('merchandise.ui.name')}
         maxLength={200}
         name="name"
         onChange={(event) => patchDraft({ name: event.target.value })}
@@ -151,7 +152,7 @@ const CategoryEditor = ({
       />
       <FormInput
         id="category-heading"
-        label="Nadpis na stránce kategorie"
+        label={t('merchandise.ui.categoryPageHeading')}
         maxLength={300}
         name="heading"
         onChange={(event) => patchDraft({ heading: event.target.value })}
@@ -159,7 +160,7 @@ const CategoryEditor = ({
       />
       <FormTextarea
         id="category-description"
-        label="Krátký popis"
+        label={t('merchandise.ui.shortDescription')}
         maxLength={5000}
         name="description"
         onChange={(event) => patchDraft({ description: event.target.value })}
@@ -167,7 +168,7 @@ const CategoryEditor = ({
       />
       <FormTextarea
         id="category-long-description"
-        label="Popis kategorie"
+        label={t('merchandise.ui.categoryDescription')}
         maxLength={50_000}
         name="longDescription"
         onChange={(event) => patchDraft({ longDescription: event.target.value })}
@@ -176,7 +177,7 @@ const CategoryEditor = ({
       <FormInput
         id="category-position"
         inputMode="numeric"
-        label="Pořadí mezi sourozenci (menší číslo = výš)"
+        label={t('merchandise.ui.siblingPosition')}
         name="position"
         onChange={(event) => patchDraft({ positionText: event.target.value })}
         value={draft.positionText}
@@ -220,7 +221,7 @@ const CategoryEditor = ({
 };
 
 /** Side panel for the storefront category tree: rename, heading, descriptions and sibling order. */
-export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) => {
+const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const [open, setOpen] = useState(false);
@@ -318,6 +319,67 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     setServerError(null);
   };
 
+  return {
+    backToList,
+    busy,
+    categories,
+    draft,
+    list,
+    loaded,
+    nameInvalid,
+    open,
+    openPanel,
+    parentName,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  };
+};
+
+const categoryListState = ({ categories, loaded, selection }: ReturnType<typeof useCategoryAdmin>) => ({
+  empty: loaded.status === 'ready' && categories.length === 0,
+  failed: loaded.status === 'error',
+  loading: loaded.status === 'idle' || loaded.status === 'loading',
+  visible: loaded.status === 'ready' && categories.length > 0 && selection === null,
+});
+
+export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
+  const model = useCategoryAdmin(props);
+  const {
+    backToList,
+    busy,
+    draft,
+    list,
+    nameInvalid,
+    open,
+    openPanel,
+    parentName,
+    patchDraft,
+    positionInvalid,
+    reload,
+    save,
+    search,
+    select,
+    selected,
+    selection,
+    serverError,
+    setOpen,
+    setSearch,
+    siblings,
+    t,
+  } = model;
+  const listState = categoryListState(model);
+
   return (
     <>
       <Button icon="icon-[mdi--file-tree-outline]" onClick={openPanel} size="sm" theme="outlined" variant="secondary">
@@ -344,11 +406,11 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         open={open}
         resizeLabel={t('merchandise.sidePanel.resize')}
         size="md"
-        title="Kategorie e-shopu"
+        title={t('merchandise.ui.storefrontCategories')}
       >
         <div className="flex flex-col gap-200 py-200">
-          {(loaded.status === 'idle' || loaded.status === 'loading') && <StatusText>Načítám kategorie…</StatusText>}
-          {loaded.status === 'error' && (
+          {listState.loading && <StatusText>Načítám kategorie…</StatusText>}
+          {listState.failed && (
             <>
               <StatusText showIcon status="error">
                 Kategorie se nepodařilo načíst.
@@ -358,17 +420,15 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               </Button>
             </>
           )}
-          {loaded.status === 'ready' && categories.length === 0 && (
-            <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>
-          )}
-          {loaded.status === 'ready' && categories.length > 0 && selection === null && (
+          {listState.empty && <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>}
+          {listState.visible && (
             <>
               <FormInput
                 id="category-admin-search"
-                label="Hledat kategorii"
+                label={t('merchandise.ui.searchCategories')}
                 name="categorySearch"
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="název nebo adresa"
+                placeholder={t('merchandise.ui.categorySearchPlaceholder')}
                 size="sm"
                 value={search}
               />

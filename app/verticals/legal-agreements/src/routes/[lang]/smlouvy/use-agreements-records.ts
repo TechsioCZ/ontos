@@ -15,6 +15,16 @@ import { contractTitle } from './contract-title.ts';
 
 const DEFAULT_START_DATE = '2026-10-05';
 const DEFAULT_END_DATE = '2027-10-05';
+type CommercialTerms = Pick<Contract, 'noticePeriod' | 'rentTerms' | 'responsiblePerson' | 'subject'>;
+type MutableCommercialTerms = { -readonly [Field in keyof CommercialTerms]: CommercialTerms[Field] };
+type ContractTermsCommand = Extract<AgreementsCommand, { readonly _tag: 'SetContractTerms' }>;
+type MutableContractTermsCommand = { -readonly [Field in keyof ContractTermsCommand]: ContractTermsCommand[Field] };
+const crowns = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2));
+const parseCrowns = (value: string) => {
+  const normalized = value.replaceAll(/\s/gu, '').replace(',', '.');
+  return /^\d+(?:\.\d{1,2})?$/u.test(normalized) ? Math.round(Number(normalized) * 100) : undefined;
+};
+const optionalTermsText = (value: string) => (value.trim().length === 0 ? undefined : value.trim());
 const browserCrypto = Crypto.make({
   digest: (algorithm, data) =>
     Effect.tryPromise({
@@ -32,11 +42,8 @@ const browserCrypto = Crypto.make({
 });
 const newUuid = browserCrypto.randomUUIDv4();
 /** The optional commercial terms of a contract, carried over when a draft is edited or a contract renewed. */
-type ContractTerms = {
-  -readonly [Key in 'noticePeriod' | 'rentTerms' | 'responsiblePerson' | 'subject']?: Contract[Key];
-};
-export const contractTerms = (record: Contract): ContractTerms => {
-  const terms: ContractTerms = {};
+export const contractTerms = (record: Contract): CommercialTerms => {
+  const terms: MutableCommercialTerms = {};
   if (record.noticePeriod !== undefined) {
     terms.noticePeriod = record.noticePeriod;
   }
@@ -51,19 +58,6 @@ export const contractTerms = (record: Contract): ContractTerms => {
   }
   return terms;
 };
-const crowns = (minor: number) => (minor % 100 === 0 ? String(minor / 100) : (minor / 100).toFixed(2));
-const parseCrowns = (value: string) => {
-  const normalized = value.replaceAll(/\s/gu, '').replace(',', '.');
-  return /^\d+(?:\.\d{1,2})?$/u.test(normalized) ? Math.round(Number(normalized) * 100) : undefined;
-};
-const optionalText = (value: string) => (value.trim().length === 0 ? undefined : value.trim());
-type SetContractTermsCommand = {
-  -readonly [Key in keyof Extract<AgreementsCommand, { readonly _tag: 'SetContractTerms' }>]: Extract<
-    AgreementsCommand,
-    { readonly _tag: 'SetContractTerms' }
-  >[Key];
-};
-
 const contractReferenceAudiences = (record: Contract | undefined) => {
   const audiences = ['party-registry'];
   if (record !== undefined && record.unitRef !== null) {
@@ -373,11 +367,11 @@ export const useRecordsPage = (input: AgreementsInput) => {
       setActionFeedback('validation');
       return;
     }
-    const subject = optionalText(terms.subject);
-    const responsiblePerson = optionalText(terms.responsiblePerson);
-    const noticePeriod = optionalText(terms.noticePeriod);
+    const subject = optionalTermsText(terms.subject);
+    const responsiblePerson = optionalTermsText(terms.responsiblePerson);
+    const noticePeriod = optionalTermsText(terms.noticePeriod);
     setTermsOpen(false);
-    const command: SetContractTermsCommand = {
+    const command: MutableContractTermsCommand = {
       _tag: 'SetContractTerms',
       contractRef: selected.contractRef,
     };

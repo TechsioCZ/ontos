@@ -421,22 +421,23 @@ it.effect('issues API-key gateway context through the server-only credential bou
 
 it('lets server API keys bind the active revision without weakening session revision pinning', () => {
   const payload = { audience: 'merchandise' };
-  expect(Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
+  expect(Schema.decodeSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
   expect(() => Schema.decodeUnknownSync(GatewayContextRequestSchema)(payload)).toThrow();
   expect(() =>
-    Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
+    Schema.decodeSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
   ).toThrow();
 });
 
-it('constrains the combined gateway protocol to named reads rather than arbitrary URLs or actions', () => {
+it('declares the combined gateway protocol as whole-body JSON bytes rather than a shared owner DTO', () => {
   const decode = Schema.decodeUnknownSync(ApiKeyGatewayReadRequestSchema);
-  const payload = { audience: 'merchandise', query: { view: { storefront: true } }, readName: 'records' };
-  expect(decode(payload)).toEqual(payload);
-  for (const readName of ['../actions/order', 'https://other.test', '%2e%2e', 'records/../../actions']) {
-    expect(() => decode({ ...payload, readName })).toThrow();
-  }
+  const payload = new TextEncoder().encode(
+    '{"audience":"merchandise","query":{"view":{"storefront":true}},"readName":"records"}',
+  );
+  expect(decode(payload)).toBe(payload);
+  expect(() => decode({ audience: 'merchandise', query: {}, readName: 'records' })).toThrow();
+  expect(() => decode(new TextDecoder().decode(payload))).toThrow();
   expect(endpointStatuses(GatewayContextApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
-    400, 401, 403, 409, 429, 500, 503,
+    400, 400, 401, 403, 409, 429, 500, 503,
   ]);
 });
 

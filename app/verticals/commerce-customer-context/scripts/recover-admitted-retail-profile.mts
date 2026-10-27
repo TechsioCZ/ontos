@@ -100,7 +100,7 @@ export const claimRetailProfileWithAtomicApproval = Effect.fn('RetailProfileReco
   },
 );
 
-export const makeRetailProfileRecoveryRuntime = Effect.fn('RetailProfileRecovery.makeRuntime')(
+const makeRetailProfileRecoveryRuntime = Effect.fn('RetailProfileRecovery.makeRuntime')(
   function* makeRetailProfileRecoveryRuntime(mode: typeof RecoveryModeSchema.Type) {
     // Explicit config parsing never invokes the dotenv-aware default database layer.
     const urls = yield* Config.all({

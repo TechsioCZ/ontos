@@ -23,6 +23,7 @@ import {
   Struct,
   Trim,
   check,
+  decodeResult,
   decodeUnknownResult,
   isMinLength,
   makeFilter,
@@ -45,7 +46,7 @@ const NonEmptyBuildStringSchema = OptionFromUndefinedOr(Trim.pipe(check(isMinLen
 
 /** Reads a build input from the framework build environment; blank values count as unset. */
 const readBuildEnvironmentValue: BuildEnvironmentReader = (name) => {
-  const decoded = decodeUnknownResult(NonEmptyBuildStringSchema)(getBuildConfigEnvironment(name));
+  const decoded = decodeResult(NonEmptyBuildStringSchema)(getBuildConfigEnvironment(name));
   return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 
@@ -65,7 +66,7 @@ const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
-export const createDevelopmentContractMiddleware =
+const createDevelopmentContractMiddleware =
   (moduleUrl: string) =>
   ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {
@@ -82,44 +83,11 @@ export const createDevelopmentContractMiddleware =
     });
   };
 
-export const createCloudflareWorkerSecurity = () => ({
-  contentSecurityPolicy: {
-    directives: {
-      'base-uri': ["'self'"],
-      'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-      'default-src': ["'self'"],
-      'font-src': ["'self'", 'data:', 'https:', 'http:'],
-      'form-action': ["'self'"],
-      'frame-ancestors': ["'self'"],
-      'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-      'manifest-src': ["'self'", 'https:', 'http:'],
-      'object-src': ["'none'"],
-      'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https:', 'http:', 'blob:'],
-      'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-      'worker-src': ["'self'", 'blob:'],
-    },
-    mode: 'report-only' as const,
-    reason:
-      'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
-  },
-  enabled: true,
-  headers: {
-    contentTypeOptions: 'nosniff' as const,
-    permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-    referrerPolicy: 'strict-origin-when-cross-origin' as const,
-  },
-  noindex: {
-    localhost: true,
-    previewHostnames: [],
-    workersDev: true,
-  },
-});
-
 const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: string): string =>
   getResultOrThrow(
-    decodeUnknownResult(
-      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
-    )(envValue(name) ?? ''),
+    decodeResult(Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))))(
+      envValue(name) ?? '',
+    ),
   );
 
 const DeclaredCloudflareHyperdrivesSchema = Struct({ binding: StringSchema, idVariable: StringSchema }).pipe(
@@ -141,7 +109,7 @@ const DeclaredCloudflareHyperdrivesSchema = Struct({ binding: StringSchema, idVa
 );
 
 const declaredCloudflareHyperdrives = (declared: CloudflareHyperdriveBuildBindings) =>
-  getResultOrThrow(decodeUnknownResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
+  getResultOrThrow(decodeResult(DeclaredCloudflareHyperdrivesSchema)(declared)).flatMap(optionToArray);
 
 const cloudflareHyperdriveBindings = (envValue: BuildEnvironmentReader, declared: CloudflareHyperdriveBuildBindings) =>
   declaredCloudflareHyperdrives(declared).map(({ binding, idVariable }) => ({
@@ -195,7 +163,7 @@ interface CloudflareEmailBindings {
 
 /** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
 export const createCloudflareEmailBindings = (envValue: BuildEnvironmentReader): CloudflareEmailBindings => {
-  const sender = decodeUnknownResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(
+  const sender = decodeResult(OptionFromUndefinedOr(CloudflareEmailSenderSchema))(
     envValue('ULTRAMODERN_EMAIL_SENDER'),
   ).pipe(getResultOrThrow, getOptionOrUndefined);
   if (sender === undefined || sender === '') {
@@ -270,9 +238,10 @@ export const createCloudflareWorkerConfig = (
   const dataPlane = createCloudflareDataPlaneBindings(envValue, hyperdrives);
   // Backend-heavy Workers must not follow a distant caller away from the private data plane.
   // Placement probes a public single-homed endpoint, not a private VPC hostname.
-  const placementHost = decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
-    envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
-  ).pipe(getResultOrThrow, getOptionOrUndefined);
+  const placementHost = decodeResult(NonEmptyBuildStringSchema)(envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST')).pipe(
+    getResultOrThrow,
+    getOptionOrUndefined,
+  );
   const placement: { readonly host: string } | { readonly mode: 'off' } =
     placementHost === undefined ? { mode: 'off' } : { host: placementHost };
   const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;

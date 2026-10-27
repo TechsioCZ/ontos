@@ -12,8 +12,13 @@ import { buildAkrosEncoded } from './akros-catalog.mts';
 import { mergeSeed, restoreCatalog } from './akros-merge.ts';
 import { refreshAkrosOrderPresentation } from './order-presentation.ts';
 
+class AkrosSeedInputError extends Schema.TaggedError<AkrosSeedInputError>()('AkrosSeedInputError', {
+  reason: Schema.String,
+}) {}
+
 export const akrosLegalEntityId = '71000000-0000-4000-8000-000000000024';
-export const buildAkrosState = () => Schema.decodeUnknownEffect(MerchandiseStateSchema)(buildAkrosEncoded());
+export const buildAkrosState = () =>
+  buildAkrosEncoded().pipe(Effect.flatMap(Schema.decodeEffect(MerchandiseStateSchema)));
 
 const AdminDatabaseLive = Layer.effect(
   PgClient.PgClient,
@@ -55,14 +60,16 @@ const writeState = Effect.fn('Merchandise.writeAkrosState')(function* writeAkros
   repairPresentation: boolean,
 ) {
   if (repairPresentation && (reset || restore)) {
-    return yield* Effect.fail(new Error('Presentation repair cannot reset or restore the catalog'));
+    return yield* Effect.fail(
+      new AkrosSeedInputError({ reason: 'Presentation repair cannot reset or restore the catalog' }),
+    );
   }
   const seed = yield* buildAkrosState();
   yield* logSeed(seed);
   const stored = reset ? undefined : yield* readCompanySnapshot(akrosScope);
   if (repairPresentation) {
     if (stored === undefined) {
-      return yield* Effect.fail(new Error('AKROS merchandise must already exist'));
+      return yield* Effect.fail(new AkrosSeedInputError({ reason: 'AKROS merchandise must already exist' }));
     }
     return yield* repairStoredPresentation(stored.state);
   }

@@ -36,7 +36,7 @@ const AccessTokenClaims = Schema.Struct({
 });
 const SigningKeys = Schema.Struct({
   keys: Schema.Array(
-    Schema.StructWithRest(Schema.Struct({ kty: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)]),
+    Schema.StructWithRest(Schema.Struct({ kty: Schema.String }), [Schema.Record(Schema.String, Schema.Json)]),
   ),
 });
 const invalidToken = (cause: unknown): ConnectionUnauthorized => {
@@ -169,7 +169,6 @@ export const connectionPrincipalContext = (live: LiveConnection) => {
   };
   return agent ? { ...principal, delegatedByPrincipalId: grant.userPrincipalId } : principal;
 };
-export type ConnectionPrincipal = ReturnType<typeof connectionPrincipalContext>;
 
 /** The throttled `authn.connector_exchange` audit row (at most once a minute per grant). */
 const auditUse = Effect.fn('Mcp.auditUse')(function* auditUse(live: LiveConnection) {

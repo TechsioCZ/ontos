@@ -1,3 +1,4 @@
+import { Schema } from 'effect';
 import type { CustomerListItem } from '@app/party-registry/api/client';
 import type { AccountingExport, Invoice } from '../../../../shared/apis/records.ts';
 
@@ -65,13 +66,23 @@ export const invoiceStatusBadge = (invoice: Invoice, referenceDate: string) =>
     : ({ kind: 'invoice', value: invoice.businessState } as const);
 
 /** S07.R5 document lifecycle: návrh → připraveno → schváleno → předáno do účetnictví (→ potvrdila účetní). */
-export type InvoiceLifecycle = 'ACCOUNTANT_CONFIRMED' | 'APPROVED' | 'DRAFT' | 'HANDED_OVER' | 'PREPARED' | 'VOIDED';
+export const InvoiceLifecycleSchema = Schema.Literals([
+  'ACCOUNTANT_CONFIRMED',
+  'APPROVED',
+  'DRAFT',
+  'HANDED_OVER',
+  'PREPARED',
+  'VOIDED',
+]);
+export type InvoiceLifecycle = typeof InvoiceLifecycleSchema.Type;
 
 type ExportLike = Pick<AccountingExport, 'invoiceResourceIds' | 'status'>;
 
 /** The latest live (not failed) handover package that contains the invoice. */
 export const latestHandover = <T extends ExportLike>(invoice: Invoice, exports: readonly T[]): T | undefined =>
-  exports.filter((entry) => entry.status !== 'FAILED' && entry.invoiceResourceIds.includes(invoice.ref.resourceId)).at(-1);
+  exports.findLast(
+    (entry) => entry.status !== 'FAILED' && entry.invoiceResourceIds.some((id) => id === invoice.ref.resourceId),
+  );
 
 export const invoiceLifecycle = (invoice: Invoice, exports: readonly ExportLike[] = []): InvoiceLifecycle => {
   if (invoice.businessState === 'VOIDED') {
@@ -87,19 +98,16 @@ export const invoiceLifecycle = (invoice: Invoice, exports: readonly ExportLike[
   return handover?.status === 'HANDED_OVER' ? 'HANDED_OVER' : 'APPROVED';
 };
 
-export const LIFECYCLE_PRESENTATION: Readonly<
-  Record<
-    InvoiceLifecycle,
-    { readonly label: string; readonly variant: 'info' | 'outline' | 'success' | 'warning' }
-  >
-> = {
+export const LIFECYCLE_PRESENTATION = {
   ACCOUNTANT_CONFIRMED: { label: 'Předáno · potvrdila účetní', variant: 'success' },
   APPROVED: { label: 'Schváleno', variant: 'info' },
   DRAFT: { label: 'Návrh', variant: 'outline' },
   HANDED_OVER: { label: 'Předáno do účetnictví', variant: 'success' },
   PREPARED: { label: 'Připraveno ke schválení', variant: 'warning' },
   VOIDED: { label: 'Stornováno', variant: 'outline' },
-};
+} satisfies Readonly<
+  Record<InvoiceLifecycle, { readonly label: string; readonly variant: 'info' | 'outline' | 'success' | 'warning' }>
+>;
 
 /** Czech plural of "potvrzený doklad" (1 doklad, 2–4 doklady, 5+ dokladů). */
 export const confirmedDocumentsLabel = (count: number): string => {

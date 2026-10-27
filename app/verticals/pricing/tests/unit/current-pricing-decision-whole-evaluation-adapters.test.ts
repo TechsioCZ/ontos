@@ -62,7 +62,7 @@ const scope: OperationalScope = {
 const transaction = scopedRoutineInvokerFromTransaction(() => Effect.succeed([]), {
   legalEntityId,
   tenantId,
-}) as unknown as ScopedTransactionExecutor;
+}) as ScopedTransactionExecutor;
 
 const externalOwnerEvidenceValidation = makePricingExternalOwnerEvidenceValidationService();
 
@@ -484,10 +484,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
           outcome: 'ZERO_FLOOR_AUTHORIZATION_SET_CURRENT',
         });
       };
-      // SAFETY: This focused reader test invokes only readCurrentSet; every unrelated persistence method is unreachable.
-      const reader = makeCurrentPricingDecisionZeroFloorSetReader({
-        readCurrentSet,
-      } as ZeroFloorAuthorizationPersistence);
+      const reader = makeCurrentPricingDecisionZeroFloorSetReader({ readCurrentSet });
       const { loaded } = yield* attemptSourceScenario('RESOLVED');
       const { attempt } = loaded;
       const reads = yield* reader.loadCurrent(request, attempt, composition);

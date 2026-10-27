@@ -21,7 +21,7 @@ import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/a
 import { AgendaStateSchema, agendaStateForAssignee, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
 import { MetersStateSchema } from '../../shared/domain/meters.ts';
-import { EntityIdSchema, FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
+import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
 import {
   CHANGE_LOG_ROW,
   ChangeLogStateSchema,
@@ -30,7 +30,7 @@ import {
   changeEntries,
   touchedSince,
 } from '../../shared/domain/change-log.ts';
-import type { ChangeEntry, ChangeEntryEncoded } from '../../shared/domain/change-log.ts';
+import type { BaseUpdatedAt, ChangeEntry, ChangeEntryEncoded } from '../../shared/domain/change-log.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { OverviewValueSchema, opsOverviewOf } from '../../shared/domain/ops-overview.ts';
 import type { OverviewValue } from '../../shared/domain/ops-overview.ts';
@@ -165,7 +165,8 @@ const recordsAccessList = (granted: Grants) => {
 
 /** The rows a records read needs, exactly as the owner transaction read them (still encoded). */
 export interface LoadedFacilityRecords {
-  readonly file: StoredFile | undefined;
+  /** A binary projection is present only when the read requested and found one. */
+  readonly file?: StoredFile | undefined;
   readonly rows: ReadonlyMap<string, { readonly revision: number; readonly state: unknown; readonly updatedAt: Date }>;
 }
 
@@ -403,9 +404,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
         agenda,
         state: rawInput,
       }).pipe(Effect.mapError(unavailable));
-      const state: unknown = yield* Schema.decodeUnknownEffect(definition.stateSchema)(raw).pipe(
-        Effect.mapError(unavailable),
-      );
+      const state = yield* Schema.decodeUnknownEffect(definition.stateSchema)(raw).pipe(Effect.mapError(unavailable));
       const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
       return { exists: row !== undefined, raw, revision: row?.revision ?? 0, state, updatedAt };
     });
@@ -563,7 +562,7 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       command: OpsCommand,
       expectedRevision: number,
       resourceId: string,
-      baseUpdatedAt?: string,
+      baseUpdatedAt?: string | BaseUpdatedAt,
     ) {
       if (Predicate.isTagged(command, 'FileUpload')) {
         return yield* uploadFile(command, resourceId);
@@ -602,19 +601,13 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       }
       const now = yield* DateTime.now;
       // The reducer always runs against the CURRENT state, so every business rule sees the latest data.
-      const changeInput: unknown = yield* definition.evolve(snapshot.state, command, { actor, now, resourceId });
-      const change = yield* Schema.decodeUnknownEffect(
-        Schema.Struct({
-          entityIds: Schema.Array(EntityIdSchema),
-          state: Schema.toType(definition.stateSchema),
-        }),
-      )(changeInput).pipe(Effect.mapError(unavailable));
+      const change = yield* definition
+        .dispatch(snapshot.state, command, { actor, now, resourceId })
+        .pipe(Effect.catchTag('SchemaError', (cause) => Effect.fail(unavailable(cause))));
       if (stale && baseUpdatedAt !== undefined && touchedSince(snapshot.raw, change.entityIds, baseUpdatedAt)) {
         return yield* revisionConflict();
       }
-      const encoded: unknown = yield* Schema.encodeUnknownEffect(definition.stateSchema)(change.state).pipe(
-        Effect.mapError(unavailable),
-      );
+      const encoded = yield* change.encoding.pipe(Effect.mapError(unavailable));
       const { state: after } = yield* Schema.decodeUnknownEffect(ChangeLogSnapshotSchema)({
         agenda: definition.id,
         state: encoded,

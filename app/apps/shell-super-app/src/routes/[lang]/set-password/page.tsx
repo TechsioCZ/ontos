@@ -17,7 +17,7 @@ import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 const SearchSchema = Schema.Struct({ token: InvitationTokenSchema });
 const SetPasswordPage = () => {
-  const { language } = useModernI18n();
+  const { language, t } = useModernI18n();
   const token = useRouterState({
     select: (state) => Option.getOrUndefined(Schema.decodeUnknownOption(SearchSchema)(state.location.search))?.token,
   });
@@ -85,7 +85,7 @@ const SetPasswordPage = () => {
               <FormInput
                 autoComplete="new-password"
                 disabled={busy}
-                label="Nové heslo"
+                label={t('shell.invitation.newPassword')}
                 maxLength={128}
                 minLength={8}
                 name="password"
@@ -95,7 +95,7 @@ const SetPasswordPage = () => {
               <FormInput
                 autoComplete="new-password"
                 disabled={busy}
-                label="Zopakujte nové heslo"
+                label={t('shell.invitation.confirmPassword')}
                 maxLength={128}
                 minLength={8}
                 name="confirmation"

@@ -1,4 +1,6 @@
-// @effect-diagnostics asyncFunction:off
+import type { IsoDate } from '../../../../../shared/domain/common.ts';
+import { Effect } from 'effect';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Doplnění (rule-based), Pohyby (ledger + issues by month + serial lookup), Nabídky, Dodavatelé. ops-purchasing lane.
 import { DetailList, SectionCard, SidePanel, foldSearchText, formatDate, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -9,10 +11,10 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PurchasingState, Supplier, SupplierQuote } from '../../../../../shared/domain/purchasing.ts';
 import {
@@ -28,6 +30,8 @@ import { failureKey, formatAmount, formatQuantity, lookupOf, todayIso, usePurcha
 import type { RunCommand } from './purchasing-model.ts';
 import { LevelBadge, MovementTable, TextLink } from './stock-tab.tsx';
 
+const notProvidedKey = 'facility-operations.common.notProvided';
+
 // ── Doplnění zásob ────────────────────────────────────────────────────────────────────────────────────────────────
 export const ReplenishTab = ({
   canWrite,
@@ -35,18 +39,19 @@ export const ReplenishTab = ({
   onOpenItem,
   state,
 }: {
-  readonly state: PurchasingState;
   readonly canWrite: boolean;
-  readonly onOpenItem: (itemId: string) => void;
   readonly onDraftOrder: (supplierId: string | undefined, lines: readonly DraftLine[]) => void;
+  readonly onOpenItem: (itemId: string) => void;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const lookup = lookupOf(state);
   const today = todayIso();
-  const suggestions = state.items
-    .map((item) => materialPlanOf(state, item, today))
-    .filter((plan) => plan.suggestedQuantity > 0);
+  const suggestions = state.items.flatMap((item) => {
+    const plan = materialPlanOf(state, item, today);
+    return plan.suggestedQuantity > 0 ? [plan] : [];
+  });
   const groups = new Map<string, MaterialPlan[]>();
   for (const plan of suggestions) {
     const key = plan.item.supplierId ?? '';
@@ -76,7 +81,7 @@ export const ReplenishTab = ({
                     onClick={() =>
                       onDraftOrder(
                         supplier?.id,
-                        plans.map((plan) => draftLine(plan.item, plan.suggestedQuantity)),
+                        plans.map((plan) => draftLine(plan.item.id, plan.item, plan.suggestedQuantity)),
                       )
                     }
                     size="sm"
@@ -87,14 +92,20 @@ export const ReplenishTab = ({
                 ) : undefined
               }
               key={supplierId}
-              title={supplier?.name ?? t('facility-operations.common.notProvided')}
+              title={supplier?.name ?? t(notProvidedKey)}
             >
               {draft !== undefined && (
                 <StatusText showIcon status="warning">
                   {k('replenish.draftExists', { number: draft.number })}
                 </StatusText>
               )}
-              <div className="overflow-x-auto" role="region" aria-label="Doporučené doplnění zásob" tabIndex={0}>
+              {/* oxlint-disable jsx-a11y/no-noninteractive-tabindex -- Pending scoped exception approval: this named stock viewport needs keyboard scrolling. */}
+              <section
+                aria-label={t('facility-operations.ui.recommendedReplenishment')}
+                className="overflow-x-auto"
+                tabIndex={0}
+              >
+                {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
                 <Table size="sm" style={{ minWidth: '40rem' }} variant="line">
                   <Table.Header>
                     <Table.Row>
@@ -138,7 +149,7 @@ export const ReplenishTab = ({
                     ))}
                   </Table.Body>
                 </Table>
-              </div>
+              </section>
             </SectionCard>
           );
         })
@@ -153,9 +164,9 @@ export const MovementsTab = ({
   onOpenOrder,
   state,
 }: {
-  readonly state: PurchasingState;
   readonly me: PrincipalRef | undefined;
   readonly onOpenOrder: (orderId: string) => void;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const lookup = lookupOf(state);
@@ -182,7 +193,12 @@ export const MovementsTab = ({
         ].join(' '),
       ).includes(query);
     })
-    .toSorted((left, right) => (left.date === right.date ? 0 : left.date < right.date ? 1 : -1));
+    .toSorted((left, right) => {
+      if (left.date === right.date) {
+        return 0;
+      }
+      return left.date < right.date ? 1 : -1;
+    });
   const months = [...issuesByMonth(state.movements).entries()]
     .toSorted(([left], [right]) => (left < right ? 1 : -1))
     .slice(0, 4);
@@ -219,7 +235,6 @@ export const MovementsTab = ({
         </div>
         <div className="w-full max-w-xs">
           <Select
-            placeholder={k('placeholders.option')}
             items={['all', 'receipt', 'issue', 'transfer', 'adjustment'].map((value) => ({
               displayValue: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
               label: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
@@ -229,6 +244,7 @@ export const MovementsTab = ({
             labelProps={{ className: 'sr-only' }}
             name="movement-kind"
             onValueChange={({ value }) => setKind(value[0] ?? 'all')}
+            placeholder={k('placeholders.option')}
             size="sm"
             value={[kind]}
           />
@@ -254,70 +270,206 @@ export const QuoteStatusBadge = ({ status }: { readonly status: SupplierQuote['s
   );
 };
 
+const QuoteLookupContext = createContext<ReturnType<typeof lookupOf> | undefined>(undefined);
+const SupplierStateContext = createContext<PurchasingState | undefined>(undefined);
+
+const QuoteNumberCell = ({ row }: CellContext<SupplierQuote>) => {
+  const lookup = useContext(QuoteLookupContext);
+  return (
+    <div className="flex flex-col">
+      <span className="font-medium">{row.original.number}</span>
+      <span className="text-fg-secondary text-xs">{lookup?.supplier(row.original.supplierId)?.name ?? '—'}</span>
+    </div>
+  );
+};
+
+const QuoteStatusCell = ({ row }: CellContext<SupplierQuote>) => <QuoteStatusBadge status={row.original.status} />;
+
+const QuoteDateCell = ({ row }: CellContext<SupplierQuote>) => formatDate(row.original.date);
+
+const QuoteValidityCell = ({ row }: CellContext<SupplierQuote>) => {
+  const { t } = useModernI18n();
+  return row.original.validUntil === undefined ? t(notProvidedKey) : formatDate(row.original.validUntil);
+};
+
+const QuoteLinesCell = ({ row }: CellContext<SupplierQuote>) => {
+  const k = usePurchasingT();
+  return k('quotes.lineCount', { count: row.original.lines.length });
+};
+
+const QuoteTotalCell = ({ row }: CellContext<SupplierQuote>) => (
+  <span className="tabular-nums">{formatAmount(orderTotalMinor(row.original), row.original.currency)}</span>
+);
+
+const QuoteOrderCell = ({ row }: CellContext<SupplierQuote>) => {
+  const lookup = useContext(QuoteLookupContext);
+  return lookup?.order(row.original.purchaseOrderId)?.number ?? <span className="text-fg-secondary">—</span>;
+};
+
+const SupplierNameCell = ({ row }: CellContext<Supplier>) => (
+  <div className="flex flex-col">
+    <span className="font-medium">{row.original.name}</span>
+    <span className="text-fg-secondary text-xs">{row.original.ico === undefined ? '' : `IČO ${row.original.ico}`}</span>
+  </div>
+);
+
+const SupplierContactCell = ({ row }: CellContext<Supplier>) => {
+  const { t } = useModernI18n();
+  return row.original.contact ?? t(notProvidedKey);
+};
+
+const SupplierEmailCell = ({ row }: CellContext<Supplier>) => (
+  <span className="flex flex-col text-xs">
+    <span>{row.original.email ?? ''}</span>
+    <span>{row.original.phone ?? ''}</span>
+  </span>
+);
+
+const SupplierLeadCell = ({ row }: CellContext<Supplier>) => {
+  const k = usePurchasingT();
+  const { t } = useModernI18n();
+  return row.original.leadTimeDays === undefined
+    ? t(notProvidedKey)
+    : k('leadTimeDays', { count: row.original.leadTimeDays });
+};
+
+const SupplierItemsCell = ({ row }: CellContext<Supplier>) => {
+  const state = useContext(SupplierStateContext);
+  return state?.items.filter((item) => item.supplierId === row.original.id).length ?? 0;
+};
+
+const SupplierOrdersCell = ({ row }: CellContext<Supplier>) => {
+  const state = useContext(SupplierStateContext);
+  return (
+    state?.orders.filter((order) => order.supplierId === row.original.id && order.status !== 'cancelled').length ?? 0
+  );
+};
+
 export const QuotesTab = ({
   onOpen,
   state,
 }: {
-  readonly state: PurchasingState;
   readonly onOpen: (quoteId: string) => void;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const lookup = lookupOf(state);
   const columns: ColumnDef<SupplierQuote>[] = [
     {
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{row.original.number}</span>
-          <span className="text-fg-secondary text-xs">{lookup.supplier(row.original.supplierId)?.name ?? '—'}</span>
-        </div>
-      ),
+      cell: QuoteNumberCell,
       header: k('fields.quote'),
       id: 'number',
     },
-    { cell: ({ row }) => <QuoteStatusBadge status={row.original.status} />, header: k('fields.status'), id: 'status' },
-    { cell: ({ row }) => formatDate(row.original.date), header: k('fields.quoteDate'), id: 'date' },
+    { cell: QuoteStatusCell, header: k('fields.status'), id: 'status' },
+    { cell: QuoteDateCell, header: k('fields.quoteDate'), id: 'date' },
     {
-      cell: ({ row }) =>
-        row.original.validUntil === undefined
-          ? t('facility-operations.common.notProvided')
-          : formatDate(row.original.validUntil),
+      cell: QuoteValidityCell,
       header: k('fields.validUntil'),
       id: 'validUntil',
     },
     {
-      cell: ({ row }) => k('quotes.lineCount', { count: row.original.lines.length }),
+      cell: QuoteLinesCell,
       header: k('fields.lines'),
       id: 'lines',
     },
     {
-      cell: ({ row }) => (
-        <span className="tabular-nums">{formatAmount(orderTotalMinor(row.original), row.original.currency)}</span>
-      ),
+      cell: QuoteTotalCell,
       header: k('fields.total'),
       id: 'total',
     },
     {
-      cell: ({ row }) =>
-        lookup.order(row.original.purchaseOrderId)?.number ?? <span className="text-fg-secondary">—</span>,
+      cell: QuoteOrderCell,
       header: k('fields.order'),
       id: 'order',
     },
   ];
   return (
-    <DataTable
-      columns={columns}
-      data={state.quotes.toReversed()}
-      getRowId={(row) => row.id}
-      getRowLabel={(row) => row.original.number}
-      interactive
-      loading={false}
-      onRowClick={(row) => onOpen(row.original.id)}
-      size="sm"
-      translations={{ emptyDescription: k('empty.quotes'), emptyTitle: t('facility-operations.common.states.emptyTitle') }}
-    />
+    <QuoteLookupContext value={lookup}>
+      <DataTable
+        columns={columns}
+        data={state.quotes.toReversed()}
+        getRowId={(row) => row.id}
+        getRowLabel={(row) => row.original.number}
+        interactive
+        loading={false}
+        onRowClick={(row) => onOpen(row.original.id)}
+        size="sm"
+        translations={{
+          emptyDescription: k('empty.quotes'),
+          emptyTitle: t('facility-operations.common.states.emptyTitle'),
+        }}
+      />
+    </QuoteLookupContext>
   );
 };
+
+interface SubmitOrderFromQuoteInput {
+  readonly expectedDate: IsoDate;
+  readonly k: ReturnType<typeof usePurchasingT>;
+  readonly onOpenOrder: (id: string) => void;
+  readonly quote: SupplierQuote;
+  readonly run: RunCommand;
+  readonly setBusy: (value: boolean) => void;
+  readonly setError: (value: string | undefined) => void;
+  readonly state: PurchasingState;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+  readonly warehouseId: string;
+}
+const submitOrderFromQuote = Effect.fn('FacilityOperations.Purchasing.submitOrderFromQuote')(
+  function* createOrderFromQuote(input: SubmitOrderFromQuoteInput) {
+    const { expectedDate, k, onOpenOrder, quote, run, setBusy, setError, state, t, toast, warehouseId } = input;
+    setError(undefined);
+    const warehouse = state.warehouses.find((entry) => entry.id === warehouseId);
+    if (warehouse === undefined) {
+      setError(t('facility-operations.common.required'));
+      return;
+    }
+    setBusy(true);
+    const command = {
+      _tag: 'PurchaseOrderCreateFromQuote' as const,
+      quoteId: quote.id,
+      warehouseId: warehouse.id,
+    };
+    const outcome = yield* run(expectedDate === '' ? command : { ...command, expectedDate });
+    setBusy(false);
+    if (outcome.ok) {
+      toast.create({ duration: 5000, title: k('quotes.ordered'), type: 'success' });
+      const [orderId] = outcome.result.entityIds;
+      if (orderId !== undefined) {
+        onOpenOrder(orderId);
+      }
+    } else {
+      setError(t(failureKey(outcome.reason)));
+    }
+  },
+);
+
+interface SubmitQuoteRejectionInput {
+  readonly k: ReturnType<typeof usePurchasingT>;
+  readonly quote: SupplierQuote;
+  readonly run: RunCommand;
+  readonly setBusy: (value: boolean) => void;
+  readonly setError: (value: string | undefined) => void;
+  readonly setRejecting: (value: boolean) => void;
+  readonly t: ReturnType<typeof useModernI18n>['t'];
+  readonly toast: ReturnType<typeof useToast>;
+}
+const submitQuoteRejection = Effect.fn('FacilityOperations.Purchasing.submitQuoteRejection')(function* rejectQuote(
+  input: SubmitQuoteRejectionInput,
+) {
+  const { k, quote, run, setBusy, setError, setRejecting, t, toast } = input;
+  setBusy(true);
+  const outcome = yield* run({ _tag: 'PurchaseQuoteReject', quoteId: quote.id });
+  setBusy(false);
+  setRejecting(false);
+  if (outcome.ok) {
+    toast.create({ duration: 5000, title: k('quotes.rejected'), type: 'success' });
+  } else {
+    setError(t(failureKey(outcome.reason)));
+  }
+});
 
 export const QuotePanel = ({
   canWrite,
@@ -327,12 +479,12 @@ export const QuotePanel = ({
   run,
   state,
 }: {
-  readonly state: PurchasingState;
-  readonly quoteId: string;
   readonly canWrite: boolean;
-  readonly run: RunCommand;
   readonly onClose: () => void;
   readonly onOpenOrder: (orderId: string) => void;
+  readonly quoteId: string;
+  readonly run: RunCommand;
+  readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
@@ -342,47 +494,23 @@ export const QuotePanel = ({
   const [warehouseId, setWarehouseId] = useState(state.warehouses[0]?.id ?? '');
   const [expectedDate, setExpectedDate] = useState('');
   const [rejecting, setRejecting] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   if (quote === undefined) {
     return null;
   }
-  const toOrder = async () => {
-    setError(undefined);
-    setBusy(true);
-    const outcome = await run({
-      _tag: 'PurchaseOrderCreateFromQuote',
-      quoteId: quote.id,
-      warehouseId: warehouseId as PurchasingState['warehouses'][number]['id'],
-      ...(expectedDate === '' ? {} : { expectedDate }),
-    });
-    setBusy(false);
-    if (outcome.ok) {
-      toast.create({ duration: 5000, title: k('quotes.ordered'), type: 'success' });
-      const orderId = outcome.result.entityIds[0];
-      if (orderId !== undefined) {
-        onOpenOrder(orderId);
-      }
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
-  };
-  const reject = async () => {
-    setBusy(true);
-    const outcome = await run({ _tag: 'PurchaseQuoteReject', quoteId: quote.id });
-    setBusy(false);
-    setRejecting(false);
-    if (outcome.ok) {
-      toast.create({ duration: 5000, title: k('quotes.rejected'), type: 'success' });
-    } else {
-      setError(t(failureKey(outcome.reason)));
-    }
-  };
+  const toOrder = () =>
+    submitOrderFromQuote({ expectedDate, k, onOpenOrder, quote, run, setBusy, setError, state, t, toast, warehouseId });
+  const reject = () => submitQuoteRejection({ k, quote, run, setBusy, setError, setRejecting, t, toast });
   const order = lookup.order(quote.purchaseOrderId);
   return (
     <SidePanel
       description={lookup.supplier(quote.supplierId)?.name ?? ''}
-      onOpenChange={(open) => !open && onClose()}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
       open
       resizeLabel={t('facility-operations.common.close')}
       size="xl"
@@ -405,7 +533,6 @@ export const QuotePanel = ({
             <p className="text-fg-secondary text-sm">{k('quotes.toOrderHint')}</p>
             <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
               <Select
-                placeholder={k('placeholders.warehouse')}
                 items={state.warehouses.map((entry) => ({
                   displayValue: entry.name,
                   label: entry.name,
@@ -414,6 +541,7 @@ export const QuotePanel = ({
                 label={k('fields.deliverTo')}
                 name="quote-warehouse"
                 onValueChange={({ value }) => setWarehouseId(value[0] ?? warehouseId)}
+                placeholder={k('placeholders.warehouse')}
                 size="md"
                 value={[warehouseId]}
               />
@@ -432,7 +560,14 @@ export const QuotePanel = ({
                   <Button onClick={() => setRejecting(false)} size="sm" theme="outlined" variant="secondary">
                     {t('facility-operations.common.cancel')}
                   </Button>
-                  <Button isLoading={busy} onClick={() => void reject()} size="sm" variant="danger">
+                  <Button
+                    isLoading={busy}
+                    onClick={() => {
+                      browserRuntime.runFork(reject());
+                    }}
+                    size="sm"
+                    variant="danger"
+                  >
                     {k('quotes.reject')}
                   </Button>
                 </>
@@ -444,7 +579,9 @@ export const QuotePanel = ({
                   <Button
                     icon="icon-[mdi--cart-arrow-right]"
                     isLoading={busy}
-                    onClick={() => void toOrder()}
+                    onClick={() => {
+                      browserRuntime.runFork(toOrder());
+                    }}
                     size="sm"
                     variant="primary"
                   >
@@ -494,8 +631,7 @@ export const QuotePanel = ({
               { label: k('fields.quoteDate'), value: formatDate(quote.date) },
               {
                 label: k('fields.validUntil'),
-                value:
-                  quote.validUntil === undefined ? t('facility-operations.common.notProvided') : formatDate(quote.validUntil),
+                value: quote.validUntil === undefined ? t(notProvidedKey) : formatDate(quote.validUntil),
               },
               { label: k('fields.currency'), value: quote.currency },
               {
@@ -520,61 +656,50 @@ export const SuppliersTab = ({ state }: { readonly state: PurchasingState }) => 
   const { t } = useModernI18n();
   const columns: ColumnDef<Supplier>[] = [
     {
-      cell: ({ row }) => (
-        <div className="flex flex-col">
-          <span className="font-medium">{row.original.name}</span>
-          <span className="text-fg-secondary text-xs">
-            {row.original.ico === undefined ? '' : `IČO ${row.original.ico}`}
-          </span>
-        </div>
-      ),
+      cell: SupplierNameCell,
       header: k('fields.supplierName'),
       id: 'name',
     },
     {
-      cell: ({ row }) => row.original.contact ?? t('facility-operations.common.notProvided'),
+      cell: SupplierContactCell,
       header: k('fields.contact'),
       id: 'contact',
     },
     {
-      cell: ({ row }) => (
-        <span className="flex flex-col text-xs">
-          <span>{row.original.email ?? ''}</span>
-          <span>{row.original.phone ?? ''}</span>
-        </span>
-      ),
+      cell: SupplierEmailCell,
       header: k('fields.email'),
       id: 'email',
     },
     {
-      cell: ({ row }) =>
-        row.original.leadTimeDays === undefined
-          ? t('facility-operations.common.notProvided')
-          : k('leadTimeDays', { count: row.original.leadTimeDays }),
+      cell: SupplierLeadCell,
       header: k('fields.leadTime'),
       id: 'lead',
     },
     {
-      cell: ({ row }) => state.items.filter((item) => item.supplierId === row.original.id).length,
+      cell: SupplierItemsCell,
       header: k('suppliers.items'),
       id: 'items',
     },
     {
-      cell: ({ row }) =>
-        state.orders.filter((order) => order.supplierId === row.original.id && order.status !== 'cancelled').length,
+      cell: SupplierOrdersCell,
       header: k('suppliers.orders'),
       id: 'orders',
     },
   ];
   return (
-    <DataTable
-      columns={columns}
-      data={[...state.suppliers]}
-      getRowId={(row) => row.id}
-      getRowLabel={(row) => row.original.name}
-      loading={false}
-      size="sm"
-      translations={{ emptyDescription: k('empty.suppliers'), emptyTitle: t('facility-operations.common.states.emptyTitle') }}
-    />
+    <SupplierStateContext value={state}>
+      <DataTable
+        columns={columns}
+        data={[...state.suppliers]}
+        getRowId={(row) => row.id}
+        getRowLabel={(row) => row.original.name}
+        loading={false}
+        size="sm"
+        translations={{
+          emptyDescription: k('empty.suppliers'),
+          emptyTitle: t('facility-operations.common.states.emptyTitle'),
+        }}
+      />
+    </SupplierStateContext>
   );
 };

@@ -633,7 +633,7 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
   db: MerchandiseDb,
   scope: StoreScope,
   options: { readonly aiChanges?: boolean; readonly history?: AgentHistoryRequest; readonly lock?: boolean } = {},
-) {
+): Effect.fn.Return<CatalogHead | undefined, MerchandiseStoreFailure> {
   const history =
     options.history === undefined
       ? catalogHeads.aiChanges
@@ -1125,7 +1125,10 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
 export const readSnapshot = Effect.fn('MerchandiseStore.readSnapshot')(function* readSnapshot(
   db: MerchandiseDb,
   scope: StoreScope,
-) {
+): Effect.fn.Return<
+  { readonly revision: number; readonly state: MerchandiseState } | undefined,
+  MerchandiseStoreFailure
+> {
   const head = yield* loadHead(db, scope, { aiChanges: true });
   if (head === undefined) {
     return Option.getOrUndefined(Option.none<Pick<WorkingSet, 'revision' | 'state'>>());
@@ -1170,5 +1173,3 @@ export const readSnapshot = Effect.fn('MerchandiseStore.readSnapshot')(function*
     'Stored snapshot does not decode',
   );
 });
-
-export type { ProductVariant } from '../../shared/domain/merchandise-model.ts';

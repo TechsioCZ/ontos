@@ -19,7 +19,7 @@ import {
 } from '../../packages/shared-contracts/src/agent-proposals.ts';
 import { DemoSeedError } from './seed-client.mts';
 
-const legalEntityId = '71000000-0000-4000-8000-000000000020';
+const targetLegalEntityId = '71000000-0000-4000-8000-000000000020';
 /** The guide finds the batch by this instruction; keep it stable. */
 const instruction = 'Promítni nový ceník dodavatele (+5 %) do ceny jednoho produktu a připrav úkol pro obchodníky.';
 export const SubmissionIntentSchema = Schema.Struct({
@@ -95,6 +95,9 @@ const post = <P extends Schema.Top>(
 /** Persisted input is replayed before any reads can rebuild a different price command. */
 export const prepareAgentPlatformBatch = (intentFile: string) =>
   Effect.gen(function* prepareBatch() {
+    const legalEntityId = yield* Schema.decodeUnknownEffect(AgentProposalSubmitRequestSchema.fields.legalEntityId)(
+      targetLegalEntityId,
+    );
     const { apiKey, compositionUrl, shellUrl } = yield* configuration;
     const fs = yield* FileSystem.FileSystem;
     const agentHeaders = { 'x-api-key': Redacted.value(apiKey) };

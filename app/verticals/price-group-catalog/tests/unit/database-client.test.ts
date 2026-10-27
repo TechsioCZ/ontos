@@ -9,10 +9,7 @@ it.effect('keeps client configuration failures in the typed channel', () =>
       Effect.scoped(
         makePriceGroupCatalogDatabase({
           connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos?statement_timeout=1',
-          database: 'ontos',
-          host: 'localhost',
-          port: 5433,
-          user: 'ontos_runtime',
+          expectedRole: 'ontos_runtime',
         }),
       ),
     );

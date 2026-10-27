@@ -10,10 +10,26 @@ const management = { principalId: '72000000-0000-4000-8000-000000000021', tenant
 const operations = { principalId: '72000000-0000-4000-8000-000000000022', tenantId };
 const finance = { principalId: '72000000-0000-4000-8000-000000000023', tenantId };
 
-const riverside = { id: '6a0197b3-4b13-46c5-a3ab-8dbb46dda58e', kind: 'property', label: 'Riverside Office Park (RIVERSIDE)' } as const;
-const parkova = { id: 'f5ef97e9-2935-4ebc-83e6-aa9d475e561b', kind: 'property', label: 'Rezidence Parková (PARKOVA)' } as const;
-const r201 = { id: 'ec2c089a-69d4-459d-a67f-83d986add5f8', kind: 'unit', label: 'Riverside Office Park › Kancelář R201 (R201)' } as const;
-const s01 = { id: '1ecbca7a-0c49-49c3-a122-3d0d03476cad', kind: 'unit', label: 'Riverside Office Park › Sklad S01 (S01)' } as const;
+const riverside = {
+  id: '6a0197b3-4b13-46c5-a3ab-8dbb46dda58e',
+  kind: 'property',
+  label: 'Riverside Office Park (RIVERSIDE)',
+} as const;
+const parkova = {
+  id: 'f5ef97e9-2935-4ebc-83e6-aa9d475e561b',
+  kind: 'property',
+  label: 'Rezidence Parková (PARKOVA)',
+} as const;
+const r201 = {
+  id: 'ec2c089a-69d4-459d-a67f-83d986add5f8',
+  kind: 'unit',
+  label: 'Riverside Office Park › Kancelář R201 (R201)',
+} as const;
+const s01 = {
+  id: '1ecbca7a-0c49-49c3-a122-3d0d03476cad',
+  kind: 'unit',
+  label: 'Riverside Office Park › Sklad S01 (S01)',
+} as const;
 
 const eventId = (n: number) => `73130000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
 const notificationId = (n: number) => `73130000-0000-4000-8000-0000000002${String(n).padStart(2, '0')}`;
@@ -27,7 +43,10 @@ const labels = new Map([
   [management.principalId, 'management@siampark.demo'],
 ]);
 
-const events = [
+type EncodedEvent = AgendaStateEncoded['events'][number];
+type MutableEvent = { -readonly [Key in keyof EncodedEvent]: EncodedEvent[Key] };
+
+const baseEvents: readonly Omit<EncodedEvent, 'status'>[] = [
   {
     ...audit(),
     assignee: operations,
@@ -93,14 +112,17 @@ const events = [
     related: riverside,
     title: 'Instalace vánoční výzdoby areálu',
   },
-].map((event) => ({
-  ...event,
-  ...(event.assignee === undefined ? {} : { assigneeLabel: labels.get(event.assignee.principalId) ?? '' }),
-  status: 'PLANNED',
-}));
+];
+const events = baseEvents.map((event): EncodedEvent => {
+  const planned: MutableEvent = { ...event, status: 'PLANNED' };
+  if (event.assignee !== undefined) {
+    planned.assigneeLabel = labels.get(event.assignee.principalId) ?? '';
+  }
+  return planned;
+});
 
 /** Assignment notices the reducer would have produced when management assigned the events above. */
-const notifications = events.flatMap((event, index) =>
+const notifications = events.flatMap((event, index): NonNullable<AgendaStateEncoded['notifications']> =>
   event.assignee === undefined || event.assignee.principalId === management.principalId
     ? []
     : [
@@ -119,5 +141,4 @@ const notifications = events.flatMap((event, index) =>
       ],
 );
 
-export const seedAgendaState = (): AgendaStateEncoded =>
-  ({ events, exports: [], notifications, preferences: [] }) as unknown as AgendaStateEncoded;
+export const seedAgendaState = (): AgendaStateEncoded => ({ events, exports: [], notifications, preferences: [] });

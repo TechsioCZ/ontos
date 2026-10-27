@@ -1,47 +1,78 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { pipe, Effect, Predicate } from 'effect';
+import { orderDateText } from '../../../../../shared/domain/imports.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Predicate } from 'effect';
+
 import { useState } from 'react';
-import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import type { AiBatch, AiChange } from '../../../../../shared/domain/ai-changes.ts';
 import {
   aiRiskLabel,
   aiStatusLabel,
   initialAiChangesSlice,
   newClientContactsDiff,
 } from '../../../../../shared/domain/ai-changes.ts';
+import type { AiBatch, AiChange } from '../../../../../shared/domain/ai-changes.ts';
+
 import { CrmPage } from '../../../../crm/crm-page.tsx';
-import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
+import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+
 import { CrmStateGate } from '../../../../crm/ui.tsx';
 import './review.css';
 
-type Submit = (command: CrmCommand) => Promise<CrmCommandOutcome>;
+type Submit = CrmCommandSubmit;
 // Fixed Hanák demo accounts from scripts/demo/permissions.mts, keyed by their UUIDv5 principal identity.
 // Never attribute an unknown account to one of these people; keep its unambiguous account identifier.
-const hanakReviewers: Readonly<Record<string, string>> = {
-  '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák · spravce@hanak.demo',
-  '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková · vedouci@hanak.demo',
-};
+const revertedBatchLabel = 'Dávka vrácena';
+
+const hanakReviewers = new Map(
+  Object.entries({
+    '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák · spravce@hanak.demo',
+    '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková · vedouci@hanak.demo',
+  }),
+);
 const nameOf = (records: RecordsResponse, principalId: string) => {
   const name =
     records.state.salespeople.find((entry) => entry.principalId === principalId)?.name ??
-    hanakReviewers[principalId] ??
+    hanakReviewers.get(principalId) ??
     records.state.aiChanges?.batches.find((entry) => entry.agentPrincipalId === principalId)?.agentLabel ??
     `Účet schvalovatele ${principalId}`;
   return records.viewer.principalId === principalId ? `${name} (vy)` : name;
 };
 
+const changeStatusVariant = (status: AiChange['status']) => {
+  if (status === 'pending') {
+    return 'warning';
+  }
+  return status === 'applied' ? 'success' : 'secondary';
+};
+
+const batchStatus = (batch: AiBatch, pending: readonly AiChange[], applied: readonly AiChange[]) => {
+  if (batch.revertedAt !== undefined) {
+    return { label: revertedBatchLabel, variant: 'secondary' } as const;
+  }
+  if (pending.length > 0) {
+    return { label: `${pending.length} ke schválení`, variant: 'warning' } as const;
+  }
+  if (applied.length > 0) {
+    return { label: 'Změny provedeny', variant: 'success' } as const;
+  }
+  return { label: 'Vyřízeno', variant: 'secondary' } as const;
+};
+
 const ChangeCard = ({
-  change,
   busy,
+  change,
   decide,
 }: {
-  readonly change: AiChange;
   readonly busy: boolean;
+  readonly change: AiChange;
   readonly decide: (ids: readonly string[], decision: 'approve' | 'reject') => void;
 }) => (
   <article className="ai-review-change" data-change-id={change.id}>
@@ -51,11 +82,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{change.target.label}</p>
       </div>
       <div className="ai-review-actions">
-        <Badge
-          variant={change.status === 'pending' ? 'warning' : change.status === 'applied' ? 'success' : 'secondary'}
-        >
-          {aiStatusLabel[change.status]}
-        </Badge>
+        <Badge variant={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
@@ -63,38 +90,40 @@ const ChangeCard = ({
       <span className="font-medium">Proč AI změnu navrhuje: </span>
       {change.reason}
     </p>
-    <div className="ai-review-diff" role="table" aria-label={`Porovnání: ${change.summary}`}>
-      <div className="ai-review-diff-head" role="row">
-        <span role="columnheader">Údaj</span>
-        <span role="columnheader">Před změnou</span>
-        <span role="columnheader">Po schválení</span>
-      </div>
-      {(Predicate.isTagged(change.operation, 'CreateClient')
-        ? [
-            ...change.diff.filter((line) => line.field !== 'contacts' && !line.field.startsWith('contacts.')),
-            ...newClientContactsDiff(change.operation.contacts),
-          ]
-        : change.diff
-      ).map((line) => (
-        <div className="ai-review-diff-row" role="row" key={line.field}>
-          <span className="font-medium" role="cell">
-            {line.label}
-          </span>
-          <span className="ai-review-before" role="cell">
-            {line.before ?? 'Neuvedeno'}
-          </span>
-          <span className="ai-review-after" role="cell">
-            {line.after ?? 'Vymazáno'}
-          </span>
-        </div>
-      ))}
-    </div>
-    {change.failure && (
+    <table aria-label={`Porovnání: ${change.summary}`} className="ai-review-diff">
+      <thead>
+        <tr className="ai-review-diff-head">
+          <th scope="col">Údaj</th>
+          <th scope="col">Před změnou</th>
+          <th scope="col">Po schválení</th>
+        </tr>
+      </thead>
+      <tbody>
+        {(Predicate.isTagged(change.operation, 'CreateClient')
+          ? [
+              ...change.diff.filter((line) => line.field !== 'contacts' && !line.field.startsWith('contacts.')),
+              ...newClientContactsDiff(change.operation.contacts),
+            ]
+          : change.diff
+        ).map((line) => (
+          <tr className="ai-review-diff-row" key={line.field}>
+            <th className="font-medium" scope="row">
+              {line.label}
+            </th>
+            <td className="ai-review-before">{line.before ?? 'Neuvedeno'}</td>
+            <td className="ai-review-after">{line.after ?? 'Vymazáno'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    {change.failure !== undefined && change.failure !== '' && (
       <p className="text-sm" role="alert">
         Změnu nelze provést: {change.failure}
       </p>
     )}
-    {change.decisionNote && <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>}
+    {change.decisionNote !== undefined && change.decisionNote !== '' && (
+      <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>
+    )}
     {change.status === 'pending' && (
       <div className="ai-review-actions ai-review-end">
         <Button
@@ -116,36 +145,49 @@ const ChangeCard = ({
 
 const BatchCard = ({
   batch,
-  changes,
   busy,
-  submit,
+  changes,
   feedback,
   records,
+  submit,
 }: {
   readonly batch: AiBatch;
-  readonly changes: readonly AiChange[];
   readonly busy: boolean;
-  readonly submit: Submit;
+  readonly changes: readonly AiChange[];
   readonly feedback: (text: string) => void;
   readonly records: RecordsResponse;
+  readonly submit: Submit;
 }) => {
+  const { t } = useModernI18n();
   const [note, setNote] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = changes.filter((change) => change.status === 'pending');
   const applied = changes.filter((change) => change.status === 'applied');
+  const status = batchStatus(batch, pending, applied);
   const decide = (ids: readonly string[], decision: 'approve' | 'reject') => {
-    void submit({
+    const command: Extract<CrmCommandInput, { readonly _tag: 'AiDecideChanges' }> = {
       _tag: 'AiDecideChanges',
       changeIds: [...ids],
       decision,
-      ...(note.trim() !== '' ? { note: note.trim() } : {}),
-    }).then((result) =>
-      feedback(
-        result.ok
-          ? decision === 'approve'
-            ? 'Rozhodnutí uloženo. Zkontrolujte výsledek u jednotlivých změn.'
-            : 'Návrhy zamítnuty. Data zůstala beze změny.'
-          : 'Rozhodnutí se nepodařilo uložit. Záznam se mohl od návrhu změnit. Obnovte seznam a připravte nový návrh.',
+    };
+    if (note.trim() !== '') {
+      Object.assign(command, { note: note.trim() });
+    }
+    browserRuntime.runFork(
+      submit(command).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            let message =
+              'Rozhodnutí se nepodařilo uložit. Záznam se mohl od návrhu změnit. Obnovte seznam a připravte nový návrh.';
+            if (result.ok) {
+              message =
+                decision === 'approve'
+                  ? 'Rozhodnutí uloženo. Zkontrolujte výsledek u jednotlivých změn.'
+                  : 'Návrhy zamítnuty. Data zůstala beze změny.';
+            }
+            feedback(message);
+          }),
+        ),
       ),
     );
   };
@@ -155,38 +197,20 @@ const BatchCard = ({
         <div className="ai-review-heading">
           <div>
             <p className="text-fg-secondary text-xs">
-              {formatDateTime(batch.createdAt)} · {batch.agentLabel}
+              {pipe(batch.createdAt, orderDateText, formatDateTime)} · {batch.agentLabel}
             </p>
             <h2 className="ai-review-instruction">{batch.instruction}</h2>
           </div>
-          <Badge
-            variant={
-              batch.revertedAt !== undefined
-                ? 'secondary'
-                : pending.length > 0
-                  ? 'warning'
-                  : applied.length > 0
-                    ? 'success'
-                    : 'secondary'
-            }
-          >
-            {batch.revertedAt !== undefined
-              ? 'Dávka vrácena'
-              : pending.length > 0
-                ? `${pending.length} ke schválení`
-                : applied.length > 0
-                  ? 'Změny provedeny'
-                  : 'Vyřízeno'}
-          </Badge>
+          <Badge variant={status.variant}>{status.label}</Badge>
         </div>
         {pending.length > 0 && (
           <>
             <FormInput
               id={`note-${batch.id}`}
-              label="Poznámka k rozhodnutí (nepovinná)"
-              value={note}
+              label={t('crm.ciWorkflow.decisionNote')}
               onChange={(event) => setNote(event.target.value)}
-              placeholder="Např. ověřeno s obchodníkem"
+              placeholder={t('crm.ciWorkflow.decisionNotePlaceholder')}
+              value={note}
             />
             <div className="ai-review-actions">
               <Button
@@ -223,9 +247,9 @@ const BatchCard = ({
             <Button
               disabled={busy}
               onClick={() => setConfirmRevert(!confirmRevert)}
+              size="sm"
               theme="outlined"
               variant="secondary"
-              size="sm"
             >
               Vrátit vše
             </Button>
@@ -241,25 +265,31 @@ const BatchCard = ({
                 <div className="ai-review-actions">
                   <Button
                     disabled={busy}
-                    size="sm"
                     onClick={() => {
-                      void submit({
-                        _tag: 'AiRevertBatch',
-                        batchId: batch.id,
-                        note: note || 'Vráceno na žádost schvalovatele',
-                      }).then((result) => {
-                        feedback(
-                          result.ok
-                            ? 'Celá dávka vrácena. Původní údaje obnoveny, historie zachována.'
-                            : 'Dávku nelze vrátit, některý záznam se mezitím změnil. Pozdější úpravy zůstaly zachovány.',
-                        );
-                        setConfirmRevert(false);
-                      });
+                      browserRuntime.runFork(
+                        submit({
+                          _tag: 'AiRevertBatch',
+                          batchId: batch.id,
+                          note: note || 'Vráceno na žádost schvalovatele',
+                        }).pipe(
+                          Effect.tap((result) =>
+                            Effect.sync(() => {
+                              feedback(
+                                result.ok
+                                  ? 'Celá dávka vrácena. Původní údaje obnoveny, historie zachována.'
+                                  : 'Dávku nelze vrátit, některý záznam se mezitím změnil. Pozdější úpravy zůstaly zachovány.',
+                              );
+                              setConfirmRevert(false);
+                            }),
+                          ),
+                        ),
+                      );
                     }}
+                    size="sm"
                   >
                     Potvrdit vrácení celé dávky
                   </Button>
-                  <Button size="sm" theme="outlined" variant="secondary" onClick={() => setConfirmRevert(false)}>
+                  <Button onClick={() => setConfirmRevert(false)} size="sm" theme="outlined" variant="secondary">
                     Zrušit
                   </Button>
                 </div>
@@ -267,47 +297,49 @@ const BatchCard = ({
             )}
           </div>
         )}
-        {batch.revertedAt && (
+        {batch.revertedAt !== undefined && (
           <p className="text-fg-secondary text-xs">
-            Vráceno {formatDateTime(batch.revertedAt)} · {nameOf(records, batch.revertedBy ?? '')}
+            Vráceno {pipe(batch.revertedAt, orderDateText, formatDateTime)} · {nameOf(records, batch.revertedBy ?? '')}
           </p>
         )}
       </header>
       <div className="ai-review-changes">
         {changes.map((change) => (
-          <ChangeCard key={change.id} change={change} busy={busy} decide={decide} />
+          <ChangeCard busy={busy} change={change} decide={decide} key={change.id} />
         ))}
       </div>
     </section>
   );
 };
 
-export const AiApprovalsPage = () => {
-  const { state, busy, load, submit } = useCrmRecords();
+const AiApprovalsContent = () => {
+  const { t } = useModernI18n();
+  const { busy, load, state, submit } = useCrmRecords();
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
   const [message, setMessage] = useState('');
   const [showFullLog, setShowFullLog] = useState(false);
   return (
-    <CrmPage titleKey="crm.pages.ai.title">
+    <>
       <PageHeader
-        title="AI změny ke schválení"
-        description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
-        meta={<Badge variant="secondary">Úroveň C</Badge>}
         actions={
-          <Button disabled={busy} onClick={load} theme="outlined" variant="secondary" size="sm">
+          <Button disabled={busy} onClick={load} size="sm" theme="outlined" variant="secondary">
             Obnovit seznam
           </Button>
         }
+        description="AI připraví návrh. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
+        meta={<Badge variant="secondary">Úroveň C</Badge>}
+        title={t('crm.pages.ai.title')}
       />
-      <CrmStateGate state={state} onRetry={load}>
+      <CrmStateGate onRetry={load} state={state}>
         {(records) => {
-          if (!records.viewer.writeAll)
+          if (!records.viewer.writeAll) {
             return (
               <EmptyState
-                title="Schvalování je vyhrazeno vedení"
                 description="Změny AI může schválit nebo vrátit pouze správce a vedoucí obchodu."
+                title={t('crm.ciWorkflow.managementApprovalsOnly')}
               />
             );
+          }
           const slice = records.state.aiChanges ?? initialAiChangesSlice;
           const batches = slice.batches
             .toReversed()
@@ -325,39 +357,35 @@ export const AiApprovalsPage = () => {
                   rozhodnutí má autora, čas a výsledek. Provedenou dávku lze bezpečně vrátit.
                 </p>
               </div>
-              <div className="ai-review-actions" role="group" aria-label="Zobrazení dávek">
+              <fieldset aria-label={t('crm.ciWorkflow.batchView')} className="ai-review-actions">
                 <Button
+                  aria-pressed={filter === 'pending'}
+                  onClick={() => setFilter('pending')}
                   size="sm"
                   theme={filter === 'pending' ? 'solid' : 'outlined'}
                   variant={filter === 'pending' ? 'primary' : 'secondary'}
-                  aria-pressed={filter === 'pending'}
-                  onClick={() => setFilter('pending')}
                 >
                   Ke schválení
                 </Button>
                 <Button
+                  aria-pressed={filter === 'all'}
+                  onClick={() => setFilter('all')}
                   size="sm"
                   theme={filter === 'all' ? 'solid' : 'outlined'}
                   variant={filter === 'all' ? 'primary' : 'secondary'}
-                  aria-pressed={filter === 'all'}
-                  onClick={() => setFilter('all')}
                 >
                   Všechny dávky
                 </Button>
-              </div>
-              {message && (
-                <p className="ai-review-feedback" role="status">
-                  {message}
-                </p>
-              )}
+              </fieldset>
+              {message && <output className="ai-review-feedback">{message}</output>}
               {batches.length === 0 ? (
                 <EmptyState
-                  title={filter === 'pending' ? 'Žádné změny nečekají na schválení' : 'Zatím nemáte návrhy AI'}
                   description={
                     filter === 'pending'
                       ? 'Hotová rozhodnutí a možnost vrácení najdete ve Všech dávkách.'
                       : 'Připojte agenta s profilem C a požádejte ho o návrh úprav klientů. Návrh se uloží sem, nikoli přímo do dat.'
                   }
+                  title={filter === 'pending' ? 'Žádné změny nečekají na schválení' : 'Zatím nemáte návrhy AI'}
                 />
               ) : (
                 batches.map((batch, index) => {
@@ -365,11 +393,11 @@ export const AiApprovalsPage = () => {
                   const card = (
                     <BatchCard
                       batch={batch}
-                      changes={changes}
-                      records={records}
                       busy={busy}
-                      submit={submit}
+                      changes={changes}
                       feedback={setMessage}
+                      records={records}
+                      submit={submit}
                     />
                   );
                   return index > 0 &&
@@ -378,8 +406,8 @@ export const AiApprovalsPage = () => {
                       <summary>
                         <span>{batch.instruction}</span>
                         <span className="text-fg-secondary text-xs">
-                          {formatDateTime(batch.createdAt)} ·{' '}
-                          {batch.revertedAt === undefined ? 'Vyřízeno' : 'Dávka vrácena'}
+                          {pipe(batch.createdAt, orderDateText, formatDateTime)} ·{' '}
+                          {batch.revertedAt === undefined ? 'Vyřízeno' : revertedBatchLabel}
                         </span>
                       </summary>
                       {card}
@@ -389,7 +417,7 @@ export const AiApprovalsPage = () => {
                   );
                 })
               )}
-              <SectionCard title="Deník AI a schvalování">
+              <SectionCard title={t('crm.ciWorkflow.aiApprovalLog')}>
                 {slice.log.length === 0 ? (
                   <p className="text-fg-secondary text-sm">Deník se naplní prvním návrhem AI.</p>
                 ) : (
@@ -400,22 +428,22 @@ export const AiApprovalsPage = () => {
                       .map((entry) => (
                         <li key={entry.id}>
                           <div className="text-fg-secondary text-xs">
-                            {formatDateTime(entry.at)} · {nameOf(records, entry.actorPrincipalId)} ·{' '}
-                            {entry.actorKind === 'agent' ? 'AI návrh' : 'Lidské rozhodnutí'}
+                            {pipe(entry.at, orderDateText, formatDateTime)} · {nameOf(records, entry.actorPrincipalId)}{' '}
+                            · {entry.actorKind === 'agent' ? 'AI návrh' : 'Lidské rozhodnutí'}
                           </div>
                           <p className="text-sm">{entry.message}</p>
                           <span className="text-fg-secondary text-xs">
                             {
                               (
                                 {
-                                  proposed: 'Uloženo ke schválení',
-                                  auto_applied: 'Provedeno (historický záznam)',
-                                  approved: 'Schváleno a provedeno',
-                                  rejected: 'Zamítnuto',
                                   apply_failed: 'Neprovedeno',
-                                  reverted: 'Vráceno',
+                                  approved: 'Schváleno a provedeno',
+                                  auto_applied: 'Provedeno (historický záznam)',
+                                  batch_reverted: revertedBatchLabel,
+                                  proposed: 'Uloženo ke schválení',
+                                  rejected: 'Zamítnuto',
                                   revert_conflict: 'Vrácení zablokováno',
-                                  batch_reverted: 'Dávka vrácena',
+                                  reverted: 'Vráceno',
                                 } as const
                               )[entry.action]
                             }
@@ -425,7 +453,7 @@ export const AiApprovalsPage = () => {
                   </ol>
                 )}
                 {slice.log.length > 8 && (
-                  <Button size="sm" theme="outlined" variant="secondary" onClick={() => setShowFullLog(!showFullLog)}>
+                  <Button onClick={() => setShowFullLog(!showFullLog)} size="sm" theme="outlined" variant="secondary">
                     {showFullLog ? 'Zobrazit jen poslední události' : `Zobrazit celý deník (${slice.log.length})`}
                   </Button>
                 )}
@@ -434,9 +462,15 @@ export const AiApprovalsPage = () => {
           );
         }}
       </CrmStateGate>
-    </CrmPage>
+    </>
   );
 };
+
+export const AiApprovalsPage = () => (
+  <CrmPage titleKey="crm.pages.ai.title">
+    <AiApprovalsContent />
+  </CrmPage>
+);
 /** The Shell awaits this before it reveals the page, so the first render already has the records. */
 export { preloadCrmRecords as preloadPage } from '../../../../crm/records.ts';
 export default AiApprovalsPage;

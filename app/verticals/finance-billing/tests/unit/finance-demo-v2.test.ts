@@ -6,6 +6,8 @@ import {
   AccountingSetupSchema,
   CalendarMonthSchema,
   FinanceDocumentSchema,
+  FinanceInvoiceResourceIdSchema,
+  FinanceRecurringTemplateIdSchema,
   FinanceStateSchema,
   InvoiceLineSchema,
   InvoiceSchema,
@@ -132,7 +134,9 @@ describe('S07 invoices', () => {
           tenantId,
         },
       });
-      const templateId = created.state.recurringTemplates?.[0]?.id ?? '';
+      const templateId = yield* Schema.decodeEffect(FinanceRecurringTemplateIdSchema)(
+        created.state.recurringTemplates?.[0]?.id ?? '',
+      );
       const first = yield* run(created.state, {
         _tag: 'GenerateRecurringInvoice',
         confirmDuplicate: false,
@@ -201,7 +205,11 @@ describe('S08 accounting handover', () => {
       const first = yield* run(state, {
         _tag: 'CreateAccountingExport',
         format: 'CSV',
-        invoiceResourceIds: ['a', 'b', 'c'],
+        invoiceResourceIds: yield* Schema.decodeEffect(AccountingExportSchema.fields.invoiceResourceIds)([
+          'a',
+          'b',
+          'c',
+        ]),
       });
       const created = first.state.accountingExports?.[0];
       expect(created?.invoiceResourceIds).toEqual(['a', 'b', 'c']);
@@ -215,7 +223,7 @@ describe('S08 accounting handover', () => {
       const second = yield* run(first.state, {
         _tag: 'CreateAccountingExport',
         format: 'JSON',
-        invoiceResourceIds: ['d'],
+        invoiceResourceIds: yield* Schema.decodeEffect(AccountingExportSchema.fields.invoiceResourceIds)(['d']),
       });
       expect(second.state.accountingExports?.map((entry) => entry.version)).toEqual([1, 2]);
       // S08-03: nothing becomes "booked"; the invoices keep their accounting state.
@@ -248,7 +256,13 @@ describe('S09 planning', () => {
       cashFlowOpening: { confirmedAt: now, openingBalanceMinor: 0, openingDate: '2026-10-01' },
       invoices: [paid],
       manualPayments: [
-        { amountMinor: 100_000, id: 'p1', invoiceResourceId: 'x', paidOn: '2026-10-10', recordedAt: now },
+        {
+          amountMinor: 100_000,
+          id: 'p1',
+          invoiceResourceId: Schema.decodeSync(FinanceInvoiceResourceIdSchema)('x'),
+          paidOn: '2026-10-10',
+          recordedAt: now,
+        },
       ],
     };
     const [october] = cashFlowMonths(state, { businessDate: '2026-10-20', fromMonth: '2026-10', months: 1 });
@@ -280,8 +294,9 @@ describe('Rental demo consistency', () => {
         tenantId,
       },
     });
-    const legacy = invoice('legacy', { recurringTemplateId: 'template' });
-    const draft = invoice('draft', { businessState: 'DRAFT', recurringTemplateId: 'template' });
+    const templateId = Schema.decodeSync(FinanceRecurringTemplateIdSchema)('template');
+    const legacy = invoice('legacy', { recurringTemplateId: templateId });
+    const draft = invoice('draft', { businessState: 'DRAFT', recurringTemplateId: templateId });
     const result = alignRentalTemplates({
       ...empty,
       invoices: [source, legacy, draft],
@@ -292,7 +307,7 @@ describe('Rental demo consistency', () => {
           counterpartyRef,
           createdAt: now,
           dueDays: 14,
-          id: 'template',
+          id: templateId,
           issueDay: 1,
           lines: [{ description: 'Nájemné R101', quantity: 1, unitPriceMinor: 4_500_000, vatRate: 21 }],
           name: 'Nájem R101',

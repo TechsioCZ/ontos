@@ -1,3 +1,4 @@
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -17,6 +18,7 @@ export const OrderCustomerButton = ({
   readonly order: Order;
   readonly revision: number;
 }) => {
+  const { t } = useModernI18n();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,7 @@ export const OrderCustomerButton = ({
           }
         }}
         open={open}
-        title="Převést kontakt na zákazníka?"
+        title={t('merchandise.ui.convertContactToCustomer')}
       >
         <p>
           {order.contact?.name} · {order.contact?.email}

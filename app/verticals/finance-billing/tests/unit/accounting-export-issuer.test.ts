@@ -1,7 +1,8 @@
+import { IssuerIcoSchema } from '../../shared/apis/records.ts';
 import { describe, expect, it } from 'effect-rstest';
 import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
 import { FinanceReferenceUnavailable } from '../../shared/actions/errors/finance-reference-unavailable.ts';
-import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
+import { FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import { withoutExportFiles } from '../../src/api/records.read.ts';
 import { projectFinanceRecords, transitionFinance } from '../../src/services/persistence.service.ts';
@@ -51,17 +52,21 @@ const empty: FinanceState = {
 let counter = 0;
 const run = (
   state: FinanceState,
-  command: FinanceCommand,
+  command: typeof FinanceCommandSchema.Encoded,
   validators: FinanceValidators = trusted,
   configuration = deployedShell,
 ) => {
   counter += 1;
-  return transitionFinance(state, command, scope, validators, {
+  const execution = {
     attemptId: `attempt-${counter}`,
     now,
     principalId: 'principal-1',
     resourceId: `resource-${counter}`,
-  }).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configuration));
+  };
+  return Schema.decodeEffect(FinanceCommandSchema)(command).pipe(
+    Effect.flatMap((decoded) => transitionFinance(state, decoded, scope, validators, execution)),
+    Effect.provideService(ConfigProvider.ConfigProvider, configuration),
+  );
 };
 
 describe('S08 export issuer identity', () => {
@@ -113,6 +118,9 @@ describe('S08 export issuer identity', () => {
           ),
         );
         expect(Schema.is(FinanceReferenceUnavailable)(failure)).toBe(true);
+        if (!Schema.is(FinanceReferenceUnavailable)(failure)) {
+          expect.unreachable('An unusable Shell origin must retain the reference-unavailable failure');
+        }
         expect(failure.reason).toBe('export_shell_origin_unavailable');
       }),
     );
@@ -139,7 +147,7 @@ describe('S08 export issuer identity', () => {
     Effect.gen(function* snapshot() {
       const state: FinanceState = {
         ...empty,
-        accountingSetup: { issuerIco: '12345678' },
+        accountingSetup: { issuerIco: yield* Schema.decodeEffect(IssuerIcoSchema)('12345678') },
         invoices: [invoice('a'), invoice('b')],
       };
       const result = yield* run(state, {
