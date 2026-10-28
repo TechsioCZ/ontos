@@ -21,6 +21,7 @@ export const scriptedPgClientLayer = (
       const client = yield* SqlClient.make({
         acquirer,
         compiler: PgClient.makeCompiler(),
+        driver: 'pg',
         prepareTransactionControls: true,
         releaseSavepoint: (name) => `RELEASE SAVEPOINT ${name}`,
         spanAttributes: [['db.system.name', 'postgresql']],

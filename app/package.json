@@ -118,7 +118,8 @@
     "application-release": "node ./scripts/immutable-application-release.mts",
     "dev:availability": "pnpm --filter @app/availability dev",
     "dev:privacy": "pnpm --filter @app/privacy dev",
-    "dev:projects": "pnpm --filter @app/projects dev"
+    "dev:projects": "pnpm --filter @app/projects dev",
+    "prepare": "ultramodern-create ultramodern compiler-prepare"
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
@@ -128,15 +129,15 @@
     "@app/price-group-catalog": "workspace:*",
     "@app/privacy": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
-    "@effect/sql-pg": "4.0.5",
+    "@effect/sql-pg": "4.0.7",
     "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {
     "@babel/types": "8.0.6",
-    "@effect/opentelemetry": "4.0.5",
-    "@effect/platform-node": "4.0.5",
-    "@effect/tsgo": "0.53.1",
+    "@effect/opentelemetry": "4.0.7",
+    "@effect/platform-node": "4.0.7",
+    "@effect/tsgo": "0.59.0",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/bff-effect": "catalog:ultramodern",
@@ -153,7 +154,7 @@
     "@types/node": "^26.4.1",
     "@typescript/native": "npm:typescript@7.0.2",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "effect": "4.0.5",
+    "effect": "4.0.7",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "esbuild": "0.28.1",
     "eslint-plugin-github": "6.1.2",
@@ -172,7 +173,9 @@
     "oxlint-plugin-react-doctor": "0.9.12",
     "oxlint-tsgolint": "7.0.2001",
     "ultracite": "7.11.0",
-    "yaml": "2.9.1"
+    "yaml": "2.9.1",
+    "tsrs": "0.20.0-ts7.1.0-beta",
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=26",
