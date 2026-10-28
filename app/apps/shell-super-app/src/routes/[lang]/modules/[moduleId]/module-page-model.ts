@@ -2,7 +2,11 @@ import { Effect, Fiber, Match, Schema } from 'effect';
 import type { Cause, Config } from 'effect';
 
 import { ResolveModuleTargetPayloadSchema } from '../../../../../shared/api.ts';
-import type { ResolveModuleTargetPayload, ResolvedModuleTarget } from '../../../../../shared/api.ts';
+import type {
+  ResolveModuleTargetPayload,
+  ResolvedModuleTarget,
+  SafeTenantIdentity,
+} from '../../../../../shared/api.ts';
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions, ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -19,7 +23,7 @@ import {
 } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel, sessionEndedModel } from '../../home-page-model.ts';
 import { requireSignedIn } from '../../../sign-in-return.ts';
-import type { AuthenticatedHomePageModel, HomePageModel } from '../../home-page-model.ts';
+import type { HomePageModel } from '../../home-page-model.ts';
 
 interface ModuleTargetLoaderArguments {
   readonly canonicalPath?: string;
@@ -103,14 +107,14 @@ const browserTargetCache = browserStaleWhileRevalidateCache(
 
 const targetFor = (
   payload: ResolveModuleTargetPayload,
-  shell: AuthenticatedHomePageModel,
+  identity: SafeTenantIdentity,
   options: ShellAuthenticationClientOptions,
 ) => {
   const cacheBaseUrl = browserBaseUrl(options);
   return cacheBaseUrl === undefined
     ? resolveModuleTarget(payload, options)
     : Schema.encodeEffect(ResolveModuleTargetPayloadJson)(payload).pipe(
-        Effect.flatMap((encoded) => browserTargetCache.get(browserReadKey(cacheBaseUrl, shell.identity, encoded))),
+        Effect.flatMap((encoded) => browserTargetCache.get(browserReadKey(cacheBaseUrl, identity, encoded))),
       );
 };
 
@@ -162,7 +166,20 @@ export const loadModulePageModel: (
   function* loadModulePageModelEffect(selector: ModuleTargetLoaderArguments) {
     const { request } = selector;
     const serverTarget = isServerRender() ? yield* startServerTarget(selector, request) : undefined;
-    const shell = yield* loadHomePageModel(request).pipe(Effect.timeout('30 seconds'));
+    const targetScope = yield* Effect.scope;
+    let browserTarget: Fiber.Fiber<ResolvedModuleTarget, ShellTargetClientError> | undefined;
+    const shell = yield* loadHomePageModel(request, (identity, revision, options) =>
+      targetPayload(selector, revision).pipe(
+        Effect.flatMap((payload) => targetFor(payload, identity, options)),
+        Effect.forkIn(targetScope, { startImmediately: true }),
+        Effect.tap((fiber) =>
+          Effect.sync(() => {
+            browserTarget = fiber;
+          }),
+        ),
+        Effect.asVoid,
+      ),
+    ).pipe(Effect.timeout('30 seconds'));
     if (shell.state !== 'authenticated') {
       return {
         shell,
@@ -173,16 +190,17 @@ export const loadModulePageModel: (
       return { shell, state: 'selection_required' } satisfies ModuleTargetPageModel;
     }
     const { compositionRevision } = shell;
+    const pendingTarget = serverTarget ?? browserTarget;
     const target =
-      serverTarget === undefined
+      pendingTarget === undefined
         ? shellAuthenticationClientOptionsFromRequest(request).pipe(
             Effect.flatMap((options) =>
               targetPayload(selector, compositionRevision).pipe(
-                Effect.flatMap((payload) => targetFor(payload, shell, options)),
+                Effect.flatMap((payload) => targetFor(payload, shell.identity, options)),
               ),
             ),
           )
-        : Fiber.join(serverTarget);
+        : Fiber.join(pendingTarget);
     return yield* target.pipe(
       Effect.map((resolved): ModuleTargetPageModel =>
         resolved.compositionRevision === compositionRevision
@@ -201,6 +219,7 @@ export const loadModulePageModel: (
       }),
     );
   },
+  Effect.scoped,
 );
 
 export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>

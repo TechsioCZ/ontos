@@ -155,12 +155,11 @@ it.effect('resolves trusted context before returning one serializable compositio
     expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
       shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableLegalEntitiesMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
-    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
-      availableTenantsMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-    );
+    for (const read of [canManageDemoAccountsMock, availableLegalEntitiesMock, availableTenantsMock]) {
+      expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
+        read.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      );
+    }
   }),
 );
 
@@ -268,21 +267,23 @@ it.effect('keeps the configured local HTTP origin for the server-side session re
   }),
 );
 
-it.effect('stops before legal-entity and tenant reads when composition is unavailable', () =>
+it.effect('keeps composition failure authoritative after starting independent company reads', () =>
   Effect.gen(function* verifyCase8() {
     shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({ state: 'unavailable' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
   }),
 );
 
-it.effect('requires a document reload before legal-entity and tenant reads for a stale release', () =>
+it.effect('requires a document reload despite speculative company reads for a stale release', () =>
   Effect.gen(function* staleCompositionStopsOwnerReads() {
     shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({ state: 'reload_required' });
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
-    expect(availableTenantsMock).not.toHaveBeenCalled();
+    expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
+    expect(availableTenantsMock).toHaveBeenCalledTimes(1);
   }),
 );
 
