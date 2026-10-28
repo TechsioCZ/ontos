@@ -1,8 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import type { Cause } from 'effect';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Cause, Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
 import { isSqlError } from 'effect/sql/SqlError';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -28,6 +28,7 @@ import {
 } from './errors.ts';
 import type { ActionEvidenceSnapshot } from './events.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
+import { ReadEvidencePersistenceError } from '../reads/read-evidence-persistence-error.ts';
 import { createActionTransactionErrorWithCause, getActionTransactionErrorCause } from './transaction-error.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
@@ -408,14 +409,34 @@ const resolveIdempotentInvocation = (
     .limit(1)
     .pipe(Effect.mapError((cause) => persistenceFailure(failureReason, cause)));
 
+const isPromotedSqlFailure = Schema.is(Schema.Union([EffectDrizzleQueryError, ReadEvidencePersistenceError]));
+
 /**
- * Native SQL settlement reports COMMIT, rollback and savepoint failures as defects. Recover only
- * SqlError at this reviewed persistence boundary; owners then map it to their declared error.
- * Unrelated defects retain their defect channel.
+ * Effect promotes the body's typed failure to a defect when SQL settlement also defects. Recover
+ * the settlement SqlError only when every defect is SQL or a structurally verified SQL body error.
+ * An unrelated defect or interruption keeps the complete cause in its original channel.
  */
-export const recoverSqlTransactionError = Effect.catchDefect((defect) =>
-  isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-);
+export const recoverSqlTransactionError = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | SqlError, R> =>
+  effect.pipe(
+    Effect.catchCause((cause): Effect.Effect<never, E | SqlError> => {
+      let settlementError: SqlError | undefined;
+      for (const reason of cause.reasons) {
+        if (Cause.isInterruptReason(reason)) {
+          return Effect.failCause(cause);
+        }
+        if (Cause.isDieReason(reason)) {
+          if (isSqlError(reason.defect)) {
+            settlementError = reason.defect;
+          } else if (!isPromotedSqlFailure(reason.defect)) {
+            return Effect.failCause(cause);
+          }
+        }
+      }
+      return settlementError === undefined ? Effect.failCause(cause) : Effect.fail(settlementError);
+    }),
+  );
 
 export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(

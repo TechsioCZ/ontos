@@ -283,6 +283,8 @@ export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<
     }),
   );
 
+const isTaggedWorkerFailure = Schema.is(Schema.Struct({ _tag: Schema.String }));
+
 /**
  * Name every failure reason by its tag only, so a defect raised beside a typed failure (for example
  * by a finalizer) stays visible. A raw cause can carry database diagnostics or credentials, and
@@ -293,7 +295,12 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
     if (Cause.isFailReason(reason)) {
       return reason.error._tag;
     }
-    return Cause.isDieReason(reason) ? 'Defect' : 'Interrupted';
+    if (!Cause.isDieReason(reason)) {
+      return 'Interrupted';
+    }
+    // A failing finalizer promotes the original tagged, yieldable failure to Die in Effect 4.0.7.
+    const { defect } = reason;
+    return isTaggedWorkerFailure(defect) && Effect.isEffect(defect) ? defect._tag : 'Defect';
   });
   return [...new Set(names)].join(', ');
 };
