@@ -19,6 +19,8 @@ const EnvironmentKeySchema = Schema.Literals([
   'COMMERCE_PORTAL_AUTH_SECRETS',
   'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS',
   'COMMERCE_PORTAL_AUTH_URL',
+  // The shared runtime identity's connection, which a host that names the realm connects it with.
+  'DATABASE_URL',
 ]);
 type EnvironmentKey = typeof EnvironmentKeySchema.Type;
 export type CommercePortalAuthEnvironment = Readonly<Partial<Record<EnvironmentKey, string>>>;
@@ -321,18 +323,18 @@ const namedValue = (provider: ConfigProvider.ConfigProvider, key: string) =>
     .pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
 /**
- * The process environment the realm is read from. A Worker reaches PostgreSQL only through its `HYPERDRIVE`
- * binding (the `ontos_runtime` role, as `.env.example` configures the realm), so once a host names the realm its
- * runtime connection is that binding's; Node keeps `COMMERCE_PORTAL_AUTH_DATABASE_URL`.
+ * The process environment the realm is read from. Once a host names the realm, its runtime connection is the
+ * shared runtime identity's (the `ontos_runtime` role, as `.env.example` configures the realm): the Worker's
+ * `HYPERDRIVE` binding, or `DATABASE_URL` on Node. That identity is the one the deployment migrates and grants
+ * the provider schema to, so no host can be handed a provider role nobody granted.
  */
-const portalAuthEnvironment: Effect.Effect<ConfigProvider.ConfigProvider> = Effect.gen(
-  function* portalAuthEnvironmentEffect() {
-    const environment = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
+const portalAuthEnvironmentFor = Effect.fn('CommercePortalAuthConfig.environment')(
+  function* portalAuthEnvironmentEffect(environment: ConfigProvider.ConfigProvider) {
     if (Option.isNone(yield* namedValue(environment, 'COMMERCE_PORTAL_AUTH_URL'))) {
       return environment;
     }
     const runtime = yield* databaseRuntime
-      .runtimeDatabaseProvider(ConfigProvider.fromUnknown({}), SHARED_RUNTIME_IDENTITY)
+      .runtimeDatabaseProvider(environment, SHARED_RUNTIME_IDENTITY)
       .pipe(Effect.orElseSucceed(() => ConfigProvider.fromUnknown({})));
     return Option.match(yield* namedValue(runtime, 'DATABASE_URL'), {
       onNone: () => environment,
@@ -344,13 +346,14 @@ const portalAuthEnvironment: Effect.Effect<ConfigProvider.ConfigProvider> = Effe
     });
   },
 );
+const portalAuthEnvironment = portalAuthEnvironmentFor(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
 
-/** `Option.none()` only when the supplied environment names no portal-realm value at all. */
+/** `Option.none()` only when the supplied host environment names no portal-realm value at all. */
 export const parseOptionalCommercePortalAuthConfig = (
   environment: CommercePortalAuthEnvironment,
 ): Effect.Effect<Option.Option<CommercePortalAuthConfigValue>, CommercePortalAuthConfigError> =>
-  parseOptionalCommercePortalAuthConfigFromProvider(
-    ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true }),
+  portalAuthEnvironmentFor(ConfigProvider.fromUnknown(environment, { preserveEmptyStrings: true })).pipe(
+    Effect.flatMap(parseOptionalCommercePortalAuthConfigFromProvider),
   );
 
 /** The availability read that keeps a misconfiguration an error; the portal groups answer for it. */
