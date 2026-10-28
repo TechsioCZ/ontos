@@ -48,6 +48,7 @@ const ReportSchema = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
       dependencies: Names,
+      devDependencies: Names,
       exports: Names,
       file: Schema.String,
       files: Names,
@@ -56,6 +57,8 @@ const ReportSchema = Schema.Struct({
     }),
   ),
 });
+const unusedDevDependencies = (report: typeof ReportSchema.Type, file: string): readonly string[] =>
+  report.issues.find((issue) => issue.file === file)?.devDependencies.map((finding) => finding.name) ?? [];
 const stringify = (value: Schema.Json) =>
   Effect.gen(function* testEffect1() {
     return yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value);
@@ -1166,6 +1169,89 @@ it.live(
     );
     const missingAnchor = yield* build();
     expect(!missingAnchor.evidence.some((item) => item.kind === 'resolver' && item.target === 'target')).toBe(true);
+  }),
+);
+
+it.live(
+  'UltraModern compiler commands consume tsrs without hiding unused compiler neighbors',
+  Effect.fn(function* testUltramodernCompilerConsumers() {
+    const root = yield* fixture();
+    const child = 'verticals/compiler';
+    const consumerPath = path.join(root, auditConsumersFile);
+    const prepare = 'ultramodern-create ultramodern compiler-prepare';
+    const typecheck = 'ultramodern-create ultramodern typecheck --project tsconfig.json';
+    const compilerDependencies = { '@effect/tsgo': '0.63.0', tsrs: '0.20.1-ts7.1.0-beta', yaml: '2.9.1' };
+    const manifests = (rootCommand: string, childCommand: string, withProvider = true) =>
+      Effect.gen(function* writeCompilerManifests() {
+        const devDependencies = withProvider
+          ? compilerDependencies
+          : { tsrs: compilerDependencies.tsrs, yaml: '2.9.1' };
+        write(
+          root,
+          packageFile,
+          yield* stringify({
+            devDependencies,
+            name: 'compiler-consumer-controls',
+            private: true,
+            scripts: { prepare: rootCommand },
+            type: 'module',
+            workspaces: ['verticals/*'],
+          }),
+        );
+        write(
+          root,
+          `${child}/${packageFile}`,
+          yield* stringify({
+            devDependencies,
+            name: '@fixture/compiler',
+            private: true,
+            scripts: { typecheck: childCommand },
+            type: 'module',
+          }),
+        );
+      });
+    write(root, indexFile, 'export {};');
+    write(root, `${child}/${indexFile}`, 'export {};');
+    const base = {
+      workspaces: {
+        '.': { entry: [indexFile], node: false, project: [sourcePattern] },
+        'verticals/*': { entry: [indexFile], node: false, project: [sourcePattern] },
+      },
+    };
+    const analyze = () =>
+      Effect.gen(function* analyzeCompilerConsumers() {
+        const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+        const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+        expect(run.status, run.stderr).toBe(1);
+        const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+        return { model, report };
+      });
+    yield* manifests(prepare, typecheck);
+    const consumed = yield* analyze();
+    expect(consumed.model.evidence.filter((fact) => fact.target === 'tsrs')).toEqual([
+      expect.objectContaining({ kind: 'dependency', source: packageFile, workspace: '.' }),
+      expect.objectContaining({ kind: 'dependency', source: `${child}/${packageFile}`, workspace: child }),
+    ]);
+    for (const file of [packageFile, `${child}/${packageFile}`]) {
+      expect(unusedDevDependencies(consumed.report, file)).not.toContain('tsrs');
+      expect(unusedDevDependencies(consumed.report, file)).toContain('yaml');
+    }
+    for (const { childCommand, rootCommand, withProvider } of [
+      {
+        childCommand: 'ultramodern-create ultramodern skills install',
+        rootCommand: `echo '${prepare}'`,
+        withProvider: true,
+      },
+      { childCommand: typecheck, rootCommand: prepare, withProvider: false },
+    ]) {
+      yield* manifests(rootCommand, childCommand, withProvider);
+      const unused = yield* analyze();
+      expect(unused.model.evidence.some((fact) => fact.target === 'tsrs')).toBe(false);
+      for (const file of [packageFile, `${child}/${packageFile}`]) {
+        expect(unusedDevDependencies(unused.report, file)).toContain('tsrs');
+        expect(unusedDevDependencies(unused.report, file)).toContain('yaml');
+      }
+    }
   }),
 );
 

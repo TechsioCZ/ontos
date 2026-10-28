@@ -319,6 +319,26 @@ const manifestEvidence = (
       });
     }
   }
+  // The official compiler commands resolve tsrs/package.json from their owning workspace
+  // before selecting the Effect-enabled binary; no JavaScript import exposes that consumer.
+  const declaresCompiler =
+    (manifest.devDependencies?.tsrs ?? manifest.dependencies?.tsrs) !== undefined &&
+    (manifest.devDependencies?.['@effect/tsgo'] ?? manifest.dependencies?.['@effect/tsgo']) !== undefined;
+  const compilerCommand = Object.values(manifest.scripts ?? {}).some((command) =>
+    /^ultramodern-create ultramodern (?:compiler-prepare|typecheck --(?:build|project) [\w./-]+\.json(?: --force)?)$/u.test(
+      command,
+    ),
+  );
+  if (declaresCompiler && compilerCommand) {
+    facts.push({
+      kind: 'dependency',
+      line: 1,
+      reason: 'UltraModern compiler command resolves the declared tsrs metadata',
+      source: manifestFile,
+      target: 'tsrs',
+      workspace,
+    });
+  }
   for (const [alias, reference] of Object.entries(manifest['zephyr:dependencies'] ?? {})) {
     const target = zephyrPackageName(reference);
     if (target !== undefined) {
