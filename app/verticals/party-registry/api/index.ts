@@ -2,7 +2,7 @@ import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-erro
 import { makeDatabaseConfigLive, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } from '@app/core-runtime';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
@@ -86,13 +86,13 @@ const runtimeObservabilityLive = Layer.mergeAll(
 );
 
 const productionReadRuntimeLive = partyRegistryReadRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
 );
 const productionSearchProjectionGatewayLive = partyRegistrySearchProjectionGatewayLive.pipe(
   Layer.provide(partyRegistryDatabaseConfigLive),
 );
 const productionActionRuntimeLive = partyRegistryActionRuntimeLive.pipe(
-  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(partyRegistryDatabaseConfigLive, nodeCryptoLayer)),
 );
 
 type PartyRegistryApiRuntimeArguments = readonly [
@@ -154,7 +154,7 @@ export const makePartyRegistryApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, NodeCrypto.layer)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
     Layer.provide(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(
