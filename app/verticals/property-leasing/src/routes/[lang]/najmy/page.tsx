@@ -182,15 +182,12 @@ const leaseRecords = definePageData({
 const leaseOccupant = definePageData({
   key: (input: LeaseDetailInput) => `${input.legalEntityId}:${input.resourceId}`,
   load: (input: LeaseDetailInput) =>
-    leaseRecords.preload(input).pipe(
-      Effect.andThen(() => {
-        const current = leaseRecords.snapshot(input);
-        return loadOccupantName(
-          current.state === 'ready'
-            ? current.value.records.occupancies.find((record) => record.occupancyRef.resourceId === input.resourceId)
-            : undefined,
-        );
-      }),
+    leaseRecords.read(input).pipe(
+      Effect.flatMap((current) =>
+        loadOccupantName(
+          current.records.occupancies.find((record) => record.occupancyRef.resourceId === input.resourceId),
+        ),
+      ),
       Effect.map(Option.getOrUndefined),
     ),
   runtime: browserRuntime,

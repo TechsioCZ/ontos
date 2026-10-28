@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off -- MF boundary: `preloadPage` is Promise-shaped because Effect is not shared across remotes; the work stays in Effect. expires: 2027-03-31.
-import { Effect, Fiber, Option, Result } from 'effect';
+import { Deferred, Effect, Exit, Fiber, MutableRef, Option, Result } from 'effect';
 import type { ManagedRuntime } from 'effect';
 
 /**
@@ -19,6 +19,20 @@ export interface ModulePageContext {
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;
+}
+
+/** Lifetime of a dataset's unfinished loads, including superseded owners. Plain functions cross the MF boundary. */
+export interface PageDataWork {
+  readonly onSettled: (callback: () => void) => void;
+}
+
+/** Document-wide work notification, shared even when remotes bundle separate copies of this module. */
+export const pageDataWorkEvent = 'ontos:page-data-work';
+
+declare global {
+  interface WindowEventMap {
+    'ontos:page-data-work': CustomEvent<PageDataWork>;
+  }
 }
 
 /** Props the Shell passes to every exposed page/component and to its preloadPage. */
@@ -47,6 +61,8 @@ export interface PageData<I, A, E> {
   readonly key: (input: I) => string;
   /** Starts or joins the load. Fresh ready entry (<20 s, not invalidated): completes at once. Stale ready entry: completes at once and revalidates in the background. Missing/failed: completes when settled. Never fails. */
   readonly preload: (input: I) => Effect.Effect<void>;
+  /** Browser-only dependency read: returns fresh data or waits for the latest generation. Propagates load failures, including failed revalidation; never returns last-good data as fresh. */
+  readonly read: (input: I) => Effect.Effect<A, E>;
   /** Re-runs the load and keeps the current value visible (refreshing: true). Use after writes. Never fails. */
   readonly refresh: (input: I) => Effect.Effect<void>;
   /** Referentially stable until that entry changes (required by useSyncExternalStore). */
@@ -62,17 +78,63 @@ export const moduleWriteEvent = 'ontos:module-write';
 /** A ready value this young is served without loading again. */
 const FRESH_FOR = '20 seconds';
 
+/** Invalidate all local dependencies before any mounted store starts revalidation. */
+const writeInvalidators = MutableRef.make<ReadonlySet<() => () => void>>(new Set());
+const writeListenerRegistered = MutableRef.make(false);
+const onModuleWrite = (): void => {
+  const revalidate = Array.from(MutableRef.get(writeInvalidators), (invalidate) => invalidate());
+  for (const start of revalidate) {
+    start();
+  }
+};
+
+interface LoadLifetime {
+  active: number;
+  readonly listeners: Set<() => void>;
+}
+
 interface Entry<I, A, E> {
-  /** Bumped by every load start; only the newest run may settle the entry. */
+  /** Wakes waiters immediately when a write or refresh supersedes their owner. */
+  changed: Deferred.Deferred<boolean>;
+  /** Current generation's result, separate from the last-good snapshot retained after a failed refresh. */
+  completion: Deferred.Deferred<A, E>;
+  /** Bumped by every load start and write; only the newest run may settle the entry. */
   generation: number;
-  inFlight: Option.Option<Fiber.Fiber<void>>;
+  inFlight: Option.Option<Fiber.Fiber<unknown, unknown>>;
   readonly input: I;
+  lifetime: LoadLifetime;
   snapshot: PageDataSnapshot<A, E>;
   /** Set by a module write, a failed load, or once a ready value is older than `FRESH_FOR`. */
   stale: boolean;
 }
 
 const isBrowser = (): boolean => 'document' in globalThis;
+
+const supersede = <I, A, E>(entry: Entry<I, A, E>): Option.Option<Fiber.Fiber<unknown, unknown>> => {
+  const previous = entry.inFlight;
+  entry.generation += 1;
+  entry.inFlight = Option.none();
+  return previous;
+};
+
+/** Interrupt only after publishing replacements: waiters must follow them, not the obsolete owner's exit. */
+const interruptObsolete = (run: Option.Option<Fiber.Fiber<unknown, unknown>>): void => {
+  if (Option.isSome(run)) {
+    run.value.interruptUnsafe();
+  }
+};
+
+/** A preparation follows replacement owners without waiting for obsolete work to finish. */
+const awaitCurrent = <I, A, E>(entry: Entry<I, A, E>): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const { changed, generation, inFlight } = entry;
+    if (Option.isNone(inFlight)) {
+      return Effect.void;
+    }
+    return Effect.raceFirst(Fiber.await(inFlight.value).pipe(Effect.asVoid), Deferred.await(changed)).pipe(
+      Effect.andThen(Effect.suspend(() => (entry.generation === generation ? Effect.void : awaitCurrent(entry)))),
+    );
+  });
 
 export const definePageData = <I, A, E, R>(options: {
   readonly key: (input: I) => string;
@@ -81,7 +143,7 @@ export const definePageData = <I, A, E, R>(options: {
 }): PageData<I, A, E> => {
   const entries = new Map<string, Entry<I, A, E>>();
   const listeners = new Set<() => void>();
-  let writeListenerRegistered = false;
+  let storeRegistered = false;
   /** During a write notification, `snapshot` records the keys mounted readers re-read (React does so inside the listener). */
   let observing = false;
   const observedKeys = new Set<string>();
@@ -114,7 +176,7 @@ export const definePageData = <I, A, E, R>(options: {
 
   /** A defect or interruption ends the run without a typed outcome: the entry stays as it was and is retried next time. */
   const abandon = (entry: Entry<I, A, E>, generation: number): void => {
-    if (entry.generation !== generation || Option.isNone(entry.inFlight)) {
+    if (entry.generation !== generation) {
       return;
     }
     entry.inFlight = Option.none();
@@ -140,56 +202,117 @@ export const definePageData = <I, A, E, R>(options: {
     ).pipe(Effect.asVoid);
 
   const startLoad = (entry: Entry<I, A, E>): Fiber.Fiber<void> => {
-    entry.generation += 1;
-    const { generation } = entry;
-    const previous = entry.snapshot;
-    if (previous.state !== 'pending' && !previous.refreshing) {
-      entry.snapshot = { ...previous, refreshing: true };
-      notify();
+    const obsolete = supersede(entry);
+    const { changed, generation } = entry;
+    entry.changed = Deferred.makeUnsafe<boolean>();
+    const completion = Deferred.makeUnsafe<A, E>();
+    entry.completion = completion;
+    if (entry.lifetime.active === 0) {
+      entry.lifetime = { active: 0, listeners: new Set() };
     }
+    const { lifetime } = entry;
+    lifetime.active += 1;
     let settled = false;
     const fiber = options.runtime.runFork(
-      options.load(entry.input).pipe(
-        Effect.result,
-        Effect.flatMap((result) => {
-          settled = true;
-          settle(entry, generation, result);
-          return Result.isSuccess(result) ? expireLater(entry, generation) : Effect.void;
-        }),
-        Effect.ensuring(Effect.sync(() => abandon(entry, generation))),
+      Effect.withFiber((run) => {
+        if (entry.generation !== generation) {
+          return Effect.void;
+        }
+        // Publish before executing user code, which can synchronously dispatch a write or wake a waiter.
+        entry.inFlight = Option.some(run);
+        return Effect.suspend(() => {
+          const previous = entry.snapshot;
+          if (previous.state !== 'pending' && !previous.refreshing) {
+            entry.snapshot = { ...previous, refreshing: true };
+            notify();
+          }
+          return options.load(entry.input);
+        }).pipe(
+          Effect.result,
+          Effect.flatMap((result) => {
+            settled = true;
+            settle(entry, generation, result);
+            Deferred.doneUnsafe(completion, Effect.fromResult(result));
+            return Result.isSuccess(result) ? expireLater(entry, generation) : Effect.void;
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!settled) {
+              abandon(entry, generation);
+            }
+          }),
+        ),
       ),
     );
-    // A load that completes synchronously has already settled inside `runFork`.
-    if (!settled && entry.generation === generation) {
+    // A runtime still building its services has not reached `withFiber` yet.
+    if (entry.generation === generation && fiber.pollUnsafe() === undefined) {
       entry.inFlight = Option.some(fiber);
     }
+    // Observe the fiber itself: even interruption before its Effect starts must release the lifetime.
+    fiber.addObserver((exit) => {
+      if (Exit.isFailure(exit)) {
+        Deferred.doneUnsafe(completion, Effect.failCause(exit.cause));
+      }
+      lifetime.active -= 1;
+      if (lifetime.active === 0) {
+        for (const listener of lifetime.listeners) {
+          listener();
+        }
+        lifetime.listeners.clear();
+      }
+    });
+    // Completing a Deferred may resume waiters synchronously: publish the replacement before waking them.
+    Deferred.doneUnsafe(changed, Effect.succeed(true));
+    interruptObsolete(obsolete);
     return fiber;
   };
 
-  const onModuleWrite = (): void => {
-    for (const entry of entries.values()) {
+  const invalidateOnWrite = (): (() => void) => {
+    const loadingKeys = new Set<string>();
+    const obsolete: Option.Option<Fiber.Fiber<unknown, unknown>>[] = [];
+    for (const [key, entry] of entries) {
+      if (Option.isSome(entry.inFlight)) {
+        loadingKeys.add(key);
+      }
+      obsolete.push(supersede(entry));
       entry.stale = true;
     }
-    observedKeys.clear();
-    observing = true;
-    try {
-      notify();
-    } finally {
-      observing = false;
-    }
-    for (const key of observedKeys) {
-      const entry = entries.get(key);
-      if (entry !== undefined && entry.snapshot.state === 'ready' && Option.isNone(entry.inFlight)) {
-        startLoad(entry);
+    return () => {
+      observedKeys.clear();
+      observing = true;
+      try {
+        notify();
+      } finally {
+        observing = false;
       }
-    }
-    observedKeys.clear();
+      for (const key of new Set([...loadingKeys, ...observedKeys])) {
+        const entry = entries.get(key);
+        if (
+          entry !== undefined &&
+          (loadingKeys.has(key) || entry.snapshot.state === 'ready') &&
+          entry.stale &&
+          Option.isNone(entry.inFlight)
+        ) {
+          startLoad(entry);
+        }
+      }
+      observedKeys.clear();
+      for (const run of obsolete) {
+        interruptObsolete(run);
+      }
+    };
   };
 
   const entryFor = (input: I): Entry<I, A, E> => {
-    if (!writeListenerRegistered && 'addEventListener' in globalThis) {
-      writeListenerRegistered = true;
-      globalThis.addEventListener(moduleWriteEvent, onModuleWrite);
+    if (!storeRegistered && 'addEventListener' in globalThis) {
+      storeRegistered = true;
+      MutableRef.update(writeInvalidators, (stores) => new Set([...stores, invalidateOnWrite]));
+      if (!MutableRef.get(writeListenerRegistered)) {
+        MutableRef.set(writeListenerRegistered, true);
+        globalThis.addEventListener(moduleWriteEvent, onModuleWrite);
+      }
     }
     const key = options.key(input);
     const existing = entries.get(key);
@@ -197,9 +320,12 @@ export const definePageData = <I, A, E, R>(options: {
       return existing;
     }
     const created: Entry<I, A, E> = {
+      changed: Deferred.makeUnsafe<boolean>(),
+      completion: Deferred.makeUnsafe<A, E>(),
       generation: 0,
       inFlight: Option.none(),
       input,
+      lifetime: { active: 0, listeners: new Set() },
       snapshot: pageDataPending,
       stale: true,
     };
@@ -208,7 +334,7 @@ export const definePageData = <I, A, E, R>(options: {
   };
 
   /** Returns the run a caller must wait for, or none when the current value may be served at once. */
-  const begin = (input: I): Option.Option<Fiber.Fiber<void>> => {
+  const begin = (input: I): Option.Option<Fiber.Fiber<unknown, unknown>> => {
     const entry = entryFor(input);
     if (entry.snapshot.state === 'ready') {
       if (Option.isNone(entry.inFlight) && entry.stale) {
@@ -219,13 +345,58 @@ export const definePageData = <I, A, E, R>(options: {
     return Option.isSome(entry.inFlight) ? entry.inFlight : Option.some(startLoad(entry));
   };
 
-  const preload = (input: I): Effect.Effect<void> =>
+  const announceWork = ({ lifetime }: Entry<I, A, E>): void => {
+    if (lifetime.active > 0) {
+      globalThis.dispatchEvent(
+        new CustomEvent<PageDataWork>(pageDataWorkEvent, {
+          detail: {
+            onSettled: (listener) => {
+              if (lifetime.active === 0) {
+                listener();
+              } else {
+                lifetime.listeners.add(listener);
+              }
+            },
+          },
+        }),
+      );
+    }
+  };
+
+  const preload = Effect.fn('PageData.preload')(function* preloadEntry(input: I) {
+    if (!isBrowser()) {
+      return;
+    }
+    const run = begin(input);
+    const entry = entryFor(input);
+    announceWork(entry);
+    yield* Option.isSome(run) ? awaitCurrent(entry) : Effect.void;
+  });
+
+  const read = (input: I): Effect.Effect<A, E> =>
     Effect.suspend(() => {
       if (!isBrowser()) {
-        return Effect.void;
+        return Effect.die('PageData.read requires a browser document');
       }
-      const run = begin(input);
-      return Option.isSome(run) ? Fiber.await(run.value).pipe(Effect.asVoid) : Effect.void;
+      const entry = entryFor(input);
+      if (entry.snapshot.state === 'ready' && !entry.stale && Option.isNone(entry.inFlight)) {
+        return Effect.succeed(entry.snapshot.value);
+      }
+      if (Option.isNone(entry.inFlight)) {
+        startLoad(entry);
+      }
+      const { changed, completion, generation } = entry;
+      announceWork(entry);
+      return Effect.raceFirst(
+        Deferred.await(completion).pipe(Effect.exit, Effect.map(Option.some)),
+        Deferred.await(changed).pipe(Effect.as(Option.none())),
+      ).pipe(
+        Effect.flatMap((result) =>
+          entry.generation !== generation || Option.isNone(result)
+            ? read(input)
+            : Exit.match(result.value, { onFailure: Effect.failCause, onSuccess: Effect.succeed }),
+        ),
+      );
     });
 
   const ensure = (input: I): void => {
@@ -235,7 +406,14 @@ export const definePageData = <I, A, E, R>(options: {
   };
 
   const refresh = (input: I): Effect.Effect<void> =>
-    Effect.suspend(() => (isBrowser() ? Fiber.await(startLoad(entryFor(input))).pipe(Effect.asVoid) : Effect.void));
+    Effect.suspend(() => {
+      if (!isBrowser()) {
+        return Effect.void;
+      }
+      const entry = entryFor(input);
+      startLoad(entry);
+      return awaitCurrent(entry);
+    });
 
   const update = (input: I, f: (value: A) => A): void => {
     const entry = entries.get(options.key(input));
@@ -264,7 +442,7 @@ export const definePageData = <I, A, E, R>(options: {
     };
   };
 
-  return { ensure, key: options.key, preload, refresh, snapshot, subscribe, update };
+  return { ensure, key: options.key, preload, read, refresh, snapshot, subscribe, update };
 };
 
 const PRELOAD_STEP_CONCURRENCY = 8;
