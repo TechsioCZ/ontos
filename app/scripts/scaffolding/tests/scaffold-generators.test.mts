@@ -6192,6 +6192,7 @@ it.live(
               ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
               ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
               ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
+              ['packages/core-runtime/src/reads', 'packages/core-runtime/src/reads', 'dir'],
               ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
               ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],
               ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
