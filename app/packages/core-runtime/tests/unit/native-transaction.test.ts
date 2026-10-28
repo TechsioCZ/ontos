@@ -96,6 +96,34 @@ for (const boundary of ['context', 'evidence'] as const) {
       }
     }),
   );
+
+  it.effect(`scoped ${boundary} preserves unrelated rollback defects beside promoted SQL failures`, () =>
+    Effect.gen(function* preserveUnrelatedRollbackDefect() {
+      const defect = new Error('unexpected rollback defect');
+      const sqlFailure = new SqlError({ reason: new ConnectionError({ cause: new Error('body query failed') }) });
+      const events: string[] = [];
+      const executor = yield* makeTestDatabase((statement) => {
+        events.push(statement);
+        if (statement === 'ROLLBACK') {
+          return Effect.die(defect);
+        }
+        if (statement.includes('from "core"."tenants"') || statement.startsWith('insert into')) {
+          return Effect.fail(sqlFailure);
+        }
+        return Effect.succeed(
+          statement.includes('trust.')
+            ? [{ legal_entity_id: '', role: 'party_registry_runtime', tenant_id: scopedPrincipal.tenantId }]
+            : [],
+        );
+      });
+      const exit = yield* Effect.exit(run(executor));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(true);
+      }
+      expect(events).toContain('ROLLBACK');
+    }),
+  );
 }
 
 const harness = Effect.fn(function* makeHarness(
