@@ -1,4 +1,4 @@
-import { Clock, DateTime, Duration, Effect, Layer, Option, Ref, Schedule } from 'effect';
+import { Cause, Clock, DateTime, Duration, Effect, Layer, Option, Ref, Schedule } from 'effect';
 
 import type { DueEnrollmentAttempt, DueEnrollmentAttemptCursor } from '../enrollment/attempts/attempt-persistence.ts';
 import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
@@ -196,6 +196,17 @@ const observe = (
     Effect.asVoid,
   );
 
+/**
+ * Why a sweep failed, in the same terms the HTTP continuation logs it: the failure's bounded reason
+ * and its rendered cause. A bare error tag cannot tell a provider read from a Core call or a
+ * transaction, and every one of them fails with the same tag.
+ */
+const failureEvidence = (failure: { readonly _tag: string; readonly reason: string }) => ({
+  cause: Cause.pretty(Cause.fail(failure)),
+  errorTag: failure._tag,
+  reason: failure.reason,
+});
+
 const trackedAdvance = (
   state: SweeperState,
   inner: Pick<Continuation, 'advance'>,
@@ -226,7 +237,7 @@ const advanceEntry = (
     Effect.matchEffect({
       onFailure: (failure) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not advance this Attempt'), {
-          errorTag: failure._tag,
+          ...failureEvidence(failure),
           portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
         }).pipe(
           Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),
@@ -262,7 +273,7 @@ const claimedAdvance = (
       Effect.matchEffect({
         onFailure: (failure) =>
           Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
-            errorTag: failure._tag,
+            ...failureEvidence(failure),
             portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
           }).pipe(
             Effect.andThen(Ref.update(state.observation, (current) => ({ ...current, available: false }))),

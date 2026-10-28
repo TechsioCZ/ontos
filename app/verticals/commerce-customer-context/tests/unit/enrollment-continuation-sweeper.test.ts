@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { DateTime, Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Logger, Option, Ref, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
@@ -540,5 +540,49 @@ it.effect('keeps tracked Attempts and spends no budget when opening a compositio
     expect(yield* Ref.get(opened)).toBe(2);
     expect(yield* Ref.get(charged)).toBe(1);
     expect(yield* Ref.get(advanced)).toBe(1);
+  }),
+);
+
+it.effect('says why an advance failed, as the HTTP continuation does, rather than only its tag', () =>
+  Effect.gen(function* explainsFailedAdvance() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const driverFailure = new Error('permission denied for table user');
+    const pass: CommerceEnrollmentContinuationSweepPass = {
+      advance: () =>
+        Effect.fail(
+          attemptUnavailable(
+            'Current provider email verification is unavailable',
+            attempt.portalEnrollmentAttemptId,
+            driverFailure,
+          ),
+        ),
+      claimSweep: () => Effect.succeed(Option.some(1)),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      listDue: () => Effect.succeed([due(attempt)]),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: { advance: pass.advance, openSweepPass: Effect.succeed(pass) },
+      staleAfterMillis: 0,
+    });
+    const logs: string[] = [];
+
+    yield* sweeper.sweep.pipe(
+      Effect.provide(
+        Logger.layer([
+          Logger.make((options) => {
+            logs.push(JSON.stringify(Logger.formatStructured.log(options)));
+          }),
+        ]),
+      ),
+    );
+
+    // Every dependency an advance reaches fails with the same tag; only the reason and the cause
+    // say whether it was the provider database, Core or the owner transaction.
+    const warning = logs.find((line) => line.includes('could not advance this Attempt'));
+    expect(warning).toContain('Current provider email verification is unavailable');
+    expect(warning).toContain('permission denied for table user');
   }),
 );
