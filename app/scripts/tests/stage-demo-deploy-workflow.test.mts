@@ -171,6 +171,7 @@ const loadPreparedSecrets = [
 ];
 const RELEASE_SECRET_CHECK = 'Validate the complete immutable release secret inventory';
 const SERVICE_GRANTS = 'Reconcile storefront, Commerce and Privacy service grants';
+const STREAM_START = 'Start the unit upload stream';
 const IMMUTABLE_UPLOAD = 'Upload every immutable release Worker';
 const UPLOAD_JOIN = 'Wait for every unit upload';
 const PUBLICATION = 'Publish the Application Composition';
@@ -181,7 +182,6 @@ const DATABASE_RECORD = 'Record the prepared database fingerprint';
 const INSTALL_APP_STEP = 'Install the app workspace';
 const UNIT_BUILD_STEP = 'Build and verify the unit for Cloudflare';
 const RELEASE_TESTS_BARRIER = 'Wait for the release script tests';
-const HOST_DECISION = 'Decide whether the outbox host deploys';
 const HOST_DEPLOY_START = 'Start the outbox worker host deploy';
 const HOST_DEPLOY_JOIN = 'Push the outbox worker host';
 const HOST_ADMISSION = 'Require the new host to admit the published composition';
@@ -189,7 +189,11 @@ const CONTINUE_PUBLICATION = 'Continue publication of the completed owner migrat
 const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 const INSTALL_APP = './.github/actions/install-app';
 const LEDGER_UNITS = 'Record the uploaded units in the release ledger';
-const BUILD_BARRIER = 'Wait for the outbox host and storefront builds';
+const HOST_FETCH = 'Fetch the outbox host build output';
+const STOREFRONT_FETCH = 'Fetch the storefront build output';
+const HOST_MATERIALIZE = 'Materialize the stage outbox host zerops.yaml';
+const HOST_RELEASE = 'Name the outbox host release';
+const STOP_UPLOADS = 'Stop the unit uploads after a failed release step';
 const STOREFRONT_DEPLOY = 'Deploy the AKROS storefront';
 const CANDIDATE = 'Assemble the composition candidate';
 const workflowExpression = (body: string) => ['${{', body, '}}'].join(' ');
@@ -354,7 +358,7 @@ it('keeps the original bundle only in preparation and gives every later release 
     RECOMPUTE_PLAN,
     OUTBOX_PLAN,
     RECOVERY_CONFIG_CHECK,
-    IMMUTABLE_UPLOAD,
+    STREAM_START,
     SERVICE_GRANTS,
     RECOVERY_CONFIG_APPLY,
     SHELL_INGRESS,
@@ -372,7 +376,7 @@ it('keeps the original bundle only in preparation and gives every later release 
     );
     expect(indexOf(steps, step.name)).toBeGreaterThan(indexOf(steps, PREPARE_SECRETS));
   }
-  const upload = steps.find(({ name }) => name === IMMUTABLE_UPLOAD);
+  const upload = steps.find(({ name }) => name === STREAM_START);
   expect(upload?.env?.RAW_RELEASE_SECRETS_FILE).toBe(rawFileReference);
   expect(steps.filter(({ env }) => env?.RAW_RELEASE_SECRETS_FILE !== undefined)).toEqual([upload]);
   expect(steps.filter(({ env }) => env?.ALL_RELEASE_SECRETS !== undefined)).toEqual([prepare]);
@@ -601,6 +605,7 @@ it('checks every served owner secret before private network access or any stage 
     MIGRATE,
     CONTINUE_PUBLICATION,
     SERVICE_GRANTS,
+    STREAM_START,
     IMMUTABLE_UPLOAD,
   ]) {
     expect(indexOf(steps, RELEASE_SECRET_CHECK)).toBeLessThan(indexOf(steps, later));
@@ -853,27 +858,37 @@ for (const example of secretInventoryExamples) {
   );
 }
 
-it('streams the uploads in the background beside the grants and joins them before the candidate', () => {
+it('streams the uploads in the background beside the database preparation and joins them before the candidate', () => {
   const { steps } = readJobs().release;
-  const upload = steps.find(({ name }) => name === IMMUTABLE_UPLOAD);
+  const upload = steps.find(({ name }) => name === STREAM_START);
   expect(upload?.if).toBe(fullPublicationCondition);
   expect(upload?.env?.ALL_RELEASE_SECRETS_FILE).toBe(preparedFileReference);
   expect(upload?.run).toContain('scripts/ci/release-stream.mts stream');
   expect(upload?.run).toContain('--parallelism 8');
+  // The stream starts right after barrier B1, before the first database change of either path.
+  expect(indexOf(steps, STREAM_START)).toBe(indexOf(steps, RELEASE_TESTS_BARRIER) + 1);
+  expect(indexOf(steps, STREAM_START)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
+  expect(upload?.run).toContain('--start-file "$STREAM_DIRECTORY/start"');
   // The background status file is the only path from the stream's outcome to the job's.
   expect(upload?.run).toContain(String.raw`printf '%s\n' "$status" >"$STREAM_DIRECTORY/exit-code"`);
   expect(upload?.run).toContain(') </dev/null >/dev/null 2>&1 &');
   expect(upload?.id).toBe('uploads');
   expect(upload?.run).toContain('--stop-file "$STREAM_DIRECTORY/stop"');
   // A failed step before the join stops the stream, and the join still waits for the uploads already running.
-  const stop = steps.find(({ name }) => name === 'Stop the unit uploads after a failed release step');
-  expect(stop?.if).toBe("failure() && steps.uploads.outcome == 'success'");
+  const stop = steps.find(({ name }) => name === STOP_UPLOADS);
+  // A cancelled run stops the stream too, or its unpacked units would hold the stage lock until the deadline.
+  expect(stop?.if).toBe("(failure() || cancelled()) && steps.uploads.outcome == 'success'");
+  // Every step before publication runs while the stream may still upload, so its failure stops the stream.
+  for (const prepared of [DATABASE_RECORD, HOST_FETCH, STOREFRONT_FETCH, HOST_MATERIALIZE, HOST_RELEASE]) {
+    expect(indexOf(steps, prepared)).toBeGreaterThan(indexOf(steps, STREAM_START));
+    expect(indexOf(steps, prepared)).toBeLessThan(indexOf(steps, STOP_UPLOADS));
+  }
   expect(stop?.run).toBe('touch "$STREAM_DIRECTORY/stop"');
   const join = steps.find(({ name }) => name === UPLOAD_JOIN);
   expect(join?.if).toBe("always() && steps.uploads.outcome == 'success'");
-  expect(indexOf(steps, 'Stop the unit uploads after a failed release step')).toBe(indexOf(steps, UPLOAD_JOIN) - 1);
+  expect(indexOf(steps, STOP_UPLOADS)).toBe(indexOf(steps, UPLOAD_JOIN) - 1);
   expect(join?.run).toContain('release-stream.mts join --directory "$STREAM_DIRECTORY"');
-  expect(indexOf(steps, IMMUTABLE_UPLOAD)).toBeLessThan(indexOf(steps, SERVICE_GRANTS));
+  expect(indexOf(steps, STREAM_START)).toBeLessThan(indexOf(steps, SERVICE_GRANTS));
   expect(indexOf(steps, SERVICE_GRANTS)).toBeLessThan(indexOf(steps, UPLOAD_JOIN));
   expect(indexOf(steps, UPLOAD_JOIN)).toBeLessThan(indexOf(steps, CANDIDATE));
   expect(indexOf(steps, CANDIDATE)).toBeLessThan(indexOf(steps, PUBLICATION));
@@ -903,12 +918,7 @@ it('plans from input digests in the protected environment without a deployment a
     expect(plan.outputs?.[output]).toBe(['${{', `steps.plan.outputs.${output}`, '}}'].join(' '));
   }
   // The digest's build environment is the same in the plan, the builds and the release.
-  for (const key of [
-    'CLOUDFLARE_ACCOUNT_ID',
-    'DEPLOY_TARGET',
-    'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
-    'ULTRAMODERN_DISABLE_BUILD_TS_CHECKER',
-  ]) {
+  for (const key of ['DEPLOY_TARGET', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'ULTRAMODERN_DISABLE_BUILD_TS_CHECKER']) {
     expect(planner?.env?.[key]).toBeDefined();
     expect(jobs.build.env?.[key]).toBe(planner?.env?.[key]);
     expect(release.env?.[key]).toBe(planner?.env?.[key]);
@@ -921,6 +931,29 @@ it('plans from input digests in the protected environment without a deployment a
   expect(indexOf(release.steps, RECOMPUTE_PLAN)).toBeLessThan(
     indexOf(release.steps, 'Connect the runner to the private Zerops database network'),
   );
+});
+
+it("tags and proves every uploaded backend version with the planner's secret fingerprint key", () => {
+  const { plan, release } = readJobs();
+  const planner = plan.steps.find(({ id }) => id === 'plan');
+  // Each upload records the HMAC of its owner secrets on its backend Worker version, and reusing a release (a
+  // failed-job rerun or a retained unit) requires that fingerprint, so the release job holds the plan's key.
+  expect(release.env?.RELEASE_FINGERPRINT_KEY).toBe(secretReference('RELEASE_FINGERPRINT_KEY'));
+  expect(release.env?.RELEASE_FINGERPRINT_KEY).toBe(planner?.env?.RELEASE_FINGERPRINT_KEY);
+});
+
+it('hands the environment-scoped Cloudflare account to the builds, which run without the environment', () => {
+  const { build, plan, release } = readJobs();
+  const planner = plan.steps.find(({ id }) => id === 'plan');
+  // Read in the env-less build job, vars.CLOUDFLARE_ACCOUNT_ID is empty and every unit digest differs from the plan's.
+  expect(planner?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(workflowExpression('vars.CLOUDFLARE_ACCOUNT_ID'));
+  expect(release.env?.CLOUDFLARE_ACCOUNT_ID).toBe(planner?.env?.CLOUDFLARE_ACCOUNT_ID);
+  expect(planner?.run).toContain(
+    String.raw`printf 'cloudflare_account_id=%s\n' "$CLOUDFLARE_ACCOUNT_ID" >>"$GITHUB_OUTPUT"`,
+  );
+  expect(plan.outputs?.cloudflare_account_id).toBe(workflowExpression('steps.plan.outputs.cloudflare_account_id'));
+  expect(build.environment).toBeUndefined();
+  expect(build.env?.CLOUDFLARE_ACCOUNT_ID).toBe(workflowExpression('needs.plan.outputs.cloudflare_account_id'));
 });
 
 it('builds only the changed units, trusts the lockfile there and names every output by its digest', () => {
@@ -963,7 +996,14 @@ it('waits for the release script tests before the first stage change', () => {
   expect(barrier?.run).toContain("release-stream.mts await --job 'Test the release scripts'");
   expect(barrier?.['continue-on-error']).toBeUndefined();
   expect(indexOf(steps, DATABASE_PATH)).toBeLessThan(indexOf(steps, RELEASE_TESTS_BARRIER));
-  for (const mutation of [INITIAL_BOOTSTRAP, MIGRATE, CONTINUE_PUBLICATION, IMMUTABLE_UPLOAD, SERVICE_GRANTS]) {
+  for (const mutation of [
+    STREAM_START,
+    INITIAL_BOOTSTRAP,
+    MIGRATE,
+    CONTINUE_PUBLICATION,
+    IMMUTABLE_UPLOAD,
+    SERVICE_GRANTS,
+  ]) {
     expect(indexOf(steps, RELEASE_TESTS_BARRIER)).toBeLessThan(indexOf(steps, mutation));
   }
 });
@@ -1005,21 +1045,60 @@ it('keeps the identity bootstrap and the owner verification on the database ligh
   expect(indexOf(steps, POST_MIGRATION_BOOTSTRAP)).toBeLessThan(indexOf(steps, DATABASE_RECORD));
 });
 
-it('deploys the prebuilt outbox host only when needed, beside the Shell tail, and requires positive admission', () => {
+it('prepares everything the outbox host deploy needs before publication', () => {
+  const { steps } = readJobs().release;
+  // Everything that does not need the publication happens before it: fetching the host artifact (barrier B2 when
+  // this run builds it), its configuration file and the release it names. Only apply and push come after.
+  for (const prepared of [HOST_FETCH, HOST_MATERIALIZE, HOST_RELEASE]) {
+    const step = steps.find(({ name }) => name === prepared);
+    expect(step?.if).toBeUndefined();
+    expect(step?.['continue-on-error']).toBeUndefined();
+    expect(indexOf(steps, prepared)).toBeLessThan(indexOf(steps, CANDIDATE));
+  }
+  const fetch = steps.find(({ name }) => name === HOST_FETCH);
+  expect(fetch?.run).toContain('release-stream.mts fetch --plan "$PLAN_FILE" --artifact outbox-host');
+  expect(fetch?.run).toContain('--output "$RUNNER_TEMP/outbox-host"');
+  const release = steps.find(({ name }) => name === HOST_RELEASE);
+  expect(release?.id).toBe('host-release');
+  expect(release?.run).toBe(
+    'mise exec -- pnpm exec node scripts/ci/release-stream.mts host-release --plan "$PLAN_FILE" >>"$GITHUB_OUTPUT"',
+  );
+});
+
+it('always redeploys the outbox host after the configuration apply, with no live probe that could skip it', () => {
+  const { steps } = readJobs().release;
+  // Zerops resolves native secret references outside the materialized configuration, so no live digest proves the
+  // running configuration current: nothing may make the host deploy conditional.
+  expect(steps.some(({ run }) => run?.includes('--probe') === true)).toBe(false);
+  expect(steps.some(({ run }) => run?.includes('host-decision') === true)).toBe(false);
+  expect(steps.some(({ if: condition }) => condition?.includes('outputs.deploy') === true)).toBe(false);
+  const start = steps.find(({ name }) => name === HOST_DEPLOY_START);
+  expect(start?.if).toBeUndefined();
+  expect(indexOf(steps, RECOVERY_CONFIG_APPLY)).toBeLessThan(indexOf(steps, HOST_DEPLOY_START));
+  const record = steps.find(({ name }) => name === 'Record the outbox host in the release ledger');
+  expect(record?.if).toBe(
+    workflowExpression("!inputs.outbox_only && steps.host-release.outputs.source-revision != ''"),
+  );
+  expect(record?.env).toEqual({
+    HOST_DIGEST: workflowExpression('steps.host-release.outputs.digest'),
+    HOST_SOURCE_REVISION: workflowExpression('steps.host-release.outputs.source-revision'),
+  });
+});
+
+it('deploys the prebuilt outbox host beside the Shell tail after publication and requires positive admission', () => {
   const { steps } = readJobs().release;
   expect(steps.some(({ name }) => name === 'Install Zerops CLI')).toBe(false);
   expect(steps.some(({ run }) => run?.includes('sleep 60') === true)).toBe(false);
-  const decision = steps.find(({ name }) => name === HOST_DECISION);
-  expect(decision?.id).toBe('host-deploy');
-  expect(decision?.env?.RECOVERY_CHANGED).toBe(['${{', 'steps.recovery-config.outputs.changed', '}}'].join(' '));
-  expect(decision?.run).toContain('release-stream.mts host-decision');
   const start = steps.find(({ name }) => name === HOST_DEPLOY_START);
-  expect(start?.if).toBe("steps.host-deploy.outputs.deploy == 'true'");
   expect(start?.env?.ZCLI_PATH).toBe(['${{', 'steps.composition-vpn.outputs.cli-path', '}}'].join(' '));
-  expect(start?.run).toContain('release-stream.mts fetch');
+  // The artifact the push deploys is the one fetched before publication.
+  expect(start?.run).not.toContain('release-stream.mts fetch');
+  expect(start?.env?.OUTBOX_HOST_ARTIFACT).toBe(
+    `${workflowExpression(RUNNER_TEMP_CONTEXT)}/outbox-host/outbox-host.tar.zst`,
+  );
   expect(start?.run).toContain('app/scripts/push-zerops-units.sh');
   expect(start?.id).toBe('host-start');
-  expect(start?.env?.OUTBOX_HOST_DIGEST).toBe(['${{', 'steps.host-deploy.outputs.digest', '}}'].join(' '));
+  expect(start?.env?.OUTBOX_HOST_DIGEST).toBe(workflowExpression('steps.host-release.outputs.digest'));
   // Joined even after a failed tail step, so the host deploy is never cut off halfway.
   expect(steps.find(({ name }) => name === HOST_DEPLOY_JOIN)?.if).toBe(
     "always() && steps.host-start.outcome == 'success'",
@@ -1028,10 +1107,11 @@ it('deploys the prebuilt outbox host only when needed, beside the Shell tail, an
   expect(admission?.if).toBeUndefined();
   expect(admission?.run).toContain('scripts/ci/await-outbox-admission.mts');
   expect(admission?.run).toContain('--revision "$revision" --host-digest "$HOST_DIGEST" --timeout 180');
+  // The Shell ingress, rebrand and storefront run in the foreground while the host deploys; both branches join
+  // before the customer fixture, which needs the host admitted.
   const order = [
     PUBLICATION,
     RECOVERY_CONFIG_APPLY,
-    HOST_DECISION,
     HOST_DEPLOY_START,
     SHELL_INGRESS,
     'Rebrand the rental demo through the native Shell Action',
@@ -1040,6 +1120,7 @@ it('deploys the prebuilt outbox host only when needed, beside the Shell tail, an
     HOST_ADMISSION,
     'Prepare the native demo customer fixture',
     'Clear the runner-owned Zerops VPN',
+    'Smoke the Shell login and OAuth metadata',
   ].map((name) => indexOf(steps, name));
   expect(order.every((position) => position >= 0)).toBe(true);
   expect(order).toEqual(EffectArray.sort(order, Order.Number));
@@ -1061,6 +1142,17 @@ it('writes the release ledger at its checkpoints even when a later step fails', 
     expect(upload.with?.['retention-days']).toBe(90);
   }
   expect(indexOf(steps, UPLOAD_JOIN)).toBeLessThan(indexOf(steps, LEDGER_UNITS));
+  // The always-run artifact and ledger checkpoints wait beside the host deploy, not before publication.
+  for (const checkpoint of [
+    'Archive the candidate and receipts',
+    'Upload the per-unit upload logs',
+    LEDGER_UNITS,
+    'Upload the release ledger checkpoint',
+  ]) {
+    expect(steps.find(({ name }) => name === checkpoint)?.if?.startsWith('always() && ')).toBe(true);
+    expect(indexOf(steps, checkpoint)).toBeGreaterThan(indexOf(steps, HOST_DEPLOY_START));
+    expect(indexOf(steps, checkpoint)).toBeLessThan(indexOf(steps, SHELL_INGRESS));
+  }
   expect(indexOf(steps, 'Record the outbox host in the release ledger')).toBeLessThan(
     indexOf(steps, 'Upload the final release ledger'),
   );
@@ -1137,53 +1229,56 @@ it.effect('the actual ledger checkpoint records the uploaded receipts and the pr
   ).pipe(Effect.provide(workflowServices)),
 );
 
-// `gh api <jobs route>` answers this run's jobs from the fixture file.
+// `gh api <route>` answers this run's jobs from the fixture file, lists one artifact of any name and downloads an
+// empty zip for it.
 const GH_JOBS_SHIM = `#!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-const jobs = JSON.parse(readFileSync(process.env.SHIM_JOBS_FILE, 'utf8'));
-if (!process.argv[3].includes('/jobs?filter=latest')) process.exit(1);
-process.stdout.write(JSON.stringify({ jobs, total_count: jobs.length }));
+import { appendFileSync, readFileSync } from 'node:fs';
+const route = process.argv[3];
+appendFileSync(process.env.SHIM_LOG_FILE, route + '\\n');
+if (route.includes('/jobs?filter=latest')) {
+  const jobs = JSON.parse(readFileSync(process.env.SHIM_JOBS_FILE, 'utf8'));
+  process.stdout.write(JSON.stringify({ jobs, total_count: jobs.length }));
+} else if (route.includes('/artifacts?name=')) {
+  const name = decodeURIComponent(route.match(/name=([^&]+)/)[1]);
+  process.stdout.write(JSON.stringify({ artifacts: [{ expired: false, id: 7, name }], total_count: 1 }));
+} else if (/artifacts\\/\\d+\\/zip$/.test(route)) {
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  process.stdout.write(end);
+} else {
+  process.exit(1);
+}
 `;
 
 it('publishes no replacement composition before the outbox host and storefront builds succeeded', () => {
   const jobs = readJobs();
   const { steps } = jobs.release;
-  const barrier = steps.find(({ name }) => name === BUILD_BARRIER);
-  expect(barrier?.if).toBe(
-    workflowExpression(
-      "!inputs.outbox_only && (needs.plan.outputs.host_mode == 'build' || needs.plan.outputs.storefront_mode == 'build')",
-    ),
-  );
-  expect(barrier?.['continue-on-error']).toBeUndefined();
-  // The barrier finds the build jobs by the names the workflow gives them.
+  expect(steps.some(({ name }) => name === 'Wait for the outbox host and storefront builds')).toBe(false);
+  // The fetch steps find the build jobs by the names the workflow gives them.
   expect(jobs['build-outbox-host'].name).toBe(HOST_BUILD_JOB);
   expect(jobs['build-storefront'].name).toBe(STOREFRONT_BUILD_JOB);
-  expect(barrier?.run).toContain(`--job '${HOST_BUILD_JOB}'`);
-  expect(barrier?.run).toContain(`--job '${STOREFRONT_BUILD_JOB}'`);
-  expect(indexOf(steps, UPLOAD_JOIN)).toBeLessThan(indexOf(steps, BUILD_BARRIER));
-  expect(indexOf(steps, BUILD_BARRIER)).toBeLessThan(indexOf(steps, CANDIDATE));
+  const host = steps.find(({ name }) => name === HOST_FETCH);
+  const storefront = steps.find(({ name }) => name === STOREFRONT_FETCH);
+  expect(host?.if).toBeUndefined();
+  expect(storefront?.if).toBe(fullPublicationCondition);
+  expect(storefront?.run).toContain('release-stream.mts fetch --plan "$PLAN_FILE" --artifact akros-storefront');
+  for (const fetch of [HOST_FETCH, STOREFRONT_FETCH]) {
+    expect(steps.find(({ name }) => name === fetch)?.['continue-on-error']).toBeUndefined();
+    expect(indexOf(steps, fetch)).toBeLessThan(indexOf(steps, CANDIDATE));
+  }
   expect(indexOf(steps, CANDIDATE)).toBeLessThan(indexOf(steps, PUBLICATION));
 });
 
 const buildJob = (name: string, conclusion: string) => ({ conclusion, name, status: 'completed' });
 for (const example of [
-  { host: 'build', jobs: [buildJob(HOST_BUILD_JOB, 'failure')], ok: false, storefront: 'reuse' },
-  {
-    host: 'build',
-    jobs: [buildJob(HOST_BUILD_JOB, 'success'), buildJob(STOREFRONT_BUILD_JOB, 'failure')],
-    ok: false,
-    storefront: 'build',
-  },
-  {
-    host: 'build',
-    jobs: [buildJob(HOST_BUILD_JOB, 'success'), buildJob(STOREFRONT_BUILD_JOB, 'success')],
-    ok: true,
-    storefront: 'build',
-  },
-  { host: 'retain', jobs: [buildJob(STOREFRONT_BUILD_JOB, 'success')], ok: true, storefront: 'build' },
+  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'build', ok: false },
+  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'success')], mode: 'build', ok: true },
+  { fetch: STOREFRONT_FETCH, jobs: [buildJob(STOREFRONT_BUILD_JOB, 'cancelled')], mode: 'build', ok: false },
+  { fetch: STOREFRONT_FETCH, jobs: [buildJob(STOREFRONT_BUILD_JOB, 'success')], mode: 'build', ok: true },
+  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'kept', ok: true },
 ]) {
   it.effect(
-    `the actual build barrier ${example.ok ? 'passes' : 'stops'} host ${example.host}, storefront ${example.storefront}: ${example.jobs.map(({ conclusion }) => conclusion).join(', ')}`,
+    `the actual ${example.fetch === HOST_FETCH ? 'host' : 'storefront'} fetch ${example.ok ? 'passes' : 'stops'} a ${example.mode} artifact after a ${example.jobs.map(({ conclusion }) => conclusion).join(', ')} build`,
     () =>
       Effect.scoped(
         Effect.gen(function* awaitsWorkflowBuilds() {
@@ -1194,18 +1289,37 @@ for (const example of [
           writeFileSync(path.join(temp, 'bin', 'gh'), GH_JOBS_SHIM);
           chmodSync(path.join(temp, 'bin', 'gh'), 0o755);
           writeFileSync(path.join(temp, 'jobs.json'), JSON.stringify(example.jobs));
+          const built = example.mode === 'build';
+          const kept = { id: 9, name: 'kept-artifact', sourceRevision: 'a'.repeat(40) };
+          const planFile = path.join(temp, 'deploy-plan.json');
+          writeFileSync(
+            planFile,
+            JSON.stringify({
+              host: { artifact: built ? null : kept, digest: sha256('host'), mode: built ? 'build' : 'retain' },
+              storefront: {
+                artifact: built ? null : kept,
+                digest: sha256('storefront'),
+                mode: built ? 'build' : 'reuse',
+              },
+              units: [],
+            }),
+          );
           const exit = yield* Effect.exit(
-            runReleaseStep(BUILD_BARRIER, {
+            runReleaseStep(example.fetch, {
               GITHUB_REPOSITORY: 'example/ontos',
               GITHUB_RUN_ID: '42',
-              HOST_MODE: example.host,
               PATH: `${path.join(temp, 'bin')}:${inherited}`,
+              PLAN_FILE: planFile,
               RUNNER_TEMP: temp,
               SHIM_JOBS_FILE: path.join(temp, 'jobs.json'),
-              STOREFRONT_MODE: example.storefront,
+              SHIM_LOG_FILE: path.join(temp, 'gh.log'),
             }),
           );
           expect(Exit.isSuccess(exit)).toBe(example.ok);
+          const routes = readFileSync(path.join(temp, 'gh.log'), 'utf-8');
+          // A failed build is never downloaded; a kept artifact needs no build job of this run.
+          expect(routes.includes('/zip')).toBe(example.ok);
+          expect(routes.includes('/jobs?')).toBe(built);
         }),
       ).pipe(Effect.provide(workflowServices)),
   );
@@ -1290,6 +1404,30 @@ it('runs every owner migration through the native lifecycle on the private netwo
   }
 });
 
+it('uploads before the sealed migrations finished on no path but the database light path', () => {
+  const { steps } = readJobs().release;
+  const stream = steps.find(({ name }) => name === STREAM_START);
+  // Only the light path, which runs no migration, allows the uploads when the stream starts.
+  expect(stream?.env?.DATABASE_MODE).toBe(workflowExpression('steps.database-path.outputs.mode'));
+  expect(stream?.run).toContain(
+    ['if [[ "$DATABASE_MODE" == light ]]; then', '  touch "$STREAM_DIRECTORY/start"', 'fi'].join('\n'),
+  );
+  expect(stream?.run?.match(/STREAM_DIRECTORY\/start"/gu)).toHaveLength(2);
+  // The full chain and a continuation allow them only once their last database step succeeded.
+  const allow = steps.find(({ name }) => name === IMMUTABLE_UPLOAD);
+  expect(allow?.if).toBe(fullPublicationCondition);
+  expect(allow?.run).toBe('touch "$STREAM_DIRECTORY/start"');
+  expect(allow?.['continue-on-error']).toBeUndefined();
+  for (const earlier of [INITIAL_BOOTSTRAP, MIGRATE, CONTINUE_PUBLICATION, POST_MIGRATION_BOOTSTRAP]) {
+    expect(indexOf(steps, earlier)).toBeLessThan(indexOf(steps, IMMUTABLE_UPLOAD));
+  }
+  expect(indexOf(steps, IMMUTABLE_UPLOAD)).toBeLessThan(indexOf(steps, SERVICE_GRANTS));
+  expect(steps.filter(({ run }) => run?.includes('STREAM_DIRECTORY/start') === true).map(({ name }) => name)).toEqual([
+    STREAM_START,
+    IMMUTABLE_UPLOAD,
+  ]);
+});
+
 it('keeps exact-published-revision outbox retries out of the schema migration and identity bootstrap lifecycle', () => {
   const { steps } = readJobs().release;
   const outboxRetry = 'Require the exact published revision for an outbox-only retry';
@@ -1352,16 +1490,12 @@ it('checks canonical recovery configuration before database mutation and provisi
   });
   expect(provision?.env).toEqual(check?.env);
   const provisionLines = provision?.run?.split('\n').filter(Boolean) ?? [];
-  expect(provisionLines.slice(0, 3)).toEqual([
+  // The host always redeploys after the apply, so a created or removed host secret always reaches it.
+  expect(provisionLines).toEqual([
     ...loadPreparedSecrets,
-    'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply | tee "$RUNNER_TEMP/recovery-apply.json"',
-  ]);
-  // The apply report's changed flag decides whether the host redeploys to receive new host secrets.
-  expect(provision?.id).toBe('recovery-config');
-  expect(provision?.run).toContain(`printf 'changed=%s\\n'`);
-  expect(provisionLines.at(-1)).toBe(
+    'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply',
     'mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify',
-  );
+  ]);
   expect(indexOf(steps, RECOVERY_CONFIG_CHECK)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
   expect(indexOf(steps, RECOVERY_CONFIG_CHECK)).toBeLessThan(indexOf(steps, READINESS));
   expect(indexOf(steps, RECOVERY_CONFIG_APPLY)).toBeGreaterThan(indexOf(steps, PUBLICATION));

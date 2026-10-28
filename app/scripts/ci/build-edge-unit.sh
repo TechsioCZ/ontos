@@ -21,6 +21,12 @@ set -euo pipefail
 : "${WORKERS_DEV_SUBDOMAIN:?WORKERS_DEV_SUBDOMAIN is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 
+# Inherited Git selectors (GIT_DIR, GIT_WORK_TREE, hook-exported GIT_INDEX_FILE) would let the digest recomputation and
+# the output listing below read another checkout than the one this script builds.
+while IFS= read -r name; do
+  unset "$name"
+done < <(compgen -e | grep '^GIT_' || true)
+
 cd "$(dirname "$0")/../.."
 releases=".codex/reports/releases/$UNIT_ID"
 mkdir -p "$releases"

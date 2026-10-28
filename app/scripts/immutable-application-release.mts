@@ -54,6 +54,7 @@ import {
   readReviewedApplicationReleaseIntent,
 } from './application-release-intent.mts';
 import type { ApplicationReleaseIntent } from './application-release-intent.mts';
+import { DIGEST_ENV_KEYS, computeSecretFingerprints } from './ci/deploy-plan.mts';
 import { verifyImmutableBackendModuleContent } from './immutable-backend-package.mts';
 import { OpsCommandError } from './ops/ops-command-error.mts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
@@ -108,6 +109,9 @@ const workerVersionIdSchema = Schema.NonEmptyString.pipe(
 const deliveryUnitIdSchema = Schema.NonEmptyString.pipe(Schema.brand('DeliveryUnitId'), Schema.decodeTo(Schema.String));
 const sha256 = Schema.String.check(Schema.isPattern(/^[a-f\d]{64}$/u));
 const artifact = Schema.Struct({ sha256, url: Schema.String });
+/** The deploy plan's word for a secret fingerprint it cannot compute: no fingerprint key or no release secrets. */
+const SECRET_FINGERPRINT_UNAVAILABLE = 'unavailable';
+const secretFingerprintSchema = Schema.String.check(Schema.isPattern(/^(?:[a-f\d]{64}|unavailable)$/u));
 
 export const ImmutableApplicationReleasePlanSchema = Schema.Struct({
   appId,
@@ -129,6 +133,12 @@ export const ImmutableApplicationReleaseReceiptSchema = Schema.Struct({
   assetsVersionId: workerVersionIdSchema,
   backend: ApplicationCompositionCloudflareWorkerBackendSchema,
   plan: ImmutableApplicationReleasePlanSchema,
+  /**
+   * The deploy plan's HMAC of the unit's release secrets (its `secretFingerprint`) that the backend Worker version
+   * holds. The release identity names a source revision, not its secrets, so a rotation at the same revision finds
+   * the same Workers; this fingerprint, also annotated on the Worker version, is how reuse tells them apart.
+   */
+  secretFingerprint: secretFingerprintSchema,
 });
 export type ImmutableApplicationReleaseReceipt = typeof ImmutableApplicationReleaseReceiptSchema.Type;
 
@@ -894,6 +904,108 @@ export const readVerifiedReleaseFiles = Effect.fn('ImmutableApplicationRelease.v
   },
 );
 
+/**
+ * The deploy plan's fingerprint of a unit's stored release secrets (`computeSecretFingerprints`, the plan's matrix
+ * `secretFingerprint`): the same key and the same raw owner-keyed secrets the plan read, so equal fingerprints at one
+ * source revision mean equal bound secrets. Without the key or the secrets it is `unavailable`, exactly as in the plan.
+ */
+export const currentReleaseSecretFingerprint = Effect.fn('ImmutableApplicationRelease.secretFingerprint')(
+  function* currentReleaseSecretFingerprintEffect(unitId: string) {
+    const key = yield* Config.option(Config.Redacted('RELEASE_FINGERPRINT_KEY'));
+    const secretsFile = yield* Config.option(Config.Redacted('ALL_RELEASE_SECRETS_FILE'));
+    const rawSecrets = Option.isSome(secretsFile)
+      ? Option.some(
+          yield* (yield* FileSystem.FileSystem)
+            .readFileString(Redacted.value(secretsFile.value))
+            .pipe(Effect.mapError((cause) => fail('the raw release secrets file cannot be read', cause))),
+        )
+      : (yield* Config.option(Config.Redacted('ALL_RELEASE_SECRETS'))).pipe(Option.map(Redacted.value));
+    if (Option.isNone(key) || Option.isNone(rawSecrets) || rawSecrets.value === '') {
+      return SECRET_FINGERPRINT_UNAVAILABLE;
+    }
+    const fingerprints = Option.liftThrowable(computeSecretFingerprints)({
+      key: Redacted.value(key.value),
+      rawSecrets: rawSecrets.value,
+      unitIds: [unitId],
+    });
+    return Option.match(fingerprints, {
+      onNone: () => SECRET_FINGERPRINT_UNAVAILABLE,
+      onSome: (computed) => computed[unitId] ?? SECRET_FINGERPRINT_UNAVAILABLE,
+    });
+  },
+  Effect.mapError((cause) =>
+    Schema.is(ImmutableApplicationReleaseError)(cause)
+      ? cause
+      : fail('the release secret fingerprint configuration is invalid', cause),
+  ),
+);
+
+/** A backend Worker version records the secret fingerprint it was uploaded with as its version message. */
+export const releaseSecretFingerprintAnnotation = (secretFingerprint: string) =>
+  `ontos-release-secrets:${secretFingerprint}`;
+
+export const STALE_RELEASE_SECRETS =
+  'the existing immutable release holds other release secrets than this release binds; a secret rotation needs a new source revision';
+
+const WorkerVersionAnnotationsSchema = Schema.Struct({
+  result: Schema.Struct({
+    annotations: Schema.OptionFromOptionalNullOr(
+      Schema.Struct({ 'workers/message': Schema.OptionFromOptionalNullOr(Schema.String) }),
+    ),
+  }),
+  success: Schema.Boolean,
+});
+
+/** The exact backend Worker version must have been uploaded with `secretFingerprint`'s secrets. */
+export const requireWorkerVersionSecretFingerprint = Effect.fn('ImmutableApplicationRelease.versionSecrets')(
+  function* requireWorkerVersionSecretFingerprintEffect(
+    accountId: string,
+    token: Redacted.Redacted,
+    scriptName: string,
+    versionId: string,
+    secretFingerprint: string,
+  ) {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.execute(
+      HttpClientRequest.bearerToken(
+        HttpClientRequest.get(`${providerScriptUrl(accountId, scriptName)}/versions/${encodeURIComponent(versionId)}`),
+        Redacted.value(token),
+      ),
+    );
+    const version = yield* Schema.decodeUnknownEffect(WorkerVersionAnnotationsSchema)(yield* response.json);
+    if (response.status !== 200 || !version.success) {
+      return yield* fail('the immutable backend Worker version could not be observed');
+    }
+    const message = version.result.annotations.pipe(Option.flatMap((annotations) => annotations['workers/message']));
+    if (!Option.contains(message, releaseSecretFingerprintAnnotation(secretFingerprint))) {
+      return yield* fail(STALE_RELEASE_SECRETS);
+    }
+    return yield* Effect.void;
+  },
+  Effect.timeout(Duration.seconds(30)),
+  Effect.mapError((cause) =>
+    Schema.is(ImmutableApplicationReleaseError)(cause)
+      ? cause
+      : fail('the immutable backend Worker version could not be observed within its timeout'),
+  ),
+);
+
+/**
+ * The environment of the digest recomputation: the build environment every unit digest covers, the runner platform
+ * and PATH, nothing else. Inherited Git selectors (GIT_DIR, GIT_WORK_TREE, hook-exported GIT_INDEX_FILE) would make
+ * the planner hash another checkout than the clean HEAD the source checks inspect. An empty value reads as unset, so
+ * the recomputed digest then differs and the check fails closed. The secrets stay out: the release passes the
+ * fingerprint it binds instead.
+ */
+const unitDigestEnvironment = Effect.gen(function* unitDigestEnvironmentEffect() {
+  const entries = yield* Effect.forEach([...DIGEST_ENV_KEYS, 'RUNNER_OS', 'RUNNER_ARCH', 'PATH'], (name) =>
+    Config.option(Config.String(name)).pipe(
+      Effect.map(Option.map((value): readonly [string, Redacted.Redacted] => [name, Redacted.make(value)])),
+    ),
+  );
+  return Object.fromEntries(EffectArray.getSomes(entries));
+});
+
 export interface PlannedUnitInputs {
   readonly artifactName?: string | undefined;
   readonly inputsFile?: string | undefined;
@@ -936,12 +1048,22 @@ export const requirePlannedUnitInputs = Effect.fn('ImmutableApplicationRelease.r
     ) {
       return yield* fail(message);
     }
-    // The CLI calls computeUnitDigest with the same environment and secret HMACs as the plan job.
-    // Never derive current inputs from the downloaded artifact's own lines or digest.
+    // The CLI calls computeUnitDigest with the plan job's build environment and the fingerprint of the secrets
+    // this release binds. Never derive current inputs from the downloaded artifact's own lines or digest.
+    const secretFingerprint = yield* currentReleaseSecretFingerprint(plan.appId);
     const current = yield* runCommand({
-      args: [path.resolve(import.meta.dirname, 'ci/deploy-plan.mts'), 'unit-digest', '--unit', plan.appId],
+      args: [
+        path.resolve(import.meta.dirname, 'ci/deploy-plan.mts'),
+        'unit-digest',
+        '--unit',
+        plan.appId,
+        '--secret-fingerprint',
+        secretFingerprint,
+      ],
       command: 'node',
       cwd: directory,
+      env: yield* unitDigestEnvironment,
+      extendEnv: false,
     }).pipe(
       Effect.flatMap((digest) => Schema.decodeUnknownEffect(sha256)(digest.trim())),
       Effect.mapError(() => fail(message)),
@@ -1377,6 +1499,24 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     if (!reuseExisting && presence.includes('present')) {
       return yield* fail('an immutable release identity already exists; publication must never overwrite it');
     }
+    // The identity names the source revision, not the secrets, so a rotation at the same revision finds these
+    // Workers too. Reuse only a backend version uploaded with exactly the secrets this release binds; the receipt
+    // would otherwise claim the new secrets for a Worker that still holds the old ones.
+    const secretFingerprint = yield* currentReleaseSecretFingerprint(plan.appId);
+    if (reuseExisting) {
+      if (secretFingerprint === SECRET_FINGERPRINT_UNAVAILABLE) {
+        return yield* fail(
+          'an existing immutable release can be reused only with RELEASE_FINGERPRINT_KEY and the raw release secrets, which prove it holds the secrets this release binds',
+        );
+      }
+      yield* requireWorkerVersionSecretFingerprint(
+        accountId,
+        apiToken,
+        plan.backendScriptName,
+        yield* readRetainedImmutableWorkerVersion(accountId, apiToken, plan.backendScriptName),
+        secretFingerprint,
+      );
+    }
     yield* markPhase('provider account and absence');
     const deployedAssetsDirectory = yield* materializeImmutablePublicAssets(compiledAssets);
     // Native assets-only Workers apply these bytes directly; the compiled assets stay unchanged.
@@ -1495,7 +1635,12 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     }
     yield* markPhase('verify upload package');
     if (!reuseExisting) {
-      yield* deploy(backendConfig, ['--no-bundle', ...secretsArguments]);
+      yield* deploy(backendConfig, [
+        '--no-bundle',
+        '--message',
+        releaseSecretFingerprintAnnotation(secretFingerprint),
+        ...secretsArguments,
+      ]);
       yield* markPhase('backend upload with secrets');
       yield* deployImmutableAssets({
         accountId,
@@ -1551,6 +1696,13 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       ],
       { concurrency: 'unbounded' },
     );
+    yield* requireWorkerVersionSecretFingerprint(
+      accountId,
+      apiToken,
+      plan.backendScriptName,
+      versionId,
+      secretFingerprint,
+    );
     yield* markPhase('provider read-back');
     const backend = yield* Schema.decodeUnknownEffect(ApplicationCompositionCloudflareWorkerBackendSchema)({
       baseUrl: `https://${plan.backendScriptName}.${accountSubdomain}.workers.dev/`,
@@ -1563,6 +1715,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       assetsVersionId,
       backend,
       plan,
+      secretFingerprint,
     } satisfies ImmutableApplicationReleaseReceipt;
   },
   Effect.scoped,
@@ -1590,7 +1743,10 @@ const PlanDocumentSchema = Schema.Struct({
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
 });
 
-/** A ledger receipt is reusable only while both exact deployments remain active in this account. */
+/**
+ * A ledger receipt is reusable only while both exact deployments remain active in this account and the backend
+ * version is the one uploaded with the secrets the receipt fingerprints.
+ */
 export const verifyRetainedImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.verifyRetained')(
   function* verifyRetainedApplicationRelease(raw: ImmutableApplicationReleaseReceipt) {
     const receipt = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseReceiptSchema, {
@@ -1624,6 +1780,16 @@ export const verifyRetainedImmutableApplicationRelease = Effect.fn('ImmutableApp
     if (backendVersion !== backend.versionId || assetsVersion !== receipt.assetsVersionId) {
       return yield* fail('the retained provider deployments no longer match their receipt');
     }
+    if (receipt.secretFingerprint === SECRET_FINGERPRINT_UNAVAILABLE) {
+      return yield* fail('a retained receipt must record the fingerprint of the release secrets its Worker holds');
+    }
+    yield* requireWorkerVersionSecretFingerprint(
+      accountId,
+      token,
+      plan.backendScriptName,
+      backendVersion,
+      receipt.secretFingerprint,
+    );
     return yield* Effect.void;
   },
 );

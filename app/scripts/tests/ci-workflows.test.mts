@@ -439,6 +439,12 @@ it('deploys retained edge releases after migrations under the shared environment
   expect(deploy?.run).not.toContain('--namespace');
   expect(deploy?.run).toContain('--plan-file');
   expect(deploy?.run).toContain('--receipt-file');
+  // A failed-job rerun reuses an uploaded release only when the backend version's secret fingerprint proves the same
+  // owner secrets, which needs the fingerprint key beside the raw owner-keyed secrets.
+  expect(deploy?.env).toMatchObject({
+    ALL_RELEASE_SECRETS: expression('secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS'),
+    RELEASE_FINGERPRINT_KEY: expression('secrets.RELEASE_FINGERPRINT_KEY'),
+  });
   expect(JSON.stringify([plan, builds])).not.toContain('secrets.');
   const finalize = jobs['finalize-edge-deployment'];
   expect(finalize.environment).toBe(EDGE_ENVIRONMENT);

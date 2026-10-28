@@ -2246,6 +2246,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
           ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          # Each upload records the HMAC of its owner secrets on its backend Worker version; a failed-job rerun
+          # reuses an already-uploaded release only when that fingerprint proves the same secrets.
+          RELEASE_FINGERPRINT_KEY: ${{ secrets.RELEASE_FINGERPRINT_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: |

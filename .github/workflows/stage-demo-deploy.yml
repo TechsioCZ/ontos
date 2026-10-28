@@ -203,6 +203,8 @@ jobs:
       db_inputs_digest: ${{ steps.plan.outputs.db_inputs_digest }}
       db_mode: ${{ steps.plan.outputs.db_mode }}
       force_full: ${{ steps.plan.outputs.force_full }}
+      # An environment variable: the builds run without the environment, so they take it from here.
+      cloudflare_account_id: ${{ steps.plan.outputs.cloudflare_account_id }}
     steps:
       - name: Require a full manual deployment for migration continuation
         if: inputs.continue_migrated_publication
@@ -275,6 +277,7 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/deploy-plan"
           mise exec -- node scripts/ci/deploy-plan.mts "${args[@]}"
+          printf 'cloudflare_account_id=%s\n' "$CLOUDFLARE_ACCOUNT_ID" >>"$GITHUB_OUTPUT"
 
       - name: Upload the deploy plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -306,9 +309,10 @@ jobs:
       # The plan's HMAC of the unit's release secrets, so inputs.json recomputes the digest without any secret.
       ONTOS_UNIT_SECRET_FINGERPRINT: ${{ matrix.unit.secretFingerprint }}
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-      # Unit digest inputs, as the plan computed them. The explicit TS-Go reference build type-checks the
-      # unit, so the bundler's checker is off.
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      # Unit digest inputs, as the plan computed them. The account is a stage-edge environment variable, which this
+      # job without an environment cannot read. The explicit TS-Go reference build type-checks the unit, so the
+      # bundler's checker is off.
+      CLOUDFLARE_ACCOUNT_ID: ${{ needs.plan.outputs.cloudflare_account_id }}
       DEPLOY_TARGET: cloudflare
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
@@ -516,6 +520,8 @@ jobs:
   # composition refresh. The job records the stage-edge deployment, so the refresh re-publishes this revision.
   # It starts with the plan: database preparation overlaps the builds, it waits for the release script tests
   # (barrier B1) before its first stage change, and it uploads each unit as soon as that unit's build succeeds.
+  # Everything the outbox host deploy can prepare happens before publication; after it only the host configuration
+  # apply and the deploy-only push run, beside the Shell ingress, rebrand and storefront.
   release:
     name: Deploy, publish and activate stage
     needs: [plan]
@@ -883,6 +889,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mise exec -- pnpm exec node scripts/ci/release-stream.mts await --job 'Test the release scripts' --timeout-seconds 840
 
+      # Uploads only create immutable release Workers; nothing serves them until publication. The stream starts right
+      # after barrier B1 and runs in the background beside the database preparation: it verifies every retained
+      # unit's live Workers against its ledger receipt, fetches and unpacks each unit as soon as its build job
+      # succeeds, and fails as soon as any expected build fails (barrier B2). No unit uploads before the start file
+      # exists: at once on the database light path, after the sealed migrations otherwise. Eight upload at a time
+      # (Cloudflare API rate limits). Owner secrets reach each upload only through its environment.
+      - name: Start the unit upload stream
+        id: uploads
+        if: ${{ !inputs.outbox_only }}
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
+          RAW_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.raw-path }}
+          DATABASE_MODE: ${{ steps.database-path.outputs.mode }}
+        run: |
+          mkdir -p "$RECEIPTS" "$RUNNER_TEMP/upload-logs" "$STREAM_DIRECTORY"
+          if [[ "$DATABASE_MODE" == light ]]; then
+            touch "$STREAM_DIRECTORY/start"
+          fi
+          (
+            status=0
+            mise exec -- pnpm exec node scripts/ci/release-stream.mts stream \
+              --plan "$PLAN_FILE" --receipts "$RECEIPTS" --logs "$RUNNER_TEMP/upload-logs" \
+              --state "$STREAM_DIRECTORY/units.json" --start-file "$STREAM_DIRECTORY/start" \
+              --stop-file "$STREAM_DIRECTORY/stop" --parallelism 8 --timeout-seconds 2700 \
+              >"$STREAM_DIRECTORY/stream.log" 2>&1 || status=$?
+            printf '%s\n' "$status" >"$STREAM_DIRECTORY/exit-code"
+          ) </dev/null >/dev/null 2>&1 &
+          echo "Streaming the uploads in the background (process $!)"
+
       # Both paths: the bootstrap reconciles the mutable gateway trust mapping, which the catalog fingerprint
       # deliberately leaves out (scripts/ci/database-preparation-inputs.json audit).
       - name: Bootstrap every database identity before migrations
@@ -939,31 +976,12 @@ jobs:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: mise exec -- pnpm db:verify
 
-      # Uploads only create immutable release Workers; nothing serves them until publication. The stream runs in
-      # the background while the grants reconcile: it uploads each unit as soon as its build job succeeds (eight
-      # at a time, Cloudflare API rate limits), verifies every retained unit's live Workers against its ledger
-      # receipt, and fails as soon as any expected build fails (barrier B2). Owner secrets reach each upload
-      # only through its environment.
+      # From here every unit uploads as soon as its build output is unpacked. The full path keeps its strict order: no
+      # upload before the sealed chain (or the continuation's verification) succeeded. The light path, which runs no
+      # migration, already allowed the uploads when the stream started.
       - name: Upload every immutable release Worker
-        id: uploads
         if: ${{ !inputs.outbox_only }}
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
-          RAW_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.raw-path }}
-        run: |
-          mkdir -p "$RECEIPTS" "$RUNNER_TEMP/upload-logs" "$STREAM_DIRECTORY"
-          (
-            status=0
-            mise exec -- pnpm exec node scripts/ci/release-stream.mts stream \
-              --plan "$PLAN_FILE" --receipts "$RECEIPTS" --logs "$RUNNER_TEMP/upload-logs" \
-              --state "$STREAM_DIRECTORY/units.json" --stop-file "$STREAM_DIRECTORY/stop" \
-              --parallelism 8 --timeout-seconds 2700 \
-              >"$STREAM_DIRECTORY/stream.log" 2>&1 || status=$?
-            printf '%s\n' "$status" >"$STREAM_DIRECTORY/exit-code"
-          ) </dev/null >/dev/null 2>&1 &
-          echo "Streaming the uploads in the background (process $!)"
+        run: touch "$STREAM_DIRECTORY/start"
 
       # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation. One --apply
       # reads every grant, writes only what is missing and reads the result back.
@@ -999,10 +1017,51 @@ jobs:
           mise exec -- pnpm exec node scripts/postgres/database-state-fingerprint.mts
           --inputs-digest "$DB_INPUTS_DIGEST" --output "$RUNNER_TEMP/database-record.json"
 
-      # A failed step between the stream's start and this join stops it: no waiting unit starts, and the job waits
-      # for the uploads already running, so none is cut off halfway.
+      # Barrier B2 for the outbox host and the storefront, and everything their deploys can prepare before
+      # publication. A host or storefront this run builds must have built: the old host cannot admit the new owner
+      # build markers, so a failed host build stops the release before publication. Kept ones come from the plan.
+      - name: Fetch the outbox host build output
+        timeout-minutes: 30
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          mise exec -- pnpm exec node scripts/ci/release-stream.mts fetch
+          --plan "$PLAN_FILE" --artifact outbox-host --output "$RUNNER_TEMP/outbox-host"
+
+      - name: Fetch the storefront build output
+        if: ${{ !inputs.outbox_only }}
+        timeout-minutes: 30
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          mise exec -- pnpm exec node scripts/ci/release-stream.mts fetch
+          --plan "$PLAN_FILE" --artifact akros-storefront --output "$RUNNER_TEMP/storefront"
+
+      # Zerops rejects a build file over 50 kB, so the deploy reads only the outbox host's setup.
+      - name: Materialize the stage outbox host zerops.yaml
+        working-directory: app
+        env:
+          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.outbox.yaml
+        run: |
+          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --setup outbox-worker-host --output "$ZEROPS_YAML_PATH"
+          wc -c "$ZEROPS_YAML_PATH"
+          echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
+
+      # The host always redeploys after the configuration apply: Zerops resolves native secret references outside the
+      # materialized configuration, so no live digest can prove the running configuration current. This names the
+      # artifact the push deploys and the revision it was built from.
+      - name: Name the outbox host release
+        id: host-release
+        working-directory: app
+        run: mise exec -- pnpm exec node scripts/ci/release-stream.mts host-release --plan "$PLAN_FILE" >>"$GITHUB_OUTPUT"
+
+      # A failed or cancelled step between the stream's start and this join stops it: no waiting unit starts (not even
+      # one already unpacked at the start gate), and the job waits only for the uploads already running, so none is
+      # cut off halfway and a cancelled run does not hold the stage lock until the stream's deadline.
       - name: Stop the unit uploads after a failed release step
-        if: failure() && steps.uploads.outcome == 'success'
+        if: (failure() || cancelled()) && steps.uploads.outcome == 'success'
         run: touch "$STREAM_DIRECTORY/stop"
 
       - name: Wait for every unit upload
@@ -1010,6 +1069,75 @@ jobs:
         timeout-minutes: 45
         working-directory: app
         run: mise exec -- pnpm exec node scripts/ci/release-stream.mts join --directory "$STREAM_DIRECTORY" --timeout-seconds 2640
+
+      - name: Assemble the composition candidate
+        if: ${{ !inputs.outbox_only }}
+        working-directory: app
+        run: |
+          receipts=()
+          while IFS= read -r id; do
+            receipts+=(--receipt-file "$RECEIPTS/$id.json")
+          done < <(jq -r '.modules[].appId' topology/application-release-intent.json)
+          mkdir -p "$(dirname "$CANDIDATE_FILE")"
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts candidate \
+            --intent-file topology/application-release-intent.json "${receipts[@]}" \
+            --shell-receipt-file "$RECEIPTS/shell-super-app.json" \
+            --candidate-file "$CANDIDATE_FILE"
+
+      # Publishing from an active authority drains the old composition itself.
+      - name: Publish the Application Composition
+        if: ${{ !inputs.outbox_only }}
+        timeout-minutes: 20
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$CANDIDATE_FILE"
+
+      # A created or removed host secret reaches the running host through the redeploy that always follows.
+      - name: Provision canonical enrollment recovery host configuration
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
+          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+        run: |
+          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
+          export ALL_RELEASE_SECRETS
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply
+          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify
+
+      # Runs beside the Shell ingress, rebrand and storefront: a deploy-only Zerops push of the host artifact fetched
+      # before publication.
+      - name: Start the outbox worker host deploy
+        id: host-start
+        env:
+          UNITS_JSON: '["outbox-worker-host"]'
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZCLI_PATH: ${{ steps.composition-vpn.outputs.cli-path }}
+          OUTBOX_HOST_ARTIFACT: ${{ runner.temp }}/outbox-host/outbox-host.tar.zst
+          OUTBOX_HOST_DIGEST: ${{ steps.host-release.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/outbox-host-deploy" "$RUNNER_TEMP/zcli-bin"
+          ln -sf -- "$ZCLI_PATH" "$RUNNER_TEMP/zcli-bin/zcli"
+          export PATH="$RUNNER_TEMP/zcli-bin:$PATH"
+          (
+            status=0
+            app/scripts/push-zerops-units.sh >"$RUNNER_TEMP/outbox-host-deploy/stream.log" 2>&1 || status=$?
+            printf '%s\n' "$status" >"$RUNNER_TEMP/outbox-host-deploy/exit-code"
+          ) </dev/null >/dev/null 2>&1 &
+          echo "Deploying the outbox host in the background (process $!)"
+
+      - name: Archive the candidate and receipts
+        if: always() && !inputs.outbox_only
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage-demo-release
+          path: |
+            ${{ runner.temp }}/composition-candidate
+            ${{ runner.temp }}/release-receipts
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload the per-unit upload logs
         if: always() && !inputs.outbox_only
@@ -1026,8 +1154,8 @@ jobs:
           grep -h ' phase \|receipt written' "$RUNNER_TEMP"/upload-logs/*.log | sed -E 's/^.*(release [^ ]+ (phase|receipt))/\1/' | sort || true
           grep -h 'release CLI exit' "$RUNNER_TEMP"/upload-logs/*.log | sort | uniq -c || true
 
-      # Checkpoint: every receipt this run wrote or verified and the database it prepared, even when a later
-      # step fails, so the next run reuses them.
+      # Checkpoint: every receipt this run wrote or verified and the database it prepared, so the next run reuses them.
+      # These always run, even after a failed step, and sit in the tail beside the host deploy, not before publication.
       - name: Record the uploaded units in the release ledger
         id: ledger-units
         if: always() && !inputs.outbox_only && steps.release-secrets.outputs.directory != ''
@@ -1047,133 +1175,6 @@ jobs:
           if-no-files-found: error
           overwrite: true
           retention-days: 90
-
-      # Barrier B2 for the outbox host and the storefront: the uploads already required every unit build, and no
-      # replacement composition is published before the host and storefront this run builds exist too. The old host
-      # cannot admit the new owner build markers, so a failed host build must stop the release here.
-      - name: Wait for the outbox host and storefront builds
-        if: ${{ !inputs.outbox_only && (needs.plan.outputs.host_mode == 'build' || needs.plan.outputs.storefront_mode == 'build') }}
-        timeout-minutes: 30
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HOST_MODE: ${{ needs.plan.outputs.host_mode }}
-          STOREFRONT_MODE: ${{ needs.plan.outputs.storefront_mode }}
-        run: |
-          jobs=()
-          if [[ "$HOST_MODE" == build ]]; then
-            jobs+=(--job 'Build the outbox host')
-          fi
-          if [[ "$STOREFRONT_MODE" == build ]]; then
-            jobs+=(--job 'Build akros-storefront')
-          fi
-          mise exec -- pnpm exec node scripts/ci/release-stream.mts await "${jobs[@]}" --timeout-seconds 1740
-
-      - name: Assemble the composition candidate
-        if: ${{ !inputs.outbox_only }}
-        working-directory: app
-        run: |
-          receipts=()
-          while IFS= read -r id; do
-            receipts+=(--receipt-file "$RECEIPTS/$id.json")
-          done < <(jq -r '.modules[].appId' topology/application-release-intent.json)
-          mkdir -p "$(dirname "$CANDIDATE_FILE")"
-          mise exec -- pnpm exec node scripts/immutable-application-release.mts candidate \
-            --intent-file topology/application-release-intent.json "${receipts[@]}" \
-            --shell-receipt-file "$RECEIPTS/shell-super-app.json" \
-            --candidate-file "$CANDIDATE_FILE"
-
-      - name: Archive the candidate and receipts
-        if: always() && !inputs.outbox_only
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: stage-demo-release
-          path: |
-            ${{ runner.temp }}/composition-candidate
-            ${{ runner.temp }}/release-receipts
-          if-no-files-found: ignore
-          retention-days: 14
-
-      # Publishing from an active authority drains the old composition itself.
-      - name: Publish the Application Composition
-        if: ${{ !inputs.outbox_only }}
-        timeout-minutes: 20
-        working-directory: app
-        env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$CANDIDATE_FILE"
-
-      # Zerops rejects a build file over 50 kB, so the deploy reads only the outbox host's setup.
-      - name: Materialize the stage outbox host zerops.yaml
-        working-directory: app
-        env:
-          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.outbox.yaml
-        run: |
-          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --setup outbox-worker-host --output "$ZEROPS_YAML_PATH"
-          wc -c "$ZEROPS_YAML_PATH"
-          echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
-
-      - name: Provision canonical enrollment recovery host configuration
-        id: recovery-config
-        timeout-minutes: 5
-        working-directory: app
-        env:
-          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
-          ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
-        run: |
-          ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
-          export ALL_RELEASE_SECRETS
-          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts apply | tee "$RUNNER_TEMP/recovery-apply.json"
-          # A created or removed host secret reaches the running host only through a redeploy.
-          printf 'changed=%s\n' "$(jq -R 'fromjson? | select(type == "object" and has("changed")) | .changed' "$RUNNER_TEMP/recovery-apply.json" | tail -1)" >>"$GITHUB_OUTPUT"
-          mise exec -- pnpm exec node scripts/ops/enrollment-recovery-host-config.mts verify
-
-      # The host redeploys only when its inputs changed, its /status does not report this artifact digest
-      # (unreachable included), or its recovery configuration changed. An outbox-only retry always deploys.
-      - name: Decide whether the outbox host deploys
-        id: host-deploy
-        working-directory: app
-        env:
-          OUTBOX_ONLY: ${{ inputs.outbox_only }}
-          RECOVERY_CHANGED: ${{ steps.recovery-config.outputs.changed }}
-          ZEROPS_OUTBOX_WORKER_HOST_HOSTNAME: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_HOSTNAME }}
-        run: |
-          live=""
-          if digest="$(jq -er '.host.digest | select(type == "string")' "$PLAN_FILE")"; then
-            live="$(mise exec -- pnpm exec node scripts/ci/await-outbox-admission.mts --host-digest "$digest" --probe |
-              jq -R -r 'fromjson? | select(type == "object" and has("artifactDigest")) | .artifactDigest // ""' | tail -1)" || live=""
-          fi
-          mise exec -- pnpm exec node scripts/ci/release-stream.mts host-decision \
-            --plan "$PLAN_FILE" --live-digest "$live" \
-            --recovery-changed "$RECOVERY_CHANGED" --force "$OUTBOX_ONLY" >>"$GITHUB_OUTPUT"
-
-      # Runs beside the Shell ingress, rebrand and storefront: fetch the prebuilt host artifact (its build job already
-      # passed barrier B2 when this run builds it), then a deploy-only Zerops push of it.
-      - name: Start the outbox worker host deploy
-        id: host-start
-        if: steps.host-deploy.outputs.deploy == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UNITS_JSON: '["outbox-worker-host"]'
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZCLI_PATH: ${{ steps.composition-vpn.outputs.cli-path }}
-          OUTBOX_HOST_ARTIFACT: ${{ runner.temp }}/outbox-host/outbox-host.tar.zst
-          OUTBOX_HOST_DIGEST: ${{ steps.host-deploy.outputs.digest }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/outbox-host-deploy" "$RUNNER_TEMP/zcli-bin"
-          ln -sf -- "$ZCLI_PATH" "$RUNNER_TEMP/zcli-bin/zcli"
-          export PATH="$RUNNER_TEMP/zcli-bin:$PATH"
-          (
-            status=0
-            {
-              (cd app && mise exec -- pnpm exec node scripts/ci/release-stream.mts fetch \
-                --plan "$PLAN_FILE" --artifact outbox-host --output "$(dirname "$OUTBOX_HOST_ARTIFACT")") &&
-                app/scripts/push-zerops-units.sh
-            } >"$RUNNER_TEMP/outbox-host-deploy/stream.log" 2>&1 || status=$?
-            printf '%s\n' "$status" >"$RUNNER_TEMP/outbox-host-deploy/exit-code"
-          ) </dev/null >/dev/null 2>&1 &
-          echo "Deploying the outbox host in the background (process $!)"
 
       - name: Activate the Shell ingress
         if: ${{ !inputs.outbox_only }}
@@ -1203,16 +1204,6 @@ jobs:
           mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL"
           --idempotency-key "${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-najempark-v1"
 
-      - name: Fetch the storefront build output
-        if: ${{ !inputs.outbox_only }}
-        timeout-minutes: 30
-        working-directory: app
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          mise exec -- pnpm exec node scripts/ci/release-stream.mts fetch
-          --plan "$PLAN_FILE" --artifact akros-storefront --output "$RUNNER_TEMP/storefront"
-
       - name: Deploy the AKROS storefront
         if: ${{ !inputs.outbox_only }}
         timeout-minutes: 15
@@ -1236,13 +1227,13 @@ jobs:
           --directory "$RUNNER_TEMP/outbox-host-deploy" --timeout-seconds 1140
 
       # Every expected owner must report this composition revision admitted and a completed cycle after the
-      # publication on the host's internal /status, whether or not the host was redeployed.
+      # publication on the redeployed host's internal /status.
       - name: Require the new host to admit the published composition
         timeout-minutes: 5
         working-directory: app
         env:
           ZEROPS_OUTBOX_WORKER_HOST_HOSTNAME: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_HOSTNAME }}
-          HOST_DIGEST: ${{ steps.host-deploy.outputs.digest }}
+          HOST_DIGEST: ${{ steps.host-release.outputs.digest }}
         run: |
           revision="$(curl -fsS --max-time 30 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL" \
             | jq -er '.composition.revision | select(type == "string" and test("^[a-f0-9]{64}$"))')"
@@ -1250,11 +1241,11 @@ jobs:
             --revision "$revision" --host-digest "$HOST_DIGEST" --timeout 180
 
       - name: Record the outbox host in the release ledger
-        if: ${{ !inputs.outbox_only && steps.host-deploy.outputs.deploy == 'true' && steps.host-deploy.outputs.source-revision != '' }}
+        if: ${{ !inputs.outbox_only && steps.host-release.outputs.source-revision != '' }}
         working-directory: app
         env:
-          HOST_DIGEST: ${{ steps.host-deploy.outputs.digest }}
-          HOST_SOURCE_REVISION: ${{ steps.host-deploy.outputs.source-revision }}
+          HOST_DIGEST: ${{ steps.host-release.outputs.digest }}
+          HOST_SOURCE_REVISION: ${{ steps.host-release.outputs.source-revision }}
         run: >-
           mise exec -- node scripts/ci/release-ledger.mts record-host
           --ledger "$LEDGER_DIRECTORY/stage-release-ledger.json"

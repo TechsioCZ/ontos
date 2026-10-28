@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -505,7 +506,7 @@ const receiptPlan = (unitId: string, digest: string, sourceRevision: string) => 
     assetsOrigin: `https://${assetsScriptName}.${SUBDOMAIN}.workers.dev/`,
     assetsScriptName,
     backendScriptName: `ontos-backend-${marker}`,
-    buildMarker: 'e'.repeat(64),
+    buildMarker: createHash('sha256').update(`${unitId}:${digest}:${sourceRevision}`).digest('hex'),
     sourceRevision,
   };
 };
@@ -828,6 +829,7 @@ it.live(
         const shell = rolledBack.units.find((unit) => unit.id === SHELL);
         expect(shell).toMatchObject({ artifact: { id: shellArtifactA?.id, sourceRevision: REV_A }, mode: 'retain' });
         expect(shell?.receipt?.plan.sourceRevision).toBe(REV_A);
+        expect(shell?.receipt?.plan.buildMarker).not.toBe(shellReceipt(shellDigest, REV_B).plan.buildMarker);
         expect(rolledBack.units.find((unit) => unit.id === 'alpha')?.receipt?.plan.sourceRevision).toBe(REV_A);
         // The ledger carries forward the receipt the composition keeps.
         expect(rolledBack.ledger.units[shellDigest]?.sourceRevision).toBe(REV_A);

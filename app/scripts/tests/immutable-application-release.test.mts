@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import nodePath from 'node:path';
 import nodeProcess from 'node:process';
 
@@ -9,6 +10,7 @@ import {
 import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import {
   Array as EffectArray,
+  Config,
   ConfigProvider,
   DateTime,
   Deferred,
@@ -20,6 +22,7 @@ import {
   Option,
   Order,
   Redacted,
+  Result,
   Schedule,
   Schema,
 } from 'effect';
@@ -28,15 +31,18 @@ import { expect, it } from 'effect-rstest';
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 import type { HttpClientRequest } from 'effect/http';
 
+import { computeSecretFingerprints } from '../ci/deploy-plan.mts';
 import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
   ImmutableUploadRetrySchedule,
+  STALE_RELEASE_SECRETS,
   deployImmutableApplicationRelease,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
   readReleaseFiles,
+  releaseSecretFingerprintAnnotation,
   requirePlannedUnitInputs,
   resolveCleanImmutableApplicationSourceRevision,
   validateImmutableApplicationReleaseArtifacts,
@@ -92,6 +98,20 @@ const OWNER_SECRET_VALUE = 'owned-release-test-binding';
 const ASSET_READBACK_FAILURE = 'immutable release asset readback failed or exceeded its timeout';
 const ASSETS_ROUTING_FAILURE = 'immutable assets routing completion failed or exceeded its timeout';
 const READBACK_DEADLINE = '30 seconds';
+const FINGERPRINT_KEY = 'release-fingerprint-test-key';
+const NODE_MODULE_INPUT = '--input-type=module';
+const INPUTS_FILE_NAME = 'inputs.json';
+const PLAN_DIGEST_VERSION = 'ontos-deploy-plan-v1';
+const NO_BUNDLE_FLAG = '--no-bundle';
+const PLANNED_INPUTS_FAILURE = 'planned input verification failed';
+const RETAINED_SECRET_FINGERPRINT = 'f'.repeat(64);
+/** The deploy plan's fingerprint of `ownerSecrets` stored as the unit's raw release secrets. */
+const secretFingerprintOf = (ownerSecrets: Readonly<Record<string, string>>) =>
+  computeSecretFingerprints({
+    key: FINGERPRINT_KEY,
+    rawSecrets: JSON.stringify({ [APP_ID]: ownerSecrets }),
+    unitIds: [APP_ID],
+  })[APP_ID] ?? '';
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
@@ -251,6 +271,7 @@ const receiptFor = (appId = APP_ID) =>
       assetsVersionId: ASSETS_VERSION_ID,
       backend: backendFor(plan),
       plan,
+      secretFingerprint: RETAINED_SECRET_FINGERPRINT,
     };
   });
 
@@ -376,7 +397,7 @@ it.effect('rejects dirty, untracked, invalid, and unavailable Git source evidenc
 it.effect('executes source checks without inherited process environment selectors', () =>
   runCommand({
     args: [
-      '--input-type=module',
+      NODE_MODULE_INPUT,
       '-e',
       'process.stdout.write(JSON.stringify({ inheritedPath: Boolean(process.env.PATH), explicit: process.env.ONTOS_TEST_RELEASE_SENTINEL }));',
     ],
@@ -412,7 +433,7 @@ for (const [label, stderr, transient] of [
 ] as const) {
   it.effect(`classifies a provider ${label} as ${transient ? 'transient' : 'final'}`, () =>
     runCommand({
-      args: ['--input-type=module', '-e', `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1);`],
+      args: [NODE_MODULE_INPUT, '-e', `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1);`],
       classifyTransientProviderFailure: true,
       command: nodeProcess.execPath,
     }).pipe(
@@ -643,6 +664,7 @@ it.effect('supports a complete API-only release without inventing a federation m
           assetsVersionId: ASSETS_VERSION_ID,
           backend: backendFor(plan),
           plan,
+          secretFingerprint: RETAINED_SECRET_FINGERPRINT,
         },
       ],
       { modules: [{ appId: plan.appId }] },
@@ -1160,6 +1182,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
     readonly existingRelease?: boolean;
+    /** The version message an existing backend was uploaded with; defaults to this release's fingerprint. */
+    readonly existingVersionMessage?: string;
+    /** The release fingerprint key; `null` leaves it unset. */
+    readonly fingerprintKey?: string | null;
     readonly initialAssetNotFound?: boolean;
     readonly initialSource?: string;
     readonly noBundle?: boolean;
@@ -1188,7 +1214,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const output = nodePath.join(appDirectory, '.output');
   const publicDirectory = nodePath.join(output, 'public');
   const plan = yield* planFor();
-  const inputsFile = nodePath.join(appDirectory, 'inputs.json');
+  const inputsFile = nodePath.join(appDirectory, INPUTS_FILE_NAME);
   if (options.plannedDigest !== undefined) {
     yield* fileSystem.writeFileString(
       inputsFile,
@@ -1197,7 +1223,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         lines: [],
         sourceRevision: plan.sourceRevision,
         unitId: plan.appId,
-        version: 'ontos-deploy-plan-v1',
+        version: PLAN_DIGEST_VERSION,
       }),
     );
   }
@@ -1267,6 +1293,17 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const publishedInventories: (readonly ReleaseFile[])[] = [];
   const requests: string[] = [];
   const providerWrites: { readonly method: string; readonly url: string }[] = [];
+  const rawSecrets = JSON.stringify({ [APP_ID]: options.ownerSecrets ?? {} });
+  const fingerprintKey = options.fingerprintKey === undefined ? FINGERPRINT_KEY : options.fingerprintKey;
+  const secretFingerprint =
+    fingerprintKey === null
+      ? 'unavailable'
+      : (computeSecretFingerprints({ key: fingerprintKey, rawSecrets, unitIds: [APP_ID] })[APP_ID] ?? '');
+  // The provider keeps the version message of the backend upload, or of the existing release's earlier upload.
+  let backendVersionMessage =
+    options.existingRelease === true
+      ? (options.existingVersionMessage ?? releaseSecretFingerprintAnnotation(secretFingerprint))
+      : undefined;
   let canceledAssetBodies = 0;
   let checkedSource = 0;
   let absentChecks = 0;
@@ -1284,6 +1321,21 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     const outcome = options.backendUploadFailures?.[backendUploads] ?? 'success';
     backendUploads += 1;
     return outcome;
+  };
+  // A completed backend upload is the version the provider then serves, with the message it was uploaded with.
+  const recordBackendVersionMessage = (
+    command: OpsCommand,
+    capturedConfig: Readonly<Record<string, Schema.Json>>,
+    outcome: string,
+  ) => {
+    if (
+      outcome === 'success' &&
+      capturedConfig.name === plan.backendScriptName &&
+      !command.args.includes('--dry-run')
+    ) {
+      const message = command.args.indexOf('--message');
+      backendVersionMessage = message === -1 ? undefined : command.args[message + 1];
+    }
   };
   const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) => {
     if (command.args.includes('--dry-run')) {
@@ -1364,6 +1416,18 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
                   : { 'cf-entrypoint': options.deployedEntrypoint ?? capturedMain },
             });
           }),
+      ),
+      Match.when(
+        (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/versions/${BACKEND_VERSION_ID}`),
+        () =>
+          Effect.sync(() =>
+            Response.json({
+              result: {
+                annotations: backendVersionMessage === undefined ? {} : { 'workers/message': backendVersionMessage },
+              },
+              success: true,
+            }),
+          ),
       ),
       Match.when(
         (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/deployments`),
@@ -1615,6 +1679,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
               }
             }
             const uploadOutcome = backendUploadOutcome(command, capturedConfig);
+            recordBackendVersionMessage(command, capturedConfig, uploadOutcome);
             if (uploadOutcome !== 'success') {
               return yield* new OpsCommandError({
                 command: [command.command, ...command.args].join(' '),
@@ -1642,18 +1707,21 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             ),
           ),
   });
+  const configuration = new Map([
+    ['ALL_RELEASE_SECRETS', rawSecrets],
+    ['CLOUDFLARE_ACCOUNT_ID', 'a'.repeat(32)],
+    ['CLOUDFLARE_API_TOKEN', 'immutable-release-test-token'],
+    ['ONTOS_IMMUTABLE_RELEASE_SECRETS', JSON.stringify(options.ownerSecrets ?? {})],
+  ]);
+  if (fingerprintKey !== null) {
+    configuration.set('RELEASE_FINGERPRINT_KEY', fingerprintKey);
+  }
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
     Layer.succeed(ImmutableUploadRetrySchedule, Schedule.forever),
     shellLayer,
     releaseLockDatabase(timeline),
-    ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
-        CLOUDFLARE_API_TOKEN: 'immutable-release-test-token',
-        ONTOS_IMMUTABLE_RELEASE_SECRETS: JSON.stringify(options.ownerSecrets ?? {}),
-      }),
-    ),
+    ConfigProvider.layer(ConfigProvider.fromUnknown(Object.fromEntries(configuration))),
   );
   return {
     assetBodyEvents,
@@ -1682,6 +1750,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     recoveryWorkerPath,
     recoveryWorkerReadStarted,
     requests,
+    secretFingerprint,
     timeline,
   };
 });
@@ -1747,8 +1816,9 @@ it.effect('rejects retained content, entrypoint, and deployment mismatches witho
         const deployment = yield* prepareDeployment({ existingRelease: true, ...mismatch });
         const failure = yield* deployment.deploy.pipe(Effect.flip);
         expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-        expect(deployment.commands).toHaveLength(1);
-        expect(deployment.commands[0]?.args).toContain('--dry-run');
+        // A partial backend deployment already fails the secret check, before even the packaging dry run.
+        expect(deployment.commands.length).toBeLessThanOrEqual(1);
+        expect(deployment.commands.every(({ args }) => args.includes('--dry-run'))).toBe(true);
         expect(deployment.capturedSecrets).toEqual([]);
         expect(deployment.providerWrites).toEqual([]);
       }
@@ -1770,7 +1840,7 @@ it.effect('never deletes a previous release when rerun packaging fails transient
 );
 
 const backendUploads = (deployment: { readonly timeline: readonly string[] }) =>
-  deployment.timeline.filter((entry) => entry.startsWith('exec wrangler deploy') && entry.includes('--no-bundle'));
+  deployment.timeline.filter((entry) => entry.startsWith('exec wrangler deploy') && entry.includes(NO_BUNDLE_FLAG));
 
 it.effect('retries a transient provider upload failure under the same identity after removing its half release', () =>
   Effect.scoped(
@@ -1924,7 +1994,7 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(receipt.artifacts.workerSha256).toMatch(/^[a-f\d]{64}$/u);
       expect(fixture.commands).toHaveLength(3);
       expect(fixture.commands[0]?.args).toContain('--dry-run');
-      expect(fixture.commands[1]?.args).toContain('--no-bundle');
+      expect(fixture.commands[1]?.args).toContain(NO_BUNDLE_FLAG);
       expect(fixture.commands.every(({ args }) => !args.includes('--dispatch-namespace'))).toBe(true);
       expect(fixture.capturedConfigs[0]?.workers_dev).toBe(true);
       expect(fixture.capturedConfigs[1]?.workers_dev).toBe(true);
@@ -2661,44 +2731,84 @@ it.effect('requires one backend provider version serving every request before is
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('verifies retained receipts against both active versions without writing to the provider', () =>
+/** A provider whose backend version was uploaded with `versionMessage`, for the retained receipt checks. */
+const retainedProvider = (
+  receipt: { readonly plan: { readonly backendScriptName: string } },
+  requests: { readonly method: string; readonly url: string }[],
+  versionMessage: string,
+) =>
+  HttpClient.make((request, destination) => {
+    requests.push({ method: request.method, url: destination.href });
+    const versionPath = `/workers/scripts/${receipt.plan.backendScriptName}/versions/${BACKEND_VERSION_ID}`;
+    const result = Match.value(destination.pathname).pipe(
+      Match.when(
+        (pathname) => pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH),
+        () => ({ subdomain: WORKERS_SUBDOMAIN }),
+      ),
+      Match.when(
+        (pathname) => pathname.endsWith(versionPath),
+        () => ({ annotations: { 'workers/message': versionMessage } }),
+      ),
+      Match.orElse(() => ({
+        deployments: [
+          {
+            versions: [
+              {
+                percentage: 100,
+                version_id: destination.href.includes(receipt.plan.backendScriptName)
+                  ? BACKEND_VERSION_ID
+                  : ASSETS_VERSION_ID,
+              },
+            ],
+          },
+        ],
+      })),
+    );
+    return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ result, success: true })));
+  });
+
+const retainedConfig = ConfigProvider.layer(
+  ConfigProvider.fromUnknown({ CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN }),
+);
+
+it.effect('verifies retained receipts against both active versions and their secrets without writing', () =>
   Effect.gen(function* retainedReceiptVerification() {
     const receipt = yield* receiptFor();
     const requests: { readonly method: string; readonly url: string }[] = [];
-    const client = HttpClient.make((request, destination) => {
-      requests.push({ method: request.method, url: destination.href });
-      const result = destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH)
-        ? { subdomain: WORKERS_SUBDOMAIN }
-        : {
-            deployments: [
-              {
-                versions: [
-                  {
-                    percentage: 100,
-                    version_id: destination.href.includes(receipt.plan.backendScriptName)
-                      ? BACKEND_VERSION_ID
-                      : ASSETS_VERSION_ID,
-                  },
-                ],
-              },
-            ],
-          };
-      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ result, success: true })));
-    });
     yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
-            CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
-          }),
-        ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        retainedProvider(receipt, requests, releaseSecretFingerprintAnnotation(RETAINED_SECRET_FINGERPRINT)),
       ),
+      Effect.provide(retainedConfig),
     );
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     expect(requests.every(({ method }) => method === 'GET')).toBe(true);
     expect(requests.filter(({ url }) => url.endsWith('/deployments'))).toHaveLength(2);
+    expect(requests.at(-1)?.url).toContain(`/versions/${BACKEND_VERSION_ID}`);
+  }),
+);
+
+it.effect('rejects a retained receipt whose backend version holds other or unrecorded release secrets', () =>
+  Effect.gen(function* retainedReceiptSecrets() {
+    const receipt = yield* receiptFor();
+    for (const [secretFingerprint, versionMessage] of [
+      [RETAINED_SECRET_FINGERPRINT, releaseSecretFingerprintAnnotation('e'.repeat(64))],
+      [RETAINED_SECRET_FINGERPRINT, 'deployed by hand'],
+      ['unavailable', releaseSecretFingerprintAnnotation('unavailable')],
+    ] as const) {
+      const failure = yield* verifyRetainedImmutableApplicationRelease({ ...receipt, secretFingerprint }).pipe(
+        Effect.provideService(HttpClient.HttpClient, retainedProvider(receipt, [], versionMessage)),
+        Effect.provide(retainedConfig),
+        Effect.flip,
+      );
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        secretFingerprint === 'unavailable'
+          ? 'a retained receipt must record the fingerprint of the release secrets its Worker holds'
+          : STALE_RELEASE_SECRETS,
+      );
+    }
   }),
 );
 
@@ -2807,7 +2917,7 @@ for (const scenario of [
       Effect.gen(function* oldArtifactInputs() {
         const fileSystem = yield* FileSystem.FileSystem;
         const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-planned-unit-inputs-' });
-        const inputsFile = nodePath.join(directory, 'inputs.json');
+        const inputsFile = nodePath.join(directory, INPUTS_FILE_NAME);
         const digest = 'd'.repeat(64);
         const plan = yield* planFor();
         const artifactName = `edge-unit-${APP_ID}-${scenario === 'artifact-name-mismatch' ? 'e'.repeat(64) : digest}`;
@@ -2821,13 +2931,13 @@ for (const scenario of [
                   lines: ['blob app/verticals/party-registry/src/index.ts recorded-object'],
                   sourceRevision: scenario === 'source-mismatch' ? 'b'.repeat(40) : SOURCE_REVISION,
                   unitId: scenario === 'unit-mismatch' ? 'tax' : APP_ID,
-                  version: scenario === 'version-mismatch' ? 'unknown-v2' : 'ontos-deploy-plan-v1',
+                  version: scenario === 'version-mismatch' ? 'unknown-v2' : PLAN_DIGEST_VERSION,
                 }),
           );
         }
         const commands: OpsCommand[] = [];
         let computed = false;
-        const verification = requirePlannedUnitInputs(directory, plan, 'planned input verification failed', {
+        const verification = requirePlannedUnitInputs(directory, plan, PLANNED_INPUTS_FAILURE, {
           artifactName,
           inputsFile,
         }).pipe(
@@ -2846,8 +2956,15 @@ for (const scenario of [
               }
               computed = true;
               expect(command.command).toBe('node');
-              expect(command.args.slice(1)).toEqual([UNIT_DIGEST_PHASE, '--unit', APP_ID]);
+              expect(command.args.slice(1)).toEqual([
+                UNIT_DIGEST_PHASE,
+                '--unit',
+                APP_ID,
+                '--secret-fingerprint',
+                'unavailable',
+              ]);
               expect(command.args[0]?.endsWith('/ci/deploy-plan.mts')).toBe(true);
+              expect(command.extendEnv).toBe(false);
               return scenario === 'planner-failure'
                 ? Effect.fail(new OpsCommandError({ command: 'node', message: 'digest computation unavailable' }))
                 : Effect.succeed(`${scenario === 'digest-mismatch' ? 'e'.repeat(64) : digest}\n`);
@@ -2876,6 +2993,171 @@ it.effect('uploads an old-revision artifact without rewriting its identity when 
       expect(receipt.plan.sourceRevision).toBe(SOURCE_REVISION);
       expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
       expect(fixture.timeline.filter((phase) => phase === UNIT_DIGEST_PHASE)).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails closed when a same-revision secret rotation finds the Workers uploaded with the old secrets', () =>
+  Effect.scoped(
+    Effect.gen(function* sameRevisionSecretRotation() {
+      const original = { PRIVATE_KEY: 'release-secret-before-rotation' };
+      const rotated = { PRIVATE_KEY: 'release-secret-after-rotation' };
+      // The first release uploads both Workers with the original secrets and annotates the backend version.
+      const first = yield* prepareDeployment({ ownerSecrets: original });
+      const uploaded = yield* first.deploy;
+      expect(uploaded.secretFingerprint).toBe(secretFingerprintOf(original));
+      expect(uploaded.secretFingerprint).not.toBe(secretFingerprintOf(rotated));
+      const upload = first.commands.find(({ args }) => args.includes(NO_BUNDLE_FLAG));
+      const annotation = releaseSecretFingerprintAnnotation(secretFingerprintOf(original));
+      expect(upload?.args[upload.args.indexOf('--message') + 1]).toBe(annotation);
+
+      // A failed-job rerun with the same secrets reuses them: same identity, same secrets.
+      const rerun = yield* prepareDeployment({
+        existingRelease: true,
+        existingVersionMessage: annotation,
+        ownerSecrets: original,
+      });
+      expect((yield* rerun.deploy).secretFingerprint).toBe(uploaded.secretFingerprint);
+      expect(rerun.capturedSecrets).toEqual([]);
+
+      // The same revision after a rotation finds the same Worker names, which still hold the original secrets.
+      const rotation = yield* prepareDeployment({
+        existingRelease: true,
+        existingVersionMessage: annotation,
+        ownerSecrets: rotated,
+      });
+      const failure = yield* rotation.deploy.pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(STALE_RELEASE_SECRETS);
+      // No receipt, no packaging, no upload, no secret write and no provider mutation.
+      expect(rotation.commands).toEqual([]);
+      expect(rotation.capturedSecrets).toEqual([]);
+      expect(rotation.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('reuses an existing release only when the fingerprint key proves the secrets it holds', () =>
+  Effect.scoped(
+    Effect.gen(function* unprovenReuse() {
+      for (const options of [
+        { fingerprintKey: null },
+        { existingVersionMessage: 'deployed without a recorded secret fingerprint' },
+      ] as const) {
+        const deployment = yield* prepareDeployment({
+          existingRelease: true,
+          ownerSecrets: { PRIVATE_KEY: 'test-only' },
+          ...options,
+        });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(deployment.commands).toEqual([]);
+        expect(deployment.providerWrites).toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('annotates a new backend upload with an unavailable fingerprint and records it in the receipt', () =>
+  Effect.scoped(
+    Effect.gen(function* unavailableNewUpload() {
+      const deployment = yield* prepareDeployment({ fingerprintKey: null, ownerSecrets: { PRIVATE_KEY: 'test-only' } });
+      const receipt = yield* deployment.deploy;
+      expect(receipt.secretFingerprint).toBe('unavailable');
+      const upload = deployment.commands.find(({ args }) => args.includes(NO_BUNDLE_FLAG));
+      expect(upload?.args).toContain(releaseSecretFingerprintAnnotation('unavailable'));
+      expect(deployment.capturedSecrets).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const revisionDigest = (revision: string | undefined) =>
+  createHash('sha256')
+    .update(revision ?? '')
+    .digest('hex');
+
+it.effect('recomputes the digest of the clean checkout even when inherited Git selectors name another one', () =>
+  Effect.scoped(
+    Effect.gen(function* inheritedGitSelectors() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const scratch = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-digest-git-selectors-' });
+      const live = OpsShellLive.pipe(Layer.provide(NodeServices.layer));
+      const searchPath = yield* Config.String('PATH');
+      const git = (cwd: string, args: readonly string[]) =>
+        runCommand({
+          args: ['-c', 'user.name=release-test', '-c', 'user.email=release-test@example.com', ...args],
+          command: GIT_COMMAND,
+          cwd,
+          env: { PATH: Redacted.make(searchPath) },
+          extendEnv: false,
+        }).pipe(Effect.provide(live));
+      // The clean checkout being released, and an older one whose inputs match the downloaded artifact.
+      const [checkout, older] = [nodePath.join(scratch, 'checkout'), nodePath.join(scratch, 'older')];
+      const revisions: string[] = [];
+      for (const [directory, message] of [
+        [checkout, 'released'],
+        [older, 'older'],
+      ] as const) {
+        yield* fileSystem.makeDirectory(directory);
+        yield* git(directory, ['init', '-q']);
+        yield* git(directory, ['commit', '-q', '--allow-empty', '-m', message]);
+        revisions.push((yield* git(directory, ['rev-parse', 'HEAD'])).trim());
+      }
+      // Stands in for the planner: hashes the HEAD its own Git commands resolve, as unit-closure's git reads do.
+      const probe =
+        "import { execFileSync } from 'node:child_process'; import { createHash } from 'node:crypto';" +
+        "process.stdout.write(createHash('sha256').update(execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).digest('hex'));";
+      // A hook-style environment of the release process: every command that inherits it gets these selectors,
+      // which point every Git command at the older checkout.
+      const selectors = {
+        GIT_DIR: Redacted.make(nodePath.join(older, '.git')),
+        GIT_WORK_TREE: Redacted.make(older),
+      };
+      const shell = Layer.effect(
+        OpsShell,
+        Effect.gen(function* liveShellWithProbe() {
+          const real = yield* OpsShell;
+          const inheriting = (command: OpsCommand): OpsCommand =>
+            command.extendEnv === false ? command : { ...command, env: { ...selectors, ...command.env } };
+          return {
+            run: (command: OpsCommand) =>
+              real.run(
+                inheriting(
+                  command.command === 'node'
+                    ? { ...command, args: [NODE_MODULE_INPUT, '-e', probe], command: nodeProcess.execPath }
+                    : command,
+                ),
+              ),
+          };
+        }),
+      ).pipe(Layer.provide(live));
+      const plan = yield* planFor();
+      const inputsFile = nodePath.join(scratch, INPUTS_FILE_NAME);
+      const verify = (digest: string) =>
+        Effect.gen(function* verifyArtifactInputs() {
+          yield* fileSystem.writeFileString(
+            inputsFile,
+            JSON.stringify({
+              digest,
+              lines: [],
+              sourceRevision: plan.sourceRevision,
+              unitId: APP_ID,
+              version: PLAN_DIGEST_VERSION,
+            }),
+          );
+          return yield* requirePlannedUnitInputs(checkout, plan, PLANNED_INPUTS_FAILURE, {
+            artifactName: `edge-unit-${APP_ID}-${digest}`,
+            inputsFile,
+          }).pipe(
+            Effect.provide(shell),
+            Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ PATH: searchPath }))),
+          );
+        });
+      const olderDigest = yield* verify(revisionDigest(revisions[1])).pipe(Effect.result);
+      expect(Result.isFailure(olderDigest) ? olderDigest.failure.message : 'the older checkout passed').toBe(
+        PLANNED_INPUTS_FAILURE,
+      );
+      yield* verify(revisionDigest(revisions[0]));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

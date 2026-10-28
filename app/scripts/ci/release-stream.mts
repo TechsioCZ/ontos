@@ -1,6 +1,7 @@
 // The stage demo release job's runner-side orchestration. It waits for this run's jobs (barrier B1: the release
 // script tests; barrier B2: every expected build), streams each finished unit's build output into its immutable
-// upload as soon as that unit's build succeeds, and writes the stage release ledger at its checkpoints.
+// upload as soon as that unit's build succeeds and the release job allows uploads (after the sealed migrations, or at
+// once on the database light path), and writes the stage release ledger at its checkpoints.
 // GitHub is read only through `gh api` and every child process goes through the OpsShell seam, so the tests put
 // `gh` and `pnpm` shims on the child PATH. Owner secrets reach an upload only through its redacted environment.
 import path from 'node:path';
@@ -20,22 +21,28 @@ import {
   Option,
   Redacted,
   Ref,
+  Result,
   Schema,
   Semaphore,
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
+import { FetchHttpClient } from 'effect/http';
 
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import type { OpsShellService, SecretValues } from '../ops/ops-shell.mts';
-import { hostArtifactName, storefrontArtifactName, unitArtifactName } from './deploy-plan.mts';
+import { DIGEST_VERSION, hostArtifactName, storefrontArtifactName, unitArtifactName } from './deploy-plan.mts';
+import { expectedHostOwners, publishedHostComposition } from './await-outbox-admission.mts';
 import {
   createGitHubClient,
   parseLedger,
   readZipEntries,
+  readTrustedLedgers,
+  unitRecordHistory,
   recordDatabase,
   recordUnitReceipt,
   serializeLedger,
 } from './release-ledger.mts';
+import type { ReleaseLedger, TrustedArtifact } from './release-ledger.mts';
 
 export class ReleaseStreamError extends Schema.TaggedError<ReleaseStreamError>()('ReleaseStreamError', {
   message: Schema.String,
@@ -350,6 +357,11 @@ export interface StreamOptions {
   readonly receipts: string;
   /** The prepared owner-keyed release secret bundle. */
   readonly secretsFile: Redacted.Redacted;
+  /**
+   * Created by the release job once the database is ready for uploads: at once on the light path, after the sealed
+   * migrations otherwise. Units are fetched, unpacked and retained units verified before it, but nothing uploads.
+   */
+  readonly startFile: string;
   readonly stateFile: string;
   /** Created by the release job when a later step failed: no unit starts after it appears. */
   readonly stopFile: string;
@@ -363,6 +375,12 @@ interface StreamRun {
   readonly stateLock: Semaphore.Semaphore;
   readonly states: Ref.Ref<ReadonlyMap<string, UnitState>>;
   readonly stopped: Ref.Ref<boolean>;
+  /** Bounds the units fetching, verifying or uploading at once; a unit waiting for the start file holds none. */
+  readonly uploads: Semaphore.Semaphore;
+  /**
+   * Settled by the start file (uploads may begin), or failed by the stop file, the deadline or the first failed unit.
+   */
+  readonly uploadsAllowed: JobGate;
 }
 
 const setStatus = (run: StreamRun, id: string, status: UnitState['status']) =>
@@ -382,7 +400,10 @@ const unitLog = (run: StreamRun, unit: PlannedUnit) => path.join(run.options.log
 const unitReleaseDirectory = (unitId: string) => `.codex/reports/releases/${unitId}`;
 const unitInputsFile = (unitId: string) => `${unitReleaseDirectory(unitId)}/inputs.json`;
 
-/** Marks the unit failed and stops new work: units still waiting for their build never start. */
+/**
+ * Marks the unit failed and stops new work: units still waiting for their build never start, and units already
+ * unpacked but still waiting for the start file never upload.
+ */
 const failUnit = (run: StreamRun, unit: PlannedUnit, message: string) =>
   Effect.gen(function* failStreamUnit() {
     const fs = yield* FileSystem.FileSystem;
@@ -390,9 +411,20 @@ const failUnit = (run: StreamRun, unit: PlannedUnit, message: string) =>
     yield* Console.error(`::error title=Release unit failed::${message}`);
     yield* setStatus(run, unit.id, 'failed');
     yield* Ref.set(run.stopped, true);
-    for (const gate of run.builds.values()) {
-      yield* Deferred.fail(gate, failure('not started after an earlier unit failed'));
+    const stopped = failure('not started after an earlier unit failed');
+    for (const gate of [...run.builds.values(), run.uploadsAllowed]) {
+      yield* Deferred.fail(gate, stopped);
     }
+    return false;
+  });
+
+/** New work starts only while no unit failed and no later release step stopped the stream. */
+const mayStart = (run: StreamRun, unit: PlannedUnit) =>
+  Effect.gen(function* mayStartUnit() {
+    if (!(yield* Ref.get(run.stopped))) {
+      return true;
+    }
+    yield* Console.error(`${unit.id}: not started after an earlier unit failed`);
     return false;
   });
 
@@ -493,16 +525,28 @@ const retainUnit = (run: StreamRun, unit: PlannedUnit, receipt: string, started:
     return true;
   });
 
-const uploadUnit = (run: StreamRun, unit: PlannedUnit, receipt: string, started: number) =>
-  Effect.gen(function* uploadStreamUnit() {
-    const fs = yield* FileSystem.FileSystem;
+interface PreparedUpload {
+  readonly artifactName: string;
+  readonly secrets: Redacted.Redacted;
+  readonly started: number;
+}
+
+/** Fetches and unpacks the unit's build output; none when the stream stopped or the owner has no secrets. */
+const prepareUpload = (run: StreamRun, unit: PlannedUnit) =>
+  Effect.gen(function* prepareUnitUpload() {
+    if (!(yield* mayStart(run, unit))) {
+      return Option.none<PreparedUpload>();
+    }
+    const started = yield* Clock.currentTimeMillis;
+    yield* setStatus(run, unit.id, 'uploading');
     const secrets = yield* ownerSecrets(run.options.secretsFile, unit.id);
     if (Option.isNone(secrets)) {
-      return yield* failUnit(
+      yield* failUnit(
         run,
         unit,
         `::error title=Missing release secrets::${unit.id} has no valid owner secret object; upload not started`,
       );
+      return Option.none<PreparedUpload>();
     }
     const artifactName =
       unit.mode === 'build'
@@ -513,27 +557,64 @@ const uploadUnit = (run: StreamRun, unit: PlannedUnit, receipt: string, started:
         ? yield* runArtifactId(run.settings, artifactName)
         : Option.match(unit.artifact, { onNone: () => 0, onSome: ({ id }) => id });
     yield* unpackUnit(run, unit, artifactId);
+    return Option.some<PreparedUpload>({ artifactName, secrets: secrets.value, started });
+  });
+
+/**
+ * Unpacks under an upload permit, waits for the start file without one, then uploads under a permit again: retained
+ * checks and other units' unpacking never queue behind units that only wait for the database preparation.
+ */
+const uploadUnit = (run: StreamRun, unit: PlannedUnit, receipt: string) =>
+  Effect.gen(function* uploadStreamUnit() {
+    const fs = yield* FileSystem.FileSystem;
+    const prepared = yield* run.uploads.withPermits(1)(prepareUpload(run, unit));
+    if (Option.isNone(prepared)) {
+      return false;
+    }
+    const { artifactName, secrets, started } = prepared.value;
+    // Strict order on the full path: no upload before the sealed migrations finished.
+    const allowed = yield* Deferred.await(run.uploadsAllowed).pipe(Effect.result);
+    if (Result.isFailure(allowed) && !(yield* Ref.get(run.stopped))) {
+      return yield* failUnit(run, unit, `${unit.id}: ${allowed.failure.message}`);
+    }
     // The release script retries a transient Cloudflare failure (unknown error 10013, internal 10021, 429/5xx,
     // dropped connections) up to three times, removing the attempt's half release first so the same identity
     // uploads again; any other failure ends the unit at once.
-    const uploaded = yield* releaseCli(
-      run,
-      unit,
-      [
-        'deploy',
-        '--app-directory',
-        unit.path,
-        '--plan-file',
-        `${unitReleaseDirectory(unit.id)}/plan.json`,
-        '--receipt-file',
-        receipt,
-        '--artifact-name',
-        artifactName,
-        '--inputs-file',
-        unitInputsFile(unit.id),
-      ],
-      { ALL_RELEASE_SECRETS_FILE: run.options.rawSecretsFile, ONTOS_IMMUTABLE_RELEASE_SECRETS: secrets.value },
+    const attempt = yield* run.uploads.withPermits(1)(
+      Effect.gen(function* uploadAllowedUnit() {
+        // A unit that failed while this one waited for the start file or a permit stops it, even after the start.
+        if (yield* Ref.get(run.stopped)) {
+          return Option.none<boolean>();
+        }
+        return Option.some(
+          yield* releaseCli(
+            run,
+            unit,
+            [
+              'deploy',
+              '--app-directory',
+              unit.path,
+              '--plan-file',
+              `${unitReleaseDirectory(unit.id)}/plan.json`,
+              '--receipt-file',
+              receipt,
+              '--artifact-name',
+              artifactName,
+              '--inputs-file',
+              unitInputsFile(unit.id),
+            ],
+            { ALL_RELEASE_SECRETS_FILE: run.options.rawSecretsFile, ONTOS_IMMUTABLE_RELEASE_SECRETS: secrets },
+          ),
+        );
+      }),
     );
+    if (Option.isNone(attempt)) {
+      const reason = Result.isFailure(allowed) ? allowed.failure.message : 'not started after an earlier unit failed';
+      yield* Console.error(`${unit.id}: not uploaded: ${reason}`);
+      yield* setStatus(run, unit.id, 'waiting');
+      return false;
+    }
+    const uploaded = attempt.value;
     if (!uploaded) {
       const tail = yield* fs.readFileString(unitLog(run, unit)).pipe(Effect.orElseSucceed(() => ''));
       yield* Console.error(`::group::${unit.id} upload log\n${tail.split('\n').slice(-80).join('\n')}\n::endgroup::`);
@@ -548,39 +629,54 @@ const uploadUnit = (run: StreamRun, unit: PlannedUnit, receipt: string, started:
     return true;
   });
 
-/** A failed release job stops the stream: units still waiting never start, running uploads finish. */
-const watchStopFile = (run: StreamRun) =>
-  Effect.gen(function* watchReleaseStop() {
+/** Local files only, so the release job's start and stop signals are seen within about a second. */
+const RELEASE_FILE_POLL = Duration.seconds(1);
+
+/**
+ * Follows the release job's signals. The start file allows uploads. A failed release job stops the stream: units
+ * still waiting never start, running uploads finish. Without either by the deadline, no upload starts.
+ */
+const watchReleaseFiles = (run: StreamRun) =>
+  Effect.gen(function* watchReleaseSignals() {
     const fs = yield* FileSystem.FileSystem;
-    const watch: Effect.Effect<void> = Effect.gen(function* pollStopFile() {
-      if (yield* fs.exists(run.options.stopFile).pipe(Effect.orElseSucceed(() => false))) {
+    const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
+    const interval = Duration.min(run.settings.pollInterval, RELEASE_FILE_POLL);
+    const watch: Effect.Effect<void> = Effect.gen(function* pollReleaseFiles() {
+      if (yield* exists(run.options.stopFile)) {
         yield* Ref.set(run.stopped, true);
-        for (const gate of run.builds.values()) {
-          yield* Deferred.fail(gate, failure('not started: a later release step failed'));
+        const stopped = failure('not started: a later release step failed');
+        for (const gate of [...run.builds.values(), run.uploadsAllowed]) {
+          yield* Deferred.fail(gate, stopped);
         }
         return yield* Effect.void;
       }
-      yield* Effect.sleep(run.settings.pollInterval);
+      if (yield* exists(run.options.startFile)) {
+        yield* Deferred.succeed(run.uploadsAllowed, true);
+      } else if ((yield* Clock.currentTimeMillis) >= run.options.deadline) {
+        yield* Deferred.fail(run.uploadsAllowed, failure('timed out waiting for the database preparation'));
+      }
+      yield* Effect.sleep(interval);
       return yield* watch;
     });
     return yield* watch;
   });
 
-const releaseUnit = (run: StreamRun, unit: PlannedUnit) =>
-  Effect.gen(function* releaseStreamUnit() {
-    if (yield* Ref.get(run.stopped)) {
-      yield* Console.error(`${unit.id}: not started after an earlier unit failed`);
+const releaseUnit = (run: StreamRun, unit: PlannedUnit) => {
+  const receipt = path.join(run.options.receipts, `${unit.id}.json`);
+  const retain = Effect.gen(function* retainStartedUnit() {
+    if (!(yield* mayStart(run, unit))) {
       return false;
     }
     const started = yield* Clock.currentTimeMillis;
     yield* setStatus(run, unit.id, 'uploading');
-    const receipt = path.join(run.options.receipts, `${unit.id}.json`);
-    return yield* unit.mode === 'retain'
-      ? retainUnit(run, unit, receipt, started)
-      : uploadUnit(run, unit, receipt, started);
-  }).pipe(Effect.catchTag('ReleaseStreamError', (cause) => failUnit(run, unit, cause.message)));
+    return yield* retainUnit(run, unit, receipt, started);
+  });
+  return (unit.mode === 'retain' ? run.uploads.withPermits(1)(retain) : uploadUnit(run, unit, receipt)).pipe(
+    Effect.catchTag('ReleaseStreamError', (cause) => failUnit(run, unit, cause.message)),
+  );
+};
 
-const awaitAndRelease = (run: StreamRun, uploads: Semaphore.Semaphore, unit: PlannedUnit) => {
+const awaitAndRelease = (run: StreamRun, unit: PlannedUnit) => {
   const gate = run.builds.get(unitBuildJob(unit.id));
   const ready: Effect.Effect<unknown, ReleaseStreamError> = gate === undefined ? Effect.void : Deferred.await(gate);
   return ready.pipe(
@@ -591,7 +687,7 @@ const awaitAndRelease = (run: StreamRun, uploads: Semaphore.Semaphore, unit: Pla
             ? Effect.as(Console.error(`${unit.id}: ${cause.message}`), false)
             : failUnit(run, unit, `${unit.id}: ${cause.message}`),
         ),
-      onSuccess: () => uploads.withPermits(1)(releaseUnit(run, unit)),
+      onSuccess: () => releaseUnit(run, unit),
     }),
   );
 };
@@ -628,16 +724,17 @@ export const streamUploads = (settings: StreamSettings, options: StreamOptions) 
         stateLock: yield* Semaphore.make(1),
         states: yield* Ref.make<ReadonlyMap<string, UnitState>>(initial),
         stopped: yield* Ref.make(false),
+        uploads: yield* Semaphore.make(Math.max(1, options.parallelism)),
+        uploadsAllowed: yield* Deferred.make<true, ReleaseStreamError>(),
       };
       yield* writeAtomically(
         options.stateFile,
         `${yield* encodeJson(UnitStatesJson, [...initial.values()], 'the unit states')}\n`,
       );
-      const uploads = yield* Semaphore.make(Math.max(1, options.parallelism));
-      // The scope interrupts the poller and the stop watch once every unit has finished.
+      // The scope interrupts the poller and the release file watch once every unit has finished.
       yield* superviseJobs(settings, run.builds, options.deadline).pipe(Effect.forkScoped);
-      yield* watchStopFile(run).pipe(Effect.forkScoped);
-      const outcomes = yield* Effect.forEach(plan.units, (unit) => awaitAndRelease(run, uploads, unit), {
+      yield* watchReleaseFiles(run).pipe(Effect.forkScoped);
+      const outcomes = yield* Effect.forEach(plan.units, (unit) => awaitAndRelease(run, unit), {
         concurrency: 'unbounded',
       });
       return outcomes.every(Boolean);
@@ -733,27 +830,22 @@ export const databasePath = (text: string, exitCode: number): DatabasePath => {
     : { mode: 'full', reason: reason === 'matching-preparation' ? 'unknown' : reason };
 };
 
-export interface HostFacts {
-  readonly force: boolean;
-  /** The live host's artifact digest from `await-outbox-admission.mts --probe`; none when unreachable. */
-  readonly liveDigest: Option.Option<string>;
-  /** The recovery configuration apply report's `changed`; anything but `false` counts as changed. */
-  readonly recoveryChanged: string;
-  readonly sourceRevision: string;
-}
-
-export interface HostDecision {
-  readonly deploy: boolean;
+export interface HostRelease {
   readonly digest: string;
-  readonly reason: string;
+  /** The revision the host artifact was built from: this run's for a build, the trusted artifact's when retained. */
   readonly sourceRevision: string;
 }
 
-/** Whether the outbox host deploys, and the revision its artifact was built from. */
-export const hostDecision = (
+/**
+ * The outbox host artifact the release deploys. It always deploys after the configuration apply: Zerops resolves
+ * native secret references (including migrator-issued database passwords) outside the materialized configuration, so
+ * no live digest can prove the running configuration current, and the deploy-only push of the prebuilt artifact is
+ * cheap.
+ */
+export const hostRelease = (
   plan: Pick<DeployPlan, 'host'>,
-  facts: HostFacts,
-): Effect.Effect<HostDecision, ReleaseStreamError> => {
+  buildRevision: string,
+): Effect.Effect<HostRelease, ReleaseStreamError> => {
   const { artifact, mode } = plan.host;
   const digest = Option.getOrElse(plan.host.digest, () => '');
   if (!SHA256.test(digest)) {
@@ -764,22 +856,9 @@ export const hostDecision = (
   }
   const sourceRevision =
     mode === 'build'
-      ? facts.sourceRevision
+      ? buildRevision
       : Option.match(artifact, { onNone: () => '', onSome: (ref) => ref.sourceRevision ?? '' });
-  const decide = (deploy: boolean, reason: string) => Effect.succeed({ deploy, digest, reason, sourceRevision });
-  if (mode === 'build') {
-    return decide(true, 'host-inputs-changed');
-  }
-  if (facts.force) {
-    return decide(true, 'outbox-only-retry');
-  }
-  if (facts.recoveryChanged !== 'false') {
-    return decide(true, 'recovery-configuration-changed');
-  }
-  return Option.match(facts.liveDigest, {
-    onNone: () => decide(true, 'status-unavailable'),
-    onSome: (live) => (live === digest ? decide(false, 'live-host-matches') : decide(true, 'status-mismatch')),
-  });
+  return Effect.succeed({ digest, sourceRevision });
 };
 
 /** Waits for a background step's `exit-code` file, prints its log and returns its exit status. */
@@ -836,8 +915,8 @@ export const fetchBuildArtifact = (
   });
 
 /**
- * The host-only plan an outbox-only retry deploys: the newest trusted prebuilt host artifact of this digest. It never
- * builds: a revision without one needs a full release.
+ * The host-only plan an outbox-only retry deploys, after its artifact's owner build identities were matched against
+ * the live publication. It never builds: an unprovable group needs a full release.
  */
 export const outboxHostPlan = (digest: string, artifact: Option.Option<typeof ArtifactRefSchema.Type>) =>
   Option.match(artifact, {
@@ -855,12 +934,45 @@ export const outboxHostPlan = (digest: string, artifact: Option.Option<typeof Ar
       ),
   });
 
+/** A content-equal artifact from a build-only or failed run is not evidence of the published owner builds. */
+export const publishedHostArtifact = ({
+  artifacts,
+  digest,
+  ledgers,
+  markers,
+  now,
+}: {
+  readonly artifacts: readonly TrustedArtifact[];
+  readonly digest: string;
+  readonly ledgers: readonly ReleaseLedger[];
+  readonly markers: Readonly<Record<string, string>>;
+  readonly now: Date;
+}) => {
+  const history = unitRecordHistory(ledgers, { digestVersion: DIGEST_VERSION, now });
+  return artifacts.find(
+    ({ artifact, run }) =>
+      artifact.name === hostArtifactName(digest) &&
+      run.head_sha !== undefined &&
+      Object.keys(markers).length > 0 &&
+      Object.entries(markers).every(([owner, marker]) =>
+        history.some(
+          (record) =>
+            record.unitId === owner &&
+            record.sourceRevision === run.head_sha &&
+            record.receipt.plan.buildMarker === marker,
+        ),
+      ),
+  );
+};
+
 const trustedHostArtifact = (digest: string) =>
   Effect.gen(function* findTrustedHostArtifact() {
-    const [repository, token, apiUrl] = yield* Effect.all([
+    const [repository, token, apiUrl, composition, now] = yield* Effect.all([
       Config.String('GITHUB_REPOSITORY'),
       Config.Redacted('GH_TOKEN'),
       Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
+      expectedHostOwners.pipe(Effect.flatMap(publishedHostComposition)),
+      DateTime.nowAsDate,
     ]);
     const client = createGitHubClient({
       apiUrl,
@@ -868,11 +980,17 @@ const trustedHostArtifact = (digest: string) =>
       repository,
       token: Redacted.value(token),
     });
-    const [found] = yield* Effect.tryPromise({
-      catch: () => failure('the trusted outbox host artifacts could not be listed'),
-      try: async () => await client.trustedArtifacts(hostArtifactName(digest), 1),
+    const found = yield* Effect.tryPromise({
+      catch: () => failure('the published outbox host artifact identities could not be verified; run a full release'),
+      try: async () => {
+        const [artifacts, ledgers] = await Promise.all([
+          client.trustedArtifacts(hostArtifactName(digest), 100),
+          readTrustedLedgers(client, 20),
+        ]);
+        return publishedHostArtifact({ artifacts, digest, ledgers, markers: composition.markers, now });
+      },
     });
-    return Option.fromNullOr(found).pipe(
+    return Option.fromUndefinedOr(found).pipe(
       Option.map(({ artifact, run }) => ({ id: artifact.id, name: artifact.name, sourceRevision: run.head_sha ?? '' })),
     );
   });
@@ -921,6 +1039,7 @@ const streamCommand = Command.make(
     parallelism: Flag.Int('parallelism'),
     plan: Flag.String('plan'),
     receipts: Flag.String('receipts'),
+    startFile: Flag.String('start-file'),
     state: Flag.String('state'),
     stopFile: Flag.String('stop-file'),
     timeout: timeoutFlag,
@@ -939,6 +1058,7 @@ const streamCommand = Command.make(
         rawSecretsFile,
         receipts: flags.receipts,
         secretsFile,
+        startFile: flags.startFile,
         stateFile: flags.state,
         stopFile: flags.stopFile,
       });
@@ -999,32 +1119,12 @@ const databasePathCommand = Command.make(
     }),
 );
 
-const hostDecisionCommand = Command.make(
-  'host-decision',
-  {
-    force: Flag.String('force'),
-    liveDigest: Flag.String('live-digest'),
-    plan: Flag.String('plan'),
-    recoveryChanged: Flag.String('recovery-changed'),
-  },
-  (flags) =>
-    Effect.gen(function* hostDecisionCommandEffect() {
-      const decision = yield* hostDecision(yield* readPlan(flags.plan), {
-        force: flags.force === 'true',
-        liveDigest: flags.liveDigest === '' ? Option.none() : Option.some(flags.liveDigest),
-        recoveryChanged: flags.recoveryChanged,
-        sourceRevision: yield* Config.String('GITHUB_SHA'),
-      });
-      yield* Console.error(
-        `Outbox host ${decision.digest.slice(0, 12)}: ${decision.deploy ? 'deploys' : 'kept'} (${decision.reason})`,
-      );
-      return yield* printOutputs({
-        deploy: String(decision.deploy),
-        digest: decision.digest,
-        reason: decision.reason,
-        'source-revision': decision.sourceRevision,
-      });
-    }),
+const hostReleaseCommand = Command.make('host-release', { plan: Flag.String('plan') }, (flags) =>
+  Effect.gen(function* hostReleaseCommandEffect() {
+    const release = yield* hostRelease(yield* readPlan(flags.plan), yield* Config.String('GITHUB_SHA'));
+    yield* Console.error(`Outbox host ${release.digest.slice(0, 12)} deploys after the configuration apply`);
+    return yield* printOutputs({ digest: release.digest, 'source-revision': release.sourceRevision });
+  }),
 );
 
 const fetchCommand = Command.make(
@@ -1074,7 +1174,7 @@ if (import.meta.main) {
       joinCommand,
       ledgerCommand,
       databasePathCommand,
-      hostDecisionCommand,
+      hostReleaseCommand,
       fetchCommand,
     ]),
   );
@@ -1082,7 +1182,7 @@ if (import.meta.main) {
     Layer.build(
       Layer.effectDiscard(Command.run({ version: '1.0.0' })(cli)).pipe(
         Layer.provide(OpsShellLive),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer)),
       ),
     ).pipe(Effect.scoped),
   );

@@ -1319,6 +1319,10 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   // The planner decides what every other input impacts: after a repair to one of its rules, the
   // units the old rule skipped must deploy too.
   'scripts/plan-deployment-impact.mts',
+  // The release script recomputes each unit digest and its secret fingerprint with the content-addressed planner.
+  'scripts/ci/deploy-plan.mts',
+  'scripts/ci/release-ledger.mts',
+  'scripts/ci/unit-closure.mts',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
