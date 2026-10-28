@@ -1,3 +1,4 @@
+import type { AvailabilityOwnerFailure } from '../../shared/domain/availability-owner-ports.ts';
 import { AvailabilityCurrentnessEvidence } from '../../shared/domain/availability-currentness-evidence-port.ts';
 import { AvailabilityCurrentnessPolicy } from '../../shared/domain/availability-currentness-policy-port.ts';
 import { AvailabilityCurrentnessEvaluator } from '../../shared/domain/availability-currentness-evaluator-port.ts';
@@ -16,7 +17,10 @@ import type {
   AvailabilityRevalidationResult,
 } from '../../shared/domain/availability-currentness.ts';
 import { AvailabilityEvaluationInputSchema } from '../../shared/domain/availability-decision.ts';
-import type { AvailabilityEvaluationInput } from '../../shared/domain/availability-decision.ts';
+import type {
+  AvailabilityEvaluationInput,
+  AvailabilityEvaluationInputRejected,
+} from '../../shared/domain/availability-decision.ts';
 import {
   AvailabilityUseBoundarySchema,
   sameAvailabilitySubject,
@@ -97,129 +101,138 @@ export interface AvailabilityCurrentnessRequest {
 }
 
 /** No TTL, revision comparison, provider fallback, Bundle write or Confirmation lifecycle exists here. */
-export const availabilityCurrentnessService = Effect.fn('availabilityCurrentnessService')(
-  function* availabilityCurrentnessService(request: AvailabilityCurrentnessRequest) {
-    const reader = yield* AvailabilityCurrentnessEvidence;
-    const policy = yield* AvailabilityCurrentnessPolicy;
-    const evaluator = yield* AvailabilityCurrentnessEvaluator;
-    const verifier = yield* AvailabilityOwnerValidityVerifier;
-    const original = request.previous === undefined ? undefined : yield* copyDecision(request.previous);
-    const candidate =
-      original !== undefined && sameAvailabilitySubject(original.decision.subject, request.subject)
-        ? original.decision.evidence
-        : yield* reader.readCurrent(request).pipe(Effect.flatMap(copyEvaluationInput));
-    interface VerificationState {
-      readonly candidate: AvailabilityEvaluationInput;
-      readonly reasons: readonly string[];
-      readonly verified?: Extract<AvailabilityOwnerValidity, { readonly _tag: 'VALID' }>;
-    }
-    const initial: VerificationState = { candidate, reasons: [] };
-    const checked = yield* Effect.reduce(
-      [0, 1],
-      () => initial,
-      Effect.fn('availabilityCurrentnessService.verifySnapshot')(function* checked(
-        state: VerificationState,
-        attempt: number,
-      ) {
-        if (state.verified !== undefined) {
-          return state;
-        }
-        const rawEvidence =
-          attempt === 0
-            ? state.candidate
-            : yield* reader.readCurrent(request).pipe(
-                Effect.catchTags({
-                  AvailabilityOwnerEvidenceUnavailable: () => Effect.succeed(state.candidate),
-                  AvailabilityOwnerEvidenceUnverifiable: () => Effect.succeed(state.candidate),
-                }),
-                Effect.flatMap(copyEvaluationInput),
-              );
-        const currentPolicy = yield* policy.resolveCurrent(request);
-        // Resolve the policy and use binding before the owner attests this exact immutable candidate.
-        const evidence = yield* copyEvaluationInput({
-          ...rawEvidence,
-          ownerQualification: {
-            ...rawEvidence.ownerQualification,
-            subject: request.subject,
-            useBoundary: request.useBoundary,
-          },
-          policy: currentPolicy,
+export const availabilityCurrentnessService: (
+  request: AvailabilityCurrentnessRequest,
+) => Effect.Effect<
+  AvailabilityRevalidationResult,
+  AvailabilityOwnerFailure | AvailabilityEvaluationInputRejected | Schema.SchemaError,
+  | AvailabilityCurrentnessEvidence
+  | AvailabilityCurrentnessPolicy
+  | AvailabilityCurrentnessEvaluator
+  | AvailabilityOwnerValidityVerifier
+> = Effect.fn('availabilityCurrentnessService')(function* availabilityCurrentnessService(
+  request: AvailabilityCurrentnessRequest,
+) {
+  const reader = yield* AvailabilityCurrentnessEvidence;
+  const policy = yield* AvailabilityCurrentnessPolicy;
+  const evaluator = yield* AvailabilityCurrentnessEvaluator;
+  const verifier = yield* AvailabilityOwnerValidityVerifier;
+  const original = request.previous === undefined ? undefined : yield* copyDecision(request.previous);
+  const candidate =
+    original !== undefined && sameAvailabilitySubject(original.decision.subject, request.subject)
+      ? original.decision.evidence
+      : yield* reader.readCurrent(request).pipe(Effect.flatMap(copyEvaluationInput));
+  interface VerificationState {
+    readonly candidate: AvailabilityEvaluationInput;
+    readonly reasons: readonly string[];
+    readonly verified?: Extract<AvailabilityOwnerValidity, { readonly _tag: 'VALID' }>;
+  }
+  const initial: VerificationState = { candidate, reasons: [] };
+  const checked = yield* Effect.reduce(
+    [0, 1],
+    () => initial,
+    Effect.fn('availabilityCurrentnessService.verifySnapshot')(function* checked(
+      state: VerificationState,
+      attempt: number,
+    ) {
+      if (state.verified !== undefined) {
+        return state;
+      }
+      const rawEvidence =
+        attempt === 0
+          ? state.candidate
+          : yield* reader.readCurrent(request).pipe(
+              Effect.catchTags({
+                AvailabilityOwnerEvidenceUnavailable: () => Effect.succeed(state.candidate),
+                AvailabilityOwnerEvidenceUnverifiable: () => Effect.succeed(state.candidate),
+              }),
+              Effect.flatMap(copyEvaluationInput),
+            );
+      const currentPolicy = yield* policy.resolveCurrent(request);
+      // Resolve the policy and use binding before the owner attests this exact immutable candidate.
+      const evidence = yield* copyEvaluationInput({
+        ...rawEvidence,
+        ownerQualification: {
+          ...rawEvidence.ownerQualification,
           subject: request.subject,
           useBoundary: request.useBoundary,
-        });
-        const proof = yield* verifier
-          .verify({ evidence, subject: request.subject, useBoundary: request.useBoundary })
-          .pipe(
-            Effect.catchTags({
-              AvailabilityOwnerEvidenceUnavailable: () =>
-                Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'OWNER_UNAVAILABLE' }),
-              AvailabilityOwnerEvidenceUnverifiable: () =>
-                Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'OWNER_UNVERIFIABLE' }),
-            }),
-          );
-        const decoded = yield* Schema.decodeEffect(Schema.toType(AvailabilityOwnerValiditySchema))(proof).pipe(
-          Effect.flatMap(Schema.encodeEffect(AvailabilityOwnerValiditySchema)),
-          Effect.flatMap(Schema.decodeEffect(AvailabilityOwnerValiditySchema)),
-          Effect.map(immutableSnapshot),
-          Effect.catchTag('SchemaError', () =>
-            Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'INVALID_OWNER_PROOF' }),
-          ),
+        },
+        policy: currentPolicy,
+        subject: request.subject,
+        useBoundary: request.useBoundary,
+      });
+      const proof = yield* verifier
+        .verify({ evidence, subject: request.subject, useBoundary: request.useBoundary })
+        .pipe(
+          Effect.catchTags({
+            AvailabilityOwnerEvidenceUnavailable: () =>
+              Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'OWNER_UNAVAILABLE' }),
+            AvailabilityOwnerEvidenceUnverifiable: () =>
+              Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'OWNER_UNVERIFIABLE' }),
+          }),
         );
-        return Match.value(decoded).pipe(
-          Match.tag('VALID', (valid): VerificationState =>
-            validProof(valid, evidence, request.subject, request.useBoundary)
-              ? { candidate: evidence, reasons: state.reasons, verified: valid }
-              : { candidate: evidence, reasons: [...state.reasons, 'OWNER_PROOF_SCOPE_OR_VALIDITY_MISMATCH'] },
-          ),
-          Match.tag('INVALID', 'UNPROVEN', (invalid): VerificationState => ({
-            candidate: evidence,
-            reasons: [...state.reasons, invalid.reason],
-          })),
-          Match.exhaustive,
-        );
-      }),
-    );
-    const { reasons, verified } = checked;
-    // Evaluate the verified snapshot verbatim; failed verification can only weaken Currentness.
-    const evidence: AvailabilityEvaluationInput =
-      verified === undefined
-        ? {
-            ...checked.candidate,
-            ownerQualification: { ...checked.candidate.ownerQualification, currentness: 'INDETERMINATE' },
-          }
-        : checked.candidate;
-    const decision = yield* evaluator.evaluate(evidence);
-    const currentDecision: AvailabilityCurrentDecision = yield* copyDecision({
-      currentness: verified === undefined ? 'INDETERMINATE' : 'OWNER_VERIFIED_CURRENT',
-      currentnessReasons: verified === undefined ? reasons : [],
-      decision,
-      evaluatedAt: request.evaluatedAt,
-      materialEvidence: verified?.materialEvidence ?? [],
-    });
-    // A newly authorized use does not change represented facts. All policy identity and evidence lineage remain material.
-    const unchanged =
-      original !== undefined &&
-      verified !== undefined &&
-      sameInput(
-        {
-          ...original.decision.evidence,
-          ownerQualification: {
-            ...original.decision.evidence.ownerQualification,
-            useBoundary: checked.candidate.useBoundary,
-          },
-          policy: { ...original.decision.evidence.policy, useBoundary: checked.candidate.useBoundary },
+      const decoded = yield* Schema.decodeEffect(Schema.toType(AvailabilityOwnerValiditySchema))(proof).pipe(
+        Effect.flatMap(Schema.encodeEffect(AvailabilityOwnerValiditySchema)),
+        Effect.flatMap(Schema.decodeEffect(AvailabilityOwnerValiditySchema)),
+        Effect.map(immutableSnapshot),
+        Effect.catchTag('SchemaError', () =>
+          Effect.succeed({ _tag: 'UNPROVEN' as const, reason: 'INVALID_OWNER_PROOF' }),
+        ),
+      );
+      return Match.value(decoded).pipe(
+        Match.tag('VALID', (valid): VerificationState =>
+          validProof(valid, evidence, request.subject, request.useBoundary)
+            ? { candidate: evidence, reasons: state.reasons, verified: valid }
+            : { candidate: evidence, reasons: [...state.reasons, 'OWNER_PROOF_SCOPE_OR_VALIDITY_MISMATCH'] },
+        ),
+        Match.tag('INVALID', 'UNPROVEN', (invalid): VerificationState => ({
+          candidate: evidence,
+          reasons: [...state.reasons, invalid.reason],
+        })),
+        Match.exhaustive,
+      );
+    }),
+  );
+  const { reasons, verified } = checked;
+  // Evaluate the verified snapshot verbatim; failed verification can only weaken Currentness.
+  const evidence: AvailabilityEvaluationInput =
+    verified === undefined
+      ? {
+          ...checked.candidate,
+          ownerQualification: { ...checked.candidate.ownerQualification, currentness: 'INDETERMINATE' },
+        }
+      : checked.candidate;
+  const decision = yield* evaluator.evaluate(evidence);
+  const currentDecision: AvailabilityCurrentDecision = yield* copyDecision({
+    currentness: verified === undefined ? 'INDETERMINATE' : 'OWNER_VERIFIED_CURRENT',
+    currentnessReasons: verified === undefined ? reasons : [],
+    decision,
+    evaluatedAt: request.evaluatedAt,
+    materialEvidence: verified?.materialEvidence ?? [],
+  });
+  // A newly authorized use does not change represented facts. All policy identity and evidence lineage remain material.
+  const unchanged =
+    original !== undefined &&
+    verified !== undefined &&
+    sameInput(
+      {
+        ...original.decision.evidence,
+        ownerQualification: {
+          ...original.decision.evidence.ownerQualification,
           useBoundary: checked.candidate.useBoundary,
         },
-        checked.candidate,
-      ) &&
-      sameMaterial(original.materialEvidence, verified.materialEvidence);
-    let bundleDisposition: AvailabilityRevalidationResult['bundleDisposition'] = 'NOT_REPRESENTED';
-    if (request.representedInBundle) {
-      bundleDisposition = unchanged ? 'UNCHANGED' : 'REPLACEMENT_REQUIRED';
-    }
-    if (original === undefined) {
-      return { bundleDisposition, currentDecision } satisfies AvailabilityRevalidationResult;
-    }
-    return { bundleDisposition, currentDecision, originalDecision: original } satisfies AvailabilityRevalidationResult;
-  },
-);
+        policy: { ...original.decision.evidence.policy, useBoundary: checked.candidate.useBoundary },
+        useBoundary: checked.candidate.useBoundary,
+      },
+      checked.candidate,
+    ) &&
+    sameMaterial(original.materialEvidence, verified.materialEvidence);
+  let bundleDisposition: AvailabilityRevalidationResult['bundleDisposition'] = 'NOT_REPRESENTED';
+  if (request.representedInBundle) {
+    bundleDisposition = unchanged ? 'UNCHANGED' : 'REPLACEMENT_REQUIRED';
+  }
+  if (original === undefined) {
+    return { bundleDisposition, currentDecision } satisfies AvailabilityRevalidationResult;
+  }
+  return { bundleDisposition, currentDecision, originalDecision: original } satisfies AvailabilityRevalidationResult;
+});

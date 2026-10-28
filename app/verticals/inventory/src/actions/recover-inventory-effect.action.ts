@@ -5,7 +5,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import type { ActionHandlerContext, ActionRegistration } from '@app/core-runtime';
+import type { ActionCollectorError, ActionHandlerContext, ActionRegistration } from '@app/core-runtime';
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { Effect as EffectType } from 'effect';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
@@ -179,7 +179,13 @@ export const makeRecoverInventoryEffectActionService = (dependencies: {
   }),
 });
 
-export const handleRecoverInventoryEffect = Effect.fn('RecoverInventoryEffectAction.handle')(function* handle(
+export const handleRecoverInventoryEffect: (
+  payload: RecoverInventoryEffectPayload,
+  context: ActionHandlerContext<typeof domainEvents, RecoverInventoryEffectServices>,
+) => Effect.Effect<
+  RecoverInventoryEffectResult,
+  InventoryEffectRecoveryError | RecoverInventoryEffectActionRejected | ActionCollectorError
+> = Effect.fn('RecoverInventoryEffectAction.handle')(function* handle(
   payload: RecoverInventoryEffectPayload,
   context: ActionHandlerContext<typeof domainEvents, RecoverInventoryEffectServices>,
 ) {
