@@ -1234,13 +1234,18 @@ const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRe
     return output.split('\0').filter(Boolean);
   });
 
-const isMigrationChange = (changedPath: string): boolean =>
-  /(?:^|\/)(?:drizzle(?:-(?:auth|contacts))?\/|drizzle(?:\.(?:auth|contacts))?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-(?:auth-)?db-schema\.mts$)/u.test(
+export const isMigrationChange = (changedPath: string): boolean =>
+  /(?:^|\/)(?:drizzle(?:-(?:auth|contacts|portal-auth))?\/|drizzle(?:\.(?:auth|contacts|portal-auth))?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-[^/]*db-schema\.mts$)/u.test(
     changedPath,
   ) ||
-  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|runtime-role-bootstrap\.mts|bootstrap-spicedb-database\.mts|database-login-roles\.mts|database-role-manifest\.mts|docker-init-runtime-role\.sh))$/u.test(
+  /^(?:scripts\/stage-demo-migrate\.mts|scripts\/run-zerops-migrator\.mjs|scripts\/run-optional-commerce-portal-auth-db\.mts|scripts\/migration-(?:convergence(?:-cli)?|equivalence)\.mts|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|runtime-role-bootstrap\.mts|runtime-role-grants\.mts|bootstrap-spicedb-database\.mts|database-login-roles\.mts|database-role-manifest\.mts|docker-init-runtime-role\.sh))$/u.test(
     changedPath,
   ) ||
+  /^verticals\/commerce-customer-context\/scripts\/(?:bootstrap-portal-auth-runtime-role|portal-auth-database-config|portal-auth-migration-journal)\.mts$/u.test(
+    changedPath,
+  ) ||
+  changedPath === 'database/identity-enrollment.ts' ||
+  changedPath === 'packages/core-runtime/src/environment/drizzle-config.ts' ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identities.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identity-manifest.ts' ||
@@ -1321,6 +1326,9 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/materialize-zerops-environment.mts',
   'scripts/materialize-ontos-zerops-runtime.mjs',
   'scripts/outbox-worker-delivery.mjs',
+  // CI prebuilds the Outbox Worker host with this recipe and compiles its digest module into the bundle.
+  'scripts/ci/build-outbox-host.sh',
+  'scripts/outbox-worker-host-artifact.mts',
   OUTBOX_WORKER_HOST.entry,
   CORE_SYSTEM_OUTBOX_WORKER.entry,
   'zerops.yaml',

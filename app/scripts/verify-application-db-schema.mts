@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Option, Order, Redacted, Schema } from 'effect';
+import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 
@@ -233,35 +234,74 @@ export const verifyOwnerSchema = Effect.fn('ApplicationDatabase.verifyOwnerSchem
   return yield* Effect.void;
 });
 
-const main = Effect.gen(function* verifyApplicationDatabase() {
-  const configuration = yield* loadDatabaseConnectionPair();
-  const commerceConfiguration = yield* loadOptionalCommercePortalAuthDatabaseConfig().pipe(
-    Effect.mapError((failure) => verificationFailure(failure.reason)),
-  );
-  const expected = applicationCatalogExpectation(configuration.admin, commerceConfiguration);
-  yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
-    Effect.mapError((cause) =>
-      verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
-    ),
-    Effect.flatMap((client) =>
-      Effect.gen(function* verifyCompleteCatalog() {
-        yield* verifyApplicationCatalog(client, expected);
-        yield* assertDatabaseRoleManifestComplete(client).pipe(
-          Effect.mapError((failure) => verificationFailure(failure.reason)),
-        );
-      }),
-    ),
-    Effect.scoped,
-  );
+/** Start the broad, expensive owners first so the final wave contains the small contracts. */
+export const orderOwnerVerifiers = (paths: readonly string[]): readonly string[] => {
+  const longestFirst = [
+    './verify-core-db-schema.mts',
+    '../verticals/party-registry/scripts/verify-db-schema.mts',
+    '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
+    '../verticals/inventory/scripts/verify-db-schema.mts',
+    '../verticals/pricing/scripts/verify-db-schema.mts',
+    '../apps/shell-super-app/scripts/verify-auth-db-schema.mts',
+  ];
+  const rank = (path: string) => {
+    const index = longestFirst.indexOf(path);
+    return index === -1 ? longestFirst.length : index;
+  };
+  return EffectArray.sort(paths, (left: string, right: string) => Order.Number(rank(left), rank(right)));
+};
 
-  yield* Console.log('Verified exact application schemas and migration journals');
-  for (const ownerVerifierPath of ownerVerifierPaths) {
-    yield* verifyOwnerSchema(ownerVerifierPath);
-  }
-  if (Option.isSome(commerceConfiguration)) {
-    yield* verifyOwnerSchema(COMMERCE_PORTAL_AUTH_VERIFIER);
-  }
-}).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+export const validateVerifierConcurrency = (value: number) =>
+  Number.isInteger(value) && value >= 1 && value <= 4
+    ? Effect.succeed(value)
+    : Effect.fail(verificationFailure('Expected --concurrency with an integer between 1 and 4'));
+
+/** forEach interrupts siblings on failure and joins their process finalizers before returning. */
+export const verifyOwnerSchemas = (paths: readonly string[], concurrency = 4) =>
+  Effect.forEach(orderOwnerVerifiers(paths), verifyOwnerSchema, { concurrency, discard: true });
+
+const verifyRoleManifest = (client: PgClient.PgClient) =>
+  assertDatabaseRoleManifestComplete(client).pipe(Effect.mapError((failure) => verificationFailure(failure.reason)));
+
+const verifyApplicationDatabase = (concurrency: number) =>
+  Effect.gen(function* verifyApplicationDatabaseEffect() {
+    const configuration = yield* loadDatabaseConnectionPair();
+    const commerceConfiguration = yield* loadOptionalCommercePortalAuthDatabaseConfig().pipe(
+      Effect.mapError((failure) => verificationFailure(failure.reason)),
+    );
+    const expected = applicationCatalogExpectation(configuration.admin, commerceConfiguration);
+    yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
+      Effect.mapError((cause) =>
+        verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
+      ),
+      Effect.flatMap((client) =>
+        Effect.gen(function* verifyCompleteCatalog() {
+          yield* verifyApplicationCatalog(client, expected);
+          yield* verifyRoleManifest(client);
+        }),
+      ),
+      Effect.scoped,
+    );
+
+    yield* Console.log('Verified exact application schemas and migration journals');
+    yield* verifyOwnerSchemas(
+      Option.isSome(commerceConfiguration)
+        ? [...ownerVerifierPaths, COMMERCE_PORTAL_AUTH_VERIFIER]
+        : ownerVerifierPaths,
+      concurrency,
+    );
+  }).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+
+const main = Command.run(
+  Command.make(
+    'verify-application-db-schema',
+    {
+      concurrency: Flag.Int('concurrency').pipe(Flag.withDefault(4)),
+    },
+    ({ concurrency }) => validateVerifierConcurrency(concurrency).pipe(Effect.flatMap(verifyApplicationDatabase)),
+  ),
+  { version: '1.0.0' },
+);
 
 if (import.meta.main) {
   NodeRuntime.runMain(main.pipe(Effect.provide([Reactivity.layer, NodeServices.layer])));

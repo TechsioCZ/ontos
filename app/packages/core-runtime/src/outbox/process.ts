@@ -2,6 +2,8 @@ import {
   Array as Arr,
   Cause,
   Config,
+  Context,
+  DateTime,
   Effect,
   Exit,
   Function as Fn,
@@ -10,6 +12,7 @@ import {
   Option,
   Order,
   Random,
+  Ref,
   References,
   Schema,
   Tracer,
@@ -32,6 +35,7 @@ import type {
   combineOutboxWorkerHealth,
   createOutboxWorkerHealth,
   OutboxWorkerHealth,
+  OutboxWorkerHostStatus,
   serveOutboxWorkerHealth,
 } from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
@@ -59,6 +63,23 @@ const unavailableSubscriptionCatalog = (cause: unknown) =>
 
 const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
+
+type OutboxWorkerDeployment = Readonly<{ appId: string; buildMarker: string }>;
+
+/**
+ * How a hosted polling loop reports its compiled owner identity and the composition revision of each
+ * successful cycle to the host's /status. It travels in the fiber context because owner wrappers such
+ * as Commerce's recovery entry rebuild the entry and its loop input. Outside a host it reports nowhere.
+ */
+interface AdmissionReport {
+  readonly admitted: (compositionRevision: string) => Effect.Effect<void>;
+  readonly identify: (deployment: OutboxWorkerDeployment) => Effect.Effect<void>;
+}
+
+const OutboxWorkerAdmissionReport = Context.Reference<AdmissionReport>(
+  '@app/core-runtime/outbox/process/OutboxWorkerAdmissionReport',
+  { defaultValue: () => ({ admitted: () => Effect.void, identify: () => Effect.void }) },
+);
 
 export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWorkerRegistration, LayerError> {
   readonly claimOwnerPrefix: string;
@@ -92,6 +113,8 @@ export interface RunOutboxWorkerHostInput<
   LayerErrors extends readonly { readonly _tag: string }[],
   StartupError = never,
 > {
+  /** Digest of the deployed host artifact, compiled into its bundle; /status reports it. Source runs have none. */
+  readonly artifactDigest?: Option.Option<string>;
   readonly entries: { readonly [Index in keyof LayerErrors]: OutboxWorkerEntry<LayerErrors[Index]> };
   readonly health?: boolean;
   /** Additional process services share the host Scope and its existing runtime adapter. */
@@ -112,6 +135,8 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
     registrations: registrations.length,
     runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
+        const report = yield* OutboxWorkerAdmissionReport;
+        yield* report.identify({ appId: expectedDeployment.appId, buildMarker: expectedDeployment.buildMarker });
         const authority = yield* ActiveApplicationCompositionService;
         const admitWorkerComposition = Effect.fn('OutboxWorker.admitComposition')(function* admitCompositionEffect(
           suppliedSubscriptions: readonly (typeof OutboxSubscriptionAuthoritySchema.Type)[],
@@ -186,6 +211,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
         const admitComposition = admitWorkerComposition(suppliedSubscriptions);
         const pollingInput: RunOutboxPollingLoopInput<Registration> = {
           admitComposition,
+          admitted: report.admitted,
           config,
           registrations,
           subscriptions: compiledSubscriptions,
@@ -196,7 +222,13 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
       });
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),
-        (runtime) => runtime.contextEffect.pipe(Effect.flatMap((context) => Effect.provideContext(loop, context))),
+        // The owner runtime's context replaces the host's, so the host's admission report crosses explicitly.
+        (runtime) =>
+          Effect.all([runtime.contextEffect, Effect.service(OutboxWorkerAdmissionReport)], { concurrency: 1 }).pipe(
+            Effect.flatMap(([context, report]) =>
+              Effect.provideContext(loop, Context.add(context, OutboxWorkerAdmissionReport, report)),
+            ),
+          ),
         (runtime) => runtime.disposeEffect,
       );
     },
@@ -235,22 +267,71 @@ const loadOutboxWorkerHealthApi = Effect.suspend(() => {
   return Effect.promise(Fn.constant(healthApi)).pipe(Effect.timeout('30 seconds'), Effect.orDie);
 });
 
+interface LoopAdmission {
+  readonly deployment: Option.Option<OutboxWorkerDeployment>;
+  readonly last: Option.Option<{ readonly at: DateTime.Utc; readonly revision: string }>;
+}
+
 interface HostedLoop<LayerError> {
+  readonly admission: Ref.Ref<LoopAdmission>;
   readonly config: OutboxPollingConfig;
   readonly entry: OutboxWorkerEntry<LayerError>;
   readonly health: Option.Option<OutboxWorkerHealth>;
 }
 
-const hostedLoop = <LayerError>(
-  entry: OutboxWorkerEntry<LayerError>,
-  config: OutboxPollingConfig,
-  healthApi: OutboxWorkerHealthApi | undefined,
-): Effect.Effect<HostedLoop<LayerError>> =>
-  healthApi === undefined
-    ? Effect.succeed({ config, entry, health: Option.none() })
-    : healthApi
-        .createOutboxWorkerHealth({ staleAfterMs: Math.max(5000, config.pollIntervalMs * 3) })
-        .pipe(Effect.map((health) => ({ config, entry, health: Option.some(health) })));
+const hostedLoop = Effect.fn('OutboxWorkerHost.hostedLoop')(function* makeHostedLoop<LayerError>({
+  config,
+  entry,
+  healthApi,
+}: {
+  readonly config: OutboxPollingConfig;
+  readonly entry: OutboxWorkerEntry<LayerError>;
+  readonly healthApi: OutboxWorkerHealthApi | undefined;
+}) {
+  const admission = yield* Ref.make<LoopAdmission>({ deployment: Option.none(), last: Option.none() });
+  const health =
+    healthApi === undefined
+      ? Option.none<OutboxWorkerHealth>()
+      : Option.some(
+          yield* healthApi.createOutboxWorkerHealth({ staleAfterMs: Math.max(5000, config.pollIntervalMs * 3) }),
+        );
+  const loop: HostedLoop<LayerError> = { admission, config, entry, health };
+  return loop;
+});
+
+const admissionReport = (admission: Ref.Ref<LoopAdmission>): AdmissionReport => ({
+  admitted: (revision) =>
+    DateTime.now.pipe(
+      Effect.flatMap((at) => Ref.update(admission, (current) => ({ ...current, last: Option.some({ at, revision }) }))),
+    ),
+  identify: (deployment) => Ref.update(admission, (current) => ({ ...current, deployment: Option.some(deployment) })),
+});
+
+/** Each owner's admission in host order; readiness is that loop's own health, never the combined host's. */
+const hostStatus = (
+  artifactDigest: Option.Option<string>,
+  loops: readonly HostedLoop<unknown>[],
+): Effect.Effect<OutboxWorkerHostStatus> =>
+  Effect.forEach(
+    loops,
+    ({ admission, health }) =>
+      Effect.all(
+        [
+          Ref.get(admission),
+          Option.match(health, { onNone: () => Effect.succeed(false), onSome: (loopHealth) => loopHealth.isReady }),
+        ],
+        { concurrency: 1 },
+      ).pipe(
+        Effect.map(([{ deployment, last }, ready]) => ({
+          admittedRevision: last.pipe(Option.map(({ revision }) => revision)),
+          appId: deployment.pipe(Option.map(({ appId }) => appId)),
+          buildMarker: deployment.pipe(Option.map(({ buildMarker }) => buildMarker)),
+          lastSuccessAt: last.pipe(Option.map(({ at }) => at)),
+          ready,
+        })),
+      ),
+    { concurrency: 1 },
+  ).pipe(Effect.map((owners) => ({ artifactDigest, owners })));
 
 /**
  * Runs every entry's polling loop in one process behind one signal handler and one readiness
@@ -276,7 +357,7 @@ export const runOutboxWorkerHost = <
       const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
       const loops: readonly HostedLoop<LayerErrors[number]>[] = yield* Effect.forEach(
         Arr.zip(input.entries, configs),
-        ([entry, config]) => hostedLoop(entry, config, healthApi),
+        ([entry, config]) => hostedLoop({ config, entry, healthApi }),
         { concurrency: 1 },
       );
       if (healthApi !== undefined) {
@@ -284,7 +365,7 @@ export const runOutboxWorkerHost = <
         if (Option.isSome(configuredHealthPort)) {
           yield* healthApi.serveOutboxWorkerHealth(
             healthApi.combineOutboxWorkerHealth(loops.flatMap(({ health }) => Option.toArray(health))),
-            { port: configuredHealthPort.value },
+            { port: configuredHealthPort.value, status: hostStatus(input.artifactDigest ?? Option.none(), loops) },
           );
         }
       }
@@ -302,7 +383,7 @@ export const runOutboxWorkerHost = <
 
       const runLoops = Effect.forEach(
         loops,
-        ({ config, entry, health }) =>
+        ({ admission, config, entry, health }) =>
           entry
             .runLoop(
               Option.match(health, {
@@ -310,7 +391,10 @@ export const runOutboxWorkerHost = <
                 onSome: (loopHealth) => ({ config, health: loopHealth }),
               }),
             )
-            .pipe(Effect.annotateLogs({ claimOwner: config.claimOwner })),
+            .pipe(
+              Effect.provideService(OutboxWorkerAdmissionReport, admissionReport(admission)),
+              Effect.annotateLogs({ claimOwner: config.claimOwner }),
+            ),
         // Every hosted loop polls forever, so the host needs exactly one fiber per loop.
         { concurrency: loops.length, discard: true },
       );

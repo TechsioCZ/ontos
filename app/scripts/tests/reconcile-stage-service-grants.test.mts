@@ -210,3 +210,32 @@ it('preserves scoped-role member usersets for service modules and exact Action g
   ).toBe(false);
   expect(new Set(desired.map((row) => v1.Relationship.toJsonString(row))).size).toBe(desired.length);
 });
+
+it.live('bounds parallel grant reads to eight while keeping a single write and verified readback', () =>
+  Effect.gen(function* boundedGrantReads() {
+    const state = memoryRelationships(serviceGrantMemberships());
+    let active = 0;
+    let peak = 0;
+    const rpc: ServiceGrantRpc = {
+      ...state.rpc,
+      readRelationships: (request) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            active += 1;
+            peak = Math.max(peak, active);
+          }),
+          () => Effect.sleep('1 millis').pipe(Effect.andThen(state.rpc.readRelationships(request))),
+          () =>
+            Effect.sync(() => {
+              active -= 1;
+            }),
+        ),
+    };
+    const result = yield* reconcileServiceGrants(rpc, desired, 'apply');
+    expect(result.missing).toBe(0);
+    expect(state.writes).toHaveLength(1);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(active).toBe(0);
+  }),
+);

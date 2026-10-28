@@ -1731,20 +1731,6 @@ zerops:
           path: /live
       start: sh -c 'cd app/.zerops/runtime/core-system-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
   - setup: outbox-worker-host
-    build:
-      base: alpine@3.23
-      envVariables:
-        ZE_FAIL_BUILD: 'true'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
-      buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
-        - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
-        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.12.0/bin" "$HOME/.local/node-26.12.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
-      deployFiles:
-        - app/.zerops/runtime/outbox-worker-host
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -1752,7 +1738,7 @@ zerops:
           port: 4100
           path: /live
         failureTimeout: 3m
-        retryPeriod: 10s
+        retryPeriod: 3s
     run:
       base: nodejs@24
       ports:

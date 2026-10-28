@@ -7,7 +7,13 @@ import { Config, Effect, FileSystem, Schedule, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
-import { ownerVerifierPaths, verifyOwnerSchema } from '../verify-application-db-schema.mts';
+import {
+  orderOwnerVerifiers,
+  ownerVerifierPaths,
+  validateVerifierConcurrency,
+  verifyOwnerSchema,
+  verifyOwnerSchemas,
+} from '../verify-application-db-schema.mts';
 
 it('retains all 29 owner verifiers including Projects and invokes Core through the application enrollment wrapper', () => {
   expect(ownerVerifierPaths).toHaveLength(29);
@@ -172,3 +178,80 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 }
+
+it.effect('rejects unbounded concurrency and prioritizes the broad owners', () =>
+  Effect.gen(function* validateConcurrency() {
+    expect(yield* validateVerifierConcurrency(4)).toBe(4);
+    expect(yield* validateVerifierConcurrency(2)).toBe(2);
+    for (const value of [0, 5, -1, 1.5]) {
+      const failure = yield* validateVerifierConcurrency(value).pipe(Effect.flip);
+      expect(failure.reason).toContain('between 1 and 4');
+    }
+    expect(orderOwnerVerifiers([ownerVerifierPaths[1], ownerVerifierPaths[0]])[0]).toBe(ownerVerifierPaths[0]);
+  }),
+);
+
+it.effect('runs four asynchronous owner children at once and joins all of them', () =>
+  Effect.gen(function* boundedChildren() {
+    const fs = yield* FileSystem.FileSystem;
+    const fixture = yield* ownerFixture('');
+    const paths: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const file = path.join(fixture.directory, `owner-${index}.mjs`);
+      yield* fs.writeFileString(
+        file,
+        `
+        import { writeFileSync, readdirSync } from 'node:fs';
+        const directory = new URL('./', import.meta.url);
+        writeFileSync(new URL('./ready-${index}', directory), 'ready');
+        const timer = setInterval(() => {
+          if (readdirSync(directory).filter(name => name.startsWith('ready-')).length >= 4) {
+            clearInterval(timer);
+            writeFileSync(new URL('./finished-${index}', directory), 'finished');
+          }
+        }, 5);
+        setTimeout(() => process.exit(99), 5000).unref();
+      `,
+      );
+      paths.push(pathToFileURL(file).href);
+    }
+    yield* verifyOwnerSchemas(paths);
+    for (let index = 0; index < 6; index += 1) {
+      expect(yield* fs.exists(path.join(fixture.directory, `finished-${index}`))).toBe(true);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('a failed parallel owner cancels and joins the still-running sibling', () =>
+  Effect.gen(function* joinedFailure() {
+    const fs = yield* FileSystem.FileSystem;
+    const fixture = yield* ownerFixture('');
+    const failure = path.join(fixture.directory, 'fail.mjs');
+    const sibling = path.join(fixture.directory, 'sibling.mjs');
+    yield* fs.writeFileString(
+      failure,
+      `
+      import { existsSync } from 'node:fs';
+      setInterval(() => { if (existsSync(new URL('./ready', import.meta.url))) process.exit(7); }, 5);
+      setTimeout(() => process.exit(99), 5000).unref();
+    `,
+    );
+    yield* fs.writeFileString(
+      sibling,
+      `
+      import { writeFileSync } from 'node:fs';
+      process.once('SIGTERM', () => setTimeout(() => {
+        writeFileSync(new URL('./stopped', import.meta.url), 'joined');
+        process.exit(0);
+      }, 50));
+      writeFileSync(new URL('./ready', import.meta.url), 'ready');
+      setTimeout(() => process.exit(99), 5000);
+    `,
+    );
+    const result = yield* verifyOwnerSchemas([pathToFileURL(failure).href, pathToFileURL(sibling).href], 2).pipe(
+      Effect.flip,
+    );
+    expect(result.reason).toContain('exited with code 7');
+    expect(yield* fs.readFileString(path.join(fixture.directory, 'stopped'))).toBe('joined');
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

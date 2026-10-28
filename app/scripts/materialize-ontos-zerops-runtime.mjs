@@ -2,7 +2,7 @@
 /// <reference types="node" />
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Layer, Path, Schema } from 'effect';
+import { Config, Effect, FileSystem, Layer, Option, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -63,6 +63,8 @@ const materializeCommand = Command.make(
           return yield* Effect.fail(failure('--package must match --package-dir/package.json name'));
         }
         const options = { appId, packageDir, packageName, workspaceRoot };
+        // scripts/ci/build-outbox-host.sh passes the plan's host digest; the bundle serves it on /status.
+        const artifactDigest = yield* Config.option(Config.String('ONTOS_OUTBOX_HOST_DIGEST'));
         const delivery = yield* Effect.tryPromise({
           catch: (cause) => failure(String(cause)),
           try: async () => await resolveOutboxWorker(options),
@@ -85,7 +87,12 @@ const materializeCommand = Command.make(
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
         const runtimePackage = yield* Effect.tryPromise({
           catch: (cause) => failure(String(cause)),
-          try: async () => await materializeOutboxWorker({ ...options, runtimeDir }),
+          try: async () =>
+            await materializeOutboxWorker({
+              ...options,
+              artifactDigest: Option.getOrUndefined(artifactDigest),
+              runtimeDir,
+            }),
         });
         const runtimePackageJson = yield* Schema.encodeEffect(RuntimePackageJsonSchema)(runtimePackage);
         yield* fs.writeFileString(path.join(runtimeDir, 'package.json'), `${runtimePackageJson}\n`);

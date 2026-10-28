@@ -92,6 +92,7 @@ const ASSET_RESPONSE_TIMEOUT = Duration.seconds(10);
 /** GETs of one asset per readback attempt, when the transport rather than the content fails. */
 const ASSET_READ_ATTEMPTS = 3;
 
+const RECEIPT_FILE_FLAG = 'receipt-file';
 const SHELL_APP_ID = 'shell-super-app';
 const NATIVE_ENVELOPE_MISMATCH = 'the native Cloudflare release envelope does not bind the final artifact bytes';
 const PUBLIC_ASSET_INVENTORY_MISMATCH =
@@ -893,13 +894,59 @@ export const readVerifiedReleaseFiles = Effect.fn('ImmutableApplicationRelease.v
   },
 );
 
-export const requirePlannedSourceRevision = Effect.fn('ImmutableApplicationRelease.requirePlannedSource')(
-  function* requirePlannedSourceRevisionEffect(
+export interface PlannedUnitInputs {
+  readonly artifactName?: string | undefined;
+  readonly inputsFile?: string | undefined;
+}
+
+const PlannedUnitInputsDocumentSchema = Schema.Struct({
+  digest: sha256,
+  lines: Schema.Array(Schema.String),
+  sourceRevision,
+  unitId: appId,
+  version: Schema.Literal('ontos-deploy-plan-v1'),
+});
+
+/** Old artifacts keep their identity only when the shared planner proves their inputs unchanged. */
+export const requirePlannedUnitInputs = Effect.fn('ImmutableApplicationRelease.requirePlannedUnitInputs')(
+  function* requirePlannedUnitInputsEffect(
     directory: string,
     plan: ImmutableApplicationReleasePlan,
     message: string,
+    evidence: PlannedUnitInputs = {},
   ) {
-    if ((yield* resolveCleanImmutableApplicationSourceRevision(directory)) !== plan.sourceRevision) {
+    const revision = yield* resolveCleanImmutableApplicationSourceRevision(directory);
+    if (revision === plan.sourceRevision) {
+      return yield* Effect.void;
+    }
+    // The release names the build artifact it unpacked and the inputs.json the build packed beside its output.
+    const { artifactName, inputsFile } = evidence;
+    if (artifactName === undefined || inputsFile === undefined) {
+      return yield* fail(message);
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const inputs = yield* fileSystem.readFileString(inputsFile).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(PlannedUnitInputsDocumentSchema))),
+      Effect.mapError(() => fail(message)),
+    );
+    if (
+      inputs.unitId !== plan.appId ||
+      inputs.sourceRevision !== plan.sourceRevision ||
+      artifactName !== `edge-unit-${plan.appId}-${inputs.digest}`
+    ) {
+      return yield* fail(message);
+    }
+    // The CLI calls computeUnitDigest with the same environment and secret HMACs as the plan job.
+    // Never derive current inputs from the downloaded artifact's own lines or digest.
+    const current = yield* runCommand({
+      args: [path.resolve(import.meta.dirname, 'ci/deploy-plan.mts'), 'unit-digest', '--unit', plan.appId],
+      command: 'node',
+      cwd: directory,
+    }).pipe(
+      Effect.flatMap((digest) => Schema.decodeUnknownEffect(sha256)(digest.trim())),
+      Effect.mapError(() => fail(message)),
+    );
+    if (current !== inputs.digest || (yield* resolveCleanImmutableApplicationSourceRevision(directory)) !== revision) {
       return yield* fail(message);
     }
     return yield* Effect.void;
@@ -1246,10 +1293,12 @@ export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.depl
  * release after a transient provider failure (see {@link retryTransientImmutableUpload}).
  */
 const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.upload')(
-  function* uploadImmutableReleaseEffect(input: {
-    readonly appDirectory: string;
-    readonly plan: ImmutableApplicationReleasePlan;
-  }) {
+  function* uploadImmutableReleaseEffect(
+    input: {
+      readonly appDirectory: string;
+      readonly plan: ImmutableApplicationReleasePlan;
+    } & PlannedUnitInputs,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const client = yield* HttpClient.HttpClient;
     const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
@@ -1266,10 +1315,11 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     })(input.plan).pipe(Effect.mapError((cause) => fail('release plan failed validation', cause)));
     const markPhase = yield* releasePhaseTimer(plan.backendScriptName);
     yield* validateReleasePlan(plan);
-    yield* requirePlannedSourceRevision(
+    yield* requirePlannedUnitInputs(
       input.appDirectory,
       plan,
       'the release plan does not identify the current clean Git source revision',
+      input,
     );
     const output = path.resolve(input.appDirectory, '.output');
     const outputFiles = yield* readVerifiedReleaseFiles(output, plan);
@@ -1419,10 +1469,11 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       backendConfig,
       yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)))(capturedConfig),
     );
-    yield* requirePlannedSourceRevision(
+    yield* requirePlannedUnitInputs(
       input.appDirectory,
       plan,
       'the source revision changed while preparing the immutable upload package',
+      input,
     );
     yield* readVerifiedReleaseFiles(output, plan, [
       assetsConfig,
@@ -1522,10 +1573,12 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
  * (the one database registration) keeps the environment-wide publication lock. The same release identity
  * stays serialized so its absence check, upload and readback cannot interleave with a second upload.
  */
-export const deployImmutableApplicationRelease = (input: {
-  readonly appDirectory: string;
-  readonly plan: ImmutableApplicationReleasePlan;
-}) =>
+export const deployImmutableApplicationRelease = (
+  input: {
+    readonly appDirectory: string;
+    readonly plan: ImmutableApplicationReleasePlan;
+  } & PlannedUnitInputs,
+) =>
   withImmutableApplicationReleaseIdentityLock(input.plan.backendScriptName)(
     uploadImmutableApplicationRelease(input).pipe(
       retryTransientImmutableUpload([input.plan.backendScriptName, input.plan.assetsScriptName]),
@@ -1537,21 +1590,79 @@ const PlanDocumentSchema = Schema.Struct({
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
 });
 
+/** A ledger receipt is reusable only while both exact deployments remain active in this account. */
+export const verifyRetainedImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.verifyRetained')(
+  function* verifyRetainedApplicationRelease(raw: ImmutableApplicationReleaseReceipt) {
+    const receipt = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseReceiptSchema, {
+      onExcessProperty: 'error',
+    })(raw).pipe(Effect.mapError((cause) => fail('retained release receipt failed validation', cause)));
+    const { backend, plan } = receipt;
+    yield* validateReleasePlan(plan);
+    if (
+      plan.appId === SHELL_APP_ID ||
+      backend.workerName !== plan.backendScriptName ||
+      backend.baseUrl !== plan.assetsOrigin.replace(`${plan.assetsScriptName}.`, `${plan.backendScriptName}.`) ||
+      receipt.artifacts.contract.url !== `${plan.assetsOrigin}.well-known/ontos-module-manifest.json` ||
+      (receipt.artifacts.federationManifest !== undefined &&
+        receipt.artifacts.federationManifest.url !== `${plan.assetsOrigin}mf-manifest.json`)
+    ) {
+      return yield* fail('the retained receipt must identify the exact immutable application release');
+    }
+    const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
+    const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+    if (!/^[a-f\d]{32}$/u.test(accountId)) {
+      return yield* fail('retained release verification requires an exact Cloudflare account');
+    }
+    yield* verifyImmutableAssetsAccountOrigin(accountId, token, plan);
+    const [backendVersion, assetsVersion] = yield* Effect.all(
+      [
+        readRetainedImmutableWorkerVersion(accountId, token, plan.backendScriptName),
+        readRetainedImmutableWorkerVersion(accountId, token, plan.assetsScriptName),
+      ],
+      { concurrency: 2 },
+    );
+    if (backendVersion !== backend.versionId || assetsVersion !== receipt.assetsVersionId) {
+      return yield* fail('the retained provider deployments no longer match their receipt');
+    }
+    return yield* Effect.void;
+  },
+);
+
+const verifyRetainedCommand = Command.make(
+  'verify-retained',
+  { receiptFile: Flag.String(RECEIPT_FILE_FLAG) },
+  ({ receiptFile }) =>
+    Effect.gen(function* verifyRetainedCommandEffect() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const receipt = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(ImmutableApplicationReleaseReceiptSchema),
+      )(yield* fileSystem.readFileString(receiptFile));
+      yield* verifyRetainedImmutableApplicationRelease(receipt);
+    }),
+);
+
 const deployCommand = Command.make(
   'deploy',
   {
     appDirectory: Flag.String('app-directory'),
+    artifactName: Flag.String('artifact-name').pipe(Flag.optional),
+    inputsFile: Flag.String('inputs-file').pipe(Flag.optional),
     planFile: Flag.String('plan-file'),
-    receiptFile: Flag.String('receipt-file'),
+    receiptFile: Flag.String(RECEIPT_FILE_FLAG),
   },
-  ({ appDirectory, planFile, receiptFile }) =>
+  ({ appDirectory, artifactName, inputsFile, planFile, receiptFile }) =>
     Effect.gen(function* deployCommandEffect() {
       const fileSystem = yield* FileSystem.FileSystem;
       const plan = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableApplicationReleasePlanSchema))(
         yield* fileSystem.readFileString(planFile),
       );
       // The receipt is written only after the upload was read back; a failed upload leaves no receipt.
-      const receipt = yield* deployImmutableApplicationRelease({ appDirectory, plan });
+      const receipt = yield* deployImmutableApplicationRelease({
+        appDirectory,
+        artifactName: Option.getOrUndefined(artifactName),
+        inputsFile: Option.getOrUndefined(inputsFile),
+        plan,
+      });
       yield* fileSystem.writeFileString(
         receiptFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(ImmutableApplicationReleaseReceiptSchema))(receipt),
@@ -1565,7 +1676,7 @@ const candidateCommand = Command.make(
   {
     candidateFile: Flag.String('candidate-file'),
     intentFile: Flag.String('intent-file'),
-    receiptFiles: Flag.String('receipt-file').pipe(Flag.atLeast(0)),
+    receiptFiles: Flag.String(RECEIPT_FILE_FLAG).pipe(Flag.atLeast(0)),
     retainedShellSnapshotFile: Flag.String('retained-shell-snapshot-file').pipe(Flag.optional),
     shellReceiptFile: Flag.String('shell-receipt-file').pipe(Flag.optional),
   },
@@ -1658,7 +1769,13 @@ const planCommand = Command.make(
 );
 
 const command = Command.make('immutable-application-release').pipe(
-  Command.withSubcommands([applicationReleaseSelectCommand, planCommand, deployCommand, candidateCommand]),
+  Command.withSubcommands([
+    applicationReleaseSelectCommand,
+    planCommand,
+    deployCommand,
+    verifyRetainedCommand,
+    candidateCommand,
+  ]),
 );
 const executableLayer = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(

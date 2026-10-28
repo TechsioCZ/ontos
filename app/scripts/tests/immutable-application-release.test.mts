@@ -37,8 +37,10 @@ import {
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
   readReleaseFiles,
+  requirePlannedUnitInputs,
   resolveCleanImmutableApplicationSourceRevision,
   validateImmutableApplicationReleaseArtifacts,
+  verifyRetainedImmutableApplicationRelease,
 } from '../immutable-application-release.mts';
 import type { ReleaseFile } from '../immutable-application-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
@@ -55,6 +57,9 @@ import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import { releaseUiFor } from './release-envelope-ui.fixture.mts';
 
+const UNIT_DIGEST_PHASE = 'unit-digest';
+const ACCOUNT_SUBDOMAIN_PATH = '/workers/subdomain';
+const RETAINED_TEST_TOKEN = 'retained-test-token';
 const APP_ID = 'party-registry';
 const GIT_COMMAND = 'git';
 const TRUSTED_GIT_DIRECTORY = '/trusted/repository';
@@ -981,7 +986,7 @@ const refusesExistingProviderRelease = (
       const requests: { readonly method: string; readonly url: string }[] = [];
       const commands: OpsCommand[] = [];
       const client = HttpClient.make((request, destination) => {
-        if (destination.pathname.endsWith('/workers/subdomain')) {
+        if (destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH)) {
           requests.push({ method: request.method, url: destination.href });
           return Effect.succeed(
             HttpClientResponse.fromWeb(
@@ -1165,6 +1170,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly ownerSecrets?: Readonly<Record<string, string>>;
     readonly packagingFailure?: boolean;
     readonly pageJsPath?: string;
+    readonly plannedDigest?: string;
     readonly recoveryWorkerName?: string;
     readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
@@ -1182,6 +1188,19 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const output = nodePath.join(appDirectory, '.output');
   const publicDirectory = nodePath.join(output, 'public');
   const plan = yield* planFor();
+  const inputsFile = nodePath.join(appDirectory, 'inputs.json');
+  if (options.plannedDigest !== undefined) {
+    yield* fileSystem.writeFileString(
+      inputsFile,
+      JSON.stringify({
+        digest: options.plannedDigest,
+        lines: [],
+        sourceRevision: plan.sourceRevision,
+        unitId: plan.appId,
+        version: 'ontos-deploy-plan-v1',
+      }),
+    );
+  }
   const inventory = artifactInventory(plan, options.pageJsPath);
   const nativeAssets = [...inventory.assets, ...(options.additionalPublicFiles ?? [])];
   const capturedMain = options.noBundle === true ? 'index.mjs' : 'index.js';
@@ -1304,7 +1323,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           }),
       ),
       Match.when(
-        (path) => path.endsWith('/workers/subdomain'),
+        (path) => path.endsWith(ACCOUNT_SUBDOMAIN_PATH),
         () =>
           Effect.sync(() =>
             Response.json({
@@ -1533,90 +1552,95 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   );
   const shellLayer = Layer.succeed(OpsShell, {
     run: (command: OpsCommand) =>
-      Effect.gen(function* nativeDeploymentCommand() {
-        if (command.command === GIT_COMMAND) {
-          if (command.args[0] === 'status') {
-            checkedSource += 1;
-          }
-          const revision =
-            options.initialSource ??
-            (options.changedSource === true && checkedSource > 0 ? 'b'.repeat(40) : SOURCE_REVISION);
-          return gitResult(command, appDirectory, revision);
-        }
-        if (command.args.join(' ') === 'exec wrangler --version') {
-          return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
-        }
-        commands.push(command);
-        timeline.push(command.args.join(' '));
-        const config = command.args[command.args.indexOf('--config') + 1];
-        if (config === undefined) {
-          return yield* Effect.die('a native release command must identify its Wrangler config');
-        }
-        const capturedConfig = yield* Schema.decodeUnknownEffect(
-          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
-        )(yield* fileSystem.readFileString(config));
-        capturedConfigs.push(capturedConfig);
-        if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
-          const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
-          capturedSecrets.push({
-            file: secretsPath,
-            secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
-              yield* fileSystem.readFileString(secretsPath),
+      command.command === 'node'
+        ? Effect.sync(() => {
+            timeline.push(UNIT_DIGEST_PHASE);
+            return `${options.plannedDigest ?? ''}\n`;
+          })
+        : Effect.gen(function* nativeDeploymentCommand() {
+            if (command.command === GIT_COMMAND) {
+              if (command.args[0] === 'status') {
+                checkedSource += 1;
+              }
+              const revision =
+                options.initialSource ??
+                (options.changedSource === true && checkedSource > 0 ? 'b'.repeat(40) : SOURCE_REVISION);
+              return gitResult(command, appDirectory, revision);
+            }
+            if (command.args.join(' ') === 'exec wrangler --version') {
+              return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
+            }
+            commands.push(command);
+            timeline.push(command.args.join(' '));
+            const config = command.args[command.args.indexOf('--config') + 1];
+            if (config === undefined) {
+              return yield* Effect.die('a native release command must identify its Wrangler config');
+            }
+            const capturedConfig = yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+            )(yield* fileSystem.readFileString(config));
+            capturedConfigs.push(capturedConfig);
+            if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
+              const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
+              capturedSecrets.push({
+                file: secretsPath,
+                secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+                  yield* fileSystem.readFileString(secretsPath),
+                ),
+              });
+            }
+            const assetsConfig = yield* Schema.decodeUnknownEffect(
+              Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
+            )(capturedConfig);
+            publishedInventories.push(yield* readReleaseFiles(assetsConfig.assets.directory));
+            if (command.args.includes('--dry-run')) {
+              const directory = command.args[command.args.indexOf('--outdir') + 1];
+              if (directory === undefined) {
+                return yield* Effect.die('native packaging must identify its captured output directory');
+              }
+              for (const module of capturedModules) {
+                yield* fileSystem.writeFile(nodePath.join(directory, module.path), module.bytes);
+              }
+              if (options.tamperWorkerDuringPackaging === true) {
+                yield* fileSystem.writeFileString(
+                  nodePath.join(output, BACKEND_ENTRY_PATH),
+                  'export default { changed: true };',
+                );
+              }
+              if (options.unboundFileDuringPackaging === true) {
+                yield* fileSystem.writeFileString(
+                  nodePath.join(output, 'unbound-during-packaging.mjs'),
+                  'export const extra = true;',
+                );
+              }
+            }
+            const uploadOutcome = backendUploadOutcome(command, capturedConfig);
+            if (uploadOutcome !== 'success') {
+              return yield* new OpsCommandError({
+                command: [command.command, ...command.args].join(' '),
+                message: 'native test upload failed',
+                transient: uploadOutcome === 'transient',
+              });
+            }
+            if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
+              return yield* Effect.fail({
+                providerCode: options.assetsUploadError.providerCode,
+                providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
+              });
+            }
+            return '';
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.mapError((cause) =>
+              Schema.is(OpsCommandError)(cause)
+                ? cause
+                : new OpsCommandError({
+                    cause,
+                    command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
+                    message: 'native test packaging failed',
+                  }),
             ),
-          });
-        }
-        const assetsConfig = yield* Schema.decodeUnknownEffect(
-          Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
-        )(capturedConfig);
-        publishedInventories.push(yield* readReleaseFiles(assetsConfig.assets.directory));
-        if (command.args.includes('--dry-run')) {
-          const directory = command.args[command.args.indexOf('--outdir') + 1];
-          if (directory === undefined) {
-            return yield* Effect.die('native packaging must identify its captured output directory');
-          }
-          for (const module of capturedModules) {
-            yield* fileSystem.writeFile(nodePath.join(directory, module.path), module.bytes);
-          }
-          if (options.tamperWorkerDuringPackaging === true) {
-            yield* fileSystem.writeFileString(
-              nodePath.join(output, BACKEND_ENTRY_PATH),
-              'export default { changed: true };',
-            );
-          }
-          if (options.unboundFileDuringPackaging === true) {
-            yield* fileSystem.writeFileString(
-              nodePath.join(output, 'unbound-during-packaging.mjs'),
-              'export const extra = true;',
-            );
-          }
-        }
-        const uploadOutcome = backendUploadOutcome(command, capturedConfig);
-        if (uploadOutcome !== 'success') {
-          return yield* new OpsCommandError({
-            command: [command.command, ...command.args].join(' '),
-            message: 'native test upload failed',
-            transient: uploadOutcome === 'transient',
-          });
-        }
-        if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
-          return yield* Effect.fail({
-            providerCode: options.assetsUploadError.providerCode,
-            providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
-          });
-        }
-        return '';
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError((cause) =>
-          Schema.is(OpsCommandError)(cause)
-            ? cause
-            : new OpsCommandError({
-                cause,
-                command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
-                message: 'native test packaging failed',
-              }),
-        ),
-      ),
+          ),
   });
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
@@ -1640,7 +1664,13 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     capturedConfigs,
     capturedSecrets,
     commands,
-    deploy: deployImmutableApplicationRelease({ appDirectory, plan }).pipe(Effect.provide(layer)),
+    deploy: deployImmutableApplicationRelease({
+      appDirectory,
+      artifactName:
+        options.plannedDigest === undefined ? undefined : `edge-unit-${plan.appId}-${options.plannedDigest}`,
+      inputsFile,
+      plan,
+    }).pipe(Effect.provide(layer)),
     headerReadinessBodies,
     notFoundBodies,
     originalHeaders,
@@ -2627,6 +2657,225 @@ it.effect('requires one backend provider version serving every request before is
           ),
         ).toBe(true);
       }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('verifies retained receipts against both active versions without writing to the provider', () =>
+  Effect.gen(function* retainedReceiptVerification() {
+    const receipt = yield* receiptFor();
+    const requests: { readonly method: string; readonly url: string }[] = [];
+    const client = HttpClient.make((request, destination) => {
+      requests.push({ method: request.method, url: destination.href });
+      const result = destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH)
+        ? { subdomain: WORKERS_SUBDOMAIN }
+        : {
+            deployments: [
+              {
+                versions: [
+                  {
+                    percentage: 100,
+                    version_id: destination.href.includes(receipt.plan.backendScriptName)
+                      ? BACKEND_VERSION_ID
+                      : ASSETS_VERSION_ID,
+                  },
+                ],
+              },
+            ],
+          };
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ result, success: true })));
+    });
+    yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+            CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
+          }),
+        ),
+      ),
+    );
+    expect(requests).toHaveLength(3);
+    expect(requests.every(({ method }) => method === 'GET')).toBe(true);
+    expect(requests.filter(({ url }) => url.endsWith('/deployments'))).toHaveLength(2);
+  }),
+);
+
+for (const missing of ['backend', 'assets', 'both', 'none'] as const) {
+  it.effect(`rejects a retained half release, deleted Worker, or changed active version (${missing})`, () =>
+    Effect.gen(function* unavailableRetainedReceipt() {
+      const receipt = yield* receiptFor();
+      const client = HttpClient.make((request, destination) => {
+        const backend = destination.href.includes(receipt.plan.backendScriptName);
+        const expectedVersion = backend ? BACKEND_VERSION_ID : ASSETS_VERSION_ID;
+        const absent = missing === 'both' || (backend ? missing === 'backend' : missing === 'assets');
+        const account = destination.pathname.endsWith(ACCOUNT_SUBDOMAIN_PATH);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              {
+                result: account
+                  ? { subdomain: WORKERS_SUBDOMAIN }
+                  : {
+                      deployments: absent
+                        ? []
+                        : [
+                            {
+                              versions: [
+                                {
+                                  percentage: 100,
+                                  version_id: missing === 'none' ? 'another-version' : expectedVersion,
+                                },
+                              ],
+                            },
+                          ],
+                    },
+                success: account || !absent,
+              },
+              { status: !account && absent ? 404 : 200 },
+            ),
+          ),
+        );
+      });
+      const failure = yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+              CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
+            }),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+    }),
+  );
+}
+
+it.effect('rejects a retained receipt from a foreign account before reading Worker versions', () =>
+  Effect.gen(function* foreignRetainedReceipt() {
+    const receipt = yield* receiptFor();
+    const requests: string[] = [];
+    const client = HttpClient.make((request, destination) => {
+      requests.push(destination.href);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            result: { subdomain: 'another-account' },
+            success: true,
+          }),
+        ),
+      );
+    });
+    const failure = yield* verifyRetainedImmutableApplicationRelease(receipt).pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({
+            CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+            CLOUDFLARE_API_TOKEN: RETAINED_TEST_TOKEN,
+          }),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(failure.message).toContain('locked Cloudflare account');
+    expect(requests).toHaveLength(1);
+  }),
+);
+
+for (const scenario of [
+  'matching',
+  'digest-mismatch',
+  'source-mismatch',
+  'artifact-name-mismatch',
+  'unit-mismatch',
+  'version-mismatch',
+  'missing-inputs',
+  'malformed-inputs',
+  'dirty-head',
+  'moving-head',
+  'planner-failure',
+] as const) {
+  it.effect(`requires recomputed planned unit inputs for an older artifact (${scenario})`, () =>
+    Effect.scoped(
+      Effect.gen(function* oldArtifactInputs() {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-planned-unit-inputs-' });
+        const inputsFile = nodePath.join(directory, 'inputs.json');
+        const digest = 'd'.repeat(64);
+        const plan = yield* planFor();
+        const artifactName = `edge-unit-${APP_ID}-${scenario === 'artifact-name-mismatch' ? 'e'.repeat(64) : digest}`;
+        if (scenario !== 'missing-inputs') {
+          yield* fileSystem.writeFileString(
+            inputsFile,
+            scenario === 'malformed-inputs'
+              ? '{broken'
+              : JSON.stringify({
+                  digest,
+                  lines: ['blob app/verticals/party-registry/src/index.ts recorded-object'],
+                  sourceRevision: scenario === 'source-mismatch' ? 'b'.repeat(40) : SOURCE_REVISION,
+                  unitId: scenario === 'unit-mismatch' ? 'tax' : APP_ID,
+                  version: scenario === 'version-mismatch' ? 'unknown-v2' : 'ontos-deploy-plan-v1',
+                }),
+          );
+        }
+        const commands: OpsCommand[] = [];
+        let computed = false;
+        const verification = requirePlannedUnitInputs(directory, plan, 'planned input verification failed', {
+          artifactName,
+          inputsFile,
+        }).pipe(
+          Effect.provideService(OpsShell, {
+            run: (command) => {
+              commands.push(command);
+              if (command.command === 'git') {
+                return Effect.succeed(
+                  gitResult(
+                    command,
+                    directory,
+                    scenario === 'moving-head' && computed ? 'c'.repeat(40) : 'b'.repeat(40),
+                    scenario === 'dirty-head' ? ' M changed-source.ts\n' : '',
+                  ),
+                );
+              }
+              computed = true;
+              expect(command.command).toBe('node');
+              expect(command.args.slice(1)).toEqual([UNIT_DIGEST_PHASE, '--unit', APP_ID]);
+              expect(command.args[0]?.endsWith('/ci/deploy-plan.mts')).toBe(true);
+              return scenario === 'planner-failure'
+                ? Effect.fail(new OpsCommandError({ command: 'node', message: 'digest computation unavailable' }))
+                : Effect.succeed(`${scenario === 'digest-mismatch' ? 'e'.repeat(64) : digest}\n`);
+            },
+          }),
+        );
+        if (scenario === 'matching') {
+          yield* verification;
+          expect(commands.filter(({ command }) => command === 'node')).toHaveLength(1);
+          expect(commands.filter(({ args }) => args[0] === 'status')).toHaveLength(2);
+        } else {
+          const failure = yield* verification.pipe(Effect.flip);
+          expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('uploads an old-revision artifact without rewriting its identity when recomputed inputs match', () =>
+  Effect.scoped(
+    Effect.gen(function* matchingOldArtifactUpload() {
+      const fixture = yield* prepareDeployment({ initialSource: 'b'.repeat(40), plannedDigest: 'd'.repeat(64) });
+      const receipt = yield* fixture.deploy;
+      expect(receipt.plan).toEqual(fixture.plan);
+      expect(receipt.plan.sourceRevision).toBe(SOURCE_REVISION);
+      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+      expect(fixture.timeline.filter((phase) => phase === UNIT_DIGEST_PHASE)).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

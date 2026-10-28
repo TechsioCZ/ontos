@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -79,6 +82,8 @@ const serviceEnvironments = (): ReadonlyMap<string, Readonly<Record<string, stri
 const databaseUrlKeys = (environment: Readonly<Record<string, string>>) =>
   DATABASE_URL_KEYS.filter((key) => environment[key] !== undefined);
 
+const pushUnitsPath = new URL('../push-zerops-units.sh', import.meta.url);
+
 const serviceNode = (zeropsYaml: string, setup: string) => {
   const services = Schema.decodeUnknownSync(Schema.instanceOf(YAMLSeq))(parseDocument(zeropsYaml).get('zerops', true));
   const matches = services.items.filter((item) => isMap(item) && item.get('setup') === setup);
@@ -86,8 +91,8 @@ const serviceNode = (zeropsYaml: string, setup: string) => {
   return Schema.decodeUnknownSync(Schema.instanceOf(YAMLMap))(matches[0]);
 };
 
-const serviceStrings = (service: YAMLMap, path: readonly string[]): readonly string[] => {
-  const sequence = service.getIn(path, true);
+const serviceStrings = (service: YAMLMap, keys: readonly string[]): readonly string[] => {
+  const sequence = service.getIn(keys, true);
   if (sequence === undefined) {
     return [];
   }
@@ -185,7 +190,7 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid');
   expect(workflow).toContain(`STAGE_VARIABLES_JSON: \${{ toJSON(vars) }}`);
   expect(workflow).toContain('app/scripts/push-zerops-units.sh');
-  const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
+  const pushUnits = readFileSync(pushUnitsPath, 'utf-8');
   expect(pushUnits).toContain('active-composition:publish stage-service-id --setup "$unit"');
   // Neither dedicated workers nor the combined host may be given a public subdomain.
   expect(pushUnits).toContain(`    *-worker | ${OUTBOX_WORKER_HOST.stageSetup}) ;;`);
@@ -251,12 +256,12 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const host = serviceBlock(zeropsYaml, OUTBOX_WORKER_HOST.id);
 
-  expect(host).toContain(
-    `zerops:materialize --app '${OUTBOX_WORKER_HOST.id}' --package 'app' --package-dir '.' --worker`,
-  );
-  expect(serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).getIn(['build', 'deployFiles', 0])).toBe(
-    'app/.zerops/runtime/outbox-worker-host',
-  );
+  // CI prebuilds the host (scripts/ci/build-outbox-host.sh) and Zerops only deploys it: no Zerops build.
+  expect(serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).has('build')).toBe(false);
+  expect(host).not.toContain('zerops:materialize');
+  const pushUnits = readFileSync(pushUnitsPath, 'utf-8');
+  expect(pushUnits).toContain('zcli service deploy');
+  expect(pushUnits).toContain(`readonly host_runtime="app/.zerops/runtime/$host_setup"`);
   expect(
     serviceNode(zeropsYaml, OUTBOX_WORKER_HOST.id).getIn(['run', 'envVariables', 'OUTBOX_WORKER_HEALTH_PORT']),
   ).toBe('4100');
@@ -465,7 +470,7 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     expect(workflow).toContain('zerops:materialize-environment');
     expect(workflow).toContain('--environment "$DEPLOY_ENVIRONMENT"');
     expect(workflow).toContain('--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT"');
-    const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
+    const pushUnits = readFileSync(pushUnitsPath, 'utf-8');
     expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
   }),
 );
@@ -592,4 +597,153 @@ it('declares no project-level variable that could carry a database credential', 
   expect(Object.keys(deployment)).toStrictEqual(['zerops']);
   expect(Object.keys(imports)).toStrictEqual(['services']);
   expect(readFileSync(zeropsImportPath, 'utf-8')).not.toMatch(/envVariables|DB_PASSWORD|DATABASE_URL/u);
+});
+
+const StepInputsSchema = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean]));
+const MainHostWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'build-outbox-host': Schema.Struct({
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      outputs: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(
+        Schema.Struct({
+          env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+          id: Schema.optional(Schema.String),
+          name: Schema.String,
+          run: Schema.optional(Schema.String),
+          with: Schema.optional(StepInputsSchema),
+        }),
+      ),
+    }),
+    'deploy-zerops': Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+          if: Schema.optional(Schema.String),
+          name: Schema.String,
+          run: Schema.optional(Schema.String),
+          uses: Schema.optional(Schema.String),
+          with: Schema.optional(StepInputsSchema),
+        }),
+      ),
+    }),
+  }),
+});
+// zstd and jq come from Homebrew on macOS and from the system on Linux runners.
+const PUSH_TEST_PATH = '/opt/homebrew/bin:/usr/bin:/bin';
+const PUSH_TEST_BASH = os.platform() === 'darwin' ? '/opt/homebrew/bin/bash' : '/bin/bash';
+const HOST_DIGEST_OUTPUT = `\${{ needs.build-outbox-host.outputs.digest }}`;
+const RUNNER_TEMP_EXPRESSION = `\${{ runner.temp }}`;
+
+/** Packs a host archive the way scripts/ci/build-outbox-host.sh lays it out, carrying `digest`. */
+const writeHostArchive = (directory: string, digest: string): string => {
+  const root = path.join(directory, 'archive');
+  const runtime = path.join(root, 'app/.zerops/runtime', OUTBOX_WORKER_HOST.stageSetup);
+  mkdirSync(path.join(runtime, 'node/bin'), { recursive: true });
+  writeFileSync(path.join(runtime, 'worker.mjs'), '');
+  writeFileSync(path.join(runtime, 'node/bin/node'), '#!/bin/sh\n');
+  chmodSync(path.join(runtime, 'node/bin/node'), 0o755);
+  writeFileSync(
+    path.join(runtime, 'worker-artifact.json'),
+    JSON.stringify({ artifactDigest: digest, schemaVersion: 3, serviceId: OUTBOX_WORKER_HOST.stageSetup }),
+  );
+  const archive = path.join(directory, 'outbox-host.tar.zst');
+  const packed = spawnSync('/bin/sh', ['-c', 'tar -c -f - -C "$1" app | zstd --quiet -o "$2"', 'pack', root, archive], {
+    encoding: 'utf-8',
+  });
+  expect(packed.stderr).toBe('');
+  expect(packed.status).toBe(0);
+  return archive;
+};
+
+it("deploys the main pipeline's planned Outbox Worker host from the artifact build-outbox-host built", () => {
+  const { jobs } = Schema.decodeUnknownSync(MainHostWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
+  const build = jobs['build-outbox-host'];
+  // The host builds only when the plan deploys it, and names its artifact after the digest it carries.
+  expect(build.if).toContain(`contains(needs.deploy-plan.outputs.providers, '"${OUTBOX_WORKER_HOST.stageSetup}"')`);
+  expect(build.outputs.digest).toBe(`\${{ steps.digest.outputs.digest }}`);
+  expect(build.steps.find((step) => step.id === 'digest')?.run).toContain('scripts/ci/deploy-plan.mts host-digest');
+  const recipe = build.steps.find((step) => step.run?.includes('app/scripts/ci/build-outbox-host.sh') === true);
+  expect(recipe?.env?.ONTOS_OUTBOX_HOST_DIGEST).toBe(`\${{ steps.digest.outputs.digest }}`);
+  const upload = build.steps.find((step) => step.name === 'Upload the host artifact');
+  expect(upload?.with?.name).toBe(`outbox-host-\${{ steps.digest.outputs.digest }}`);
+  expect(upload?.with?.path).toBe(`${RUNNER_TEMP_EXPRESSION}/outbox-host.tar.zst`);
+
+  const { steps } = jobs['deploy-zerops'];
+  const download = steps.findIndex((step) => step.with?.name === `outbox-host-${HOST_DIGEST_OUTPUT}`);
+  const providers = steps.findIndex((step) => step.name === 'Deploy affected providers');
+  expect(download).toBeGreaterThanOrEqual(0);
+  expect(download).toBeLessThan(providers);
+  expect(steps[download]?.uses).toMatch(/^actions\/download-artifact@/u);
+  const downloaded = Schema.decodeUnknownSync(Schema.String)(steps[download]?.with?.path);
+  const caller = steps[providers]?.env ?? {};
+  expect(caller.OUTBOX_HOST_DIGEST).toBe(HOST_DIGEST_OUTPUT);
+  expect(caller.OUTBOX_HOST_ARTIFACT).toBe(`${downloaded}/outbox-host.tar.zst`);
+
+  // Run the shared script with exactly that caller's host environment and a stubbed Zerops CLI.
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-push-zerops-host-'));
+  try {
+    const runnerTemp = path.join(directory, 'runner');
+    const digest = 'a'.repeat(64);
+    mkdirSync(path.join(runnerTemp, 'outbox-host'), { recursive: true });
+    const archive = writeHostArchive(path.join(runnerTemp, 'outbox-host'), digest);
+    const resolve = (value: string | undefined) =>
+      Schema.decodeUnknownSync(Schema.String)(value)
+        .replaceAll(RUNNER_TEMP_EXPRESSION, runnerTemp)
+        .replaceAll(HOST_DIGEST_OUTPUT, digest);
+    expect(resolve(caller.OUTBOX_HOST_ARTIFACT)).toBe(archive);
+    const bin = path.join(directory, 'bin');
+    const calls = path.join(directory, 'calls');
+    mkdirSync(bin);
+    mkdirSync(path.join(directory, 'checkout/app'), { recursive: true });
+    writeFileSync(path.join(bin, 'mise'), '#!/bin/sh\necho host-service-id\n');
+    writeFileSync(path.join(bin, 'zcli'), '#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$ZCLI_CALLS"\n');
+    chmodSync(path.join(bin, 'mise'), 0o755);
+    chmodSync(path.join(bin, 'zcli'), 0o755);
+    const push = (host: Readonly<Record<string, string>>) =>
+      spawnSync(PUSH_TEST_BASH, [new URL(pushUnitsPath).pathname], {
+        cwd: path.join(directory, 'checkout'),
+        encoding: 'utf-8',
+        env: {
+          GITHUB_SHA: 'b'.repeat(40),
+          PATH: `${bin}:${PUSH_TEST_PATH}`,
+          RUNNER_TEMP: runnerTemp,
+          UNITS_JSON: JSON.stringify([OUTBOX_WORKER_HOST.stageSetup]),
+          ZCLI_CALLS: calls,
+          ZEROPS_PROJECT_ID: 'project-id',
+          ZEROPS_YAML_PATH: path.join(directory, 'zerops.yaml'),
+          ...host,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+      });
+
+    const deployed = push({
+      OUTBOX_HOST_ARTIFACT: resolve(caller.OUTBOX_HOST_ARTIFACT),
+      OUTBOX_HOST_DIGEST: resolve(caller.OUTBOX_HOST_DIGEST),
+    });
+    expect(deployed.stderr).toBe('');
+    expect(deployed.status).toBe(0);
+    const [deploy, ...rest] = readFileSync(calls, 'utf-8').trim().split('\n');
+    expect(rest).toStrictEqual([]);
+    expect(deploy).toMatch(
+      /^service deploy --working-dir \S+ --path-to-file-or-dir app\/\.zerops\/runtime\/outbox-worker-host /u,
+    );
+    expect(deploy).toContain('--service-id host-service-id --setup outbox-worker-host');
+
+    // An artifact that carries another digest, or none at all, never deploys.
+    rmSync(calls);
+    const stale = push({ OUTBOX_HOST_ARTIFACT: archive, OUTBOX_HOST_DIGEST: 'c'.repeat(64) });
+    expect(stale.status).toBe(1);
+    expect(stale.stderr).toContain(`does not carry host digest ${'c'.repeat(64)}`);
+    const missing = push({});
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('OUTBOX_HOST_ARTIFACT');
+    // Only best-effort log collection may reach the Zerops CLI after a refused artifact.
+    const refused = existsSync(calls) ? readFileSync(calls, 'utf-8').trim().split('\n') : [];
+    expect(refused.filter((line) => !line.startsWith('service log '))).toStrictEqual([]);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });

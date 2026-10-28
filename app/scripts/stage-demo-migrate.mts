@@ -22,6 +22,8 @@ import type { StageDeployDiagnosticInput, StageDeployStatus } from './stage-depl
 import { writeStageDeployDiagnostic } from './stage-deploy-diagnostics.mts';
 import { verifyInitialCompositionCutover } from './initial-composition-cutover.mts';
 import { ZeropsPublicApiLive } from './zerops-public-api.mts';
+import { DatabasePreparationPlanSchema, readDatabasePreparationPlan } from './postgres/database-state-fingerprint.mts';
+import { Reactivity } from 'effect/reactivity';
 
 const DIAGNOSTIC_TIMEOUT = 'diagnostic-timeout';
 const SUMMARY_UNAVAILABLE = 'Stage deployment summary unavailable; the migration outcome is unchanged.';
@@ -237,15 +239,22 @@ export const stageDemoMigrationCommand = Command.make(
       Flag.withDefault(false),
       Flag.withDescription('Verify an exact completed migration only; never recover an incomplete migration.'),
     ),
+    databaseRecord: Flag.String('database-record').pipe(Flag.withDefault('')),
     drainBudgetMs: Flag.String('drain-budget-ms').pipe(
       Flag.withDefault(`${APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.drainMs}`),
       Flag.withDescription('Positive drain deadline in milliseconds, default 300000, within the total deadline.'),
     ),
+    forceFull: Flag.Boolean('force-full').pipe(Flag.withDefault(false)),
+    inputsDigest: Flag.String('inputs-digest').pipe(Flag.withDefault('')),
     migrationBudgetMs: Flag.String('migration-budget-ms').pipe(
       Flag.withDefault(`${APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.migrationMs}`),
       Flag.withDescription(
         'Positive child deadline in milliseconds, default 840000, clamped to the remaining total deadline.',
       ),
+    ),
+    plan: Flag.Boolean('plan').pipe(
+      Flag.withDefault(false),
+      Flag.withDescription('Read-only database light-path decision; uncertainty always selects the full sealed chain.'),
     ),
     readiness: Flag.Boolean('readiness').pipe(
       Flag.withDefault(false),
@@ -266,16 +275,33 @@ export const stageDemoMigrationCommand = Command.make(
       ),
     ),
   },
-  ({ continuePublication, drainBudgetMs, migrationBudgetMs, readiness, resumeMigratedRevision, totalBudgetMs }) =>
+  ({
+    continuePublication,
+    databaseRecord,
+    drainBudgetMs,
+    forceFull,
+    inputsDigest,
+    migrationBudgetMs,
+    plan,
+    readiness,
+    resumeMigratedRevision,
+    totalBudgetMs,
+  }) =>
     Effect.gen(function* runStageMigrationCommand() {
       const diagnostics = yield* configuredDiagnosticOptions;
-      if (
-        (readiness && continuePublication) ||
-        (Option.isSome(resumeMigratedRevision) && (readiness || continuePublication))
-      ) {
+      if ([plan, readiness, continuePublication, Option.isSome(resumeMigratedRevision)].filter(Boolean).length > 1) {
         return yield* new StageDemoMigrationError({
           message: 'Readiness, completed-migration publication and schema retry are mutually exclusive',
         });
+      }
+      if (plan) {
+        const result = yield* readDatabasePreparationPlan({
+          forceFull,
+          inputsDigest,
+          recordFile: databaseRecord,
+        });
+        const json = yield* Schema.encodeEffect(Schema.fromJsonString(DatabasePreparationPlanSchema))(result);
+        return yield* Console.log(json);
       }
       if (readiness) {
         return yield* withApplicationCompositionReadinessDeadline(readApplicationCompositionReadiness).pipe(
@@ -308,7 +334,7 @@ export const stageDemoMigrationCommand = Command.make(
         Option.getOrUndefined(resumeMigratedRevision),
       );
     }),
-);
+).pipe(Command.provide(() => Reactivity.layer));
 
 if (import.meta.main) {
   const services = Layer.mergeAll(ApplicationCompositionAuthorityAdminDatabaseLive, ZeropsPublicApiLive).pipe(
@@ -317,41 +343,57 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     Effect.gen(function* runStageMigrationEntrypoint() {
       const diagnostics = yield* configuredDiagnosticOptions;
-      const mode = yield* Deferred.make<boolean>();
+      const mode = yield* Deferred.make<{ readonly plan: boolean; readonly readiness: boolean }>();
+      const unavailablePlan = Schema.encodeEffect(Schema.fromJsonString(DatabasePreparationPlanSchema))({
+        authorityPhase: 'unknown',
+        light: false,
+        loginsOk: false,
+        reason: 'state-unavailable',
+        stateHash: Option.none(),
+      }).pipe(Effect.flatMap(Console.log));
       const command = Command.run({ version: '1.0.0' })(
         stageDemoMigrationCommand.pipe(
           Command.provide(() => services),
           // The parsed mode starts the deadline before service provisioning, without reparsing argv.
-          Command.provideEffectDiscard(({ readiness }) => Deferred.succeed(mode, readiness)),
+          Command.provideEffectDiscard(({ plan, readiness }) => Deferred.succeed(mode, { plan, readiness })),
         ),
       ).pipe(
         Effect.catchTag('ApplicationCompositionAuthorityError', () =>
-          Effect.flatMap(Deferred.await(mode), (readiness) =>
-            readiness
-              ? reportReadiness(
-                  { advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' },
-                  diagnostics,
-                )
-              : reportDiagnostic(
-                  {
-                    authorityPhase: 'unknown',
-                    migrationsCompleted: false,
-                    migrationStarted: false,
-                    phase: 'unknown',
-                    reason: 'phase-failed',
-                    status: 'failed',
-                  },
-                  diagnostics,
-                ).pipe(Effect.andThen(Effect.fail(new StageDemoMigrationError({ message: AUTHORITY_FAILURE })))),
-          ),
+          Effect.flatMap(Deferred.await(mode), ({ plan, readiness }) => {
+            if (plan) {
+              return unavailablePlan;
+            }
+            if (readiness) {
+              return reportReadiness(
+                { advisoryOnly: true, reason: 'diagnostic-unavailable', status: 'unknown' },
+                diagnostics,
+              );
+            }
+            return reportDiagnostic(
+              {
+                authorityPhase: 'unknown',
+                migrationsCompleted: false,
+                migrationStarted: false,
+                phase: 'unknown',
+                reason: 'phase-failed',
+                status: 'failed',
+              },
+              diagnostics,
+            ).pipe(Effect.andThen(Effect.fail(new StageDemoMigrationError({ message: AUTHORITY_FAILURE }))));
+          }),
         ),
       );
       const watchdog = Deferred.await(mode).pipe(
-        Effect.flatMap((readiness) =>
-          readiness
+        Effect.flatMap(({ plan, readiness }) =>
+          readiness || plan
             ? Effect.sleep(Duration.millis(APPLICATION_COMPOSITION_PUBLICATION_BUDGETS.diagnosticMs)).pipe(
                 Effect.andThen(
-                  reportReadiness({ advisoryOnly: true, reason: DIAGNOSTIC_TIMEOUT, status: 'unknown' }, diagnostics),
+                  plan
+                    ? unavailablePlan
+                    : reportReadiness(
+                        { advisoryOnly: true, reason: DIAGNOSTIC_TIMEOUT, status: 'unknown' },
+                        diagnostics,
+                      ),
                 ),
               )
             : Effect.never,

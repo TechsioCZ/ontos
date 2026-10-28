@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "$comment": "App-relative globs whose content, with their import closure, decides the outbox host digest beside the hosted owners' unit digests. zerops.yaml is listed because its host setup is the deployed run configuration.",
+  "globs": [
+    "scripts/outbox-worker-host.generated.mts",
+    "scripts/email-dispatch-trigger.mts",
+    "scripts/outbox-worker-delivery.mjs",
+    "scripts/generate-outbox-worker-deployment.mjs",
+    "scripts/materialize-outbox-worker.mjs",
+    "scripts/materialize-ontos-zerops-runtime.mjs",
+    "scripts/verify-zerops-workspace-install.mts",
+    "scripts/install-zerops-node.sh",
+    "scripts/ci/build-outbox-host.sh",
+    "scripts/ci/outbox-host-inputs.json",
+    "zerops.yaml"
+  ]
+}

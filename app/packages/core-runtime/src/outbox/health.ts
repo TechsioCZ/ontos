@@ -1,9 +1,11 @@
 import { NodeHttpServer } from '@effect/platform-node';
-import { Clock, Effect, Match, Option, Ref } from 'effect';
+import { Clock, Effect, Match, Option, Ref, Schema } from 'effect';
 import type { Scope } from 'effect';
 import { HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import type { ServeError } from 'effect/http/HttpServerError';
+
+import { OntosDeploymentAppIdSchema } from '../modules/manifest.ts';
 
 interface HealthState {
   readonly lastSuccessfulCycleAt: Option.Option<number>;
@@ -65,6 +67,29 @@ export const createOutboxWorkerHealth = ({
   staleAfterMs,
 }: CreateOutboxWorkerHealthOptions): Effect.Effect<OutboxWorkerHealth> => makeOutboxWorkerHealth(staleAfterMs, now);
 
+/**
+ * One hosted owner's compiled identity and the last composition revision its polling loop completed a
+ * successful cycle under. Identity stays None until the loop reports it. JSON carries None as null.
+ */
+export const OutboxWorkerOwnerStatusSchema = Schema.Struct({
+  admittedRevision: Schema.OptionFromNullOr(Schema.String),
+  appId: Schema.OptionFromNullOr(OntosDeploymentAppIdSchema),
+  buildMarker: Schema.OptionFromNullOr(Schema.String),
+  lastSuccessAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  ready: Schema.Boolean,
+});
+export type OutboxWorkerOwnerStatus = typeof OutboxWorkerOwnerStatusSchema.Type;
+
+/**
+ * The deployed host artifact and every hosted owner's admission, so a release can confirm that the
+ * host it expects runs and that each owner admitted the composition it published. No configuration values.
+ */
+export const OutboxWorkerHostStatusSchema = Schema.Struct({
+  artifactDigest: Schema.OptionFromNullOr(Schema.String),
+  owners: Schema.Array(OutboxWorkerOwnerStatusSchema),
+});
+export type OutboxWorkerHostStatus = typeof OutboxWorkerHostStatusSchema.Type;
+
 /** The lifecycle and readiness checks one health server serves and closes. */
 export type OutboxWorkerReadiness = Pick<OutboxWorkerHealth, 'isLive' | 'isReady' | 'shuttingDown'>;
 
@@ -87,9 +112,10 @@ export interface OutboxWorkerHealthServer {
 // Node supplies only the server constructor; the Effect adapter owns all socket I/O and cleanup.
 const createNodeHealthServer = () => process.getBuiltinModule('http').createServer();
 
+/** Serves /live, /ready and /status on the internal health port; the host has no public route. */
 export const serveOutboxWorkerHealth: (
   health: OutboxWorkerReadiness,
-  options: { readonly port: number },
+  options: { readonly port: number; readonly status: Effect.Effect<OutboxWorkerHostStatus> },
 ) => Effect.Effect<OutboxWorkerHealthServer, ServeError, Scope.Scope> = Effect.fn('OutboxWorkerHealth.serve')(
   function* serveOutboxWorkerHealthEffect(health, options) {
     const server = yield* NodeHttpServer.make(createNodeHealthServer, {
@@ -100,6 +126,13 @@ export const serveOutboxWorkerHealth: (
       if (request.url === '/live') {
         return health.isLive.pipe(
           Effect.map((live) => HttpServerResponse.jsonUnsafe({ live }, { status: live ? 200 : 503 })),
+        );
+      }
+      if (request.url === '/status') {
+        return options.status.pipe(
+          Effect.flatMap(Schema.encodeEffect(OutboxWorkerHostStatusSchema)),
+          Effect.orDie,
+          Effect.map((status) => HttpServerResponse.jsonUnsafe(status, { status: 200 })),
         );
       }
       if (request.url !== '/ready') {

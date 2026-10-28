@@ -1,19 +1,24 @@
 #!/bin/sh
-# Materialize the Outbox Worker host exactly as its zerops.yaml build does, assemble only its
-# deployFiles, and run its real start command until every hosted loop has polled the database and
-# /ready answers. Then stop it with SIGTERM and require a clean exit. A hosted owner whose layer
-# cannot start, a runtime dependency the bundle does not ship, or a shutdown that hangs fails here
+# Run the Outbox Worker host artifact with its real zerops.yaml start command until every hosted loop
+# has polled the database, /ready answers and /status shows every owner admitting the served composition
+# under the artifact's digest. Then stop it with SIGTERM and require a clean exit. A hosted owner whose
+# layer cannot start, a runtime dependency the bundle does not ship, or a shutdown that hangs fails here
 # instead of after the Cloudflare stage deploys it.
 #
-# Usage: sh scripts/prove-outbox-worker-host-artifact.sh <empty-artifact-directory>
+# Usage: sh scripts/prove-outbox-worker-host-artifact.sh <empty-artifact-directory> [<outbox-host.tar.zst>]
+# With the prebuilt archive from scripts/ci/build-outbox-host.sh it runs that exact artifact on its shipped
+# Node, so the machine must execute its linux-musl Node (an Alpine container). Without it, it materializes
+# the host the way that build does and runs it on the workspace Node.
 # The caller supplies the migrated database and SpiceDB environment (see the service-integration job).
 set -eu
 
-artifact="${1:?usage: prove-outbox-worker-host-artifact.sh <empty-artifact-directory>}"
+usage='usage: prove-outbox-worker-host-artifact.sh <empty-artifact-directory> [<outbox-host.tar.zst>]'
+artifact="${1:?$usage}"
+prebuilt="${2:-}"
 app_directory="$(cd "$(dirname "$0")/.." && pwd)"
-repository="$(cd "$app_directory/.." && pwd)"
 timeout_seconds="${OUTBOX_WORKER_HOST_READY_TIMEOUT_SECONDS:-120}"
 setup='outbox-worker-host'
+runtime="app/.zerops/runtime/$setup"
 
 case "$timeout_seconds" in
   ''|*[!0-9]*)
@@ -33,7 +38,7 @@ if [ -n "$(ls -A "$artifact")" ]; then
 fi
 artifact="$(cd "$artifact" && pwd)"
 
-# One line per field: the materialize command, the deployFiles, the health port, and the start command.
+# One line per field: the health port and the start command. The host setup has no Zerops build.
 service="$(cd "$app_directory" && node --input-type=module --eval "
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
@@ -41,33 +46,41 @@ const service = parse(readFileSync('zerops.yaml', 'utf-8')).zerops.find(({ setup
 if (service === undefined) {
   throw new Error('zerops.yaml has no $setup setup');
 }
-const materialize = service.build.buildCommands.find((command) => command.includes('zerops:materialize'));
-process.stdout.write([
-  materialize.slice(materialize.indexOf('pnpm run zerops:materialize')),
-  service.build.deployFiles.join(' '),
-  service.run.envVariables.OUTBOX_WORKER_HEALTH_PORT,
-  service.run.start,
-].join('\n'));
+process.stdout.write([service.run.envVariables.OUTBOX_WORKER_HEALTH_PORT, service.run.start].join('\n'));
 ")"
-materialize="$(printf '%s\n' "$service" | sed -n 1p)"
-deploy_files="$(printf '%s\n' "$service" | sed -n 2p)"
-port="$(printf '%s\n' "$service" | sed -n 3p)"
-start="$(printf '%s\n' "$service" | sed -n 4p)"
+port="$(printf '%s\n' "$service" | sed -n 1p)"
+start="$(printf '%s\n' "$service" | sed -n 2p)"
 
-(cd "$app_directory" && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" sh -c "$materialize")
+if [ -n "$prebuilt" ]; then
+  # Zerops places the archive's paths under /var/www, where the start command runs; this proof uses $artifact.
+  zstd --quiet --decompress --stdout -- "$prebuilt" | tar -x -f - -C "$artifact"
+else
+  # The digest a source materialization compiles in; a prebuilt archive brings the plan's own.
+  proof_digest="$(node --eval "process.stdout.write(require('node:crypto').createHash('sha256').update('outbox-worker-host-artifact-proof').digest('hex'))")"
+  (
+    cd "$app_directory"
+    ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" ONTOS_OUTBOX_HOST_DIGEST="$proof_digest" \
+      pnpm run zerops:materialize --app "$setup" --package 'app' --package-dir '.' --worker
+  )
+  mkdir -p "$artifact/$(dirname "$runtime")"
+  cp -Rp "$app_directory/../$runtime" "$artifact/$runtime"
+fi
+if [ ! -f "$artifact/$runtime/worker.mjs" ]; then
+  echo "The Outbox Worker host artifact has no $runtime/worker.mjs" >&2
+  exit 1
+fi
+host_digest="$(node --input-type=module --eval "
+import { readFileSync } from 'node:fs';
+const { artifactDigest } = JSON.parse(readFileSync(process.argv[1], 'utf-8'));
+if (typeof artifactDigest !== 'string') {
+  throw new Error('The Outbox Worker host artifact names no artifact digest');
+}
+process.stdout.write(artifactDigest);
+" "$artifact/$runtime/worker-artifact.json")"
 
-for deploy_file in $deploy_files; do
-  if [ ! -e "$repository/$deploy_file" ]; then
-    echo "Outbox Worker host deployFiles entry $deploy_file does not exist in the build" >&2
-    exit 1
-  fi
-  mkdir -p "$artifact/$(dirname "$deploy_file")"
-  cp -Rp "$repository/$deploy_file" "$artifact/$deploy_file"
-done
-
-# The Zerops build ships its own Node in the runtime's node/; this proof runs the start command with
-# the pinned workspace Node on PATH instead, exec'd so SIGTERM reaches the start command's own shell
-# exactly as the platform delivers it (dash does not exec the last command of `sh -c` itself).
+# A source materialization has no node/, so its start command falls through to the pinned workspace Node
+# on PATH; a prebuilt archive runs on the Node it ships. Both are exec'd so SIGTERM reaches the start
+# command's own shell exactly as the platform delivers it (dash does not exec the last command of `sh -c`).
 # Readiness requires a successful cycle under the complete approved composition. The local proof
 # owns an otherwise empty authority row and a loopback source; neither is a deployment receipt.
 fixture_log="$artifact/outbox-worker-host-proof-fixture.log"
@@ -127,7 +140,7 @@ trap 'exit 143' TERM
 (
   cd "$app_directory"
   exec node scripts/outbox-worker-host-proof-fixture.mts \
-    --worker-artifact "$artifact/app/.zerops/runtime/$setup/worker-artifact.json" \
+    --worker-artifact "$artifact/$runtime/worker-artifact.json" \
     --source-url-file "$source_url_file" \
     --host-stopped-file "$host_stopped_file"
 ) >"$fixture_log" 2>&1 &
@@ -180,6 +193,21 @@ until [ "$(curl --silent --max-time 2 --output /dev/null --write-out '%{http_cod
   fi
   sleep 1
 done
+
+# Positive admission: the same check the stage release runs after it publishes a composition.
+revision="$(curl --silent --fail --max-time 5 "$source_url" | node --input-type=module --eval "
+let document = '';
+for await (const chunk of process.stdin) {
+  document += chunk;
+}
+process.stdout.write(JSON.parse(document).composition.revision);
+")"
+if ! (cd "$app_directory" && node scripts/ci/await-outbox-admission.mts --status-url "http://127.0.0.1:$port/status" \
+  --revision "$revision" --host-digest "$host_digest" --timeout "$timeout_seconds"); then
+  cat "$log"
+  echo "The assembled Outbox Worker host did not report every owner admitting $revision" >&2
+  exit 1
+fi
 
 loops="$(grep -c 'Outbox Worker loop started' "$log" || true)"
 owners="$(grep -c 'outboxWorkerEntry as ' "$app_directory/scripts/outbox-worker-host.generated.mts")"

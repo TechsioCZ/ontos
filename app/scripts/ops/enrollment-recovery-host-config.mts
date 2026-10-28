@@ -224,6 +224,11 @@ const compare = (
 
 /** Safe output only. A successful CHECK plans absent keys, not runtime readiness or permission proof. */
 const ReportSchema = Schema.Struct({
+  /**
+   * APPLY only: it created or removed a host secret. Zerops hands a running container its secrets at
+   * start, so the release redeploys the host even when the host artifact itself is unchanged.
+   */
+  changed: Schema.Boolean,
   createdKeys: Schema.Array(ManagedKeySchema),
   managedKeys: Schema.Array(ManagedKeySchema),
   missingKeys: Schema.Array(ManagedKeySchema),
@@ -274,7 +279,14 @@ export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigM
         return yield* failure(RETIRED_VALUE_PRESENT, stillRetired);
       }
     }
-    return { createdKeys, managedKeys: [...desired.keys()], missingKeys, mode, retiredKeys };
+    return {
+      changed: mode === 'apply' && (createdKeys.length > 0 || retiredKeys.length > 0),
+      createdKeys,
+      managedKeys: [...desired.keys()],
+      missingKeys,
+      mode,
+      retiredKeys,
+    };
   });
 
 if (import.meta.main) {

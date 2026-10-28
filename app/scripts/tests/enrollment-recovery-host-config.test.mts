@@ -166,6 +166,7 @@ it.effect('CHECK plans missing host keys without writing or exporting secret val
     expect(Arr.sort(report.missingKeys, Order.String)).toEqual(Arr.sort(Object.keys(expectedValues), Order.String));
     expect(report.createdKeys).toEqual([]);
     expect(report.retiredKeys).toEqual([]);
+    expect(report.changed).toBe(false);
     expect(state.writes).toEqual([]);
     expect(state.reads).toEqual(['host-id']);
     expect(state.commands).toEqual([{ args: ['service', 'list', '--project-id', 'project-id'], command: 'zcli' }]);
@@ -180,6 +181,8 @@ it.effect('APPLY copies exact canonical values to the host only, preserves unrel
     });
     const first = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
     expect(first.createdKeys).toHaveLength(5);
+    // A created secret reaches the host only when it restarts, so the release must redeploy it.
+    expect(first.changed).toBe(true);
     expect(state.writes.every(({ serviceId }) => serviceId === 'host-id')).toBe(true);
     for (const [key, value] of Object.entries(expectedValues)) {
       expect(Redacted.value(state.host.get(key) ?? Redacted.make('missing'))).toBe(value);
@@ -187,6 +190,7 @@ it.effect('APPLY copies exact canonical values to the host only, preserves unrel
     expect(Redacted.value(state.host.get('KEEP') ?? Redacted.make('missing'))).toBe('existing');
     const again = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
     expect(again.createdKeys).toEqual([]);
+    expect(again.changed).toBe(false);
     expect(state.writes).toHaveLength(5);
     yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer));
   }),
@@ -301,6 +305,7 @@ it.effect('removes the retired portal provider URL from the host, and VERIFY ref
     const state = fixture({ host: { ...expectedValues, KEEP: 'existing', [RETIRED_KEY]: RETIRED_URL } });
     const planned = yield* enrollmentRecoveryHostConfig('check').pipe(Effect.provide(state.layer));
     expect(planned.retiredKeys).toEqual([RETIRED_KEY]);
+    expect(planned.changed).toBe(false);
     expect(state.deletes).toEqual([]);
     expectSafeFailure(
       yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer), Effect.result),
@@ -309,6 +314,7 @@ it.effect('removes the retired portal provider URL from the host, and VERIFY ref
 
     const applied = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
     expect(applied.retiredKeys).toEqual([RETIRED_KEY]);
+    expect(applied.changed).toBe(true);
     expect(state.deletes).toEqual([{ key: RETIRED_KEY, serviceId: 'host-id' }]);
     expect(state.host.has(RETIRED_KEY)).toBe(false);
     expect(Redacted.value(state.host.get('KEEP') ?? Redacted.make('missing'))).toBe('existing');

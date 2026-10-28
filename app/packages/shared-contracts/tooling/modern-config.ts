@@ -306,8 +306,12 @@ export const createWorkspaceModernConfig = ({
     output: {
       // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
       // holds a cold dev server past readiness budgets. Builds keep the checker; in `modern dev`,
-      // `pnpm typecheck` owns type diagnostics.
-      disableTsChecker: readBuildEnvironmentValue('NODE_ENV') === 'development',
+      // `pnpm typecheck` owns type diagnostics. A CI unit build that has already run its own TS-Go reference
+      // build (`ultramodern typecheck --build`, which fails on a transitive type error) sets
+      // ULTRAMODERN_DISABLE_BUILD_TS_CHECKER=1 instead of checking the same graph twice.
+      disableTsChecker:
+        readBuildEnvironmentValue('NODE_ENV') === 'development' ||
+        readBuildEnvironmentValue('ULTRAMODERN_DISABLE_BUILD_TS_CHECKER') === '1',
     },
     server: {
       publicDir: ['./.dev-public'],

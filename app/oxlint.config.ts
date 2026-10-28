@@ -687,6 +687,38 @@ export default defineConfig({
       },
     },
     {
+      // The stage demo deploy planner runs in its plan job before any workspace install, which keeps the plan off
+      // the deploy's critical path, so these scripts import Node builtins only: no Effect, Schema or Redacted. They
+      // validate JSON by hand at each boundary, throw to one CLI edge and run the checkout's git. Every rule below
+      // prescribes an Effect or Schema replacement; the rest of the rule set still applies.
+      files: ['scripts/ci/deploy-plan.mts', 'scripts/ci/release-ledger.mts', 'scripts/ci/unit-closure.mts'],
+      rules: {
+        'anti-slop/no-runtime-typeof': 'off',
+        'anti-slop/no-unknown-parameters': 'off',
+        'anti-slop/no-unknown-returns': 'off',
+        'anti-slop/no-unsafe-dictionary-type': 'off',
+        'effect-native/no-ad-hoc-argv-in-scripts': 'off',
+        'effect-native/no-ambient-date': 'off',
+        'effect-native/no-ambient-process-env': 'off',
+        'effect-native/no-async-script-program': 'off',
+        'effect-native/no-console-in-scripts': 'off',
+        'effect-native/no-direct-node-io-in-scripts': 'off',
+        'effect-native/no-environment-record-type': 'off',
+        'effect-native/no-hand-parsed-environment-value': 'off',
+        'effect-native/no-instanceof': 'off',
+        'effect-native/no-native-json-parse': 'off',
+        'effect-native/no-native-json-stringify': 'off',
+        'effect-native/no-nullable-service-outcome': 'off',
+        'effect-native/no-promise-shaped-port': 'off',
+        'effect-native/no-refinement-outside-schema': 'off',
+        'effect-native/no-string-timestamp-schema': 'off',
+        'effect-native/no-structural-document-walking': 'off',
+        'effect-native/no-throw-in-scripts': 'off',
+        'effect-native/no-unredacted-secret-field': 'off',
+        'sonarjs/no-os-command-from-path': 'off',
+      },
+    },
+    {
       // These tests inspect complete public/module surfaces; namespace imports are the assertion.
       files: [
         'apps/shell-super-app/tests/unit/routes/document-gateway-assertions.test.ts',

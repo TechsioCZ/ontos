@@ -97,6 +97,7 @@ const UnitIdSchema = Schema.NonEmptyString.pipe(Schema.brand('UnitId'));
 
 export const HostWorkerArtifactSchema = Schema.Struct({
   appId: Schema.Literal(OUTBOX_WORKER_HOST.id),
+  artifactDigest: Schema.OptionFromNullOr(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))),
   entry: Schema.Literal(OUTBOX_WORKER_BUNDLE),
   ownerBuildIdentities: Schema.Array(
     Schema.Struct({
@@ -106,7 +107,7 @@ export const HostWorkerArtifactSchema = Schema.Struct({
       unitId: UnitIdSchema,
     }),
   ),
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   serviceId: Schema.Literal(OUTBOX_WORKER_HOST.id),
   sourceInputs: Schema.Array(Schema.NonEmptyString),
   sourceRevision: Schema.NonEmptyString,

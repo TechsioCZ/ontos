@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { createDigestContext } from '../ci/deploy-plan.mts';
 import { CONSERVATIVE_FULL_DEPLOY_PATHS } from '../plan-deployment-impact.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -65,4 +66,14 @@ it('plans a full deployment for every root-level file a delivery unit build read
   expect(inputs).toContain('module-federation.shared.ts');
   expect(inputs).toContain('scripts/ontos-mcp-contribution.mts');
   expect(inputs.filter((input) => !CONSERVATIVE_FULL_DEPLOY_PATHS.has(input))).toEqual([]);
+});
+
+it('hashes every root-level file a delivery unit build reads into every unit digest', () => {
+  const globalInputs = new Set(
+    createDigestContext(appRoot)
+      .globalLines()
+      .map((line) => line.split(' ')[1]),
+  );
+  const inputs = EffectArray.sort(rootBuildInputs(), Order.String);
+  expect(inputs.filter((input) => !globalInputs.has(`app/${input}`))).toEqual([]);
 });

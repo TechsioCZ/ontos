@@ -1114,6 +1114,8 @@ for (const changedPath of [
   'scripts/outbox-worker-delivery.mjs',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
+  'scripts/ci/build-outbox-host.sh',
+  'scripts/outbox-worker-host-artifact.mts',
   'zerops.yaml',
   TOPOLOGY_PATH,
   'module-federation.shared.ts',

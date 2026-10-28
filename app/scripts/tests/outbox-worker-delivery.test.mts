@@ -65,6 +65,7 @@ const RuntimeManifestSchema = Schema.fromJsonString(
 );
 const ServiceIdSchema = Schema.String.pipe(Schema.brand('ServiceId'));
 const WorkerArtifactSchema = Schema.Struct({
+  artifactDigest: Schema.OptionFromNullOr(Schema.String),
   ownerBuildIdentities: Schema.Array(
     Schema.Struct({
       appId: Schema.String.pipe(Schema.brand('AppId')),
@@ -73,7 +74,7 @@ const WorkerArtifactSchema = Schema.Struct({
       unitId: Schema.String.pipe(Schema.brand('UnitId')),
     }),
   ),
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
   serviceId: ServiceIdSchema,
   sourceInputs: Schema.Array(Schema.String),
   sourceRevision: Schema.OptionFromNullOr(Schema.String),
@@ -158,6 +159,12 @@ const makeFixture = () =>
       writeFile(
         path.join(root, 'scripts/email-dispatch-trigger.mts'),
         'export const startEmailDispatchTrigger = () => { throw new Error("Artifact fixtures must never execute email startup"); };\n',
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, 'scripts/outbox-worker-host-artifact.mts'),
+        'export const outboxHostArtifactDigest = null;\n',
       ),
     );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
@@ -269,8 +276,10 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(coreEntry).toContain("from '@app/shell-super-app/outbox-worker-host'");
     expect(coreEntry).toContain('entries: [outboxWorkerEntry]');
     expect(coreEntry).not.toContain('@app/ledger');
-    expect(host).toContain("zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker");
-    expect(host).toContain("deployFiles:\n        - 'app/.zerops/runtime/outbox-worker-host'");
+    // CI builds the host artifact and Zerops only deploys it, so the host setup has no Zerops build.
+    expect(host).not.toContain('build:');
+    expect(host).not.toContain('zerops:materialize');
+    expect(host).toContain('retryPeriod: 3s');
     expect(host).toContain("OUTBOX_WORKER_HEALTH_PORT: '4100'");
     expect(host).toContain('ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host');
     expect(host).toContain(SHARED_DATABASE_URL_PREFIX);
@@ -280,6 +289,8 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(host).toContain(`start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && `);
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
     expect(hostEntry).toContain('  startup: startEmailDispatchTrigger,\n');
+    expect(hostEntry).toContain("import { outboxHostArtifactDigest } from './outbox-worker-host-artifact.mts';\n");
+    expect(hostEntry).toContain('  artifactDigest: outboxHostArtifactDigest,\n');
     expect(hostEntry).not.toContain('startEmailDispatchTrigger();');
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",
@@ -309,6 +320,9 @@ it.live('updates native unquoted worker setups in place and preserves custom set
     run:
       start: preserve-me
   - setup: outbox-worker-host
+    build:
+      buildCommands:
+        - remote build that a deploy-only host must not keep
     deploy:
       readinessCheck:
         failureTimeout: 8m
@@ -322,6 +336,7 @@ it.live('updates native unquoted worker setups in place and preserves custom set
     expect(document.getIn(['zerops', 1, 'run', 'envVariables', 'OUTBOX_WORKER_HEALTH_PORT'])).toBe('4110');
     expect(document.getIn(['zerops', 2, 'run', 'start'])).toBe('preserve-me');
     expect(document.getIn(['zerops', 3, 'deploy', 'readinessCheck', 'failureTimeout'])).toBe('8m');
+    expect(document.hasIn(['zerops', 3, 'build'])).toBe(false);
     expect((yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, first.deployment))).deployment).toBe(
       first.deployment,
     );
@@ -456,6 +471,8 @@ it.live('refuses to materialize an Outbox Worker host whose entry drifted from i
   }),
 );
 
+const HOST_DIGEST = 'c'.repeat(64);
+
 it.live('bundles every hosted owner entry into the real Outbox Worker host artifact', () =>
   Effect.gen(function* bundlesHost() {
     const runtimeDir = yield* Effect.acquireRelease(
@@ -465,6 +482,7 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
     const runtimePackage = yield* Effect.tryPromise(() =>
       materializeOutboxWorker({
         appId: OUTBOX_WORKER_HOST.id,
+        artifactDigest: HOST_DIGEST,
         packageDir: '.',
         packageName: 'app',
         runtimeDir,
@@ -475,6 +493,10 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
       yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, WORKER_ARTIFACT), 'utf-8')),
     );
     expect(artifact.serviceId).toBe(OUTBOX_WORKER_HOST.id);
+    // The plan's host digest is recorded beside the bundle and compiled into it for /status.
+    expect(artifact.artifactDigest).toEqual(Option.some(HOST_DIGEST));
+    const bundle = yield* Effect.tryPromise(() => readFile(path.join(runtimeDir, 'worker.mjs'), 'utf-8'));
+    expect(bundle).toMatch(new RegExp(`outboxHostArtifactDigest = Option\\d*\\.some\\("${HOST_DIGEST}"\\)`, 'u'));
     expect(runtimePackage.name).toBe('outbox-worker-host-runtime');
     for (const owner of ['party-registry', 'commerce-customer-context', 'price-group-catalog']) {
       expect(artifact.sourceInputs).toContain(`verticals/${owner}/src/worker-host/entry.ts`);

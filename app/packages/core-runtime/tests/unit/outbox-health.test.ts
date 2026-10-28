@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, Layer, Predicate } from 'effect';
+import { ConfigProvider, Effect, Layer, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 
@@ -11,10 +11,12 @@ import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/p
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 import { outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
+const status = Effect.succeed({ artifactDigest: Option.none(), owners: [] });
+
 it.live('production health binds all IPv4 interfaces for external-container probes', () =>
   Effect.gen(function* externallyReachableHealth() {
     const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
-    const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+    const server = yield* serveOutboxWorkerHealth(health, { port: 0, status });
     expect(server.hostname).toBe('0.0.0.0');
   }),
 );
@@ -28,7 +30,7 @@ it.live('readiness starts false, follows successful/failing cycles, expires, and
       now: Effect.sync(() => now),
       staleAfterMs: 100,
     });
-    const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+    const server = yield* serveOutboxWorkerHealth(health, { port: 0, status });
     const live = client.get(`http://127.0.0.1:${server.port}/live`);
     const ready = client.get(`http://127.0.0.1:${server.port}/ready`);
     const startingLiveResponse = yield* live;
@@ -38,6 +40,9 @@ it.live('readiness starts false, follows successful/failing cycles, expires, and
     expect(startingResponse.status).toBe(503);
     expect(yield* startingResponse.json).toEqual({ ready: false });
     expect((yield* client.get(`http://127.0.0.1:${server.port}/unknown`)).status).toBe(404);
+    const statusResponse = yield* client.get(`http://127.0.0.1:${server.port}/status`);
+    expect(statusResponse.status).toBe(200);
+    expect(yield* statusResponse.json).toEqual({ artifactDigest: null, owners: [] });
     yield* health.cycleSucceeded;
     const readyResponse = yield* ready;
     expect(readyResponse.status).toBe(200);
@@ -65,7 +70,7 @@ it.live('a host awaiting composition stays live while every business cycle remai
     const first = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
     const second = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
     const health = combineOutboxWorkerHealth([first, second]);
-    const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
+    const server = yield* serveOutboxWorkerHealth(health, { port: 0, status });
     const live = client.get(`http://127.0.0.1:${server.port}/live`);
     const ready = client.get(`http://127.0.0.1:${server.port}/ready`);
     yield* first.cycleFailed;
@@ -87,10 +92,10 @@ it.live('closing the health scope marks it unavailable and releases its dynamica
   Effect.gen(function* releasedPort() {
     const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
     yield* health.cycleSucceeded;
-    const server = yield* Effect.scoped(serveOutboxWorkerHealth(health, { port: 0 }));
+    const server = yield* Effect.scoped(serveOutboxWorkerHealth(health, { port: 0, status }));
     expect(yield* health.isLive).toBe(false);
     expect(yield* health.isReady).toBe(false);
-    const rebound = yield* Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port }));
+    const rebound = yield* Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port, status }));
     expect(rebound.port).toBe(server.port);
   }),
 );
@@ -98,8 +103,8 @@ it.live('closing the health scope marks it unavailable and releases its dynamica
 it.live('a health port already in use produces a typed server startup failure', () =>
   Effect.gen(function* occupiedPort() {
     const health = yield* createOutboxWorkerHealth({ staleAfterMs: 5000 });
-    const server = yield* serveOutboxWorkerHealth(health, { port: 0 });
-    const failure = yield* Effect.flip(Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port })));
+    const server = yield* serveOutboxWorkerHealth(health, { port: 0, status });
+    const failure = yield* Effect.flip(Effect.scoped(serveOutboxWorkerHealth(health, { port: server.port, status })));
     expect(Predicate.isTagged(failure, 'ServeError')).toBe(true);
   }),
 );

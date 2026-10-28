@@ -45,11 +45,72 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # The org runs at most 20 jobs at once, and a push to the sales demo branch starts the Stage Demo Deploy and
+  # its pull request's gates in the same second: the gates' first wave alone takes 19 runners. Pull request and
+  # merge queue gates therefore wait (behind queue-proof, which every gate needs) while a stage demo deploy run
+  # still has jobs queued for a runner, its final verification excepted, for at most 20 minutes. It never fails
+  # a run: on any error or at the ceiling the gates simply start. Main pushes and dispatches pass at once.
+  stage-deploy-yield:
+    name: Yield runners to a stage demo deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    permissions:
+      actions: read
+    steps:
+      - name: Wait while a stage demo deploy has jobs queued for a runner
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          deploy_runs="repos/$GITHUB_REPOSITORY/actions/workflows/stage-demo-deploy.yml/runs?branch=demo/sales-crm&per_page=20"
+          started=$SECONDS
+          # A push to the demo branch creates its deploy run in about the same second as this run.
+          expect_sha=""
+          if [[ "$HEAD_REF" == demo/sales-crm ]]; then expect_sha="$HEAD_SHA"; fi
+          busy() {
+            local runs id
+            runs="$(gh api "$deploy_runs" --jq '[.workflow_runs[] | select(.status != "completed") | {id, status, head_sha}]')" || return 1
+            if [[ -n "$expect_sha" ]] && (( SECONDS - started < 90 )) &&
+               ! jq -e --arg sha "$expect_sha" 'any(.[]; .head_sha == $sha)' <<<"$runs" >/dev/null; then
+              echo "waiting for the deploy run of $expect_sha to appear"
+              return 0
+            fi
+            # A run waiting for its first runner, or one whose plan has not yet created its build jobs.
+            if jq -e 'any(.[]; .status == "queued" or .status == "requested")' <<<"$runs" >/dev/null; then
+              echo 'a stage demo deploy run is queued'
+              return 0
+            fi
+            for id in $(jq -r '.[] | select(.status == "in_progress") | .id' <<<"$runs"); do
+              # shellcheck disable=SC2016 # $jobs is a jq variable.
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '
+                  [.jobs[] | select(.name != "Verify stage once")] as $jobs
+                  | any($jobs[]; .status == "queued" or .status == "waiting")
+                    or any($jobs[]; .name == "Plan the changed units"
+                      and (.status != "completed" or ((now - (.completed_at | fromdateiso8601)) < 30)))' |
+                 grep -qx true; then
+                echo "stage demo deploy run $id still has jobs waiting for a runner"
+                return 0
+              fi
+            done
+            return 1
+          }
+          while (( SECONDS - started < 1200 )) && busy; do
+            sleep 15
+          done
+          if (( SECONDS - started >= 1200 )); then
+            echo '::notice title=Gates no longer yield::The stage demo deploy still queues jobs after 20 minutes; the gates start now.'
+          fi
+          echo "The gates start after $((SECONDS - started)) s."
+
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
   # merge_group run of this workflow ran every gate on this exact commit and succeeded. Such a commit skips
   # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
   queue-proof:
     name: Find the merge queue proof of this commit
+    needs: [stage-deploy-yield]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1609,11 +1670,81 @@ jobs:
           state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
           cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
+  # The Outbox Worker host never builds on Zerops. When the plan deploys it, CI builds its musl artifact once,
+  # beside the migrations, under the host digest the artifact must carry, and deploy-zerops only deploys it.
+  # It is its own job so the Alpine build's musl files never reach the runner that later runs the workspace.
+  build-outbox-host:
+    name: Build the Outbox Worker host after merge to main
+    if: >-
+      ${{ !cancelled() && needs.deploy-plan.result == 'success'
+      && contains(needs.deploy-plan.outputs.providers, '"outbox-worker-host"') }}
+    needs: [deploy-target, deploy-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup the pinned Node
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          working_directory: app
+
+      - name: Compute the Outbox Worker host digest
+        id: digest
+        working-directory: app
+        env:
+          DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+        run: |
+          digest="$(mise exec -- node scripts/ci/deploy-plan.mts host-digest)"
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error title=Outbox Worker host digest::deploy-plan.mts host-digest printed no digest" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+
+      - name: Build the host in Alpine
+        env:
+          ONTOS_OUTBOX_HOST_DIGEST: ${{ steps.digest.outputs.digest }}
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          docker run --rm \
+            --env ONTOS_OUTBOX_HOST_DIGEST --env ULTRAMODERN_SOURCE_REVISION --env RUNNER_TEMP=/runner-temp \
+            --volume "$GITHUB_WORKSPACE:/src" --volume "$RUNNER_TEMP:/runner-temp" --workdir /src \
+            alpine:3.23 sh app/scripts/ci/build-outbox-host.sh
+          ls -lh "$RUNNER_TEMP/outbox-host.tar.zst"
+
+      - name: Upload the host artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: outbox-host-${{ steps.digest.outputs.digest }}
+          path: ${{ runner.temp }}/outbox-host.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
   # The environment's deployment: the providers, outbox workers and Shell that run on Zerops, beside the edge deploy.
+  # A planned Outbox Worker host deploys only the artifact build-outbox-host built; a failed build stops the deploy.
   deploy-zerops:
     name: Deploy the environment's Zerops services after merge to main
-    if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' }}
-    needs: [deploy-target, deploy-plan, deploy-migrations]
+    if: >-
+      ${{ !cancelled() && needs.deploy-migrations.result == 'success'
+      && (needs.build-outbox-host.result == 'success' || needs.build-outbox-host.result == 'skipped') }}
+    needs: [deploy-target, deploy-plan, deploy-migrations, build-outbox-host]
     runs-on: ubuntu-latest
     # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
     # plan order, so a full topology deploy (12 units plus publication) needs about 3 hours.
@@ -1679,12 +1810,21 @@ jobs:
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
+      - name: Download the prebuilt Outbox Worker host
+        if: needs.build-outbox-host.result == 'success'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: outbox-host-${{ needs.build-outbox-host.outputs.digest }}
+          path: ${{ runner.temp }}/outbox-host
+
       - name: Deploy affected providers
         if: needs.deploy-plan.outputs.providers != '[]'
         env:
           UNITS_JSON: ${{ needs.deploy-plan.outputs.providers }}
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          OUTBOX_HOST_ARTIFACT: ${{ runner.temp }}/outbox-host/outbox-host.tar.zst
+          OUTBOX_HOST_DIGEST: ${{ needs.build-outbox-host.outputs.digest }}
         run: app/scripts/push-zerops-units.sh
 
       - name: Deploy Shell after affected providers

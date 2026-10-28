@@ -9,13 +9,20 @@ inputs:
     description: Export the app/.mise.toml environment.
     default: "true"
   save-store:
-    description: Save a missed pnpm store on main. Exactly one job sets this, so parallel jobs never race to save.
+    description: >-
+      Save a missed pnpm store on main or the sales demo branch. Exactly one job of a workflow sets this, so
+      parallel jobs never race to save.
     default: "false"
   restore-typescript-build:
     description: >-
-      Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved on main for this
-      toolchain and lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
+      Restore the newest TS-Go typecheck build (app/node_modules/.cache/tsgo) saved for this toolchain and
+      lockfile. TS-Go rechecks every file whose content changed, so a stale build only costs time.
     default: "false"
+  typescript-build-unit:
+    description: >-
+      The delivery unit whose own reference build the TS-Go typecheck build is, keyed apart from main's
+      whole-workspace build. Its restore falls back to that whole-workspace build. Empty for the workspace.
+    default: ""
 
 outputs:
   typescript-build-key:
@@ -52,18 +59,37 @@ runs:
       run: mise exec -- pnpm install --frozen-lockfile ${{ inputs.install-args }}
 
     - name: Save the pnpm store
-      if: inputs.save-store == 'true' && github.ref == 'refs/heads/main' && steps.restore.outputs.cache-hit != 'true'
+      if: >-
+        inputs.save-store == 'true' && steps.restore.outputs.cache-hit != 'true' &&
+        (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/demo/sales-crm')
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.store.outputs.path }}
         key: ${{ steps.restore.outputs.cache-primary-key }}
 
     # Restored after the install, which creates app/node_modules. The key names this commit, so the
-    # restore takes the newest build saved for this toolchain and lockfile.
+    # restore takes the newest build saved for this toolchain and lockfile; a unit's own build comes first.
     - name: Name the TS-Go typecheck build
       id: typescript-build
       shell: bash
-      run: echo "key=tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      env:
+        TOOLCHAIN: ${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
+        UNIT: ${{ inputs.typescript-build-unit }}
+      run: |
+        workspace="tsgo-$TOOLCHAIN-"
+        prefix="$workspace"
+        if [[ -n "$UNIT" ]]; then
+          prefix="tsgo-unit-$UNIT-$TOOLCHAIN-"
+        fi
+        {
+          echo "key=$prefix$GITHUB_SHA"
+          echo 'restore-keys<<RESTORE_KEYS'
+          printf '%s\n' "$prefix"
+          if [[ "$prefix" != "$workspace" ]]; then
+            printf '%s\n' "$workspace"
+          fi
+          echo 'RESTORE_KEYS'
+        } >>"$GITHUB_OUTPUT"
 
     - name: Restore the TS-Go typecheck build
       if: inputs.restore-typescript-build == 'true'
@@ -71,4 +97,4 @@ runs:
       with:
         path: app/node_modules/.cache/tsgo
         key: ${{ steps.typescript-build.outputs.key }}
-        restore-keys: tsgo-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}-
+        restore-keys: ${{ steps.typescript-build.outputs.restore-keys }}

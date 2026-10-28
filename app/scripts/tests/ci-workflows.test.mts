@@ -1362,8 +1362,13 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
       "!cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success'",
     ),
   );
-  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, MIGRATIONS_JOB]);
-  expect(zerops.if).toBe(expression(`!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success'`));
+  // A planned Outbox Worker host deploys only its CI-built artifact, so a failed host build stops the deploy.
+  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, DEPLOY_PLAN_JOB, MIGRATIONS_JOB, 'build-outbox-host']);
+  expect(zerops.if).toBe(
+    expression(
+      `!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success' && (needs.build-outbox-host.result == 'success' || needs.build-outbox-host.result == 'skipped')`,
+    ),
+  );
   // Publication shares the environment lock; migrations lock on their own after the initial guard.
   expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
   expect(migrations.concurrency.group).toBe(`zerops-migrations-${DEPLOY_ENVIRONMENT_EXPRESSION}`);

@@ -26,6 +26,12 @@ import { readDevelopmentPorts } from './topology-development-ports.mjs';
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
 
+/**
+ * The module the host entry reads its artifact digest from. The host bundle compiles the plan's digest in
+ * its place, so /status names the exact prebuilt artifact; a source run of the entry reports none.
+ */
+export const OUTBOX_HOST_ARTIFACT_MODULE = 'scripts/outbox-worker-host-artifact.mts';
+
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
     shell: Schema.Struct({ id: Schema.String, package: Schema.String, path: Schema.String }),
@@ -134,6 +140,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
   return [
     HOST_ENTRY_HEADER,
     "import { startEmailDispatchTrigger } from './email-dispatch-trigger.mts';",
+    "import { outboxHostArtifactDigest } from './outbox-worker-host-artifact.mts';",
     "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
     `import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '${host.coreOwner.hostExport}';`,
     ...host.owners.map(
@@ -141,6 +148,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
     ),
     '',
     'startOutboxWorkerHost({',
+    '  artifactDigest: outboxHostArtifactDigest,',
     '  entries: [',
     '    coreSystemOutboxWorkerEntry,',
     ...bindings.map((binding) => `    ${binding},`),
@@ -286,6 +294,10 @@ const renderHostService = (services, serviceIds, rootPackageName, delivery) =>
       ['run', 'start'],
       `sh -c 'cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
     );
+    if (delivery.id === OUTBOX_WORKER_HOST.id) {
+      service.delete('build');
+      service.setIn(['deploy', 'readinessCheck', 'retryPeriod'], '3s');
+    }
     return service;
   });
 
@@ -459,6 +471,11 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
       { id: OUTBOX_WORKER_HOST.stageSetup, service: hostService },
     ]) {
       const current = yield* saveWorkerDeployment(deployment, id, service);
+      // CI builds the host artifact (scripts/ci/build-outbox-host.sh) and Zerops only deploys it, so the
+      // host setup carries no Zerops build that a push could run instead.
+      if (id === OUTBOX_WORKER_HOST.stageSetup) {
+        current.delete('build');
+      }
       for (const { request, worker } of DEDICATED_WORKER_IDENTITIES) {
         current.deleteIn(['run', 'envVariables', request.identity.urlKey]);
         if (id === CORE_SYSTEM_OUTBOX_WORKER.stageSetup) {

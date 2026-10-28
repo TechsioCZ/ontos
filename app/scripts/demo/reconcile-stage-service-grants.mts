@@ -142,7 +142,7 @@ const relationshipFrom = (
     resource: { objectId: resourceId, objectType: resourceType },
     subject: { object: { objectId: subjectId, objectType: subjectType }, optionalRelation: subjectRelation ?? '' },
   });
-const requestFor = (relationship: v1.Relationship) => {
+const requestFor = (relationship: v1.Relationship): Effect.Effect<v1.ReadRelationshipsRequest, ServiceGrantError> => {
   const { resource } = relationship;
   const subject = relationship.subject?.object;
   if (resource === undefined || subject === undefined || resource.objectId === '' || subject.objectId === '') {
@@ -256,6 +256,17 @@ export const desiredCompanyAdministratorWorkforceGrants = (): readonly v1.Relati
     ),
   );
 
+const readMissingServiceGrants = (rpc: ServiceGrantRpc, desired: readonly v1.Relationship[]) =>
+  Effect.forEach(
+    desired,
+    (relationship) =>
+      requestFor(relationship).pipe(
+        Effect.flatMap((request) => rpc.readRelationships(request)),
+        Effect.map((rows) => (isPresent(rows, relationship) ? [] : [relationship])),
+      ),
+    { concurrency: 8 },
+  ).pipe(Effect.map((missing) => missing.flat()));
+
 export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(function* reconcileServiceGrantsEffect(
   rpc: ServiceGrantRpc,
   desired: readonly v1.Relationship[],
@@ -276,12 +287,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
       yield* Console.log(reason);
     }
   }
-  const missing: v1.Relationship[] = [];
-  for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
-      missing.push(relationship);
-    }
-  }
+  const missing = yield* readMissingServiceGrants(rpc, desired);
   yield* Console.log(`Service grants ${mode}: desired=${desired.length} missing=${missing.length}`);
   if (mode === 'verify' && missing.length > 0) {
     return yield* new ServiceGrantError({ reason: `${missing.length} service grants are missing` });
@@ -296,10 +302,8 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
       ),
     }),
   );
-  for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
-      return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
-    }
+  if ((yield* readMissingServiceGrants(rpc, desired)).length > 0) {
+    return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
   }
   yield* Console.log(`Service grants verified: desired=${desired.length} applied=${missing.length} missing=0`);
   return { applied: missing.length, desired: desired.length, missing: 0 };
