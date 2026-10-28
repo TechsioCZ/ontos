@@ -1317,7 +1317,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
         document: Effect.gen(function* loadDocument() {
           if (context.state !== 'authenticated') {
             return {
-              composition: { navigation: [] as const, state: context.state },
+              // Tenant authentication is valid, but a company composition still requires a selected company.
+              composition: {
+                navigation: [] as const,
+                state: context.state === 'tenant_authenticated' ? ('selection_required' as const) : context.state,
+              },
               session,
               tenants,
             };

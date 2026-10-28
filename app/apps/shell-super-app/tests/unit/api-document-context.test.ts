@@ -239,23 +239,34 @@ it.live('interrupts pending composition and people reads when the parallel hint 
   }).pipe(Effect.timeout('2 seconds')),
 );
 
-for (const state of ['selection_required', 'access_blocked'] as const) {
+for (const state of ['selection_required', 'access_blocked', 'tenant_authenticated'] as const) {
   it.effect(`never starts company composition, people checks or assertions for ${state}`, () =>
     Effect.gen(function* noCompanyAdmission() {
-      const context: ShellContextResult = {
-        availableLegalEntities: [],
+      const { legalEntityId, ...tenantPrincipal } = principal;
+      void legalEntityId;
+      const base = {
         identity,
-        principal,
+        principal: tenantPrincipal,
         setCookieHeaders: [],
-        state,
       };
+      const context: ShellContextResult =
+        state === 'tenant_authenticated'
+          ? { ...base, availableLegalEntities: [legalEntity], state }
+          : { ...base, availableLegalEntities: [], state };
       const { issue, readComposition, response, tenantPermissions } = yield* documentTest(
         context,
-        Effect.succeed(unavailable),
+        Effect.succeed(
+          state === 'tenant_authenticated' ? [{ decision: 'allowed', key: principal.tenantId }] : unavailable,
+        ),
         () => Effect.die('Company composition must not run without company admission'),
       );
-      expect(response.composition).toEqual({ navigation: [], state });
-      expect(response.legalEntities?.tenantContextAvailable).toBe(false);
+      expect(response.composition).toEqual({
+        navigation: [],
+        state: state === 'tenant_authenticated' ? 'selection_required' : state,
+      });
+      expect(response.session.state).toBe(state);
+      expect(response.legalEntities?.legalEntities).toEqual(state === 'tenant_authenticated' ? [legalEntity] : []);
+      expect(response.legalEntities?.tenantContextAvailable).toBe(state === 'tenant_authenticated');
       expect(response.legalEntities).not.toHaveProperty('selectedLegalEntityId');
       expect(response).not.toHaveProperty('canManagePeople');
       expect(response).not.toHaveProperty('gatewayAssertions');

@@ -47,8 +47,8 @@
         }
       },
       "legalEntity": {
-        "tenantContext": "Organizace (bez firmy)",
-        "tenantContextActive": "Pracujete v rozsahu organizace. Pro práci ve firemních modulech vyberte firmu.",
+        "tenantContext": "Bez vybrané firmy",
+        "tenantContextActive": "Není vybraná firma. Pro práci s jejími daty vyberte firmu v nabídce vlevo.",
         "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
         "accessibleLabel": "Aktuální právní subjekt",
         "failed": "Přepnutí právního subjektu selhalo. Zkuste to znovu.",
