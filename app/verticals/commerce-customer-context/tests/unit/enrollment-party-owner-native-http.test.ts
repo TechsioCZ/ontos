@@ -13,7 +13,10 @@ import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journey
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import {
+  CommerceEnrollmentOwnerEffectRejected,
+  CommerceEnrollmentOwnerEffectUnavailable,
+} from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 
 const compositionRevision = 'c'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -363,7 +366,11 @@ const customerCommandPayloadSchema = Schema.Union([
   Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
 ]);
 
-const customerDirectoryTransport = (state: 'ABSENT' | 'RUNNING' | 'COMMITTED', failCommand = false) => {
+const customerDirectoryTransport = (
+  state: 'ABSENT' | 'RUNNING' | 'COMMITTED',
+  failCommand = false,
+  onboardProblem?: { readonly body: Readonly<Record<string, string | number | boolean>>; readonly status: number },
+) => {
   const requests: Request[] = [];
   const commands: (typeof customerCommandPayloadSchema.Type)[] = [];
   let issued = 0;
@@ -394,6 +401,9 @@ const customerDirectoryTransport = (state: 'ABSENT' | 'RUNNING' | 'COMMITTED', f
         commands.push(payload);
         if (failCommand) {
           throw new Error('Acknowledgement lost');
+        }
+        if (onboardProblem !== undefined && request.url.endsWith('/counterparty-customer-onboard')) {
+          return Response.json(onboardProblem.body, { status: onboardProblem.status });
         }
         if (request.url.endsWith('/counterparty-customer-onboard')) {
           return Response.json({
@@ -534,5 +544,96 @@ it.effect('never retries a customer command after its acknowledgement is lost', 
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(transport.commands).toHaveLength(1);
     expect(transport.issued()).toBe(2);
+  }),
+);
+
+const roleOverlap = {
+  body: {
+    _tag: 'PartyCommandConflictProblem',
+    code: 'counterparty_role_overlap',
+    detail: 'The command conflicts with the current state. Review the resource before trying again.',
+    status: 409,
+    title: 'Party Registry command conflict',
+    type: 'https://ontos.dev/problems/party-command-conflict',
+  },
+  status: 409,
+};
+
+it.effect('records a definite Party refusal of the customer role as an owner rejection', () =>
+  Effect.gen(function* refusedCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, roleOverlap);
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure)).toBe(true);
+    expect(failure.code).toBe('counterparty_role_overlap');
+    // Contact points are never attempted after the customer role was refused.
+    expect(transport.commands).toHaveLength(1);
+  }),
+);
+
+it.effect('reconciles a fenced customer directory operation that Party refused into a terminal rejection', () =>
+  Effect.gen(function* reconcileRefusedCustomerDirectory() {
+    // Party commits nothing for a refused command, so its key resolves as never started.
+    const transport = customerDirectoryTransport('ABSENT', false, roleOverlap);
+    const resolution = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .reconcile({ ...transition, observedRevision: 2, ownerOperationRevision: 1 })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(resolution.status).toBe('FAILED');
+    expect(resolution.failureCode).toBe('owner_rejected');
+    expect(resolution.outcomeCode).toBe('counterparty_role_overlap');
+    expect(transport.commands).toHaveLength(1);
+  }),
+);
+
+it.effect('keeps a Party outage on the customer role indeterminate', () =>
+  Effect.gen(function* unavailableCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, {
+      body: {
+        _tag: 'PartyCommandUnavailableProblem',
+        detail: 'Party Registry is unavailable',
+        retryable: true,
+        status: 503,
+        title: 'Party Registry unavailable',
+        type: 'https://ontos.dev/problems/party-command-unavailable',
+      },
+      status: 503,
+    });
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+  }),
+);
+
+it.effect('treats a customer role that committed under the same key during dispatch as enrolled', () =>
+  Effect.gen(function* alreadyCommittedCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', false, {
+      body: {
+        _tag: 'PartyCommandAlreadyCommittedProblem',
+        code: 'action_already_committed',
+        detail: 'The command already committed',
+        invocationId: '99000000-0000-4000-8000-000000000001',
+        resolution: 'REFRESH_GOVERNED_READS',
+        retryCommand: false,
+        status: 409,
+        title: 'Party Registry command already committed',
+        type: 'https://ontos.dev/problems/party-command-already-committed',
+      },
+      status: 409,
+    });
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(transport.commands).toHaveLength(3);
   }),
 );

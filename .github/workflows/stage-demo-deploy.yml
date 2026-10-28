@@ -46,8 +46,15 @@ on:
           - check
           - reconcile
         default: none
+      profile_recovery_transition:
+        description: Which admitted owner operation the recovery inspects or reconciles.
+        type: choice
+        options:
+          - ensure-retail-customer-profile
+          - party-customer-enroll
+        default: ensure-retail-customer-profile
       profile_recovery_request:
-        description: Exact reviewed operation identity and expected journal revisions as JSON. No credentials or customer data.
+        description: Exact reviewed operation identity as JSON (profile also takes expected journal revisions). No credentials or customer data.
         type: string
         default: ''
       profile_recovery_approval_sha256:
@@ -98,6 +105,7 @@ jobs:
       - name: Require an isolated manual operator request on demo
         env:
           RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+          RECOVERY_TRANSITION: ${{ inputs.profile_recovery_transition }}
           APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
           DEPLOY: ${{ inputs.deploy }}
           OUTBOX_ONLY: ${{ inputs.outbox_only }}
@@ -112,6 +120,10 @@ jobs:
           if [[ ( "$RECOVERY_MODE" == reconcile && ! "$APPROVAL_SHA256" =~ ^[a-f0-9]{64}$ ) ||
                 ( "$RECOVERY_MODE" == check && -n "$APPROVAL_SHA256" ) ]]; then
             echo '::error::Only reconcile accepts and requires the exact read-only approval digest' >&2
+            exit 1
+          fi
+          if [[ "$RECOVERY_TRANSITION" != ensure-retail-customer-profile && "$RECOVERY_TRANSITION" != party-customer-enroll ]]; then
+            echo '::error::Profile recovery supports only its reviewed owner transitions' >&2
             exit 1
           fi
 
@@ -129,6 +141,7 @@ jobs:
         run: >-
           mise exec -- pnpm test:scripts
           scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/recover-admitted-customer-directory.test.mts
           scripts/tests/stage-profile-recovery-workflow.test.mts
 
       - name: Connect the operator to the private database network
@@ -157,6 +170,7 @@ jobs:
           ONTOS_STAGE_PROFILE_RECOVERY_REQUEST_JSON: ${{ inputs.profile_recovery_request }}
           ONTOS_STAGE_PROFILE_RECOVERY_APPROVAL_SHA256: ${{ inputs.profile_recovery_approval_sha256 }}
           ONTOS_STAGE_PROFILE_RECOVERY_SOURCE_REVISION: ${{ github.sha }}
+          RECOVERY_TRANSITION: ${{ inputs.profile_recovery_transition }}
         run: |
           ONTOS_SHELL_GATEWAY_BASE_URL="$(jq -er '."commerce-customer-context".ONTOS_SHELL_GATEWAY_BASE_URL | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
           ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$(jq -er '."commerce-customer-context".ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
@@ -167,7 +181,18 @@ jobs:
           printf '::add-mask::%s\n' "$masked_key"
           unset masked_key
           export ONTOS_SHELL_GATEWAY_BASE_URL ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY
-          mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-retail-profile.mts
+          case "$RECOVERY_TRANSITION" in
+            ensure-retail-customer-profile)
+              mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-retail-profile.mts
+              ;;
+            party-customer-enroll)
+              mise exec -- pnpm exec node verticals/commerce-customer-context/scripts/recover-admitted-customer-directory.mts
+              ;;
+            *)
+              echo '::error::Unsupported profile recovery transition' >&2
+              exit 1
+              ;;
+          esac
 
       - name: Clear only the operator runner's private network
         if: always() && steps.recovery-vpn.outputs.state-directory != ''
@@ -437,6 +462,7 @@ jobs:
           scripts/tests/database-login-roles.test.mts
           scripts/tests/enrollment-recovery-host-config.test.mts
           scripts/tests/recover-admitted-retail-profile.test.mts
+          scripts/tests/recover-admitted-customer-directory.test.mts
           scripts/tests/stage-profile-recovery-workflow.test.mts
           scripts/tests/verify-stage-migration-continuation.test.mts
           scripts/tests/prepare-stage-customer.test.mts

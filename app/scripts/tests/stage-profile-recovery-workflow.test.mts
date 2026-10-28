@@ -139,6 +139,7 @@ it('gates future releases and recovery runs on the operator and workflow tests',
     workflow.jobs['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true)?.run,
   ]) {
     expect(tests).toContain('scripts/tests/recover-admitted-retail-profile.test.mts');
+    expect(tests).toContain('scripts/tests/recover-admitted-customer-directory.test.mts');
     expect(tests).toContain('scripts/tests/stage-profile-recovery-workflow.test.mts');
   }
 });
@@ -155,6 +156,10 @@ for (const example of [
   { digest: '', mode: 'check', outbox: 'true', passes: false },
   { continuation: 'true', digest: '', mode: 'check', passes: false },
   { branch: 'refs/heads/main', digest: '', mode: 'check', passes: false },
+  { digest: '', mode: 'check', passes: true, transition: 'party-customer-enroll' },
+  { digest: approvalSha256, mode: 'reconcile', passes: true, transition: 'party-customer-enroll' },
+  { digest: '', mode: 'check', passes: false, transition: 'party.customer.enroll' },
+  { digest: '', mode: 'check', passes: false, transition: '' },
 ]) {
   it.effect(`the real operator shell gate handles ${JSON.stringify(example)}`, () =>
     Effect.gen(function* verifyOperatorGate() {
@@ -170,6 +175,7 @@ for (const example of [
           GITHUB_REF: Redacted.make(example.branch ?? 'refs/heads/demo/sales-crm'),
           OUTBOX_ONLY: Redacted.make(example.outbox ?? 'false'),
           RECOVERY_MODE: Redacted.make(example.mode),
+          RECOVERY_TRANSITION: Redacted.make(example.transition ?? 'ensure-retail-customer-profile'),
         },
       }).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(example.passes);

@@ -1,4 +1,11 @@
-import { AddContactPointPayloadSchema, CounterpartyCustomerOnboardPayloadSchema } from '@app/party-registry/api';
+import {
+  AddContactPointPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
+  PartyCommandAliasWriteRejectedProblemSchema,
+  PartyCommandAlreadyCommittedProblemSchema,
+  PartyCommandConflictProblemSchema,
+  PartyCommandUnprocessableProblemSchema,
+} from '@app/party-registry/api';
 import {
   addContactPointWithAuthorization,
   counterpartyCustomerOnboardWithAuthorization,
@@ -30,6 +37,28 @@ export interface RetailCustomerDirectoryOwnerInput extends Omit<RetailPartyCandi
 const unavailable = (reason: string, cause?: unknown) =>
   ownerUnavailable('retail_customer_directory_unavailable', reason, cause);
 const outcomeCode = 'retail_customer_directory_enrolled';
+
+/**
+ * Party answers these problems only after deciding the command against its own state, and the
+ * governed command commits nothing. Re-sending the same command meets the same state, so treating
+ * the refusal as an unknown outcome would retry it until the sweep budget is spent and leave the
+ * owner operation unresolved, pinning its Application Composition release.
+ */
+const isDefinitePartyRefusal = Schema.is(
+  Schema.Union([
+    PartyCommandConflictProblemSchema,
+    PartyCommandUnprocessableProblemSchema,
+    PartyCommandAliasWriteRejectedProblemSchema,
+  ]),
+);
+
+/** The same key committing between the resolution and this dispatch is a known, successful outcome. */
+const committedMeanwhile = Schema.is(PartyCommandAlreadyCommittedProblemSchema);
+
+const commandFailure = (cause: unknown) =>
+  isDefinitePartyRefusal(cause)
+    ? ownerRejected(cause.code, 'The Party Registry refused the customer directory command', cause)
+    : unavailable('The governed customer command did not return a known outcome', cause);
 
 type CustomerCommand =
   | {
@@ -108,18 +137,21 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
   {
     const gateway = yield* acquireRetailPartyGateway(input);
     const options = { ...gateway.options, correlationId: input.requestCorrelation, idempotencyKey };
-    const failed = (cause: unknown) =>
-      unavailable('The governed customer command did not return a known outcome', cause);
     const dispatched =
       command.actionKey === 'party.registry.counterparty-customer-onboard'
         ? counterpartyCustomerOnboardWithAuthorization(
             command.payload,
             Redacted.value(gateway.credential),
             options,
-          ).pipe(Effect.asVoid, Effect.mapError(failed))
+          ).pipe(
+            Effect.asVoid,
+            Effect.catchIf(committedMeanwhile, () => Effect.void),
+            Effect.mapError(commandFailure),
+          )
         : addContactPointWithAuthorization(command.payload, Redacted.value(gateway.credential), options).pipe(
             Effect.asVoid,
-            Effect.mapError(failed),
+            Effect.catchIf(committedMeanwhile, () => Effect.void),
+            Effect.mapError(commandFailure),
           );
     yield* dispatched;
   }

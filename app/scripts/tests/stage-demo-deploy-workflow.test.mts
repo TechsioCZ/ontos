@@ -339,6 +339,55 @@ it('keeps isolated profile recovery on its original bundle without the release p
   expect(indexOf(job.steps, CLEANUP_SECRETS)).toBe(-1);
 });
 
+const PROFILE_TRANSITION = 'ensure-retail-customer-profile';
+const DIRECTORY_TRANSITION = 'party-customer-enroll';
+it('routes each reviewed recovery transition to its own operator command and tests both before stage access', () => {
+  const RecoveryInputsSchema = Schema.Struct({
+    on: Schema.Struct({
+      workflow_dispatch: Schema.Struct({
+        inputs: Schema.Struct({
+          profile_recovery_transition: Schema.Struct({
+            default: Schema.String,
+            options: Schema.Array(Schema.String),
+            type: Schema.String,
+          }),
+        }),
+      }),
+    }),
+  });
+  const { on } = Schema.decodeUnknownSync(RecoveryInputsSchema)(
+    parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
+  );
+  expect(on.workflow_dispatch.inputs.profile_recovery_transition).toEqual({
+    default: PROFILE_TRANSITION,
+    options: [PROFILE_TRANSITION, DIRECTORY_TRANSITION],
+    type: 'choice',
+  });
+  const { steps } = readJobs()['profile-recovery'];
+  const transition = ['${{', 'inputs.profile_recovery_transition', '}}'].join(' ');
+  const gate = steps.find(({ name }) => name === 'Require an isolated manual operator request on demo');
+  const command = steps.find(({ name }) => name === 'Run only the exact admitted profile recovery');
+  const tests = steps.find(({ name }) => name === 'Test the bounded operator command before stage access');
+  expect(gate?.env?.RECOVERY_TRANSITION).toBe(transition);
+  expect(gate?.run).toContain(`"$RECOVERY_TRANSITION" != ${DIRECTORY_TRANSITION}`);
+  expect(command?.env?.RECOVERY_TRANSITION).toBe(transition);
+  const branches = command?.run?.split('case "$RECOVERY_TRANSITION" in')[1]?.split('esac')[0] ?? '';
+  const scriptFor = (label: string) =>
+    branches
+      .split(';;')
+      .find((branch) => branch.trim().startsWith(`${label})`))
+      ?.match(/recover-admitted-[a-z-]+\.mts/u)?.[0];
+  expect(scriptFor(PROFILE_TRANSITION)).toBe('recover-admitted-retail-profile.mts');
+  expect(scriptFor(DIRECTORY_TRANSITION)).toBe('recover-admitted-customer-directory.mts');
+  expect(branches).toContain("*)\n    echo '::error::Unsupported profile recovery transition' >&2\n    exit 1");
+  expect(tests?.run).toContain('scripts/tests/recover-admitted-customer-directory.test.mts');
+  expect(
+    readJobs()['release-script-tests'].steps.some(
+      ({ run }) => run?.includes('scripts/tests/recover-admitted-customer-directory.test.mts') === true,
+    ),
+  ).toBe(true);
+});
+
 it('keeps the original bundle only in preparation and gives every later release consumer the same private file', () => {
   expect(readWorkflow().env.STAGE_ZONE).toBe('bleeding.dev');
   expect(readWorkflow().env.STAGE_SHELL_URL).toBe('https://ontos-stage.bleeding.dev');

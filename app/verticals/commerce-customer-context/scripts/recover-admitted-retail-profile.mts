@@ -48,7 +48,11 @@ import {
   recoverAdmittedRetailProfile,
   withRetailProfileRecoveryDeadline,
 } from './recover-admitted-retail-profile-program.mts';
-import type { RecoveryObservation, RecoveryRequest } from './recover-admitted-retail-profile-program.mts';
+import type {
+  ApprovedFenceObservation,
+  RecoveryObservation,
+  RecoveryRequest,
+} from './recover-admitted-retail-profile-program.mts';
 
 const unavailable = () => new AdmittedRetailProfileRecoveryError({ reason: 'evidence-unavailable' });
 const configurationInvalid = () => new AdmittedRetailProfileRecoveryError({ reason: 'configuration-invalid' });
@@ -67,7 +71,7 @@ const readOnlyDatabase = (
 export const claimRetailProfileWithAtomicApproval = Effect.fn('RetailProfileRecovery.atomicClaim')(
   function* claimRetailProfileWithAtomicApproval(
     transaction: CoreTransaction,
-    observation: RecoveryObservation,
+    observation: ApprovedFenceObservation,
     input: ClaimEnrollmentTransitionInput,
   ) {
     const scope = { legalEntityId: observation.attempt.targetLegalEntityId, tenantId: observation.attempt.tenantId };

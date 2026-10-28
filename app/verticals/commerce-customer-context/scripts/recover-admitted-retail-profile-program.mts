@@ -338,9 +338,12 @@ const commandFailure = () =>
  * Native claim fences before checking expectedRevision. Checking both exact post-fence deltas
  * under the same native row locks prevents a concurrent revision from committing that fence.
  */
+/** The journal rows an approved operator fence is bound to; shared by every admitted-operation recovery. */
+export type ApprovedFenceObservation = Pick<RecoveryObservation, 'attempt' | 'operation'>;
+
 export const claimApprovedRetailProfileFence = Effect.fn('RetailProfileRecovery.claimApprovedFence')(
   function* claimApprovedRetailProfileFence(
-    initial: RecoveryObservation,
+    initial: ApprovedFenceObservation,
     input: ClaimEnrollmentTransitionInput,
     store: CommerceEnrollmentOwnerAttemptStore,
   ) {
