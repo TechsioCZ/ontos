@@ -47,6 +47,7 @@ const percent = (value: number) => `${value > 0 ? '+' : ''}${percentFormat.forma
 interface BudgetDraft {
   readonly actual: string;
   readonly category: string;
+  readonly existing?: Pick<BudgetLine, 'propertyRef' | 'unitRef'>;
   readonly explanation: string;
   readonly id?: string;
   readonly kind: BudgetLine['kind'];
@@ -61,6 +62,22 @@ const newDraft = (): BudgetDraft => ({
   kind: 'COST',
   object: emptyObjectSelection,
   planned: '',
+});
+
+export const editBudgetDraft = (budget: BudgetLine): BudgetDraft => ({
+  actual: minorToInput(budget.actualManualMinor),
+  category: budget.category,
+  existing: budget,
+  explanation: budget.explanation ?? '',
+  id: budget.id,
+  kind: budget.kind,
+  object: {
+    contractId: '',
+    costCenter: budget.costCenter ?? '',
+    propertyId: budget.propertyRef?.resourceId ?? '',
+    unitId: budget.unitRef?.resourceId ?? '',
+  },
+  planned: minorToInput(budget.plannedMinor),
 });
 
 const actualFromInvoicesLabel = (budget: BudgetLine, invoices: readonly Invoice[]) =>
@@ -126,6 +143,46 @@ const PlanActualBars = ({
   );
 };
 
+export const buildBudgetLineCommand = ({
+  actual,
+  budgetMonth,
+  draft,
+  planned,
+  vm,
+}: {
+  readonly actual?: number | undefined;
+  readonly budgetMonth: string;
+  readonly draft: BudgetDraft;
+  readonly planned: number;
+  readonly vm: Pick<FinanceViewModel, 'actorLabel' | 'objects'>;
+}): FinanceCommandDraft<'UpsertBudgetLine'> => {
+  const upsertBudgetLineCommand: FinanceCommandDraft<'UpsertBudgetLine'> = {
+    _tag: 'UpsertBudgetLine',
+    category: draft.category.trim(),
+    kind: draft.kind,
+    period: budgetMonth,
+    plannedMinor: planned,
+    ...objectAnchors(
+      vm.objects,
+      { ...draft.object, contractId: '' },
+      draft.id === undefined ? undefined : draft.existing,
+    ),
+  };
+  if (vm.actorLabel !== undefined) {
+    upsertBudgetLineCommand.actorLabel = vm.actorLabel;
+  }
+  if (actual !== undefined) {
+    upsertBudgetLineCommand.actualManualMinor = actual;
+  }
+  if (draft.explanation.trim() !== '') {
+    upsertBudgetLineCommand.explanation = draft.explanation.trim();
+  }
+  if (draft.id !== undefined) {
+    upsertBudgetLineCommand.id = draft.id;
+  }
+  return upsertBudgetLineCommand;
+};
+
 /** S09: monthly cash-flow with a confirmed opening balance, and user-editable budgets with plan vs. actual. */
 const planningPanelSaveBudgetProgram = Effect.fn('Finance.saveBudget')(function* planningPanelSaveBudgetProgram(
   context: Pick<ReturnType<typeof usePlanningPanel>, 'budgetMonth' | 'draft' | 'setDraft' | 'setError' | 'vm'>,
@@ -140,26 +197,7 @@ const planningPanelSaveBudgetProgram = Effect.fn('Finance.saveBudget')(function*
     setError('Zkontrolujte kategorii a částky (např. 25 000 nebo 25 000,50).');
     return;
   }
-  const upsertBudgetLineCommand: FinanceCommandDraft<'UpsertBudgetLine'> = {
-    _tag: 'UpsertBudgetLine',
-    category: draft.category.trim(),
-    kind: draft.kind,
-    period: budgetMonth,
-    plannedMinor: planned,
-    ...objectAnchors(vm.objects, { ...draft.object, contractId: '' }),
-  };
-  if (vm.actorLabel !== undefined) {
-    upsertBudgetLineCommand.actorLabel = vm.actorLabel;
-  }
-  if (actual !== undefined) {
-    upsertBudgetLineCommand.actualManualMinor = actual;
-  }
-  if (draft.explanation.trim() !== '') {
-    upsertBudgetLineCommand.explanation = draft.explanation.trim();
-  }
-  if (draft.id !== undefined) {
-    upsertBudgetLineCommand.id = draft.id;
-  }
+  const upsertBudgetLineCommand = buildBudgetLineCommand({ actual, budgetMonth, draft, planned, vm });
   const outcome = yield* vm.execute(upsertBudgetLineCommand, 'Rozpočet uložen');
   if (outcome.ok) {
     setDraft(undefined);
@@ -596,22 +634,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                             <Button
                               aria-label={t('finance-billing.financeUi.common.edit')}
                               icon="icon-[mdi--pencil-outline]"
-                              onClick={() =>
-                                setDraft({
-                                  actual: minorToInput(budget.actualManualMinor),
-                                  category: budget.category,
-                                  explanation: budget.explanation ?? '',
-                                  id: budget.id,
-                                  kind: budget.kind,
-                                  object: {
-                                    contractId: '',
-                                    costCenter: budget.costCenter ?? '',
-                                    propertyId: budget.propertyRef?.resourceId ?? '',
-                                    unitId: budget.unitRef?.resourceId ?? '',
-                                  },
-                                  planned: minorToInput(budget.plannedMinor),
-                                })
-                              }
+                              onClick={() => setDraft(editBudgetDraft(budget))}
                               size="sm"
                               theme="borderless"
                               variant="secondary"

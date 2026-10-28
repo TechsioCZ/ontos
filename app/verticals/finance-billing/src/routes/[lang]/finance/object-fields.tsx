@@ -16,31 +16,44 @@ export interface ObjectSelection {
 
 export const emptyObjectSelection: ObjectSelection = { contractId: '', costCenter: '', propertyId: '', unitId: '' };
 
-/** Selection → command anchors, without empty keys. Unknown ids (stale lists) are dropped. */
+/** Selection → command anchors, preserving typed existing links independently from optional labels. */
 export interface InvoiceObjectAnchors {
   contractRef?: ContractRef;
   costCenter?: string;
   propertyRef?: PropertyRef;
   unitRef?: UnitRef;
 }
-export const objectAnchors = (objects: RentalObjects, selection: ObjectSelection): InvoiceObjectAnchors => {
-  const property = objects.properties.find((entry) => entry.ref.resourceId === selection.propertyId);
-  const unit = objects.units.find(
-    (entry) => entry.ref.resourceId === selection.unitId && entry.propertyId === selection.propertyId,
+const selectedRef = <Ref extends { readonly resourceId: string }>(
+  id: string,
+  existing: Ref | undefined,
+  options: readonly { readonly ref: Ref }[],
+): Ref | undefined =>
+  id === existing?.resourceId ? existing : options.find((entry) => entry.ref.resourceId === id)?.ref;
+
+export const objectAnchors = (
+  objects: RentalObjects,
+  selection: ObjectSelection,
+  existing?: Readonly<InvoiceObjectAnchors>,
+): InvoiceObjectAnchors => {
+  const propertyRef = selectedRef(selection.propertyId, existing?.propertyRef, objects.properties);
+  const unitRef = selectedRef(
+    selection.unitId,
+    selection.propertyId === existing?.propertyRef?.resourceId ? existing.unitRef : undefined,
+    objects.units.filter((entry) => entry.propertyId === selection.propertyId),
   );
-  const contract = objects.contracts.find((entry) => entry.ref.resourceId === selection.contractId);
+  const contractRef = selectedRef(selection.contractId, existing?.contractRef, objects.contracts);
   const anchors: InvoiceObjectAnchors = {};
-  if (contract !== undefined) {
-    anchors.contractRef = contract.ref;
+  if (selection.contractId !== '' && contractRef !== undefined) {
+    anchors.contractRef = contractRef;
   }
   if (selection.costCenter !== '') {
     anchors.costCenter = selection.costCenter;
   }
-  if (property !== undefined) {
-    anchors.propertyRef = property.ref;
-  }
-  if (property !== undefined && unit !== undefined) {
-    anchors.unitRef = unit.ref;
+  if (selection.propertyId !== '' && propertyRef !== undefined) {
+    anchors.propertyRef = propertyRef;
+    if (selection.unitId !== '' && unitRef !== undefined) {
+      anchors.unitRef = unitRef;
+    }
   }
   return anchors;
 };
@@ -73,6 +86,9 @@ interface ObjectFieldsProps {
   readonly value: ObjectSelection;
 }
 
+const unlistedSelection = (id: string, listed: boolean, label: string) =>
+  id !== '' && !listed ? [{ displayValue: label, label, value: id }] : [];
+
 /** Property → unit (filtered by property), optional contract and středisko pickers. */
 export const ObjectFields = ({
   idPrefix,
@@ -86,11 +102,16 @@ export const ObjectFields = ({
   const units = objects.units.filter((entry) => entry.propertyId === value.propertyId);
   return (
     <div className="grid grid-cols-1 gap-200 md:grid-cols-2" data-finance-object-fields={idPrefix}>
-      {objects.available && (
+      {(objects.available || value.propertyId !== '') && (
         <>
           <SelectTemplate
             items={[
               { displayValue: 'Bez vazby na objekt', label: 'Bez vazby na objekt', value: NONE },
+              ...unlistedSelection(
+                value.propertyId,
+                objects.propertyName(value.propertyId) !== undefined,
+                t('finance-billing.financeUi.objects.property'),
+              ),
               ...objects.properties.map((entry) => ({
                 displayValue: entry.label,
                 label: entry.label,
@@ -108,9 +129,14 @@ export const ObjectFields = ({
             value={[value.propertyId === '' ? NONE : value.propertyId]}
           />
           <SelectTemplate
-            disabled={value.propertyId === '' || units.length === 0}
+            disabled={value.propertyId === '' || (units.length === 0 && value.unitId === '')}
             items={[
               { displayValue: 'Celá nemovitost', label: 'Celá nemovitost', value: NONE },
+              ...unlistedSelection(
+                value.unitId,
+                units.some((entry) => entry.ref.resourceId === value.unitId),
+                t('finance-billing.financeUi.priceList.unit'),
+              ),
               ...units.map((entry) => ({ displayValue: entry.label, label: entry.label, value: entry.ref.resourceId })),
             ]}
             label={t('finance-billing.financeUi.priceList.unit')}
@@ -125,10 +151,15 @@ export const ObjectFields = ({
           />
         </>
       )}
-      {showContract && objects.contracts.length > 0 && (
+      {showContract && (objects.contracts.length > 0 || value.contractId !== '') && (
         <SelectTemplate
           items={[
             { displayValue: 'Bez smlouvy', label: 'Bez smlouvy', value: NONE },
+            ...unlistedSelection(
+              value.contractId,
+              objects.contractName(value.contractId) !== undefined,
+              t('finance-billing.financeUi.objects.contract'),
+            ),
             ...objects.contracts.map((entry) => ({
               displayValue: entry.label,
               label: entry.label,

@@ -20,6 +20,7 @@ import type { ObjectSelection } from './object-fields.tsx';
 
 interface PlanDraft {
   readonly amount: string;
+  readonly existing?: Pick<PlanItem, 'contractRef' | 'propertyRef' | 'unitRef'>;
   readonly expectedDate: PlanItem['expectedDate'];
   readonly id?: string;
   readonly kind: PlanItem['kind'];
@@ -41,6 +42,24 @@ const newPlanDraft = (date: string): PlanDraft => ({
   title: '',
 });
 
+export const editPlanItemDraft = (item: PlanItem): PlanDraft => ({
+  amount: minorToInput(item.amountMinor),
+  existing: item,
+  expectedDate: item.expectedDate,
+  id: item.id,
+  kind: item.kind,
+  note: item.note ?? '',
+  object: {
+    contractId: item.contractRef?.resourceId ?? '',
+    costCenter: '',
+    propertyId: item.propertyRef?.resourceId ?? '',
+    unitId: item.unitRef?.resourceId ?? '',
+  },
+  probability: item.probabilityPercent === undefined ? '' : String(item.probabilityPercent),
+  projectName: item.projectName ?? '',
+  title: item.title,
+});
+
 const relationText = (vm: FinanceViewModel, item: PlanItem) =>
   [
     objectSummary(vm.objects, item),
@@ -51,6 +70,46 @@ const relationText = (vm: FinanceViewModel, item: PlanItem) =>
   ]
     .filter((part) => part !== undefined)
     .join(' · ');
+
+export const buildPlanItemCommand = ({
+  amountMinor,
+  draft,
+  probability,
+  vm,
+}: {
+  readonly amountMinor: number;
+  readonly draft: PlanDraft;
+  readonly probability?: number | undefined;
+  readonly vm: Pick<FinanceViewModel, 'actorLabel' | 'objects'>;
+}): FinanceCommandDraft<'UpsertPlanItem'> => {
+  const upsertPlanItemCommand: FinanceCommandDraft<'UpsertPlanItem'> = {
+    _tag: 'UpsertPlanItem',
+    amountMinor,
+    currency: 'CZK',
+    expectedDate: draft.expectedDate,
+    kind: draft.kind,
+    title: draft.title.trim(),
+    ...(({ costCenter: _costCenter, ...anchors }) => anchors)(
+      objectAnchors(vm.objects, draft.object, draft.id === undefined ? undefined : draft.existing),
+    ),
+  };
+  if (vm.actorLabel !== undefined) {
+    upsertPlanItemCommand.actorLabel = vm.actorLabel;
+  }
+  if (draft.id !== undefined) {
+    upsertPlanItemCommand.id = draft.id;
+  }
+  if (draft.note.trim() !== '') {
+    upsertPlanItemCommand.note = draft.note.trim();
+  }
+  if (probability !== undefined) {
+    upsertPlanItemCommand.probabilityPercent = probability;
+  }
+  if (draft.projectName.trim() !== '') {
+    upsertPlanItemCommand.projectName = draft.projectName.trim();
+  }
+  return upsertPlanItemCommand;
+};
 
 /** S09 item 1: expected income/expense with amount, currency, expected date, optional probability and relation. */
 const planItemsSaveProgram = Effect.fn('Finance.save')(function* planItemsSaveProgram(
@@ -70,30 +129,7 @@ const planItemsSaveProgram = Effect.fn('Finance.save')(function* planItemsSavePr
     setError('Pravděpodobnost zadejte jako celé číslo 1–100 %, nebo ji nechte prázdnou.');
     return;
   }
-  const upsertPlanItemCommand: FinanceCommandDraft<'UpsertPlanItem'> = {
-    _tag: 'UpsertPlanItem',
-    amountMinor,
-    currency: 'CZK',
-    expectedDate: draft.expectedDate,
-    kind: draft.kind,
-    title: draft.title.trim(),
-    ...(({ costCenter: _costCenter, ...anchors }) => anchors)(objectAnchors(vm.objects, draft.object)),
-  };
-  if (vm.actorLabel !== undefined) {
-    upsertPlanItemCommand.actorLabel = vm.actorLabel;
-  }
-  if (draft.id !== undefined) {
-    upsertPlanItemCommand.id = draft.id;
-  }
-  if (draft.note.trim() !== '') {
-    upsertPlanItemCommand.note = draft.note.trim();
-  }
-  if (probability !== undefined) {
-    upsertPlanItemCommand.probabilityPercent = probability;
-  }
-  if (draft.projectName.trim() !== '') {
-    upsertPlanItemCommand.projectName = draft.projectName.trim();
-  }
+  const upsertPlanItemCommand = buildPlanItemCommand({ amountMinor, draft, probability, vm });
   const outcome = yield* vm.execute(
     upsertPlanItemCommand,
     draft.id === undefined ? 'Položka finančního plánu přidána' : 'Položka finančního plánu uložena',
@@ -217,23 +253,7 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
                             icon="icon-[mdi--pencil-outline]"
                             onClick={() => {
                               setError(undefined);
-                              setDraft({
-                                amount: minorToInput(item.amountMinor),
-                                expectedDate: item.expectedDate,
-                                id: item.id,
-                                kind: item.kind,
-                                note: item.note ?? '',
-                                object: {
-                                  contractId: item.contractRef?.resourceId ?? '',
-                                  costCenter: '',
-                                  propertyId: item.propertyRef?.resourceId ?? '',
-                                  unitId: item.unitRef?.resourceId ?? '',
-                                },
-                                probability:
-                                  item.probabilityPercent === undefined ? '' : String(item.probabilityPercent),
-                                projectName: item.projectName ?? '',
-                                title: item.title,
-                              });
+                              setDraft(editPlanItemDraft(item));
                             }}
                             size="sm"
                             theme="borderless"
