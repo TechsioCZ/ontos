@@ -3,6 +3,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
   GatewayAssertionReplayError,
+  recoverSqlTransactionError,
   configureDatabasePool,
 } from '@app/core-runtime';
 import type {
@@ -18,7 +19,6 @@ import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Clock, Context, DateTime, Duration, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { isSqlError } from 'effect/sql/SqlError';
 
 import { gatewayAssertionRedemptions } from '../database/schema.ts';
 
@@ -95,8 +95,8 @@ export const makeGatewayAssertionRedemption = (
     );
     const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
     const inserted = yield* redeemAssertion(executor, input, expiredBefore, expiresAt).pipe(
+      recoverSqlTransactionError,
       Effect.mapError(unavailableError),
-      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(unavailableError(defect)) : Effect.die(defect))),
       Effect.timeoutOrElse({
         duration: REDEMPTION_TIMEOUT,
         orElse: () => Effect.fail(unavailableError()),
