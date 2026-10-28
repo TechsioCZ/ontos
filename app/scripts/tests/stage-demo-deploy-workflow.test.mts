@@ -872,7 +872,6 @@ it('checks canonical recovery configuration before database mutation and provisi
   ]);
   expect(check?.env).toEqual({
     ALL_RELEASE_SECRETS_FILE: preparedFileReference,
-    ZEROPS_MIGRATOR_SERVICE_ID: ['${{', 'vars.ZEROPS_MIGRATOR_SERVICE_ID', '}}'].join(' '),
     ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ['${{', 'vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID', '}}'].join(' '),
   });
   expect(provision?.env).toEqual(check?.env);

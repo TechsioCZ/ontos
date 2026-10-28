@@ -503,6 +503,7 @@ export const fakeZeropsApi = (
           }
           stage.services = stage.services.filter(({ id }) => id !== serviceId);
         }),
+      deleteServiceSecret: notFaked('deleteServiceSecret'),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       findServiceStack: notFaked('findServiceStack'),
       findServiceStackIdentity: (serviceId) =>

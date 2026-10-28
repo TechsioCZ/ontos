@@ -11,11 +11,10 @@ import { ZeropsApiError } from '../zerops-public-api-error.mts';
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
 
 const OWNER = 'commerce-customer-context';
-const RUNTIME_KEY = 'COMMERCE_PORTAL_AUTH_DATABASE_URL';
+const RETIRED_KEY = 'COMMERCE_PORTAL_AUTH_DATABASE_URL';
 const ADMIN_KEY = 'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL';
 const SYNTHETIC_SECRET = 'synthetic-never-emit-credential-123456789';
-const RUNTIME_URL = 'postgresql://portal_runtime:runtime-password@db18:5432/portal';
-const ADMIN_URL = 'postgresql://portal_admin:admin-password@db18:5432/portal';
+const RETIRED_URL = 'postgresql://commerce_auth_runtime:runtime-password@db18:5432/portal';
 const OWNER_VALUES = {
   COMMERCE_CORE_IDENTITY_API_KEY: SYNTHETIC_SECRET,
   COMMERCE_CORE_IDENTITY_BASE_URL: 'https://shell.example/shell-super-app-api',
@@ -24,64 +23,40 @@ const OWNER_VALUES = {
   ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: SYNTHETIC_SECRET,
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example',
 };
-const expectedValues = { ...OWNER_VALUES, [RUNTIME_KEY]: RUNTIME_URL };
+const expectedValues = OWNER_VALUES;
 const redactedMap = (values: Readonly<Record<string, string>>) =>
   new Map(Object.entries(values).map(([key, value]) => [key, Redacted.make(value)]));
 
 const unused = () => Effect.die('Unexpected API method');
 const NOT_COPIED = 'must-not-copy';
-const DATABASE_ID = 'database-id';
-const MIGRATOR_ID = 'migrator-id';
 const reference = (key: string) => `\${${key}}`;
-const TEMPLATE_RUNTIME = `postgresql://portal_runtime:runtime-password@${reference('db18_hostname')}:${reference('db18_port')}/${reference('db18_dbName')}`;
-const TEMPLATE_ADMIN = `postgresql://${reference('db18_superUser')}:${reference('db18_superUserPassword')}@${reference('db18_hostname')}:${reference('db18_port')}/${reference('db18_dbName')}`;
-const DATABASE_VALUES = {
-  dbName: 'portal',
-  hostname: 'db18',
-  port: '5432',
-  superUser: 'portal_admin',
-  superUserPassword: SYNTHETIC_SECRET,
-};
 
 const fixture = (
   options: {
     readonly config?: {
       readonly ALL_RELEASE_SECRETS?: string | null;
-      readonly ZEROPS_MIGRATOR_SERVICE_ID?: string;
       readonly ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID?: string;
       readonly ZEROPS_PROJECT_ID?: string;
     };
-    readonly database?: Readonly<Record<string, string>>;
-    readonly databaseName?: string;
     readonly host?: Readonly<Record<string, string>>;
     readonly hostName?: string;
-    readonly migrator?: Readonly<Record<string, string>>;
-    readonly migratorName?: string;
     readonly owner?: unknown;
     readonly rawJson?: string;
     readonly serviceListing?: string;
   } = {},
 ) => {
-  const database = redactedMap(options.database ?? DATABASE_VALUES);
   const host = redactedMap(options.host ?? {});
-  const migrator = redactedMap(options.migrator ?? { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: RUNTIME_URL });
   const writes: { readonly content: Redacted.Redacted; readonly key: string; readonly serviceId: string }[] = [];
+  const deletes: { readonly key: string; readonly serviceId: string }[] = [];
   const reads: string[] = [];
   const commands: OpsCommand[] = [];
   let failRead = false;
   let failWrite = false;
   let discardWrite = false;
+  let discardDelete = false;
   let afterWrite: (() => void) | undefined;
-  const serviceValues = new Map([
-    ['host-id', host],
-    [DATABASE_ID, database],
-    [MIGRATOR_ID, migrator],
-  ]);
-  const serviceNames = new Map([
-    ['host-id', options.hostName ?? 'outboxworkerhost'],
-    [DATABASE_ID, options.databaseName ?? 'db18'],
-    [MIGRATOR_ID, options.migratorName ?? 'migrator'],
-  ]);
+  const serviceValues = new Map([['host-id', host]]);
+  const serviceNames = new Map([['host-id', options.hostName ?? 'outboxworkerhost']]);
   const api = ZeropsPublicApi.of({
     createServiceSecret: (serviceId, key, content) =>
       Effect.suspend(() => {
@@ -96,6 +71,17 @@ const fixture = (
         return Effect.void;
       }),
     deleteService: unused,
+    deleteServiceSecret: (serviceId, key) =>
+      Effect.suspend(() => {
+        if (failWrite) {
+          return Effect.fail(new ZeropsApiError({ cause: SYNTHETIC_SECRET, message: SYNTHETIC_SECRET }));
+        }
+        deletes.push({ key, serviceId });
+        if (!discardDelete) {
+          host.delete(key);
+        }
+        return Effect.void;
+      }),
     enableSubdomainAccess: unused,
     findServiceStack: unused,
     findServiceStackIdentity: unused,
@@ -124,15 +110,13 @@ const fixture = (
         Effect.sync(() => {
           commands.push(command);
           return (
-            options.serviceListing ??
-            '│ host-id │ outboxworkerhost │ ACTIVE │\n│ migrator-id │ migrator │ ACTIVE │\n│ database-id │ db18 │ ACTIVE │'
+            options.serviceListing ?? '│ host-id │ outboxworkerhost │ ACTIVE │\n│ migrator-id │ migrator │ ACTIVE │'
           );
         }),
     }),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
         ALL_RELEASE_SECRETS: options.rawJson ?? JSON.stringify({ [OWNER]: options.owner ?? OWNER_VALUES }),
-        ZEROPS_MIGRATOR_SERVICE_ID: MIGRATOR_ID,
         ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: 'host-id',
         ZEROPS_PROJECT_ID: 'project-id',
         ...options.config,
@@ -141,11 +125,15 @@ const fixture = (
   );
   return {
     commands,
+    deletes,
     host,
     layer,
     reads,
     setAfterWrite: (action: () => void) => {
       afterWrite = action;
+    },
+    setDiscardDelete: () => {
+      discardDelete = true;
     },
     setDiscardWrite: () => {
       discardWrite = true;
@@ -177,11 +165,11 @@ it.effect('CHECK plans missing host keys without writing or exporting secret val
     const report = yield* enrollmentRecoveryHostConfig('check').pipe(Effect.provide(state.layer));
     expect(Arr.sort(report.missingKeys, Order.String)).toEqual(Arr.sort(Object.keys(expectedValues), Order.String));
     expect(report.createdKeys).toEqual([]);
+    expect(report.retiredKeys).toEqual([]);
     expect(state.writes).toEqual([]);
-    expect(state.reads).toEqual([MIGRATOR_ID, 'database-id', 'host-id']);
+    expect(state.reads).toEqual(['host-id']);
     expect(state.commands).toEqual([{ args: ['service', 'list', '--project-id', 'project-id'], command: 'zcli' }]);
     expect(JSON.stringify(report)).not.toContain(SYNTHETIC_SECRET);
-    expect(JSON.stringify(report)).not.toContain(RUNTIME_URL);
   }),
 );
 
@@ -191,7 +179,7 @@ it.effect('APPLY copies exact canonical values to the host only, preserves unrel
       host: { COMMERCE_PORTAL_AUTH_URL: OWNER_VALUES.COMMERCE_PORTAL_AUTH_URL, KEEP: 'existing' },
     });
     const first = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
-    expect(first.createdKeys).toHaveLength(6);
+    expect(first.createdKeys).toHaveLength(5);
     expect(state.writes.every(({ serviceId }) => serviceId === 'host-id')).toBe(true);
     for (const [key, value] of Object.entries(expectedValues)) {
       expect(Redacted.value(state.host.get(key) ?? Redacted.make('missing'))).toBe(value);
@@ -199,7 +187,7 @@ it.effect('APPLY copies exact canonical values to the host only, preserves unrel
     expect(Redacted.value(state.host.get('KEEP') ?? Redacted.make('missing'))).toBe('existing');
     const again = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
     expect(again.createdKeys).toEqual([]);
-    expect(state.writes).toHaveLength(6);
+    expect(state.writes).toHaveLength(5);
     yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer));
   }),
 );
@@ -251,7 +239,7 @@ it.effect('ignores foreign owners, grants, deployment settings, composition and 
       COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS: NOT_COPIED,
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: NOT_COPIED,
       ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT: NOT_COPIED,
-      [RUNTIME_KEY]: NOT_COPIED,
+      [RETIRED_KEY]: NOT_COPIED,
     };
     const state = fixture({ rawJson: JSON.stringify({ foreign: { key: 123 }, [OWNER]: owner }) });
     yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
@@ -261,7 +249,8 @@ it.effect('ignores foreign owners, grants, deployment settings, composition and 
         Order.String,
       ),
     ).toEqual(Arr.sort(Object.keys(expectedValues), Order.String));
-    expect(Redacted.value(state.host.get(RUNTIME_KEY) ?? Redacted.make('missing'))).toBe(RUNTIME_URL);
+    expect(state.host.has(RETIRED_KEY)).toBe(false);
+    expect(state.host.has(ADMIN_KEY)).toBe(false);
   }),
 );
 
@@ -291,12 +280,10 @@ it.effect('validates exact service names and distinct safe IDs before reading se
   Effect.gen(function* validateServiceIdentities() {
     for (const options of [
       { hostName: 'other-worker' },
-      { migratorName: 'other-migrator' },
-      { databaseName: 'other-database' },
-      { serviceListing: '│ unknown-db │ db19 │ ACTIVE │' },
-      { serviceListing: '│ db-one │ db18 │ ACTIVE │\n│ db-two │ db18 │ ACTIVE │' },
-      { config: { ZEROPS_MIGRATOR_SERVICE_ID: 'host-id' } },
+      { serviceListing: '│ host-id │ migrator │ ACTIVE │' },
+      { serviceListing: '│ other-id │ outboxworkerhost │ ACTIVE │' },
       { config: { ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: '../host-id' } },
+      { config: { ZEROPS_PROJECT_ID: 'project id' } },
     ]) {
       const state = fixture(options);
       expectSafeFailure(
@@ -309,72 +296,46 @@ it.effect('validates exact service names and distinct safe IDs before reading se
   }),
 );
 
-it.effect('requires the distinct canonical portal DB pair and rejects identity overrides and alternate sources', () =>
-  Effect.gen(function* validatePortalDatabaseIdentity() {
-    const invalidPairs: Readonly<Record<string, string>>[] = [
-      {},
-      { [ADMIN_KEY]: ADMIN_URL },
-      { [RUNTIME_KEY]: RUNTIME_URL },
-      { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: ADMIN_URL },
-      { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: RUNTIME_URL.replace(':5432/portal', ':5432/other') },
-      { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: `${RUNTIME_URL}?user=portal_admin` },
-      { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: 'https://example.com/portal' },
-      { [ADMIN_KEY]: ADMIN_URL, [RUNTIME_KEY]: RUNTIME_URL.replace('portal_runtime', '%ZZ') },
-    ];
-    for (const migrator of invalidPairs) {
-      const state = fixture({ migrator, owner: { ...OWNER_VALUES, [RUNTIME_KEY]: RUNTIME_URL } });
-      expectSafeFailure(
-        yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer), Effect.result),
-        'portal-database-pair-invalid',
-      );
-      expect(state.writes).toEqual([]);
-    }
-  }),
-);
+it.effect('removes the retired portal provider URL from the host, and VERIFY refuses a host still carrying it', () =>
+  Effect.gen(function* retirePortalProviderUrl() {
+    const state = fixture({ host: { ...expectedValues, KEEP: 'existing', [RETIRED_KEY]: RETIRED_URL } });
+    const planned = yield* enrollmentRecoveryHostConfig('check').pipe(Effect.provide(state.layer));
+    expect(planned.retiredKeys).toEqual([RETIRED_KEY]);
+    expect(state.deletes).toEqual([]);
+    expectSafeFailure(
+      yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer), Effect.result),
+      'retired-value-present',
+    );
 
-it.effect('resolves the real migrator template shape through only the verified database service', () =>
-  Effect.gen(function* resolveCanonicalDatabaseReferences() {
-    const state = fixture({
-      migrator: { [ADMIN_KEY]: TEMPLATE_ADMIN, [RUNTIME_KEY]: TEMPLATE_RUNTIME },
-    });
-    yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
-    expect(Redacted.value(state.host.get(RUNTIME_KEY) ?? Redacted.make('missing'))).toBe(RUNTIME_URL);
-    expect(state.host.has(ADMIN_KEY)).toBe(false);
-    expect(state.writes.every(({ serviceId }) => serviceId === 'host-id')).toBe(true);
+    const applied = yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer));
+    expect(applied.retiredKeys).toEqual([RETIRED_KEY]);
+    expect(state.deletes).toEqual([{ key: RETIRED_KEY, serviceId: 'host-id' }]);
+    expect(state.host.has(RETIRED_KEY)).toBe(false);
+    expect(Redacted.value(state.host.get('KEEP') ?? Redacted.make('missing'))).toBe('existing');
+    expect(state.writes).toEqual([]);
+    expect(JSON.stringify(applied)).not.toContain(RETIRED_URL);
+
+    expect((yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer))).retiredKeys).toEqual([]);
+    expect(state.deletes).toHaveLength(1);
     yield* enrollmentRecoveryHostConfig('verify').pipe(Effect.provide(state.layer));
   }),
 );
 
-it.effect('fails unresolved, masked, unknown or administrative runtime references before writes', () =>
-  Effect.gen(function* rejectUnusableDatabaseReferences() {
-    const cases = [
-      { database: {}, runtime: TEMPLATE_RUNTIME },
-      { database: { ...DATABASE_VALUES, hostname: 'REDACTED' }, runtime: TEMPLATE_RUNTIME },
-      { database: { ...DATABASE_VALUES, port: '0' }, runtime: TEMPLATE_RUNTIME },
-      { database: { ...DATABASE_VALUES, port: '5432/path' }, runtime: TEMPLATE_RUNTIME },
-      { database: { ...DATABASE_VALUES, superUserPassword: '*****' }, runtime: TEMPLATE_RUNTIME },
-      { database: DATABASE_VALUES, runtime: TEMPLATE_RUNTIME.replace('db18_hostname', 'other_hostname') },
-      { database: DATABASE_VALUES, runtime: TEMPLATE_RUNTIME.replace('portal_runtime', reference('db18_superUser')) },
-      { database: DATABASE_VALUES, runtime: 'REDACTED' },
-    ];
-    for (const item of cases) {
-      const state = fixture({
-        database: item.database,
-        migrator: { [ADMIN_KEY]: TEMPLATE_ADMIN, [RUNTIME_KEY]: item.runtime },
-      });
-      expectSafeFailure(
-        yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer), Effect.result),
-        'database-reference-unavailable',
-      );
-      expect(state.writes).toEqual([]);
-    }
+it.effect('fails APPLY when a retired key survives its deletion', () =>
+  Effect.gen(function* detectSurvivingRetiredKey() {
+    const state = fixture({ host: { ...expectedValues, [RETIRED_KEY]: RETIRED_URL } });
+    state.setDiscardDelete();
+    expectSafeFailure(
+      yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(state.layer), Effect.result),
+      'retired-value-present',
+    );
   }),
 );
 
 it.effect('a mismatch in the final managed key blocks all writes in every mode, never rotating', () =>
   Effect.gen(function* rejectExistingMismatchesBeforeWrites() {
     for (const mode of ['check', 'apply', 'verify'] as const) {
-      const state = fixture({ host: { [RUNTIME_KEY]: ADMIN_URL } });
+      const state = fixture({ host: { COMMERCE_PORTAL_AUTH_URL: 'https://other.example' } });
       expectSafeFailure(
         yield* enrollmentRecoveryHostConfig(mode).pipe(Effect.provide(state.layer), Effect.result),
         'existing-value-mismatch',
@@ -409,7 +370,7 @@ it.effect('detects missing write readback and a concurrent mismatch before any f
     );
     const changed = fixture();
     changed.setAfterWrite(() => {
-      changed.host.set(RUNTIME_KEY, Redacted.make(ADMIN_URL));
+      changed.host.set('COMMERCE_PORTAL_AUTH_URL', Redacted.make('https://other.example'));
     });
     expectSafeFailure(
       yield* enrollmentRecoveryHostConfig('apply').pipe(Effect.provide(changed.layer), Effect.result),
@@ -421,11 +382,12 @@ it.effect('detects missing write readback and a concurrent mismatch before any f
 
 it.effect('sanitizes provider read/write failures and Config failures without retaining raw causes', () =>
   Effect.gen(function* sanitizeProtectedFailures() {
-    for (const kind of ['read', 'write'] as const) {
-      const state = fixture();
+    for (const kind of ['read', 'write', 'delete'] as const) {
+      const state = fixture(kind === 'delete' ? { host: { ...expectedValues, [RETIRED_KEY]: RETIRED_URL } } : {});
       if (kind === 'read') {
         state.setFailRead();
       } else {
+        // The fake fails creates and deletes alike; a host carrying only a retired key reaches the delete.
         state.setFailWrite();
       }
       expectSafeFailure(

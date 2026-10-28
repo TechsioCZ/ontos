@@ -9,8 +9,6 @@ import { OpsShellLive } from './ops-shell.mts';
 import { listZeropsServices } from './stage-operations.mts';
 
 const OWNER = 'commerce-customer-context';
-const PORTAL_DATABASE = 'COMMERCE_PORTAL_AUTH_DATABASE_URL';
-const PORTAL_ADMIN_DATABASE = 'COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL';
 const REQUIRED_OWNER_KEYS = [
   'COMMERCE_PORTAL_AUTH_URL',
   'COMMERCE_PORTAL_AUTH_SECRET',
@@ -35,42 +33,47 @@ const OPTIONAL_OWNER_KEYS = [
   'SMTP_TIMEOUT_MS',
   'ONTOS_EMAIL_FROM',
 ] as const;
-const ManagedKeySchema = Schema.Literals([...REQUIRED_OWNER_KEYS, ...OPTIONAL_OWNER_KEYS, PORTAL_DATABASE]);
+const ManagedKeySchema = Schema.Literals([...REQUIRED_OWNER_KEYS, ...OPTIONAL_OWNER_KEYS]);
 type ManagedKey = typeof ManagedKeySchema.Type;
+/**
+ * Host settings that must not stand. The portal realm connects as the shared runtime identity the
+ * deployment grants (`DATABASE_URL`), so a provider URL on the host names a role nothing grants.
+ */
+const RETIRED_HOST_KEYS = ['COMMERCE_PORTAL_AUTH_DATABASE_URL'] as const;
+const RetiredKeySchema = Schema.Literals(RETIRED_HOST_KEYS);
+type RetiredKey = typeof RetiredKeySchema.Type;
 const ModeSchema = Schema.Literals(['check', 'apply', 'verify']);
 export type EnrollmentRecoveryHostConfigMode = typeof ModeSchema.Type;
 const CANONICAL_VALUE_INVALID = 'canonical-value-invalid';
 const SERVICE_IDENTITY_INVALID = 'service-identity-invalid';
-const PORTAL_DATABASE_PAIR_INVALID = 'portal-database-pair-invalid';
 const PROTECTED_API_UNAVAILABLE = 'protected-api-unavailable';
 const CONFIGURATION_UNAVAILABLE = 'configuration-unavailable';
-const DATABASE_REFERENCE_UNAVAILABLE = 'database-reference-unavailable';
+const RETIRED_VALUE_PRESENT = 'retired-value-present';
 
 export class EnrollmentRecoveryHostConfigError extends Schema.TaggedError<EnrollmentRecoveryHostConfigError>()(
   'EnrollmentRecoveryHostConfigError',
   {
-    key: Schema.optionalKey(ManagedKeySchema),
+    key: Schema.optionalKey(Schema.Union([ManagedKeySchema, RetiredKeySchema])),
     reason: Schema.Literals([
       CONFIGURATION_UNAVAILABLE,
       'canonical-owner-invalid',
       CANONICAL_VALUE_INVALID,
       SERVICE_IDENTITY_INVALID,
-      PORTAL_DATABASE_PAIR_INVALID,
       PROTECTED_API_UNAVAILABLE,
-      DATABASE_REFERENCE_UNAVAILABLE,
       'existing-value-mismatch',
       'host-value-missing',
+      RETIRED_VALUE_PRESENT,
     ]),
   },
 ) {}
 
 type FailureReason = EnrollmentRecoveryHostConfigError['reason'];
-const failure = (reason: FailureReason, key?: ManagedKey) =>
+const failure = (reason: FailureReason, key?: ManagedKey | RetiredKey) =>
   key === undefined
     ? new EnrollmentRecoveryHostConfigError({ reason })
     : new EnrollmentRecoveryHostConfigError({ key, reason });
 
-// Drop all provider/decoder causes: they can contain tokens, complete JSON documents or DB URLs.
+// Drop all provider/decoder causes: they can contain tokens or complete JSON documents.
 const protectedRead = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
   operation.pipe(Effect.catchCause(() => Effect.fail(failure(PROTECTED_API_UNAVAILABLE))));
 
@@ -176,150 +179,26 @@ const canonicalOwner = Effect.gen(function* readCanonicalOwner() {
 const serviceIds = Effect.gen(function* readProtectedServiceIds() {
   const ids = yield* Config.all({
     host: Config.String('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID'),
-    migrator: Config.String('ZEROPS_MIGRATOR_SERVICE_ID'),
     project: Config.String('ZEROPS_PROJECT_ID'),
   }).pipe(Effect.mapError(() => failure(CONFIGURATION_UNAVAILABLE)));
-  if (
-    !/^[A-Za-z0-9_-]{1,128}$/u.test(ids.host) ||
-    !/^[A-Za-z0-9_-]{1,128}$/u.test(ids.migrator) ||
-    !/^[A-Za-z0-9_-]{1,128}$/u.test(ids.project) ||
-    ids.host === ids.migrator
-  ) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/u.test(ids.host) || !/^[A-Za-z0-9_-]{1,128}$/u.test(ids.project)) {
     return yield* failure(SERVICE_IDENTITY_INVALID);
   }
   const api = yield* ZeropsPublicApi;
   const services = yield* protectedRead(listZeropsServices(ids.project));
-  const databases = services.filter(({ hostname }) => hostname === 'db18');
-  const [database] = databases;
-  if (
-    databases.length !== 1 ||
-    database === undefined ||
-    !/^[A-Za-z0-9_-]{1,128}$/u.test(database.id) ||
-    database.id === ids.host ||
-    database.id === ids.migrator ||
-    !services.some(({ hostname, id }) => hostname === 'outboxworkerhost' && id === ids.host) ||
-    !services.some(({ hostname, id }) => hostname === 'migrator' && id === ids.migrator)
-  ) {
+  if (!services.some(({ hostname, id }) => hostname === 'outboxworkerhost' && id === ids.host)) {
     return yield* failure(SERVICE_IDENTITY_INVALID);
   }
   const host = yield* protectedRead(api.serviceStack(ids.host));
-  const migrator = yield* protectedRead(api.serviceStack(ids.migrator));
-  const db = yield* protectedRead(api.serviceStack(database.id));
-  if (host.name !== 'outboxworkerhost' || migrator.name !== 'migrator' || db.name !== 'db18') {
+  if (host.name !== 'outboxworkerhost') {
     return yield* failure(SERVICE_IDENTITY_INVALID);
   }
-  return { ...ids, database: database.id };
+  return ids;
 });
 
-const DATABASE_REFERENCES = new Map([
-  ['db18_hostname', 'hostname'],
-  ['db18_port', 'port'],
-  ['db18_dbName', 'dbName'],
-  ['db18_superUser', 'superUser'],
-  ['db18_superUserPassword', 'superUserPassword'],
-]);
-const referenceTextValid = (key: string, text: string) => {
-  if (key === 'hostname') {
-    return /^[A-Za-z0-9.-]+$/u.test(text);
-  }
-  if (key === 'port') {
-    return /^\d+$/u.test(text) && Number(text) >= 1 && Number(text) <= 65_535;
-  }
-  return true;
-};
-const resolvePortalReferences = (
-  configured: Redacted.Redacted | undefined,
-  database: ReadonlyMap<string, Redacted.Redacted>,
-  administrative: boolean,
-) =>
-  Effect.gen(function* resolveAllowlistedPortalReferences() {
-    if (configured === undefined) {
-      return yield* failure(PORTAL_DATABASE_PAIR_INVALID);
-    }
-    let resolved = Redacted.value(configured);
-    for (const match of resolved.matchAll(/\$\{(?<reference>[^}]+)\}/gu)) {
-      const name = match.groups?.reference ?? '';
-      const key = DATABASE_REFERENCES.get(name);
-      const value = key === undefined ? undefined : database.get(key);
-      if (
-        key === undefined ||
-        value === undefined ||
-        !opaqueValue(Redacted.value(value)) ||
-        (!administrative && (key === 'superUser' || key === 'superUserPassword'))
-      ) {
-        return yield* failure(DATABASE_REFERENCE_UNAVAILABLE);
-      }
-      const text = Redacted.value(value);
-      if (!referenceTextValid(key, text)) {
-        return yield* failure(DATABASE_REFERENCE_UNAVAILABLE);
-      }
-      const replacement = yield* Effect.try({
-        catch: () => failure(DATABASE_REFERENCE_UNAVAILABLE),
-        try: () => (key === 'hostname' || key === 'port' ? text : encodeURIComponent(text)),
-      });
-      resolved = resolved.replaceAll(match[0], replacement);
-    }
-    if (!opaqueValue(resolved)) {
-      return yield* failure(DATABASE_REFERENCE_UNAVAILABLE);
-    }
-    return Redacted.make(resolved);
-  });
-
-const IDENTITY_PARAMETERS = new Set(['db', 'database', 'dbname', 'host', 'hostaddr', 'port', 'user']);
-const portalConnection = (value: Redacted.Redacted | undefined) =>
-  Effect.gen(function* validatePortalConnection() {
-    if (value === undefined || !opaqueValue(Redacted.value(value))) {
-      return yield* failure(PORTAL_DATABASE_PAIR_INVALID);
-    }
-    const url = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(Redacted.value(value)).pipe(
-      Effect.mapError(() => failure(PORTAL_DATABASE_PAIR_INVALID)),
-    );
-    const identity = yield* Effect.try({
-      catch: () => failure(PORTAL_DATABASE_PAIR_INVALID),
-      try: () => ({
-        database: decodeURIComponent(url.pathname.replace(/^\/+/u, '')),
-        user: decodeURIComponent(url.username),
-      }),
-    });
-    const port = url.port === '' ? 5432 : Number(url.port);
-    if (
-      (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') ||
-      url.hostname === '' ||
-      identity.database === '' ||
-      identity.user === '' ||
-      url.hash !== '' ||
-      !Number.isSafeInteger(port) ||
-      port < 1 ||
-      port > 65_535 ||
-      [...url.searchParams.keys()].some((key) => IDENTITY_PARAMETERS.has(key.toLowerCase()))
-    ) {
-      return yield* failure(PORTAL_DATABASE_PAIR_INVALID);
-    }
-    return { database: identity.database, host: url.hostname, port, user: identity.user, value };
-  });
-
-const portalRuntimeUrl = (
-  secrets: ReadonlyMap<string, Redacted.Redacted>,
-  database: ReadonlyMap<string, Redacted.Redacted>,
-) =>
-  Effect.gen(function* readCanonicalPortalDatabasePair() {
-    const runtime = yield* portalConnection(
-      yield* resolvePortalReferences(secrets.get(PORTAL_DATABASE), database, false),
-    );
-    const admin = yield* portalConnection(
-      yield* resolvePortalReferences(secrets.get(PORTAL_ADMIN_DATABASE), database, true),
-    );
-    if (
-      runtime.user === admin.user ||
-      runtime.database !== admin.database ||
-      runtime.host !== admin.host ||
-      runtime.port !== admin.port
-    ) {
-      return yield* failure(PORTAL_DATABASE_PAIR_INVALID);
-    }
-    // The admin value is evidence of separation only. It never enters the host configuration.
-    return runtime.value;
-  });
+/** The retired keys the host still carries, in their declared order. */
+const retiredPresent = (existing: ReadonlyMap<string, Redacted.Redacted>): RetiredKey[] =>
+  RETIRED_HOST_KEYS.filter((key) => existing.has(key));
 
 const compare = (
   desired: ReadonlyMap<ManagedKey, Redacted.Redacted>,
@@ -349,12 +228,14 @@ const ReportSchema = Schema.Struct({
   managedKeys: Schema.Array(ManagedKeySchema),
   missingKeys: Schema.Array(ManagedKeySchema),
   mode: ModeSchema,
+  /** Retired keys the host carried: planned removals for CHECK, the ones removed for APPLY. */
+  retiredKeys: Schema.Array(RetiredKeySchema),
 });
 export type EnrollmentRecoveryHostConfigReport = typeof ReportSchema.Type;
 
 /**
- * Reuses canonical owner credentials and the existing migrator runtime identity. No dotenv, DB
- * connection, credential generation, rotation, grant change, or project-wide secret propagation.
+ * Reuses canonical owner credentials and removes retired host settings. No dotenv, DB connection,
+ * credential generation, rotation, grant change, or project-wide secret propagation.
  */
 export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigMode) =>
   Effect.gen(function* reconcileEnrollmentRecoveryHostConfig(): Effect.fn.Return<
@@ -365,12 +246,18 @@ export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigM
     const desired = yield* canonicalOwner;
     const ids = yield* serviceIds;
     const api = yield* ZeropsPublicApi;
-    const migrator = yield* protectedRead(api.serviceSecrets(ids.migrator));
-    const database = yield* protectedRead(api.serviceSecrets(ids.database));
-    desired.set(PORTAL_DATABASE, yield* portalRuntimeUrl(migrator, database));
-    const missingKeys = yield* compare(desired, yield* protectedRead(api.serviceSecrets(ids.host)), mode === 'verify');
+    const existing = yield* protectedRead(api.serviceSecrets(ids.host));
+    const missingKeys = yield* compare(desired, existing, mode === 'verify');
+    const retiredKeys = retiredPresent(existing);
+    const [firstRetired] = retiredKeys;
+    if (mode === 'verify' && firstRetired !== undefined) {
+      return yield* failure(RETIRED_VALUE_PRESENT, firstRetired);
+    }
     const createdKeys: ManagedKey[] = [];
     if (mode === 'apply') {
+      for (const key of retiredKeys) {
+        yield* protectedRead(api.deleteServiceSecret(ids.host, key));
+      }
       for (const [key, value] of desired) {
         // Re-read and compare the entire plan before each create. The API has no atomic batch/CAS;
         // a failure may leave correct additions behind, and a rerun converges without overwrites.
@@ -380,9 +267,14 @@ export const enrollmentRecoveryHostConfig = (mode: EnrollmentRecoveryHostConfigM
           createdKeys.push(key);
         }
       }
-      yield* compare(desired, yield* protectedRead(api.serviceSecrets(ids.host)), true);
+      const applied = yield* protectedRead(api.serviceSecrets(ids.host));
+      yield* compare(desired, applied, true);
+      const [stillRetired] = retiredPresent(applied);
+      if (stillRetired !== undefined) {
+        return yield* failure(RETIRED_VALUE_PRESENT, stillRetired);
+      }
     }
-    return { createdKeys, managedKeys: [...desired.keys()], missingKeys, mode };
+    return { createdKeys, managedKeys: [...desired.keys()], missingKeys, mode, retiredKeys };
   });
 
 if (import.meta.main) {

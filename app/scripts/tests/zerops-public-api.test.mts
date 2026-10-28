@@ -280,6 +280,42 @@ it.effect('creates a sensitive service secret and waits for its process to finis
   }),
 );
 
+it.effect('deletes only the named service secret and waits for each deletion', () =>
+  Effect.gen(function* deletesServiceSecret() {
+    const requests: string[] = [];
+    const client = HttpClient.make((request, url) => {
+      requests.push(`${request.method} ${url.pathname}${url.search}`);
+      const answer = Match.value(`${request.method} ${url.pathname}`).pipe(
+        Match.when('GET /api/rest/public/service-stack/recovery-host/user-data', () =>
+          Response.json({
+            list: [
+              { content: 'kept', id: 'kept-entry', key: 'KEEP' },
+              { content: 'retired', id: 'retired-entry', key: 'RETIRED' },
+            ],
+            total: 2,
+          }),
+        ),
+        Match.orElse(() => Response.json({ id: 'delete-process', status: 'FINISHED' })),
+      );
+      return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+    });
+    const layer = Layer.merge(
+      ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+    );
+    yield* Effect.gen(function* removeSecret() {
+      const api = yield* ZeropsPublicApi;
+      yield* api.deleteServiceSecret('recovery-host', 'RETIRED');
+    }).pipe(Effect.provide(layer));
+
+    expect(requests).toEqual([
+      'GET /api/rest/public/service-stack/recovery-host/user-data?limit=100&offset=0',
+      'DELETE /api/rest/public/user-data/retired-entry',
+      'GET /api/rest/public/process/delete-process',
+    ]);
+  }),
+);
+
 it.effect('reads a deleted service as absent and any other failed read as an error', () =>
   Effect.gen(function* findsServices() {
     const client = HttpClient.make((request, url) => {

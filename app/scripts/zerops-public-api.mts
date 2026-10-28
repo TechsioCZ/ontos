@@ -59,7 +59,7 @@ const SERVICE_STACK_NOT_FOUND = 'serviceStackNotFound';
 const ErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
 const EnvFileSchema = Schema.Struct({ envFile: Schema.String });
 const ServiceUserDataPageSchema = Schema.Struct({
-  list: Schema.Array(Schema.Struct({ content: Schema.String, key: Schema.String })),
+  list: Schema.Array(Schema.Struct({ content: Schema.String, id: Schema.String, key: Schema.String })),
   total: Schema.Number,
 });
 /** The page size for service user data listings; `total` tells whether another page follows. */
@@ -105,6 +105,8 @@ export interface ZeropsPublicApiService {
   ) => Effect.Effect<void, ZeropsApiError>;
   /** Permanently deletes a service and waits for the native deletion process to finish. */
   readonly deleteService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
+  /** Deletes every secret named `key` on one service and waits until Zerops applied each deletion. */
+  readonly deleteServiceSecret: (serviceId: string, key: string) => Effect.Effect<void, ZeropsApiError>;
   readonly enableSubdomainAccess: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Reads a service like `serviceStack`, but a deleted or unknown service is `None` rather than an error. */
   readonly findServiceStack: (serviceId: string) => Effect.Effect<Option.Option<ZeropsServiceStack>, ZeropsApiError>;
@@ -345,8 +347,10 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `service secret ${key}`);
   });
 
-  const serviceSecrets = Effect.fn('ZeropsPublicApi.serviceSecrets')(function* readServiceSecrets(serviceId: string) {
-    const secrets = new Map<string, Redacted.Redacted>();
+  const serviceUserData = Effect.fn('ZeropsPublicApi.serviceUserData')(function* readServiceUserData(
+    serviceId: string,
+  ) {
+    const entries: (typeof ServiceUserDataPageSchema.Type)['list'][number][] = [];
     let offset = 0;
     let total = 1;
     while (offset < total) {
@@ -355,16 +359,36 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
         ServiceUserDataPageSchema,
         'service secret list',
       );
-      for (const { content, key } of page.list) {
-        secrets.set(key, Redacted.make(content));
-      }
+      entries.push(...page.list);
       if (page.list.length === 0) {
         break;
       }
       offset += page.list.length;
       ({ total } = page);
     }
+    return entries;
+  });
+
+  const serviceSecrets = Effect.fn('ZeropsPublicApi.serviceSecrets')(function* readServiceSecrets(serviceId: string) {
+    const secrets = new Map<string, Redacted.Redacted>();
+    for (const { content, key } of yield* serviceUserData(serviceId)) {
+      secrets.set(key, Redacted.make(content));
+    }
     return secrets;
+  });
+
+  const deleteServiceSecret = Effect.fn('ZeropsPublicApi.deleteServiceSecret')(function* deleteServiceSecret(
+    serviceId: string,
+    key: string,
+  ) {
+    for (const entry of (yield* serviceUserData(serviceId)).filter((candidate) => candidate.key === key)) {
+      const process = yield* send(
+        HttpClientRequest.make('DELETE')(`${ZEROPS_PUBLIC_API_URL}/user-data/${entry.id}`),
+        ProcessSchema,
+        'service secret delete',
+      );
+      yield* awaitProcess(process, `service secret ${key} delete`);
+    }
   });
 
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
@@ -416,6 +440,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   return ZeropsPublicApi.of({
     createServiceSecret,
     deleteService,
+    deleteServiceSecret,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
     findServiceStack: (serviceId) => findServiceStackWith(serviceId, ServiceStackSchema),
     findServiceStackIdentity: (serviceId) => findServiceStackWith(serviceId, ServiceStackIdentitySchema),

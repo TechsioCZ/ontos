@@ -696,7 +696,6 @@ jobs:
         working-directory: app
         env:
           ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
-          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
           ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
         run: |
           ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
@@ -976,7 +975,6 @@ jobs:
         working-directory: app
         env:
           ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
-          ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
           ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
         run: |
           ALL_RELEASE_SECRETS="$(cat -- "$ALL_RELEASE_SECRETS_FILE")"
