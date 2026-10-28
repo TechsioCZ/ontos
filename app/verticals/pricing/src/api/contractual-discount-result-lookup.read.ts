@@ -33,22 +33,26 @@ const contractualDiscountResultLookupEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-export const readContractualDiscountResult = Effect.fn('ContractualDiscountResultLookupRead.read')(
-  function* readContractualDiscountResult(
-    input: ContractualDiscountResultLookupRequest,
-    trustedScope: { readonly legalEntityId: null | string | undefined },
-    services: Pick<ContractualDiscountPersistence, 'lookupResult'>,
-  ) {
-    if (trustedScope.legalEntityId === null || trustedScope.legalEntityId === undefined) {
-      return {
-        actionInvocationId: input.actionInvocationId,
-        outcome: 'CONTRACTUAL_DISCOUNT_RESULT_UNAVAILABLE' as const,
-        retryable: true as const,
-      } satisfies ContractualDiscountResultLookupResponse;
-    }
-    return yield* services.lookupResult(input).pipe(Effect.mapError(lookupUnavailable));
-  },
-);
+export const readContractualDiscountResult: (
+  input: ContractualDiscountResultLookupRequest,
+  trustedScope: { readonly legalEntityId: null | string | undefined },
+  services: Pick<ContractualDiscountPersistence, 'lookupResult'>,
+) => Effect.Effect<ContractualDiscountResultLookupResponse, ReadHandlerUnavailable> = Effect.fn(
+  'ContractualDiscountResultLookupRead.read',
+)(function* readContractualDiscountResult(
+  input: ContractualDiscountResultLookupRequest,
+  trustedScope: { readonly legalEntityId: null | string | undefined },
+  services: Pick<ContractualDiscountPersistence, 'lookupResult'>,
+) {
+  if (trustedScope.legalEntityId === null || trustedScope.legalEntityId === undefined) {
+    return {
+      actionInvocationId: input.actionInvocationId,
+      outcome: 'CONTRACTUAL_DISCOUNT_RESULT_UNAVAILABLE' as const,
+      retryable: true as const,
+    } satisfies ContractualDiscountResultLookupResponse;
+  }
+  return yield* services.lookupResult(input).pipe(Effect.mapError(lookupUnavailable));
+});
 
 export const contractualDiscountResultLookupRead = defineRead(
   {

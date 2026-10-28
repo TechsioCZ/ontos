@@ -3,11 +3,15 @@
 // @ontos-action-http-slug recover-inventory-effect
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted, Schema } from 'effect';
+import type { HttpApiClient } from 'effect/http-api';
 import {
   RecoverInventoryEffectActionApi,
   RecoverInventoryEffectPayloadSchema,
 } from '../../shared/apis/recover-inventory-effect-action.ts';
-import type { RecoverInventoryEffectPayload } from '../../shared/actions/recover-inventory-effect.ts';
+import type {
+  RecoverInventoryEffectPayload,
+  RecoverInventoryEffectResult,
+} from '../../shared/actions/recover-inventory-effect.ts';
 import { operationGateway } from './action-gateway.ts';
 
 const traceIdOption = 'traceId' as const;
@@ -39,10 +43,15 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
     options,
   );
 
+type EndpointResult = ReturnType<
+  HttpApiClient.ForApi<typeof RecoverInventoryEffectActionApi>['recoverInventoryEffectAction']['execute']
+>;
+type AuthorizedResult = Effect.Effect<RecoverInventoryEffectResult, Effect.Error<EndpointResult> | Schema.SchemaError>;
+
 export const executeRecoverInventoryEffectWithAuthorization = (
   payload: RecoverInventoryEffectPayload,
   ...[credential, requestCorrelation, options]: AuthorizedInvocation
-) =>
+): AuthorizedResult =>
   Schema.encodeUnknownEffect(RecoverInventoryEffectPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
@@ -59,7 +68,7 @@ export const executeRecoverInventoryEffectWithAuthorization = (
 export const executeRecoverInventoryEffect = (
   payload: RecoverInventoryEffectPayload,
   ...[requestCorrelation, options]: OperationInvocation
-) =>
+): ReturnType<typeof operationGateway.invoke<RecoverInventoryEffectResult, Effect.Error<AuthorizedResult>>> =>
   operationGateway.invoke(
     (credential, { apiBaseUrl, compositionRevision }) =>
       executeRecoverInventoryEffectWithAuthorization(payload, credential, requestCorrelation, {

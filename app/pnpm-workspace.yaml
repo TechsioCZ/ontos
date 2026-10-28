@@ -35,22 +35,22 @@ minimumReleaseAgeExclude:
   - '@effect/platform-node-shared@4.0.7'
   - '@effect/sql-pg@4.0.7'
   # Exact compiler identities from the reviewed UltraModern compiler contract.
-  - '@effect/tsgo-darwin-arm64@0.59.0'
-  - '@effect/tsgo-darwin-x64@0.59.0'
-  - '@effect/tsgo-linux-arm64@0.59.0'
-  - '@effect/tsgo-linux-arm@0.59.0'
-  - '@effect/tsgo-linux-x64@0.59.0'
-  - '@effect/tsgo-win32-arm64@0.59.0'
-  - '@effect/tsgo-win32-x64@0.59.0'
-  - '@effect/tsgo@0.59.0'
-  - '@tsrs/darwin-arm64@0.20.0-ts7.1.0-beta'
-  - '@tsrs/darwin-x64@0.20.0-ts7.1.0-beta'
-  - '@tsrs/linux-arm64-gnu@0.20.0-ts7.1.0-beta'
-  - '@tsrs/linux-arm64-musl@0.20.0-ts7.1.0-beta'
-  - '@tsrs/linux-x64-gnu@0.20.0-ts7.1.0-beta'
-  - '@tsrs/linux-x64-musl@0.20.0-ts7.1.0-beta'
-  - '@tsrs/win32-x64@0.20.0-ts7.1.0-beta'
-  - 'tsrs@0.20.0-ts7.1.0-beta'
+  - '@effect/tsgo-darwin-arm64@0.63.0'
+  - '@effect/tsgo-darwin-x64@0.63.0'
+  - '@effect/tsgo-linux-arm64@0.63.0'
+  - '@effect/tsgo-linux-arm@0.63.0'
+  - '@effect/tsgo-linux-x64@0.63.0'
+  - '@effect/tsgo-win32-arm64@0.63.0'
+  - '@effect/tsgo-win32-x64@0.63.0'
+  - '@effect/tsgo@0.63.0'
+  - '@tsrs/darwin-arm64@0.20.1-ts7.1.0-beta'
+  - '@tsrs/darwin-x64@0.20.1-ts7.1.0-beta'
+  - '@tsrs/linux-arm64-gnu@0.20.1-ts7.1.0-beta'
+  - '@tsrs/linux-arm64-musl@0.20.1-ts7.1.0-beta'
+  - '@tsrs/linux-x64-gnu@0.20.1-ts7.1.0-beta'
+  - '@tsrs/linux-x64-musl@0.20.1-ts7.1.0-beta'
+  - '@tsrs/win32-x64@0.20.1-ts7.1.0-beta'
+  - 'tsrs@0.20.1-ts7.1.0-beta'
   - '@bleedingdev/mf-bridge-react@2.9.2'
   - '@bleedingdev/mf-cli@2.9.2'
   - '@bleedingdev/mf-dts-plugin@2.9.2'
@@ -107,6 +107,8 @@ minimumReleaseAgeExclude:
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  - 'tsrs@0.20.1-ts7.1.0-beta'
 trustPolicyIgnoreAfter: 1440
 blockExoticSubdeps: true
 engineStrict: true
@@ -117,6 +119,8 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
+  '@effect/tsgo': 0.63.0
+  tsrs: 0.20.1-ts7.1.0-beta
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.7
@@ -124,7 +128,7 @@ overrides:
   '@rsbuild/core': 2.2.11
   node-fetch: ^3.3.2
   '@tanstack/history': 1.162.4
-  zod: 4.6.5
+  zod: 4.6.7
   # UltraModern workspace policy: the signed braces fork bounds parser nesting; sharp 0.35.5 is the patched release.
   'braces@>=3.0.0 <3.0.4': npm:@bleedingdev/braces@3.0.4
   'sharp@>=0.35.0 <0.35.5': 0.35.5
@@ -138,10 +142,14 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  # .11 predates @effect/tsgo 0.63.0; keep its metadata/stamp checks and pin the reviewed provider's exact targets.
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11': patches/ultramodern-compiler-compatibility.patch
+  '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.11': patches/ultramodern-compiler-discovery.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # upstream: https://github.com/ScriptedAlchemy/effect-rstest (latest build cbbf87e still imports effect/unstable/arbitrary; Effect 4.0.0 exports Arbitrary from the effect root)
   effect-rstest: patches/effect-rstest-effect-4.0.0-arbitrary.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380 (optional policy/role fields)
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6429 (Effect 4.0.0 SqlError path and Schema.isBetweenLength; merged on rc5, unreleased)
+  # TS 7.1: https://github.com/microsoft/TypeScript/pull/64307; share the unchanged distributive returning conditional across base/derived declarations.
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch

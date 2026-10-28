@@ -84,7 +84,7 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.59.0",
+    "@effect/tsgo": "0.63.0",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
@@ -107,7 +107,7 @@
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4",
-    "tsrs": "0.20.0-ts7.1.0-beta"
+    "tsrs": "0.20.1-ts7.1.0-beta"
   },
   "modernjs": {
     "preset": "presetUltramodern",
