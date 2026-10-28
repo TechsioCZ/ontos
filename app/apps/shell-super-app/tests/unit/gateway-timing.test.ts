@@ -1,9 +1,11 @@
+// @rstest-environment node
 import { Effect, Exit, Logger, Option, Ref, Stream } from 'effect';
 import { TestClock } from 'effect/testing';
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from '../../api/auth/gateway-timing.ts';
+import { relayModuleResponse } from '../../src/module-api/response-relay.ts';
 
 const withGatewayTimings = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
   Effect.gen(function* provideRequestTimings() {
@@ -34,26 +36,43 @@ const capturedLogs = (entries: unknown[]) =>
   ]);
 
 describe('Shell gateway phase timing', () => {
-  it.effect('preserves fixed numeric owner read phases alongside gateway phases', () =>
+  it.effect('preserves only approved owner phases through the relay and gateway collector', () =>
     Effect.gen(function* ownerAndGatewayTimings() {
       const ownerTimings =
         'read-authentication;dur=0, read-admission;dur=1.25, read-scope;dur=2, read-module;dur=3, read-permission;dur=4, read-prepare;dur=5, read-transaction;dur=6, read-authority;dur=7, read-rls;dur=8, read-owner;dur=9.125, read-validation;dur=10, read-audit;dur=11, read-encode;dur=12';
-      const upstream = HttpServerResponse.text('owner response', {
-        headers: {
-          'cache-control': 'private, no-store',
-          'server-timing': ownerTimings,
-          'set-cookie': 'session=opaque; HttpOnly',
-        },
-        status: 202,
-      });
+      const upstream = HttpServerResponse.fromWeb(
+        relayModuleResponse(
+          new Response('owner response', {
+            headers: {
+              'cache-control': 'public, max-age=3600',
+              'content-type': 'application/json',
+              location: 'https://untrusted.test',
+              refresh: '0;url=https://untrusted.test',
+              'server-timing': `${ownerTimings}, private;desc="secret, read-owner;dur=999", read-audit;dur=1;desc="secret", read-rls;dur=NaN, owner-dispatch;dur=999`,
+              'set-cookie': 'session=opaque; HttpOnly',
+              'x-private-debug': 'secret',
+            },
+            status: 202,
+          }),
+          'https://shell.test',
+        ),
+      );
       const response = yield* handle(
         TestClock.adjust(25).pipe(Effect.as(upstream), observeGatewayPhase('owner-dispatch'), withGatewayTimings),
       );
       expect(response.headers['server-timing']).toBe(`${ownerTimings}, owner-dispatch;dur=25`);
       expect(response.status).toBe(202);
       expect(response.body).toBe(upstream.body);
-      expect(response.headers['cache-control']).toBe('private, no-store');
-      expect(response.headers['set-cookie']).toBe('session=opaque; HttpOnly');
+      const webResponse = HttpServerResponse.toWeb(response);
+      expect(yield* Effect.promise(() => webResponse.text())).toBe('owner response');
+      expect(webResponse.headers.get('content-type')).toBe('application/json');
+      expect(webResponse.headers.get('cache-control')).toBe('no-store');
+      expect(webResponse.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
+      expect(webResponse.headers.get('vary')).toBe('authorization');
+      expect(webResponse.headers.get('x-content-type-options')).toBe('nosniff');
+      for (const name of ['set-cookie', 'refresh', 'location', 'x-private-debug']) {
+        expect(webResponse.headers.get(name)).toBeNull();
+      }
     }),
   );
 
