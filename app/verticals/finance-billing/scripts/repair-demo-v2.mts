@@ -31,7 +31,7 @@ const program = Effect.gen(function* repair() {
     state: unknown;
   }>`select revision,state from finance_billing.finance_states where tenant_id=${tenant} and legal_entity_id=${entity}`;
   if (row === undefined) {
-    return yield* new DemoRepairRejected({ reason: 'Missing Siampark finance state' });
+    return yield* new DemoRepairRejected({ reason: 'Missing Nájempark finance state' });
   }
   const original = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
   let state = alignRentalTemplates(original);

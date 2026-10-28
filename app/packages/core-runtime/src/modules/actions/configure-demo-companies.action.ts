@@ -47,6 +47,15 @@ const handleConfigureDemoCompanies = Effect.fn('ConfigureDemoCompanies.handle')(
     targetResourceId: demoCompanyTenantId,
     targetResourceType: 'demo-company-configuration',
   });
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `demo-rental-principals-prior:${demoCompanyTenantId}`,
+    resultCount: result.previousPrincipalCount,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: demoCompanyTenantId,
+    targetResourceType: 'demo-rental-principal-brand',
+  });
   return {
     companies: result.companies.map((company) => ({
       ...company,

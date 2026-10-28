@@ -77,11 +77,11 @@ const rows: readonly ExportRow[] = [
 const siampark: ExportMeta = {
   batchNumber: 'UP-2026-004',
   createdAt: '2026-10-20T08:00:00.000Z',
-  createdBy: 'Finance (finance@siampark.demo)',
+  createdBy: 'Finance (finance@najempark.demo)',
   issuer: {
     city: 'Praha',
     ico: '12345678',
-    name: 'Siampark',
+    name: 'Nájempark',
     street: 'Testovací 1',
     vatId: 'CZ12345678',
     zip: '110 00',
@@ -135,7 +135,7 @@ it.layer(NodeServices.layer)('POHODA XML export (STORMWARE dataPack 2.0)', (test
         '<typ:company>Ateliér Horák s.r.o.</typ:company>',
         '<typ:ico>27082440</typ:ico>',
         '<typ:dic>CZ27082440</typ:dic>',
-        '<typ:company>Siampark</typ:company>',
+        '<typ:company>Nájempark</typ:company>',
         '<typ:ico>12345678</typ:ico>',
         '<typ:paymentType>draft</typ:paymentType>',
         '<inv:text>Nájem kanceláře &amp; skladu</inv:text>',

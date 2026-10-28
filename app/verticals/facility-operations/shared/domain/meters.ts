@@ -2,7 +2,7 @@
 // OWNED BY THE `meters` LANE (ops-meters). Keep exporting MetersStateSchema and emptyMetersState.
 // Old JSONB rows must still decode: new fields are `Schema.optionalKey(...)` (or reseed: pnpm demo:seed:facility-operations).
 //
-// Model: a meter (měřidlo) of one medium sits on a supply point (odběrné místo) of a Siampark property or unit.
+// Model: a meter (měřidlo) of one medium sits on a supply point (odběrné místo) of a Nájempark property or unit.
 // Readings (odečty) are cumulative register values. Consumption is ONLY ever derived from two consecutive valid
 // readings of the same meter with the same unit of measure (S04-01); the first reading has no consumption (S04-02).
 // Voided readings stay in the history (who/when/why) and are skipped by every calculation.

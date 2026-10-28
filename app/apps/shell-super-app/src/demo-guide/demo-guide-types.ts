@@ -11,7 +11,7 @@ export type DemoGuideId = typeof DemoGuideIdSchema.Type;
 
 /** Public demo account the presenter signs in with for a step; never an authentication default. */
 export interface DemoGuidePersona {
-  /** Sign-in e-mail, e.g. `management@siampark.demo`. */
+  /** Sign-in e-mail, e.g. `management@najempark.demo`. */
   readonly email: string;
   /** Short Czech role label, e.g. `Vedení nemovitostí`. */
   readonly role: string;

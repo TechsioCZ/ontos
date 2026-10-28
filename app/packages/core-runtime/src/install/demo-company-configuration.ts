@@ -15,8 +15,10 @@ import {
   rentalDemoCompany,
 } from './demo-company-profiles.ts';
 import { demoCompanyActiveModuleKeys } from './demo-seed/demo-company-modules.ts';
+import { rebrandRentalDemoPrincipals } from './demo-rental-principal-brand.ts';
 
 const rentalRegistrationNumber = 'DEMO-SIAMPARK-RENTAL';
+const rentalLegacyLegalName = 'Siampark';
 const commercialRegistrationNumber = 'DEMO-SIAMPARK';
 type AdditionalDemoCompany = (typeof additionalDemoCompanies)[number];
 const knownCompanyIds: ReadonlySet<string> = new Set([
@@ -46,6 +48,7 @@ export interface DemoCompanyConfigurationPersistence {
   readonly ensureModules: Effect.Effect<void, IdentityPersistenceUnavailableError>;
   readonly load: Effect.Effect<readonly DemoCompanyRecord[], IdentityPersistenceUnavailableError>;
   readonly renameCommercial: Effect.Effect<void, IdentityPersistenceUnavailableError>;
+  readonly renameRental: Effect.Effect<void, IdentityPersistenceUnavailableError>;
 }
 const persistenceFailure = (cause: unknown) => {
   const failure = new IdentityPersistenceUnavailableError({
@@ -89,7 +92,7 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
     }) ||
     (rental !== undefined &&
       (!validCompany(rental, rentalDemoCompany.legalEntityId, rentalRegistrationNumber) ||
-        rental.legalName !== rentalDemoCompany.legalName))
+        ![rentalLegacyLegalName, rentalDemoCompany.legalName].includes(rental.legalName)))
   ) {
     return yield* new IdentityLifecycleConflictError({
       code: 'identity_lifecycle_conflict',
@@ -101,6 +104,8 @@ export const configureDemoCompanies = Effect.fn('DemoCompanyConfiguration.config
   }
   if (rental === undefined) {
     yield* persistence.createRental;
+  } else if (rental.legalName !== rentalDemoCompany.legalName) {
+    yield* persistence.renameRental;
   }
   yield* Effect.forEach(
     additionalDemoCompanies.filter((company) => !rows.some((row) => row.legalEntityId === company.legalEntityId)),
@@ -192,9 +197,35 @@ const persistenceFromTransaction = (
     ),
     Effect.asVoid,
   ),
+  renameRental: DateTime.nowAsDate.pipe(
+    Effect.flatMap((now) =>
+      transaction
+        .update(legalEntities)
+        .set({ legalName: rentalDemoCompany.legalName, updatedAt: now })
+        .where(
+          and(
+            eq(legalEntities.tenantId, demoCompanyTenantId),
+            eq(legalEntities.legalEntityId, rentalDemoCompany.legalEntityId),
+            eq(legalEntities.registrationCountry, 'CZ'),
+            eq(legalEntities.registrationNumber, rentalRegistrationNumber),
+            eq(legalEntities.status, 'active'),
+            eq(legalEntities.legalName, rentalLegacyLegalName),
+          ),
+        )
+        .pipe(Effect.mapError(persistenceFailure)),
+    ),
+    Effect.asVoid,
+  ),
 });
 
 export const configureDemoCompaniesFromTransaction = (
   transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
   tenantId: string,
-) => configureDemoCompanies(tenantId, persistenceFromTransaction(transaction));
+) =>
+  configureDemoCompanies(tenantId, persistenceFromTransaction(transaction)).pipe(
+    Effect.flatMap((result) =>
+      rebrandRentalDemoPrincipals(transaction, tenantId).pipe(
+        Effect.map(({ inspected }) => ({ ...result, previousPrincipalCount: inspected })),
+      ),
+    ),
+  );

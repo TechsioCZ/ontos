@@ -156,7 +156,7 @@ const startFakeSmtp = (mode: Mode = 'accept') =>
 class SmtpFixture extends Context.Service<SmtpFixture, FakeSmtp>()(
   '@app/email-delivery/tests/unit/smtp.test/SmtpFixture',
 ) {}
-const smtpTestLayer = (mode: Mode, from = 'finance@siampark.demo', timeoutMs = 10_000) =>
+const smtpTestLayer = (mode: Mode, from = 'finance@najempark.demo', timeoutMs = 10_000) =>
   Layer.unwrap(
     Effect.map(startFakeSmtp(mode), (server) =>
       Layer.merge(
@@ -183,7 +183,7 @@ const sendWithConfiguration = Effect.fn('SmtpTest.sendWithConfiguration')(functi
 }, Effect.scoped);
 
 describe('SMTP email delivery adapter', () => {
-  it.layer(smtpTestLayer('accept', 'Siampark – finanční oddělení <finance@siampark.demo>'), {
+  it.layer(smtpTestLayer('accept', 'Nájempark – finanční oddělení <finance@najempark.demo>'), {
     excludeTestServices: true,
   })((test) => {
     test.effect('accepts a message', () =>
@@ -196,7 +196,7 @@ describe('SMTP email delivery adapter', () => {
         expect(server.messages.length).toBe(1);
         expect(server.messages[0]).toContain(`Subject: =?UTF-8?B?${Buffer.from(message.subject).toString('base64')}?=`);
         expect(server.messages[0]).toContain(
-          `From: =?UTF-8?B?${Buffer.from('Siampark – finanční oddělení').toString('base64')}?= <finance@siampark.demo>`,
+          `From: =?UTF-8?B?${Buffer.from('Nájempark – finanční oddělení').toString('base64')}?= <finance@najempark.demo>`,
         );
         expect(server.messages[0]).toContain('Content-Type: text/html; charset=utf-8');
       }),
@@ -280,7 +280,7 @@ describe('SMTP email delivery adapter', () => {
     );
   });
 
-  it.layer(smtpTestLayer('stall-after-data', 'finance@siampark.demo', 100), { excludeTestServices: true })((test) => {
+  it.layer(smtpTestLayer('stall-after-data', 'finance@najempark.demo', 100), { excludeTestServices: true })((test) => {
     test.effect('lost DATA acknowledgement times out indeterminate without a second submission', () =>
       Effect.gen(function* uncertainAcceptance() {
         const server = yield* SmtpFixture;
@@ -424,9 +424,9 @@ describe('SMTP email delivery adapter', () => {
 
   it('formats address headers with RFC 2047 encoded display names', () => {
     expect(formatAddressHeader('AKROS e-shop <eshop@akros.demo>')).toBe('AKROS e-shop <eshop@akros.demo>');
-    const encodedName = formatAddressHeader('Siampark – finanční oddělení <finance@siampark.demo>');
+    const encodedName = formatAddressHeader('Nájempark – finanční oddělení <finance@najempark.demo>');
     expect(encodedName.startsWith('=?UTF-8?B?')).toBe(true);
-    expect(encodedName.endsWith(' <finance@siampark.demo>')).toBe(true);
+    expect(encodedName.endsWith(' <finance@najempark.demo>')).toBe(true);
     expect(formatAddressHeader('a@b.cz')).toBe('a@b.cz');
   });
 });

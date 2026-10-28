@@ -394,7 +394,7 @@ const renderClientSummaries = ({
       </div>
     )}
     {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
-        Siampark, never sees the wholesale "Prodeje v kostce" block. */}
+        Nájempark, never sees the wholesale "Prodeje v kostce" block. */}
     {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
   </>
 );

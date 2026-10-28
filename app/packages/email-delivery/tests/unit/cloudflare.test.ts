@@ -206,7 +206,7 @@ describe('undeliverable recipients', () => {
   it.layer(NodeCrypto.layer)((test) => {
     for (const domain of [
       'demo.ontos',
-      'siampark.demo',
+      'najempark.demo',
       'hanak.demo',
       'akros.demo',
       'kavarna.demo',
@@ -269,12 +269,54 @@ it.effect('uses the single onboarded stage address even when company SMTP overri
     const env = {
       AKROS_EMAIL_FROM: 'eshop@akros.demo',
       ONTOS_EMAIL_FROM: 'noreply@ontos-stage.bleeding.dev',
-      SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@siampark.demo',
+      SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@najempark.demo',
+      SIAMPARK_EMAIL_FROM: 'finance@najempark.demo',
     };
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'cloudflare')).toBe(from);
+    expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'cloudflare')).toBe(
+      'Nájempark – finanční oddělení <noreply@ontos-stage.bleeding.dev>',
+    );
     expect(
-      yield* agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Siampark' }, env, 'cloudflare'),
-    ).toBe('Siampark – upozornění <noreply@ontos-stage.bleeding.dev>');
+      yield* agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Nájempark' }, env, 'cloudflare'),
+    ).toBe('Nájempark – upozornění <noreply@ontos-stage.bleeding.dev>');
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'smtp')).toBe('eshop@akros.demo');
+    expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'smtp')).toBe(
+      'finance@najempark.demo',
+    );
   }),
 );
+
+const brandedSubmission = rs.fn<(request: BindingRequest) => Promise<BindingReceipt>>().mockResolvedValue({
+  messageId: 'cf-najempark',
+});
+it.layer(
+  Layer.unwrap(
+    Effect.map(
+      senderFor(
+        { legalEntityId: SIAMPARK_LEGAL_ENTITY_ID },
+        'Nájempark',
+        { ONTOS_EMAIL_FROM: 'noreply@ontos.example' },
+        'cloudflare',
+      ),
+      (sender) => CloudflareEmailDeliveryLive({ send: brandedSubmission }, sender),
+    ),
+  ),
+)((test) => {
+  test.effect('submits the Nájempark sender name to the mocked Cloudflare binding', () =>
+    Effect.gen(function* brandedBindingPayload() {
+      const service = yield* EmailDeliveryService;
+      expect(yield* service.send({ ...message, to: 'customer@example.test' })).toEqual({
+        accepted: true,
+        id: 'cf-najempark',
+      });
+      expect(brandedSubmission).toHaveBeenCalledTimes(1);
+      expect(brandedSubmission.mock.calls[0]?.[0]).toEqual({
+        from: 'Nájempark – finanční oddělení <noreply@ontos.example>',
+        html: '<p>Text</p>',
+        subject: message.subject,
+        text: 'Text',
+        to: 'customer@example.test',
+      });
+    }),
+  );
+});

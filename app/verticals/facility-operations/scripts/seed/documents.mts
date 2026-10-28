@@ -1,4 +1,4 @@
-// Seed of agenda `documents` for Siampark (legal entity …0021). OWNED BY THE `documents` LANE.
+// Seed of agenda `documents` for Nájempark (legal entity …0021). OWNED BY THE `documents` LANE.
 // Return the ENCODED state (ISO strings for dates, plain ids). It is validated against DocumentsStateSchema.
 // Real seed files live in ./files (generated PDFs/PNGs); `seedDocumentFiles` lists them for facility_operations.files.
 import { Effect, FileSystem, Path, Schema } from 'effect';
@@ -18,7 +18,7 @@ const operations = { principalId: '72000000-0000-4000-8000-000000000022', tenant
 const finance = { principalId: '72000000-0000-4000-8000-000000000023', tenantId };
 type Actor = typeof management;
 
-// Siampark property/unit ids (property-portfolio) and contract ids (legal-agreements, deterministic demo ids).
+// Nájempark property/unit ids (property-portfolio) and contract ids (legal-agreements, deterministic demo ids).
 const ref = {
   a202: {
     id: '675f7443-390d-4f9c-adfd-2a0471e9f331',
@@ -207,7 +207,7 @@ const audit = (createdAt: string, createdBy: Actor, updatedAt = createdAt, updat
   updatedBy,
 });
 
-const siampark = 'Siampark s.r.o.';
+const siampark = 'Nájempark s.r.o.';
 
 export const seedDocumentsState = Effect.fn('FacilityOperations.seedDocumentsState')(
   function* seedDocumentsState(): Effect.fn.Return<

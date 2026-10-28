@@ -1,4 +1,4 @@
-// Siampark property/unit options for any agenda form, read through property-portfolio's public records client
+// Nájempark property/unit options for any agenda form, read through property-portfolio's public records client
 // (governed read, its own gateway audience). Stored on records as an opaque PropertyRef + display snapshot.
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { Effect } from 'effect';

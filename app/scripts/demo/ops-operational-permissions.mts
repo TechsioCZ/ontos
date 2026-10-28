@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** LOCAL ONLY: apply the external Siampark operational grants without resetting other demo identities/data.
+/** LOCAL ONLY: apply the external Nájempark operational grants without resetting other demo identities/data.
  * Run from app/: mise exec -- node scripts/demo/ops-operational-permissions.mts
  * Set ONTOS_DEMO_ENV_FILE to the running runtime's .env when its local TLS certificate differs.
  * Restricted agendas still require read_all/write_all, which this persona never receives. S00: the persona is
@@ -27,7 +27,7 @@ import { principalRelationships, siamparkRentalPersonas } from './permissions.mt
 
 export const opsOperationalRelationships = (actions: readonly DemoAction[]) =>
   siamparkRentalPersonas
-    .filter((persona) => persona.email === 'external@siampark.demo')
+    .filter((persona) => persona.email === 'external@najempark.demo')
     .flatMap((persona) =>
       principalRelationships(
         persona.principalId,
@@ -70,7 +70,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   if (actions.length !== 1) {
     return yield* Effect.fail(new Error('Required published Action is missing'));
   }
-  const persona = siamparkRentalPersonas.find((entry) => entry.email === 'external@siampark.demo');
+  const persona = siamparkRentalPersonas.find((entry) => entry.email === 'external@najempark.demo');
   if (persona === undefined) {
     return yield* Effect.fail(new Error('External demo persona is missing'));
   }
@@ -109,7 +109,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
   );
   yield* client.writeRelationships(v1.WriteRelationshipsRequest.create({ updates: revoked }));
   yield* Console.log(
-    `External Siampark operational grants applied (${relationships.length} relationships); restricted agendas unchanged.`,
+    `External Nájempark operational grants applied (${relationships.length} relationships); restricted agendas unchanged.`,
   );
   return yield* Effect.void;
 }).pipe(

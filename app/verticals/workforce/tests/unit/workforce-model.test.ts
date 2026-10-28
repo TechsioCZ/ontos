@@ -15,7 +15,7 @@ const createCommand: WorkforceCommand = {
   _tag: 'CreateEmployee',
   active: true,
   department: 'Obchod',
-  email: 'jana.novakova@siampark.demo',
+  email: 'jana.novakova@najempark.demo',
   fullName: 'Jana Nováková',
   id: employeeId,
   role: 'SALES_REP',
@@ -58,7 +58,7 @@ it.effect('rejects a second Employee with an e-mail already in use, ignoring cas
     const failure = yield* Effect.flip(
       evolveEmployeeState(
         created.state,
-        { ...createCommand, email: 'Jana.Novakova@siampark.demo', id: otherEmployeeId },
+        { ...createCommand, email: 'Jana.Novakova@najempark.demo', id: otherEmployeeId },
         { now },
       ),
     );
@@ -71,13 +71,13 @@ it.effect('rejects an update that moves an Employee onto another Employee e-mail
     const first = yield* evolveEmployeeState(emptyState, createCommand, { now });
     const second = yield* evolveEmployeeState(
       first.state,
-      { ...createCommand, email: 'petr.svoboda@siampark.demo', id: otherEmployeeId },
+      { ...createCommand, email: 'petr.svoboda@najempark.demo', id: otherEmployeeId },
       { now },
     );
     const failure = yield* Effect.flip(
       evolveEmployeeState(
         second.state,
-        { _tag: 'UpdateEmployee', id: otherEmployeeId, patch: { email: 'jana.novakova@siampark.demo' } },
+        { _tag: 'UpdateEmployee', id: otherEmployeeId, patch: { email: 'jana.novakova@najempark.demo' } },
         { now },
       ),
     );
@@ -96,7 +96,7 @@ it.effect('keeps a row editable when it already shares its e-mail with another r
       {
         _tag: 'UpdateEmployee',
         id: otherEmployeeId,
-        patch: { department: 'Export', email: 'Jana.Novakova@siampark.demo' },
+        patch: { department: 'Export', email: 'Jana.Novakova@najempark.demo' },
       },
       { now },
     );

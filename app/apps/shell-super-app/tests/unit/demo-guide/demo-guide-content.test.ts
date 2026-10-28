@@ -32,7 +32,7 @@ const personaDomains = new Map([
   ['akros', '@akros.demo'],
   ['hanak', '@hanak.demo'],
   ['obchod', '@demo.ontos'],
-  ['siampark', '@siampark.demo'],
+  ['siampark', '@najempark.demo'],
 ]);
 
 const legalEntities = {
@@ -49,6 +49,51 @@ it('selects the guide of the current company only', () => {
   expect(demoGuideFor()).toBeUndefined();
   // Kavárna Doma (legacy) has no guide.
   expect(demoGuideFor('71000000-0000-4000-8000-000000000023')).toBeUndefined();
+});
+
+it('uses Nájempark consistently in displayed copy and every rental persona login', () => {
+  const guide = demoGuideFor(legalEntities.siampark);
+  expect(guide?.companyName).toBe('Nájempark');
+  const chapters = guide?.chapters ?? [];
+  const steps = chapters.flatMap((chapter) => chapter.steps);
+  const displayedCopy = [
+    guide?.companyName,
+    guide?.intro,
+    ...Object.values(guide?.boundaries ?? {}).flat(),
+    ...chapters.flatMap((chapter) => [chapter.title, chapter.summary]),
+    ...steps.flatMap((step) => [step.title, step.click, step.say, step.persona?.role, step.persona?.email]),
+  ].join(' ');
+  expect(displayedCopy).not.toMatch(/siampark/iu);
+  expect(steps.find((step) => step.id === 'siampark-uvod')?.click).toContain('firmu Nájempark');
+  const operations = steps.find((step) => step.id === 'siampark-externista-provoz');
+  expect(operations?.click).toContain('Nájempark přidělil');
+  expect(operations?.say).toContain('Nájempark přidělil');
+  const emails = [...new Set(steps.flatMap((step) => (step.persona === null ? [] : [step.persona.email])))];
+  expect(emails.toSorted((left, right) => left.localeCompare(right))).toEqual([
+    'external@najempark.demo',
+    'finance@najempark.demo',
+    'management@najempark.demo',
+    'operations@najempark.demo',
+  ]);
+});
+
+it('keeps the rental guide identity and seeded resource links unchanged by the rebrand', () => {
+  const guide = demoGuideFor(legalEntities.siampark);
+  expect(guide?.id).toBe('siampark');
+  expect(guide?.legalEntityId).toBe('71000000-0000-4000-8000-000000000021');
+  const targets = guide?.chapters.flatMap((chapter) => chapter.steps.map((step) => step.target)) ?? [];
+  expect(
+    targets.flatMap((target) => (target.kind === 'app' && target.path.includes('?') ? [target.path] : [])),
+  ).toEqual([
+    '/nemovitosti?resourceId=6a0197b3-4b13-46c5-a3ab-8dbb46dda58e',
+    '/nemovitosti?resourceId=bf65f06e-fe64-4787-813f-6a62bad12409',
+    '/najmy?resourceId=d2197c66-25a6-5113-86bf-14cb3c3c1b3e',
+    '/smlouvy?resourceId=a0ac0359-d251-5b37-bed2-b9a0db201a77',
+    '/finance?resourceId=23e891be-5ab3-462c-84fd-d628605a068b',
+    '/provoz/majetek?asset=siampark-asset-002',
+    '/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b',
+    '/provoz/majetek?asset=siampark-asset-001',
+  ]);
 });
 
 it.each(demoGuides.map((guide) => [guide.id, guide] as const))('guide %s is complete and well formed', (id, guide) => {

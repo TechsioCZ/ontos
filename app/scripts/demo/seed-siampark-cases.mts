@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * LOCAL ONLY. Siampark (0021) business cases (obchodní případy) for S00 "Externí obchodník smí číst jen svěřené
- * kontakty a případy". Idempotent; runs through the public governed APIs as Vedení (management@siampark.demo):
+ * LOCAL ONLY. Nájempark (0021) business cases (obchodní případy) for S00 "Externí obchodník smí číst jen svěřené
+ * kontakty a případy". Idempotent; runs through the public governed APIs as Vedení (management@najempark.demo):
  *
  *   1. creates the four prospect cases below when a case with the same title is absent (three owned by the
  *      external salesperson's employee record, one by Vedení) with the sales-pipeline `CreateOpportunity` Action;
- *   2. entrusts to external@siampark.demo exactly the cases whose owner is his employee record: one SpiceDB
+ *   2. entrusts to external@najempark.demo exactly the cases whose owner is his employee record: one SpiceDB
  *      `resource#reader` grant per case, and removes the grant from cases no longer owned by him.
  *
  * external@ opens `demo.sales-pipeline` read-only WITHOUT `demo.sales_pipeline.read_all` (permissions.mts), so the
@@ -44,8 +44,8 @@ import type { SeedClient, SeedTarget } from './seed-client.mts';
 
 const moduleId = 'demo.sales-pipeline';
 const resourceType = 'demo.sales-pipeline.opportunity';
-const externalEmail = 'external@siampark.demo';
-const managementEmail = 'management@siampark.demo';
+const externalEmail = 'external@najempark.demo';
+const managementEmail = 'management@najempark.demo';
 
 const externalPrincipalId = siamparkRentalPersonas.find(({ email }) => email === externalEmail)?.principalId ?? '';
 
@@ -205,7 +205,7 @@ export const seedSiamparkCaseRecords = Effect.fn('Demo.seedSiamparkCaseRecords')
     const matchingClients = crmClients.filter(({ name }) => name === entry.customer);
     const [crmClient] = matchingClients;
     if (matchingClients.length !== 1 || crmClient === undefined) {
-      return yield* new DemoSeedError({ reason: `Expected one Siampark CRM fixture for ${entry.customer}.` });
+      return yield* new DemoSeedError({ reason: `Expected one Nájempark CRM fixture for ${entry.customer}.` });
     }
     const customer = yield* existingSeedCustomer(customers, entry.customer);
     let partyId = crmClient.partyRef?.partyId ?? customer?.partyRef.resourceId;
@@ -251,7 +251,7 @@ export const seedSiamparkCaseRecords = Effect.fn('Demo.seedSiamparkCaseRecords')
   pipeline = yield* client.call(pipelineAudience, recordsPath, Empty, {}, Pipeline);
   for (const entry of cases) {
     if (pipeline.items.filter(({ title }) => title === entry.title).length !== 1) {
-      return yield* new DemoSeedError({ reason: `Siampark case fixture is missing or duplicated: ${entry.title}.` });
+      return yield* new DemoSeedError({ reason: `Nájempark case fixture is missing or duplicated: ${entry.title}.` });
     }
   }
   return pipeline;
@@ -263,7 +263,7 @@ const main = Effect.gen(function* seedCases() {
     Config.withDefault(Redacted.make('password1234')),
   );
   if (externalPrincipalId === '') {
-    return yield* new DemoSeedError({ reason: `Siampark persona ${externalEmail} is missing.` });
+    return yield* new DemoSeedError({ reason: `Nájempark persona ${externalEmail} is missing.` });
   }
   const client = yield* connectSeedClient(
     { legalEntityId: rentalDemoLegalEntityId, shellUrl, tenantId: demoTenantId },
@@ -274,10 +274,12 @@ const main = Effect.gen(function* seedCases() {
   const employeeOf = (email: string) => employees.find((entry) => entry.active && entry.email === email)?.id;
   const owners = { external: employeeOf(externalEmail), management: employeeOf(managementEmail) };
   if (owners.external === undefined) {
-    return yield* new DemoSeedError({ reason: 'Siampark has no active employee record for external@siampark.demo.' });
+    return yield* new DemoSeedError({ reason: 'Nájempark has no active employee record for external@najempark.demo.' });
   }
   if (owners.management === undefined) {
-    return yield* new DemoSeedError({ reason: 'Siampark has no active employee record for management@siampark.demo.' });
+    return yield* new DemoSeedError({
+      reason: 'Nájempark has no active employee record for management@najempark.demo.',
+    });
   }
   const checkpointDirectory = yield* Config.String('ONTOS_DEMO_CASE_CHECKPOINT_DIR').pipe(
     Config.withDefault(new URL('../../.scratch/demo-siampark-cases/', import.meta.url).pathname),
@@ -295,7 +297,7 @@ const main = Effect.gen(function* seedCases() {
     others.map(({ id }) => id),
   );
   return yield* Console.log(
-    `Siampark obchodní případy: ${pipeline.items.length}; svěřeno ${externalEmail}: ${entrusted.map(({ title }) => title).join(', ')}.`,
+    `Nájempark obchodní případy: ${pipeline.items.length}; svěřeno ${externalEmail}: ${entrusted.map(({ title }) => title).join(', ')}.`,
   );
 });
 

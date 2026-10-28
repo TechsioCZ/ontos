@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** LOCAL ONLY: add the Siampark (0021) CRM grants without resetting other demo identities or data.
+/** LOCAL ONLY: add the Nájempark (0021) CRM grants without resetting other demo identities or data.
  * Vedení: demo.crm read_all + write_all + assign; Externí obchodník: demo.crm read_assigned only (no write) and
  * demo.sales-pipeline read without read_all (only cases granted by scripts/demo/seed-siampark-cases.mts).
  * Run from app/: node scripts/demo/siampark-crm-permissions.mts
@@ -23,7 +23,7 @@ import { rentalDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import type { DemoAction } from './permissions.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
-const emails = new Set(['management@siampark.demo', 'external@siampark.demo']);
+const emails = new Set(['management@najempark.demo', 'external@najempark.demo']);
 
 export const siamparkCrmRelationships = (actions: readonly DemoAction[]) =>
   siamparkRentalPersonas
@@ -35,7 +35,7 @@ export const siamparkCrmRelationships = (actions: readonly DemoAction[]) =>
         actions.filter((action) => action.actionKey === 'demo.crm.apply-command'),
         rentalDemoLegalEntityId,
         demoTenantId,
-        persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external',
+        persona.email === 'management@najempark.demo' ? 'crm-repair-management' : 'crm-repair-external',
       ),
     );
 
@@ -92,7 +92,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
     (value) => Effect.sync(() => value.close()),
   );
   yield* client.writeRelationships(bootstrapRelationshipRequest(relationships));
-  yield* Console.log(`Siampark CRM grants applied (${relationships.length} relationships).`);
+  yield* Console.log(`Nájempark CRM grants applied (${relationships.length} relationships).`);
   return yield* Effect.void;
 }).pipe(
   Effect.scoped,

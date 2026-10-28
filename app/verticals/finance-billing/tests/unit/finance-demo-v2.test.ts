@@ -32,7 +32,7 @@ const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
 const validators: FinanceValidators = {
-  exportReferences: Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
+  exportReferences: Effect.succeed({ issuerName: 'Nájempark', partners: new Map() }),
   invoice: () => Effect.void,
 };
 const counterpartyRef = {

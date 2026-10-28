@@ -421,7 +421,7 @@ it('retains stable fixture IDs and explicit human affiliations, never deriving m
 });
 
 it('seeds every membership company before bootstrap on a fresh baseline, without waiting for the company Action', () => {
-  // The full Siampark reset creates only the commercial company; permissions must supply the remaining targets.
+  // The full Nájempark reset creates only the commercial company; permissions must supply the remaining targets.
   const baselineCompanyIds = new Set<string>([commercialDemoCompany.legalEntityId]);
   for (const membership of demoCompanyMemberships) {
     if (!baselineCompanyIds.has(membership.legalEntityId)) {
@@ -609,7 +609,7 @@ it.effect('defers company setup while the demo shell is offline, then uses its a
         ? {
             companies: [
               { legalEntityId: demoLegalEntityId, legalName: 'Obchodní firma' },
-              { legalEntityId: rentalDemoLegalEntityId, legalName: 'Siampark' },
+              { legalEntityId: rentalDemoLegalEntityId, legalName: 'Nájempark' },
             ],
           }
         : {};
@@ -663,7 +663,7 @@ it.effect('fails demo startup when the company Action is denied instead of decla
   }),
 );
 
-it('limits the external Siampark role to real operational/assigned-only permissions', () => {
+it('limits the external Nájempark role to real operational/assigned-only permissions', () => {
   const [management, , finance, external] = siamparkRentalPersonas;
   expect(hasModule(management.principalId, rentalDemoLegalEntityId, portfolioModule)).toBe(true);
   expect(hasPermission(management.principalId, rentalDemoLegalEntityId, operationsModule, operationsWriteAll)).toBe(

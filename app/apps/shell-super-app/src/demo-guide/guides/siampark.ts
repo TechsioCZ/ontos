@@ -1,9 +1,9 @@
 import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
 
-const management: DemoGuidePersona = { email: 'management@siampark.demo', role: 'Vedení' };
-const operations: DemoGuidePersona = { email: 'operations@siampark.demo', role: 'Provoz' };
-const finance: DemoGuidePersona = { email: 'finance@siampark.demo', role: 'Účetní' };
-const external: DemoGuidePersona = { email: 'external@siampark.demo', role: 'Externí obchodník' };
+const management: DemoGuidePersona = { email: 'management@najempark.demo', role: 'Vedení' };
+const operations: DemoGuidePersona = { email: 'operations@najempark.demo', role: 'Provoz' };
+const finance: DemoGuidePersona = { email: 'finance@najempark.demo', role: 'Účetní' };
+const external: DemoGuidePersona = { email: 'external@najempark.demo', role: 'Externí obchodník' };
 
 export const siamparkGuide: DemoGuide = {
   chapters: [
@@ -11,7 +11,7 @@ export const siamparkGuide: DemoGuide = {
       id: 'uvod',
       steps: [
         {
-          click: 'Otevřete Domů a dole v menu ukažte tenant OntOS DEMO a vybranou firmu Siampark.',
+          click: 'Otevřete Domů a dole v menu ukažte tenant OntOS DEMO a vybranou firmu Nájempark.',
           id: 'siampark-uvod',
           persona: management,
           say: 'OntOS je jedna platforma pro více firem, ale každá firma má oddělená data a oprávnění. Začneme u konkrétní budovy a dojdeme až k faktuře.',
@@ -180,10 +180,10 @@ export const siamparkGuide: DemoGuide = {
         },
         {
           click:
-            'Provoz › Agenda: jen událost Prohlídka R101 se zájemcem, kterou mu Siampark přidělil, a poznámka Agendu máte jen pro čtení. Bez tlačítka Nová událost; v Měřidlech jen odečty bez cen a bez úprav.',
+            'Provoz › Agenda: jen událost Prohlídka R101 se zájemcem, kterou mu Nájempark přidělil, a poznámka Agendu máte jen pro čtení. Bez tlačítka Nová událost; v Měřidlech jen odečty bez cen a bez úprav.',
           id: 'siampark-externista-provoz',
           persona: external,
-          say: 'Z provozu dostane jen to, co mu Siampark přidělil. Události kolegů ani ceny energií neuvidí a nic nezmění – hlídá to server.',
+          say: 'Z provozu dostane jen to, co mu Nájempark přidělil. Události kolegů ani ceny energií neuvidí a nic nezmění – hlídá to server.',
           target: { kind: 'app', path: '/provoz/agenda' },
           title: 'Provoz jen pro čtení',
         },
@@ -241,7 +241,7 @@ export const siamparkGuide: DemoGuide = {
       title: 'Připojení ChatGPT / Claude',
     },
   ],
-  companyName: 'Siampark',
+  companyName: 'Nájempark',
   id: 'siampark',
   intro:
     'Správa areálu od budovy přes nájem a smlouvu až po fakturu, provoz, finance a externího dodavatele. Každá role vidí jen to, co potřebuje.',

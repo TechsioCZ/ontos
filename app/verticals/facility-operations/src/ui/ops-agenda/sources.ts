@@ -1,4 +1,4 @@
-// Loads every Siampark source the calendar / overview / search read, each through its owner's PUBLIC governed read
+// Loads every Nájempark source the calendar / overview / search read, each through its owner's PUBLIC governed read
 // (own gateway audience, own permission check). A source the person may not read, or that is down, is reported
 // per source ("bez oprávnění" / "zdroj nedostupný") and never replaced by zeros. Owned by the ops-agenda lane.
 import { listCustomers } from '@app/party-registry/api/client';

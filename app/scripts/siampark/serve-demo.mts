@@ -32,7 +32,7 @@ const serveConfiguration = Config.all({
 type ServeConfiguration = Effect.Success<ReturnType<typeof serveConfiguration.parse>>;
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 
-export const parseDemoServeConfiguration = Effect.fn('SiamparkDemo.parseServeConfiguration')(
+export const parseDemoServeConfiguration = Effect.fn('NajemparkDemo.parseServeConfiguration')(
   function* parseConfiguration(provider: ConfigProvider.ConfigProvider) {
     const configuration = yield* serveConfiguration
       .parse(provider)

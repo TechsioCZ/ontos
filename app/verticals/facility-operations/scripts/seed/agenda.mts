@@ -1,4 +1,4 @@
-// Seed of agenda `agenda` for Siampark (legal entity …0021). OWNED BY THE `agenda` LANE (ops-agenda).
+// Seed of agenda `agenda` for Nájempark (legal entity …0021). OWNED BY THE `agenda` LANE (ops-agenda).
 // Returns the ENCODED state with fixed ids/timestamps so reseeds are deterministic.
 // Only OWN calendar entries live here (meetings, reminders, internal deadlines). Contract, lease, task, invoice,
 // asset and inspection deadlines are never copied: the calendar reads them from their source module.
@@ -38,9 +38,9 @@ const createdAt = '2026-10-19T07:30:00.000Z';
 const audit = (by = management) => ({ createdAt, createdBy: by, updatedAt: createdAt, updatedBy: by });
 
 const labels = new Map([
-  [operations.principalId, 'operations@siampark.demo'],
-  [finance.principalId, 'finance@siampark.demo'],
-  [management.principalId, 'management@siampark.demo'],
+  [operations.principalId, 'operations@najempark.demo'],
+  [finance.principalId, 'finance@najempark.demo'],
+  [management.principalId, 'management@najempark.demo'],
 ]);
 
 type EncodedEvent = AgendaStateEncoded['events'][number];

@@ -1,5 +1,5 @@
 /// <reference lib="es2023" />
-// Sales demo v2 seed for Siampark finance (S07–S09): received invoices with a stored PDF, rent invoices with partial
+// Sales demo v2 seed for Nájempark finance (S07–S09): received invoices with a stored PDF, rent invoices with partial
 // payments, recurring rent templates, budgets, an opening balance and one accountant handover package.
 // It drives the owner's pure transitions (same rules as the Action) and writes the result with the admin role.
 //
@@ -26,7 +26,7 @@ class DemoSeedRejected extends Schema.TaggedError<DemoSeedRejected, { readonly b
 
 const TENANT = '70000000-0000-4000-8000-000000000020';
 const MARKER = 'demo-v2-seed';
-const ACTOR = 'Finance (finance@siampark.demo)';
+const ACTOR = 'Finance (finance@najempark.demo)';
 const OCTOBER_RENT_DUE = '2026-10-15';
 const DEMO_ISSUE_DATE = '2026-10-05';
 const OCTOBER_START = '2026-10-01';

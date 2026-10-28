@@ -31,7 +31,7 @@ const response = {
   state: {
     documents: [
       {
-        actorLabel: 'Finance (finance@siampark.demo)',
+        actorLabel: 'Finance (finance@najempark.demo)',
         fileName: 'faktura-2026-412.pdf',
         id: 'doc-1',
         invoiceResourceId: 'inv-1',

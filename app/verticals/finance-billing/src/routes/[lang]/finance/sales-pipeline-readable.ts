@@ -19,7 +19,7 @@ export const financeReferenceAccess = Effect.sync(() => referenceAccessFromModul
 const PROPERTY_MODULE = 'property.portfolio';
 const AGREEMENTS_MODULE = 'legal.agreements';
 
-/** Siampark object modules (property/unit, contracts) the company can read; other companies get no object picker. */
+/** Nájempark object modules (property/unit, contracts) the company can read; other companies get no object picker. */
 export const objectAccessFromModules = (modules?: ReadonlySet<string>) => ({
   contractsReadable: modules === undefined || modules.has(AGREEMENTS_MODULE),
   propertiesReadable: modules === undefined || modules.has(PROPERTY_MODULE),

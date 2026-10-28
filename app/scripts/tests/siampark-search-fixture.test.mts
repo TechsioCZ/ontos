@@ -27,7 +27,7 @@ const fixture = {
   searchDocuments: demoSearchDocuments,
   tenant: { defaultLocale: 'cs', displayName: 'Synthetic demo', slug: 'siampark-demo', tenantId: demoTenantId },
 };
-const runValidation = Effect.fn('SiamparkSearchFixture.runValidation')(function* validateFixture(
+const runValidation = Effect.fn('NajemparkSearchFixture.runValidation')(function* validateFixture(
   input: typeof Schema.Unknown.Type,
   validateOnly: boolean,
 ) {

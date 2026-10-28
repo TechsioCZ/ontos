@@ -428,7 +428,7 @@ it.effect('stores complete tenant case metadata with actor and history across la
     const caseWire = {
       deadline: '2026-11-15',
       estimatedValueMinor: 5_450_000,
-      owner: 'Vedení Siampark',
+      owner: 'Vedení Nájempark',
       subject: 'Prodloužení nájmu R101',
     };
     const caseDetails = yield* Schema.decodeEffect(TenantCaseDetailsSchema)(caseWire);

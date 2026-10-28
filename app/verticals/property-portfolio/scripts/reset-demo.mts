@@ -50,7 +50,7 @@ const main = (fixturePath: string) =>
         set: { payload: input.state, revision: 0, updatedAt: now },
         target: [propertyState.tenantId, propertyState.legalEntityId],
       });
-    return yield* Console.log('Siampark property demo reset to revision 0');
+    return yield* Console.log('Nájempark property demo reset to revision 0');
   });
 const command = Command.make('demo-fixture', { fixture: Flag.String('fixture') }, ({ fixture }) =>
   main(fixture).pipe(Effect.tapError((failure) => Console.error(`Fixture port failed: ${failure._tag}`))),

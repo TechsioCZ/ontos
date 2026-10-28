@@ -311,9 +311,9 @@ it('stale source deadlines are hidden without deleting stored notification histo
 it('greets the session person, never an account role or a fixture persona', () => {
   expect(personalGreetingName(' Jana Nováková ')).toBe('Jana Nováková');
   expect(personalGreetingName('Jana')).toBe('Jana');
-  expect(personalGreetingName('Vedení Siampark')).toBeUndefined();
-  expect(personalGreetingName('Provoz Siampark')).toBeUndefined();
-  expect(personalGreetingName('Účetní Siampark')).toBeUndefined();
+  expect(personalGreetingName('Vedení Nájempark')).toBeUndefined();
+  expect(personalGreetingName('Provoz Nájempark')).toBeUndefined();
+  expect(personalGreetingName('Účetní Nájempark')).toBeUndefined();
   expect(personalGreetingName('Externí obchodník')).toBeUndefined();
   expect(pipe(undefined, personalGreetingName)).toBeUndefined();
   expect(personalGreetingName('')).toBeUndefined();

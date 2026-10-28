@@ -32,7 +32,7 @@ it.effect('retires only original fixtures, retains unrelated contracts and is id
   }),
 );
 
-it.effect('fails closed for Siampark, edited fixtures and references from successor contracts', () =>
+it.effect('fails closed for Nájempark, edited fixtures and references from successor contracts', () =>
   Effect.gen(function* rejectsUnsafeCleanup() {
     const wrongScope = yield* retireLegacyRental(
       { ...legacyRentalScope, legalEntityId: '71000000-0000-4000-8000-000000000021' },

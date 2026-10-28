@@ -1,4 +1,4 @@
-// Facility operations seed: writes every agenda's demo state for the Siampark company (legal entity …0021).
+// Facility operations seed: writes every agenda's demo state for the Nájempark company (legal entity …0021).
 //   pnpm demo:seed:facility-operations            (root)   — or —   node verticals/facility-operations/scripts/reset-demo.mts --sales-demo
 // Lanes enrich ONLY their own file: verticals/facility-operations/scripts/seed/<agenda>.mts (export `seed<Agenda>State`).
 // Each agenda row is upserted to revision 0, so a reseed resets that agenda. --validate-only touches no database.

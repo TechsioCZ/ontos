@@ -74,7 +74,7 @@ const program = Effect.gen(function* repair() {
         return yield* new RentalRepairRejected({ reason: 'Concurrent finance change; retry scoped repair' });
       }
       return yield* Console.log(
-        `Siampark rental repair revision ${row.revision} -> ${row.revision + 1}: two linked replacements; original issued customer/amount snapshots and exports preserved; duplicate draft voided.`,
+        `Nájempark rental repair revision ${row.revision} -> ${row.revision + 1}: two linked replacements; original issued customer/amount snapshots and exports preserved; duplicate draft voided.`,
       );
     }),
   );

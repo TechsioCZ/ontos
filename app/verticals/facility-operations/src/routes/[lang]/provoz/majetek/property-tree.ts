@@ -1,4 +1,4 @@
-// Siampark properties with their units, read through property-portfolio's public records client (governed read).
+// Nájempark properties with their units, read through property-portfolio's public records client (governed read).
 // Used by the assets page to place an asset on a property or unit and to scope an inventory by property.
 import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { Effect } from 'effect';

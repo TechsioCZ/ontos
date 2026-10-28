@@ -30,7 +30,7 @@ export type DemoResetChildEnvironment = { readonly [Key in keyof DemoResetConfig
 const loopbackHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const requiredText = Schema.Trim.check(Schema.isNonEmpty());
 
-export const validateResetEnvironment = Effect.fn('SiamparkDemo.validateLocalConfiguration')(
+export const validateResetEnvironment = Effect.fn('NajemparkDemo.validateLocalConfiguration')(
   function* validateLocalConfiguration(environment: DemoResetChildEnvironment) {
     yield* Schema.decodeUnknownEffect(Schema.Literal('development'))(environment.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT);
     yield* Schema.decodeEffect(Schema.Trim.check(Schema.isMinLength(32)))(environment.BETTER_AUTH_SECRET);

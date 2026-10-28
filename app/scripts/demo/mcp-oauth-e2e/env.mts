@@ -32,7 +32,7 @@ export const loadE2eSettings = Effect.gen(function* loadSettings() {
 
 export const VERIFICATION_PERSONA = 'verification@ci.ontos';
 
-export const PERSONA = 'management@siampark.demo';
+export const PERSONA = 'management@najempark.demo';
 
 /** Company administrator of Obchodní firma; operator of its seeded AI agents (variant 2 acts as agent B). */
 export const AGENT_OPERATOR_PERSONA = 'obchod@demo.ontos';

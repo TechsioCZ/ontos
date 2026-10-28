@@ -121,7 +121,7 @@ const fixture = (): FinanceState => {
   };
 };
 
-describe('Siampark scoped rental fixture repair', () => {
+describe('Nájempark scoped rental fixture repair', () => {
   it.effect('preserves issued snapshots and exports, creates correctly anchored replacements, and is idempotent', () =>
     Effect.gen(function* replacementHistory() {
       const original = fixture();

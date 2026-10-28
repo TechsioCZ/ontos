@@ -168,7 +168,7 @@ it.effect('rejects a duplicate serial number', () =>
   }),
 );
 
-it.effect('the seed decodes, covers every Siampark unit and stages the demo cases', () =>
+it.effect('the seed decodes, covers every Nájempark unit and stages the demo cases', () =>
   Effect.gen(function* meterSeed() {
     const state = yield* Schema.decodeUnknownEffect(MetersStateSchema)(seedMetersState());
     const unitIds = new Set(

@@ -58,7 +58,7 @@ export const writeBootstrapRelationships = Effect.fn('Demo.writeBootstrapRelatio
       },
       modules: [],
       relationships,
-      tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+      tenant: { defaultLocale: 'cs', displayName: 'Nájempark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
     });
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'demo-relationships-' });
     const file = path.join(directory, 'context.json');

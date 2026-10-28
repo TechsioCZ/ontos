@@ -364,6 +364,8 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/materialize-zerops-environment.test.mts
+          scripts/tests/rebrand-rental-demo.test.mts
           scripts/tests/prepare-stage-release-secrets.test.mts
           scripts/tests/stage-demo-migrate.test.mts
           scripts/tests/stage-deploy-diagnostics.test.mts
@@ -944,6 +946,15 @@ jobs:
             --app-directory apps/shell-super-app \
             --receipt-file "$RECEIPTS/shell-super-app.json"
 
+      - name: Rebrand the rental demo through the native Shell Action
+        if: ${{ !inputs.outbox_only }}
+        timeout-minutes: 5
+        working-directory: app
+        # A deliberate deployment rerun reauthorizes the convergent operation; never retry an uncertain write here.
+        run: >-
+          mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL"
+          --idempotency-key "${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-najempark-v1"
+
       # The host is built from this same checkout and source SHA, before the single stage lock is released.
       - name: Install Zerops CLI
         run: |
@@ -956,9 +967,7 @@ jobs:
         env:
           ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.outbox.yaml
         run: |
-          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --output "$RUNNER_TEMP/zerops.yaml"
-          awk 'BEGIN { print "zerops:" } /^  - setup: / { keep = ($0 ~ /outbox-worker-host/) } keep' "$RUNNER_TEMP/zerops.yaml" >"$ZEROPS_YAML_PATH"
-          grep -q "setup: 'outbox-worker-host'" "$ZEROPS_YAML_PATH"
+          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --setup outbox-worker-host --output "$ZEROPS_YAML_PATH"
           wc -c "$ZEROPS_YAML_PATH"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 

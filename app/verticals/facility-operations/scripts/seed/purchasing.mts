@@ -1,4 +1,4 @@
-// Seed of agenda `purchasing` for Siampark (legal entity …0021). OWNED BY THE `purchasing` LANE (ops-purchasing).
+// Seed of agenda `purchasing` for Nájempark (legal entity …0021). OWNED BY THE `purchasing` LANE (ops-purchasing).
 // The seed is a replay of real commands through the same pure reducer the Action uses, so every number in the
 // demo (stock on hand, partial deliveries, remaining quantities) is produced by the production rules.
 // Deterministic: fixed resource ids and timestamps. Returns the ENCODED state.

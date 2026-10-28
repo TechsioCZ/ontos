@@ -1,4 +1,4 @@
-// Open sales cases (obchodní případy) for the Siampark overview, read through the sales-pipeline PUBLIC governed read
+// Open sales cases (obchodní případy) for the Nájempark overview, read through the sales-pipeline PUBLIC governed read
 // with the person's own gateway credential (audience `sales-pipeline`). The schema below names only the fields the
 // overview uses, so newer producer fields never break this read.
 import { CalendarDateWireSchema, issueGatewayContext, makeOperationGateway } from '@app/shared-contracts';

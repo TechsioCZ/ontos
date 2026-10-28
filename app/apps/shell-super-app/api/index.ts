@@ -197,6 +197,7 @@ import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-r
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
 import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { demoAccountCapability } from './auth/demo-accounts.ts';
+import { rebrandRentalDemoAccounts } from './auth/rental-demo-brand-runtime-infrastructure.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -1681,6 +1682,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const response = yield* service
             .configureDemoCompanies({ ...context, payload })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+          yield* rebrandRentalDemoAccounts(context.principal.tenantId).pipe(
+            Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)),
+          );
           return yield* decodeResponse(ConfigureDemoCompaniesResponseSchema, response, shellInternalProblem);
         }),
       ),

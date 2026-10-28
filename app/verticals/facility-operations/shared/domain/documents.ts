@@ -28,7 +28,7 @@ export const StoredFileRefSchema = Schema.Struct({
 export type StoredFileRef = typeof StoredFileRefSchema.Type;
 
 /**
- * Typed reference to any record a document or comment belongs to (S12.R3, S14.R1): a Siampark property, unit,
+ * Typed reference to any record a document or comment belongs to (S12.R3, S14.R1): a Nájempark property, unit,
  * asset, contract, tenant, invoice, task, incident, another document, a conversation channel… `kind` is an open
  * short key (e.g. `property`, `unit`, `asset`, `contract`, `tenant`, `document`, `task`, `incident`, `meter`,
  * `channel`); `label` is a display snapshot taken when the link was made. Never joined to another module's tables.

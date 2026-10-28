@@ -11,9 +11,9 @@ import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts
 import { connectSeedClient } from './seed-client.mts';
 
 const people = [
-  ['management', 'Vedení Siampark', 'SALES_HEAD', 'Vedení', '21'],
-  ['operations', 'Provoz Siampark', 'SUPPORT', 'Správa areálu', '22'],
-  ['finance', 'Účetní Siampark', 'ACCOUNTANT', 'Finance', '23'],
+  ['management', 'Vedení Nájempark', 'SALES_HEAD', 'Vedení', '21'],
+  ['operations', 'Provoz Nájempark', 'SUPPORT', 'Správa areálu', '22'],
+  ['finance', 'Účetní Nájempark', 'ACCOUNTANT', 'Finance', '23'],
   ['external', 'Externí obchodník', 'SALES_REP', 'Externí spolupráce', '24'],
 ] as const;
 
@@ -24,13 +24,13 @@ const program = Effect.gen(function* linkWorkforceLogins() {
   );
   const client = yield* connectSeedClient(
     { legalEntityId: rentalDemoLegalEntityId, shellUrl, tenantId: demoTenantId },
-    'management@siampark.demo',
+    'management@najempark.demo',
     password,
   );
   for (const [key, name, role, department, suffix] of people) {
     const records = yield* client.read('workforce', RecordsResponseSchema);
     const id = demoId('workforce.employee', `siampark-${key}`);
-    const email = `${key}@siampark.demo`;
+    const email = `${key}@najempark.demo`;
     const existing = records.items.find((item) => item.id === id || item.email === email);
     if (existing !== undefined) {
       yield* Console.log(`Already linked: ${email}`);

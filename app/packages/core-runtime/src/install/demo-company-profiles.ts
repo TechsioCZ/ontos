@@ -1,4 +1,6 @@
 /** Fixed, synthetic development companies; these identifiers never select trusted request scope. */
+export { rentalDemoBrandProfiles } from './demo-rental-brand-profiles.ts';
+
 export const demoCompanyTenantId = '70000000-0000-4000-8000-000000000020';
 export const commercialDemoCompany = {
   legalEntityId: '71000000-0000-4000-8000-000000000020',
@@ -6,7 +8,7 @@ export const commercialDemoCompany = {
 } as const;
 export const rentalDemoCompany = {
   legalEntityId: '71000000-0000-4000-8000-000000000021',
-  legalName: 'Siampark',
+  legalName: 'Nájempark',
 } as const;
 /** Wholesale company of the CRM demo (sales reps with assigned clients). */
 export const crmDemoCompany = {

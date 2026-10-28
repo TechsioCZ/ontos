@@ -73,7 +73,7 @@ describe('Finance reference credentials', () => {
     expect(commandReferenceAudiences(manualDraft, [])).toEqual(['party-registry']);
   });
 
-  it('adds one single-use credential per Siampark anchor the validators read', () => {
+  it('adds one single-use credential per Nájempark anchor the validators read', () => {
     expect(invoiceReferenceAudiences({ propertyRef, unitRef })).toEqual([
       'party-registry',
       'property-portfolio',

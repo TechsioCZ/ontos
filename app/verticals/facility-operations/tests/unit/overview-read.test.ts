@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 // The overview read must show exactly what the browser used to compute from the full records read: same deadlines
 // (none may silently disappear), same open incidents, same search rows and record counts, for every kind of
-// principal, on the seeded Siampark data. Both sides go through their wire schema (encode -> JSON -> decode) like
+// principal, on the seeded Nájempark data. Both sides go through their wire schema (encode -> JSON -> decode) like
 // in production. The "legacy" functions below are the browser computation before the overview read existed.
 import { expect, it, rstest } from 'effect-rstest';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';

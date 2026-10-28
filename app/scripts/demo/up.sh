@@ -25,7 +25,7 @@ LOG_DIR="$SCRATCH/demo-logs"
 PID_DIR="$SCRATCH/demo-pids"
 STAMP_DIR="$SCRATCH/demo-build"
 STUB_DIR="$SCRATCH/demo-bin"
-# Not Siampark's 3031: on the demo machine launchd still owns 3031 for the old Siampark composition service.
+# Not Nájempark's 3031: on the demo machine launchd still owns 3031 for the old Nájempark composition service.
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 export ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active"
 SHELL_PORT=3020
@@ -133,8 +133,8 @@ load_env
 # 2. Containers (OrbStack). Isolated project/volume: ontos-demo-db + ontos-demo-spicedb on 5433/50051/8443, ontos-demo-mailpit on 1025/8025, ontos-demo-mailpit-test (test/QA recipients) on 1026/8026.
 step containers "${COMPOSE[@]}" up -d --wait
 
-# 3. Schema, base context, Siampark baseline, authorization. SpiceDB is in-memory: grants are re-written
-#    on every run (demo:reset writes the Siampark account grants).
+# 3. Schema, base context, Nájempark baseline, authorization. SpiceDB is in-memory: grants are re-written
+#    on every run (demo:reset writes the Nájempark account grants).
 DATABASE_LOGIN_ROLE_POLICY=initialize-local step db-migrate pnpm_ db:migrate
 step local-initialize pnpm_ local:initialize
 if [ "${DEMO_RESET:-1}" != 0 ]; then
@@ -247,7 +247,7 @@ sleep 3
 kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid")" 2>/dev/null ||
   say "WARN outbox worker host exited; see $LOG_DIR/outbox-worker-host.log"
 
-# Real e-mail: after-commit dispatcher (AKROS order e-mails, Siampark payment reminders) over SMTP (Mailpit by default).
+# Real e-mail: after-commit dispatcher (AKROS order e-mails, Nájempark payment reminders) over SMTP (Mailpit by default).
 say "starting the e-mail dispatcher (SMTP ${SMTP_HOST:-127.0.0.1}:${SMTP_PORT:-1025})"
 start email-dispatcher "${WITH_ENV[@]}" node scripts/demo/email-dispatcher/main.mts
 wait_http "http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz" 60 email-dispatcher
@@ -260,7 +260,7 @@ step demo-permissions "${WITH_ENV[@]}" node scripts/demo/reset-permissions.mts
 # People administration (Lidé a role): company administrators may run core.identity.manage-demo-account.
 step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-grants.mts
 step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.mts
-# Old baseline grants Siampark staff to commercial 0020; only retain their intended Siampark company.
+# Old baseline grants Nájempark staff to commercial 0020; only retain their intended Nájempark company.
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # Per-company navigation (core.legal_entity_navigation_exclusions): pages a demo company does not offer.
 step navigation-exclusions "${WITH_ENV[@]}" node scripts/demo/navigation-exclusions.mts
@@ -313,10 +313,10 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
     "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     ONTOS_DEMO_SEED_TENANT_ID=70000000-0000-4000-8000-000000000020 \
     ONTOS_DEMO_SEED_LEGAL_ENTITY_ID=71000000-0000-4000-8000-000000000021 \
-    ONTOS_DEMO_SEED_EMAIL=management@siampark.demo \
+    ONTOS_DEMO_SEED_EMAIL=management@najempark.demo \
     "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
     mise exec -- pnpm demo:seed:rental --apply
-  # S00: Siampark business cases; the three owned by „Externí obchodník“ are entrusted to external@siampark.demo.
+  # S00: Nájempark business cases; the three owned by „Externí obchodník“ are entrusted to external@najempark.demo.
   step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
     node scripts/demo/seed-siampark-cases.mts
 fi
@@ -328,7 +328,7 @@ cat <<EOF
 [demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   testovací adresy: http://localhost:8026   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Verticals: ${VERTICALS[*]}
-[demo] Login: management@siampark.demo / password1234  (also operations@, finance@, external@)
+[demo] Login: management@najempark.demo / password1234  (also operations@, finance@, external@)
 [demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local
 [demo] MCP (Claude/ChatGPT): http://localhost:$SHELL_PORT/mcp
 [demo] Logs: $LOG_DIR   Stop: scripts/demo/down.sh [--containers]

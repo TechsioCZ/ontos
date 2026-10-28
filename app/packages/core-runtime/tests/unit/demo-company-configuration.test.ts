@@ -7,6 +7,7 @@ import type {
   DemoCompanyConfigurationPersistence,
 } from '../../src/install/demo-company-configuration.ts';
 import {
+  additionalDemoCompanies,
   commercialDemoCompany,
   demoCompanyTenantId,
   rentalDemoCompany,
@@ -65,6 +66,14 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
       const index = rows.findIndex((row) => row.legalEntityId === commercialDemoCompany.legalEntityId);
       rows.splice(index, 1, { ...commercial, legalName: commercialDemoCompany.legalName });
     }),
+    renameRental: Effect.sync(() => {
+      calls.push('rename-rental');
+      for (const [index, row] of rows.entries()) {
+        if (row.legalEntityId === rentalDemoCompany.legalEntityId) {
+          rows[index] = { ...row, legalName: rentalDemoCompany.legalName };
+        }
+      }
+    }),
   };
   return { calls, modules, persistence, rows };
 };
@@ -88,8 +97,16 @@ it.effect('refuses conflicting registrations, owners and user-renamed companies 
       [{ ...commercial, registrationNumber: 'A-REAL-COMPANY' }],
       [{ ...commercial, legalName: 'Customer custom company' }],
       [commercial, { ...rental, legalName: 'Customer custom rental company' }],
+      [commercial, { ...rental, legalName: 'Nájempark s.r.o.' }],
+      [commercial, { ...rental, legalName: 'Siampark ' }],
+      [commercial, { ...rental, legalName: 'siampark' }],
+      [commercial, { ...rental, tenantId: '11111111-1111-4111-8111-111111111111' }],
       [commercial, { ...rental, registrationNumber: 'OTHER-IDENTITY' }],
       [commercial, { ...rental, legalEntityId: '11111111-1111-4111-8111-111111111111' }],
+      [commercial, { ...rental, legalName: 'Siampark', tenantId: '11111111-1111-4111-8111-111111111111' }],
+      [commercial, { ...rental, legalName: 'Siampark', registrationNumber: 'OTHER-IDENTITY' }],
+      [commercial, { ...rental, legalName: 'Siampark', registrationCountry: 'SK' }],
+      [commercial, { ...rental, legalName: 'Siampark', status: 'inactive' }],
     ],
     (rows) =>
       Effect.gen(function* conflictBeforeWrite() {
@@ -100,6 +117,33 @@ it.effect('refuses conflicting registrations, owners and user-renamed companies 
       }),
     { concurrency: 1 },
   ),
+);
+
+it.effect('renames the exact legacy rental once at the same UUID and leaves canonical names unchanged on rerun', () =>
+  Effect.gen(function* idempotentRentalRename() {
+    const additionalRows = additionalDemoCompanies.map((company) => ({
+      ...company,
+      registrationCountry: 'CZ',
+      status: 'active',
+      tenantId: demoCompanyTenantId,
+    }));
+    const canonicalCommercial = { ...commercial, legalName: commercialDemoCompany.legalName };
+    const state = fixture([canonicalCommercial, { ...rental, legalName: 'Siampark' }, ...additionalRows]);
+    const first = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    expect(rentalDemoCompany).toEqual({
+      legalEntityId: '71000000-0000-4000-8000-000000000021',
+      legalName: 'Nájempark',
+    });
+    expect(state.rows).toEqual([canonicalCommercial, rental, ...additionalRows]);
+    expect(state.calls).toEqual(['load', 'rename-rental', 'modules']);
+    const second = yield* configureDemoCompanies(demoCompanyTenantId, state.persistence);
+    expect(state.rows).toEqual([canonicalCommercial, rental, ...additionalRows]);
+    expect(state.calls).toEqual(['load', 'rename-rental', 'modules', 'load', 'modules']);
+    expect(first.previousCompanyCount).toBe(5);
+    expect(second.previousCompanyCount).toBe(5);
+    expect(second.companies).toEqual(first.companies);
+    expect(state.modules.get('legal.agreements')).toBe('disabled');
+  }),
 );
 
 it.effect(

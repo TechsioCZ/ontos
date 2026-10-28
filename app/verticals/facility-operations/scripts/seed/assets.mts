@@ -1,4 +1,4 @@
-// Seed of agenda `assets` for Siampark (legal entity …0021). OWNED BY THE `assets` LANE (ops-assets).
+// Seed of agenda `assets` for Nájempark (legal entity …0021). OWNED BY THE `assets` LANE (ops-assets).
 // Returns the ENCODED state (ISO strings, plain ids); validated against AssetsStateSchema by reset-demo.mts.
 // Property/unit ids are the property-portfolio records of the rental seed (Rezidence Parková, Riverside Office
 // Park). Labels are display snapshots, so the UI still reads well if the property seed is ever re-created.
@@ -1271,7 +1271,7 @@ const buildTemplates = (): NonNullable<AssetsStateEncoded['templates']> => [
     interval: 'yearly',
     method: seedText.rovnomerny,
     name: 'Budovy – účetní, 50 let',
-    note: 'Podle účetní politiky Siamparku, schváleno 12. 1. 2026.',
+    note: 'Podle účetní politiky Nájemparku, schváleno 12. 1. 2026.',
     type: 'accounting',
     years: 50,
   },
@@ -1332,7 +1332,7 @@ export const seedInvestments = (): EncodedInvestment[] => {
       plannedAmountMinor: kc(185_000),
       plannedDate: '2026-09-15',
       priority: 'medium',
-      responsible: 'Provoz Siampark',
+      responsible: 'Provoz Nájempark',
       status: 'done',
       title: 'LED osvětlení garáží Riverside',
     },
@@ -1367,7 +1367,7 @@ export const seedInvestments = (): EncodedInvestment[] => {
       plannedAmountMinor: kc(1_150_000),
       plannedDate: '2027-06-30',
       priority: 'low',
-      responsible: 'Management Siampark',
+      responsible: 'Management Nájempark',
       status: 'planned',
       title: 'Fotovoltaická elektrárna na střeše',
     },

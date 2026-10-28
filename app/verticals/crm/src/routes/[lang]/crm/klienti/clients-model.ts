@@ -30,7 +30,7 @@ export const kindLabels = { organization: 'Firma', person: 'Fyzická osoba' } as
 /** Known demo principals of Velkoobchod Hanák (companies lane personas) for readable history rows. */
 const knownPrincipals = new Map(
   Object.entries({
-    '72000000-0000-4000-8000-000000000021': 'Vedení Siampark',
+    '72000000-0000-4000-8000-000000000021': 'Vedení Nájempark',
     '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
     '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
     // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.

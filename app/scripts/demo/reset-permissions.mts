@@ -10,7 +10,7 @@
  *    inserts, but with a stable ID so grants survive a reset).
  * 3. Runs the core development bootstrap port with the accounts and the role matrix from `permissions.mts`.
  *    It writes principals, auth bindings and SpiceDB relationships. SpiceDB is in-memory, so rerun after a
- *    container restart. The Siampark accounts are not touched.
+ *    container restart. The Nájempark accounts are not touched.
  * 4. When the shell answers, signs in as obchod@demo.ontos and issues a managed API key for the bot through
  *    `/auth/identity/api-keys/managed`, unless the key in `app/.env.demo.local` still works. Writes
  *    ONTOS_AGENT_API_KEY, ONTOS_SHELL_URL, ONTOS_COMPOSITION_REVISION and ONTOS_LEGAL_ENTITY_ID there.
@@ -85,7 +85,7 @@ const readinessTimeout = '10 seconds';
 const BOT_KEY_AUDIENCE = 'work-tasks';
 /** The storefront BFF exchanges its key for merchandise gateway assertions in the e-shop company. */
 const STOREFRONT_KEY_AUDIENCE = 'merchandise';
-/** Every human account: the Obchodní firma / Siampark accounts plus the CRM and e-shop company personas. */
+/** Every human account: the Obchodní firma / Nájempark accounts plus the CRM and e-shop company personas. */
 const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
 /** Membership targets must exist before bootstrap; the audited company Action runs only after its grants exist. */
 export const demoBootstrapCompanyRows = [
@@ -97,7 +97,7 @@ export const demoBootstrapCompanyRows = [
   status: 'active' as const,
   tenantId: demoCompanyTenantId,
 }));
-/** `demo.crm` is tenant-activated here so the CRM company works whatever the Siampark reset lists. */
+/** `demo.crm` is tenant-activated here so the CRM company works whatever the Nájempark reset lists. */
 const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000-000000000201' } as const;
 const facilityOperationsModuleState = {
   moduleId: 'facility.operations',
@@ -136,7 +136,7 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
   });
   yield* executor.transaction((transaction) =>
     Effect.gen(function* writeIdentityRows() {
-      // One neutral tenant contains all four demo companies; never label Hanák or Kavárna as Siampark.
+      // One neutral tenant contains all four demo companies; never label Hanák or Kavárna as Nájempark.
       yield* transaction
         .update(tenants)
         .set({ name: 'OntOS DEMO', updatedAt: now })

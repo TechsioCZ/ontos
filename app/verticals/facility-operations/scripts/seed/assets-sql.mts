@@ -1,4 +1,4 @@
-// Prints an SQL upsert that reseeds ONLY the `assets` agenda of Siampark (…0021), leaving other agendas alone.
+// Prints an SQL upsert that reseeds ONLY the `assets` agenda of Nájempark (…0021), leaving other agendas alone.
 // Usage (demo DB in docker):
 //   node verticals/facility-operations/scripts/seed/assets-sql.mts | docker exec -i ontos-demo-db psql -U ontos_admin -d siampark_demo
 // The full reset (all agendas) stays `pnpm demo:seed:facility-operations`.

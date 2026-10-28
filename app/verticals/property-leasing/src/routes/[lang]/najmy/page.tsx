@@ -523,7 +523,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     const request: { -readonly [Key in keyof CustomerRequest]: CustomerRequest[Key] } = {
       displayName: input.displayName.trim(),
       email: input.email.trim(),
-      evidenceReference: 'Siampark – evidence nájemců a zájemců',
+      evidenceReference: 'Nájempark – evidence nájemců a zájemců',
       partyType: input.partyType,
       phone: input.phone.trim(),
     };
@@ -549,7 +549,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
                       kind: 'NOTE',
                       summary:
                         input.note.trim() === ''
-                          ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Siampark.`
+                          ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Nájempark.`
                           : input.note.trim(),
                     },
                     counterpartyRef: created.counterpartyRef,

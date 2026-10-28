@@ -196,7 +196,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
     ],
     legalEntity: {
       legalEntityId: demoLegalEntityId,
-      legalName: 'Siampark DEMO s.r.o.',
+      legalName: 'Nájempark DEMO s.r.o.',
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
@@ -206,7 +206,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
     })),
     relationships: relationships(),
     searchDocuments: demoSearchDocuments,
-    tenant: { defaultLocale: 'cs', displayName: 'Siampark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
+    tenant: { defaultLocale: 'cs', displayName: 'Nájempark DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });
   const parties = yield* encodeOperatorFixture(PartyFixtureSchema, {
     invocationId: demoId('seed.invocation'),
@@ -224,7 +224,7 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
   ];
   return ports;
 });
-const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
+const resetNajemparkDemo = (validateOnly: boolean, configuration?: Readonly<Record<string, string>>) =>
   Effect.gen(function* resetDemoPorts() {
     yield* Config.schema(Schema.Literal('development'), 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
       Config.withDefault('development'),
@@ -250,7 +250,7 @@ const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Recor
     const fs = yield* FileSystem.FileSystem;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-demo-' });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const run = Effect.fn('SiamparkDemo.runOwnerPort')(function* runOwnerPort(script: string, encodedFixture: string) {
+    const run = Effect.fn('NajemparkDemo.runOwnerPort')(function* runOwnerPort(script: string, encodedFixture: string) {
       const file = path.join(directory, `${script.split('/').join('-')}.json`);
       yield* fs.writeFileString(file, encodedFixture);
       const code = yield* spawner.exitCode(
@@ -271,18 +271,18 @@ const resetSiamparkDemo = (validateOnly: boolean, configuration?: Readonly<Recor
       yield* run(port.script, port.encodedFixture);
     }
     return yield* Console.log(
-      'Siampark baseline restored. Sign in as operations@siampark.demo; password1234. Business date: 2026-10-05.',
+      'Nájempark baseline restored. Sign in as operations@najempark.demo; password1234. Business date: 2026-10-05.',
     );
   });
-const reportFailure = Effect.fn('SiamparkDemo.reportFailure')(function* reportFailure(
-  failure: Effect.Error<ReturnType<typeof resetSiamparkDemo>>,
+const reportFailure = Effect.fn('NajemparkDemo.reportFailure')(function* reportFailure(
+  failure: Effect.Error<ReturnType<typeof resetNajemparkDemo>>,
 ) {
-  return yield* Console.error(`Siampark reset failed (${failure._tag}); inspect the failing owner port.`);
+  return yield* Console.error(`Nájempark reset failed (${failure._tag}); inspect the failing owner port.`);
 });
 const command = Command.make(
   'siampark-demo-reset',
   { validateOnly: Flag.Boolean('validate-only').pipe(Flag.withDefault(false)) },
-  ({ validateOnly }) => resetSiamparkDemo(validateOnly).pipe(Effect.scoped, Effect.tapError(reportFailure)),
+  ({ validateOnly }) => resetNajemparkDemo(validateOnly).pipe(Effect.scoped, Effect.tapError(reportFailure)),
 );
 const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
   Layer.provide(NodeServices.layer),

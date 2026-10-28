@@ -96,7 +96,7 @@ it.effect('refuses duplicate fixture keys and mismatching records without overwr
           resourceType: counterpartyResource,
           tenantId: target.tenantId,
         },
-        displayName: 'Ukázkový nájemce Siampark',
+        displayName: 'Ukázkový nájemce Nájempark',
         partyRef: {
           moduleId: partyModule,
           resourceId: target.legalEntityId,
@@ -106,6 +106,31 @@ it.effect('refuses duplicate fixture keys and mismatching records without overwr
         status: 'ARCHIVED',
       },
     ]).pipe(Effect.flip);
+    expect(Schema.is(DemoSeedError)(failure)).toBe(true);
+  }),
+);
+
+it.effect('retains a legacy rental customer identity and refuses old/new-name duplicates after the rebrand', () =>
+  Effect.gen(function* preservesRebrandedCustomerIdentity() {
+    const existing: Parameters<typeof existingSeedCustomer>[0][number] = {
+      counterpartyRef: {
+        moduleId: partyModule,
+        resourceId: target.legalEntityId,
+        resourceType: counterpartyResource,
+        tenantId: target.tenantId,
+      },
+      displayName: 'Ukázkový nájemce Siampark',
+      partyRef: {
+        moduleId: partyModule,
+        resourceId: target.legalEntityId,
+        resourceType: partyResource,
+        tenantId: target.tenantId,
+      },
+      status: 'ACTIVE',
+    };
+    expect(yield* existingSeedCustomer([existing])).toEqual(existing);
+    const duplicate = { ...existing, displayName: 'Ukázkový nájemce Nájempark' };
+    const failure = yield* existingSeedCustomer([existing, duplicate]).pipe(Effect.flip);
     expect(Schema.is(DemoSeedError)(failure)).toBe(true);
   }),
 );
@@ -488,7 +513,7 @@ it.effect('missing CRM fixture data fails the case seed rather than silently rep
       const failure = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory).pipe(Effect.flip);
       expect(Schema.is(DemoSeedError)(failure)).toBe(true);
       expect((yield* Schema.decodeUnknownEffect(DemoSeedError)(failure)).reason).toContain(
-        'Expected one Siampark CRM fixture',
+        'Expected one Nájempark CRM fixture',
       );
     }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
     expect(fixture.parties).toHaveLength(0);

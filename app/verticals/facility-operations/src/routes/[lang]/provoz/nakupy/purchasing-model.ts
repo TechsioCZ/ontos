@@ -93,7 +93,7 @@ export type TaskOptionsState =
   | { readonly cause: Effect.Error<ReturnType<typeof executeWorkRecords>>; readonly status: 'failed' }
   | { readonly options: readonly RefOption[]; readonly status: 'ready' };
 
-/** Open Siampark work tasks (work-tasks public records read) for movement traceability. */
+/** Open Nájempark work tasks (work-tasks public records read) for movement traceability. */
 export const useTaskOptions = (): TaskOptionsState => {
   const [state, setState] = useState<TaskOptionsState>({ status: 'loading' });
   useEffect(() => {

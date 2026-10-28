@@ -81,30 +81,32 @@ const defaultDatabaseName = 'siampark_demo';
 const federationManifestPath = '/mf-manifest.json';
 
 /** This operator cannot publish against an original or remotely hosted database. */
-export const validateDevelopmentDatabase = Effect.fn('SiamparkComposition.validateDatabase')(function* validateDatabase(
-  environment: string,
-  urls: { readonly DATABASE_ADMIN_URL: string; readonly DATABASE_URL: string },
-  databaseName: string = defaultDatabaseName,
-) {
-  if (environment !== 'development') {
-    return yield* fail('An explicit development environment is required');
-  }
-  const pair = yield* parseDatabaseConnectionPair(urls).pipe(
-    Effect.mapError(() => fail('Distinct native database identities are required')),
-  );
-  if (
-    !isLoopbackHostname(pair.admin.host) ||
-    !isLoopbackHostname(pair.runtime.host) ||
-    databaseName.length === 0 ||
-    pair.admin.database !== databaseName ||
-    pair.runtime.database !== databaseName ||
-    pair.admin.host !== pair.runtime.host ||
-    pair.admin.port !== pair.runtime.port
+export const validateDevelopmentDatabase = Effect.fn('NajemparkComposition.validateDatabase')(
+  function* validateDatabase(
+    environment: string,
+    urls: { readonly DATABASE_ADMIN_URL: string; readonly DATABASE_URL: string },
+    databaseName: string = defaultDatabaseName,
   ) {
-    return yield* fail('Both database identities must target the explicitly selected loopback demo database');
-  }
-  return pair;
-});
+    if (environment !== 'development') {
+      return yield* fail('An explicit development environment is required');
+    }
+    const pair = yield* parseDatabaseConnectionPair(urls).pipe(
+      Effect.mapError(() => fail('Distinct native database identities are required')),
+    );
+    if (
+      !isLoopbackHostname(pair.admin.host) ||
+      !isLoopbackHostname(pair.runtime.host) ||
+      databaseName.length === 0 ||
+      pair.admin.database !== databaseName ||
+      pair.runtime.database !== databaseName ||
+      pair.admin.host !== pair.runtime.host ||
+      pair.admin.port !== pair.runtime.port
+    ) {
+      return yield* fail('Both database identities must target the explicitly selected loopback demo database');
+    }
+    return pair;
+  },
+);
 
 export const validateDevelopmentArtifactUrl = (url: URL) =>
   url.protocol === 'http:' &&
@@ -125,7 +127,7 @@ export const decodeDevelopmentArtifactText = (artifact: ObservedArtifact) =>
 const PointerJournalSchema = Schema.fromJsonString(Schema.Array(Schema.String).check(Schema.isMaxLength(2)));
 
 /** The provider's durable pointer, not a fallback in owner runtimes. Only the DB-approved value is readable. */
-export const makeDevelopmentCompositionPointer = Effect.fn('SiamparkComposition.makePointer')(function* makePointer(
+export const makeDevelopmentCompositionPointer = Effect.fn('NajemparkComposition.makePointer')(function* makePointer(
   statePath: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -214,7 +216,7 @@ const environmentLive = ConfigProvider.layer(
   }),
 );
 
-export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve')(function* serve(
+export const serveDevelopmentComposition = Effect.fn('NajemparkComposition.serve')(function* serve(
   environment: string,
   encodedPort: string,
   configuration: {

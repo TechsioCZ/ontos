@@ -1,6 +1,6 @@
 // Server-side projection of the provoz agendas for Přehled provozu and Moje agenda (overview read).
 // The pages show deadlines, open incidents, search rows and record counts of these agendas, never the whole
-// agenda documents (~270 kB on Siampark), so the overview read computes them here and ships only the result.
+// agenda documents (~270 kB on Nájempark), so the overview read computes them here and ships only the result.
 // Pure functions over the decoded agenda states the person may read; owned by the ops-agenda lane.
 import { Schema } from 'effect';
 import type { DateTime } from 'effect';

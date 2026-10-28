@@ -36,7 +36,7 @@ const people = (count: number | null) => {
 };
 const place = (context: NoticeContext) =>
   [context.unitLabel, context.propertyLabel].filter((part) => part.length > 0).join(', ');
-const signature = '\n\nS pozdravem\nSiampark';
+const signature = '\n\nS pozdravem\nNájempark';
 
 /**
  * Editable notification texts for stays and leases (S10). Wording is a proposal; times, prices and rules that
@@ -50,7 +50,7 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            body: `Siampark: potvrzujeme rezervaci ${context.unitLabel} ${period(context.record)}${people(
+            body: `Nájempark: potvrzujeme rezervaci ${context.unitLabel} ${period(context.record)}${people(
               context.record.peopleCount,
             )}. Podrobnosti zašleme e-mailem.`,
             subject: '',
@@ -71,7 +71,7 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            body: `Siampark: těšíme se na Vás ${day(context.record.startDate)} v ${context.unitLabel}${
+            body: `Nájempark: těšíme se na Vás ${day(context.record.startDate)} v ${context.unitLabel}${
               context.propertyAddress.length > 0 ? `, ${context.propertyAddress}` : ''
             }. Čas předání klíčů upřesníme.`,
             subject: '',
@@ -89,7 +89,10 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
     label: 'Zrušení rezervace',
     render: (context, channel) =>
       channel === 'SMS'
-        ? { body: `Siampark: Vaše rezervace ${context.unitLabel} ${period(context.record)} byla zrušena.`, subject: '' }
+        ? {
+            body: `Nájempark: Vaše rezervace ${context.unitLabel} ${period(context.record)} byla zrušena.`,
+            subject: '',
+          }
         : {
             body: `Dobrý den, ${context.partyName},\n\npotvrzujeme zrušení rezervace: ${place(context)}, ${period(
               context.record,
@@ -104,7 +107,7 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
     render: (context, channel) =>
       channel === 'SMS'
         ? {
-            body: `Siampark: předání ${context.unitLabel} k nájmu od ${day(
+            body: `Nájempark: předání ${context.unitLabel} k nájmu od ${day(
               context.record.startDate,
             )}. Termín předání a protokol domluvíme.`,
             subject: '',
@@ -130,7 +133,7 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
             )} a zálohy ${crowns(terms.serviceChargesMinor)})`;
       const due = terms === undefined ? '' : ` se splatností ${terms.paymentDay}. dne v měsíci`;
       return channel === 'SMS'
-        ? { body: `Siampark: připomínáme platbu nájmu ${context.unitLabel}: ${amount}${due}.`, subject: '' }
+        ? { body: `Nájempark: připomínáme platbu nájmu ${context.unitLabel}: ${amount}${due}.`, subject: '' }
         : {
             body: `Dobrý den,\n\npřipomínáme platbu za nájem ${place(context)} pro ${
               context.partyName
@@ -146,7 +149,7 @@ export const noticeTemplates: readonly NoticeTemplate[] = [
     render: (context, channel) => {
       const end = context.record.endDate === null ? 'není sjednán' : day(context.record.endDate);
       return channel === 'SMS'
-        ? { body: `Siampark: nájem ${context.unitLabel} končí ${end}. Ozvěte se nám k prodloužení.`, subject: '' }
+        ? { body: `Nájempark: nájem ${context.unitLabel} končí ${end}. Ozvěte se nám k prodloužení.`, subject: '' }
         : {
             body: `Dobrý den,\n\nnájem ${place(context)} pro ${
               context.partyName

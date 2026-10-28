@@ -48,6 +48,66 @@ const readWorkflow = () =>
     parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
   );
 const readJobs = () => readWorkflow().jobs;
+const SHELL_INGRESS = 'Activate the Shell ingress';
+const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
+
+it('runs the native rental rebrand only after Shell activation and gates it on its own tests', () => {
+  const { release, 'release-script-tests': tests } = readJobs();
+  const rebrandName = 'Rebrand the rental demo through the native Shell Action';
+  const position = release.steps.findIndex((step) => step.name === rebrandName);
+  const step = release.steps[position];
+  expect(position).toBeGreaterThan(release.steps.findIndex(({ name }) => name === SHELL_INGRESS));
+  expect(position).toBeLessThan(
+    release.steps.findIndex(({ name }) => name === 'Smoke the Shell login and OAuth metadata'),
+  );
+  expect(step?.if).toBe(fullPublicationCondition);
+  expect(step?.['working-directory']).toBe('app');
+  expect(step?.['timeout-minutes']).toBe(5);
+  expect(step?.['continue-on-error']).toBeUndefined();
+  expect(step?.run).toBe(
+    `mise exec -- pnpm demo:rebrand:rental --apply --shell-url "$STAGE_SHELL_URL" --idempotency-key "\${GITHUB_SHA}-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}-najempark-v1"`,
+  );
+  expect(tests.steps.find(({ run }) => run?.includes('rstest') === true)?.run).toContain(
+    'scripts/tests/rebrand-rental-demo.test.mts',
+  );
+});
+
+it.effect('the actual outbox materialization step writes only the native host setup and exports its path', () =>
+  Effect.scoped(
+    Effect.gen(function* materializesWorkflowOutbox() {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'stage-outbox-materialization-' });
+      const output = `${directory}/zerops.outbox.yaml`;
+      const githubEnv = `${directory}/github-env`;
+      const step = readJobs().release.steps.find(
+        ({ name }) => name === 'Materialize the stage outbox host zerops.yaml',
+      );
+      expect(step?.['working-directory']).toBe('app');
+      expect(step?.env?.ZEROPS_YAML_PATH).toBe(['${{', 'runner.temp', '}}/zerops.outbox.yaml'].join(' '));
+      expect(step?.run).toContain('--setup outbox-worker-host');
+      expect(step?.run).not.toMatch(/\b(?:awk|grep)\b/u);
+      yield* runCommand({
+        args: ['-euo', 'pipefail', '-c', step?.run ?? 'exit 1'],
+        command: 'bash',
+        cwd: new URL('../..', import.meta.url).pathname.replace(/\/$/u, ''),
+        env: {
+          GITHUB_ENV: Redacted.make(githubEnv),
+          RUNNER_TEMP: Redacted.make(directory),
+          ZEROPS_YAML_PATH: Redacted.make(output),
+        },
+      });
+      const text = yield* fs.readFileString(output);
+      const source = Schema.decodeUnknownSync(
+        Schema.Struct({ zerops: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)) }),
+      )(parse(readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8')));
+      expect(parse(text)).toEqual({
+        zerops: [source.zerops.find((item) => item.setup === 'outbox-worker-host')],
+      });
+      expect(new TextEncoder().encode(text).byteLength).toBeLessThan(50_000);
+      expect(yield* fs.readFileString(githubEnv)).toBe(`ZEROPS_YAML_PATH=${output}\n`);
+    }),
+  ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
 
 const localBootstrapScript = new URL('../demo/up.sh', import.meta.url);
 const MIGRATE = 'Migrate every owner schema';
@@ -67,7 +127,6 @@ const RELEASE_SECRET_CHECK = 'Validate the complete immutable release secret inv
 const SERVICE_GRANTS = 'Reconcile storefront, Commerce and Privacy service grants';
 const IMMUTABLE_UPLOAD = 'Upload every immutable release Worker';
 const PUBLICATION = 'Publish the Application Composition';
-const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
 const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
@@ -208,7 +267,7 @@ it('keeps the original bundle only in preparation and gives every later release 
     RECOVERY_CONFIG_CHECK,
     SERVICE_GRANTS,
     IMMUTABLE_UPLOAD,
-    'Activate the Shell ingress',
+    SHELL_INGRESS,
     RECOVERY_CONFIG_APPLY,
   ]);
   for (const step of consumers) {
@@ -754,7 +813,7 @@ it('runs every owner migration through the native lifecycle on the private netwo
   expect(indexOf(steps, READINESS)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
   expect(steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP)?.run).toBe('mise exec -- pnpm db:verify');
   expect(indexOf(steps, MIGRATE)).toBeGreaterThan(connect);
-  for (const later of [IMMUTABLE_UPLOAD, PUBLICATION, 'Activate the Shell ingress', 'Deploy the AKROS storefront']) {
+  for (const later of [IMMUTABLE_UPLOAD, PUBLICATION, SHELL_INGRESS, 'Deploy the AKROS storefront']) {
     expect(indexOf(steps, later)).toBeGreaterThan(indexOf(steps, MIGRATE));
   }
 });
@@ -836,6 +895,8 @@ it('runs this workflow test with the release script tests that gate the release 
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
   for (const name of [
     'stage-demo-deploy-workflow',
+    'materialize-zerops-environment',
+    'rebrand-rental-demo',
     'prepare-stage-release-secrets',
     'stage-demo-migrate',
     'stage-deploy-diagnostics',

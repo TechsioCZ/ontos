@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Local sales-demo fixture repair: original Siampark bootstrap accounts belong in Siampark, not Obchodní firma.
+/** Local sales-demo fixture repair: original Nájempark bootstrap accounts belong in Nájempark, not Obchodní firma.
  * Remove ONLY their four stale commercial legal_entity#member edges; all company 0021 grants remain untouched.
  * Run after both reset baselines and reset-permissions. No accounts, records, or other grants are reset.
  */
@@ -57,7 +57,7 @@ const program = Effect.gen(function* repairCompanyMemberships() {
   );
   yield* client.writeRelationships(request);
   yield* Console.log(
-    'Company fixture repair: removed four stale Siampark memberships in Obchodní firma; Siampark retained.',
+    'Company fixture repair: removed four stale Nájempark memberships in Obchodní firma; Nájempark retained.',
   );
   return yield* Effect.void;
 });

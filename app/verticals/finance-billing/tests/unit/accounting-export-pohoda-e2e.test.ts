@@ -57,7 +57,7 @@ let counter = 0;
 const run = (
   state: FinanceState,
   command: typeof FinanceCommandSchema.Encoded,
-  validators = trustedReferences('Siampark'),
+  validators = trustedReferences('Nájempark'),
 ) => {
   counter += 1;
   const execution = {
@@ -117,7 +117,7 @@ const received = invoice('pf-1', {
 });
 
 it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML handover end-to-end', (test) => {
-  test.effect('Siampark: setup IČO + session name + registry partner become a valid, hashed, versioned dataPack', () =>
+  test.effect('Nájempark: setup IČO + session name + registry partner become a valid, hashed, versioned dataPack', () =>
     Effect.gen(function* siampark() {
       const configured = yield* run(
         { ...empty, invoices: [issued, received] },
@@ -133,11 +133,11 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
         configured.state,
         {
           _tag: 'CreateAccountingExport',
-          actorLabel: 'Finance (finance@siampark.demo)',
+          actorLabel: 'Finance (finance@najempark.demo)',
           format: 'POHODA_XML',
           invoiceResourceIds: ['fv-1', 'pf-1'],
         },
-        trustedReferences('Siampark', {
+        trustedReferences('Nájempark', {
           [counterpartyRef.resourceId]: { city: 'Praha', ico: '27082440', vatId: 'CZ27082440' },
         }),
       );
@@ -145,14 +145,14 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(created?.fileName).toBe('UP-2026-001-v1.xml');
       expect(created?.format).toBe('POHODA_XML');
       expect(created?.status).toBe('PREPARED');
-      expect(created?.issuerName).toBe('Siampark');
+      expect(created?.issuerName).toBe('Nájempark');
       expect(created?.issuerIco).toBe('12345678');
       const content = created?.content ?? '';
       const crypto = yield* Crypto.Crypto;
       const digest = yield* crypto.digest('SHA-256', new TextEncoder().encode(content));
       expect(created?.sha256).toBe(Hex.encode(digest));
       expect(content).toContain('id="UP-2026-001-v1" ico="12345678"');
-      expect(content).toContain('<typ:company>Siampark</typ:company>');
+      expect(content).toContain('<typ:company>Nájempark</typ:company>');
       expect(content).toContain('<typ:dic>CZ12345678</typ:dic>');
       expect(content).toContain('<typ:company>Ateliér Horák s.r.o.</typ:company>');
       expect(content).toContain('<typ:ico>27082440</typ:ico>');
@@ -207,9 +207,9 @@ it.layer(Layer.merge(NodeServices.layer, NodeCrypto.layer))('S08 POHODA XML hand
       expect(Object.keys(payload.command)).not.toContain('counterparties');
       expect(Object.keys(payload.command)).not.toContain('host');
       expect(Object.keys(payload.command)).not.toContain('shellOrigin');
-      const result = yield* run({ ...empty, invoices: [issued] }, payload.command, trustedReferences('Siampark'));
+      const result = yield* run({ ...empty, invoices: [issued] }, payload.command, trustedReferences('Nájempark'));
       const content = result.state.accountingExports?.[0]?.content ?? '';
-      expect(content).toContain('<typ:company>Siampark</typ:company>');
+      expect(content).toContain('<typ:company>Nájempark</typ:company>');
       expect(content).not.toContain('Obchodní firma');
       expect(content).not.toContain('12345678');
       // The file names the authenticated principal, not the readable label the browser sent.

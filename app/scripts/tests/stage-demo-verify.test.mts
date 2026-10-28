@@ -14,7 +14,7 @@ import type { StageResponse, StageTransport } from '../ops/stage-demo-verify.mjs
 
 const shellUrl = 'https://shell.stage.test';
 const storefrontUrl = 'https://storefront.stage.test';
-const persona = 'management@siampark.demo';
+const persona = 'management@najempark.demo';
 const SIGN_IN = '/shell-super-app-api/auth/sign-in';
 const SIGN_OUT = '/shell-super-app-api/auth/sign-out';
 const CS = '/cs';
@@ -111,7 +111,7 @@ it.effect('still signs the session out when a document probe fails', () =>
     const { failures } = yield* test.run;
 
     expect(failures.map((failure) => failure.message)).toEqual([
-      '/cs #2 (management@siampark.demo) failed: Error: socket hang up',
+      '/cs #2 (management@najempark.demo) failed: Error: socket hang up',
       'storefront home answered 503',
     ]);
     expect(failures[0]).toBeInstanceOf(StageVerificationFailure);
@@ -147,7 +147,7 @@ it.effect('rejects a page document over the acceptance budget but never a slow a
     expect(yield* test.output).toContain('sign-in 200 ttfb=5.00s total=5.00s');
     expect(DOCUMENT_ACCEPTANCE_MS).toBe(1500);
     expect(failures.map((failure) => failure.message)).toEqual([
-      '/cs #1 (management@siampark.demo) took 1600ms, over the 1500ms page budget',
+      '/cs #1 (management@najempark.demo) took 1600ms, over the 1500ms page budget',
     ]);
   }),
 );
@@ -300,7 +300,7 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
           ConfigProvider.fromUnknown({
             STAGE_SHELL_URL: shellUrl,
             STAGE_STOREFRONT_URL: storefrontUrl,
-            STAGE_VERIFY_PERSONA: 'configured@siampark.demo',
+            STAGE_VERIFY_PERSONA: 'configured@najempark.demo',
           }),
         ),
       ),
@@ -310,7 +310,7 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
       body,
     );
 
-    expect(payload.email).toBe('configured@siampark.demo');
+    expect(payload.email).toBe('configured@najempark.demo');
     expect(Redacted.value(payload.password)).toBe('password1234');
     expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
     expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);

@@ -26,7 +26,7 @@ const financeAudience = 'finance-billing';
 const workAudience = 'work-tasks';
 const partyAudience = 'party-registry';
 const pipelineAudience = 'sales-pipeline';
-const propertyResponsiblePerson = 'Provoz Siampark';
+const propertyResponsiblePerson = 'Provoz Nájempark';
 const serviceLeaseEnd = '2026-10-31';
 const serviceLeaseKey = 'a101-technoservis';
 const atelierLeaseKey = 'r201-atelier';
@@ -36,7 +36,7 @@ const activeLeaseState = 'ACTIVE';
 const contractResponsiblePerson = 'Jana Správcová';
 
 /**
- * Siampark rental story (company 0021): two buildings, eight units, five tenant organizations, leases in every
+ * Nájempark rental story (company 0021): two buildings, eight units, five tenant organizations, leases in every
  * state (active, ending, upcoming, ended, draft), unsigned contract records, service tasks on the
  * units and issued invoices anchored to building, unit, lease and contract. Every identity is a fixed UUIDv5, so a
  * rerun only fills in what is missing and never overwrites diverging data.

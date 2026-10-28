@@ -57,7 +57,7 @@ const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: stri
     return yield* new ResetInputError({ reason: 'Fixture references must match the fixed demo tenant and collection' });
   }
   yield* writeWorkState(input.legalEntityId, input.tenantId, input.state);
-  return yield* Console.log('Siampark work demo state reset to revision 0');
+  return yield* Console.log('Nájempark work demo state reset to revision 0');
 });
 
 // --- Sales demo (`--sales-demo`, called by app/scripts/demo/reset-demo.mts) -----------------------------------
@@ -70,7 +70,7 @@ const salesDemoTaskCount = 80;
 // Due dates spread -20..+30 days around this anchor. The UI marks overdue against the real current date.
 const salesDemoAnchor = DateTime.makeUnsafe('2026-10-13T12:00:00.000Z');
 const salesDemoAnchorDate = DateTime.formatIsoDateUtc(salesDemoAnchor);
-// Owner principal: the Siampark management demo account, the same principal the Siampark seed uses.
+// Owner principal: the Nájempark management demo account, the same principal the Nájempark seed uses.
 const salesDemoOwnerPrincipalRef = {
   principalId: '72000000-0000-4000-8000-000000000021',
   tenantId: demoTenantId,

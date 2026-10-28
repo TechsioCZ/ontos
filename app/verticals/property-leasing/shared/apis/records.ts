@@ -49,7 +49,7 @@ export const OccupancySchema = Schema.Struct({
   unitRef: UnitRefSchema,
 });
 export type Occupancy = typeof OccupancySchema.Type;
-/** Siampark tenant relationship evidence, scoped with the same company as the lease aggregate. */
+/** Nájempark tenant relationship evidence, scoped with the same company as the lease aggregate. */
 export const TenantContactSchema = Schema.Struct({
   email: Schema.String.check(Schema.isMaxLength(200)),
   id: Schema.String.check(Schema.isUUID()),

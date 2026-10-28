@@ -9,7 +9,7 @@ type MutableInvoiceAnchors = { -readonly [Key in keyof InvoiceAnchors]: InvoiceA
 
 /**
  * Gateway audiences the backend validators read for one invoice. The counterparty is always checked in the party
- * registry; the Siampark modules are read only for anchors the invoice carries. Each credential is single use, so a
+ * registry; the Nájempark modules are read only for anchors the invoice carries. Each credential is single use, so a
  * unit anchor needs its own property-module credential next to the property one. Requesting an audience that is not
  * part of the composition fails the whole command, so nothing else is listed.
  */

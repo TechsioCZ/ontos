@@ -2,7 +2,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
-import { isSeq, parseDocument } from 'yaml';
+import { isMap, isSeq, parseDocument } from 'yaml';
 
 /**
  * `app/zerops.yaml` describes stage, the environment every push deploys. A deployment to another
@@ -33,13 +33,22 @@ const variablePaths = (document: ReturnType<typeof parseDocument>, setupCount: n
     PHASES.map((phase) => ['zerops', index, phase, 'envVariables', variable]).filter((path) => document.hasIn(path)),
   );
 
-/** The zerops.yaml text with every build and runtime configured for `target`. */
-export const materializeZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnvironmentTarget) =>
+/** Configure `target`, optionally retaining exactly one setup within Zerops' 50 kB build-file limit. */
+export const materializeZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnvironmentTarget, setup?: string) =>
   Effect.gen(function* materializeZeropsEnvironmentEffect() {
     const document = parseDocument(zeropsYamlText);
     const setups = document.get('zerops');
     if (document.errors.length > 0 || !isSeq(setups)) {
       return yield* new ZeropsEnvironmentMaterializationError({ message: 'zerops.yaml has no zerops setups' });
+    }
+    if (setup !== undefined) {
+      const matches = setups.items.filter((item) => isMap(item) && item.get('setup') === setup);
+      if (matches.length !== 1) {
+        return yield* new ZeropsEnvironmentMaterializationError({
+          message: `zerops.yaml needs exactly one setup "${setup}", found ${matches.length}`,
+        });
+      }
+      setups.items = matches;
     }
     const setupCount = setups.items.length;
     const environmentPaths = variablePaths(document, setupCount, DEPLOYMENT_ENVIRONMENT_VARIABLE);
@@ -67,7 +76,13 @@ export const materializeZeropsEnvironment = (zeropsYamlText: string, target: Zer
         document.setIn(path, target.spiceDbEndpoint);
       }
     }
-    return document.toString({ lineWidth: 0 });
+    const text = document.toString({ lineWidth: 0 });
+    if (setup !== undefined && new TextEncoder().encode(text).byteLength >= 50_000) {
+      return yield* new ZeropsEnvironmentMaterializationError({
+        message: `zerops.yaml setup "${setup}" must be smaller than 50000 bytes`,
+      });
+    }
+    return text;
   });
 
 const commandTarget = (environment: DeploymentEnvironment, spiceDbEndpoint: Option.Option<string>) =>
@@ -94,13 +109,18 @@ const materializeCommand = Command.make(
     environment: Flag.Literals('environment', DeploymentEnvironmentSchema.literals),
     input: Flag.String('input'),
     output: Flag.String('output'),
+    setup: Flag.String('setup').pipe(Flag.optional),
     spiceDbEndpoint: Flag.String('spicedb-endpoint').pipe(Flag.optional),
   },
-  ({ environment, input, output, spiceDbEndpoint }) =>
+  ({ environment, input, output, setup, spiceDbEndpoint }) =>
     Effect.gen(function* materialize() {
       const fileSystem = yield* FileSystem.FileSystem;
       const target = yield* commandTarget(environment, spiceDbEndpoint);
-      const text = yield* materializeZeropsEnvironment(yield* fileSystem.readFileString(input), target);
+      const text = yield* materializeZeropsEnvironment(
+        yield* fileSystem.readFileString(input),
+        target,
+        Option.getOrUndefined(setup),
+      );
       yield* fileSystem.writeFileString(output, text);
       yield* Effect.logInfo(`Wrote the ${environment} zerops.yaml to ${output}`);
     }),

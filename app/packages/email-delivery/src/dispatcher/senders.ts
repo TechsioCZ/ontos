@@ -32,8 +32,8 @@ const knownSenders = new Map<string, KnownSender>([
   [
     SIAMPARK_LEGAL_ENTITY_ID,
     {
-      defaultAddress: 'finance@siampark.demo',
-      displayName: 'Siampark – finanční oddělení',
+      defaultAddress: 'finance@najempark.demo',
+      displayName: 'Nájempark – finanční oddělení',
       envKey: 'SIAMPARK_EMAIL_FROM',
     },
   ],
@@ -72,7 +72,7 @@ export const senderFor = Effect.fn('EmailSender.senderFor')(function* companySen
   return `${displayName} <${fallback ?? known?.defaultAddress ?? DEFAULT_FALLBACK_ADDRESS}>`;
 });
 
-/** Agenda notifications have a distinct company sender, with a Siampark-specific override. */
+/** Agenda notifications have a distinct company sender, with a Nájempark-specific override. */
 export const agendaSenderFor = Effect.fn('EmailSender.agendaSenderFor')(function* agendaSender(
   person: Pick<AgendaRecipientInput, 'legalEntityId' | 'legalName'>,
   environment: EmailEnvironment,
@@ -94,6 +94,6 @@ export const agendaSenderFor = Effect.fn('EmailSender.agendaSenderFor')(function
   const smtpFrom = yield* Config.String('SMTP_FROM').pipe(Config.option).parse(provider);
   const fallback = Option.isSome(smtpFrom) ? addressOf(smtpFrom.value) : null;
   const defaultAddress =
-    person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@siampark.demo' : DEFAULT_FALLBACK_ADDRESS;
+    person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@najempark.demo' : DEFAULT_FALLBACK_ADDRESS;
   return `${companyDisplayName(person.legalName)} – upozornění <${fallback ?? defaultAddress}>`;
 });

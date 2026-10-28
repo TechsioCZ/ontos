@@ -1,4 +1,4 @@
-// Seed of agenda `meters` for Siampark (legal entity …0021). OWNED BY THE `meters` LANE (ops-meters).
+// Seed of agenda `meters` for Nájempark (legal entity …0021). OWNED BY THE `meters` LANE (ops-meters).
 // Returns the ENCODED state with fixed ids/timestamps so reseeds are deterministic.
 // Property/unit references are display snapshots of the rental seed (Rezidence Parková, Riverside Office Park);
 // the ids are the ones the live rental seed produced, the labels keep the screens readable if ids ever change.

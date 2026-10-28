@@ -32,7 +32,7 @@ import { closeMcpClient, connectMcp, callJson, rawMcpStatus } from './mcp.mts';
 import { openSharedTab, ensureLoggedIn, approveConnection, sessionPost } from './browser.mts';
 import type { E2eTab } from './browser.mts';
 
-const ADMIN_EMAIL = 'management@siampark.demo';
+const ADMIN_EMAIL = 'management@najempark.demo';
 const ADMIN_ID = '72000000-0000-4000-8000-000000000021';
 const LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000021';
 const LIST = '/shell-super-app-api/auth/identity/agent-entities/list';

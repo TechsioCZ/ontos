@@ -594,8 +594,8 @@ export const rentalDemoRoles = {
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
 /**
- * The original Siampark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in the
- * Siampark company 0021, each with the `facility.operations` agendas. The external agent sees operational agendas only.
+ * The original Nájempark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in the
+ * Nájempark company 0021, each with the `facility.operations` agendas. The external agent sees operational agendas only.
  */
 const withFacilityOperations = (role: DemoRole): DemoRole => ({
   ...role,
@@ -603,7 +603,7 @@ const withFacilityOperations = (role: DemoRole): DemoRole => ({
 });
 export const siamparkRentalPersonas = [
   {
-    email: 'management@siampark.demo',
+    email: 'management@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000021',
     // S00: Vedení keeps every CRM contact and entrusts chosen ones to the external salesperson (demo.crm.assign).
     role: (() => {
@@ -616,23 +616,23 @@ export const siamparkRentalPersonas = [
     })(),
   },
   {
-    email: 'operations@siampark.demo',
+    email: 'operations@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000022',
     role: withFacilityOperations(rentalDemoRoles.salesRep),
   },
   {
-    email: 'finance@siampark.demo',
+    email: 'finance@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000023',
     role: withFacilityOperations(rentalDemoRoles.accountant),
   },
   {
-    email: 'external@siampark.demo',
+    email: 'external@najempark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
     // S00: reads only the CRM clients entrusted to him (`demo.crm.read_assigned`, no write, no read_all) and the
     // business cases entrusted to him: `demo.sales-pipeline` opened read-only WITHOUT `read_all`, so the owner's
     // governed records read returns only opportunities with a per-case reader grant (scripts/demo/
     // seed-siampark-cases.mts grants exactly the cases owned by his employee record). No write Action, no
-    // billing/finance, agreements, occupancy or party registry. Siampark CRM data: scripts/demo/seed-siampark-crm.mts.
+    // billing/finance, agreements, occupancy or party registry. Nájempark CRM data: scripts/demo/seed-siampark-crm.mts.
     role: {
       contextPermissions: {
         'demo.crm': ['demo.crm.read_assigned'],

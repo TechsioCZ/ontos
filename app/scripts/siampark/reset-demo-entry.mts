@@ -35,7 +35,7 @@ export const makeDemoResetCommand = (environment: DemoResetChildEnvironment, ste
     options,
   );
 };
-export const executeDemoReset = Effect.fn('SiamparkDemo.executeGuardedReset')(function* executeGuardedReset(
+export const executeDemoReset = Effect.fn('NajemparkDemo.executeGuardedReset')(function* executeGuardedReset(
   environment: DemoResetChildEnvironment,
   validateOnly: boolean,
   execute: (step: ResetStep) => Effect.Effect<void, DemoResetConfigurationError>,
@@ -52,7 +52,7 @@ export const executeDemoReset = Effect.fn('SiamparkDemo.executeGuardedReset')(fu
   return yield* execute('reset');
 });
 
-const main = Effect.fn('SiamparkDemo.resetEntrypoint')(function* resetEntrypoint(validateOnly: boolean) {
+const main = Effect.fn('NajemparkDemo.resetEntrypoint')(function* resetEntrypoint(validateOnly: boolean) {
   const file = yield* ConfigProvider.fromDotEnv({ path: path.join(workspaceRoot, '.env') });
   const configuration = yield* resetEnvironment
     .parse(ConfigProvider.orElse(ConfigProvider.fromEnv(), file))
@@ -85,7 +85,7 @@ const command = Command.make(
       Effect.scoped,
       Effect.tapError((failure) =>
         Console.error(
-          `Siampark reset failed (${failure._tag}): ${Schema.is(DemoResetConfigurationError)(failure) ? failure.reason : 'Configuration could not be loaded'}; no configuration values are logged.`,
+          `Nájempark reset failed (${failure._tag}): ${Schema.is(DemoResetConfigurationError)(failure) ? failure.reason : 'Configuration could not be loaded'}; no configuration values are logged.`,
         ),
       ),
     ),

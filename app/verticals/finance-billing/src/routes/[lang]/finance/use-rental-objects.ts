@@ -78,7 +78,7 @@ const rentalContractOptions = (
 
 /**
  * Active properties, units and contracts of the selected company, for the object pickers on invoices, budgets and
- * plan items. A company without the Siampark modules (or a role without access) simply gets no picker.
+ * plan items. A company without the Nájempark modules (or a role without access) simply gets no picker.
  */
 export const useRentalObjects = () => {
   const [properties, setProperties] = useState<readonly PropertyOption[]>([]);

@@ -117,7 +117,7 @@ it.effect('a manual signature needs an uploaded version and activates a draft co
     const contract = {
       contractType: 'Nájemní smlouva',
       owner: 'Jana Správcová',
-      parties: ['Siampark s.r.o.', 'Kavárna U Parku s.r.o.'],
+      parties: ['Nájempark s.r.o.', 'Kavárna U Parku s.r.o.'],
       status: 'draft',
       validTo: '2028-10-31',
     } satisfies ContractTerms;

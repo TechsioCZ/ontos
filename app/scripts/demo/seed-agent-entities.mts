@@ -56,7 +56,7 @@ interface SeedAgent {
 }
 const SEEDS: readonly SeedAgent[] = [
   {
-    adminEmail: 'management@siampark.demo',
+    adminEmail: 'management@najempark.demo',
     description: 'Hlídá závady, revize a úkoly provozu areálu. Změny jen navrhuje, schvaluje je člověk.',
     displayName: 'Asistent provozu',
     legalEntityId: '71000000-0000-4000-8000-000000000021',

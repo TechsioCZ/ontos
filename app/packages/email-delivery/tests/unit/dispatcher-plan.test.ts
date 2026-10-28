@@ -57,13 +57,13 @@ const baseOrder: AkrosOrderInput = {
 const reminder: RentReminderInput = {
   invoiceNumber: 'FV-2026-0007',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
-  legalName: 'Siampark',
+  legalName: 'Nájempark',
   reminder: {
     createdAt: '2026-10-21T09:00:00.000Z',
     deliveryMode: 'EMAIL',
     id: 'rem-0001',
     invoiceResourceId: 'inv-0007',
-    recipient: ' obchod@siampark.demo ',
+    recipient: ' obchod@najempark.demo ',
     text: 'Dobrý den,\n\nk faktuře FV-2026-0007 nebyla dosud přijata úhrada.',
   },
   tenantId: '70000000-0000-4000-8000-000000000001',
@@ -176,13 +176,13 @@ describe('AKROS order e-mail planning', () => {
   });
 });
 
-describe('Siampark reminder e-mail planning', () => {
+describe('Nájempark reminder e-mail planning', () => {
   test('plans an EMAIL-mode reminder with the invoice number in the subject', () => {
     const planned = planRentReminderEmail(reminder, enabledSince);
-    expect(planned?.subject).toBe('Siampark – upomínka k faktuře FV-2026-0007');
+    expect(planned?.subject).toBe('Nájempark – upomínka k faktuře FV-2026-0007');
     expect(planned?.eventLabel).toBe('Upomínka k úhradě');
     expect(planned?.dedupeKey).toBe('rent-reminder:rem-0001');
-    expect(planned?.recipient).toBe('obchod@siampark.demo');
+    expect(planned?.recipient).toBe('obchod@najempark.demo');
     expect(planned?.text.startsWith(reminder.reminder.text)).toBe(true);
   });
 
@@ -202,7 +202,7 @@ describe('Siampark reminder e-mail planning', () => {
   test('falls back to a generic subject when the invoice number is unknown', () => {
     const noInvoice: RentReminderInput = { ...reminder, invoiceNumber: null };
     const planned = planRentReminderEmail(noInvoice, enabledSince);
-    expect(planned?.subject).toBe('Siampark – upomínka k neuhrazené faktuře');
+    expect(planned?.subject).toBe('Nájempark – upomínka k neuhrazené faktuře');
     expect(planned?.subjectNumber).toBe('');
   });
 });
@@ -214,10 +214,10 @@ describe('reminders in the name of the issuing company', () => {
     legalName: 'Obchodní firma',
   };
 
-  test('an Obchodní firma reminder carries the Obchodní firma header, subject and footer, never Siampark', () => {
+  test('an Obchodní firma reminder carries the Obchodní firma header, subject and footer, never Nájempark', () => {
     const planned = planRentReminderEmail(obchodni, enabledSince);
     expect(planned?.subject).toBe('Obchodní firma – upomínka k faktuře FV-2026-0007');
-    expect(planned?.html.includes('Siampark')).toBe(false);
+    expect(planned?.html.includes('Nájempark')).toBe(false);
     expect(planned?.text.includes('jménem společnosti Obchodní firma')).toBe(true);
   });
 
@@ -226,13 +226,21 @@ describe('reminders in the name of the issuing company', () => {
     () =>
       Effect.gen(function* companySenders() {
         expect(yield* senderFor(obchodni, 'Obchodní firma', {})).toBe('Obchodní firma – účtárna <ucetni@demo.ontos>');
-        expect(yield* senderFor(reminder, 'Siampark', {})).toBe('Siampark – finanční oddělení <finance@siampark.demo>');
+        expect(yield* senderFor(reminder, 'Nájempark', {})).toBe(
+          'Nájempark – finanční oddělení <finance@najempark.demo>',
+        );
         expect(yield* senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000024' }, 'AKROS', {})).toBe(
           'AKROS e-shop <eshop@akros.demo>',
         );
         expect(
-          yield* senderFor(reminder, 'Siampark', { SIAMPARK_EMAIL_FROM: 'Siampark <fakturace@siampark.cz>' }),
-        ).toBe('Siampark <fakturace@siampark.cz>');
+          yield* senderFor(reminder, 'Nájempark', { SIAMPARK_EMAIL_FROM: 'Nájempark <fakturace@najempark.demo>' }),
+        ).toBe('Nájempark <fakturace@najempark.demo>');
+        expect(
+          yield* senderFor(reminder, 'Nájempark', {
+            SIAMPARK_EMAIL_FROM: ' ',
+            SMTP_FROM: 'OntOS <noreply@ontos.example>',
+          }),
+        ).toBe('Nájempark – finanční oddělení <noreply@ontos.example>');
         expect(yield* senderFor(obchodni, 'Obchodní firma', { SMTP_FROM: 'OntOS <noreply@vase-domena.cz>' })).toBe(
           'Obchodní firma – účtárna <noreply@vase-domena.cz>',
         );
@@ -271,9 +279,9 @@ describe('AKROS status label in e-mails', () => {
 
 describe('agenda notification e-mails', () => {
   const person: AgendaRecipientInput = {
-    email: 'operations@siampark.demo',
+    email: 'operations@najempark.demo',
     legalEntityId: '71000000-0000-4000-8000-000000000021',
-    legalName: 'Siampark',
+    legalName: 'Nájempark',
     notifications: [
       {
         category: 'ASSIGNED',
@@ -325,7 +333,7 @@ describe('agenda notification e-mails', () => {
       expect.unreachable('The opted-in person must receive the mandatory notification batch');
     }
     expect(email.dedupeKey).toBe('facility-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
-    expect(email.subject).toBe('Siampark – 2 nová upozornění v agendě');
+    expect(email.subject).toBe('Nájempark – 2 nová upozornění v agendě');
     expect(email.text).toContain('Přiřazeno vám: Zkontrolovat osvětlení');
     expect(email.text).toContain('Otevřít: http://localhost:3020/cs/ukoly?resourceId=w1');
     expect(email.text).toContain('Po termínu: Revize hasicích přístrojů');
@@ -361,7 +369,24 @@ describe('agenda notification e-mails', () => {
         [],
       );
       expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
-      expect(yield* agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
+      expect(yield* agendaSenderFor(person, {})).toBe('Nájempark – upozornění <provoz@najempark.demo>');
+    }),
+  );
+
+  test.effect('retains the legacy agenda override key and SMTP fallback with the new company name', () =>
+    Effect.gen(function* agendaSenderCompatibility() {
+      expect(
+        yield* agendaSenderFor(person, {
+          SIAMPARK_AGENDA_EMAIL_FROM: 'Nájempark <upozorneni@najempark.demo>',
+          SMTP_FROM: 'noreply@ontos.example',
+        }),
+      ).toBe('Nájempark <upozorneni@najempark.demo>');
+      expect(
+        yield* agendaSenderFor(person, {
+          SIAMPARK_AGENDA_EMAIL_FROM: ' ',
+          SMTP_FROM: 'OntOS <noreply@ontos.example>',
+        }),
+      ).toBe('Nájempark – upozornění <noreply@ontos.example>');
     }),
   );
 });
@@ -373,7 +398,7 @@ describe('test recipients go to the separate test capture, never the demo inbox'
       'Marek.Hruska@EXAMPLE.INVALID',
       'x@shop.test',
       'fakturace.audit@firma.cz',
-      'critic1@siampark.demo',
+      'critic1@najempark.demo',
       'fixer@hanak.demo',
       'qa-test@akros.demo',
       'a@audit.example',
@@ -383,7 +408,7 @@ describe('test recipients go to the separate test capture, never the demo inbox'
   });
   test('demo-story recipients stay in the demo inbox', () => {
     for (const address of [
-      'operations@siampark.demo',
+      'operations@najempark.demo',
       'pavel.dvorak@dvorak-stavby.demo',
       'fakturace@kavarnauparku.cz',
       'fakturace@odberatel.example',

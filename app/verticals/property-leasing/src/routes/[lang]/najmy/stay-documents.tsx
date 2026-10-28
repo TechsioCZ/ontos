@@ -106,7 +106,7 @@ const printSheet = (sheet: RegistrationSheet, context: NoticeContext) => {
     sheet.number,
   )}</title><style>body{font:13px system-ui,sans-serif;margin:32px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:6px;text-align:left}h1{font-size:20px}dl{display:grid;grid-template-columns:12rem 1fr;gap:4px 12px}</style></head><body><h1>Evidenční list ${escapeHtml(
     sheet.number,
-  )}</h1><dl><dt>Ubytovatel</dt><dd>Siampark</dd><dt>Jednotka</dt><dd>${escapeHtml(
+  )}</h1><dl><dt>Ubytovatel</dt><dd>Nájempark</dd><dt>Jednotka</dt><dd>${escapeHtml(
     [context.unitLabel, context.propertyLabel, context.propertyAddress].filter((part) => part !== '').join(', '),
   )}</dd><dt>Rezervace / nájem</dt><dd>${escapeHtml(context.partyName)}</dd><dt>Období</dt><dd>${escapeHtml(
     `${formatDate(sheet.startDate)} – ${day(Option.getOrNull(sheet.endDate))}`,

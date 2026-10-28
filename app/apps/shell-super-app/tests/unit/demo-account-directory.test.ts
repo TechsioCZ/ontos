@@ -33,11 +33,11 @@ const caller = { legalName: 'Company', principal: { ...principal, legalEntityId:
 const transport = { correlationId: 'original-role-template-read' };
 const emails = [
   'obchod@demo.ontos',
-  'management@siampark.demo',
-  'operations@siampark.demo',
+  'management@najempark.demo',
+  'operations@najempark.demo',
   'obchodnik@demo.ontos',
-  'finance@siampark.demo',
-  'external@siampark.demo',
+  'finance@najempark.demo',
+  'external@najempark.demo',
 ];
 const retainedAccounts = emails.map((email, index) => ({ email, providerSubjectId: `retained-user-${index}` }));
 const retainedBindings = retainedAccounts.map(({ providerSubjectId }, index) => ({

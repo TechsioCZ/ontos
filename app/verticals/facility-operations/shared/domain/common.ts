@@ -57,7 +57,7 @@ export const MinorAmountSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(
 export const SignedMinorAmountSchema = Schema.Int;
 
 /**
- * Opaque reference to a Siampark property-module record (property, unit or asset id from property-portfolio),
+ * Opaque reference to a Nájempark property-module record (property, unit or asset id from property-portfolio),
  * plus a display snapshot taken when the reference was set. Never joined to the other module's tables.
  */
 export const PropertyRefSchema = Schema.Struct({

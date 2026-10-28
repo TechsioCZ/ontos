@@ -9,7 +9,7 @@
  * customer list is company-wide). The CRM server therefore creates/reuses the registry Party + CUSTOMER
  * Counterparty itself, after checking the salesperson's CRM rights, authenticated as this non-human principal:
  *
- *   - member of every company that runs the CRM (Siampark 0021, Velkoobchod Hanák 0022);
+ *   - member of every company that runs the CRM (Nájempark 0021, Velkoobchod Hanák 0022);
  *   - party.registry module access + counterparty_manager/reader and party_identity_manager/reader/reviewer;
  *   - executor grants for exactly create-party, resolve-duplicate-candidate-create, counterparty-customer-onboard
  *     and add-contact-point. No archive/merge/update of Parties;

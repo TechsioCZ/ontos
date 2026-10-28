@@ -60,8 +60,8 @@ class LiveDemoPrerequisiteUnavailable extends Schema.TaggedError<LiveDemoPrerequ
   }
 }
 
-const signIn = Effect.fn('SiamparkLiveHttp.signIn')(function* signInDemoAccount(
-  email: 'operations@siampark.demo' | 'external@siampark.demo' | 'management@siampark.demo',
+const signIn = Effect.fn('NajemparkLiveHttp.signIn')(function* signInDemoAccount(
+  email: 'operations@najempark.demo' | 'external@najempark.demo' | 'management@najempark.demo',
 ) {
   const client = yield* HttpApiClient.make(ShellAuthenticationApi, {
     baseUrl: shellApiBaseUrl,
@@ -81,7 +81,7 @@ const signIn = Effect.fn('SiamparkLiveHttp.signIn')(function* signInDemoAccount(
   return { compositionRevision: composition.compositionRevision, cookie };
 });
 
-const authorize = Effect.fn('SiamparkLiveHttp.authorize')(function* authorizeDemoOwner(
+const authorize = Effect.fn('NajemparkLiveHttp.authorize')(function* authorizeDemoOwner(
   session: { readonly compositionRevision: string; readonly cookie: string },
   audience: string,
 ) {
@@ -133,7 +133,7 @@ const safeTransportFailure = (failure: LiveHttpFailure) =>
 type LiveSession = Effect.Success<ReturnType<typeof signIn>>;
 // The public SDK wire schema is the native-client equivalent of its browser
 // makeReferenceGatewayCredentials helper, whose revision comes from the DOM.
-const referenceCredentials = Effect.fn('SiamparkLiveHttp.referenceCredentials')(function* providerCredentials(
+const referenceCredentials = Effect.fn('NajemparkLiveHttp.referenceCredentials')(function* providerCredentials(
   session: LiveSession,
   audiences: readonly string[],
 ) {
@@ -149,22 +149,24 @@ const referenceCredentials = Effect.fn('SiamparkLiveHttp.referenceCredentials')(
   return Redacted.make(encoded);
 });
 
-const readLiveAgreements = Effect.fn('SiamparkLiveHttp.readAgreements')(function* agreementsRead(session: LiveSession) {
+const readLiveAgreements = Effect.fn('NajemparkLiveHttp.readAgreements')(function* agreementsRead(
+  session: LiveSession,
+) {
   const grant = yield* authorize(session, 'legal-agreements');
   return yield* readAgreements({}, grant.credential, correlation(), grant.options);
 });
-const readLiveOccupancies = Effect.fn('SiamparkLiveHttp.readOccupancies')(function* occupancyRead(
+const readLiveOccupancies = Effect.fn('NajemparkLiveHttp.readOccupancies')(function* occupancyRead(
   session: LiveSession,
 ) {
   const grant = yield* authorize(session, 'property-leasing');
   return yield* readOccupancies({}, grant.credential, correlation(), grant.options);
 });
-const readLiveFinance = Effect.fn('SiamparkLiveHttp.readFinance')(function* financeRead(session: LiveSession) {
+const readLiveFinance = Effect.fn('NajemparkLiveHttp.readFinance')(function* financeRead(session: LiveSession) {
   const grant = yield* authorize(session, 'finance-billing');
   return yield* readInvoices({}, grant.credential, correlation(), grant.options);
 });
 
-const applyAgreementCommand = Effect.fn('SiamparkLiveHttp.applyAgreementCommand')(function* agreementAction(
+const applyAgreementCommand = Effect.fn('NajemparkLiveHttp.applyAgreementCommand')(function* agreementAction(
   session: LiveSession,
   expectedRevision: number,
   command: AgreementsCommand,
@@ -183,7 +185,7 @@ const applyAgreementCommand = Effect.fn('SiamparkLiveHttp.applyAgreementCommand'
     referenceCredentials: providers,
   });
 });
-const applyOccupancyCommand = Effect.fn('SiamparkLiveHttp.applyOccupancyCommand')(function* occupancyAction(
+const applyOccupancyCommand = Effect.fn('NajemparkLiveHttp.applyOccupancyCommand')(function* occupancyAction(
   session: LiveSession,
   expectedRevision: number,
   command: (typeof OccupancyPayloadSchema.Encoded)['command'],
@@ -203,7 +205,7 @@ const applyOccupancyCommand = Effect.fn('SiamparkLiveHttp.applyOccupancyCommand'
   });
 });
 
-const applyFinanceCommand = Effect.fn('SiamparkLiveHttp.applyFinanceCommand')(function* applyLiveFinanceCommand(
+const applyFinanceCommand = Effect.fn('NajemparkLiveHttp.applyFinanceCommand')(function* applyLiveFinanceCommand(
   session: { readonly compositionRevision: string; readonly cookie: string },
   expectedRevision: number,
   command: FinanceCommand,
@@ -219,7 +221,7 @@ const applyFinanceCommand = Effect.fn('SiamparkLiveHttp.applyFinanceCommand')(fu
   });
 });
 
-const prepareGoldenLease = Effect.fn('SiamparkLiveHttp.prepareGoldenLease')(function* goldenLeaseBaseline(
+const prepareGoldenLease = Effect.fn('NajemparkLiveHttp.prepareGoldenLease')(function* goldenLeaseBaseline(
   session: LiveSession,
 ) {
   const propertyGrant = yield* authorize(session, 'property-portfolio');
@@ -307,7 +309,7 @@ const prepareGoldenLease = Effect.fn('SiamparkLiveHttp.prepareGoldenLease')(func
   return { agreements, contract, customer, document, finance, occupancies, occupancy, unit };
 });
 
-const executeGoldenSignedDocument = Effect.fn('SiamparkLiveHttp.executeGoldenSignedDocument')(
+const executeGoldenSignedDocument = Effect.fn('NajemparkLiveHttp.executeGoldenSignedDocument')(
   function* signedGoldenContract(
     session: LiveSession,
     prepared: Effect.Success<ReturnType<typeof prepareGoldenLease>>,
@@ -346,7 +348,7 @@ const executeGoldenSignedDocument = Effect.fn('SiamparkLiveHttp.executeGoldenSig
   },
 );
 
-const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(function* confirmedGoldenInvoice(
+const executeGoldenInvoice = Effect.fn('NajemparkLiveHttp.executeGoldenInvoice')(function* confirmedGoldenInvoice(
   session: LiveSession,
   prepared: Effect.Success<ReturnType<typeof prepareGoldenLease>>,
 ) {
@@ -405,10 +407,10 @@ const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(
   return confirmed;
 });
 
-layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark live HTTP acceptance', (it) => {
+layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark live HTTP acceptance', (it) => {
   it.effect('live Management reads Finance and Activities with read-only server capabilities', () =>
     Effect.gen(function* managementReadOnlyFinance() {
-      const session = yield* signIn('management@siampark.demo');
+      const session = yield* signIn('management@najempark.demo');
       const finance = yield* readLiveFinance(session);
       expect(finance.canWrite).toBe(false);
       expect(finance.state.invoices.length).toBeGreaterThanOrEqual(4);
@@ -424,7 +426,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
     'live Operations completes the A101 lease through owning occupancy, signature and invoice Actions',
     () =>
       Effect.gen(function* operationsGoldenLease() {
-        const session = yield* signIn('operations@siampark.demo');
+        const session = yield* signIn('operations@najempark.demo');
         const prepared = yield* prepareGoldenLease(session);
         const initialDraft = yield* Schema.decodeEffect(OccupancySchema)({
           ...prepared.occupancy,
@@ -480,7 +482,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
 
   it.effect('live Operations creates a B201 successor draft and resolves only renewal attention', () =>
     Effect.gen(function* operationsRenewalDraft() {
-      const session = yield* signIn('operations@siampark.demo');
+      const session = yield* signIn('operations@najempark.demo');
       const before = yield* readLiveAgreements(session);
       const old = before.contracts.find((item) => item.contractRef.resourceId === expiringContractId);
       if (old === undefined || old.endDate === null || old.hasSuccessorDraft) {
@@ -527,7 +529,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
 
   it.effect('live Operations records a canonical relationship Activity linked to one real Work Task', () =>
     Effect.gen(function* operationsRelationshipFollowUp() {
-      const session = yield* signIn('operations@siampark.demo');
+      const session = yield* signIn('operations@najempark.demo');
       const relationshipGrant = yield* authorize(session, 'crm-activities');
       const before = yield* readActivities({}, relationshipGrant.credential, correlation(), relationshipGrant.options);
       const workGrant = yield* authorize(session, 'work-tasks');
@@ -607,7 +609,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
 
   it.effect('live External reads only its assigned Task, Activity and B201 Counterparty', () =>
     Effect.gen(function* externalAssignedReads() {
-      const session = yield* signIn('external@siampark.demo');
+      const session = yield* signIn('external@najempark.demo');
       const work = yield* authorize(session, 'work-tasks');
       const tasks = yield* readTasks({ resourceId: assignedTaskId }, work.credential, correlation(), work.options);
       expect(tasks.items.map((task) => task.ref.resourceId)).toEqual([assignedTaskId]);
@@ -641,7 +643,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
 
   it.effect('live External receives typed HTTP 403 for an unrelated Task, Invoice and Counterparty', () =>
     Effect.gen(function* externalDeniedReads() {
-      const session = yield* signIn('external@siampark.demo');
+      const session = yield* signIn('external@najempark.demo');
       const work = yield* authorize(session, 'work-tasks');
       const task = yield* Effect.result(
         readTasks({ resourceId: unrelatedTaskId }, work.credential, correlation(), work.options),
@@ -688,7 +690,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
 
   it.effect('live Operations commits only one of two Task changes at the same expected revision', () =>
     Effect.gen(function* operationsConcurrentRevision() {
-      const session = yield* signIn('operations@siampark.demo');
+      const session = yield* signIn('operations@najempark.demo');
       const initialGrant = yield* authorize(session, 'work-tasks');
       const before = yield* readTasks({}, initialGrant.credential, correlation(), initialGrant.options);
       const assigned = before.items.find((task) => task.ref.resourceId === assignedTaskId);

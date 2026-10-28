@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `pnpm demo:seed:facility-operations`: (re)seeds every Facility operations agenda (facility.operations) for Siampark 0021.
+ * `pnpm demo:seed:facility-operations`: (re)seeds every Facility operations agenda (facility.operations) for Nájempark 0021.
  * Runs verticals/facility-operations/scripts/reset-demo.mts with the validated local environment. Local only.
  */
 import { NodeServices } from '@effect/platform-node';
@@ -14,7 +14,7 @@ class SeedError extends Schema.TaggedError<SeedError>()('SeedError', { reason: S
 
 const OWNER_SCRIPT = 'verticals/facility-operations/scripts/reset-demo.mts';
 
-const seed = Effect.fn('Siampark.seedFacilityOperations')(function* seedFacilityOperations(
+const seed = Effect.fn('Nájempark.seedFacilityOperations')(function* seedFacilityOperations(
   salesDemo: boolean,
   validateOnly: boolean,
 ) {

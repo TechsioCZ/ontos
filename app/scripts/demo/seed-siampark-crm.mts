@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * LOCAL ONLY. Siampark (0021) CRM state for S00 "Externí obchodník smí číst jen svěřené kontakty a případy".
+ * LOCAL ONLY. Nájempark (0021) CRM state for S00 "Externí obchodník smí číst jen svěřené kontakty a případy".
  *
- *   node --env-file=.env scripts/demo/seed-siampark-crm.mts          # writes only when Siampark has no CRM state
- *   node --env-file=.env scripts/demo/seed-siampark-crm.mts --reset  # replaces the Siampark CRM state
+ *   node --env-file=.env scripts/demo/seed-siampark-crm.mts          # writes only when Nájempark has no CRM state
+ *   node --env-file=.env scripts/demo/seed-siampark-crm.mts --reset  # replaces the Nájempark CRM state
  *
  * Six prospective tenants (none has a lease yet). Vedení entrusted three of them to the external salesperson
- * (external@siampark.demo); the other three stay with Vedení or unassigned. external@ holds only
+ * (external@najempark.demo); the other three stay with Vedení or unassigned. external@ holds only
  * `demo.crm.read_assigned` (scripts/demo/permissions.mts), so the crm owner returns just the three entrusted
  * clients with their contacts, calls/meetings and planned contacts. The Hanák CRM row (0022) is never touched.
  */
@@ -25,7 +25,7 @@ const principalOf = (email: string) =>
   Effect.gen(function* fixturePrincipal() {
     const persona = siamparkRentalPersonas.find((entry) => entry.email === email);
     if (persona === undefined) {
-      return yield* new CrmSeedFailure({ message: `Siampark persona ${email} is missing` });
+      return yield* new CrmSeedFailure({ message: `Nájempark persona ${email} is missing` });
     }
     return persona.principalId;
   });
@@ -242,7 +242,7 @@ const clients: readonly ClientSeed[] = [
 ];
 
 const salespersonNamespace = 'crm.salesperson';
-const managementEmail = 'management@siampark.demo';
+const managementEmail = 'management@najempark.demo';
 const clientId = (seed: ClientSeed) => demoId('crm.client', seed.key);
 const seedState = (now: DateTime.Utc, managementPrincipal: string, externalPrincipal: string) => {
   const salespeople = [
@@ -250,13 +250,13 @@ const seedState = (now: DateTime.Utc, managementPrincipal: string, externalPrinc
       active: true,
       email: managementEmail,
       id: demoId(salespersonNamespace, 'siampark-vedeni'),
-      name: 'Vedení Siampark',
+      name: 'Vedení Nájempark',
       phone: '+420 515 900 100',
       principalId: managementPrincipal,
     },
     {
       active: true,
-      email: 'external@siampark.demo',
+      email: 'external@najempark.demo',
       id: demoId(salespersonNamespace, 'siampark-externi'),
       name: 'Martin Krejčí',
       phone: '+420 724 518 330',
@@ -405,9 +405,9 @@ const seedState = (now: DateTime.Utc, managementPrincipal: string, externalPrinc
 };
 
 const program = (reset: boolean) =>
-  Effect.gen(function* seedSiamparkCrm() {
+  Effect.gen(function* seedNajemparkCrm() {
     const managementPrincipal = yield* principalOf(managementEmail);
-    const externalPrincipal = yield* principalOf('external@siampark.demo');
+    const externalPrincipal = yield* principalOf('external@najempark.demo');
     const now = yield* DateTime.now;
     const decoded = yield* Schema.decodeUnknownEffect(CrmStateSchema)(
       seedState(now, managementPrincipal, externalPrincipal),
@@ -432,8 +432,8 @@ const program = (reset: boolean) =>
     ).length;
     yield* Console.log(
       rows.length === 0
-        ? 'Siampark CRM state already exists; nothing changed (use --reset to replace it).'
-        : `Siampark CRM state written: ${encoded.clients.items.length} clients, ${entrustedCount} entrusted to external@siampark.demo, ${encoded.visits.items.length} visits, ${encoded.visits.plan.length} planned contacts.`,
+        ? 'Nájempark CRM state already exists; nothing changed (use --reset to replace it).'
+        : `Nájempark CRM state written: ${encoded.clients.items.length} clients, ${entrustedCount} entrusted to external@najempark.demo, ${encoded.visits.items.length} visits, ${encoded.visits.plan.length} planned contacts.`,
     );
   });
 

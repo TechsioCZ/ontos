@@ -27,7 +27,7 @@ const program = Effect.gen(function* repair() {
       select revision, state from finance_billing.finance_states
       where tenant_id=${tenant} and legal_entity_id=${entity}`;
       if (row === undefined) {
-        return yield* new InvoicePartyRepairRejected({ reason: 'Missing Siampark finance state' });
+        return yield* new InvoicePartyRepairRejected({ reason: 'Missing Nájempark finance state' });
       }
       const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)(row.state);
       const parties = yield* sql<{ counterparty_id: string; party_id: string }>`

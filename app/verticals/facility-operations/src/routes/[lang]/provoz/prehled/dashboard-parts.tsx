@@ -1,5 +1,5 @@
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-// Building blocks of the Siampark overview dashboard (S15). Owned by the ops-agenda lane.
+// Building blocks of the Nájempark overview dashboard (S15). Owned by the ops-agenda lane.
 import { EmptyState, SectionCard, formatMoney, formatNumber, formatPercent } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';

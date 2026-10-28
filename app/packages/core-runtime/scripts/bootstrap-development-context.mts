@@ -129,7 +129,7 @@ const loadInput = (fixturePath: string) =>
       ) {
         return yield* new DevelopmentBootstrapError({
           reason:
-            'Search fixtures must contain exactly six Siampark Parties and five Counterparties in the fixed tenant and legal entity',
+            'Search fixtures must contain exactly six Nájempark Parties and five Counterparties in the fixed tenant and legal entity',
         });
       }
       for (const resourceType of searchResourceTypes) {
