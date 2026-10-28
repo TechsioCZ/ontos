@@ -1,4 +1,6 @@
 import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { parseSync } from 'oxc-parser';
+import type { Program } from 'oxc-parser';
 
 import { DelimiterDepth, toCamelCase } from './boundary-source-structure.mts';
 
@@ -546,16 +548,6 @@ const hasExactGeneratedImports = (
       [SyntaxKind.ImportKeyword],
       [SyntaxKind.OpenBraceToken],
       [SyntaxKind.Identifier, expectation.ownerApiValue],
-      [SyntaxKind.CloseBraceToken],
-      [SyntaxKind.FromKeyword],
-      [SyntaxKind.StringLiteral, expectation.ownerContractImport],
-      [SyntaxKind.SemicolonToken],
-    ],
-    [
-      [SyntaxKind.ImportKeyword],
-      [SyntaxKind.TypeKeyword],
-      [SyntaxKind.OpenBraceToken],
-      [SyntaxKind.Identifier, governedRequestType(expectation)],
       [SyntaxKind.CloseBraceToken],
       [SyntaxKind.FromKeyword],
       [SyntaxKind.StringLiteral, expectation.ownerContractImport],
@@ -2085,11 +2077,82 @@ export const hasGeneratedModuleApiReadContract = (
   );
 };
 
+interface ClientTypeSpan {
+  readonly end: number;
+  readonly start: number;
+}
+
+const clientReturnTypeSpans = (statement: Program['body'][number]): readonly ClientTypeSpan[] => {
+  const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+  if (declaration?.type !== 'VariableDeclaration') {
+    return [];
+  }
+  const spans: ClientTypeSpan[] = [];
+  for (const binding of declaration.declarations) {
+    const annotation = binding.init?.type === 'ArrowFunctionExpression' ? binding.init.returnType : undefined;
+    if (annotation !== undefined && annotation !== null) {
+      spans.push(annotation);
+    }
+  }
+  return spans;
+};
+
+/** Project only parser-proven erased types; executable imports and expressions remain checked verbatim. */
+const governedClientRuntimeSource = (source: string, expectation: GovernedClientExpectation): string | undefined => {
+  const parsed = parseSync('governed-client.ts', source);
+  if (parsed.errors.length > 0) {
+    return undefined;
+  }
+  const spans: ClientTypeSpan[] = [];
+  const allowedTypeModules = new Set(['effect', 'effect/http-api', expectation.ownerContractImport]);
+  const requestType = governedRequestType(expectation);
+  let requestImports = 0;
+  for (const statement of parsed.program.body) {
+    if (statement.type === 'ImportDeclaration' && statement.importKind === 'type') {
+      if (!allowedTypeModules.has(statement.source.value)) {
+        return undefined;
+      }
+      for (const specifier of statement.specifiers) {
+        if (specifier.type !== 'ImportSpecifier') {
+          return undefined;
+        }
+        if (
+          statement.source.value === expectation.ownerContractImport &&
+          specifier.imported.type === 'Identifier' &&
+          specifier.imported.name === requestType &&
+          specifier.local.name === requestType
+        ) {
+          requestImports += 1;
+        }
+      }
+      spans.push(statement);
+    } else if (statement.type === 'TSTypeAliasDeclaration') {
+      spans.push(statement);
+    }
+    spans.push(...clientReturnTypeSpans(statement));
+  }
+  if (requestImports !== 1) {
+    return undefined;
+  }
+  // Spans follow source order and never overlap; erase right-to-left without moving offsets.
+  return spans.reduceRight(
+    (runtime, span) =>
+      runtime.slice(0, span.start) +
+      runtime.slice(span.start, span.end).replaceAll(/[^\r\n]/gu, ' ') +
+      runtime.slice(span.end),
+    source,
+  );
+};
+
 export const hasGeneratedGovernedClientContract = (source: string, expectation: GovernedClientExpectation): boolean => {
   if (!hasGeneratedSourceHeader(source, expectation.generatedHeader)) {
     return false;
   }
-  const tokens = tokenizeGovernedClient(source);
+  const runtime = governedClientRuntimeSource(source, expectation);
+  if (runtime === undefined) {
+    return false;
+  }
+  const tokens = tokenizeGovernedClient(runtime);
   const declarations = exportedConsts(tokens);
   const authorized = declarations.find(({ name }) => name.endsWith('WithAuthorization'));
   if (authorized === undefined) {
