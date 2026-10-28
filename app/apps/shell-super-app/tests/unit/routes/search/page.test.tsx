@@ -26,6 +26,7 @@ const {
   browserRunPromiseMock,
   languageState,
   localizedLinkCalls,
+  localizedLinkMock,
   navigateMock,
   signOutMock,
   switchLegalEntityMock,
@@ -37,6 +38,7 @@ const {
     browserRunPromiseMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
+    localizedLinkMock: rstest.fn<(props: LocalizedLinkDoubleProps) => void>(),
     navigateMock: rstest.fn(async () => {}),
     signOutMock: rstest.fn(),
     switchLegalEntityMock: rstest.fn(),
@@ -73,11 +75,13 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
-  Link: (props: LocalizedLinkDoubleProps) =>
-    renderLocalizedLinkDouble(props, {
+  Link: (props: LocalizedLinkDoubleProps) => {
+    localizedLinkMock(props);
+    return renderLocalizedLinkDouble(props, {
       calls: localizedLinkCalls,
       language: languageState,
-    }),
+    });
+  },
   useLocalizedLocation: () => ({
     alternates: { cs: '/cs/hledat', en: '/en/search' },
   }),
@@ -199,15 +203,21 @@ afterEach(() => {
 test('a search result hands the canonical resource route to the framework link', () => {
   render(<SearchPage />);
 
-  const [resultCall] = resourceLinkCalls();
-  expect(resourceLinkCalls()).toHaveLength(1);
-  expect(resultCall?.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
-  expect(resultCall?.params).toEqual({
-    moduleId: 'inventory.stock',
-    resourceId: 'unit-1',
-    resourceType: 'stock-item',
-  });
-  expect(resultCall?.href).toBeUndefined();
+  const resultCalls = localizedLinkMock.mock.calls
+    .map(([props]) => props)
+    .filter(({ to }) => to.startsWith('/resources'));
+  expect(resultCalls.length).toBeGreaterThan(0);
+  for (const resultCall of resultCalls) {
+    expect(resultCall.to).toBe('/resources/$moduleId/$resourceType/$resourceId');
+    expect(resultCall.params).toEqual({
+      moduleId: 'inventory.stock',
+      resourceId: 'unit-1',
+      resourceType: 'stock-item',
+    });
+    expect(resultCall.href).toBeUndefined();
+    expect(resultCall).toHaveProperty('prefetch', 'none');
+    expect(resultCall).toHaveProperty('preload', false);
+  }
   expect(screen.getByRole('link', { name: 'Unit 1' }).getAttribute('href')).toBe(
     '/en/resources/inventory.stock/stock-item/unit-1',
   );

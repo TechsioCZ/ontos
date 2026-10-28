@@ -29,6 +29,7 @@ import { useSettledRouterState } from '../../../support/settled-router-state.ts'
 
 const {
   browserRunPromiseMock,
+  clearCacheMock,
   languageState,
   localizedLinkCalls,
   navigateMock,
@@ -42,6 +43,7 @@ const {
   const recordedLinkCalls: LocalizedLinkCall[] = [];
   return {
     browserRunPromiseMock: rstest.fn(),
+    clearCacheMock: rstest.fn(),
     languageState: { current: 'en' },
     localizedLinkCalls: recordedLinkCalls,
     navigateMock: rstest.fn(),
@@ -117,7 +119,12 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
-  useRouter: () => ({ matchRoutes: () => [], preloadRoute: () => Promise.resolve(), routesById: {} }),
+  useRouter: () => ({
+    clearCache: clearCacheMock,
+    matchRoutes: () => [],
+    preloadRoute: () => Promise.resolve(),
+    routesById: {},
+  }),
 
   // Read lazily: mock factories run before this module's imports are initialized.
   useRouterState: (options: Parameters<typeof useSettledRouterState>[0]) => useSettledRouterState(options),
@@ -307,6 +314,7 @@ it.live('successful tenant switch performs a full document reload', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -330,6 +338,7 @@ it.live('successful legal-entity switch performs a full document reload', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -361,6 +370,7 @@ it.live('logout clears the authenticated composition together', () =>
         }),
       ),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -473,6 +483,7 @@ it.live.each(switchFailureCases)(
         expect(screen.queryByText(pendingText)).toBeNull();
       }
 
+      expect(clearCacheMock).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('combobox', { name: comboboxName }).hasAttribute('disabled')).toBe(false);
     }),
 );
@@ -587,6 +598,7 @@ it.live('offers explicit tenant scope only when admitted and reloads after selec
     yield* Effect.promise(() =>
       waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' })),
     );
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 

@@ -1,26 +1,22 @@
+import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { rootRouteId, useRouter, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type { AnyRoute } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Fiber } from 'effect';
-import { createElement, Suspense, useEffect } from 'react';
+import { createContext, createElement, Suspense, useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import type { ShellNavigationItem } from '../../shared/api.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { awaitModuleTrafficQuiet } from './browser-request-cache.ts';
-import { loadRemotePage } from './remote-page-loader.ts';
+import { awaitPrimaryModuleReads, forgetRecordedPageReads, withoutRecordedPageReads } from './browser-request-cache.ts';
+
+export const StaffRoutePreloadContext = createContext({ enabled: false, generation: 0 });
 
 interface PreloadableNavigationItem {
   readonly enabled: boolean;
   readonly href?: string;
-  readonly remote?: ShellNavigationItem['remote'];
 }
 
-/** Let the foreground page load its own chunks first. */
-const SETTLE_DELAY = '5 seconds';
-/** Remote containers loaded at once while idle. */
-const REMOTE_WARM_CONCURRENCY = 3;
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
 const ignoreRenderError = () => {
@@ -66,59 +62,85 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
   });
 };
 
-/**
- * Code only: loads the remote page module of every enabled menu destination, so opening one waits only for its
- * data. Each item carries its remote from the composition, so this reads nothing (no API, assertion or module read)
- * and runs no `preloadPage`.
- */
-const warmRemotePages = (compositionRevision: string, navigation: readonly PreloadableNavigationItem[]) =>
+const warmDestinations = (router: ReturnType<typeof useRouter>, language: string, hrefs: string) =>
   Effect.forEach(
-    navigation.flatMap((item) => (item.enabled && item.remote !== undefined ? [item.remote] : [])),
-    (federation) => loadRemotePage({ compositionRevision, federation }),
-    { concurrency: REMOTE_WARM_CONCURRENCY, discard: true },
+    hrefs === '' ? [] : hrefs.split('\n'),
+    (href) => withoutRecordedPageReads(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(Effect.ignore),
+    { concurrency: 64, discard: true },
   );
 
 /**
- * Shortly after each navigation settles and module traffic goes quiet, resolves the Shell's own lazy route components
- * for the menu destinations and loads their remote page code. It never runs route loaders or calls an API: resolving
- * a module target, issuing a gateway assertion, preparing a page's data or prefetching its reads happens only for the
- * page being opened or on hover/focus intent (`ShellRouteLink` preloads on intent). Idle warming of every menu
- * destination used to issue about 50 Shell and owner requests per page view, which multiplied the load on a
- * pool-bound Shell.
+ * Native render preloads prepare code AND declared data concurrently. The only gate is the current page:
+ * first let its loader settle and its already-issued primary reads finish, without an idle timer or dwell.
  */
 export const useIdleRoutePreload = (
   navigation: readonly PreloadableNavigationItem[],
-  compositionRevision: string | undefined,
+  contextKey: string,
+  disabled: boolean,
 ) => {
   const router = useRouter();
   const { language } = useModernI18n();
-  const settledPath = useRouterState({ select: ({ resolvedLocation }) => resolvedLocation?.pathname });
+  const currentHref = useRouterState({ select: ({ location }) => location.href });
+  const settledHref = useRouterState({ select: ({ resolvedLocation }) => resolvedLocation?.href });
+  const [preparedKey, setPreparedKey] = useState<string>();
+  const [generation, setGeneration] = useState(0);
+  const previousContext = useRef(contextKey);
+  const key = [contextKey, currentHref, generation].join('\n');
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
 
   useEffect(() => {
-    const fiber =
-      settledPath !== undefined && language !== undefined
-        ? browserRuntime.runFork(
-            Effect.sleep(SETTLE_DELAY).pipe(
-              Effect.andThen(awaitModuleTrafficQuiet),
-              Effect.andThen(
-                Effect.all(
-                  [
-                    Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
-                    compositionRevision === undefined
-                      ? Effect.void
-                      : Effect.suspend(() => warmRemotePages(compositionRevision, navigation)),
-                  ],
-                  { concurrency: 2, discard: true },
-                ),
-              ),
-            ),
-          )
-        : undefined;
-    return () => {
-      if (fiber !== undefined) {
-        browserRuntime.runFork(Fiber.interrupt(fiber));
-      }
+    const restart = () => {
+      router.clearCache();
+      setGeneration((previous) => previous + 1);
     };
-  }, [compositionRevision, hrefs, language, navigation, router, settledPath]);
+    globalThis.addEventListener(moduleWriteEvent, restart);
+    return () => globalThis.removeEventListener(moduleWriteEvent, restart);
+  }, [router]);
+
+  useEffect(() => {
+    if (previousContext.current !== contextKey) {
+      previousContext.current = contextKey;
+      router.clearCache();
+      browserRuntime.runSync(forgetRecordedPageReads);
+    }
+  }, [contextKey, router]);
+
+  useEffect(() => {
+    if (disabled || currentHref !== settledHref || language === undefined) {
+      return () => {
+        // Nothing was started while the foreground page or context transition owns priority.
+      };
+    }
+    const fiber = browserRuntime.runFork(
+      awaitPrimaryModuleReads.pipe(
+        Effect.flatMap((ready) =>
+          ready
+            ? Effect.sync(() => setPreparedKey(key)).pipe(
+                Effect.andThen(
+                  Effect.all(
+                    [
+                      Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
+                      warmDestinations(router, language, hrefs),
+                    ],
+                    { concurrency: 2, discard: true },
+                  ),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+    return () => {
+      browserRuntime.runFork(Fiber.interrupt(fiber));
+    };
+  }, [currentHref, disabled, hrefs, key, language, router, settledHref]);
+
+  return {
+    enabled: !disabled && currentHref === settledHref && preparedKey === key,
+    generation,
+    suspend: () => {
+      router.clearCache();
+      browserRuntime.runSync(forgetRecordedPageReads);
+    },
+  };
 };

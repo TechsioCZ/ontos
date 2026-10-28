@@ -3,6 +3,7 @@ import { Clock, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Option, Sc
 import { TestClock } from 'effect/testing';
 import { afterAll, beforeEach, expect, it, rs } from 'effect-rstest';
 
+import { awaitPrimaryModuleReads } from '../../src/routes/browser-request-cache.ts';
 import { prepareModulePage, RemotePagePreparation } from '../../src/routes/remote-page-loader.ts';
 import type { loadRemotePage, ReadyRemotePage } from '../../src/routes/remote-page-loader.ts';
 
@@ -256,5 +257,92 @@ it.effect('does not share declared preload work between contexts using the same 
     expect(preloadPage).toHaveBeenCalledWith(props);
     expect(preloadPage).toHaveBeenCalledWith(otherProps);
     expect(transport.prefetch).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('holds speculation while cold foreground code has not issued its primary data yet', () =>
+  Effect.gen(function* coldForegroundPriority() {
+    const importing = yield* Deferred.make<boolean>();
+    const imported = yield* Deferred.make<boolean>();
+    const reading = yield* Deferred.make<boolean>();
+    const read = yield* Deferred.make<boolean>();
+    const preloadPage = () =>
+      runtime.runPromise(Deferred.succeed(reading, true).pipe(Effect.andThen(Deferred.await(read)), Effect.asVoid));
+    transport.load.mockImplementation(() =>
+      Deferred.succeed(importing, true).pipe(
+        Effect.andThen(Deferred.await(imported)),
+        Effect.as(readyPage(preloadPage)),
+      ),
+    );
+    yield* Effect.gen(function* checkColdForegroundGate() {
+      const preparation = yield* prepare(
+        target('cold-current'),
+        props,
+        globalThis.location.pathname,
+        '10 seconds',
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(importing);
+      const gate = yield* awaitPrimaryModuleReads.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      expect(gate.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(imported, true);
+      yield* Deferred.await(reading);
+      expect(gate.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(read, true);
+      yield* Fiber.join(preparation);
+      expect(yield* Fiber.join(gate)).toBe(true);
+    }).pipe(Effect.ensuring(Effect.all([Deferred.succeed(imported, true), Deferred.succeed(read, true)])));
+  }),
+);
+
+it.effect('does not gate the current page on another destination preparation', () =>
+  Effect.gen(function* destinationDoesNotOwnPriority() {
+    const importing = yield* Deferred.make<boolean>();
+    transport.load.mockImplementation(() => Deferred.succeed(importing, true).pipe(Effect.andThen(Effect.never)));
+    const preparation = yield* prepare(target('other-destination'), props, '/another-destination', '10 seconds').pipe(
+      Effect.forkChild,
+    );
+    yield* Deferred.await(importing);
+    expect(yield* awaitPrimaryModuleReads).toBe(true);
+    yield* Fiber.interrupt(preparation);
+  }),
+);
+
+it.effect('releases foreground priority when its caller leaves before code loads', () =>
+  Effect.gen(function* canceledForegroundPriority() {
+    const importing = yield* Deferred.make<boolean>();
+    transport.load.mockImplementation(() => Deferred.succeed(importing, true).pipe(Effect.andThen(Effect.never)));
+    const preparation = yield* prepare(
+      target('departed-current'),
+      props,
+      globalThis.location.pathname,
+      '10 seconds',
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(importing);
+    const gate = yield* awaitPrimaryModuleReads.pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    expect(gate.pollUnsafe()).toBeUndefined();
+    yield* Fiber.interrupt(preparation);
+    expect(yield* Fiber.join(gate)).toBe(true);
+  }),
+);
+
+it.effect('releases foreground priority when its preparation budget expires', () =>
+  Effect.gen(function* expiredForegroundPriority() {
+    const importing = yield* Deferred.make<boolean>();
+    transport.load.mockImplementation(() => Deferred.succeed(importing, true).pipe(Effect.andThen(Effect.never)));
+    const preparation = yield* prepare(
+      target('expired-current'),
+      props,
+      globalThis.location.pathname,
+      '100 millis',
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(importing);
+    const gate = yield* awaitPrimaryModuleReads.pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    expect(gate.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust('100 millis');
+    expect(yield* Fiber.join(preparation)).toEqual(Option.none());
+    expect(yield* Fiber.join(gate)).toBe(true);
   }),
 );

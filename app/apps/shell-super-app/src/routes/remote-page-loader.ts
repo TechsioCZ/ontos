@@ -7,7 +7,11 @@ import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 import type { HomePageModel } from './[lang]/home-page-model.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { prefetchRecordedReads } from './browser-request-cache.ts';
+import {
+  prefetchRecordedReads,
+  withoutRecordedPageReads,
+  withPrimaryModulePreparation,
+} from './browser-request-cache.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from './module-entrypoint-loader.ts';
 
 /** Every exposed page or component: the props its `preloadPage` received, plus the resolved target. */
@@ -177,15 +181,12 @@ export const modulePageProps = (
 export const peekRemotePage = (target: RemotePage): Option.Option<ReadyRemotePage> =>
   MutableHashMap.get(readyPages, remotePageIdentity(target));
 
-/** A module's `preloadPage` settles on its own; this only bounds one that never does. */
-const PRELOAD_PAGE_LIMIT = '30 seconds';
-
 const preloadPageData = (remote: RemoteState, props: ModulePageProps) => {
   if (remote.state !== 'ready' || remote.preloadPage === undefined) {
     return Effect.void;
   }
   const { preloadPage } = remote;
-  return Effect.tryPromise(() => preloadPage(props)).pipe(Effect.timeout(PRELOAD_PAGE_LIMIT), Effect.ignore);
+  return withoutRecordedPageReads(() => preloadPage(props)).pipe(Effect.ignore);
 };
 
 /**
@@ -209,6 +210,6 @@ export const prepareModulePage = (
             ? preloadPageData(remote, props)
             : prefetch(pathname);
           return remote;
-        }).pipe(Effect.timeoutOption(budget))
+        }).pipe(Effect.timeoutOption(budget), (work) => withPrimaryModulePreparation(pathname, work))
       : Effect.succeedNone,
   );

@@ -32,20 +32,20 @@ const settledRouterState: RouterStateDouble = {
   resolvedLocation: { pathname: '/en' },
 };
 
-const { accountMenuSelectHandlers, helmetHtmlAttributes, routerState, tenantValueChangeHandlers } = rstest.hoisted(
-  () => {
+const { accountMenuSelectHandlers, clearCacheMock, helmetHtmlAttributes, routerState, tenantValueChangeHandlers } =
+  rstest.hoisted(() => {
     const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
     const htmlAttributes: HtmlAttributes[] = [];
     const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
     const pendingRouterState: RouterStateSlot = { current: null };
     return {
       accountMenuSelectHandlers: accountHandlers,
+      clearCacheMock: rstest.fn(),
       helmetHtmlAttributes: htmlAttributes,
       routerState: pendingRouterState,
       tenantValueChangeHandlers: tenantHandlers,
     };
-  },
-);
+  });
 
 rstest.mock('@modern-js/runtime/head', () => ({
   Helmet: ({ htmlAttributes }: Pick<HelmetProps, 'htmlAttributes'>) => {
@@ -59,7 +59,12 @@ rstest.mock('@modern-js/runtime/head', () => ({
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
   useNavigate: () => () => Promise.resolve(),
-  useRouter: () => ({ matchRoutes: () => [], preloadRoute: () => Promise.resolve(), routesById: {} }),
+  useRouter: () => ({
+    clearCache: clearCacheMock,
+    matchRoutes: () => [],
+    preloadRoute: () => Promise.resolve(),
+    routesById: {},
+  }),
   useRouterState: ({ select }: { readonly select: (state: RouterStateDouble) => string | undefined }) =>
     select(routerState.current ?? settledRouterState),
 }));
@@ -200,6 +205,7 @@ const testingWorkspaceTitle = 'Testing workspace';
 
 afterEach(() => {
   cleanup();
+  clearCacheMock.mockClear();
   routerState.current = null;
   accountMenuSelectHandlers.length = 0;
   helmetHtmlAttributes.length = 0;
@@ -389,9 +395,11 @@ it.effect('renders the account Menu last and dispatches only the logout command 
     expect(screen.getByRole('menu').getAttribute('aria-activedescendant')).toBe(logout.id);
     yield* Effect.promise(() => user.keyboard('{Enter}'));
     expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
 
     accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
     expect(onLogout).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -419,6 +427,7 @@ it.effect('retains the account trigger and profile item while disabling logout w
     expect(command.getAttribute('aria-disabled')).toBe('true');
     yield* Effect.promise(() => user.click(command));
     expect(onLogout).not.toHaveBeenCalled();
+    expect(clearCacheMock).not.toHaveBeenCalled();
   }),
 );
 
@@ -449,6 +458,7 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
     yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
     expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
     expect(onTenantChange).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
 
     tenantValueChangeHandlers.at(-1)?.({
       items: [tenantProps.tenantChoices[0]],
@@ -456,6 +466,7 @@ it.effect('renders complete ordered tenant items and dispatches keyboard selecti
     });
     tenantValueChangeHandlers.at(-1)?.({ items: [], value: [] });
     expect(onTenantChange).toHaveBeenCalledTimes(1);
+    expect(clearCacheMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -739,6 +750,7 @@ test('replaces destinations when the selected entity composition changes', () =>
   expect(navigationText()).toContain('Invoices');
   expect(navigationText()).not.toContain('Products and stock');
   expect(navigationText()).not.toContain('Orders');
+  expect(clearCacheMock).toHaveBeenCalledTimes(1);
 });
 
 test('keeps unavailable destinations visible without links', () => {

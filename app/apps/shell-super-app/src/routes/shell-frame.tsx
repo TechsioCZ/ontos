@@ -1,6 +1,6 @@
 import { Helmet } from '@modern-js/runtime/head';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useNavigate, useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { useNavigate, useRouter, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
@@ -15,15 +15,19 @@ import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
+import { useContext, useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
+import { Effect } from 'effect';
+
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { withoutRecordedPageReads } from './browser-request-cache.ts';
 
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
-import { useIdleRoutePreload } from './use-idle-route-preload.ts';
+import { StaffRoutePreloadContext, useIdleRoutePreload } from './use-idle-route-preload.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -151,19 +155,68 @@ export interface ShellNavigationModel {
 
 type Translate = (key: string) => string;
 
-/**
- * LinkButton always forwards `href`; the localized router link derives it from `to`, so drop the empty one.
- * Preload on user intent, not viewport visibility: opening one page must not compete with every sidebar
- * destination's owner reads. Idle warming handles the remaining menu after the current page has settled.
- */
+/** Staff links prepare on render and immediately on intent, using native joinable router flights. */
 export const ShellRouteLink = ({
   href: _unusedHref,
   ...props
-}: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
-  // Router-active styling matches a destination only when the location equals it. Without `exact`, the home link
-  // ("/") counts as active on every page and is marked as the current page beside the real destination.
-  <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
-);
+}: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => {
+  const router = useRouter();
+  const { language } = useModernI18n();
+  const { enabled } = useContext(StaffRoutePreloadContext);
+  const prepare = (element: HTMLAnchorElement) => {
+    const url = new URL(element.href);
+    if (
+      !enabled ||
+      language === undefined ||
+      url.origin !== globalThis.location.origin ||
+      !(url.pathname === `/${language}` || url.pathname.startsWith(`/${language}/`)) ||
+      element.hasAttribute('download') ||
+      (element.target !== '' && element.target !== '_self')
+    ) {
+      return;
+    }
+    browserRuntime.runFork(
+      withoutRecordedPageReads(() =>
+        router.preloadRoute({
+          hash: url.hash.slice(1),
+          search: router.options.parseSearch(url.search),
+          to: url.pathname,
+        }),
+      ).pipe(Effect.ignore),
+    );
+  };
+  return (
+    <LocalizedLink
+      activeOptions={{ exact: true }}
+      {...props}
+      onFocus={(event) => {
+        props.onFocus?.(event);
+        if (!event.defaultPrevented) {
+          prepare(event.currentTarget);
+        }
+      }}
+      onMouseEnter={(event) => {
+        props.onMouseEnter?.(event);
+        if (!event.defaultPrevented) {
+          prepare(event.currentTarget);
+        }
+      }}
+      onTouchStart={(event) => {
+        props.onTouchStart?.(event);
+        if (!event.defaultPrevented) {
+          prepare(event.currentTarget);
+        }
+      }}
+      prefetch="none"
+      preload={false}
+      ref={(element: HTMLAnchorElement | null) => {
+        if (element !== null) {
+          prepare(element);
+        }
+      }}
+    />
+  );
+};
 
 const entryNotice = (entry: DashboardNavigationItem, t: Translate): string | null =>
   entry.unavailable ? t('shell.modules.unavailable') : null;
@@ -418,7 +471,9 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
         items={tenantItems}
         label={tenantLabel}
         name="tenant"
-        onChange={props.onTenantChange}
+        onChange={(tenantId) => {
+          props.onTenantChange(tenantId);
+        }}
         placeholder={tenantUnavailableText}
         status={selectorStatus(props.tenantSwitchFailed, tenantUnavailable)}
         statusId="tenant-switch-status"
@@ -745,6 +800,15 @@ const usePendingNavigationHref = (language: string): string | undefined => {
   return pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language);
 };
 
+const useDashboardRoutePreload = (props: AuthenticatedDashboardLayoutProps) =>
+  useIdleRoutePreload(
+    props.navigation,
+    [props.currentTenantId, props.currentLegalEntityId, props.tenantContextActive, props.compositionRevision].join(
+      '\n',
+    ),
+    props.logoutPending || props.tenantSwitchPending || props.legalEntitySwitchPending,
+  );
+
 /**
  * Akros admin frame: a compact full-width top bar (brand, search, current trail, account) above a collapsible,
  * grouped navigation Sidebar. Below the Sidebar breakpoint the same panel opens as a drawer from the top bar.
@@ -756,7 +820,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const pageLanguage = language ?? '';
   const pendingHref = usePendingNavigationHref(pageLanguage);
   const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
-  useIdleRoutePreload(props.navigation, props.compositionRevision);
+  const preload = useDashboardRoutePreload(props);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
   // navigation on screen. Hide it before the browser paints and load the document again, so the server decides.
@@ -801,7 +865,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   };
 
   return (
-    <>
+    <StaffRoutePreloadContext value={preload}>
       <Helmet>
         <title>{`${props.title ?? model.current?.link.label ?? t('shell.dashboard.home.title')} | OntOS`}</title>
       </Helmet>
@@ -828,9 +892,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
               <Sidebar.Trigger aria-label={t(navigationToggleKey)} side="start" tooltip={t(navigationToggleKey)} />
             )}
             {/* The brand is not a navigation item: the router would mark it current on every page. */}
-            <LocalizedLink aria-current={false} className="hidden no-underline md:flex" prefetch="intent" to="/">
+            <ShellRouteLink aria-current={false} className="hidden no-underline md:flex" to="/">
               <DashboardBrand />
-            </LocalizedLink>
+            </ShellRouteLink>
             {/* Search lives in each governed agenda; do not advertise an unavailable global provider. */}
             {props.logoutPending ? null : <DashboardTrail model={model} />}
           </Header.Container>
@@ -845,7 +909,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                 <DashboardAccountMenu
                   identity={props.identity}
                   logoutPending={props.logoutPending}
-                  onLogout={props.onLogout}
+                  onLogout={() => {
+                    preload.suspend();
+                    props.onLogout();
+                  }}
                 />
               </Header.ActionItem>
             </Header.Actions>
@@ -861,9 +928,18 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                 legalEntityState={props.legalEntityState}
                 legalEntitySwitchFailed={props.legalEntitySwitchFailed}
                 legalEntitySwitchPending={props.legalEntitySwitchPending}
-                onLegalEntityChange={props.onLegalEntityChange}
-                onTenantChange={props.onTenantChange}
-                onTenantContextChange={props.onTenantContextChange}
+                onLegalEntityChange={(value) => {
+                  preload.suspend();
+                  props.onLegalEntityChange(value);
+                }}
+                onTenantChange={(value) => {
+                  preload.suspend();
+                  props.onTenantChange(value);
+                }}
+                onTenantContextChange={() => {
+                  preload.suspend();
+                  props.onTenantContextChange?.();
+                }}
                 tenantChoices={props.tenantChoices}
                 tenantContextActive={props.tenantContextActive}
                 tenantContextAvailable={props.tenantContextAvailable}
@@ -896,6 +972,6 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         </div>
         {guideVisible ? <DemoGuidePanel guide={guide} identityEmail={props.identity.email} /> : null}
       </Sidebar>
-    </>
+    </StaffRoutePreloadContext>
   );
 };

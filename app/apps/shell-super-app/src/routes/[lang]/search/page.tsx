@@ -1,4 +1,4 @@
-import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -37,14 +37,12 @@ const SearchResultItem = ({
       key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
     >
       <LinkButton
-        as={LocalizedLink}
+        as={ShellRouteLink}
         params={{
           moduleId: result.ref.moduleId,
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
-        // Every result would otherwise preload its page as soon as it scrolls into view.
-        prefetch="intent"
         to="/resources/$moduleId/$resourceType/$resourceId"
         variant="secondary"
       >
