@@ -1,16 +1,27 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { isMap, isScalar, parseAllDocuments, parseDocument } from 'yaml';
 
-// Every override, peer rule, package extension and patch in pnpm-workspace.yaml must still act on
-// the resolved graph in pnpm-lock.yaml. Dead entries silently outlive the upgrade that fixed them.
+// Every dependency policy must act on the resolved graph or the pinned framework's enforced
+// workspace contract. Required security floors remain live even before their target is installed.
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 
 type Manifests = Readonly<Record<string, Readonly<Record<string, string>>>>;
+type RequiredOverrides = Readonly<Record<string, string>>;
+
+const FrameworkIdentitySchema = Schema.fromJsonString(
+  Schema.Struct({ name: Schema.Literal('@bleedingdev/modern-js-ultramodern-create'), version: Schema.String }),
+);
+const FrameworkPolicySchema = Schema.Struct({
+  ULTRAMODERN_WORKSPACE_POLICY: Schema.Struct({
+    pnpm: Schema.Struct({ overrides: Schema.Record(Schema.String, Schema.String) }),
+  }),
+});
 
 const Edges = Schema.optional(Schema.Record(Schema.String, Schema.Unknown));
 const Ranges = Schema.optional(Schema.Record(Schema.String, Schema.String));
@@ -126,7 +137,17 @@ const matchesPackage = (part: SelectorPart, id: string): boolean =>
 const rangeSelector = (section: string, key: string): string =>
   `${section}.${key} selects a version range this gate cannot evaluate; select an exact version or the bare name`;
 
-const deadOverride = (key: string, value: string, lock: Lockfile, manifests: Manifests): readonly string[] => {
+const deadOverride = (
+  key: string,
+  value: string,
+  lock: Lockfile,
+  manifests: Manifests,
+  required: RequiredOverrides,
+): readonly string[] => {
+  const requiredValue = required[key];
+  if (requiredValue !== undefined) {
+    return value === requiredValue ? [] : [`overrides.${key} must match the pinned framework policy: ${requiredValue}`];
+  }
   const parts = overrideParts(key);
   if (parts === undefined) {
     return [rangeSelector('overrides', key)];
@@ -199,11 +220,17 @@ const findDeadDependencyPolicy = (
   workspaceYaml: string,
   lockSource: string,
   manifests: Manifests,
+  required: RequiredOverrides = {},
 ): readonly string[] => {
   const lock = parseLockfile(lockSource);
   const workspace = Schema.decodeUnknownSync(WorkspaceSchema)(parseDocument(workspaceYaml).toJS() ?? {});
   return [
-    ...Object.entries(workspace.overrides ?? {}).flatMap(([key, value]) => deadOverride(key, value, lock, manifests)),
+    ...Object.keys(required).flatMap((key) =>
+      workspace.overrides?.[key] === undefined ? [`overrides.${key} is required by the pinned framework policy`] : [],
+    ),
+    ...Object.entries(workspace.overrides ?? {}).flatMap(([key, value]) =>
+      deadOverride(key, value, lock, manifests, required),
+    ),
     ...Object.entries(workspace.peerDependencyRules?.allowedVersions ?? {}).flatMap(([key, value]) =>
       deadPeerRule(key, value, lock),
     ),
@@ -284,10 +311,43 @@ patchedDependencies:
   remote-tarball: patches/remote-tarball.patch
 `;
 
-it('pnpm-workspace.yaml carries no dead overrides, peer rules, extensions or unlinked patches', () => {
-  const workspaceYaml = readFileSync(path.join(appRoot, 'pnpm-workspace.yaml'), 'utf-8');
-  const lockSource = readFileSync(path.join(appRoot, 'pnpm-lock.yaml'), 'utf-8');
-  expect(findDeadDependencyPolicy(workspaceYaml, lockSource, readManifests(lockSource))).toEqual([]);
+it.effect('pnpm-workspace.yaml carries no dead overrides, peer rules, extensions or unlinked patches', () =>
+  Effect.gen(function* checkInstalledDependencyPolicy() {
+    const workspaceYaml = readFileSync(path.join(appRoot, 'pnpm-workspace.yaml'), 'utf-8');
+    const lockSource = readFileSync(path.join(appRoot, 'pnpm-lock.yaml'), 'utf-8');
+    const frameworkRoot = path.join(appRoot, 'node_modules/@modern-js/ultramodern-create');
+    const identity = yield* Schema.decodeUnknownEffect(FrameworkIdentitySchema)(
+      readFileSync(path.join(frameworkRoot, 'package.json'), 'utf-8'),
+    );
+    expect(parseDocument(workspaceYaml).getIn(['catalogs', 'ultramodern', '@modern-js/ultramodern-create'])).toBe(
+      `npm:${identity.name}@${identity.version}`,
+    );
+    const policyPath = path.join(frameworkRoot, 'dist/esm-node/ultramodern-workspace/policy.js');
+    const source: unknown = yield* Effect.promise(() => import(pathToFileURL(policyPath).href));
+    const policy = yield* Schema.decodeUnknownEffect(FrameworkPolicySchema)(source);
+    const required = policy.ULTRAMODERN_WORKSPACE_POLICY.pnpm.overrides;
+    expect(Object.keys(required).length).toBeGreaterThan(0);
+    expect(findDeadDependencyPolicy(workspaceYaml, lockSource, readManifests(lockSource), required)).toEqual([]);
+  }),
+);
+
+it('preserves exact framework security requirements without admitting neighboring dead overrides', () => {
+  const selector = 'absent@>=1.0.0 <1.0.1';
+  const required = { [selector]: '1.0.1' };
+  expect(findDeadDependencyPolicy(`overrides:\n  '${selector}': 1.0.1\n`, lockFixture, {}, required)).toEqual([]);
+  expect(findDeadDependencyPolicy(`overrides:\n  '${selector}': 1.0.0\n`, lockFixture, {}, required)).toEqual([
+    `overrides.${selector} must match the pinned framework policy: 1.0.1`,
+  ]);
+  expect(findDeadDependencyPolicy('overrides: {}\n', lockFixture, {}, required)).toEqual([
+    `overrides.${selector} is required by the pinned framework policy`,
+  ]);
+  expect(
+    findDeadDependencyPolicy(`overrides:\n  '${selector}': 1.0.1\n  unrelated: 9.9.9\n`, lockFixture, {}, required),
+  ).toEqual(['overrides.unrelated matches nothing in pnpm-lock.yaml; delete it']);
+});
+
+it('rejects malformed framework policy evidence rather than inferring exceptions', () => {
+  expect(() => Schema.decodeUnknownSync(FrameworkPolicySchema)({ ULTRAMODERN_WORKSPACE_POLICY: {} })).toThrow();
 });
 
 it('accepts policy entries that still act on the resolved graph', () => {
