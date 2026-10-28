@@ -132,6 +132,10 @@ overrides:
   # UltraModern workspace policy: the signed braces fork bounds parser nesting; sharp 0.35.5 is the patched release.
   'braces@>=3.0.0 <3.0.4': npm:@bleedingdev/braces@3.0.4
   'sharp@>=0.35.0 <0.35.5': 0.35.5
+  'undici@>=7.0.0 <7.30.1': 7.30.1
+  'undici@>=8.0.0 <8.12.2': 8.12.2
+  'body-parser@>=2.0.0 <2.4.0': 2.4.0
+  'dompurify@>=3.0.0 <3.4.17': 3.4.17
 allowBuilds:
   '@parcel/watcher': true
   '@swc/core': true
@@ -142,7 +146,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
-  # .11 predates @effect/tsgo 0.63.0; keep its metadata/stamp checks and pin the reviewed provider's exact targets.
+  # .11 predates this compiler/Effect cohort; align emitted pins and exact provider targets while retaining metadata/stamp checks.
   '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11': patches/ultramodern-compiler-compatibility.patch
   '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.11': patches/ultramodern-compiler-discovery.patch
   # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core

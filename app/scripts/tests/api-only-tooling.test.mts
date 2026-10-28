@@ -248,6 +248,19 @@ interface WorkspaceAppFixture {
   readonly id: typeof AppIdSchema.Type;
 }
 
+interface GeneratedRootPackage {
+  readonly devDependencies: Readonly<Record<string, string>>;
+  readonly scripts: Readonly<Record<string, string>>;
+}
+
+type CreateRootPackageJson = (
+  scope: string,
+  packageSource: {
+    readonly modernPackageVersion: string;
+    readonly strategy: 'install';
+  },
+) => GeneratedRootPackage;
+
 type CreateSharedPackage = (
   scope: string,
   id: string,
@@ -417,7 +430,13 @@ const ApiServiceGeneratorModuleSchema = Schema.Struct({
 });
 
 const PackageGeneratorModuleSchema = Schema.Struct({
+  createRootPackageJson: callable<CreateRootPackageJson>(),
   createSharedPackage: callable<CreateSharedPackage>(),
+});
+
+const GeneratedRootPackageSchema = Schema.Struct({
+  devDependencies: Schema.Record(Schema.String, Schema.String),
+  scripts: Schema.Record(Schema.String, Schema.String),
 });
 
 const SharedApiGeneratorModuleSchema = Schema.Struct({
@@ -626,7 +645,45 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.5');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.7');
+    expect(sharedContractsPackage.dependencies['@effect/opentelemetry']).toBe('4.0.7');
+  }),
+);
+
+it.live(
+  'all published package generators emit the prepared Effect compiler cohort',
+  Effect.fn(function* generatedCompilerCohort() {
+    for (const moduleFormat of ['esm', 'esm-node', 'cjs']) {
+      const modulePath = publishedGeneratorModulePath(moduleFormat)('package-json');
+      const source: unknown =
+        moduleFormat === 'cjs'
+          ? require(modulePath)
+          : yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
+      const generator = yield* Schema.decodeUnknownEffect(PackageGeneratorModuleSchema)(source);
+      const packageSource = { modernPackageVersion: '3.9.3-ultramodern.11', strategy: 'install' } as const;
+      const root = yield* Schema.decodeUnknownEffect(GeneratedRootPackageSchema)(
+        generator.createRootPackageJson('fixture', packageSource),
+      );
+      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.63.0');
+      expect(root.devDependencies.tsrs, moduleFormat).toBe('0.20.1-ts7.1.0-beta');
+      expect(root.devDependencies.typescript, moduleFormat).toBe('7.0.2');
+      expect(root.devDependencies['@typescript/native'], moduleFormat).toBe('npm:typescript@7.0.2');
+      expect(root.devDependencies.effect, moduleFormat).toBe('4.0.7');
+      expect(root.devDependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
+      expect(root.scripts.postinstall, moduleFormat).toBe(
+        'ultramodern-create ultramodern compiler-prepare && ultramodern-create ultramodern skills install --postinstall',
+      );
+      const shared = generator.createSharedPackage('fixture', 'shared-contracts', 'fixture contracts', packageSource);
+      expect(shared.dependencies.effect, moduleFormat).toBe('4.0.7');
+      expect(shared.dependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
+    }
+    const preparationOutput = yield* Effect.sync(() =>
+      runNode([path.join(generatorRoot, 'templates/workspace-scripts/ultramodern-compiler-prepare.mjs')], {
+        cwd: workspaceRoot,
+      }),
+    );
+    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.20.1-ts7.1.0-beta');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.63.0');
   }),
 );
 

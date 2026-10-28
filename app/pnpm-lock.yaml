@@ -235,10 +235,14 @@ overrides:
   zod: 4.6.7
   braces@>=3.0.0 <3.0.4: npm:@bleedingdev/braces@3.0.4
   sharp@>=0.35.0 <0.35.5: 0.35.5
+  undici@>=7.0.0 <7.30.1: 7.30.1
+  undici@>=8.0.0 <8.12.2: 8.12.2
+  body-parser@>=2.0.0 <2.4.0: 2.4.0
+  dompurify@>=3.0.0 <3.4.17: 3.4.17
 
 patchedDependencies:
   '@bleedingdev/modern-js-app-tools-extensions@3.9.3-ultramodern.11': 47235786448b3402494c10b3d3c187e8c2327b4b925145176e4cc0772fa9c921
-  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11': b79cc5f40bfb3d26cf7fdba1eaa598fc7bdec40caa32eb6eec913426a45e791f
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11': 943a23bb4e1c86379921da69e79042f15aa606256c35da7ebb69fa00cc48b506
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
   drizzle-orm@1.0.0-rc.5-ab785fc: e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466
   effect-rstest: 866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca
@@ -316,7 +320,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.9.3-ultramodern.11(e05e6ad990dc0cead2b82b0a18b0ee7e)'
       '@modern-js/ultramodern-create':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11(patch_hash=b79cc5f40bfb3d26cf7fdba1eaa598fc7bdec40caa32eb6eec913426a45e791f)(0cbc5c76ad3308e2870223657691feae)'
+        version: '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11(patch_hash=943a23bb4e1c86379921da69e79042f15aa606256c35da7ebb69fa00cc48b506)(0cbc5c76ad3308e2870223657691feae)'
       '@nkzw/eslint-plugin':
         specifier: 2.0.0
         version: 2.0.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
@@ -11094,12 +11098,8 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
-    engines: {node: '>=20.18.1'}
-
-  undici@7.29.1:
-    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
+  undici@7.30.1:
+    resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
 
   undici@8.12.3:
@@ -11660,7 +11660,7 @@ snapshots:
       adm-zip: 0.6.1
       isomorphic-ws: 5.0.0(ws@8.21.3)
       typescript: 7.0.2
-      undici: 7.29.1
+      undici: 7.30.1
       ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
@@ -13619,7 +13619,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11(patch_hash=b79cc5f40bfb3d26cf7fdba1eaa598fc7bdec40caa32eb6eec913426a45e791f)(0cbc5c76ad3308e2870223657691feae)':
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.11(patch_hash=943a23bb4e1c86379921da69e79042f15aa606256c35da7ebb69fa00cc48b506)(0cbc5c76ad3308e2870223657691feae)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@10.2.2)
       '@babel/parser': 8.0.7
@@ -19325,7 +19325,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.5(@types/node@20.19.43)
-      undici: 7.29.0
+      undici: 7.30.1
       workerd: 1.20260921.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -19338,7 +19338,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.5(@types/node@26.6.3)
-      undici: 7.29.0
+      undici: 7.30.1
       workerd: 1.20260921.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -19351,7 +19351,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.5(@types/node@26.6.3)
-      undici: 7.29.1
+      undici: 7.30.1
       workerd: 1.20261012.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -21432,9 +21432,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@7.29.0: {}
-
-  undici@7.29.1: {}
+  undici@7.30.1: {}
 
   undici@8.12.3: {}
 
