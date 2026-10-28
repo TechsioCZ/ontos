@@ -20,3 +20,155 @@ diff --git a/templates/workspace-scripts/ultramodern-compiler-prepare.mjs b/temp
    throw new Error(`Unreviewed Effect tsrs capability contract: ${effect.version}`);
  }
  const supportsTsrs = declaresTsrs && effectTsrsTargets.has(platformPackage);
+diff --git a/dist/esm/ultramodern-workspace/versions.js b/dist/esm/ultramodern-workspace/versions.js
+--- a/dist/esm/ultramodern-workspace/versions.js
++++ b/dist/esm/ultramodern-workspace/versions.js
+@@ -11,9 +11,9 @@
+ const CLOUDFLARE_COMPATIBILITY_DATE = '2026-06-02';
+ const TAILWIND_VERSION = '4.3.3';
+ const RSBUILD_PLUGIN_TAILWINDCSS_VERSION = '2.0.3';
+-const EFFECT_VERSION = '4.0.5';
+-const EFFECT_TSGO_VERSION = '0.59.0';
+-const TSRS_VERSION = '0.20.0-ts7.1.0-beta';
++const EFFECT_VERSION = '4.0.7';
++const EFFECT_TSGO_VERSION = '0.63.0';
++const TSRS_VERSION = '0.20.1-ts7.1.0-beta';
+ const COMPILER_RELEASE_AGE_EXCEPTIONS = Object.freeze([
+     `@effect/tsgo@${EFFECT_TSGO_VERSION}`,
+     ...[
+diff --git a/dist/esm-node/ultramodern-workspace/versions.js b/dist/esm-node/ultramodern-workspace/versions.js
+--- a/dist/esm-node/ultramodern-workspace/versions.js
++++ b/dist/esm-node/ultramodern-workspace/versions.js
+@@ -12,9 +12,9 @@
+ const CLOUDFLARE_COMPATIBILITY_DATE = '2026-06-02';
+ const TAILWIND_VERSION = '4.3.3';
+ const RSBUILD_PLUGIN_TAILWINDCSS_VERSION = '2.0.3';
+-const EFFECT_VERSION = '4.0.5';
+-const EFFECT_TSGO_VERSION = '0.59.0';
+-const TSRS_VERSION = '0.20.0-ts7.1.0-beta';
++const EFFECT_VERSION = '4.0.7';
++const EFFECT_TSGO_VERSION = '0.63.0';
++const TSRS_VERSION = '0.20.1-ts7.1.0-beta';
+ const COMPILER_RELEASE_AGE_EXCEPTIONS = Object.freeze([
+     `@effect/tsgo@${EFFECT_TSGO_VERSION}`,
+     ...[
+diff --git a/dist/cjs/ultramodern-workspace/versions.cjs b/dist/cjs/ultramodern-workspace/versions.cjs
+--- a/dist/cjs/ultramodern-workspace/versions.cjs
++++ b/dist/cjs/ultramodern-workspace/versions.cjs
+@@ -40,9 +40,9 @@
+ const CLOUDFLARE_COMPATIBILITY_DATE = '2026-06-02';
+ const TAILWIND_VERSION = '4.3.3';
+ const RSBUILD_PLUGIN_TAILWINDCSS_VERSION = '2.0.3';
+-const EFFECT_VERSION = '4.0.5';
+-const EFFECT_TSGO_VERSION = '0.59.0';
+-const TSRS_VERSION = '0.20.0-ts7.1.0-beta';
++const EFFECT_VERSION = '4.0.7';
++const EFFECT_TSGO_VERSION = '0.63.0';
++const TSRS_VERSION = '0.20.1-ts7.1.0-beta';
+ const COMPILER_RELEASE_AGE_EXCEPTIONS = Object.freeze([
+     `@effect/tsgo@${EFFECT_TSGO_VERSION}`,
+     ...[
+diff --git a/dist/types/ultramodern-workspace/versions.d.ts b/dist/types/ultramodern-workspace/versions.d.ts
+--- a/dist/types/ultramodern-workspace/versions.d.ts
++++ b/dist/types/ultramodern-workspace/versions.d.ts
+@@ -16,9 +16,9 @@
+ export declare const CLOUDFLARE_COMPATIBILITY_DATE = "2026-06-02";
+ export declare const TAILWIND_VERSION = "4.3.3";
+ export declare const RSBUILD_PLUGIN_TAILWINDCSS_VERSION = "2.0.3";
+-export declare const EFFECT_VERSION = "4.0.5";
+-export declare const EFFECT_TSGO_VERSION = "0.59.0";
+-export declare const TSRS_VERSION = "0.20.0-ts7.1.0-beta";
++export declare const EFFECT_VERSION = "4.0.7";
++export declare const EFFECT_TSGO_VERSION = "0.63.0";
++export declare const TSRS_VERSION = "0.20.1-ts7.1.0-beta";
+ export declare const COMPILER_RELEASE_AGE_EXCEPTIONS: readonly string[];
+ export declare const TYPESCRIPT_STABLE_VERSION = "7.0.2";
+ export declare const TYPESCRIPT_VERSION = "7.0.2";
+@@ -53,31 +53,31 @@
+         readonly 'react-dom': "19.3.1";
+     };
+     readonly bffEffectDependencies: {
+-        readonly '@effect/opentelemetry': "4.0.5";
+-        readonly effect: "4.0.5";
++        readonly '@effect/opentelemetry': "4.0.7";
++        readonly effect: "4.0.7";
+     };
+     readonly appDevDependencies: {
+-        readonly '@effect/tsgo': "0.59.0";
++        readonly '@effect/tsgo': "0.63.0";
+         readonly '@rsbuild/plugin-tailwindcss': "^2.0.3";
+         readonly '@typescript/native': "npm:typescript@7.0.2";
+         readonly '@types/node': "26.6.5";
+         readonly '@types/react': "19.3.0";
+         readonly '@types/react-dom': "19.3.0";
+         readonly tailwindcss: "^4.3.3";
+-        readonly tsrs: "0.20.0-ts7.1.0-beta";
++        readonly tsrs: "0.20.1-ts7.1.0-beta";
+         readonly typescript: "7.0.2";
+         readonly wrangler: "4.151.0";
+         readonly 'zephyr-rspack-plugin': "1.6.0";
+     };
+     readonly rootDevDependencies: {
+-        readonly '@effect/tsgo': "0.59.0";
++        readonly '@effect/tsgo': "0.63.0";
+         readonly '@typescript/native': "npm:typescript@7.0.2";
+         readonly '@types/node': "26.6.5";
+         readonly lefthook: "2.2.2";
+         readonly miniflare: "5.20261012.0-beta";
+         readonly oxlint: "1.88.0";
+         readonly oxfmt: "0.73.0";
+-        readonly tsrs: "0.20.0-ts7.1.0-beta";
++        readonly tsrs: "0.20.1-ts7.1.0-beta";
+         readonly ultracite: "8.0.1";
+         readonly wrangler: "4.151.0";
+         readonly 'zephyr-agent': "1.6.0";
+diff --git a/dist/types/ultramodern-workspace/policy.d.ts b/dist/types/ultramodern-workspace/policy.d.ts
+--- a/dist/types/ultramodern-workspace/policy.d.ts
++++ b/dist/types/ultramodern-workspace/policy.d.ts
+@@ -24,31 +24,31 @@
+             readonly 'react-dom': "19.3.1";
+         };
+         readonly bffEffectDependencies: {
+-            readonly '@effect/opentelemetry': "4.0.5";
+-            readonly effect: "4.0.5";
++            readonly '@effect/opentelemetry': "4.0.7";
++            readonly effect: "4.0.7";
+         };
+         readonly appDevDependencies: {
+-            readonly '@effect/tsgo': "0.59.0";
++            readonly '@effect/tsgo': "0.63.0";
+             readonly '@rsbuild/plugin-tailwindcss': "^2.0.3";
+             readonly '@typescript/native': "npm:typescript@7.0.2";
+             readonly '@types/node': "26.6.5";
+             readonly '@types/react': "19.3.0";
+             readonly '@types/react-dom': "19.3.0";
+             readonly tailwindcss: "^4.3.3";
+-            readonly tsrs: "0.20.0-ts7.1.0-beta";
++            readonly tsrs: "0.20.1-ts7.1.0-beta";
+             readonly typescript: "7.0.2";
+             readonly wrangler: "4.151.0";
+             readonly 'zephyr-rspack-plugin': "1.6.0";
+         };
+         readonly rootDevDependencies: {
+-            readonly '@effect/tsgo': "0.59.0";
++            readonly '@effect/tsgo': "0.63.0";
+             readonly '@typescript/native': "npm:typescript@7.0.2";
+             readonly '@types/node': "26.6.5";
+             readonly lefthook: "2.2.2";
+             readonly miniflare: "5.20261012.0-beta";
+             readonly oxlint: "1.88.0";
+             readonly oxfmt: "0.73.0";
+-            readonly tsrs: "0.20.0-ts7.1.0-beta";
++            readonly tsrs: "0.20.1-ts7.1.0-beta";
+             readonly ultracite: "8.0.1";
+             readonly wrangler: "4.151.0";
+             readonly 'zephyr-agent': "1.6.0";
+@@ -96,7 +96,7 @@
+         readonly peerDependencyRules: {
+             readonly allowedVersions: {
+                 readonly react: '>=19.0.0';
+-                readonly '@effect/vitest>effect': "4.0.5";
++                readonly '@effect/vitest>effect': "4.0.7";
+             };
+         };
+         readonly allowBuilds: {
