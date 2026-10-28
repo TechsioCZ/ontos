@@ -308,6 +308,11 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     subjectType: text('subject_type'),
     /** While this stands in the future one replica owns this Attempt's sweep; it expires on its own. */
     sweepClaimedUntil: timestamp('sweep_claimed_until', { withTimezone: true }),
+    /**
+     * The approved composition the sweep count was spent under. A new release can fix what the sweeps
+     * kept halting on, so it starts the budget over just as a moved revision does.
+     */
+    sweepCompositionRevision: text('sweep_composition_revision'),
     /** How many fruitless continuation sweeps this Attempt has had while standing at `sweepRevision`. */
     sweepCount: integer('sweep_count').default(0).notNull(),
     /** The revision the sweep count was spent against; a different one starts the budget over. */
