@@ -15,7 +15,7 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
@@ -182,7 +182,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
 const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
@@ -199,7 +199,7 @@ const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUni
       ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 

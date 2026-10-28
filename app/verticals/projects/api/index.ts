@@ -8,7 +8,7 @@ import {
   TenantModuleStateServiceLive as GovernedTenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionPermissionLive,
@@ -153,7 +153,7 @@ const projectsApiHandlersLive = Layer.mergeAll(projectsReadinessLayer, governedR
     ),
   ),
   Layer.provide(Layer.mergeAll(governedApplicationCompositionSourceLive, RequestSchemaProblemLive)),
-  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(GovernedDatabaseConfigLive, nodeCryptoLayer)),
   Layer.orDie,
 );
 

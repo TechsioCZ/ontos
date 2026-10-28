@@ -17,7 +17,7 @@ import {
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -142,7 +142,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   Layer.provide(compositionSourceLive),
-  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, nodeCryptoLayer)),
 );
 const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.orDie);
 
