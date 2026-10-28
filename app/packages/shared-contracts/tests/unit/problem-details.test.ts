@@ -36,8 +36,8 @@ for (const status of statuses) {
     const encodedProblem = Schema.encodeUnknownSync(schema)(problem);
     expect(Schema.is(Schema.toEncoded(schema))(encodedProblem)).toBe(true);
     expect(Struct.omit(encodedProblem, ['_tag'])).toEqual(Struct.omit(problem, ['_tag']));
-    expect(schema.ast.annotations?.['httpApiStatus']).toBe(status);
-    const encoding = schema.ast.annotations?.['~httpApiEncoding'];
+    expect(Schema.resolveAnnotationsKey(schema)?.httpApiStatus).toBe(status);
+    const encoding = SchemaAST.resolveAt<unknown>('~httpApiEncoding')(schema.ast);
     expect(Predicate.isTagged(encoding, 'Json')).toBe(true);
     if (!Predicate.isTagged(encoding, 'Json')) {
       throw new Error('Expected JSON HTTP API encoding');

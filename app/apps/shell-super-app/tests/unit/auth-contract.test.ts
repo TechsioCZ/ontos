@@ -27,7 +27,7 @@ type TenantEndpoint =
 
 const statuses = (endpoint: TenantEndpoint) =>
   [...endpoint.error]
-    .map((schema) => schema.ast.annotations?.['httpApiStatus'])
+    .map((schema) => Schema.resolveAnnotationsKey(schema)?.httpApiStatus)
     .toSorted((left, right) => Number(left) - Number(right));
 
 const problemTag = (schema: Schema.Top): SchemaAST.LiteralValue => {
@@ -280,7 +280,7 @@ it('publishes exact tenant methods, paths, and declared failure statuses', () =>
 it('publishes the exhaustive identity failure status contract', () => {
   for (const endpoint of Object.values(ShellAuthenticationApi.groups.identity.endpoints)) {
     const identityStatuses = [...endpoint.error]
-      .map((schema) => schema.ast.annotations?.['httpApiStatus'])
+      .map((schema) => Schema.resolveAnnotationsKey(schema)?.httpApiStatus)
       .toSorted((left, right) => Number(left) - Number(right));
 
     expect(identityStatuses).toEqual([400, 401, 403, 404, 409, 422, 428, 429, 500, 503]);

@@ -21,7 +21,7 @@ const endpointStatuses = (
   endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
 ) =>
   [...endpoint.error]
-    .map((schema) => schema.ast.annotations?.['httpApiStatus'])
+    .map((schema) => Schema.resolveAnnotationsKey(schema)?.httpApiStatus)
     .toSorted((left, right) => Number(left) - Number(right));
 
 const problemTag = (schema: Schema.Top) => {

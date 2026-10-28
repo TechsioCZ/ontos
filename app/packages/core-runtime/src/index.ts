@@ -423,6 +423,7 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
+export { recoverSqlTransactionError } from './actions/repository.ts';
 export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
 export type {
   ActionCommitOpen,

@@ -47,7 +47,7 @@ const purchasePayload = Schema.decodeUnknownSync(PurchaseRequestSchema)({
 
 it('declares retryable 503 problems for Visibility and Purchase', () => {
   for (const problemSchema of [VisibilityUnavailableProblemSchema, PurchaseUnavailableProblemSchema]) {
-    expect(problemSchema.ast.annotations?.httpApiStatus).toBe(503);
+    expect(Schema.resolveAnnotationsKey(problemSchema)?.httpApiStatus).toBe(503);
   }
 });
 
