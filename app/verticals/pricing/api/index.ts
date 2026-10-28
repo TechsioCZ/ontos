@@ -17,7 +17,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -125,7 +125,7 @@ const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 /** Production Action composition with server-owned owner-client credential issuers. */
 export const productionActionRuntimeLive = pricingActionRuntimeLive.pipe(
@@ -153,7 +153,7 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
 );
 const readRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const governedReadRuntimeLive = readRuntimeLive;
 const pricingGatewayAssertionRedemptionDatabaseLive = GovernedGatewayAssertionRedemptionDatabaseLive.pipe(

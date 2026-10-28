@@ -17,7 +17,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -116,7 +116,7 @@ const paymentTermCatalogActionRuntime = makeActionRuntimeLive(ultramodernDeliver
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const productionActionRuntimeLive = paymentTermCatalogActionRuntime.pipe(
   Layer.provideMerge(unavailableCustomerContextGatewayCredentialLive),
@@ -125,7 +125,7 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 
 type PaymentTermCatalogApiRuntimeArguments = readonly [

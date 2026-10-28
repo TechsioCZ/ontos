@@ -18,7 +18,7 @@ import {
 } from '@app/core-runtime/actions/runtime-wiring';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -108,7 +108,7 @@ export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentO
 
 const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
   Layer.provide(readRuntimeDependenciesLive),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const actionAuthorizationPreflightDatabaseLive = ActionAuthorizationPreflightDatabaseLive.pipe(
   Layer.provideMerge(CorePersistenceLive),
@@ -134,7 +134,7 @@ const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
   ),
 );
 const productionActionRuntimeLive = actionRuntimeCoreLive.pipe(
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),

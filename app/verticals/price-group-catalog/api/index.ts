@@ -1,5 +1,5 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { NodeCrypto } from '@effect/platform-node';
+import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import {
   makeActionRuntimeLive,
   ContextAccessLive,
@@ -111,13 +111,13 @@ const priceGroupCatalogActionRuntimeLive = makeActionRuntimeLive(ultramodernDeli
       operationalScopeResolverLive,
     ),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const priceGroupCatalogReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(
     Layer.mergeAll(CorePersistenceLive, ContextAccessLive, moduleEntrypointGatewayLive, operationalScopeResolverLive),
   ),
-  Layer.provide(Layer.mergeAll(DatabaseConfigLive, NodeCrypto.layer)),
+  Layer.provide(Layer.mergeAll(DatabaseConfigLive, nodeCryptoLayer)),
 );
 const priceGroupCatalogGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
   Layer.provide(GovernedGatewayAssertionRedemptionDatabaseLive),
