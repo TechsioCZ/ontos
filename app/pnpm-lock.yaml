@@ -239,6 +239,8 @@ overrides:
   undici@>=8.0.0 <8.12.2: 8.12.2
   body-parser@>=2.0.0 <2.4.0: 2.4.0
   dompurify@>=3.0.0 <3.4.17: 3.4.17
+  seroval@<1.6.8: 1.6.9
+  seroval-plugins@<1.6.8: 1.6.9
 
 patchedDependencies:
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
@@ -318,7 +320,7 @@ importers:
         version: '@bleedingdev/modern-js-ultramodern-app-tools@3.9.3-ultramodern.13(7685012d71c5355714ee4e6f8a1124ab)'
       '@modern-js/ultramodern-create':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.13(5ce4c9b4ed64b536e2c8ee05b7fb317a)'
+        version: '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.13(0cbc5c76ad3308e2870223657691feae)'
       '@nkzw/eslint-plugin':
         specifier: 2.0.0
         version: 2.0.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
@@ -10617,31 +10619,11 @@ packages:
     resolution: {integrity: sha512-GL2BWwVa6JydKO6l/ljVgjAZF4QJ3S7dWDWi53s5GZT8PJzD2fNxi67HANQGKAqPrwEpL5ba7gUBGi0Ls/sEoQ==}
     engines: {node: '>=20.0.0'}
 
-  seroval-plugins@1.6.7:
-    resolution: {integrity: sha512-4Nk35ttD3DTDJW4hgw5StsVAPeU6qnDFnULAouw6tQ7oLTV/ICXrWpsXo2EE52eSP2joUMazbVf52mFEcADqRw==}
-    engines: {node: '>=10'}
-    peerDependencies:
-      seroval: ^1.0
-
-  seroval-plugins@1.6.8:
-    resolution: {integrity: sha512-N7mWAMydj89EnYTHtRpS3LBrAz3J9O6oVrqpuXuvlAHfAUG8WEKqtbAd7SBiJNY5NfCAFhSdyAh7wI4Shjqy4g==}
-    engines: {node: '>=10'}
-    peerDependencies:
-      seroval: ^1.0
-
   seroval-plugins@1.6.9:
     resolution: {integrity: sha512-kiDK/Tb8IWZ61WEU8pA2PDmAuw37gKph9Y77OZlD56mg0Y2g0Bg7gZ1HeHhs5d40w+nRoUq/wj08V26ilbez9g==}
     engines: {node: '>=10'}
     peerDependencies:
-      seroval: ^1.0
-
-  seroval@1.6.7:
-    resolution: {integrity: sha512-AeDcLh0yO2SFm9W71essgnSzLV9DI8ZH0x0knXn2DMnUZj728mpLbxjlbB6IqKCmqh8JA3cEqRyGoNkt584JcQ==}
-    engines: {node: '>=10'}
-
-  seroval@1.6.8:
-    resolution: {integrity: sha512-HlSgSAkTk4EqHcje1ptJjfZi1YDv5KbhVJ/d3P7T/nAXua2VmDu+AKDX5VTdFfZf48nDkWB2TKYt0DrCSa+3wg==}
-    engines: {node: '>=10'}
+      seroval: 1.6.9
 
   seroval@1.6.9:
     resolution: {integrity: sha512-UeEzHwAK+yl0YLbsvROV1t5yMYEwZZ0CfKYxDvUgS2fO9Vxdf8djqVIB+OuVpuawRNPqw68LE1Du/GMsW2ZPqA==}
@@ -13617,7 +13599,7 @@ snapshots:
       - webpack-cli
       - zod
 
-  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.13(5ce4c9b4ed64b536e2c8ee05b7fb317a)':
+  '@bleedingdev/modern-js-ultramodern-create@3.9.3-ultramodern.13(0cbc5c76ad3308e2870223657691feae)':
     dependencies:
       '@babel/core': 7.29.7(supports-color@10.2.2)
       '@babel/parser': 8.0.7
@@ -15723,8 +15705,8 @@ snapshots:
 
   '@solidjs/web@2.0.0-rc.15(solid-js@2.0.0-rc.15)':
     dependencies:
-      seroval: 1.6.7
-      seroval-plugins: 1.6.7(seroval@1.6.7)
+      seroval: 1.6.9
+      seroval-plugins: 1.6.9(seroval@1.6.9)
       solid-js: 2.0.0-rc.15
 
   '@speed-highlight/core@1.2.24': {}
@@ -15990,8 +15972,8 @@ snapshots:
     dependencies:
       '@tanstack/history': 1.162.4
       cookie-es: 3.1.1
-      seroval: 1.6.8
-      seroval-plugins: 1.6.8(seroval@1.6.8)
+      seroval: 1.6.9
+      seroval-plugins: 1.6.9(seroval@1.6.9)
 
   '@tanstack/store@0.11.2': {}
 
@@ -20855,21 +20837,9 @@ snapshots:
 
   serialize-javascript@7.1.2: {}
 
-  seroval-plugins@1.6.7(seroval@1.6.7):
-    dependencies:
-      seroval: 1.6.7
-
-  seroval-plugins@1.6.8(seroval@1.6.8):
-    dependencies:
-      seroval: 1.6.8
-
   seroval-plugins@1.6.9(seroval@1.6.9):
     dependencies:
       seroval: 1.6.9
-
-  seroval@1.6.7: {}
-
-  seroval@1.6.8: {}
 
   seroval@1.6.9: {}
 
@@ -21023,8 +20993,8 @@ snapshots:
     dependencies:
       '@solidjs/signals': 2.0.0-rc.15
       csstype: 3.2.3
-      seroval: 1.6.7
-      seroval-plugins: 1.6.7(seroval@1.6.7)
+      seroval: 1.6.9
+      seroval-plugins: 1.6.9(seroval@1.6.9)
 
   source-map-js@1.2.2: {}
 
