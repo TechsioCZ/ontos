@@ -17,6 +17,8 @@ export default defineConfig(
         cloudflareHyperdrives: [PARTY_REGISTRY_REQUEST_IDENTITY.cloudflareHyperdrive],
         moduleUrl: import.meta.url,
       }),
+      // Redact replaces the governed React federation singleton and fails composition proofs.
+      redact: false,
       bff: {
         effect: {
           entry: './api/index',

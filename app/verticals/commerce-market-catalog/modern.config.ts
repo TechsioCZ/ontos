@@ -63,6 +63,8 @@ export default defineConfig(
           configPath: fileURLToPath(new URL('module-federation.config.ts', import.meta.url)),
         }),
       ],
+      // Redact replaces the governed React federation singleton and fails composition proofs.
+      redact: false,
     },
     { appId, from: import.meta.url },
   ),
