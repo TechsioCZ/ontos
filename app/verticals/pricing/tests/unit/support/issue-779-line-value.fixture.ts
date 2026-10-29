@@ -22,7 +22,7 @@ import { Effect, Schema } from 'effect';
 import type { PricingUnitPriceCalculationSuccess } from '@app/pricing-contracts/domain/unit-price-calculation';
 import type { ScheduledPricingCommercialFeeRevisionSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import type { PriceGroupRef } from '@app/price-group-catalog-contracts/resources/price-group';
-import type { CounterpartyRef } from '@app/party-registry/resources/counterparty';
+import type { PricingDiscountAudience } from '@app/pricing-contracts/domain/discount';
 
 import { composePricingDiscounts } from '../../../src/services/discount-composition.service.ts';
 import { evaluatePricingLineValues } from '../../../src/services/line-value-calculation.service.ts';
@@ -57,7 +57,7 @@ interface Issue779ScenarioOptions {
 
 interface Issue779Scenario {
   readonly compositionRequest: PricingLineCompositionRequest;
-  readonly counterpartyRef: CounterpartyRef;
+  readonly counterpartyRef: Extract<PricingDiscountAudience, { readonly kind: 'COUNTERPARTY' }>['counterpartyRef'];
   readonly feeRevision: typeof ScheduledPricingCommercialFeeRevisionSchema.Encoded;
   readonly priceGroupRef: PriceGroupRef;
   readonly unitPrice: PricingUnitPriceCalculationSuccess;
