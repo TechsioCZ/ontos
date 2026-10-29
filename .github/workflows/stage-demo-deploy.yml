@@ -991,8 +991,8 @@ jobs:
           ONTOS_RETIRED_COMPOSITION_REVISION: ${{ inputs.retired_composition_revision }}
         run: mise exec -- pnpm exec node scripts/stage-demo-migrate.mts --continue-publication
 
-      # The sealed chain ends with db:verify. The light path skips that chain and a continuation never ran it in this
-      # release, so both verify here; a failed verification also leaves no preparation record.
+      # The sealed chain ends with db:verify. Light/continuation runs provision the service accounts first, then
+      # join read-only owner verification with SpiceDB-only grant reconciliation. Either failure blocks publication.
       - name: Verify every migrated owner schema
         if: ${{ !inputs.outbox_only && (inputs.continue_migrated_publication || steps.database-path.outputs.mode == 'light') }}
         timeout-minutes: 10
@@ -1000,7 +1000,16 @@ jobs:
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
-        run: mise exec -- pnpm db:verify
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BETTER_AUTH_URL: ${{ env.STAGE_SHELL_URL }}
+          ALL_RELEASE_SECRETS_FILE: ${{ steps.release-secrets.outputs.path }}
+        run: |
+          BETTER_AUTH_SECRET="$(jq -er '."shell-super-app".BETTER_AUTH_SECRET' "$ALL_RELEASE_SECRETS_FILE")"
+          echo "::add-mask::$BETTER_AUTH_SECRET"
+          export BETTER_AUTH_SECRET
+          mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply --verify-database
 
       # From here every unit uploads as soon as its build output is unpacked. The full path keeps its strict order: no
       # upload before the sealed chain (or the continuation's verification) succeeded. The light path, which runs no
@@ -1012,6 +1021,7 @@ jobs:
       # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation. One --apply
       # reads every grant, writes only what is missing and reads the result back.
       - name: Reconcile storefront, Commerce and Privacy service grants
+        if: ${{ inputs.outbox_only || (!inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full') }}
         timeout-minutes: 10
         working-directory: app
         env:

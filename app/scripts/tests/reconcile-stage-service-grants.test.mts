@@ -1,5 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Option, Schema } from 'effect';
+import { SpiceDbRpcError } from '../../packages/core-runtime/src/permissions/spicedb-rpc.ts';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -8,6 +9,8 @@ import {
   desiredServiceGrants,
   desiredCompanyAdministratorWorkforceGrants,
   reconcileServiceGrants,
+  readMissingServiceGrants,
+  verifyDatabaseAndReconcileServiceGrants,
   serviceGrantMemberships,
   stageServicePrincipals,
 } from '../demo/reconcile-stage-service-grants.mts';
@@ -36,21 +39,31 @@ const desired = desiredServiceGrants([
 const memoryRelationships = (initial: readonly v1.Relationship[]) => {
   const stored = new Map(initial.map((relationship) => [v1.Relationship.toJsonString(relationship), relationship]));
   const writes: v1.WriteRelationshipsRequest[] = [];
+  const reads: v1.ReadRelationshipsRequest[] = [];
   const rpc: ServiceGrantRpc = {
     readRelationships: (request) =>
       Effect.sync(() => {
+        reads.push(request);
         const filter = request.relationshipFilter;
+        const offset = Number(request.optionalCursor?.token ?? '0');
         return [...stored.values()]
           .filter(
             (relationship) =>
               filter !== undefined &&
               relationship.resource?.objectType === filter.resourceType &&
-              relationship.resource?.objectId === filter.optionalResourceId &&
+              (filter.optionalResourceId === '' || relationship.resource?.objectId === filter.optionalResourceId) &&
               relationship.relation === filter.optionalRelation &&
               relationship.subject?.object?.objectType === filter.optionalSubjectFilter?.subjectType &&
               relationship.subject?.object?.objectId === filter.optionalSubjectFilter?.optionalSubjectId,
           )
-          .map((relationship) => v1.ReadRelationshipsResponse.create({ relationship }));
+          .slice(offset, request.optionalLimit === 0 ? undefined : offset + request.optionalLimit)
+          .map((relationship, index) =>
+            v1.ReadRelationshipsResponse.create({
+              afterResultCursor: { token: String(offset + index + 1) },
+              readAt: { token: 'snapshot' },
+              relationship,
+            }),
+          );
       }),
     writeRelationships: (request) =>
       Effect.sync(() => {
@@ -64,7 +77,7 @@ const memoryRelationships = (initial: readonly v1.Relationship[]) => {
         return v1.WriteRelationshipsResponse.create({});
       }),
   };
-  return { rpc, writes };
+  return { reads, rpc, writes };
 };
 
 it.effect('fails closed without any writes when one existing service membership is absent', () =>
@@ -237,5 +250,200 @@ it.live('bounds parallel grant reads to eight while keeping a single write and v
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(8);
     expect(active).toBe(0);
+  }),
+);
+
+const scanRelationship = (id: string, subjectRelation = 'member') =>
+  v1.Relationship.create({
+    relation: 'role',
+    resource: { objectId: id, objectType: 'action_grant' },
+    subject: { object: { objectId: 'service-role', objectType: 'scoped_role' }, optionalRelation: subjectRelation },
+  });
+const scanDesired = Array.from({ length: 187 }, (_, index) => scanRelationship(`action-${index}`));
+for (const [name, initial, missing] of [
+  ['all present', scanDesired, []],
+  ['none present', [], scanDesired],
+  ['one missing', scanDesired.slice(1), scanDesired.slice(0, 1)],
+  ['unrelated tuple', [...scanDesired, scanRelationship('unrelated')], []],
+  ['different subject relation', [scanRelationship('action-0', 'viewer')], scanDesired],
+  [
+    'caveated tuple',
+    [v1.Relationship.create({ ...scanDesired[0], optionalCaveat: { caveatName: 'condition' } })],
+    scanDesired,
+  ],
+  ['expiring tuple', [v1.Relationship.create({ ...scanDesired[0], optionalExpiresAt: { seconds: '1' } })], scanDesired],
+] as const) {
+  it.effect(`type-scoped reads preserve exact missing-set semantics: ${name}`, () =>
+    Effect.gen(function* scanDifference() {
+      const state = memoryRelationships(initial);
+      expect(yield* readMissingServiceGrants(state.rpc, scanDesired)).toEqual(missing);
+      expect(state.reads).toHaveLength(initial.length === 0 ? 1 : 2);
+      const filter = state.reads[0].relationshipFilter;
+      expect(filter?.optionalResourceId).toBe('');
+      expect(filter?.optionalSubjectFilter?.optionalSubjectId).toBe('service-role');
+    }),
+  );
+}
+
+it.effect('reads every page at one revision, including the final desired tuple after an unrelated population', () =>
+  Effect.gen(function* paginatedScan() {
+    const unrelated = Array.from({ length: 600 }, (_, index) => scanRelationship(`unrelated-${index}`));
+    const state = memoryRelationships([...unrelated, ...scanDesired]);
+    expect(yield* readMissingServiceGrants(state.rpc, scanDesired)).toEqual([]);
+    expect(state.reads).toHaveLength(5);
+    expect(state.reads[0].consistency?.requirement.oneofKind).toBe('fullyConsistent');
+    for (const request of state.reads.slice(1)) {
+      expect(request.consistency?.requirement).toEqual({
+        atExactSnapshot: { token: 'snapshot' },
+        oneofKind: 'atExactSnapshot',
+      });
+      expect(request.optionalLimit).toBe(256);
+    }
+    expect(state.reads[1].optionalCursor).toBeUndefined();
+    expect(state.reads.slice(2).every(({ optionalCursor }) => (optionalCursor?.token.length ?? 0) > 0)).toBe(true);
+  }),
+);
+
+for (const failure of [
+  'missing cursor',
+  'repeated cursor',
+  'changed revision',
+  'missing revision',
+  'too many rows',
+] as const) {
+  it.effect(`fails closed on ${failure} without writes`, () =>
+    Effect.gen(function* invalidPage() {
+      const state = memoryRelationships(Array.from({ length: 600 }, (_, index) => scanRelationship(`action-${index}`)));
+      const rpc: ServiceGrantRpc = {
+        ...state.rpc,
+        readRelationships: (request) =>
+          state.rpc.readRelationships(request).pipe(
+            Effect.map((rows) => {
+              if (failure === 'too many rows') {
+                return [...rows, rows[0]];
+              }
+              return rows.map((row) => {
+                if (failure === 'missing cursor') {
+                  return v1.ReadRelationshipsResponse.create({ readAt: row.readAt, relationship: row.relationship });
+                }
+                if (failure === 'repeated cursor') {
+                  return v1.ReadRelationshipsResponse.create({ ...row, afterResultCursor: { token: '1' } });
+                }
+                if (failure === 'missing revision') {
+                  return v1.ReadRelationshipsResponse.create({
+                    afterResultCursor: row.afterResultCursor,
+                    relationship: row.relationship,
+                  });
+                }
+                return failure === 'changed revision' && request.optionalCursor !== undefined
+                  ? v1.ReadRelationshipsResponse.create({ ...row, readAt: { token: 'different' } })
+                  : row;
+              });
+            }),
+          ),
+      };
+      expect(Schema.is(ServiceGrantError)(yield* readMissingServiceGrants(rpc, scanDesired).pipe(Effect.flip))).toBe(
+        true,
+      );
+      expect(state.writes).toHaveLength(0);
+    }),
+  );
+}
+
+it.effect('an expiring service membership is rejected before provisioning or policy writes', () =>
+  Effect.gen(function* expiringMembership() {
+    const state = memoryRelationships(
+      serviceGrantMemberships().map((membership) =>
+        v1.Relationship.create({ ...membership, optionalExpiresAt: { seconds: '1' } }),
+      ),
+    );
+    expect(
+      Schema.is(ServiceGrantError)(yield* reconcileServiceGrants(state.rpc, desired, 'apply').pipe(Effect.flip)),
+    ).toBe(true);
+    expect(state.writes).toHaveLength(0);
+  }),
+);
+
+it.effect('a failing page discards partial evidence and never writes grants', () =>
+  Effect.gen(function* failedPage() {
+    const state = memoryRelationships(Array.from({ length: 300 }, (_, index) => scanRelationship(`action-${index}`)));
+    const failure = new SpiceDbRpcError({ cause: 'stream failed', code: Option.none() });
+    const rpc: ServiceGrantRpc = {
+      ...state.rpc,
+      readRelationships: (request) =>
+        request.optionalCursor === undefined ? state.rpc.readRelationships(request) : Effect.fail(failure),
+    };
+    expect(yield* readMissingServiceGrants(rpc, scanDesired).pipe(Effect.flip)).toBe(failure);
+    expect(state.writes).toHaveLength(0);
+  }),
+);
+
+for (const failing of ['grants', 'verification'] as const) {
+  it.effect(`${failing} failure interrupts and joins the sibling before the publication barrier returns`, () =>
+    Effect.gen(function* joinsSiblingFailure() {
+      const started = yield* Deferred.make<boolean>();
+      let finalized = false;
+      let published = false;
+      const pending = Deferred.succeed(started, true).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalized = true;
+          }),
+        ),
+      );
+      const state = memoryRelationships(serviceGrantMemberships());
+      const rpc: ServiceGrantRpc = {
+        ...state.rpc,
+        readRelationships: () =>
+          failing === 'grants'
+            ? Deferred.await(started).pipe(
+                Effect.andThen(Effect.fail(new SpiceDbRpcError({ cause: 'read failed', code: Option.none() }))),
+              )
+            : pending,
+      };
+      const verification =
+        failing === 'verification'
+          ? Deferred.await(started).pipe(Effect.andThen(Effect.fail(new ServiceGrantError({ reason: 'owner failed' }))))
+          : pending;
+      yield* verifyDatabaseAndReconcileServiceGrants(rpc, desired, verification).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            published = true;
+          }),
+        ),
+        Effect.flip,
+      );
+      expect(finalized).toBe(true);
+      expect(published).toBe(false);
+      expect(state.writes).toHaveLength(0);
+    }),
+  );
+}
+
+it.effect('fails closed when a scoped population exceeds the bounded page budget', () =>
+  Effect.gen(function* boundedPopulation() {
+    const state = memoryRelationships(scanDesired);
+    let pages = 0;
+    const rpc: ServiceGrantRpc = {
+      ...state.rpc,
+      readRelationships: (request) =>
+        request.optionalLimit === 1
+          ? state.rpc.readRelationships(request)
+          : Effect.sync(() => {
+              pages += 1;
+              return Array.from({ length: 256 }, (_, index) =>
+                v1.ReadRelationshipsResponse.create({
+                  afterResultCursor: { token: String(pages) },
+                  readAt: { token: 'snapshot' },
+                  relationship: scanRelationship(`action-${index}`),
+                }),
+              );
+            }),
+    };
+    const error = yield* readMissingServiceGrants(rpc, scanDesired).pipe(Effect.flip);
+    expect(Schema.is(ServiceGrantError)(error)).toBe(true);
+    expect(pages).toBe(128);
+    expect(state.writes).toHaveLength(0);
   }),
 );
