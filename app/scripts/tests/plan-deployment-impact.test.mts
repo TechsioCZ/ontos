@@ -294,6 +294,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
     ];
     const setupLines = setups.map((setup) => `  - setup: '${setup}'`).join('\n');
     yield* Effect.tryPromise(() => writeFile(path.join(root, 'zerops.yaml'), `zerops:\n${setupLines}\n`, 'utf-8'));
+    yield* Effect.tryPromise(() => writeFile(path.join(root, 'zerops-providers.yaml'), 'zerops: []\n', 'utf-8'));
     return root;
   });
 
@@ -1117,6 +1118,7 @@ for (const changedPath of [
   'scripts/ci/build-outbox-host.sh',
   'scripts/outbox-worker-host-artifact.mts',
   'zerops.yaml',
+  'zerops-providers.yaml',
   TOPOLOGY_PATH,
   'module-federation.shared.ts',
   'tsconfig.base.json',

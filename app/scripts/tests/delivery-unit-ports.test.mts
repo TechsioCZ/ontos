@@ -5,9 +5,11 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { readZeropsDeploymentYaml } from './zerops-deployment.fixture.mts';
+
 // The development overlay's `ports` is the one local port map. Every other place that names a delivery
 // unit's local port (its dev server default, the Shell's federation remotes, the browser-test web servers,
-// the reference topology, the overlay's own URLs, and stage zerops.yaml) must agree with it.
+// the reference topology, the overlay's own URLs, and stage zerops*.yaml) must agree with it.
 const appRoot = new URL('../../', import.meta.url);
 const readText = (path: string) => readFileSync(new URL(path, appRoot), 'utf-8');
 
@@ -135,8 +137,8 @@ it('loads remotes from approved composition and waits for verticals on their ove
   }
 });
 
-it('runs each unit and its outbox worker on the unit overlay port in stage zerops.yaml', () => {
-  const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readText('zerops.yaml')));
+it('runs each unit and its outbox worker on the unit overlay port in stage zerops*.yaml', () => {
+  const { zerops } = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readZeropsDeploymentYaml()));
   const unitBySetup = new Map(
     unitIds.flatMap((unitId) => [
       [unitId.replaceAll('-', ''), unitId],

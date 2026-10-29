@@ -38,6 +38,7 @@ import {
   listZeropsServices,
   perform,
   readAppText,
+  readZeropsDeploymentText,
   readZeropsImport,
   repositoryDirectory,
   setGithubVariable,
@@ -163,7 +164,7 @@ export const zeropsYamlEnvironmentKeys = (yamlText: string) =>
       ({ zerops }): ReadonlyMap<string, ReadonlySet<string>> =>
         new Map(zerops.map(({ run, setup }) => [setup, new Set(Object.keys(run?.envVariables ?? {}))])),
     ),
-    Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops.yaml is not a setup list' })),
+    Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops*.yaml are not setup lists' })),
   );
 
 /**
@@ -293,7 +294,7 @@ export const retire = (options: { readonly confirm: boolean; readonly dnsCutOver
       liveHostnames,
       projectKeys: yield* listZeropsProjectUserKeys(projectId),
       stageVariables: yield* listGithubVariables(repository, STAGE_ENVIRONMENT),
-      zeropsYamlKeys: yield* readAppText('zerops.yaml').pipe(Effect.flatMap(zeropsYamlEnvironmentKeys)),
+      zeropsYamlKeys: yield* readZeropsDeploymentText.pipe(Effect.flatMap(zeropsYamlEnvironmentKeys)),
     };
     const present = RETIRED_STAGE_SERVICES.flatMap((retired) => {
       const service = live.find(({ hostname }) => hostname === retired.hostname);

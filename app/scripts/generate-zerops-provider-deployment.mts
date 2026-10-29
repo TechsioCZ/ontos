@@ -398,8 +398,7 @@ export const generateZeropsProviderDeployment = (
     for (const [id, defaults] of generated.services) {
       const current = deployment.services.get(id);
       if (current === undefined) {
-        const shell = deployment.setups.items.findIndex((item) => isMap(item) && item.get('setup') === 'shellsuperapp');
-        deployment.setups.items.splice(shell === -1 ? deployment.setups.items.length : shell, 0, defaults);
+        deployment.setups.add(defaults);
         deployment.services.set(id, defaults);
       } else {
         yield* updateZeropsService(current, defaults);
@@ -584,14 +583,17 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = path.resolve();
+    // The providers live apart from zerops.yaml so that file stays under Zerops' 50 kB build-file limit.
     const sourcePath = path.join(root, 'zerops.yaml');
     const source = yield* fs.readFileString(sourcePath);
+    const providersPath = path.join(root, 'zerops-providers.yaml');
+    const providersSource = yield* fs.readFileString(providersPath);
     const topology = yield* readZeropsProviderTopology(root);
     const toolchain = yield* readZeropsToolchain(
       yield* fs.readFileString(path.join(root, '.mise.toml')),
       yield* fs.readFileString(path.join(root, 'package.json')),
     );
-    const generatedProviders = yield* generateZeropsProviderDeployment(source, topology, toolchain);
+    const generatedProviders = yield* generateZeropsProviderDeployment(providersSource, topology, toolchain);
     const importPath = path.join(root, 'zerops-import.yaml');
     const importSource = yield* fs.readFileString(importPath);
     const generatedImports = yield* generateZeropsProviderImports(importSource, topology);
@@ -605,13 +607,19 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
       ),
       { concurrency: 4 },
     );
-    const generated = yield* generateZeropsMigratorInventory(generatedProviders, migrationOwners.flat());
+    const generated = yield* generateZeropsMigratorInventory(source, migrationOwners.flat());
     const generatedMigrations = yield* generateZeropsProviderMigrations(migratorSource, migrationOwners.flat());
     if (write) {
       yield* fs.writeFileString(sourcePath, generated);
+      yield* fs.writeFileString(providersPath, generatedProviders);
       yield* fs.writeFileString(importPath, generatedImports);
       yield* fs.writeFileString(migratorPath, generatedMigrations);
-    } else if (generated !== source || generatedImports !== importSource || generatedMigrations !== migratorSource) {
+    } else if (
+      generated !== source ||
+      generatedProviders !== providersSource ||
+      generatedImports !== importSource ||
+      generatedMigrations !== migratorSource
+    ) {
       yield* invalid('Zerops provider deployment drift: run pnpm zerops:providers --write');
     }
   });

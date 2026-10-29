@@ -409,8 +409,9 @@ const saveWorkerDeployment = (deployment, id, service) =>
 /**
  * @param {string} root Workspace root.
  * @param {string} source Existing Zerops deployment source.
+ * @param {string} providerSource Zerops deployment source of the owner provider setups each worker derives from.
  */
-const generateOutboxWorkerDeploymentEffect = (root, source) =>
+const generateOutboxWorkerDeploymentEffect = (root, source, providerSource) =>
   Effect.gen(function* generateDeployment() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -418,6 +419,9 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     const ports = yield* readDevelopmentPorts(root);
     const deployment = yield* readZeropsDeployment(source).pipe(Effect.mapError((error) => failure(error.reason)));
+    const providers = yield* readZeropsDeployment(providerSource).pipe(
+      Effect.mapError((error) => failure(error.reason)),
+    );
     /** @type {import('yaml').YAMLMap[]} */
     const services = [];
     /** @type {string[]} */
@@ -430,7 +434,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         continue;
       }
       const service = yield* renderDedicatedWorker(
-        deployment.services.get(vertical.id),
+        providers.services.get(vertical.id),
         vertical.id,
         delivery.id,
         ports[vertical.id],
@@ -494,10 +498,11 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
 /**
  * @param {string} root Workspace root.
  * @param {string} source Existing Zerops deployment source.
+ * @param {string} [providerSource] Owner provider setups, `app/zerops-providers.yaml`; defaults to `source`.
  * @returns {PromiseLike<{ deployment: string, hostEntry: string | null, coreEntry: string | null }>} Deployment source with the generated worker services, and the Outbox Worker host entry source.
  */
-export const generateOutboxWorkerDeployment = (root, source) =>
-  nodeRuntime.runPromise(generateOutboxWorkerDeploymentEffect(root, source));
+export const generateOutboxWorkerDeployment = (root, source, providerSource = source) =>
+  nodeRuntime.runPromise(generateOutboxWorkerDeploymentEffect(root, source, providerSource));
 
 /** @param {{ write: boolean }} options Parsed command options. */
 const runCommand = ({ write }) =>
@@ -509,9 +514,10 @@ const runCommand = ({ write }) =>
     const hostEntryFile = path.join(root, OUTBOX_WORKER_HOST.entry);
     const coreEntryFile = path.join(root, CORE_SYSTEM_OUTBOX_WORKER.entry);
     const source = yield* fs.readFileString(file);
+    const providerSource = yield* fs.readFileString(path.join(root, 'zerops-providers.yaml'));
     const currentHostEntry = (yield* fs.exists(hostEntryFile)) ? yield* fs.readFileString(hostEntryFile) : null;
     const currentCoreEntry = (yield* fs.exists(coreEntryFile)) ? yield* fs.readFileString(coreEntryFile) : null;
-    const generated = yield* generateOutboxWorkerDeploymentEffect(root, source);
+    const generated = yield* generateOutboxWorkerDeploymentEffect(root, source, providerSource);
     if (write) {
       yield* fs.writeFileString(file, generated.deployment);
       yield* generated.hostEntry === null

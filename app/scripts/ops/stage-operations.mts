@@ -1,6 +1,7 @@
 import { Console, Context, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
+import { joinZeropsDeployments, ZEROPS_DEPLOYMENT_FILES } from '../materialize-zerops-environment.mts';
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
@@ -94,6 +95,15 @@ export const readAppText = (...segments: readonly string[]) =>
       (cause) => new StageOperationError({ cause, message: `app/${segments.join('/')} could not be read` }),
     ),
   );
+
+/** Every Zerops deployment setup, from `app/zerops.yaml` and `app/zerops-providers.yaml`, as one zerops.yaml text. */
+export const readZeropsDeploymentText = Effect.all(ZEROPS_DEPLOYMENT_FILES.map((file) => readAppText(file))).pipe(
+  Effect.flatMap((texts) =>
+    joinZeropsDeployments(texts).pipe(
+      Effect.mapError((cause) => new StageOperationError({ cause, message: 'app/zerops*.yaml are not setup lists' })),
+    ),
+  ),
+);
 
 /** One `zerops-import.yaml` service entry, kept verbatim so a re-import recreates the same service. */
 export const ZeropsImportEntrySchema = Schema.StructWithRest(

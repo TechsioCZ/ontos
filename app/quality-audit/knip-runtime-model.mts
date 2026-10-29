@@ -1209,7 +1209,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     });
     const zeropsEvidence = Effect.fn('QualityAudit.zeropsEvidence')(function* zeropsEvidence() {
       // Zerops buildCommands run from the repository root and explicitly cd into app.
-      for (const file of ['zerops.yaml', 'zerops.yml']) {
+      for (const file of ['zerops.yaml', 'zerops.yml', 'zerops-providers.yaml']) {
         const source = yield* read(file);
         if (source === undefined) {
           continue;

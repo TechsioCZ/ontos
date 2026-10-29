@@ -1765,19 +1765,25 @@ jobs:
           npm install --global @zerops/zcli@1.1.0
           mise reshim
 
-      - name: Materialize the environment's zerops.yaml
+      # The providers' setups together exceed Zerops' 50 kB build-file limit, so every unit gets its own file.
+      - name: Materialize the environment's one-setup zerops.yaml files
         if: needs.deploy-plan.outputs.any == 'true'
         working-directory: app
         env:
           PRODUCTION_SPICEDB_ENDPOINT: ${{ vars.SPICEDB_ENDPOINT }}
-          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
+          ZEROPS_YAML_DIRECTORY: ${{ runner.temp }}/zerops
         run: |
-          materialize_arguments=(--environment "$DEPLOY_ENVIRONMENT" --input zerops.yaml --output "$ZEROPS_YAML_PATH")
+          materialize_arguments=(
+            --environment "$DEPLOY_ENVIRONMENT"
+            --input zerops.yaml
+            --input zerops-providers.yaml
+            --output-directory "$ZEROPS_YAML_DIRECTORY"
+          )
           if [[ "$DEPLOY_ENVIRONMENT" == 'production' ]]; then
             materialize_arguments+=(--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT")
           fi
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
-          echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
+          echo "ZEROPS_YAML_DIRECTORY=$ZEROPS_YAML_DIRECTORY" >>"$GITHUB_ENV"
 
       - name: Download the prebuilt Outbox Worker host
         if: needs.build-outbox-host.result == 'success'

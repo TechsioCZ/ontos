@@ -335,9 +335,14 @@ Create `production` once, outside CI, before the first dispatch, with the operat
 [Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
 `OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
 
-`zerops.yaml` describes stage. Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
+`zerops.yaml` and `zerops-providers.yaml` describe stage. Zerops rejects a build file over 50 kB, so
+`zerops.yaml` (migrator, SpiceDB, cloudflared, Shell, Outbox Workers) stays small enough to push as-is,
+and `pnpm zerops:providers --write` keeps the per-vertical provider setups in `zerops-providers.yaml`.
+Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
-names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
+names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy;
+`deploy-zerops` writes one file per setup (`--output-directory`) because the providers together exceed
+the limit. Production
 therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
 `SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT`
 secret; there is no plaintext mode. Production's copy sets every `SPICEDB_ENDPOINT` to production's
