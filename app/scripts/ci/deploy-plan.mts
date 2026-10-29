@@ -83,7 +83,7 @@ const HOST_OWNER_IMPORT = /from '(?<packageName>@[\w.-]+\/[\w.-]+)\/outbox-worke
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const RELEASE_INTENT_FILE = 'topology/application-release-intent.json';
 /** How many of the newest trusted ledgers the plan merges. */
-const LEDGER_LOOKBACK = 5;
+export const LEDGER_LOOKBACK = 5;
 /** How many trusted artifacts of one name the plan weighs when it needs the one built at a given revision. */
 const ARTIFACT_CANDIDATES = 10;
 const LOOKUP_CONCURRENCY = 8;

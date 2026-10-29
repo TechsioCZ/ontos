@@ -35,8 +35,12 @@ import { computeSecretFingerprints } from '../ci/deploy-plan.mts';
 import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
+  IMMUTABLE_PROVIDER_WRITE_ATTEMPTS,
+  ImmutableProviderWriteRetrySchedule,
   ImmutableUploadRetrySchedule,
+  PUBLISHED_HALF_RELEASE,
   STALE_RELEASE_SECRETS,
+  deleteImmutableWorker,
   deployImmutableApplicationRelease,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
@@ -47,8 +51,9 @@ import {
   resolveCleanImmutableApplicationSourceRevision,
   validateImmutableApplicationReleaseArtifacts,
   verifyRetainedImmutableApplicationRelease,
+  workersDevIsTheOnlyTrigger,
 } from '../immutable-application-release.mts';
-import type { ReleaseFile } from '../immutable-application-release.mts';
+import type { ImmutableApplicationReleasePlan, ReleaseFile } from '../immutable-application-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -969,7 +974,7 @@ const releaseLockDatabase = (timeline: string[]) =>
 
 const refusesExistingProviderRelease = (
   statuses: { readonly assets: number; readonly backend: number },
-  expectedMessage: string,
+  expectedMessage: (plan: ImmutableApplicationReleasePlan) => string,
 ) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
@@ -1052,7 +1057,7 @@ const refusesExistingProviderRelease = (
       }).pipe(Effect.provide(refusalLayer), Effect.flip);
 
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-      expect(failure.message).toBe(expectedMessage);
+      expect(failure.message).toBe(expectedMessage(plan));
       expect(commands).toEqual([]);
       // Both identities' presence checks run side by side and only read; a half release or an unknown answer refuses.
       expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
@@ -1079,18 +1084,22 @@ const refusesExistingProviderRelease = (
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-const EXISTING_IDENTITY = 'an immutable release identity already exists; publication must never overwrite it';
+const unprovenSurvivor = (survivor: string) =>
+  `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`;
 
-it.effect('refuses an existing backend identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 404, backend: 200 }, EXISTING_IDENTITY),
+it.effect('refuses a half present backend identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 404, backend: 200 }, (plan) => unprovenSurvivor(plan.backendScriptName)),
 );
 
-it.effect('refuses an existing assets identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 204, backend: 404 }, EXISTING_IDENTITY),
+it.effect('refuses a half present assets identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 204, backend: 404 }, (plan) => unprovenSurvivor(plan.assetsScriptName)),
 );
 
 it.effect('refuses an unknown provider answer even when the other identity is present', () =>
-  refusesExistingProviderRelease({ assets: 403, backend: 200 }, 'provider release absence could not be established'),
+  refusesExistingProviderRelease(
+    { assets: 403, backend: 200 },
+    () => 'provider release absence could not be established',
+  ),
 );
 
 const SECRETS_FILE_ARGUMENT = '--secrets-file';
@@ -1146,9 +1155,32 @@ const assetTransportFailure = (request: HttpClientRequest.HttpClientRequest, kin
     ),
   );
 
+/** A backend upload outcome: the Worker is uploaded, then its workers.dev route request fails transiently. */
+const WORKERS_DEV_ROUTE_OUTCOME = 'workers-dev-route';
+
+/** A workers.dev route answer; a gateway error answers an HTML page, as the provider's edge does. */
+const routeAnswer = (status: number, body: Schema.Json) =>
+  status >= 500
+    ? new Response('<!DOCTYPE html><title>504 Gateway Timeout</title>', { status })
+    : Response.json(body, { status });
+
+/** Wrangler uploaded the Worker, then its workers.dev route POST met a gateway 504 (as ops-shell reports it). */
+const workersDevRouteFailure = (command: OpsCommand, scriptName: string) =>
+  new OpsCommandError({
+    cause: { providerPath: `/accounts/${'a'.repeat(32)}/workers/scripts/${scriptName}/subdomain`, providerStatus: 504 },
+    command: [command.command, ...command.args].join(' '),
+    message: 'native test upload failed at its workers.dev route',
+    transient: true,
+  });
+
+/** The native KV value of the active Application Composition. */
+const ACTIVE_COMPOSITION_PATH = `/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'d'.repeat(32)}/values/active`;
+
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
     readonly accountSubdomain?: string;
+    /** What the active Application Composition storage answers: by default a composition naming another release. */
+    readonly activeComposition?: 'names-release' | 'unreadable';
     readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
     readonly assetHeaderReadiness?: {
@@ -1161,6 +1193,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly assetHeaders?: Readonly<Record<string, string>>;
     readonly assetsDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly assetsPresenceStatus?: 200 | 204;
+    /** The assets upload command fails transiently at its workers.dev route request, after the upload. */
+    readonly assetsRouteFailure?: boolean;
+    /** Answers to successive assets workers.dev route POSTs; a POST past the list succeeds. */
+    readonly assetsRouteStatuses?: readonly number[];
     readonly assetsSubdomainAcknowledgement?: {
       readonly enabled: boolean;
       readonly previews_enabled: boolean;
@@ -1172,11 +1208,16 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     /** Network failures of the contract asset's first GETs, before any answer: a reset, a body reset or a 5xx. */
     readonly assetTransportFailures?: { readonly kind: AssetTransportFailure; readonly times: number };
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
+    /** Answers to successive backend workers.dev route POSTs; a POST past the list succeeds. */
+    readonly backendRouteStatuses?: readonly number[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
     readonly backendSubdomainSuccess?: boolean;
-    /** Outcomes of successive native backend uploads; an upload past the list succeeds. */
-    readonly backendUploadFailures?: readonly ('permanent' | 'transient')[];
+    /**
+     * Outcomes of successive native backend uploads; an upload past the list succeeds. `workers-dev-route` uploads the
+     * backend and then fails transiently at its workers.dev route request.
+     */
+    readonly backendUploadFailures?: readonly ('permanent' | 'transient' | typeof WORKERS_DEV_ROUTE_OUTCOME)[];
     readonly changedSource?: boolean;
     readonly deleteStatus?: number;
     readonly deployedEntrypoint?: string | false;
@@ -1201,6 +1242,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
     readonly stallAssetBody?: boolean;
+    /** The one Worker of the release identity a prune or removal left present; the other is absent. */
+    readonly survivingHalf?: 'assets' | 'backend';
     readonly tamperWorkerAfterEnvelope?: boolean;
     readonly tamperWorkerDuringPackaging?: boolean;
     readonly unboundFile?: boolean;
@@ -1309,9 +1352,34 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   let absentChecks = 0;
   let backendUploads = 0;
   // Removing the assets Worker (the last removal) makes the next attempt observe both identities absent again.
+  // A removed Worker reads back absent once, for the removal's own check.
+  const removedScripts = new Set<string>();
+  const survivorPath = Match.value(options.survivingHalf).pipe(
+    Match.when('backend', () => `/workers/scripts/${plan.backendScriptName}`),
+    Match.when('assets', () => `/workers/scripts/${plan.assetsScriptName}`),
+    Match.orElse(() => null),
+  );
+  let survivorRemoved = false;
+  const isSurvivor = (destination: URL) => survivorPath !== null && destination.pathname.endsWith(survivorPath);
+  // The active composition names this release, or another one.
+  const activeCompositionAnswer = () =>
+    Match.value(options.activeComposition).pipe(
+      Match.when('unreadable', () => new Response(null, { status: 403 })),
+      Match.when('names-release', () =>
+        Response.json({ composition: { modules: [{ backend: { workerName: plan.backendScriptName } }] } }),
+      ),
+      Match.orElse(() =>
+        Response.json({ composition: { modules: [{ backend: { workerName: `ontos-${'9'.repeat(56)}` } }] } }),
+      ),
+    );
   const removeProviderScript = (destination: URL) => {
     const status = options.deleteStatus ?? 200;
-    if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
+    if (status === 200) {
+      removedScripts.add(destination.pathname);
+    }
+    if (status === 200 && isSurvivor(destination)) {
+      survivorRemoved = true;
+    } else if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
       absentChecks = 0;
     }
     return Response.json({ success: status === 200 }, { status });
@@ -1329,7 +1397,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     outcome: string,
   ) => {
     if (
-      outcome === 'success' &&
+      (outcome === 'success' || outcome === WORKERS_DEV_ROUTE_OUTCOME) &&
       capturedConfig.name === plan.backendScriptName &&
       !command.args.includes('--dry-run')
     ) {
@@ -1337,13 +1405,35 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       backendVersionMessage = message === -1 ? undefined : command.args[message + 1];
     }
   };
+  /** The failure an upload command meets as the options inject it, or undefined when it succeeds. */
+  const injectedUploadFailure = (
+    command: OpsCommand,
+    capturedConfig: Readonly<Record<string, Schema.Json>>,
+    outcome: string,
+  ): OpsCommandError | undefined => {
+    if (outcome === WORKERS_DEV_ROUTE_OUTCOME) {
+      return workersDevRouteFailure(command, plan.backendScriptName);
+    }
+    if (outcome !== 'success') {
+      return new OpsCommandError({
+        command: [command.command, ...command.args].join(' '),
+        message: 'native test upload failed',
+        transient: outcome === 'transient',
+      });
+    }
+    return capturedConfig.name === plan.assetsScriptName && options.assetsRouteFailure === true
+      ? workersDevRouteFailure(command, plan.assetsScriptName)
+      : undefined;
+  };
   const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) => {
     if (command.args.includes('--dry-run')) {
       return options.packagingFailure === true ? 'transient' : 'success';
     }
     return capturedConfig.name === plan.backendScriptName ? nextBackendUploadOutcome() : 'success';
   };
-  const providerResponse = (destination: URL) =>
+  let backendRoutePosts = 0;
+  let assetsRoutePosts = 0;
+  const providerResponse = (destination: URL, method: string) =>
     Match.value(destination.pathname).pipe(
       Match.when(`/client/v4${recoveryWorkerPath}`, () =>
         Effect.gen(function* uploadedAssetsWorkerObservation() {
@@ -1368,11 +1458,18 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
               previews_enabled: false,
               success: true,
             };
-            return Response.json({
+            const routeWrite = method === 'POST';
+            const status = routeWrite ? (options.assetsRouteStatuses?.[assetsRoutePosts] ?? 200) : 200;
+            assetsRoutePosts += routeWrite ? 1 : 0;
+            return routeAnswer(status, {
               result: { enabled: acknowledgement.enabled, previews_enabled: acknowledgement.previews_enabled },
               success: acknowledgement.success,
             });
           }),
+      ),
+      Match.when(
+        (path) => path === ACTIVE_COMPOSITION_PATH,
+        () => Effect.sync(activeCompositionAnswer),
       ),
       Match.when(
         (path) => path.endsWith(ACCOUNT_SUBDOMAIN_PATH),
@@ -1387,18 +1484,23 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       Match.when(
         (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/subdomain`),
         () =>
-          Effect.sync(() =>
-            Response.json(
+          Effect.sync(() => {
+            if (method !== 'GET') {
+              const status = options.backendRouteStatuses?.[backendRoutePosts] ?? 200;
+              backendRoutePosts += 1;
+              return routeAnswer(status, { result: { enabled: true, previews_enabled: false }, success: true });
+            }
+            return Response.json(
               {
                 result:
                   options.omitBackendSubdomainEnabled === true
                     ? {}
-                    : { enabled: options.backendSubdomainEnabled ?? true },
+                    : { enabled: options.backendSubdomainEnabled ?? true, previews_enabled: false },
                 success: options.backendSubdomainSuccess ?? true,
               },
               { status: options.backendSubdomainStatus ?? 200 },
-            ),
-          ),
+            );
+          }),
       ),
       Match.when(
         (path) => path.endsWith('/content/v2'),
@@ -1467,10 +1569,17 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       ),
       Match.orElse(() =>
         Effect.sync(() => {
-          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
+          if (removedScripts.delete(destination.pathname)) {
+            return new Response(null, { status: 404 });
+          }
           const presentStatus = destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)
             ? (options.assetsPresenceStatus ?? 204)
             : 200;
+          if (isSurvivor(destination) && !survivorRemoved) {
+            absentChecks += 1;
+            return new Response(null, { status: presentStatus });
+          }
+          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
           const status = options.existingRelease !== true && absentChecks < 2 ? 404 : presentStatus;
           absentChecks += 1;
           return new Response(null, { status });
@@ -1488,7 +1597,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       }
       let response: Response;
       if (destination.hostname === 'api.cloudflare.com') {
-        response = yield* providerResponse(destination);
+        response = yield* providerResponse(destination, request.method);
       } else {
         assetBodyEvents.push(`get:${destination.href}`);
         yield* Deferred.succeed(assetReadStarted, true);
@@ -1680,12 +1789,9 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             }
             const uploadOutcome = backendUploadOutcome(command, capturedConfig);
             recordBackendVersionMessage(command, capturedConfig, uploadOutcome);
-            if (uploadOutcome !== 'success') {
-              return yield* new OpsCommandError({
-                command: [command.command, ...command.args].join(' '),
-                message: 'native test upload failed',
-                transient: uploadOutcome === 'transient',
-              });
+            const injected = injectedUploadFailure(command, capturedConfig, uploadOutcome);
+            if (injected !== undefined) {
+              return yield* injected;
             }
             if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
               return yield* Effect.fail({
@@ -1711,6 +1817,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     ['ALL_RELEASE_SECRETS', rawSecrets],
     ['CLOUDFLARE_ACCOUNT_ID', 'a'.repeat(32)],
     ['CLOUDFLARE_API_TOKEN', 'immutable-release-test-token'],
+    ['ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL', `https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`],
     ['ONTOS_IMMUTABLE_RELEASE_SECRETS', JSON.stringify(options.ownerSecrets ?? {})],
   ]);
   if (fingerprintKey !== null) {
@@ -1719,6 +1826,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
     Layer.succeed(ImmutableUploadRetrySchedule, Schedule.forever),
+    Layer.succeed(ImmutableProviderWriteRetrySchedule, Schedule.forever),
     shellLayer,
     releaseLockDatabase(timeline),
     ConfigProvider.layer(ConfigProvider.fromUnknown(Object.fromEntries(configuration))),
@@ -1910,6 +2018,232 @@ it.effect('stops retrying when a half release cannot be removed', () =>
       expect(deployment.providerWrites).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const survivingHalf of ['backend', 'assets'] as const) {
+  it.effect(
+    `recreates a pruned-half release at its own revision after removing its unreferenced ${survivingHalf}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* recreatesHalfRelease() {
+          // The same source revision derives the same identity, so a rerun after a partial prune meets the survivor.
+          const deployment = yield* prepareDeployment({ survivingHalf });
+          const receipt = yield* deployment.deploy;
+          const survivor =
+            survivingHalf === 'backend' ? deployment.plan.backendScriptName : deployment.plan.assetsScriptName;
+          const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+          expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+          expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+          // Only the survivor is removed, once, and only after the active composition proved it unreferenced.
+          expect(deployment.providerWrites.filter(({ method }) => method === 'DELETE')).toEqual([
+            { method: 'DELETE', url: `${scripts}/${survivor}` },
+          ]);
+          const compositionRead = deployment.requests.indexOf(`https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`);
+          expect(compositionRead).toBeGreaterThan(-1);
+          expect(compositionRead).toBeLessThan(deployment.requests.indexOf(`${scripts}/${survivor}`, compositionRead));
+          // The pair is uploaded whole again, the backend once, under the one identity lock.
+          expect(backendUploads(deployment)).toHaveLength(1);
+          expect(deployment.capturedConfigs.some(({ name }) => name === deployment.plan.assetsScriptName)).toBe(true);
+          expect(deployment.timeline.filter((entry) => entry.startsWith('pg_advisory_lock'))).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const [activeComposition, message] of [
+  ['names-release', () => PUBLISHED_HALF_RELEASE],
+  [
+    'unreadable',
+    (survivor: string) =>
+      `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`,
+  ],
+] as const) {
+  it.effect(`never replaces a half present release when the active composition is ${activeComposition}`, () =>
+    Effect.scoped(
+      Effect.gen(function* refusesPublishedHalfRelease() {
+        const deployment = yield* prepareDeployment({ activeComposition, survivingHalf: 'backend' });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(failure.message).toBe(message(deployment.plan.backendScriptName));
+        expect(deployment.providerWrites).toEqual([]);
+        expect(deployment.commands).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+const routeUrl = (scriptName: string) =>
+  `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${scriptName}/subdomain`;
+
+it.effect('repeats only the workers.dev route request after a backend upload whose route met a gateway 504', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteOnlyFailure() {
+      const deployment = yield* prepareDeployment({
+        backendRouteStatuses: [504, 502],
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const receipt = yield* deployment.deploy;
+
+      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+      // The backend is uploaded once; nothing is deleted and uploaded again.
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual(
+        [1, 2, 3].map(() => ({ method: 'POST', url: routeUrl(deployment.plan.backendScriptName) })),
+      );
+      // The uploaded version, its secrets and its exact module content are proven before the route is requested.
+      const firstRoutePost = deployment.requests.indexOf(routeUrl(deployment.plan.backendScriptName));
+      const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+      for (const proof of ['deployments', `versions/${BACKEND_VERSION_ID}`, 'content/v2']) {
+        const read = deployment.requests.indexOf(`${scripts}/${deployment.plan.backendScriptName}/${proof}`);
+        expect(read).toBeGreaterThan(-1);
+        expect(read).toBeLessThan(firstRoutePost);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('removes the half release without uploading again when the backend route never comes up', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteUnavailable() {
+      const deployment = yield* prepareDeployment({
+        backendRouteStatuses: Array.from({ length: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS }, () => 504),
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+      const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        `the uploaded immutable Worker ${deployment.plan.backendScriptName} could not complete its workers.dev route; its half release is removed`,
+      );
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual([
+        ...Array.from({ length: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS }, () => ({
+          method: 'POST',
+          url: routeUrl(deployment.plan.backendScriptName),
+        })),
+        { method: 'DELETE', url: `${scripts}/${deployment.plan.backendScriptName}` },
+        { method: 'DELETE', url: `${scripts}/${deployment.plan.assetsScriptName}` },
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('removes an uploaded backend that does not hold this release secrets instead of routing it', () =>
+  Effect.scoped(
+    Effect.gen(function* backendRouteWrongVersion() {
+      const deployment = yield* prepareDeployment({
+        backendDeploymentVersions: [
+          { percentage: 50, version_id: BACKEND_VERSION_ID },
+          { percentage: 50, version_id: ASSETS_VERSION_ID },
+        ],
+        backendUploadFailures: [WORKERS_DEV_ROUTE_OUTCOME],
+      });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+      expect(failure.message).toBe(
+        `the uploaded immutable Worker ${deployment.plan.backendScriptName} could not complete its workers.dev route; its half release is removed`,
+      );
+      expect(deployment.providerWrites.map(({ method }) => method)).toEqual(['DELETE', 'DELETE']);
+      expect(backendUploads(deployment)).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('repeats only the assets workers.dev route request after an assets upload whose route met a 504', () =>
+  Effect.scoped(
+    Effect.gen(function* assetsRouteOnlyFailure() {
+      const deployment = yield* prepareDeployment({ assetsRouteFailure: true, assetsRouteStatuses: [504] });
+      const receipt = yield* deployment.deploy;
+
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(deployment.capturedConfigs.filter(({ name }) => name === deployment.plan.assetsScriptName)).toHaveLength(
+        1,
+      );
+      expect(deployment.providerWrites).toEqual(
+        [1, 2].map(() => ({ method: 'POST', url: routeUrl(deployment.plan.assetsScriptName) })),
+      );
+      expect(deployment.requests.filter((url) => url === routeUrl(deployment.plan.assetsScriptName))).toHaveLength(3);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it('completes a route alone only for a Worker whose workers.dev route is its only Wrangler trigger', () => {
+  expect(workersDevIsTheOnlyTrigger({ name: 'ontos-x', routes: [], workers_dev: true })).toBe(true);
+  expect(workersDevIsTheOnlyTrigger({ queues: { producers: [{ binding: 'Q', queue: 'q' }] }, triggers: {} })).toBe(
+    true,
+  );
+  for (const triggered of [
+    { routes: ['example.com/*'] },
+    { route: 'example.com/*' },
+    { triggers: { crons: ['0 * * * *'] } },
+    { queues: { consumers: [{ queue: 'q' }] } },
+    { workflows: [{ binding: 'W', class_name: 'W', name: 'w' }] },
+  ]) {
+    expect(workersDevIsTheOnlyTrigger(triggered)).toBe(false);
+  }
+});
+
+/** One provider for Worker deletions: each DELETE and GET answers its next listed status. */
+const deletionProvider = (answers: { readonly DELETE: readonly number[]; readonly GET: readonly number[] }) => {
+  const calls: string[] = [];
+  const next = { DELETE: 0, GET: 0 };
+  const client = HttpClient.make((request) =>
+    Effect.sync(() => {
+      const method = request.method === 'DELETE' ? 'DELETE' : 'GET';
+      calls.push(method);
+      const status = answers[method][next[method]] ?? answers[method].at(-1) ?? 404;
+      next[method] += 1;
+      return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+    }),
+  );
+  const remove = deleteImmutableWorker(
+    'a'.repeat(32),
+    Redacted.make('delete-test-token'),
+    `ontos-${'b'.repeat(56)}`,
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(HttpClient.HttpClient, client),
+        Layer.succeed(ImmutableProviderWriteRetrySchedule, Schedule.forever),
+      ),
+    ),
+  );
+  return { calls, remove };
+};
+
+it.effect('proves a deletion a gateway 504 left unanswered by reading the Worker back absent', () =>
+  Effect.gen(function* unansweredDeletion() {
+    const provider = deletionProvider({ DELETE: [504], GET: [404] });
+    yield* provider.remove;
+    expect(provider.calls).toEqual(['DELETE', 'GET']);
+  }),
+);
+
+it.effect('repeats a deletion while the Worker reads back present, until the provider proves it absent', () =>
+  Effect.gen(function* repeatedDeletion() {
+    const provider = deletionProvider({ DELETE: [504, 200, 404], GET: [200, 200] });
+    yield* provider.remove;
+    expect(provider.calls).toEqual(['DELETE', 'GET', 'DELETE', 'GET', 'DELETE']);
+  }),
+);
+
+it.effect('fails a deletion the provider refuses at once, and one it never proves, after every attempt', () =>
+  Effect.gen(function* unprovenDeletion() {
+    const refused = deletionProvider({ DELETE: [409], GET: [200] });
+    const refusal = yield* refused.remove.pipe(Effect.flip);
+    expect(refusal.message).toMatch(/refused to delete the immutable Worker ontos-b{56} \(HTTP 409\)$/u);
+    expect(refused.calls).toEqual(['DELETE']);
+
+    const unproven = deletionProvider({ DELETE: [504], GET: [200] });
+    const failure = yield* unproven.remove.pipe(Effect.flip);
+    expect(failure.message).toBe(
+      `the immutable Worker ontos-${'b'.repeat(56)} was still present after ${String(IMMUTABLE_PROVIDER_WRITE_ATTEMPTS)} deletions (last answer 504)`,
+    );
+    expect(unproven.calls).toHaveLength(2 * IMMUTABLE_PROVIDER_WRITE_ATTEMPTS);
+  }),
 );
 
 it.effect('publishes native route chunks without exposing compiler source maps or changing the compiled output', () =>

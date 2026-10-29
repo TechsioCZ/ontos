@@ -79,10 +79,10 @@ const spawnOptions = (command: OpsCommand): ChildProcessModel.CommandOptions => 
   return options;
 };
 
-interface ProviderFailure {
-  providerCode: number;
-  providerPath: string;
-}
+/** One provider request a native command failed on: its code from a provider error, or its status otherwise. */
+type ProviderFailure =
+  | { providerCode: number; providerPath: string }
+  | { providerPath: string; providerStatus: number };
 
 interface CommandFailureDetails {
   cause?: ProviderFailure;
@@ -111,6 +111,30 @@ export const isTransientProviderFailure = (stderr: string): boolean => {
   return TRANSIENT_PROVIDER_FAILURES.some((pattern) => pattern.test(output));
 };
 
+/** The provider paths a failure may name: a Worker lookup and a Worker's workers.dev route. */
+const PROVIDER_FAILURE_PATH =
+  /^\/accounts\/[a-f\d]{32}\/workers\/(?:workers\/[a-z\d][a-z\d-]{0,62}|scripts\/[a-z\d][a-z\d-]{0,62}\/subdomain)$/u;
+const WORKERS_DEV_ROUTE_PATH = /^\/accounts\/[a-f\d]{32}\/workers\/scripts\/[a-z\d][a-z\d-]{0,62}\/subdomain$/u;
+
+/**
+ * An answer Wrangler cannot parse (a gateway's HTML 504, for example) carries no provider code; Wrangler names its
+ * request as `METHOD path -> status` instead. Only one such workers.dev route request is kept.
+ */
+const parseUnparsedProviderAnswer = (output: string): ProviderFailure | undefined => {
+  if (!/\bReceived a malformed response from the API\b/u.test(output)) {
+    return undefined;
+  }
+  const requests = [
+    ...output.matchAll(/^\s*(?:GET|POST|PUT|PATCH|DELETE) (?<providerPath>\S+) -> (?<providerStatus>[1-5]\d\d)\b/gmu),
+  ];
+  const [request] = requests;
+  const providerPath = request?.groups?.providerPath;
+  if (requests.length !== 1 || providerPath === undefined || !WORKERS_DEV_ROUTE_PATH.test(providerPath)) {
+    return undefined;
+  }
+  return { providerPath, providerStatus: Number(request?.groups?.providerStatus) };
+};
+
 /** Keeps only one unambiguous provider error pair; captured output is never exposed. */
 const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
   const output = stripVTControlCharacters(stderr);
@@ -118,6 +142,9 @@ const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
   const codes = [...output.matchAll(/\[code:/gu)];
   const [request] = requests;
   const [code] = codes;
+  if (requests.length === 0 && codes.length === 0) {
+    return parseUnparsedProviderAnswer(output);
+  }
   if (requests.length !== 1 || codes.length !== 1 || request === undefined || code === undefined) {
     return undefined;
   }
@@ -128,7 +155,7 @@ const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
   const codeMatch = /^\[code: (?<providerCode>0|[1-9]\d*)\]/u.exec(output.slice(code.index));
   if (
     providerPath === undefined ||
-    !/^\/accounts\/[a-f\d]{32}\/workers\/workers\/[a-z\d][a-z\d-]{0,62}$/u.test(providerPath) ||
+    !PROVIDER_FAILURE_PATH.test(providerPath) ||
     codeMatch === null ||
     code.index < request.index + (pathMatch?.[0].length ?? 0)
   ) {

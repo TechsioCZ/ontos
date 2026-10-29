@@ -32,6 +32,7 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 import type { PlatformError } from 'effect/PlatformError';
 
 import {
@@ -46,6 +47,7 @@ import { decodeActiveApplicationCompositionSnapshot } from './active-application
 import {
   ApplicationCompositionPublicationCandidateSchema,
   assertRetainedReleaseArtifactPaths,
+  readPublishedSnapshot,
 } from './publish-active-application-composition.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
@@ -68,6 +70,11 @@ export class ImmutableApplicationReleaseError extends Schema.TaggedError<Immutab
   {
     cause: Schema.optional(Schema.Defect()),
     message: Schema.String,
+    /**
+     * The attempt uploaded Workers it cannot complete (their workers.dev route never came up, or they are not what it
+     * uploaded): its half release is removed, and no further attempt runs.
+     */
+    removeHalfRelease: Schema.optional(Schema.Boolean),
     /** The provider failed an upload in a way its own retry guidance covers. */
     transient: Schema.optional(Schema.Boolean),
   },
@@ -158,6 +165,11 @@ const fail = (message: string, cause?: unknown) => new ImmutableApplicationRelea
 const isTransientUploadFailure = <E,>(failure: E): boolean =>
   Schema.is(ImmutableApplicationReleaseError)(failure) && failure.transient === true;
 
+/** Whether a failed attempt leaves a half release of its own to remove: a transient failure, or an incomplete one. */
+const leavesOwnHalfRelease = <E,>(failure: E): boolean =>
+  isTransientUploadFailure(failure) ||
+  (Schema.is(ImmutableApplicationReleaseError)(failure) && failure.removeHalfRelease === true);
+
 /** Marks a Wrangler upload failure the provider reported as transient, so its release attempt may run again. */
 const classifyTransientUpload = <A, E, R>(upload: Effect.Effect<A, E, R>) =>
   upload.pipe(
@@ -180,8 +192,20 @@ export const ImmutableUploadRetrySchedule = Context.Reference<Schedule.Schedule<
   { defaultValue: () => Schedule.exponential('10 seconds') },
 );
 
+/** How often one idempotent provider write (a Worker deletion, a workers.dev route) is attempted. */
+export const IMMUTABLE_PROVIDER_WRITE_ATTEMPTS = 6;
+
+/** The pause before each repeated idempotent provider write: 5 s, doubling, about 2.5 minutes in all. */
+export const ImmutableProviderWriteRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
+  '@app/scripts/immutable-application-release/ImmutableProviderWriteRetrySchedule',
+  { defaultValue: () => Schedule.exponential('5 seconds') },
+);
+
 const providerScriptUrl = (accountId: string, scriptName: string) =>
   `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`;
+
+/** A provider answer that says nothing about the request itself: rate limiting or a gateway or server error. */
+const isTransientProviderStatus = (status: number) => status === 429 || status >= 500;
 
 /**
  * Classifies one provider Worker script lookup. The provider answers 200 for a Worker with its own code and
@@ -194,15 +218,69 @@ export const immutableProviderScriptPresence = (status: number): 'absent' | 'pre
   return status === 404 ? 'absent' : 'unknown';
 };
 
+/** Why one deletion attempt did not prove the Worker gone. */
+const ImmutableWorkerStillPresent = Data.TaggedError('ImmutableWorkerStillPresent')<{
+  readonly status: number | 'timeout';
+}>;
+
 /**
- * Removes what a transiently failed attempt may have created under its release identities. The attempt held
- * the identity lock and found every identity absent before it uploaded, so anything present now is its own
- * unpublished half release. Deletion is never forced: a release something already references stays, and the
- * next attempt's absence check then refuses it.
+ * Deletes one Worker and proves it gone. The provider's 404 proves absence; its 200 is checked by reading the
+ * Worker back. A rate limit, gateway or server error, or timeout proves neither (a 504 deletion may well have
+ * happened), so the Worker is read back and the deletion repeated until a read proves it absent, at most
+ * {@link IMMUTABLE_PROVIDER_WRITE_ATTEMPTS} times. Any other answer is a refusal and ends at once. Deletion is
+ * never forced: the provider keeps a Worker another Worker's service binding still references.
+ */
+export const deleteImmutableWorker = Effect.fn('ImmutableApplicationRelease.deleteWorker')(
+  function* deleteImmutableWorkerEffect(accountId: string, token: Redacted.Redacted, scriptName: string) {
+    const client = yield* HttpClient.HttpClient;
+    const schedule = yield* Effect.service(ImmutableProviderWriteRetrySchedule);
+    const status = (request: HttpClientRequest.HttpClientRequest) =>
+      client.execute(HttpClientRequest.bearerToken(request, Redacted.value(token))).pipe(
+        Effect.tap((response) => Effect.ignore(response.arrayBuffer)),
+        Effect.map((response) => response.status),
+        Effect.timeout(Duration.seconds(30)),
+        Effect.orElseSucceed(() => 'timeout' as const),
+      );
+    const url = providerScriptUrl(accountId, scriptName);
+    const attempt = Effect.gen(function* deleteOnce() {
+      const deleted = yield* status(HttpClientRequest.delete(url));
+      if (deleted === 404) {
+        return yield* Effect.void;
+      }
+      if (deleted !== 200 && deleted !== 'timeout' && !isTransientProviderStatus(deleted)) {
+        return yield* fail(
+          `the provider refused to delete the immutable Worker ${scriptName} (HTTP ${String(deleted)})`,
+        );
+      }
+      const observed = yield* status(HttpClientRequest.get(url));
+      if (observed !== 404) {
+        return yield* new ImmutableWorkerStillPresent({ status: deleted });
+      }
+      return yield* Effect.void;
+    });
+    return yield* attempt.pipe(
+      Effect.retry({
+        schedule,
+        times: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS - 1,
+        while: Predicate.isTagged('ImmutableWorkerStillPresent'),
+      }),
+      Effect.catchTag('ImmutableWorkerStillPresent', ({ status: last }) =>
+        Effect.fail(
+          fail(
+            `the immutable Worker ${scriptName} was still present after ${String(IMMUTABLE_PROVIDER_WRITE_ATTEMPTS)} deletions (last answer ${String(last)})`,
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+/**
+ * Removes what a failed attempt may have created under its release identities. The attempt held the identity lock
+ * and found every identity absent before it uploaded, so anything present now is its own unpublished half release.
  */
 const removeHalfCreatedImmutableRelease = Effect.fn('ImmutableApplicationRelease.removeHalfCreated')(
   function* removeHalfCreatedImmutableReleaseEffect(scriptNames: readonly string[]) {
-    const client = yield* HttpClient.HttpClient;
     const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
     const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
     // The backend goes first: it may reference its assets Worker, never the other way round.
@@ -210,38 +288,63 @@ const removeHalfCreatedImmutableRelease = Effect.fn('ImmutableApplicationRelease
     return yield* Effect.forEach(
       scriptNames,
       (scriptName) =>
-        client
-          .execute(
-            HttpClientRequest.bearerToken(
-              HttpClientRequest.delete(providerScriptUrl(accountId, scriptName)),
-              Redacted.value(token),
-            ),
-          )
-          .pipe(
-            Effect.tap((response) => Effect.ignore(response.arrayBuffer)),
-            Effect.timeout(Duration.seconds(30)),
-            Effect.filterOrFail(
-              (response) => response.status === 200 || response.status === 404,
-              () => fail(`the half-created immutable release ${scriptName} could not be removed`),
-            ),
-            Effect.as(scriptName),
+        deleteImmutableWorker(accountId, token, scriptName).pipe(
+          Effect.mapError((cause) =>
+            fail(`the half-created immutable release ${scriptName} could not be removed`, cause),
           ),
+          Effect.as(scriptName),
+        ),
       { concurrency: 1 },
     );
   },
-  Effect.mapError((cause) =>
-    Schema.is(ImmutableApplicationReleaseError)(cause)
-      ? cause
-      : fail('the half-created immutable release could not be removed within its timeout'),
-  ),
 );
 
-const removeAfterTransientFailure =
+export const PUBLISHED_HALF_RELEASE =
+  'a half present immutable release identity is named by the active Application Composition; publication must never overwrite it';
+
+/**
+ * An identity with exactly one of its two Workers (a prune or a removal stopped between them) cannot serve, and the
+ * same source revision always derives the same identity, so it can only be released again once the survivor is gone.
+ * The caller holds the identity lock, so no other upload creates or reads either Worker meanwhile. The survivor is
+ * removed only while the active Application Composition provably names neither Worker (a published identity is never
+ * replaced) and the provider deletes it (it refuses while another Worker's service binding references it).
+ */
+const removeUnreferencedHalfRelease = Effect.fn('ImmutableApplicationRelease.removeUnreferencedHalf')(
+  function* removeUnreferencedHalfReleaseEffect(
+    accountId: string,
+    token: Redacted.Redacted,
+    plan: ImmutableApplicationReleasePlan,
+    survivor: string,
+  ) {
+    const active = yield* readPublishedSnapshot.pipe(
+      Effect.mapError((cause) =>
+        fail(
+          `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`,
+          cause,
+        ),
+      ),
+    );
+    if (
+      Option.isSome(active) &&
+      [plan.backendScriptName, plan.assetsScriptName].some((name) => active.value.includes(name))
+    ) {
+      return yield* fail(PUBLISHED_HALF_RELEASE);
+    }
+    yield* Effect.logWarning(
+      `${survivor} is the only Worker of its immutable release identity and nothing active names it; removing it so the pair is uploaded whole`,
+    );
+    return yield* deleteImmutableWorker(accountId, token, survivor).pipe(
+      Effect.mapError((cause) => fail(`the unreferenced half release ${survivor} could not be removed`, cause)),
+    );
+  },
+);
+
+const removeAfterFailedAttempt =
   (scriptNames: readonly string[], attempt: number) =>
   <E,>(failure: E) =>
-    isTransientUploadFailure(failure)
+    leavesOwnHalfRelease(failure)
       ? Effect.logWarning(
-          `transient provider failure releasing ${scriptNames.join(', ')} (attempt ${String(attempt)} of ${String(IMMUTABLE_UPLOAD_ATTEMPTS)}); removing its half release`,
+          `${isTransientUploadFailure(failure) ? 'transient provider failure' : 'incomplete upload'} releasing ${scriptNames.join(', ')} (attempt ${String(attempt)} of ${String(IMMUTABLE_UPLOAD_ATTEMPTS)}); removing its half release`,
         ).pipe(Effect.andThen(removeHalfCreatedImmutableRelease(scriptNames)))
       : Effect.void;
 
@@ -257,7 +360,8 @@ const finalTransientFailure = <E,>(failure: E) =>
  * Runs one immutable release attempt up to {@link IMMUTABLE_UPLOAD_ATTEMPTS} times while the provider fails
  * transiently, removing each failed attempt's half release first so the next one starts from verified absence
  * under the same content-addressed identity. A failed final attempt leaves no half release either, so the
- * same commit can be released again. Every other failure ends the release at once.
+ * same commit can be released again. An incomplete upload (`removeHalfRelease`) also removes its half release but
+ * is not attempted again. Every other failure ends the release at once.
  */
 export const retryTransientImmutableUpload =
   (scriptNames: readonly string[]) =>
@@ -267,7 +371,7 @@ export const retryTransientImmutableUpload =
       let attempts = 0;
       const attemptOnce = Effect.suspend(() => {
         attempts += 1;
-        return attempt.pipe(Effect.tapError(removeAfterTransientFailure(scriptNames, attempts)));
+        return attempt.pipe(Effect.tapError(removeAfterFailedAttempt(scriptNames, attempts)));
       });
       return yield* attemptOnce.pipe(
         Effect.retry({ schedule, times: IMMUTABLE_UPLOAD_ATTEMPTS - 1, while: isTransientUploadFailure }),
@@ -1302,6 +1406,113 @@ export const readRetainedImmutableWorkerVersion = Effect.fn('ImmutableApplicatio
   ),
 );
 
+const WorkersDevRouteSchema = Schema.Struct({
+  result: Schema.Struct({ enabled: Schema.Boolean, previews_enabled: Schema.Boolean }),
+  success: Schema.Boolean,
+});
+
+/** A workers.dev route request the provider answered nothing about: rate limited, a gateway or server error, or no answer. */
+const WorkersDevRouteUnanswered = Data.TaggedError('WorkersDevRouteUnanswered')<{
+  readonly status: number | 'timeout';
+}>;
+
+/**
+ * Enables one uploaded immutable Worker's exact workers.dev route with previews disabled and reads it back enabled.
+ * The POST is idempotent, so an unanswered request (see {@link WorkersDevRouteUnanswered}) repeats it, at most
+ * {@link IMMUTABLE_PROVIDER_WRITE_ATTEMPTS} times; any other answer that is not exactly that route ends at once.
+ */
+export const enableImmutableWorkersDevRoute = Effect.fn('ImmutableApplicationRelease.enableWorkersDevRoute')(
+  function* enableImmutableWorkersDevRouteEffect(accountId: string, token: Redacted.Redacted, scriptName: string) {
+    const client = yield* HttpClient.HttpClient;
+    const schedule = yield* Effect.service(ImmutableProviderWriteRetrySchedule);
+    const url = `${providerScriptUrl(accountId, scriptName)}/subdomain`;
+    const answered = (request: HttpClientRequest.HttpClientRequest) =>
+      client.execute(HttpClientRequest.bearerToken(request, Redacted.value(token))).pipe(
+        Effect.timeout(Duration.seconds(30)),
+        Effect.mapError(() => new WorkersDevRouteUnanswered({ status: 'timeout' })),
+        Effect.flatMap((response) =>
+          isTransientProviderStatus(response.status)
+            ? Effect.ignore(response.arrayBuffer).pipe(
+                Effect.andThen(Effect.fail(new WorkersDevRouteUnanswered({ status: response.status }))),
+              )
+            : Effect.succeed(response),
+        ),
+      );
+    const exactRoute = (request: HttpClientRequest.HttpClientRequest, refusal: string) =>
+      Effect.gen(function* readExactWorkersDevRoute() {
+        const response = yield* answered(request);
+        const route = yield* Schema.decodeUnknownEffect(WorkersDevRouteSchema)(yield* response.json).pipe(
+          Effect.mapError(() => fail(refusal)),
+        );
+        if (response.status !== 200 || !route.success || !route.result.enabled || route.result.previews_enabled) {
+          return yield* fail(refusal);
+        }
+        return yield* Effect.void;
+      });
+    const attempt = Effect.gen(function* enableWorkersDevRouteOnce() {
+      const request = yield* HttpClientRequest.bodyJson(HttpClientRequest.post(url), {
+        enabled: true,
+        previews_enabled: false,
+      }).pipe(Effect.mapError((cause) => fail('the workers.dev route request could not be encoded', cause)));
+      yield* exactRoute(
+        HttpClientRequest.setHeader(request, 'Cloudflare-Workers-Script-Api-Date', '2025-08-01'),
+        `the workers.dev route of ${scriptName} was not enabled with previews disabled`,
+      );
+      yield* exactRoute(
+        HttpClientRequest.get(url),
+        `the workers.dev route of ${scriptName} does not read back enabled with previews disabled`,
+      );
+    });
+    return yield* attempt.pipe(
+      Effect.retry({
+        schedule,
+        times: IMMUTABLE_PROVIDER_WRITE_ATTEMPTS - 1,
+        while: Predicate.isTagged('WorkersDevRouteUnanswered'),
+      }),
+      Effect.catchTag('WorkersDevRouteUnanswered', ({ status }) =>
+        Effect.fail(
+          fail(
+            `the workers.dev route of ${scriptName} stayed unanswered after ${String(IMMUTABLE_PROVIDER_WRITE_ATTEMPTS)} attempts (last answer ${String(status)})`,
+          ),
+        ),
+      ),
+    );
+  },
+);
+
+const WorkersDevRouteFailure = Schema.Struct({ providerPath: Schema.String });
+
+/**
+ * Wrangler uploads a Worker before it requests its workers.dev route. A command that failed transiently on exactly
+ * that route request of exactly this Worker therefore failed after the upload, at the route alone.
+ */
+const failedOnlyAtWorkersDevRoute = (failure: OpsCommandError, accountId: string, scriptName: string) =>
+  failure.transient === true &&
+  Schema.is(WorkersDevRouteFailure)(failure.cause) &&
+  failure.cause.providerPath === `/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`;
+
+const NoTriggerBeyondWorkersDev = Schema.Struct({
+  queues: Schema.optionalKey(Schema.Struct({ consumers: Schema.optionalKey(Schema.Tuple([])) })),
+  route: Schema.optionalKey(Schema.Never),
+  routes: Schema.optionalKey(Schema.Tuple([])),
+  triggers: Schema.optionalKey(Schema.Struct({ crons: Schema.optionalKey(Schema.Tuple([])) })),
+  workflows: Schema.optionalKey(Schema.Tuple([])),
+});
+
+/**
+ * Wrangler deploys a Worker's other triggers (routes, crons, queue consumers, workflows) only after its workers.dev
+ * route, so a release with any of them is not complete once that route alone is enabled.
+ */
+export const workersDevIsTheOnlyTrigger = Schema.is(NoTriggerBeyondWorkersDev);
+
+/** An uploaded Worker that cannot complete its route is not a release: its half release goes. */
+const incompleteUpload = (scriptName: string) => (cause: unknown) =>
+  new ImmutableApplicationReleaseError({
+    cause,
+    message: `the uploaded immutable Worker ${scriptName} could not complete its workers.dev route; its half release is removed`,
+    removeHalfRelease: true,
+  });
+
 const WorkerVisibilityResponse = Schema.Struct({
   errors: Schema.optionalKey(Schema.Array(Schema.Struct({ code: Schema.Number }))),
   result: Schema.OptionFromOptionalNullOr(Schema.Struct({ name: Schema.String })),
@@ -1394,8 +1605,21 @@ export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.depl
     yield* runCommand(command).pipe(
       Effect.catchTag('OpsCommandError', (failure) =>
         Effect.gen(function* recoverUploadedAssetsRouting() {
+          if (failure.command !== [command.command, ...command.args].join(' ')) {
+            return yield* failure;
+          }
+          if (failedOnlyAtWorkersDevRoute(failure, input.accountId, input.plan.assetsScriptName)) {
+            // Uploaded: one complete active version. Only its idempotent route request is repeated, never the upload.
+            return yield* readRetainedImmutableWorkerVersion(
+              input.accountId,
+              input.token,
+              input.plan.assetsScriptName,
+            ).pipe(
+              Effect.andThen(enableImmutableWorkersDevRoute(input.accountId, input.token, input.plan.assetsScriptName)),
+              Effect.mapError(incompleteUpload(input.plan.assetsScriptName)),
+            );
+          }
           if (
-            failure.command !== [command.command, ...command.args].join(' ') ||
             !Schema.is(NativeWorkerLookupFailure)(failure.cause) ||
             failure.cause.providerCode !== 10_007 ||
             failure.cause.providerPath !== `/accounts/${input.accountId}/workers/workers/${input.plan.assetsScriptName}`
@@ -1494,10 +1718,13 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     }
     // A failed-job rerun may find the complete release uploaded by its earlier attempt. Never
     // overwrite either identity: reuse only after the same full package and asset readback below.
-    // A half release (exactly one identity present) is never reused.
+    // A half release (exactly one identity present) is never reused: its unreferenced survivor is removed first.
     const reuseExisting = presence.every((current) => current === 'present');
-    if (!reuseExisting && presence.includes('present')) {
-      return yield* fail('an immutable release identity already exists; publication must never overwrite it');
+    const survivor = presence.includes('absent')
+      ? [plan.backendScriptName, plan.assetsScriptName].find((_, index) => presence[index] === 'present')
+      : undefined;
+    if (survivor !== undefined) {
+      yield* removeUnreferencedHalfRelease(accountId, apiToken, plan, survivor);
     }
     // The identity names the source revision, not the secrets, so a rotation at the same revision finds these
     // Workers too. Reuse only a backend version uploaded with exactly the secrets this release binds; the receipt
@@ -1560,14 +1787,26 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
         immutableAssetsWranglerConfig(plan, deployedAssetsDirectory, wrangler.compatibility_date),
       ),
     );
-    const deploy = (configFile: string, extra: readonly string[]) => {
+    /** `afterRouteFailure` completes an upload whose command failed only at the backend's workers.dev route. */
+    const deploy = <R = never,>(
+      configFile: string,
+      extra: readonly string[],
+      afterRouteFailure?: Effect.Effect<void, ImmutableApplicationReleaseError, R>,
+    ) => {
       const command = runCommand({
         args: ['exec', 'wrangler', 'deploy', '--config', configFile, ...extra],
+        captureProviderFailure: !reuseExisting,
         classifyTransientProviderFailure: !reuseExisting,
         command: 'pnpm',
         cwd: input.appDirectory,
         env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: apiToken },
-      });
+      }).pipe(
+        Effect.catchIf(
+          (failure) =>
+            afterRouteFailure !== undefined && failedOnlyAtWorkersDevRoute(failure, accountId, plan.backendScriptName),
+          () => afterRouteFailure ?? Effect.void,
+        ),
+      );
       // Existing identities are not owned by this attempt. Even a transient packaging failure
       // must never enter the upload retry's half-release deletion path.
       return reuseExisting ? command : classifyTransientUpload(command);
@@ -1586,6 +1825,27 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     if (!packagedModules.some((file) => file.path === packagedMain)) {
       return yield* fail('the native Worker packager did not capture the complete deployment entrypoint');
     }
+    /** The provider's retained module content must be exactly the captured native upload package. */
+    const verifyInstalledContent = (installedContent: HttpClientResponse.HttpClientResponse) =>
+      Effect.gen(function* verifyInstalledWorkerContent() {
+        if (installedContent.status !== 200) {
+          return yield* fail('the provider did not retain the complete immutable Worker module content');
+        }
+        if (installedContent.headers['cf-entrypoint'] !== packagedMain) {
+          return yield* fail('the provider retained a missing or different immutable Worker entrypoint');
+        }
+        return yield* verifyImmutableBackendModuleContent(
+          packagedModules,
+          yield* installedContent.formData.pipe(
+            Effect.timeout(Duration.seconds(30)),
+            Effect.mapError(() => fail('the retained Worker module content could not be read within its timeout')),
+          ),
+        ).pipe(
+          Effect.mapError((cause) =>
+            fail('the deployed Worker differs from the captured native upload package', cause),
+          ),
+        );
+      });
     const capturedConfig = {
       ...wrangler,
       assets: { ...wrangler.assets, directory: deployedAssetsDirectory },
@@ -1634,13 +1894,29 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       secretsArguments.push('--secrets-file', secretsFile);
     }
     yield* markPhase('verify upload package');
+    // Wrangler uploaded the backend and then failed transiently on its workers.dev route request. When that route is
+    // the backend's only trigger, the upload is proven to be exactly this release and only the idempotent route
+    // request repeats; re-uploading would only add another release under provider strain.
+    const completeBackendRoute = Effect.gen(function* completeUploadedBackendRoute() {
+      const uploadedVersion = yield* readRetainedImmutableWorkerVersion(accountId, apiToken, plan.backendScriptName);
+      yield* requireWorkerVersionSecretFingerprint(
+        accountId,
+        apiToken,
+        plan.backendScriptName,
+        uploadedVersion,
+        secretFingerprint,
+      );
+      yield* execute(HttpClientRequest.get(apiUrl(`${backendScript}/content/v2`))).pipe(
+        Effect.flatMap(verifyInstalledContent),
+      );
+      yield* enableImmutableWorkersDevRoute(accountId, apiToken, plan.backendScriptName);
+    }).pipe(Effect.mapError(incompleteUpload(plan.backendScriptName)));
     if (!reuseExisting) {
-      yield* deploy(backendConfig, [
-        '--no-bundle',
-        '--message',
-        releaseSecretFingerprintAnnotation(secretFingerprint),
-        ...secretsArguments,
-      ]);
+      yield* deploy(
+        backendConfig,
+        ['--no-bundle', '--message', releaseSecretFingerprintAnnotation(secretFingerprint), ...secretsArguments],
+        workersDevIsTheOnlyTrigger(capturedConfig) ? completeBackendRoute : undefined,
+      );
       yield* markPhase('backend upload with secrets');
       yield* deployImmutableAssets({
         accountId,
@@ -1669,21 +1945,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     if (subdomain.status !== 200 || !subdomainState.success || !subdomainState.result.enabled) {
       return yield* fail('the immutable backend has no enabled native workers.dev route');
     }
-    if (installedContent.status !== 200) {
-      return yield* fail('the provider did not retain the complete immutable Worker module content');
-    }
-    if (installedContent.headers['cf-entrypoint'] !== packagedMain) {
-      return yield* fail('the provider retained a missing or different immutable Worker entrypoint');
-    }
-    const workerSha256 = yield* verifyImmutableBackendModuleContent(
-      packagedModules,
-      yield* installedContent.formData.pipe(
-        Effect.timeout(Duration.seconds(30)),
-        Effect.mapError(() => fail('the retained Worker module content could not be read within its timeout')),
-      ),
-    ).pipe(
-      Effect.mapError((cause) => fail('the deployed Worker differs from the captured native upload package', cause)),
-    );
+    const workerSha256 = yield* verifyInstalledContent(installedContent);
     const [, versionId, assetsVersionId] = yield* Effect.all(
       [
         Effect.forEach(
