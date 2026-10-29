@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
+import { useHydrated } from './use-hydrated.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -380,6 +381,7 @@ const DashboardNavigation = ({
 
 const DashboardHeader = ({ identity, logoutPending, onLogout, title }: DashboardHeaderProps) => {
   const { t } = useModernI18n();
+  const hydrated = useHydrated();
   const accountItems: MenuItem[] = [
     {
       disabled: logoutPending,
@@ -398,7 +400,7 @@ const DashboardHeader = ({ identity, logoutPending, onLogout, title }: Dashboard
       )}
       <Header.Container position="end">
         <Header.Actions>
-          <Header.ActionItem>
+          <Header.ActionItem data-hydrated={hydrated || undefined}>
             <Menu
               aria-label={t('shell.dashboard.account.label')}
               items={accountItems}
