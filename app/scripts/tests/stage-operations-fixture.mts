@@ -506,7 +506,18 @@ export const fakeZeropsApi = (
           }
           stage.services = stage.services.filter(({ id }) => id !== serviceId);
         }),
-      deleteServiceSecret: notFaked('deleteServiceSecret'),
+      deleteServiceSecret: (serviceId, key) =>
+        Effect.sync(() => {
+          const hostname = stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId;
+          const reference = `${hostname}_${key}`;
+          stage.projectValues.delete(reference);
+          stage.projectUserKeys.splice(
+            0,
+            stage.projectUserKeys.length,
+            ...stage.projectUserKeys.filter((candidate) => candidate !== reference),
+          );
+          stage.sensitiveKeys.delete(reference);
+        }),
       deployAppVersion: notFaked('deployAppVersion'),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       findServiceStack: notFaked('findServiceStack'),
