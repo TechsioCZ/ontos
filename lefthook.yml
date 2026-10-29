@@ -2,6 +2,9 @@
 # lefthook package's own postinstall. Never bypass them with --no-verify.
 pre-commit:
   jobs:
+    - name: shell-ui-candidates
+      root: "app/"
+      run: pnpm shell:ui-candidates:check
     # oxfmt skips unsupported file types and its own ignorePatterns, matching `pnpm format`.
     - name: format
       root: "app/"

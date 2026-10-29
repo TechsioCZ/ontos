@@ -1297,6 +1297,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/generate-ontos-module-contract.mts',
   'scripts/ontos-mcp-contribution.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/generate-shell-ui-candidates.mts',
   'scripts/application-release-intent.mts',
   'scripts/application-composition-authority-publication.mts',
   'scripts/immutable-application-release.mts',

@@ -31,8 +31,7 @@
     "./resources/party": "./shared/resources/party.ts",
     "./resources/party-contact-point": "./shared/resources/party-contact-point.ts",
     "./resources/party-official-identifier": "./shared/resources/party-official-identifier.ts",
-    "./outbox-worker-host": "./src/worker-host/entry.ts",
-    "./database-identities": "./shared/database-identities.ts"
+    "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical party-registry --target dist && ultramodern-create ultramodern public-surface --app party-registry --target dist && modern deploy --skip-build --deploy-target node",
@@ -86,7 +85,8 @@
     "@app/tagging": "workspace:*",
     "@app/admin-ui": "workspace:*",
     "@techsio/ui-kit": "catalog:",
-    "uuid": "14.0.3"
+    "uuid": "14.0.3",
+    "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.53.1",

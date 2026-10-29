@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';

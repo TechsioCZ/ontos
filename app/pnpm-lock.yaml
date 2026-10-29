@@ -318,6 +318,9 @@ importers:
         specifier: 14.0.3
         version: 14.0.3
     devDependencies:
+      '@app/party-registry-identity-contracts':
+        specifier: workspace:*
+        version: link:packages/party-registry-identity-contracts
       '@babel/types':
         specifier: 8.0.6
         version: 8.0.6
@@ -372,6 +375,12 @@ importers:
       '@rstest/core':
         specifier: 0.11.12
         version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0))
+      '@tailwindcss/node':
+        specifier: 4.3.3
+        version: 4.3.3
+      '@tailwindcss/oxide':
+        specifier: 4.3.3
+        version: 4.3.3
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -520,78 +529,24 @@ importers:
       '@app/admin-ui':
         specifier: workspace:*
         version: link:../../packages/admin-ui
-      '@app/assortment':
-        specifier: workspace:*
-        version: link:../../verticals/assortment
       '@app/better-auth-effect-drizzle':
         specifier: workspace:*
         version: link:../../packages/better-auth-effect-drizzle
-      '@app/catalog':
-        specifier: workspace:*
-        version: link:../../verticals/catalog
-      '@app/commerce-market-catalog':
-        specifier: workspace:*
-        version: link:../../verticals/commerce-market-catalog
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
-      '@app/crm':
-        specifier: workspace:*
-        version: link:../../verticals/crm
-      '@app/crm-activities':
-        specifier: workspace:*
-        version: link:../../verticals/crm-activities
       '@app/email-delivery':
         specifier: workspace:*
         version: link:../../packages/email-delivery
-      '@app/facility-operations':
+      '@app/party-registry-identity-contracts':
         specifier: workspace:*
-        version: link:../../verticals/facility-operations
-      '@app/finance-billing':
-        specifier: workspace:*
-        version: link:../../verticals/finance-billing
-      '@app/inventory':
-        specifier: workspace:*
-        version: link:../../verticals/inventory
-      '@app/legal-agreements':
-        specifier: workspace:*
-        version: link:../../verticals/legal-agreements
-      '@app/merchandise':
-        specifier: workspace:*
-        version: link:../../verticals/merchandise
-      '@app/party-registry':
-        specifier: workspace:*
-        version: link:../../verticals/party-registry
-      '@app/projects':
-        specifier: workspace:*
-        version: link:../../verticals/projects
-      '@app/property-leasing':
-        specifier: workspace:*
-        version: link:../../verticals/property-leasing
-      '@app/property-portfolio':
-        specifier: workspace:*
-        version: link:../../verticals/property-portfolio
-      '@app/sales-insights':
-        specifier: workspace:*
-        version: link:../../verticals/sales-insights
-      '@app/sales-pipeline':
-        specifier: workspace:*
-        version: link:../../verticals/sales-pipeline
+        version: link:../../packages/party-registry-identity-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/tagging':
-        specifier: workspace:*
-        version: link:../../verticals/tagging
-      '@app/work-tasks':
-        specifier: workspace:*
-        version: link:../../verticals/work-tasks
-      '@app/workforce':
-        specifier: workspace:*
-        version: link:../../verticals/workforce
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
@@ -761,9 +716,6 @@ importers:
       wrangler:
         specifier: 4.137.0
         version: 4.137.0(@cloudflare/workers-types@5.20260923.1)(@types/node@26.6.3)
-      zephyr-rspack-plugin:
-        specifier: 1.2.4
-        version: 1.2.4(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.112.0(@swc/core@1.16.18(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@7.1.9(postcss@8.5.31))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.31)(sharp@0.35.5(@types/node@26.6.3))(svgo@4.1.0))
 
   packages/admin-ui:
     dependencies:
@@ -957,6 +909,12 @@ importers:
       effect-rstest:
         specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
         version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(patch_hash=866572681e625f85d787a23b50686c2f306ad327bf75f9369e194e63b87bfcca)(@rstest/core@0.11.12(@bleedingdev/mf-runtime-tools@2.9.3)(core-js@3.50.0)(happy-dom@20.8.3)(jsdom@30.1.1(@noble/hashes@2.2.0)))(effect@4.0.5)
+
+  packages/party-registry-identity-contracts:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
 
   packages/payment-term-catalog-contracts:
     dependencies:
@@ -2806,6 +2764,9 @@ importers:
       '@app/gateway-principal-verifier':
         specifier: workspace:*
         version: link:../../packages/gateway-principal-verifier
+      '@app/party-registry-identity-contracts':
+        specifier: workspace:*
+        version: link:../../packages/party-registry-identity-contracts
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

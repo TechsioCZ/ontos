@@ -438,6 +438,11 @@ jobs:
         with:
           save-store: 'true'
 
+      # Includes topology-only sources (availability): a per-built-unit check is not a release-wide gate.
+      - name: Check all Shell UI candidates
+        working-directory: app
+        run: mise exec -- pnpm shell:ui-candidates:check
+
       - name: Run the immutable release tests
         working-directory: app
         run: >-
@@ -446,6 +451,7 @@ jobs:
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
           scripts/tests/deploy-plan.test.mts
+          scripts/tests/generate-shell-ui-candidates.test.mts
           scripts/tests/deployment-build-inputs.test.mts
           scripts/tests/release-stream.test.mts
           scripts/tests/database-state-fingerprint.test.mts

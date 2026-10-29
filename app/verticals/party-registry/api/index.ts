@@ -1,7 +1,7 @@
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { DatabaseIdentityEnrollmentContext, makeDatabaseConfigLive } from '@app/core-runtime';

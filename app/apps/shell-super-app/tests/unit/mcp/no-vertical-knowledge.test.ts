@@ -4,8 +4,7 @@
  * navigation entry, review rule or follow-up comes from the composed module contracts. This test fails when a
  * vertical id appears in that source as a quoted literal or a path segment, or a module id appears anywhere.
  * Companies are tenant data too: the Shell UI must not name a demo company or key behaviour by its legal entity id.
- * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour), and the published
- * identity descriptor import in the Shell's exact database enrollment composition root.
+ * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour).
  */
 import { OntosDeploymentAppIdSchema, OntosModuleIdSchema } from '@app/core-runtime';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -77,46 +76,10 @@ const patterns = verticals.flatMap(({ appId, moduleId }) => [
 
 const ENROLLMENT_ROOT = 'apps/shell-super-app/api/database-identity-enrollment.ts';
 const ENROLLMENT_DESCRIPTOR_IMPORT =
-  "import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';";
-
-/** Only this named public contract import is composition metadata, not private vertical knowledge. */
-const withoutEnrollmentImportSource = (file: string, source: string): string => {
-  if (file !== ENROLLMENT_ROOT) {
-    return source;
-  }
-  const parsed = parseSync(file, source);
-  if (parsed.errors.length > 0) {
-    return source;
-  }
-  const sources = parsed.program.body.flatMap((statement) => {
-    if (
-      statement.type !== 'ImportDeclaration' ||
-      statement.importKind !== 'value' ||
-      statement.phase !== null ||
-      statement.attributes.length !== 0 ||
-      statement.source.value !== '@app/party-registry/database-identities' ||
-      statement.specifiers.length !== 1
-    ) {
-      return [];
-    }
-    const [specifier] = statement.specifiers;
-    return specifier?.type === 'ImportSpecifier' &&
-      specifier.importKind === 'value' &&
-      specifier.imported.type === 'Identifier' &&
-      specifier.imported.name === 'PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR'
-      ? [statement.source]
-      : [];
-  });
-  // Mask only the source literal, not the import's line or the file. Keep every line number intact.
-  return sources.reduceRight(
-    (text, { end, start }) =>
-      text.slice(0, start) + text.slice(start, end).replaceAll(/[^\r\n]/gu, ' ') + text.slice(end),
-    source,
-  );
-};
+  "import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry-identity-contracts';";
 
 const verticalKnowledgeIn = (file: string, source: string): string[] =>
-  withoutEnrollmentImportSource(file, source)
+  source
     .split('\n')
     .flatMap((line, index) =>
       patterns.filter(({ pattern }) => pattern.test(line)).map(({ id }) => `${file}:${index + 1} names ${id}`),
@@ -200,110 +163,14 @@ it('allows the published descriptor at the native Shell enrollment composition r
   expect(verticalKnowledgeIn(ENROLLMENT_ROOT, source)).toEqual([]);
 });
 
-it('recognizes a multiline named descriptor import by its imported contract, not its local alias', () => {
-  const source = [
-    'import {',
-    '  PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR as ownerIdentity,',
-    "} from '@app/party-registry/database-identities';",
-  ].join('\n');
-  expect(verticalKnowledgeIn(ENROLLMENT_ROOT, source)).toEqual([]);
+it('rejects the former vertical identity export even at the composition root', () => {
+  expect(
+    verticalKnowledgeIn(
+      ENROLLMENT_ROOT,
+      "import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';",
+    ),
+  ).toEqual([`${ENROLLMENT_ROOT}:1 names party-registry`]);
 });
-
-const rejectedEnrollmentImports = [
-  {
-    file: 'apps/shell-super-app/api/mcp/index.ts',
-    name: 'the same published descriptor in runtime code outside the composition root',
-    source: ENROLLMENT_DESCRIPTOR_IMPORT,
-  },
-  {
-    file: 'apps/shell-super-app/api/mcp/database-identity-enrollment.ts',
-    name: 'an enrollment filename in another directory',
-    source: ENROLLMENT_DESCRIPTOR_IMPORT,
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a private vertical implementation import at the composition root',
-    source: "import { schema } from '@app/party-registry/src/db/schema.ts';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a relative private vertical implementation import',
-    source: "import { schema } from '../../../verticals/party-registry/src/db/schema.ts';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a runtime export from the published descriptor subpath',
-    source: "import { makePartyRuntime } from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a descriptor mixed with another export',
-    source:
-      "import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR, PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a namespace import',
-    source: "import * as identities from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a default import',
-    source: "import descriptor from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a side-effect import',
-    source: "import '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a type-only import',
-    source:
-      "import type { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a dynamic import',
-    source: "const load = () => import('@app/party-registry/database-identities');",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a re-export',
-    source: "export { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a require call',
-    source: "const descriptor = require('@app/party-registry/database-identities');",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'a quoted path outside an import',
-    source: "const descriptorPath = '@app/party-registry/database-identities';",
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'an import-shaped comment',
-    source: `// ${ENROLLMENT_DESCRIPTOR_IMPORT}`,
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'an attributed import rather than the native descriptor import',
-    source: ENROLLMENT_DESCRIPTOR_IMPORT.replace(';', ' with { type: "json" };'),
-  },
-  {
-    file: ENROLLMENT_ROOT,
-    name: 'an otherwise permitted import in an invalid program',
-    source: `${ENROLLMENT_DESCRIPTOR_IMPORT}\nconst broken = ;`,
-  },
-];
-
-for (const { file, name, source } of rejectedEnrollmentImports) {
-  it(`still rejects ${name}`, () => {
-    expect(verticalKnowledgeIn(file, source)).toEqual([`${file}:1 names party-registry`]);
-  });
-}
 
 it('still rejects a private import on the same line as the permitted descriptor import', () => {
   const source = `${ENROLLMENT_DESCRIPTOR_IMPORT} import { schema } from '@app/party-registry/src/db/schema.ts';`;

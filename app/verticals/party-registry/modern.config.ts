@@ -4,7 +4,7 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from './shared/database-identity-data.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/party-registry-identity-contracts/src/database-identity-data.ts';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'party-registry';

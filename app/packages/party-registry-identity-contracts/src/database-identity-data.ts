@@ -1,10 +1,11 @@
 import type { DatabaseOwnerIdentityDescriptor } from '@app/core-runtime/db/database-identity-manifest';
 
+const PARTY_MODULE = 'party.registry';
+
 /** Party-owned identity facts, without private schema or runtime dependencies. */
 export const PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR = Object.freeze({
-  moduleKey: 'party.registry',
+  moduleKey: PARTY_MODULE,
   policyPrefix: 'party_registry',
-  schemas: Object.freeze(['party', 'contacts']),
   request: Object.freeze({
     cloudflareHyperdrive: Object.freeze({
       binding: 'PARTY_REGISTRY_HYPERDRIVE',
@@ -13,18 +14,19 @@ export const PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR = Object.freeze({
     gatewayScopeAudiences: Object.freeze(['party-registry']),
     handlesBearerAssertions: true,
     id: 'party_registry_request',
-    ownerModuleKey: 'party.registry',
+    ownerModuleKey: PARTY_MODULE,
     registersGatewayScopeGrants: false,
     role: 'party_registry_runtime',
     scopeAuthority: 'gateway_grant',
     urlKey: 'PARTY_REGISTRY_DATABASE_URL',
   }),
+  schemas: Object.freeze(['party', 'contacts']),
   worker: Object.freeze({
     cloudflareHyperdrive: null,
     gatewayScopeAudiences: Object.freeze([]),
     handlesBearerAssertions: false,
     id: 'party_registry_worker',
-    ownerModuleKey: 'party.registry',
+    ownerModuleKey: PARTY_MODULE,
     registersGatewayScopeGrants: false,
     role: 'party_registry_worker',
     scopeAuthority: 'session_setting',

@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { Effect, Schema } from 'effect';
 
 import {

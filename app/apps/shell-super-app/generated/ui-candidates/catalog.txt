@@ -1,0 +1,6 @@
+contents
+fixed
+hidden
+ordinal
+transition
+visible

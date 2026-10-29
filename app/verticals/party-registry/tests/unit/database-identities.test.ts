@@ -9,12 +9,12 @@ import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '../../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR as pureDescriptor,
   PARTY_REGISTRY_REQUEST_IDENTITY as pureRequestIdentity,
   PARTY_REGISTRY_WORKER_IDENTITY as pureWorkerIdentity,
-} from '../../shared/database-identity-data.ts';
+} from '@app/party-registry-identity-contracts/data';
 import {
   PARTY_REGISTRY_REQUEST_DATABASE_GRANTS,
   PARTY_REGISTRY_WORKER_DATABASE_GRANTS,

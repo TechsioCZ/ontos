@@ -1,0 +1,15 @@
+--account-group-outline
+--color-fg-secondary
+--color-page-fg
+[&_.ontos-card]:bg-transparent
+[&_.ontos-card]:border-0
+[&_.ontos-card]:p-0
+[&_.ontos-tile]:bg-base
+bg-base
+bg-surface
+border
+border-border-primary/60
+icon-[mdi--account-group-outline]
+outline
+rounded-lg
+visible

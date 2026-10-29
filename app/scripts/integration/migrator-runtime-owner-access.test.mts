@@ -1,5 +1,5 @@
 import { DATABASE_IDENTITIES, APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,0 +1,3 @@
+--color-page-fg
+--folder-plus-outline
+icon-[mdi--folder-plus-outline]

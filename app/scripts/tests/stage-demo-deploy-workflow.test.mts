@@ -1978,3 +1978,28 @@ it('publishes the cold-start composition before the sales reset discovers live A
   expect(script.lastIndexOf('step demo-reset-sales')).toBe(sales);
   expect(script.slice(ready, sales)).toContain(['[ "$', '{DEMO_RESET:-1}" != 0 ]'].join(''));
 });
+
+it('blocks candidate publication on a required all-vertical projection check, including unreleased availability', () => {
+  const jobs = readJobs();
+  const checks = jobs['release-script-tests'];
+  const step = checks.steps.find(({ name }) => name === 'Check all Shell UI candidates');
+  expect(step?.run).toBe('mise exec -- pnpm shell:ui-candidates:check');
+  expect(step?.['working-directory']).toBe('app');
+  expect(step?.if).toBeUndefined();
+  expect(step?.['continue-on-error']).toBeUndefined();
+  expect(indexOf(checks.steps, 'Check all Shell UI candidates')).toBeGreaterThan(
+    indexOf(checks.steps, 'Install the app workspace'),
+  );
+  expect(jobs.release.steps.some(({ run }) => run?.includes('release-stream.mts join') === true)).toBe(true);
+  const build = readFileSync(new URL('../ci/build-edge-unit.sh', import.meta.url), 'utf-8');
+  expect(build).toContain('generate-shell-ui-candidates.mts --check --all');
+  expect(build).toContain('generate-shell-ui-candidates.mts --check --vertical "$UNIT_ID"');
+  expect(build.indexOf('generate-shell-ui-candidates.mts')).toBeLessThan(build.indexOf('typecheck --build'));
+  const gates = readFileSync(
+    new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
+    'utf-8',
+  );
+  expect(gates).toContain('pnpm shell:ui-candidates:check');
+  const hooks = readFileSync(new URL('../../../lefthook.yml', import.meta.url), 'utf-8');
+  expect(hooks).toContain('run: pnpm shell:ui-candidates:check');
+});

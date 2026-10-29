@@ -226,3 +226,20 @@ it.live(
     expect(invalid.stdout + invalid.stderr).toMatch(/referenced[/\\]index\.ts.*TS2322/u);
   }),
 );
+
+it('Shell and Party reference the narrow identity contracts, and the root checks that project', () => {
+  const ReferencesSchema = Schema.Struct({ references: Schema.Array(Schema.Struct({ path: Schema.String })) });
+  const references = (file: string) =>
+    Schema.decodeUnknownSync(Schema.fromJsonString(ReferencesSchema))(
+      readFileSync(path.join(workspaceRoot, file), 'utf-8'),
+    ).references.map((reference) => reference.path);
+  expect(references('tsconfig.json')).toContain('packages/party-registry-identity-contracts');
+  expect(references('apps/shell-super-app/tsconfig.json')).toContain(
+    '../../packages/party-registry-identity-contracts',
+  );
+  expect(references('apps/shell-super-app/tsconfig.json')).not.toContain('../../database');
+  expect(references('verticals/party-registry/tsconfig.json')).toContain(
+    '../../packages/party-registry-identity-contracts',
+  );
+  expect(references('packages/party-registry-identity-contracts/tsconfig.json')).toEqual(['../core-runtime']);
+});

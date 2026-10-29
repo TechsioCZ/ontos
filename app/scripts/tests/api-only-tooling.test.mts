@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { execFileSync, spawnSync } from 'node:child_process';
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -2223,7 +2223,7 @@ const evaluatePartyBuildGlobalVars = Effect.fn(function* scenario20(shellOrigin:
     );
     const effectModuleUrl = pathToFileURL(require.resolve('effect', { paths: [workspaceRoot] })).href;
     const databaseIdentitiesUrl = pathToFileURL(
-      path.join(workspaceRoot, 'verticals/party-registry/shared/database-identity-data.ts'),
+      path.join(workspaceRoot, 'packages/party-registry-identity-contracts/src/database-identity-data.ts'),
     ).href;
     const { code } = yield* Effect.promise(() =>
       transform(configSource, {
@@ -2272,7 +2272,7 @@ runInNewContext(${JSON.stringify(code)}, {
     effect,
     'effect/Result': effect.Result,
     'effect/Schema': effect.Schema,
-    './shared/database-identity-data.ts': databaseIdentities,
+    '../../packages/party-registry-identity-contracts/src/database-identity-data.ts': databaseIdentities,
     'node:url': nodeUrl,
     'node:path': nodePath,
   }[specifier] ?? framework),

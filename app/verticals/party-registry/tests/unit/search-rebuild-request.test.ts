@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '../../shared/database-identities.ts';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT } from '@app/party-registry-identity-contracts';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema, Predicate } from 'effect';

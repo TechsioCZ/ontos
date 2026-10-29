@@ -16,6 +16,7 @@ import {
   computeUnitDigest,
   DIGEST_VERSION,
   hostArtifactName,
+  installManifestProjection,
   planDeployment,
   planOutputs,
   storefrontArtifactName,
@@ -23,6 +24,7 @@ import {
   unitInputsDocument,
   verifyPlan,
 } from '../ci/deploy-plan.mts';
+import { createClosureGraph, packageClosure, readRepositorySnapshot } from '../ci/unit-closure.mts';
 import {
   isTrustedArtifact,
   isTrustedProducerRun,
@@ -44,6 +46,7 @@ const REPOSITORY_ID = 7;
 const ACCOUNT = 'account-1';
 const SUBDOMAIN = 'edution';
 const SHELL = 'shell-super-app';
+const SHELL_PACKAGE = '@app/shell-super-app';
 const UNIT_IDS = [SHELL, 'alpha', 'beta', 'gamma', 'projects'] as const;
 const BUILD_ENV = {
   CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
@@ -57,6 +60,7 @@ const KEY = 'fingerprint-key';
 const SECRET_RECORD = { alpha: { TOKEN: 'a' }, beta: { TOKEN: 'b' }, [SHELL]: { BETTER_AUTH_SECRET: 's' } };
 const SECRETS = JSON.stringify(SECRET_RECORD);
 const WORKSPACE = 'workspace:*';
+const PROJECT_PACKAGE = '@app/projects';
 /** The revision a trusted earlier run deployed, and a newer one that rebuilt content-equal units. */
 const REV_A = 'a'.repeat(40);
 const REV_B = 'b'.repeat(40);
@@ -73,7 +77,7 @@ const FIXTURE_FILES = {
   'app/.mise.toml': '[tools]\nnode = "26"\n',
   'app/akros-storefront/package.json': manifest('akros-storefront'),
   'app/akros-storefront/src/index.ts': 'export const storefront = 1;\n',
-  'app/apps/shell-super-app/package.json': manifest('@app/shell-super-app', {
+  'app/apps/shell-super-app/package.json': manifest(SHELL_PACKAGE, {
     '@app/alpha': WORKSPACE,
     '@app/core': WORKSPACE,
   }),
@@ -99,6 +103,7 @@ const FIXTURE_FILES = {
   }),
   'app/scripts/gamma-helper.mts': 'export const helper = 1;\n',
   'app/scripts/generate-contract.mts': "import './scaffolding/shared.mts';\n",
+  'app/scripts/generate-shell-ui-candidates.mts': 'export {};\n',
   'app/scripts/immutable-application-release.mts': "import './release-shared.mts';\n",
   'app/scripts/immutable-shell-release.mts': "import './immutable-application-release.mts';\n",
   'app/scripts/migrate-helper.mts': 'export const migrate = 1;\n',
@@ -136,7 +141,7 @@ const FIXTURE_FILES = {
   'app/verticals/beta/src/index.ts': "export { alpha } from '@app/alpha';\n",
   'app/verticals/gamma/package.json': manifest('@app/gamma'),
   'app/verticals/gamma/src/index.ts': "export { helper } from '../../../scripts/gamma-helper.mts';\n",
-  'app/verticals/projects/package.json': manifest('@app/projects'),
+  'app/verticals/projects/package.json': manifest(PROJECT_PACKAGE),
   'app/verticals/projects/src/index.ts': 'export const projects = 1;\n',
   'app/zerops.yaml': 'zerops: []\n',
 } satisfies Readonly<Record<string, string>>;
@@ -989,4 +994,90 @@ it('the ledger carries records forward within retention and rejects malformed do
   ).toThrow(/another source revision/u);
   const entries = readZipEntries(zipOf({ [LEDGER_FILE]: serializeLedger(fresh), 'other.txt': 'x' }));
   expect(parseLedger(entries.get(LEDGER_FILE)?.toString('utf-8') ?? '')).toEqual(fresh);
+});
+
+it('projects only known install metadata and fails closed for executable or unknown package configuration', () => {
+  const base = { cpu: ['x64'], engines: { node: '>=26' }, name: '@app/example', os: ['linux'], version: '1.0.0' };
+  expect(installManifestProjection({ ...base, exports: './a.ts', scripts: { build: 'one' } })).toBe(
+    installManifestProjection({ ...base, exports: './b.ts', scripts: { build: 'two' } }),
+  );
+  for (const fields of [
+    { version: '2.0.0' },
+    { engines: { node: '>=27' } },
+    { os: ['darwin'] },
+    { cpu: ['arm64'] },
+    { libc: ['musl'] },
+    { packageManager: 'pnpm@12' },
+    { dependenciesMeta: { dep: { injected: true } } },
+    { devEngines: { packageManager: { name: 'pnpm', version: '12' } } },
+  ]) {
+    expect(installManifestProjection({ ...base, ...fields })).not.toBe(installManifestProjection(base));
+  }
+  for (const fields of [
+    { bin: './cli.js' },
+    { scripts: { postinstall: 'node install.js' } },
+    { scripts: { prepare: 'node prepare.js' } },
+    { pnpm: { overrides: { dep: '2' } } },
+    { config: { custom: true } },
+    { futureInstallOption: true },
+  ]) {
+    expect(installManifestProjection({ ...base, ...fields, description: 'one' })).not.toBe(
+      installManifestProjection({ ...base, ...fields, description: 'two' }),
+    );
+  }
+});
+
+it.live(
+  'unreached export/build-script edits stay local, while dependency and generator edits invalidate all units',
+  () =>
+    withRepository((root) =>
+      Effect.gen(function* manifestDigests() {
+        const workspaceRoot = path.join(root, 'app');
+        const before = digests(workspaceRoot);
+        yield* commit(root, {
+          'app/verticals/projects/package.json': manifest(PROJECT_PACKAGE, {}, { build: 'changed' }),
+        });
+        expect(changedUnits(before, digests(workspaceRoot))).toEqual(['projects']);
+        const local = digests(workspaceRoot);
+        yield* commit(root, {
+          'app/verticals/projects/package.json': manifest(PROJECT_PACKAGE, { external: '2' }, { build: 'changed' }),
+        });
+        expect(changedUnits(local, digests(workspaceRoot))).toEqual(UNIT_IDS);
+        const dependencies = digests(workspaceRoot);
+        yield* commit(root, { 'app/scripts/generate-shell-ui-candidates.mts': 'export const generation = 2;\n' });
+        expect(changedUnits(dependencies, digests(workspaceRoot))).toEqual(UNIT_IDS);
+      }),
+    ),
+);
+
+it.live('a vertical implementation edit cannot invalidate a Shell that reads only its candidate projection', () =>
+  withRepository((root) =>
+    Effect.gen(function* projectedShellDigest() {
+      const projection = 'app/apps/shell-super-app/generated/ui-candidates/alpha.txt';
+      const workspaceRoot = yield* commit(root, {
+        'app/apps/shell-super-app/package.json': manifest(SHELL_PACKAGE, { '@app/core': WORKSPACE }),
+        'app/apps/shell-super-app/src/index.ts': 'export const shell = 1;\n',
+        'app/apps/shell-super-app/src/ui.css': "@source '../generated/ui-candidates/*.txt';\n",
+        'app/apps/shell-super-app/tsconfig.json': json({
+          extends: '../../tsconfig.base.json',
+          references: [{ path: '../../packages/core' }],
+        }),
+        [projection]: 'p-4\n',
+      });
+      const before = digests(workspaceRoot);
+      yield* commit(root, { 'app/verticals/alpha/src/index.ts': 'export const renamed = 2;\n' });
+      expect(digests(workspaceRoot)[SHELL]).toBe(before[SHELL]);
+      expect(digests(workspaceRoot).alpha).not.toBe(before.alpha);
+      yield* commit(root, { [projection]: 'me-50\np-4\n' });
+      expect(digests(workspaceRoot)[SHELL]).not.toBe(before[SHELL]);
+    }),
+  ),
+);
+
+it('the committed Shell build closure contains no vertical or application database project', () => {
+  const snapshot = readRepositorySnapshot(path.resolve(import.meta.dirname, '../..'));
+  const closure = packageClosure(createClosureGraph(snapshot), [{ kind: 'dir', path: 'app/apps/shell-super-app' }]);
+  expect([...closure.files].filter((file) => file.startsWith('app/verticals/'))).toEqual([]);
+  expect(closure.directories.has('app/database')).toBe(false);
+  expect(closure.directories.has('app/packages/party-registry-identity-contracts')).toBe(true);
 });

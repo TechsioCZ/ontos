@@ -1,5 +1,5 @@
 import { defineDatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';
-import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry-identity-contracts';
 import { APP_DATABASE_IDENTITY_ENROLLMENT, DATABASE_IDENTITIES } from '../../database/identity-enrollment.ts';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';

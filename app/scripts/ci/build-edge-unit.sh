@@ -37,6 +37,13 @@ mise exec -- node scripts/ci/deploy-plan.mts unit-digest --unit "$UNIT_ID" \
   --expect-digest "$ONTOS_UNIT_INPUT_DIGEST" \
   --output "$RUNNER_TEMP/edge-unit-inputs.json"
 
+# Projection freshness is an admission gate, not a digest input from vertical implementation source.
+if [[ "$UNIT_ID" == shell-super-app ]]; then
+  mise exec -- pnpm exec node scripts/generate-shell-ui-candidates.mts --check --all
+else
+  mise exec -- pnpm exec node scripts/generate-shell-ui-candidates.mts --check --vertical "$UNIT_ID"
+fi
+
 if [[ "$UNIT_ID" == shell-super-app ]]; then
   mise exec -- pnpm exec node scripts/immutable-shell-release.mts plan \
     --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \

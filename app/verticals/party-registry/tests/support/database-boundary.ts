@@ -2,7 +2,7 @@ import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '../../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import {
   DatabaseConfigError,
   findPostgresFailure,

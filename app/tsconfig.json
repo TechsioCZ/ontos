@@ -114,6 +114,9 @@
     },
     {
       "path": "./verticals/projects"
+    },
+    {
+      "path": "packages/party-registry-identity-contracts"
     }
   ]
 }
