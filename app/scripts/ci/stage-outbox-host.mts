@@ -255,7 +255,9 @@ export const uploadStagedHost = ({
     }
     const { ownerBuildIdentities } = yield* Schema.decodeUnknownEffect(WorkerArtifactJson)(identity);
     yield* runCommand({
-      args: ['-c', '-z', '-f', files.package, '-C', files.unpacked, 'app'],
+      // POSIX (pax) headers like zcli's Go archive/tar: Zerops fails the deploy with "failed to identify artifact file
+      // format" on the GNU tar default format the CI runner writes.
+      args: ['--format=pax', '-c', '-z', '-f', files.package, '-C', files.unpacked, 'app'],
       command: 'tar',
     }).pipe(Effect.mapError(() => failure('the outbox host package could not be packed')));
     const archive = yield* fs.readFile(files.package);
