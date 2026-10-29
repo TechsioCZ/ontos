@@ -17,7 +17,7 @@ import {
   jobState,
   joinBackground,
   outboxHostPlan,
-  publishedHostArtifact,
+  publishedOwnerRevisions,
   readPlan,
   recordLedger,
   streamUploads,
@@ -827,26 +827,20 @@ it.live('plans an outbox-only retry from the trusted prebuilt host only, never a
   ).pipe(Effect.provide(services)),
 );
 
-it('outbox-only selects the revision matching every live owner, not the newest content-equal build', () => {
+it('outbox-only names each published owner by the revision of the receipt carrying its marker', () => {
   const now = new Date('2026-10-28T12:00:00Z');
   const revisionB = 'b'.repeat(40);
-  const revisionC = 'c'.repeat(40);
-  const digest = digestOf('host');
-  const markers = { [ALPHA]: digestOf('alpha-at-A'), [BETA]: digestOf('beta-at-A') };
-  const ledgerAt = (sourceRevision: string, runId: string) => {
+  const markerAt = (unitId: string, sourceRevision: string) => digestOf(`${unitId}-at-${sourceRevision}`);
+  const ledgerAt = (sourceRevision: string, runId: string, units: readonly string[]) => {
     let ledger = emptyLedger({ digestVersion: DIGEST_VERSION, now, runId, sourceRevision });
-    for (const unitId of [ALPHA, BETA] as const) {
+    for (const unitId of units) {
       const receipt = receiptFor(unitId);
       ledger = recordUnitReceipt(ledger, {
         digest: unitDigest(unitId),
         now,
         receipt: {
           ...receipt,
-          plan: {
-            ...receipt.plan,
-            buildMarker: sourceRevision === REVISION ? markers[unitId] : digestOf(`${unitId}-at-${sourceRevision}`),
-            sourceRevision,
-          },
+          plan: { ...receipt.plan, buildMarker: markerAt(unitId, sourceRevision), sourceRevision },
         },
         runId,
         unitId,
@@ -854,25 +848,13 @@ it('outbox-only selects the revision matching every live owner, not the newest c
     }
     return ledger;
   };
-  const builtAt = (sourceRevision: string, id: number) => ({
-    artifact: { created_at: now.toISOString(), expired: false, id, name: `outbox-host-${digest}` },
-    run: { head_sha: sourceRevision, id },
-  });
-  const published = builtAt(REVISION, 1);
-  // The newest run failed after uploading owners; another dispatch only built. Neither published these markers.
-  const artifacts = [builtAt(revisionC, 3), builtAt(revisionB, 2), published];
-  const ledgers = [ledgerAt(revisionC, '3'), ledgerAt(REVISION, '1')];
-  const select = (selectedArtifacts = artifacts, selectedMarkers: Readonly<Record<string, string>> = markers) =>
-    publishedHostArtifact({
-      artifacts: selectedArtifacts,
-      digest,
-      ledgers,
-      markers: selectedMarkers,
-      now,
-    });
-  expect(select()).toEqual(published);
-  expect(select(artifacts.slice(0, 2))).toBeUndefined();
-  expect(select(artifacts, { ...markers, [BETA]: digestOf(`beta-at-${revisionC}`) })).toBeUndefined();
-  expect(select(artifacts, {})).toBeUndefined();
-  expect(publishedHostArtifact({ artifacts, digest, ledgers: [], markers, now })).toBeUndefined();
+  // Run 2 at revision B rebuilt only beta; alpha stays published from REVISION.
+  const ledgers = [ledgerAt(revisionB, '2', [BETA]), ledgerAt(REVISION, '1', [ALPHA, BETA])];
+  const markers = { [ALPHA]: markerAt(ALPHA, REVISION), [BETA]: markerAt(BETA, revisionB) };
+  expect(publishedOwnerRevisions({ ledgers, markers, now })).toEqual({ [ALPHA]: REVISION, [BETA]: revisionB });
+  expect(
+    publishedOwnerRevisions({ ledgers, markers: { ...markers, [BETA]: markerAt(BETA, 'c'.repeat(40)) }, now }),
+  ).toBeUndefined();
+  expect(publishedOwnerRevisions({ ledgers, markers: {}, now })).toBeUndefined();
+  expect(publishedOwnerRevisions({ ledgers: [], markers, now })).toBeUndefined();
 });

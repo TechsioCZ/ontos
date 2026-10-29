@@ -58,6 +58,8 @@ const fixture = (
   const serviceValues = new Map([['host-id', host]]);
   const serviceNames = new Map([['host-id', options.hostName ?? 'outboxworkerhost']]);
   const api = ZeropsPublicApi.of({
+    appVersion: unused,
+    createAppVersion: unused,
     createServiceSecret: (serviceId, key, content) =>
       Effect.suspend(() => {
         if (failWrite) {
@@ -70,6 +72,7 @@ const fixture = (
         afterWrite?.();
         return Effect.void;
       }),
+    deleteAppVersion: unused,
     deleteService: unused,
     deleteServiceSecret: (serviceId, key) =>
       Effect.suspend(() => {
@@ -82,6 +85,7 @@ const fixture = (
         }
         return Effect.void;
       }),
+    deployAppVersion: unused,
     enableSubdomainAccess: unused,
     findServiceStack: unused,
     findServiceStackIdentity: unused,
@@ -100,7 +104,9 @@ const fixture = (
         status: 'ACTIVE',
         subdomainAccess: false,
       }),
+    serviceUserData: unused,
     stopService: unused,
+    uploadAppVersionPackage: unused,
     upsertProjectEnv: unused,
   });
   const layer = Layer.mergeAll(

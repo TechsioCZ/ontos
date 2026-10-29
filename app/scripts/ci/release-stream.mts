@@ -31,6 +31,7 @@ import { FetchHttpClient } from 'effect/http';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import type { OpsShellService, SecretValues } from '../ops/ops-shell.mts';
 import { DIGEST_VERSION, hostArtifactName, storefrontArtifactName, unitArtifactName } from './deploy-plan.mts';
+import type { OwnerRevisions } from './deploy-plan.mts';
 import { expectedHostOwners, publishedHostComposition } from './await-outbox-admission.mts';
 import {
   createGitHubClient,
@@ -42,7 +43,7 @@ import {
   recordUnitReceipt,
   serializeLedger,
 } from './release-ledger.mts';
-import type { ReleaseLedger, TrustedArtifact } from './release-ledger.mts';
+import type { ReleaseLedger } from './release-ledger.mts';
 
 export class ReleaseStreamError extends Schema.TaggedError<ReleaseStreamError>()('ReleaseStreamError', {
   message: Schema.String,
@@ -915,8 +916,8 @@ export const fetchBuildArtifact = (
   });
 
 /**
- * The host-only plan an outbox-only retry deploys, after its artifact's owner build identities were matched against
- * the live publication. It never builds: an unprovable group needs a full release.
+ * The host-only plan an outbox-only retry deploys: the trusted prebuilt artifact of the host digest under the published
+ * owner identities. It never builds: an unprovable host needs a full release.
  */
 export const outboxHostPlan = (digest: string, artifact: Option.Option<typeof ArtifactRefSchema.Type>) =>
   Option.match(artifact, {
@@ -934,66 +935,81 @@ export const outboxHostPlan = (digest: string, artifact: Option.Option<typeof Ar
       ),
   });
 
-/** A content-equal artifact from a build-only or failed run is not evidence of the published owner builds. */
-export const publishedHostArtifact = ({
-  artifacts,
-  digest,
+/**
+ * The identity revision of every published owner: the revision of the trusted ledger receipt that carries the owner's
+ * published build marker. A marker hashes its unit and revision, so a matching receipt names exactly the revision the
+ * host must compile the owner under. Undefined when any published owner has no such receipt.
+ */
+export const publishedOwnerRevisions = ({
   ledgers,
   markers,
   now,
 }: {
-  readonly artifacts: readonly TrustedArtifact[];
-  readonly digest: string;
   readonly ledgers: readonly ReleaseLedger[];
   readonly markers: Readonly<Record<string, string>>;
   readonly now: Date;
-}) => {
+}): OwnerRevisions | undefined => {
   const history = unitRecordHistory(ledgers, { digestVersion: DIGEST_VERSION, now });
-  return artifacts.find(
-    ({ artifact, run }) =>
-      artifact.name === hostArtifactName(digest) &&
-      run.head_sha !== undefined &&
-      Object.keys(markers).length > 0 &&
-      Object.entries(markers).every(([owner, marker]) =>
-        history.some(
-          (record) =>
-            record.unitId === owner &&
-            record.sourceRevision === run.head_sha &&
-            record.receipt.plan.buildMarker === marker,
-        ),
-      ),
-  );
+  const revisions: Record<string, string> = {};
+  for (const [owner, marker] of Object.entries(markers)) {
+    const kept = history.find((record) => record.unitId === owner && record.receipt.plan.buildMarker === marker);
+    if (kept === undefined) {
+      return undefined;
+    }
+    revisions[owner] = kept.sourceRevision;
+  }
+  return Object.keys(revisions).length > 0 ? revisions : undefined;
 };
 
-const trustedHostArtifact = (digest: string) =>
-  Effect.gen(function* findTrustedHostArtifact() {
-    const [repository, token, apiUrl, composition, now] = yield* Effect.all([
-      Config.String('GITHUB_REPOSITORY'),
-      Config.Redacted('GH_TOKEN'),
-      Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
-      expectedHostOwners.pipe(Effect.flatMap(publishedHostComposition)),
-      DateTime.nowAsDate,
-    ]);
-    const client = createGitHubClient({
-      apiUrl,
-      fetch: fetch.bind(globalThis),
-      repository,
-      token: Redacted.value(token),
-    });
-    const found = yield* Effect.tryPromise({
-      catch: () => failure('the published outbox host artifact identities could not be verified; run a full release'),
-      try: async () => {
-        const [artifacts, ledgers] = await Promise.all([
-          client.trustedArtifacts(hostArtifactName(digest), 100),
-          readTrustedLedgers(client, 20),
-        ]);
-        return publishedHostArtifact({ artifacts, digest, ledgers, markers: composition.markers, now });
-      },
-    });
-    return Option.fromUndefinedOr(found).pipe(
-      Option.map(({ artifact, run }) => ({ id: artifact.id, name: artifact.name, sourceRevision: run.head_sha ?? '' })),
-    );
+const OwnerRevisionsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
+/** The published owners' host: its digest under their identities and the newest trusted artifact of that digest. */
+const publishedHost = Effect.gen(function* findPublishedHost() {
+  const [repository, token, apiUrl, composition, now] = yield* Effect.all([
+    Config.String('GITHUB_REPOSITORY'),
+    Config.Redacted('GH_TOKEN'),
+    Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
+    expectedHostOwners.pipe(Effect.flatMap(publishedHostComposition)),
+    DateTime.nowAsDate,
+  ]);
+  const client = createGitHubClient({
+    apiUrl,
+    fetch: fetch.bind(globalThis),
+    repository,
+    token: Redacted.value(token),
   });
+  const unverified = failure('the published outbox host owner identities could not be verified; run a full release');
+  const ledgers = yield* Effect.tryPromise({
+    catch: () => unverified,
+    try: async () => await readTrustedLedgers(client, 20),
+  });
+  const ownerRevisions = publishedOwnerRevisions({ ledgers, markers: composition.markers, now });
+  if (ownerRevisions === undefined) {
+    return yield* unverified;
+  }
+  // The planner itself, with this job's digest environment and release secrets, exactly as the plan job ran it.
+  const printed = yield* runCommand({
+    args: [
+      path.resolve(import.meta.dirname, 'deploy-plan.mts'),
+      'host-digest',
+      '--owner-revisions',
+      yield* encodeJson(OwnerRevisionsJson, ownerRevisions, 'the published owner identities'),
+    ],
+    command: 'node',
+  }).pipe(Effect.mapError(() => failure('the outbox host digest cannot be computed at this checkout')));
+  const digest = printed.trim();
+  if (!SHA256.test(digest)) {
+    return yield* failure('deploy-plan.mts host-digest printed no outbox host digest');
+  }
+  const artifacts = yield* Effect.tryPromise({
+    catch: () => unverified,
+    try: async () => await client.trustedArtifacts(hostArtifactName(digest), 100),
+  });
+  const artifact = Option.fromUndefinedOr(artifacts.find(({ run }) => run.head_sha !== undefined)).pipe(
+    Option.map(({ artifact: found, run }) => ({ id: found.id, name: found.name, sourceRevision: run.head_sha ?? '' })),
+  );
+  return { artifact, digest };
+});
 
 /** Step outputs, one `key=value` line each, for `>>"$GITHUB_OUTPUT"`. */
 const printOutputs = (outputs: Readonly<Record<string, string>>) =>
@@ -1151,18 +1167,13 @@ const fetchCommand = Command.make(
     }),
 );
 
-const hostPlanCommand = Command.make(
-  'host-plan',
-  { digest: Flag.String('digest'), output: Flag.String('output') },
-  ({ digest, output }) =>
-    Effect.gen(function* hostPlanCommandEffect() {
-      if (!SHA256.test(digest)) {
-        return yield* failure('--digest must be the outbox host digest');
-      }
-      const text = yield* outboxHostPlan(digest, yield* trustedHostArtifact(digest));
-      yield* writeAtomically(output, `${text}\n`);
-      return yield* Console.log(`outbox host ${digest.slice(0, 12)}: deploying its trusted prebuilt artifact`);
-    }),
+const hostPlanCommand = Command.make('host-plan', { output: Flag.String('output') }, ({ output }) =>
+  Effect.gen(function* hostPlanCommandEffect() {
+    const { artifact, digest } = yield* publishedHost;
+    const text = yield* outboxHostPlan(digest, artifact);
+    yield* writeAtomically(output, `${text}\n`);
+    return yield* Console.log(`outbox host ${digest.slice(0, 12)}: deploying its trusted prebuilt artifact`);
+  }),
 );
 
 if (import.meta.main) {

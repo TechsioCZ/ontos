@@ -8,7 +8,10 @@ import path from 'node:path';
 import type { Readable } from 'node:stream';
 
 import { NodeServices } from '@effect/platform-node';
-import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
+import {
+  createUltramodernReleaseBuildMarker,
+  resolveUltramodernSourceRevision,
+} from '@modern-js/app-tools-extensions/release-identity';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { isMap, isScalar, parseDocument } from 'yaml';
@@ -21,7 +24,7 @@ import {
 
 import { DEVELOPMENT_OVERLAY_PATH } from '../topology-development-ports.mjs';
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
-import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
+import { materializeOutboxWorker, resolveOutboxWorker } from '../materialize-outbox-worker.mjs';
 import { CORE_SYSTEM_OUTBOX_WORKER, OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 
 const SHELL_UNIT_ID = 'app/shell-super-app';
@@ -479,14 +482,21 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
       Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-outbox-worker-host-bundle-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
+    const identity = {
+      appId: OUTBOX_WORKER_HOST.id,
+      packageDir: '.',
+      packageName: 'app',
+      workspaceRoot: process.cwd(),
+    };
+    // Every owner built here: each names the host's own build revision.
+    const buildRevision = resolveUltramodernSourceRevision(process.cwd());
+    const { owners } = yield* Effect.tryPromise(() => resolveOutboxWorker(identity));
     const runtimePackage = yield* Effect.tryPromise(() =>
       materializeOutboxWorker({
-        appId: OUTBOX_WORKER_HOST.id,
+        ...identity,
         artifactDigest: HOST_DIGEST,
-        packageDir: '.',
-        packageName: 'app',
+        ownerRevisions: JSON.stringify(Object.fromEntries(owners.map(({ ownerId }) => [ownerId, buildRevision]))),
         runtimeDir,
-        workspaceRoot: process.cwd(),
       }),
     );
     const artifact = decodeWorkerArtifact(
@@ -656,7 +666,18 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
     return root;
   });
 
-const compileReleaseFixture = (root: string, appId: string, sourceRevision: string, injectSourceRevision = true) =>
+const compileReleaseFixture = (
+  root: string,
+  appId: string,
+  sourceRevision: string,
+  {
+    injectSourceRevision = true,
+    ownerRevisions,
+  }: {
+    readonly injectSourceRevision?: boolean;
+    readonly ownerRevisions?: string;
+  } = {},
+) =>
   Effect.gen(function* compileReleaseFixtureEffect() {
     const runtimeDir = path.join(root, '.zerops/runtime', sourceRevision, appId);
     const rootRunner = appId === OUTBOX_WORKER_HOST.id || appId === CORE_SYSTEM_OUTBOX_WORKER.id;
@@ -665,6 +686,8 @@ const compileReleaseFixture = (root: string, appId: string, sourceRevision: stri
       packageDir: rootRunner ? '.' : `verticals/${appId}`,
       packageName: rootRunner ? 'app' : `@app/${appId}`,
       runtimeDir,
+      // JSON drops an absent revision map.
+      ownerRevisions,
       workspaceRoot: root,
     };
     const materializer = new URL('../materialize-outbox-worker.mjs', import.meta.url).href;
@@ -761,11 +784,60 @@ it.live('compiles independent source-promoted owner identities in dedicated and 
   }),
 );
 
+it.live('compiles each kept host owner under its planned identity revision, and only the host takes them', () =>
+  Effect.gen(function* keptOwnerIdentities() {
+    const head = 'a'.repeat(40);
+    const kept = 'b'.repeat(40);
+    const root = yield* makeReleaseMarkerFixture();
+    const ownerRevisions = { balance: head, ledger: kept, 'shell-super-app': head };
+    const identities = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, head, {
+      ownerRevisions: JSON.stringify(ownerRevisions),
+    });
+    expect(identities.map(({ sourceRevision, unitId }) => [unitId, sourceRevision])).toEqual([
+      [SHELL_UNIT_ID, head],
+      ['app/ledger', kept],
+      ['app/balance', head],
+    ]);
+    expect(identities[1]?.buildMarker).toBe(
+      createUltramodernReleaseBuildMarker({
+        generationBuildMarker: 'ledger-generation',
+        sourceRevision: kept,
+        unitId: 'app/ledger',
+      }),
+    );
+    const host = {
+      appId: OUTBOX_WORKER_HOST.id,
+      packageDir: '.',
+      packageName: 'app',
+      runtimeDir: path.join(root, '.zerops/runtime/rejected', OUTBOX_WORKER_HOST.id),
+      workspaceRoot: root,
+    };
+    const { ledger: _ledger, ...partial } = ownerRevisions;
+    for (const [options, reason] of [
+      [{ ...host, artifactDigest: HOST_DIGEST }, 'requires every owner identity revision'],
+      [{ ...host, artifactDigest: HOST_DIGEST, ownerRevisions: JSON.stringify(partial) }, 'exactly the hosted owners'],
+      [
+        { ...host, artifactDigest: HOST_DIGEST, ownerRevisions: JSON.stringify({ ...ownerRevisions, ledger: 'v1' }) },
+        'requires a promotable revision',
+      ],
+      [
+        { ...host, appId: CORE_SYSTEM_OUTBOX_WORKER.id, ownerRevisions: JSON.stringify(ownerRevisions) },
+        'Only the Outbox Worker host takes',
+      ],
+    ] as const) {
+      const failure = yield* Effect.flip(Effect.tryPromise(() => materializeOutboxWorker(options)));
+      expect(String(failure.cause)).toContain(reason);
+    }
+  }),
+);
+
 it.live('retains the compiled owner revision in an exported-source artifact without a revision environment', () =>
   Effect.gen(function* exportedSourceRevision() {
     const sourceRevision = 'd'.repeat(40);
     const root = yield* makeReleaseMarkerFixture(sourceRevision);
-    const identities = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, sourceRevision, false);
+    const identities = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, sourceRevision, {
+      injectSourceRevision: false,
+    });
     expect(identities.map((identity) => identity.sourceRevision)).toEqual([
       sourceRevision,
       sourceRevision,

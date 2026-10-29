@@ -1709,20 +1709,24 @@ jobs:
           DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
         run: |
-          digest="$(mise exec -- node scripts/ci/deploy-plan.mts host-digest)"
+          digest="$(mise exec -- node scripts/ci/deploy-plan.mts host-digest --output "$RUNNER_TEMP/host-inputs.json")"
           if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
             echo "::error title=Outbox Worker host digest::deploy-plan.mts host-digest printed no digest" >&2
             exit 1
           fi
           echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          # Main builds every hosted owner at HEAD.
+          echo "owner_revisions=$(jq -c .ownerRevisions "$RUNNER_TEMP/host-inputs.json")" >>"$GITHUB_OUTPUT"
 
       - name: Build the host in Alpine
         env:
           ONTOS_OUTBOX_HOST_DIGEST: ${{ steps.digest.outputs.digest }}
+          ONTOS_OUTBOX_HOST_OWNER_REVISIONS: ${{ steps.digest.outputs.owner_revisions }}
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           docker run --rm \
-            --env ONTOS_OUTBOX_HOST_DIGEST --env ULTRAMODERN_SOURCE_REVISION --env RUNNER_TEMP=/runner-temp \
+            --env ONTOS_OUTBOX_HOST_DIGEST --env ONTOS_OUTBOX_HOST_OWNER_REVISIONS --env ULTRAMODERN_SOURCE_REVISION \
+            --env RUNNER_TEMP=/runner-temp \
             --volume "$GITHUB_WORKSPACE:/src" --volume "$RUNNER_TEMP:/runner-temp" --workdir /src \
             alpine:3.23 sh app/scripts/ci/build-outbox-host.sh
           ls -lh "$RUNNER_TEMP/outbox-host.tar.zst"

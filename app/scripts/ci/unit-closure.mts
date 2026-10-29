@@ -395,7 +395,7 @@ const mappedTargets = (map: unknown, request: string): string[] | undefined => {
 };
 
 /** Files one package-level request resolves to, or undefined when only the whole package is a safe answer. */
-const resolvePackageRequest = (
+export const resolvePackageRequest = (
   graph: ClosureGraph,
   workspacePackage: WorkspacePackage,
   request: string,
