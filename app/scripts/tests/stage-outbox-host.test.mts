@@ -5,7 +5,7 @@ import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Duration, Effect, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Duration, Effect, Fiber, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -25,6 +25,7 @@ const SERVICE = 'host-service';
 const SERVICE_STACK = Schema.decodeUnknownSync(ZeropsServiceStackIdSchema)(SERVICE);
 const DIGEST = 'd'.repeat(64);
 const SECRET = 'synthetic-host-secret-never-written';
+const FIRST_VERSION_DELETED = 'delete version-1';
 const UPLOAD_URL = 'https://storage.example.test/signed-upload-never-written';
 const HOST_RUNTIME = 'app/.zerops/runtime/outbox-worker-host';
 const OWNERS = [
@@ -337,7 +338,7 @@ it.live('deploys exactly the staged version once, and replaces it when the confi
       yield* run(deployStagedHost({ digest: DIGEST, directory: changedDirectory, zeropsYaml: yamlFile }), changed);
       expect(changed.calls.filter((call) => /^(?:create|delete|deploy) /u.test(call))).toEqual([
         `create ${SERVICE} ${'f'.repeat(40)}`,
-        'delete version-1',
+        FIRST_VERSION_DELETED,
         `create ${SERVICE} ${'f'.repeat(40)}`,
         'deploy version-2',
       ]);
@@ -352,12 +353,14 @@ it.live('discards only the run attempt’s own never-deployed version', () =>
     Effect.gen(function* discardsStagedHost() {
       const archive = hostArchive(root, DIGEST);
       const wait = Duration.seconds(5);
+      const discard = (directory: string, deployDirectory = path.join(root, 'never-launched')) =>
+        discardStagedHost({ deployDirectory, directory, waitFor: wait });
 
       const none = fakeZerops();
-      yield* run(discardStagedHost({ directory: path.join(root, 'never-started'), waitFor: wait }), none);
+      yield* run(discard(path.join(root, 'never-started')), none);
       const empty = path.join(root, 'empty');
       mkdirSync(empty);
-      yield* run(discardStagedHost({ directory: empty, waitFor: wait }), none);
+      yield* run(discard(empty), none);
       expect(none.calls).toEqual([]);
       // The stop file makes a staging that has not created a version yet create none.
       expect(existsSync(stagingFiles(empty).stop)).toBe(true);
@@ -366,8 +369,8 @@ it.live('discards only the run attempt’s own never-deployed version', () =>
       const staged = path.join(root, 'staged');
       yield* run(uploadStagedHost({ artifact: archive, digest: DIGEST, directory: staged }), undeployed);
       writeFileSync(stagingFiles(staged).exitCode, '0\n');
-      yield* run(discardStagedHost({ directory: staged, waitFor: wait }), undeployed);
-      expect(undeployed.calls.at(-1)).toBe('delete version-1');
+      yield* run(discard(staged), undeployed);
+      expect(undeployed.calls.at(-1)).toBe(FIRST_VERSION_DELETED);
 
       const deployed = fakeZerops();
       const live = path.join(root, 'live');
@@ -376,7 +379,7 @@ it.live('discards only the run attempt’s own never-deployed version', () =>
       const yamlFile = path.join(root, 'zerops.yaml');
       writeFileSync(yamlFile, 'zerops: []\n');
       yield* run(deployStagedHost({ digest: DIGEST, directory: live, zeropsYaml: yamlFile }), deployed);
-      yield* run(discardStagedHost({ directory: live, waitFor: wait }), deployed);
+      yield* run(discard(live), deployed);
       expect(deployed.calls.some((call) => call.startsWith('delete '))).toBe(false);
 
       // A version that became active some other way is never deleted.
@@ -388,8 +391,29 @@ it.live('discards only the run attempt’s own never-deployed version', () =>
       if (version !== undefined) {
         version.status = 'ACTIVE';
       }
-      yield* run(discardStagedHost({ directory: active, waitFor: wait }), activated);
+      yield* run(discard(active), activated);
       expect(activated.calls.some((call) => call.startsWith('delete '))).toBe(false);
+
+      // The launcher succeeded but the background deploy is still before its start: the discard stops it, waits for
+      // it and deletes the version it never deployed.
+      const preflight = fakeZerops();
+      const pending = path.join(root, 'pending');
+      const deployDirectory = path.join(root, 'pending-deploy');
+      yield* run(uploadStagedHost({ artifact: archive, digest: DIGEST, directory: pending }), preflight);
+      writeFileSync(stagingFiles(pending).exitCode, '0\n');
+      mkdirSync(deployDirectory);
+      const discarding = yield* Effect.forkChild(run(discard(pending, deployDirectory), preflight));
+      yield* Effect.sleep(Duration.millis(100));
+      expect(existsSync(stagingFiles(pending).stop)).toBe(true);
+      const stopped = yield* Effect.flip(
+        run(deployStagedHost({ digest: DIGEST, directory: pending, zeropsYaml: yamlFile }), preflight),
+      );
+      expect(stopped.message).toContain('stopped before the outbox host deploy');
+      expect(preflight.calls.some((call) => call.startsWith('delete '))).toBe(false);
+      writeFileSync(stagingFiles(deployDirectory).exitCode, '1\n');
+      yield* Fiber.join(discarding);
+      expect(preflight.calls.at(-1)).toBe(FIRST_VERSION_DELETED);
+      expect(preflight.deployed).toEqual([]);
     }),
   ),
 );

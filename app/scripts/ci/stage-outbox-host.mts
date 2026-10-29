@@ -8,7 +8,7 @@
 //   stage-outbox-host.mts upload --directory <d> --artifact <outbox-host.tar.zst> --digest <host digest>
 //   stage-outbox-host.mts check-owners --directory <d> --receipts <release receipts directory>
 //   stage-outbox-host.mts deploy --directory <d> --digest <host digest> --zerops-yaml <materialized zerops.yaml>
-//   stage-outbox-host.mts discard --directory <d>
+//   stage-outbox-host.mts discard --directory <d> --deploy-directory <the deploy step's background directory>
 //
 // An uploaded version starts no container: the old host keeps draining the old composition until the deploy. The
 // deploy sends the zerops.yaml, so native secret references resolve at that deploy, after the configuration apply.
@@ -348,6 +348,14 @@ export const deployStagedHost = ({
     }
     const yaml = yield* fs.readFileString(zeropsYaml);
     const current = userDataFingerprint(yield* fingerprintKey, yield* api.serviceUserData(serviceId));
+    // A discard already under way owns the staged version from here on: neither replace nor deploy it.
+    const stopped = Effect.gen(function* requireNotStopped() {
+      if (yield* fs.exists(files.stop)) {
+        return yield* failure('the release stopped before the outbox host deploy');
+      }
+      return yield* Effect.void;
+    });
+    yield* stopped;
     let staged = receipt;
     if (current !== receipt.userDataFingerprint) {
       yield* Console.log('the host configuration changed since staging: replacing the staged version');
@@ -361,6 +369,7 @@ export const deployStagedHost = ({
         ...base
       } = receipt;
       staged = yield* stageVersion(directory, base, archive);
+      yield* stopped;
     }
     yield* writeReceipt(files.receipt, { ...staged, deployStarted: true });
     yield* phase('deploy-start');
@@ -371,14 +380,28 @@ export const deployStagedHost = ({
     );
   });
 
+/** Waits up to `waitFor` for a background wrapper's `exit-code` in `directory`. */
+const awaitBackground = (directory: string, waitFor: Duration.Duration) =>
+  Effect.gen(function* awaitBackgroundExit() {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.exists(stagingFiles(directory).exitCode).pipe(
+      Effect.orElseSucceed(() => false),
+      Effect.repeat({ schedule: Schedule.spaced(POLL_INTERVAL), until: (done) => done }),
+      Effect.timeoutOrElse({ duration: waitFor, orElse: () => Effect.succeed(false) }),
+    );
+  });
+
 /**
- * After a release that never deployed the staged version: stops the staging, waits for a version creation already
- * under way, then deletes the operation's own undeployed version. A deploy that started is never undone.
+ * After every release, once the deploy was joined: stops the staging and the deploy, waits for a version creation
+ * and a deploy (launched when `deployDirectory` exists) still under way, then deletes the operation's own
+ * undeployed version. A deploy that started is never undone.
  */
 export const discardStagedHost = ({
+  deployDirectory,
   directory,
   waitFor,
 }: {
+  readonly deployDirectory: string;
   readonly directory: string;
   readonly waitFor: Duration.Duration;
 }) =>
@@ -392,11 +415,10 @@ export const discardStagedHost = ({
     if (!(yield* fs.exists(files.creating))) {
       return yield* Console.log(NOTHING_STAGED);
     }
-    const finished = fs.exists(files.exitCode).pipe(Effect.orElseSucceed(() => false));
-    yield* finished.pipe(
-      Effect.repeat({ schedule: Schedule.spaced(POLL_INTERVAL), until: (done) => done }),
-      Effect.timeoutOrElse({ duration: waitFor, orElse: () => Effect.succeed(false) }),
-    );
+    yield* awaitBackground(directory, waitFor);
+    if (yield* fs.exists(deployDirectory)) {
+      yield* awaitBackground(deployDirectory, waitFor);
+    }
     if (!(yield* fs.exists(files.receipt))) {
       return yield* Console.log(NOTHING_STAGED);
     }
@@ -428,8 +450,15 @@ const commands = Command.make('stage-outbox-host').pipe(
       { digest: digestFlag, directory: directoryFlag, zeropsYaml: Flag.String('zerops-yaml') },
       deployStagedHost,
     ),
-    Command.make('discard', { directory: directoryFlag }, ({ directory }) =>
-      discardStagedHost({ directory, waitFor: DISCARD_WAIT }),
+    Command.make(
+      'discard',
+      {
+        deployDirectory: Flag.String('deploy-directory').pipe(
+          Flag.withDescription("The deploy step's background directory; it exists once the deploy was launched"),
+        ),
+        directory: directoryFlag,
+      },
+      ({ deployDirectory, directory }) => discardStagedHost({ deployDirectory, directory, waitFor: DISCARD_WAIT }),
     ),
   ]),
 );

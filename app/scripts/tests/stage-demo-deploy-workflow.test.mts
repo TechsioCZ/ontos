@@ -197,6 +197,7 @@ const HOST_STAGE_JOIN = 'Wait for the staged outbox host upload';
 const HOST_OWNER_CHECK = 'Require the staged outbox host to carry every published owner build';
 const HOST_DISCARD = 'Discard the undeployed staged outbox host';
 const HOST_STAGE_DIRECTORY = '"$RUNNER_TEMP/outbox-host-stage"';
+const HOST_DEPLOY_DIRECTORY = '"$RUNNER_TEMP/outbox-host-deploy"';
 const STOREFRONT_FETCH = 'Fetch the storefront build output';
 const HOST_MATERIALIZE = 'Materialize the stage outbox host zerops.yaml';
 const HOST_RELEASE = 'Name the outbox host release';
@@ -1188,16 +1189,18 @@ it('deploys the prebuilt outbox host beside the Shell tail after publication and
     `--directory ${HOST_STAGE_DIRECTORY} --digest "$HOST_DIGEST" --zerops-yaml "$ZEROPS_YAML_PATH"`,
   );
   expect(start?.id).toBe('host-start');
+  expect(start?.run).toContain(`mkdir -p ${HOST_DEPLOY_DIRECTORY}`);
   expect(start?.env?.HOST_DIGEST).toBe(HOST_RELEASE_DIGEST);
   expect(start?.env?.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID).toBe(
     workflowExpression('vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID'),
   );
-  // A release that stopped before the deploy deletes only its own never-deployed staged version.
+  // A release that stopped before the deploy deletes only its own never-deployed staged version, also when the
+  // launcher succeeded but the background deploy failed before it started: the discard waits for that deploy.
   const discard = steps.find(({ name }) => name === HOST_DISCARD);
-  expect(discard?.if).toBe(
-    "always() && steps.host-stage.outcome == 'success' && steps.host-start.outcome != 'success'",
+  expect(discard?.if).toBe("always() && steps.host-stage.outcome == 'success'");
+  expect(discard?.run).toContain(
+    `stage-outbox-host.mts discard --directory ${HOST_STAGE_DIRECTORY} --deploy-directory ${HOST_DEPLOY_DIRECTORY}`,
   );
-  expect(discard?.run).toContain(`stage-outbox-host.mts discard --directory ${HOST_STAGE_DIRECTORY}`);
   expect(indexOf(steps, HOST_DISCARD)).toBe(indexOf(steps, HOST_DEPLOY_JOIN) + 1);
   // Joined even after a failed tail step, so the host deploy is never cut off halfway.
   expect(steps.find(({ name }) => name === HOST_DEPLOY_JOIN)?.if).toBe(

@@ -1293,16 +1293,17 @@ jobs:
           --directory "$RUNNER_TEMP/outbox-host-deploy" --timeout-seconds 1140
 
       # A release that failed before the deploy leaves no staged version behind: this deletes only the run's own
-      # never-deployed version, after waiting for a creation already under way. A started deploy is never undone.
+      # never-deployed version, after waiting for a creation or a launched deploy still under way, so a deploy that
+      # failed in the background before it started is cleaned up too. A started deploy is never undone.
       - name: Discard the undeployed staged outbox host
-        if: always() && steps.host-stage.outcome == 'success' && steps.host-start.outcome != 'success'
+        if: always() && steps.host-stage.outcome == 'success'
         timeout-minutes: 12
         working-directory: app
         env:
           ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
         run: >-
           mise exec -- pnpm exec node scripts/ci/stage-outbox-host.mts discard
-          --directory "$RUNNER_TEMP/outbox-host-stage"
+          --directory "$RUNNER_TEMP/outbox-host-stage" --deploy-directory "$RUNNER_TEMP/outbox-host-deploy"
 
       # Every expected owner must report this composition revision admitted and a completed cycle after the
       # publication on the redeployed host's internal /status.
