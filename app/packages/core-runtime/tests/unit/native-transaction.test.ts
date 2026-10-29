@@ -5,8 +5,13 @@ import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import type { ActionTransportMetadata } from '../../src/actions/context.ts';
-import { ActionInvocationPersistenceError, ActionTransactionError } from '../../src/actions/errors.ts';
+import {
+  ActionInvocationPersistenceError,
+  ActionTransactionError,
+  getActionInvocationPersistenceErrorCause,
+} from '../../src/actions/errors.ts';
 import { makeActionRepository, recoverSqlTransactionError } from '../../src/actions/repository.ts';
+import { getActionTransactionErrorCause } from '../../src/actions/transaction-error.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../src/db/types.ts';
@@ -15,6 +20,15 @@ import type { OperationContextUnavailable } from '../../src/operations/errors.ts
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
 import { persistScopedReadEvidence } from '../../src/reads/repository.ts';
 import { makeTestDatabase } from '../support/database.ts';
+
+// Failures and defects a retained cause records, so a test can prove which SQL error recovery kept.
+const retainedFailures = (cause: Cause.Cause<never> | undefined): readonly unknown[] =>
+  (cause?.reasons ?? []).flatMap((reason) => {
+    if (Cause.isFailReason(reason)) {
+      return [reason.error];
+    }
+    return Cause.isDieReason(reason) ? [reason.defect] : [];
+  });
 
 const scopedPrincipal = trustVerifiedGatewayPrincipalContext(
   {
@@ -205,12 +219,20 @@ it.layer(NodeCrypto.layer)('Action transaction settlement', (suite) => {
               const error = yield* Effect.flip(run);
               if (boundary === 'recorded-rejection') {
                 expect(error).toBe(rollbackFailure);
+              } else if (boundary === 'permission-denial') {
+                expect(Schema.is(ActionTransactionError)(error)).toBe(true);
+                if (Schema.is(ActionTransactionError)(error)) {
+                  const failures = error.pipe(getActionTransactionErrorCause, retainedFailures);
+                  expect(failures).toHaveLength(1);
+                  expect(failures[0]).toBe(rollbackFailure);
+                }
               } else {
-                expect(
-                  Schema.is(
-                    boundary === 'permission-denial' ? ActionTransactionError : ActionInvocationPersistenceError,
-                  )(error),
-                ).toBe(true);
+                expect(Schema.is(ActionInvocationPersistenceError)(error)).toBe(true);
+                if (Schema.is(ActionInvocationPersistenceError)(error)) {
+                  const failures = error.pipe(getActionInvocationPersistenceErrorCause, retainedFailures);
+                  expect(failures).toHaveLength(1);
+                  expect(failures[0]).toBe(rollbackFailure);
+                }
               }
             } else {
               const exit = yield* Effect.exit(run);
