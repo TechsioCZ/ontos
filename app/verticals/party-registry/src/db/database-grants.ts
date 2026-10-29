@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../shared/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { trustRoutinesForIdentities } from '@app/core-runtime/db/database-identity-manifest';
 
 import type { DatabaseRoleGrants } from '@app/core-runtime';

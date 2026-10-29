@@ -3,7 +3,7 @@
 import {
   PARTY_REGISTRY_DATABASE_IDENTITY_ENROLLMENT,
   PARTY_REGISTRY_REQUEST_IDENTITY,
-} from '../../shared/database-identities.ts';
+} from '@app/party-registry-identity-contracts';
 import { PgClient } from '@effect/sql-pg';
 import {
   GatewayScopeGrantRegistrar,

@@ -1,4 +1,4 @@
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../shared/database-identities.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { gatewayScopedTenantRlsPolicies } from '@app/core-runtime';
 import { defineRelations, sql } from 'drizzle-orm';
 import { check, index, pgSchema, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';

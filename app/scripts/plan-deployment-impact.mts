@@ -1245,6 +1245,7 @@ export const isMigrationChange = (changedPath: string): boolean =>
     changedPath,
   ) ||
   changedPath === 'database/identity-enrollment.ts' ||
+  changedPath.startsWith('packages/party-registry-identity-contracts/src/') ||
   changedPath === 'packages/core-runtime/src/environment/drizzle-config.ts' ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identities.ts' ||
@@ -1297,6 +1298,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/generate-ontos-module-contract.mts',
   'scripts/ontos-mcp-contribution.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/generate-shell-ui-candidates.mts',
   'scripts/application-release-intent.mts',
   'scripts/application-composition-authority-publication.mts',
   'scripts/immutable-application-release.mts',

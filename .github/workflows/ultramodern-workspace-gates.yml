@@ -246,6 +246,7 @@ jobs:
               pnpm api:check:ontos
           - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
             commands: |
+              pnpm shell:ui-candidates:check
               pnpm test:scripts
               pnpm module-entrypoints:check
               pnpm test:deployment-impact

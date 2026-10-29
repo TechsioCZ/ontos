@@ -19,8 +19,8 @@
   },
   "scripts": {
     "dev": "modern dev",
-    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
+    "build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
+    "cloudflare:build": "node ../../scripts/generate-shell-ui-candidates.mts --check --all && modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
     "cloudflare:deploy": "node ../../scripts/immutable-shell-release.mts ingress-deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app shell-super-app",
@@ -37,30 +37,11 @@
   },
   "dependencies": {
     "@app/admin-ui": "workspace:*",
-    "@app/assortment": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*",
-    "@app/catalog": "workspace:*",
-    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/email-delivery": "workspace:*",
-    "@app/inventory": "workspace:*",
-    "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
-    "@app/legal-agreements": "workspace:*",
-    "@app/finance-billing": "workspace:*",
-    "@app/property-leasing": "workspace:*",
-    "@app/property-portfolio": "workspace:*",
-    "@app/projects": "workspace:*",
-    "@app/crm-activities": "workspace:*",
-    "@app/work-tasks": "workspace:*",
-    "@app/workforce": "workspace:*",
-    "@app/tagging": "workspace:*",
-    "@app/crm": "workspace:*",
-    "@app/sales-pipeline": "workspace:*",
-    "@app/merchandise": "workspace:*",
-    "@app/facility-operations": "workspace:*",
-    "@app/sales-insights": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.12",
     "@better-auth/cimd": "1.7.12",
@@ -91,7 +72,8 @@
     "i18next": "26.4.2",
     "jose": "6.2.5",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "@app/party-registry-identity-contracts": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
@@ -118,34 +100,12 @@
     "pg": "8.22.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
-    "wrangler": "4.137.0",
-    "zephyr-rspack-plugin": "1.2.4"
+    "wrangler": "4.137.0"
   },
   "modernjs": {
     "preset": "presetUltramodern",
     "role": "shell",
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
-  },
-  "zephyr:dependencies": {
-    "partyRegistry": "@app/party-registry@workspace:*",
-    "commerceMarketCatalog": "@app/commerce-market-catalog@workspace:*",
-    "catalog": "@app/catalog@workspace:*",
-    "inventory": "@app/inventory@workspace:*",
-    "assortment": "@app/assortment@workspace:*",
-    "propertyPortfolio": "@app/property-portfolio@workspace:*",
-    "projects": "@app/projects@workspace:*",
-    "propertyLeasing": "@app/property-leasing@workspace:*",
-    "legalAgreements": "@app/legal-agreements@workspace:*",
-    "workTasks": "@app/work-tasks@workspace:*",
-    "workforce": "@app/workforce@workspace:*",
-    "tagging": "@app/tagging@workspace:*",
-    "crm": "@app/crm@workspace:*",
-    "salesPipeline": "@app/sales-pipeline@workspace:*",
-    "merchandise": "@app/merchandise@workspace:*",
-    "facilityOperations": "@app/facility-operations@workspace:*",
-    "salesInsights": "@app/sales-insights@workspace:*",
-    "financeBilling": "@app/finance-billing@workspace:*",
-    "crmActivities": "@app/crm-activities@workspace:*"
   }
 }

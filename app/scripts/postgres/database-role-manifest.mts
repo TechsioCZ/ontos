@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR } from '@app/party-registry-identity-contracts';
 import { Result, Schema } from 'effect';
 import { APP_DATABASE_IDENTITY_ENROLLMENT, TRUST_ROUTINES } from '../../database/identity-enrollment.ts';
 import type { DatabaseIdentityEnrollment } from '@app/core-runtime/db/database-identity-manifest';

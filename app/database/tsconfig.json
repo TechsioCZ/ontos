@@ -13,6 +13,6 @@
   "include": ["identity-enrollment.ts"],
   "references": [
     { "path": "../packages/core-runtime" },
-    { "path": "../verticals/party-registry" }
+    { "path": "../packages/party-registry-identity-contracts" }
   ]
 }

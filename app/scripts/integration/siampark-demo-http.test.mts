@@ -36,6 +36,15 @@ import { expect, layer } from 'effect-rstest';
 import { Cookies, HttpClient, HttpClientRequest } from 'effect/http';
 import { HttpApiClient } from 'effect/http-api';
 
+const LEGAL_AGREEMENTS = 'legal-agreements';
+const PROPERTY_LEASING = 'property-leasing';
+const FINANCE_BILLING = 'finance-billing';
+const PARTY_REGISTRY = 'party-registry';
+const PROPERTY_PORTFOLIO = 'property-portfolio';
+const CRM_ACTIVITIES = 'crm-activities';
+const OPERATIONS_EMAIL = 'operations@najempark.demo';
+const WORK_TASKS = 'work-tasks';
+
 // The live development fixture is reset by the operator, never by this test.
 // These stable resource IDs belong to scripts/siampark/fixtures.mts.
 const shellOrigin = 'http://localhost:3020';
@@ -61,7 +70,7 @@ class LiveDemoPrerequisiteUnavailable extends Schema.TaggedError<LiveDemoPrerequ
 }
 
 const signIn = Effect.fn('NajemparkLiveHttp.signIn')(function* signInDemoAccount(
-  email: 'operations@najempark.demo' | 'external@najempark.demo' | 'management@najempark.demo',
+  email: typeof OPERATIONS_EMAIL | 'external@najempark.demo' | 'management@najempark.demo',
 ) {
   const client = yield* HttpApiClient.make(ShellAuthenticationApi, {
     baseUrl: shellApiBaseUrl,
@@ -152,17 +161,17 @@ const referenceCredentials = Effect.fn('NajemparkLiveHttp.referenceCredentials')
 const readLiveAgreements = Effect.fn('NajemparkLiveHttp.readAgreements')(function* agreementsRead(
   session: LiveSession,
 ) {
-  const grant = yield* authorize(session, 'legal-agreements');
+  const grant = yield* authorize(session, LEGAL_AGREEMENTS);
   return yield* readAgreements({}, grant.credential, correlation(), grant.options);
 });
 const readLiveOccupancies = Effect.fn('NajemparkLiveHttp.readOccupancies')(function* occupancyRead(
   session: LiveSession,
 ) {
-  const grant = yield* authorize(session, 'property-leasing');
+  const grant = yield* authorize(session, PROPERTY_LEASING);
   return yield* readOccupancies({}, grant.credential, correlation(), grant.options);
 });
 const readLiveFinance = Effect.fn('NajemparkLiveHttp.readFinance')(function* financeRead(session: LiveSession) {
-  const grant = yield* authorize(session, 'finance-billing');
+  const grant = yield* authorize(session, FINANCE_BILLING);
   return yield* readInvoices({}, grant.credential, correlation(), grant.options);
 });
 
@@ -173,12 +182,12 @@ const applyAgreementCommand = Effect.fn('NajemparkLiveHttp.applyAgreementCommand
 ) {
   const payload = yield* Schema.decodeEffect(AgreementPayloadSchema)({ command, expectedRevision });
   const providers = yield* referenceCredentials(session, [
-    'party-registry',
-    'property-leasing',
-    'property-portfolio',
-    'property-portfolio',
+    PARTY_REGISTRY,
+    PROPERTY_LEASING,
+    PROPERTY_PORTFOLIO,
+    PROPERTY_PORTFOLIO,
   ]);
-  const grant = yield* authorize(session, 'legal-agreements');
+  const grant = yield* authorize(session, LEGAL_AGREEMENTS);
   return yield* executeAgreementCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
@@ -192,12 +201,12 @@ const applyOccupancyCommand = Effect.fn('NajemparkLiveHttp.applyOccupancyCommand
 ) {
   const payload = yield* Schema.decodeEffect(OccupancyPayloadSchema)({ command, expectedRevision });
   const providers = yield* referenceCredentials(session, [
-    'property-portfolio',
-    'property-portfolio',
-    'party-registry',
-    'legal-agreements',
+    PROPERTY_PORTFOLIO,
+    PROPERTY_PORTFOLIO,
+    PARTY_REGISTRY,
+    LEGAL_AGREEMENTS,
   ]);
-  const grant = yield* authorize(session, 'property-leasing');
+  const grant = yield* authorize(session, PROPERTY_LEASING);
   return yield* executeOccupancyCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
@@ -212,7 +221,7 @@ const applyFinanceCommand = Effect.fn('NajemparkLiveHttp.applyFinanceCommand')(f
   providerAudiences: readonly string[] = [],
 ) {
   const payload = yield* Schema.decodeEffect(FinancePayloadSchema)({ command, expectedRevision });
-  const grant = yield* authorize(session, 'finance-billing');
+  const grant = yield* authorize(session, FINANCE_BILLING);
   const providers = yield* referenceCredentials(session, providerAudiences);
   return yield* executeFinanceCommand(payload, grant.credential, correlation(), {
     ...grant.options,
@@ -224,7 +233,7 @@ const applyFinanceCommand = Effect.fn('NajemparkLiveHttp.applyFinanceCommand')(f
 const prepareGoldenLease = Effect.fn('NajemparkLiveHttp.prepareGoldenLease')(function* goldenLeaseBaseline(
   session: LiveSession,
 ) {
-  const propertyGrant = yield* authorize(session, 'property-portfolio');
+  const propertyGrant = yield* authorize(session, PROPERTY_PORTFOLIO);
   const property = yield* readProperties({}, propertyGrant.credential, correlation(), propertyGrant.options);
   const occupancies = yield* readLiveOccupancies(session);
   const agreements = yield* readLiveAgreements(session);
@@ -244,7 +253,7 @@ const prepareGoldenLease = Effect.fn('NajemparkLiveHttp.prepareGoldenLease')(fun
   expect(occupancies.occupancies.filter((item) => item.unitRef.resourceId === unit.unitRef.resourceId)).toEqual([]);
   expect(finance.state.invoices.filter((item) => item.unitRef?.resourceId === unit.unitRef.resourceId)).toEqual([]);
   expect(finance.canWrite).toBe(true);
-  const searchGrant = yield* authorize(session, 'party-registry');
+  const searchGrant = yield* authorize(session, PARTY_REGISTRY);
   const results = yield* searchCounterparties(
     { query: 'Eva', role: 'CUSTOMER' },
     searchGrant.credential,
@@ -257,7 +266,7 @@ const prepareGoldenLease = Effect.fn('NajemparkLiveHttp.prepareGoldenLease')(fun
   }
   expect(selected.currentRoles).toContain('CUSTOMER');
   expect(selected.party.archived).toBe(false);
-  const partyGrant = yield* authorize(session, 'party-registry');
+  const partyGrant = yield* authorize(session, PARTY_REGISTRY);
   const customer = yield* readCounterparty(
     { counterpartyRef: selected.ref },
     partyGrant.credential,
@@ -369,13 +378,7 @@ const executeGoldenInvoice = Effect.fn('NajemparkLiveHttp.executeGoldenInvoice')
     },
     expectedRevision: prepared.finance.revision,
   });
-  const providers = [
-    'party-registry',
-    'property-portfolio',
-    'property-portfolio',
-    'property-leasing',
-    'legal-agreements',
-  ];
+  const providers = [PARTY_REGISTRY, PROPERTY_PORTFOLIO, PROPERTY_PORTFOLIO, PROPERTY_LEASING, LEGAL_AGREEMENTS];
   const draft = yield* applyFinanceCommand(session, prepared.finance.revision, payload.command, providers);
   const invoice = yield* Effect.fromNullishOr(draft.invoice);
   const ready = yield* applyFinanceCommand(
@@ -415,7 +418,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
       expect(finance.canWrite).toBe(false);
       expect(finance.state.invoices.length).toBeGreaterThanOrEqual(4);
       expect(finance.state.invoices.some((item) => item.ref.resourceId === overdueInvoiceId)).toBe(true);
-      const relationships = yield* authorize(session, 'crm-activities');
+      const relationships = yield* authorize(session, CRM_ACTIVITIES);
       const activities = yield* readActivities({}, relationships.credential, correlation(), relationships.options);
       expect(activities.canWrite).toBe(false);
       return finance.revision;
@@ -426,7 +429,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
     'live Operations completes the A101 lease through owning occupancy, signature and invoice Actions',
     () =>
       Effect.gen(function* operationsGoldenLease() {
-        const session = yield* signIn('operations@najempark.demo');
+        const session = yield* signIn(OPERATIONS_EMAIL);
         const prepared = yield* prepareGoldenLease(session);
         const initialDraft = yield* Schema.decodeEffect(OccupancySchema)({
           ...prepared.occupancy,
@@ -482,7 +485,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
 
   it.effect('live Operations creates a B201 successor draft and resolves only renewal attention', () =>
     Effect.gen(function* operationsRenewalDraft() {
-      const session = yield* signIn('operations@najempark.demo');
+      const session = yield* signIn(OPERATIONS_EMAIL);
       const before = yield* readLiveAgreements(session);
       const old = before.contracts.find((item) => item.contractRef.resourceId === expiringContractId);
       if (old === undefined || old.endDate === null || old.hasSuccessorDraft) {
@@ -529,10 +532,10 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
 
   it.effect('live Operations records a canonical relationship Activity linked to one real Work Task', () =>
     Effect.gen(function* operationsRelationshipFollowUp() {
-      const session = yield* signIn('operations@najempark.demo');
-      const relationshipGrant = yield* authorize(session, 'crm-activities');
+      const session = yield* signIn(OPERATIONS_EMAIL);
+      const relationshipGrant = yield* authorize(session, CRM_ACTIVITIES);
       const before = yield* readActivities({}, relationshipGrant.credential, correlation(), relationshipGrant.options);
-      const workGrant = yield* authorize(session, 'work-tasks');
+      const workGrant = yield* authorize(session, WORK_TASKS);
       const workBefore = yield* readTasks({}, workGrant.credential, correlation(), workGrant.options);
       const agreements = yield* readLiveAgreements(session);
       const contract = agreements.contracts.find((item) => item.contractRef.resourceId === expiringContractId);
@@ -550,8 +553,8 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         },
         expectedRevision: workBefore.revision,
       });
-      const taskProviders = yield* referenceCredentials(session, ['property-portfolio']);
-      const taskGrant = yield* authorize(session, 'work-tasks');
+      const taskProviders = yield* referenceCredentials(session, [PROPERTY_PORTFOLIO]);
+      const taskGrant = yield* authorize(session, WORK_TASKS);
       const task = yield* executeApplyCommandWithAuthorization(taskPayload, taskGrant.credential, correlation(), {
         ...taskGrant.options,
         idempotencyKey: correlation(),
@@ -573,14 +576,14 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         },
         expectedRevision: before.revision,
       });
-      const activityProviders = yield* referenceCredentials(session, ['party-registry', 'work-tasks']);
-      const activityGrant = yield* authorize(session, 'crm-activities');
+      const activityProviders = yield* referenceCredentials(session, [PARTY_REGISTRY, WORK_TASKS]);
+      const activityGrant = yield* authorize(session, CRM_ACTIVITIES);
       const recorded = yield* executeActivityCommand(activityPayload, activityGrant.credential, correlation(), {
         ...activityGrant.options,
         idempotencyKey: correlation(),
         referenceCredentials: activityProviders,
       });
-      const finalGrant = yield* authorize(session, 'crm-activities');
+      const finalGrant = yield* authorize(session, CRM_ACTIVITIES);
       const after = yield* readActivities(
         { counterpartyId: contract.counterpartyRef.resourceId },
         finalGrant.credential,
@@ -594,7 +597,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         kind: 'CALL',
         ownerPrincipalRef: before.actorPrincipalRef,
       });
-      const taskReadGrant = yield* authorize(session, 'work-tasks');
+      const taskReadGrant = yield* authorize(session, WORK_TASKS);
       const persistedTask = yield* readTasks(
         { resourceId: followUpTask.ref.resourceId },
         taskReadGrant.credential,
@@ -610,10 +613,10 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
   it.effect('live External reads only its assigned Task, Activity and B201 Counterparty', () =>
     Effect.gen(function* externalAssignedReads() {
       const session = yield* signIn('external@najempark.demo');
-      const work = yield* authorize(session, 'work-tasks');
+      const work = yield* authorize(session, WORK_TASKS);
       const tasks = yield* readTasks({ resourceId: assignedTaskId }, work.credential, correlation(), work.options);
       expect(tasks.items.map((task) => task.ref.resourceId)).toEqual([assignedTaskId]);
-      const relationships = yield* authorize(session, 'crm-activities');
+      const relationships = yield* authorize(session, CRM_ACTIVITIES);
       const activities = yield* readActivities(
         { resourceId: assignedActivityId },
         relationships.credential,
@@ -628,7 +631,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         });
       }
       expect(assignedActivity.counterpartyRef.resourceId).toBe(assignedCounterpartyId);
-      const party = yield* authorize(session, 'party-registry');
+      const party = yield* authorize(session, PARTY_REGISTRY);
       const counterparty = yield* readCounterparty(
         { counterpartyRef: assignedActivity.counterpartyRef },
         party.credential,
@@ -644,19 +647,19 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
   it.effect('live External receives typed HTTP 403 for an unrelated Task, Invoice and Counterparty', () =>
     Effect.gen(function* externalDeniedReads() {
       const session = yield* signIn('external@najempark.demo');
-      const work = yield* authorize(session, 'work-tasks');
+      const work = yield* authorize(session, WORK_TASKS);
       const task = yield* Effect.result(
         readTasks({ resourceId: unrelatedTaskId }, work.credential, correlation(), work.options),
       );
       expect(Result.match(task, { onFailure: Schema.is(TaskForbiddenSchema), onSuccess: () => false })).toBe(true);
-      const finance = yield* authorize(session, 'finance-billing');
+      const finance = yield* authorize(session, FINANCE_BILLING);
       const invoice = yield* Effect.result(
         readInvoices({ resourceId: invoiceId }, finance.credential, correlation(), finance.options),
       );
       expect(Result.match(invoice, { onFailure: Schema.is(InvoiceForbiddenSchema), onSuccess: () => false })).toBe(
         true,
       );
-      const relationships = yield* authorize(session, 'crm-activities');
+      const relationships = yield* authorize(session, CRM_ACTIVITIES);
       const activities = yield* readActivities(
         { resourceId: assignedActivityId },
         relationships.credential,
@@ -673,7 +676,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         ...assignedActivity.counterpartyRef,
         resourceId: goldenCounterpartyId,
       });
-      const party = yield* authorize(session, 'party-registry');
+      const party = yield* authorize(session, PARTY_REGISTRY);
       const counterparty = yield* Effect.result(
         readCounterparty({ counterpartyRef: unrelatedRef }, party.credential, correlation(), party.options),
       );
@@ -690,8 +693,8 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
 
   it.effect('live Operations commits only one of two Task changes at the same expected revision', () =>
     Effect.gen(function* operationsConcurrentRevision() {
-      const session = yield* signIn('operations@najempark.demo');
-      const initialGrant = yield* authorize(session, 'work-tasks');
+      const session = yield* signIn(OPERATIONS_EMAIL);
+      const initialGrant = yield* authorize(session, WORK_TASKS);
       const before = yield* readTasks({}, initialGrant.credential, correlation(), initialGrant.options);
       const assigned = before.items.find((task) => task.ref.resourceId === assignedTaskId);
       if (assigned === undefined) {
@@ -702,8 +705,8 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
         command: { _tag: 'ChangeTaskState', state, taskRef: assigned.ref },
         expectedRevision: before.revision,
       });
-      const firstGrant = yield* authorize(session, 'work-tasks');
-      const secondGrant = yield* authorize(session, 'work-tasks');
+      const firstGrant = yield* authorize(session, WORK_TASKS);
+      const secondGrant = yield* authorize(session, WORK_TASKS);
       expect(firstGrant.credential === secondGrant.credential).toBe(false);
       const firstKey = correlation();
       const secondKey = correlation();
@@ -738,7 +741,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Nájempark l
           status: 409,
         });
       }
-      const finalGrant = yield* authorize(session, 'work-tasks');
+      const finalGrant = yield* authorize(session, WORK_TASKS);
       const after = yield* readTasks({}, finalGrant.credential, correlation(), finalGrant.options);
       expect(after.revision).toBe(before.revision + 1);
       expect(after.items).toHaveLength(before.items.length);

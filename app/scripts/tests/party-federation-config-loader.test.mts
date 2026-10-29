@@ -7,7 +7,7 @@ import { expect, it, rstest } from 'effect-rstest';
 import { ChildProcess } from 'effect/process';
 
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../verticals/party-registry/shared/database-identity-data.ts';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '../../packages/party-registry-identity-contracts/src/database-identity-data.ts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 rstest.mock('@modern-js/app-tools-extensions/config', () => ({

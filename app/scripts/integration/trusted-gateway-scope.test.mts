@@ -6,7 +6,7 @@ import {
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '@app/party-registry/database-identities';
+} from '@app/party-registry-identity-contracts';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { PgAuth, PgProtocol } from '@effect/sql-pg';

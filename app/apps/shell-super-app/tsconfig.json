@@ -28,7 +28,7 @@
   ],
   "references": [
     {
-      "path": "../../database"
+      "path": "../../packages/party-registry-identity-contracts"
     },
     {
       "path": "../../packages/shared-contracts"

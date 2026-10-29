@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry/database-identities';
+import { PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/party-registry-identity-contracts';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as Arr,

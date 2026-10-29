@@ -37,11 +37,14 @@ mise exec -- node scripts/ci/deploy-plan.mts unit-digest --unit "$UNIT_ID" \
   --expect-digest "$ONTOS_UNIT_INPUT_DIGEST" \
   --output "$RUNNER_TEMP/edge-unit-inputs.json"
 
+# Projection freshness is an admission gate, not a digest input from vertical implementation source. A vertical
+# checks its own projection before the slow steps; the Shell's cloudflare:build checks every vertical's projection.
 if [[ "$UNIT_ID" == shell-super-app ]]; then
   mise exec -- pnpm exec node scripts/immutable-shell-release.mts plan \
     --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
     --plan-file "$releases/plan.json"
 else
+  mise exec -- pnpm exec node scripts/generate-shell-ui-candidates.mts --check --vertical "$UNIT_ID"
   mise exec -- pnpm exec node scripts/immutable-application-release.mts plan \
     --vertical "$UNIT_ID" --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
     --plan-file "$releases/plan.json"

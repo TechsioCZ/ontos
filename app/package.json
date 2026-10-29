@@ -150,7 +150,9 @@
     "demo:seed:eshop": "node verticals/merchandise/scripts/seed-eshop.mts",
     "demo:composition": "node scripts/siampark/development-composition.mts --environment development",
     "demo:serve": "node scripts/siampark/serve-demo.mts",
-    "dev:projects": "pnpm --filter @app/projects dev"
+    "dev:projects": "pnpm --filter @app/projects dev",
+    "shell:ui-candidates": "node scripts/generate-shell-ui-candidates.mts --all",
+    "shell:ui-candidates:check": "node scripts/generate-shell-ui-candidates.mts --check --all"
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",
@@ -218,7 +220,10 @@
     "playwright-core": "1.64.0",
     "ultracite": "7.11.0",
     "yaml": "2.9.1",
-    "@modern-js/ultramodern-app-tools": "catalog:ultramodern"
+    "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
+    "@app/party-registry-identity-contracts": "workspace:*",
+    "@tailwindcss/node": "4.3.3",
+    "@tailwindcss/oxide": "4.3.3"
   },
   "engines": {
     "node": ">=26",

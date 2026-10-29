@@ -10994,6 +10994,12 @@
       "package": "@app/storefront-registry-contracts",
       "path": "packages/storefront-registry-contracts",
       "description": "Storefront Registry-owned public Current Storefront Application contract and generated Effect client."
+    },
+    {
+      "id": "party-registry-identity-contracts",
+      "package": "@app/party-registry-identity-contracts",
+      "path": "packages/party-registry-identity-contracts",
+      "description": "Party-owned database identity descriptor, free of Party's schema and runtime."
     }
   ],
   "standaloneWorkspaces": [

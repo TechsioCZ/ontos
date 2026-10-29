@@ -1,7 +1,7 @@
 import {
   PARTY_REGISTRY_REQUEST_IDENTITY,
   PARTY_REGISTRY_WORKER_IDENTITY,
-} from '@app/party-registry/database-identities';
+} from '@app/party-registry-identity-contracts';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -307,7 +307,7 @@ it('loads database identity facts from pure data modules in every Modern configu
     const config = readUnitConfig(unit.path);
     expect(config, unit.id).toContain(
       unit.id === PARTY_REGISTRY_APP_ID
-        ? "from './shared/database-identity-data.ts'"
+        ? "from '../../packages/party-registry-identity-contracts/src/database-identity-data.ts'"
         : "from '../../packages/core-runtime/src/db/database-identity-data.ts'",
     );
     expect(config, unit.id).not.toContain('/database-identity-manifest');
@@ -378,7 +378,7 @@ it('loads the canonical identity facts synchronously and every Modern configurat
         const jiti = createJiti(import.meta.url, { fsCache: false, requireCache: false, interopDefault: true });
         const facts = jiti('./packages/core-runtime/src/db/database-identity-data.ts');
         if (!facts.SHARED_RUNTIME_IDENTITY || !facts.SHELL_GATEWAY_ISSUER_IDENTITY) throw new Error('Missing canonical Core database identities');
-        const partyFacts = jiti('./verticals/party-registry/shared/database-identity-data.ts');
+        const partyFacts = jiti('./packages/party-registry-identity-contracts/src/database-identity-data.ts');
         if (!partyFacts.PARTY_REGISTRY_REQUEST_IDENTITY || !partyFacts.PARTY_REGISTRY_WORKER_IDENTITY) throw new Error('Missing Party database identities');
         if (partyFacts.PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.request !== partyFacts.PARTY_REGISTRY_REQUEST_IDENTITY ||
             partyFacts.PARTY_REGISTRY_DATABASE_IDENTITY_DESCRIPTOR.worker !== partyFacts.PARTY_REGISTRY_WORKER_IDENTITY) throw new Error('Duplicated Party identity facts');

@@ -66,6 +66,7 @@ const GLOBAL_INPUT_FILES = Object.freeze([
   'scripts/ci/deploy-plan.mts',
   'scripts/ci/release-ledger.mts',
   'scripts/ci/unit-closure.mts',
+  'scripts/generate-shell-ui-candidates.mts',
   'tsconfig.base.json',
 ]);
 const GLOBAL_INPUT_GLOBS = Object.freeze(['patches/**', 'topology/**', '!topology/application-release-intent.json']);
@@ -121,6 +122,78 @@ export const canonicalJson = (value: unknown): string => {
     return `{${members.join(',')}}`;
   }
   return JSON.stringify(value ?? null);
+};
+
+/** Fields with a documented install effect, including package-manager and platform selection. */
+const INSTALL_MANIFEST_FIELDS = new Set([
+  'name',
+  'version',
+  'private',
+  'files',
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+  'peerDependenciesMeta',
+  'dependenciesMeta',
+  'engines',
+  'devEngines',
+  'os',
+  'cpu',
+  'libc',
+  'packageManager',
+]);
+/** Only these known non-install fields may be omitted; unfamiliar configuration falls back to the full manifest. */
+const NON_INSTALL_MANIFEST_FIELDS = new Set([
+  'description',
+  'type',
+  'exports',
+  'imports',
+  'main',
+  'module',
+  'types',
+  'typings',
+  'sideEffects',
+  'license',
+  'keywords',
+  'author',
+  'contributors',
+  'repository',
+  'homepage',
+  'bugs',
+  'scripts',
+  'modernjs',
+  'ontosContractOwner',
+  'zephyr:dependencies',
+]);
+const INSTALL_LIFECYCLE_SCRIPTS = new Set([
+  'preinstall',
+  'install',
+  'postinstall',
+  'prepublish',
+  'preprepare',
+  'prepare',
+  'postprepare',
+  'pnpm:devPreinstall',
+]);
+
+/**
+ * A lifecycle hook or bin may read arbitrary manifest metadata, so its entire manifest remains an install input.
+ * Unknown configuration is equally conservative. Reached packages are separately hashed in full by the closure.
+ */
+export const installManifestProjection = (manifest: Readonly<Record<string, unknown>>): string => {
+  const { scripts } = manifest;
+  if (
+    'bin' in manifest ||
+    (isJsonObject(scripts) && Object.keys(scripts).some((key) => INSTALL_LIFECYCLE_SCRIPTS.has(key))) ||
+    (scripts !== undefined && !isJsonObject(scripts)) ||
+    Object.keys(manifest).some((key) => !INSTALL_MANIFEST_FIELDS.has(key) && !NON_INSTALL_MANIFEST_FIELDS.has(key))
+  ) {
+    return canonicalJson(manifest);
+  }
+  return canonicalJson(
+    Object.fromEntries(Object.entries(manifest).filter(([key]) => INSTALL_MANIFEST_FIELDS.has(key))),
+  );
 };
 
 /**
@@ -265,9 +338,9 @@ export const createDigestContext = (workspaceRoot: string, revision = 'HEAD'): D
         ),
         ...blobLines(snapshot, matchTrackedFiles(snapshot, appPrefix, GLOBAL_INPUT_GLOBS)),
         ...blobLines(snapshot, matchTrackedFiles(snapshot, '', REPOSITORY_INPUT_GLOBS)),
-        ...blobLines(
-          snapshot,
-          [...graph.packages.values()].map((workspacePackage) => `${workspacePackage.dir}/package.json`),
+        ...[...graph.packages.values()].map(
+          (workspacePackage) =>
+            `install-manifest ${workspacePackage.dir}/package.json ${installManifestProjection(workspacePackage.manifest)}`,
         ),
         ...blobLines(
           snapshot,
