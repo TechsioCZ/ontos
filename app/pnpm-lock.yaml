@@ -402,7 +402,7 @@ importers:
         version: 7.0.2
       ultracite:
         specifier: 7.11.0
-        version: 7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.10)
+        version: 7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -10187,6 +10187,11 @@ packages:
     engines: {node: '>=14'}
     hasBin: true
 
+  prettier@3.9.9:
+    resolution: {integrity: sha512-Z/CJHIkdujO/OtN7nXUii0Rf3VT5SRuhjBA82Xvu2XhBUgX3nhP67T0LHceBdQLex7OOFGTox+Q5Yg8Jk2Qivg==}
+    engines: {node: '>=14'}
+    hasBin: true
+
   pretty-format@27.5.1:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
     engines: {node: ^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0}
@@ -10362,6 +10367,10 @@ packages:
 
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
+
+  resolve.exports@2.0.3:
+    resolution: {integrity: sha512-OcXjMsGdhL4XnbShKpAcSqPMzQoYkYyhbEaeSko47MjRP9NfEQMhZkXL1DoFlt9LWQn4YttrdnV6X2OiyzBi+A==}
+    engines: {node: '>=10'}
 
   resolve.exports@2.0.4:
     resolution: {integrity: sha512-zepuGL0ulf+nt+XaFrlKeaiTJeyPFPLLY62+ncq1/VTHBdt3HsfXOH60priZ6tnXQozdGcDeIF5JVTanvIcYWQ==}
@@ -10614,6 +10623,12 @@ packages:
     peerDependencies:
       seroval: ^1.0
 
+  seroval-plugins@1.6.8:
+    resolution: {integrity: sha512-N7mWAMydj89EnYTHtRpS3LBrAz3J9O6oVrqpuXuvlAHfAUG8WEKqtbAd7SBiJNY5NfCAFhSdyAh7wI4Shjqy4g==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      seroval: ^1.0
+
   seroval-plugins@1.6.9:
     resolution: {integrity: sha512-kiDK/Tb8IWZ61WEU8pA2PDmAuw37gKph9Y77OZlD56mg0Y2g0Bg7gZ1HeHhs5d40w+nRoUq/wj08V26ilbez9g==}
     engines: {node: '>=10'}
@@ -10622,6 +10637,10 @@ packages:
 
   seroval@1.6.7:
     resolution: {integrity: sha512-AeDcLh0yO2SFm9W71essgnSzLV9DI8ZH0x0knXn2DMnUZj728mpLbxjlbB6IqKCmqh8JA3cEqRyGoNkt584JcQ==}
+    engines: {node: '>=10'}
+
+  seroval@1.6.8:
+    resolution: {integrity: sha512-HlSgSAkTk4EqHcje1ptJjfZi1YDv5KbhVJ/d3P7T/nAXua2VmDu+AKDX5VTdFfZf48nDkWB2TKYt0DrCSa+3wg==}
     engines: {node: '>=10'}
 
   seroval@1.6.9:
@@ -13632,7 +13651,7 @@ snapshots:
       tsrs: 0.20.1-ts7.1.0-beta
       tsx: 4.23.15
       typescript: 7.0.2
-      ultracite: 8.0.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.73.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.10)
+      ultracite: 8.0.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.73.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)
       zephyr-rspack-plugin: 1.6.0(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.3)(@swc/helpers@0.5.23))(supports-color@10.2.2)
     transitivePeerDependencies:
       - '@astrojs/compiler-rs'
@@ -15971,8 +15990,8 @@ snapshots:
     dependencies:
       '@tanstack/history': 1.162.4
       cookie-es: 3.1.1
-      seroval: 1.6.9
-      seroval-plugins: 1.6.9(seroval@1.6.9)
+      seroval: 1.6.8
+      seroval-plugins: 1.6.8(seroval@1.6.8)
 
   '@tanstack/store@0.11.2': {}
 
@@ -17980,11 +17999,11 @@ snapshots:
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.71.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3))(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
       eslint-plugin-no-only-tests: 3.4.0
-      eslint-plugin-prettier: 5.5.6(eslint-config-prettier@10.1.8(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2)))(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(prettier@3.9.10)
+      eslint-plugin-prettier: 5.5.6(eslint-config-prettier@10.1.8(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2)))(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(prettier@3.9.9)
       eslint-rule-documentation: 1.0.23
       globals: 17.12.0
       jsx-ast-utils: 3.3.5
-      prettier: 3.9.10
+      prettier: 3.9.9
       svg-element-attributes: 1.3.1
       typescript: 6.0.3
       typescript-eslint: 8.71.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(supports-color@10.2.2)(typescript@6.0.3)
@@ -18059,10 +18078,10 @@ snapshots:
       - supports-color
       - typescript
 
-  eslint-plugin-prettier@5.5.6(eslint-config-prettier@10.1.8(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2)))(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(prettier@3.9.10):
+  eslint-plugin-prettier@5.5.6(eslint-config-prettier@10.1.8(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2)))(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(prettier@3.9.9):
     dependencies:
       eslint: 9.39.5(jiti@2.7.0)(supports-color@10.2.2)
-      prettier: 3.9.10
+      prettier: 3.9.9
       prettier-linter-helpers: 1.0.1
       synckit: 0.11.13
     optionalDependencies:
@@ -20419,6 +20438,8 @@ snapshots:
 
   prettier@3.9.10: {}
 
+  prettier@3.9.9: {}
+
   pretty-format@27.5.1:
     dependencies:
       ansi-regex: 5.0.1
@@ -20608,6 +20629,8 @@ snapshots:
   resolve-from@5.0.0: {}
 
   resolve-pkg-maps@1.0.0: {}
+
+  resolve.exports@2.0.3: {}
 
   resolve.exports@2.0.4: {}
 
@@ -20836,11 +20859,17 @@ snapshots:
     dependencies:
       seroval: 1.6.7
 
+  seroval-plugins@1.6.8(seroval@1.6.8):
+    dependencies:
+      seroval: 1.6.8
+
   seroval-plugins@1.6.9(seroval@1.6.9):
     dependencies:
       seroval: 1.6.9
 
   seroval@1.6.7: {}
+
+  seroval@1.6.8: {}
 
   seroval@1.6.9: {}
 
@@ -21336,7 +21365,7 @@ snapshots:
 
   ufo@1.6.4: {}
 
-  ultracite@7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.10):
+  ultracite@7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9):
     dependencies:
       '@clack/prompts': 1.8.1
       cli-truncate: 6.1.1
@@ -21350,7 +21379,7 @@ snapshots:
       log-update: 8.0.0
       magicast: 0.5.5
       nypm: 0.6.10
-      resolve.exports: 2.0.4
+      resolve.exports: 2.0.3
       semver: 7.8.5
       string-width: 8.3.0
       yaml: 2.9.1
@@ -21359,9 +21388,9 @@ snapshots:
       eslint: 9.39.5(jiti@2.7.0)(supports-color@10.2.2)
       oxfmt: 0.66.0
       oxlint: 1.81.0(oxlint-tsgolint@7.0.2001)
-      prettier: 3.9.10
+      prettier: 3.9.9
 
-  ultracite@8.0.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.73.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.10):
+  ultracite@8.0.1(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.73.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9):
     dependencies:
       '@clack/prompts': 1.8.1
       cli-truncate: 6.1.1
@@ -21386,7 +21415,7 @@ snapshots:
       eslint: 9.39.5(jiti@2.7.0)(supports-color@10.2.2)
       oxfmt: 0.73.0
       oxlint: 1.81.0(oxlint-tsgolint@7.0.2001)
-      prettier: 3.9.10
+      prettier: 3.9.9
 
   unbash@4.0.12: {}
 
