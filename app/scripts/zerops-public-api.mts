@@ -1,5 +1,6 @@
 import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
+import { NodeHttpClient } from '@effect/platform-node';
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
@@ -20,7 +21,7 @@ const REQUEST_TIMEOUT = Duration.seconds(30);
 const PROJECT_ENV_FILE_QUERY = 'name=&overrideEnvIsolation=none&userOnly=false&reveal=false';
 const PROCESS_POLL_INTERVAL = Duration.seconds(3);
 const PROCESS_TIMEOUT = Duration.minutes(15);
-/** A package upload streams the whole prebuilt runtime (about 100 MB) to the version's signed URL. */
+/** A package upload sends the whole prebuilt runtime (about 100 MB) to the version's signed URL. */
 const UPLOAD_TIMEOUT = Duration.minutes(10);
 const STOP_READBACK_TIMEOUT = Duration.seconds(60);
 
@@ -192,8 +193,9 @@ export interface ZeropsPublicApiService {
   /** Waits for the native stop process and independently reads the service as STOPPED. */
   readonly stopService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /**
-   * Streams an application version's package (a gzip tar, as zcli packs it) to its signed upload URL. The request
-   * carries no Zerops token, and neither the URL nor the response reaches an error.
+   * Uploads an application version's package (a gzip tar, as zcli packs it) to its signed upload URL over HTTP/1.1
+   * (`putPackageOverHttp1`). The request carries no Zerops token, and neither the URL nor the response reaches an
+   * error.
    */
   readonly uploadAppVersionPackage: (
     uploadUrl: Redacted.Redacted,
@@ -208,6 +210,24 @@ export interface ZeropsPublicApiService {
     sensitive: boolean,
   ) => Effect.Effect<void, ZeropsApiError>;
 }
+
+/**
+ * The client package uploads run on: Node's own HTTP/1.1 client, never fetch. Node's fetch negotiates HTTP/2 with
+ * Zerops' upload proxy, whose per-stream flow-control window holds one upload to about 64 KB per round trip (about
+ * 0.4 MB/s from a runner 150 ms away, against about 6 MB/s over HTTP/1.1 on the same path). Zerops answers 200 to an
+ * upload that ran longer than about a minute but keeps none of its data, and the deploy then fails with "failed to
+ * identify artifact file format".
+ */
+interface ZeropsPackageUploadClientId {
+  readonly ZeropsPackageUploadClient: never;
+}
+export const ZeropsPackageUploadClient = Context.Service<ZeropsPackageUploadClientId, HttpClient.HttpClient>(
+  'ontos/ZeropsPackageUploadClient',
+);
+
+export const ZeropsPackageUploadClientLive = Layer.effect(ZeropsPackageUploadClient, HttpClient.HttpClient).pipe(
+  Layer.provide(NodeHttpClient.layerNodeHttp),
+);
 
 export class ZeropsPublicApi extends Context.Service<ZeropsPublicApi, ZeropsPublicApiService>()(
   '@app/scripts/zerops-public-api/ZeropsPublicApi',
@@ -309,6 +329,7 @@ const awaitStoppedService = Effect.fn('ZeropsPublicApi.awaitStoppedService')(fun
 });
 
 const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
+  const uploadClient = yield* ZeropsPackageUploadClient;
   const baseClient = yield* HttpClient.HttpClient;
   const authorizedClient = baseClient.pipe(
     HttpClient.mapRequestEffect((request) =>
@@ -482,34 +503,22 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     uploadUrl: Redacted.Redacted,
     archive: Uint8Array,
   ) {
-    // Like zcli, the PUT carries no Content-Type: Zerops identifies the gzip tar from its bytes and fails the deploy
-    // with "failed to identify artifact file format" when the upload declared one. The signed URL authorizes the
-    // upload itself, so the bearer token never travels to the storage endpoint.
-    const fetch = yield* FetchHttpClient.Fetch;
-    const status = yield* Effect.scoped(
-      Effect.gen(function* putPackage() {
-        const signal = yield* Effect.abortSignal;
-        const response = yield* Effect.tryPromise(
-          fetch.bind(undefined, Redacted.value(uploadUrl), {
-            body: new Uint8Array(archive),
-            method: 'PUT',
-            redirect: 'error',
-            signal,
-          }),
-        );
-        if (response.body !== null) {
-          const { body } = response;
-          yield* Effect.tryPromise(body.cancel.bind(body)).pipe(Effect.ignore);
-        }
-        return response.status;
-      }),
-    ).pipe(
-      Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version upload failed' })),
-      Effect.timeoutOrElse({
-        duration: UPLOAD_TIMEOUT,
-        orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version upload timed out' })),
-      }),
-    );
+    // Like zcli, the PUT carries only the package and its length: no Content-Type, and no Zerops token, because the
+    // signed URL alone authorizes it. A redirect is answered as its status, never followed.
+    const status = yield* uploadClient
+      .execute(
+        HttpClientRequest.put(Redacted.value(uploadUrl)).pipe(
+          HttpClientRequest.setBody(HttpBody.raw(archive, { contentLength: archive.byteLength })),
+        ),
+      )
+      .pipe(
+        Effect.map(({ status: answered }) => answered),
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version upload failed' })),
+        Effect.timeoutOrElse({
+          duration: UPLOAD_TIMEOUT,
+          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version upload timed out' })),
+        }),
+      );
     if (status < 200 || status >= 300) {
       return yield* new ZeropsApiError({
         message: `Zerops application version upload failed with HTTP ${String(status)}`,
@@ -639,4 +648,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   });
 });
 
-export const ZeropsPublicApiLive = Layer.effect(ZeropsPublicApi, makeZeropsPublicApi);
+/** The API over an injected package upload client; `ZeropsPublicApiLive` supplies Node's HTTP/1.1 one. */
+export const ZeropsPublicApiWithUploadClient = Layer.effect(ZeropsPublicApi, makeZeropsPublicApi);
+
+export const ZeropsPublicApiLive = ZeropsPublicApiWithUploadClient.pipe(Layer.provide(ZeropsPackageUploadClientLive));
