@@ -1,4 +1,4 @@
-import { ConfigProvider, Duration, Effect, Layer, Schedule } from 'effect';
+import { ConfigProvider, Duration, Effect, Layer, Option, Schedule } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 
@@ -13,6 +13,8 @@ import {
   oldestReleasesFreeing,
   planImmutableWorkerPrune,
   plannedNewWorkers,
+  plannedRetainedWorkers,
+  stageCoordination,
 } from '../ci/prune-immutable-workers.mts';
 import type { AccountWorker, KeepSources } from '../ci/prune-immutable-workers.mts';
 import { RECEIPTS_PER_UNIT, emptyLedger, recordUnitReceipt } from '../ci/release-ledger.mts';
@@ -144,16 +146,61 @@ it('keeps the Workers of exactly the receipts a later plan may reuse, a bounded 
     ledger = recordedRelease(ledger, 'projects', String(6 - ageDays), ageDays);
   }
   const foreign = recordedRelease({ ...emptyLedger(run), digestVersion: 'another-scheme' }, 'party', '7', 1);
-  const kept = ledgerWorkers([ledger, foreign], new Date(NOW));
+  const kept = ledgerWorkers({ current: [], trusted: [ledger, foreign] }, new Date(NOW));
   // The newest receipts of `projects`; the expired `tax` receipt and the other digest scheme's receipt are gone.
   expect(RECEIPTS_PER_UNIT).toBe(3);
   expect([...kept].toSorted()).toEqual(['3', '4', '5'].flatMap((seed) => [assets(seed), backend(seed)]).toSorted());
 });
 
-it('counts two new Workers for every unit the release builds or uploads again', () => {
-  expect(plannedNewWorkers({ units: [{ mode: 'build' }, { mode: 'retain' }, { mode: 'reupload' }] })).toBe(4);
+it('keeps every receipt this run selected, even an older digest past the bound of three newer ones', () => {
+  const run = { digestVersion: DIGEST_VERSION, now: new Date(NOW), runId: '9', sourceRevision: 'f'.repeat(40) };
+  // A content reversion: the plan retains the receipt of digest 1, older than the three newer digests 2 to 4.
+  let history = recordedRelease(emptyLedger(run), 'projects', '1', 40);
+  for (const seed of ['2', '3', '4']) {
+    history = recordedRelease(history, 'projects', seed, 5 - Number(seed));
+  }
+  const selected = Object.values(history.units).find(({ receipt }) => receipt.plan.backendScriptName === backend('1'));
+  if (selected === undefined) {
+    throw new Error('the fixture records digest 1');
+  }
+  // The plan's ledger is the merge (three newest) plus the receipt it keeps, exactly as the planner carries it.
+  const current: ReleaseLedger = { ...history, units: { ...history.units, [selected.digest]: selected } };
+  const deployPlan = {
+    units: [
+      {
+        mode: 'retain',
+        receipt: Option.some({ plan: { assetsScriptName: assets('1'), backendScriptName: backend('1') } }),
+      },
+    ] as const,
+  };
+  const kept = ledgerWorkers({ current: [current], trusted: [history] }, new Date(NOW));
+  expect([...kept].toSorted()).toEqual(
+    ['1', '2', '3', '4'].flatMap((seed) => [assets(seed), backend(seed)]).toSorted(),
+  );
+  // The pre-upload guard keeps the plan's retained receipts whatever ledger it is given.
+  const guarded = plan([...pair('1', 40), ...pair('2'), ...pair('5', 50)], {
+    candidate: plannedRetainedWorkers(deployPlan),
+    ledger: ledgerWorkers({ current: [], trusted: [history] }, new Date(NOW)),
+  });
+  expect(guarded.releases.map(({ workers }) => workers)).toEqual([[backend('5'), assets('5')]]);
 });
 
+it('counts two new Workers for every unit the release builds or uploads again', () => {
+  expect(
+    plannedNewWorkers({
+      units: [
+        { mode: 'build', receipt: Option.none() },
+        {
+          mode: 'retain',
+          receipt: Option.some({ plan: { assetsScriptName: assets('1'), backendScriptName: backend('1') } }),
+        },
+        { mode: 'reupload', receipt: Option.none() },
+      ],
+    }),
+  ).toBe(4);
+});
+
+const GITHUB_API = 'https://api.github.test';
 const COMPOSITION_URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${'d'.repeat(32)}/values/active`;
 
 /** A provider answering every request with one status and body, recording each request. */
@@ -161,7 +208,7 @@ const provider = (answer: (method: string, url: string) => Response) => {
   const requests: string[] = [];
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
-      requests.push(`${request.method} ${url.pathname}`);
+      requests.push(`${request.method} ${url.pathname}${url.search}`);
       return HttpClientResponse.fromWeb(request, answer(request.method, url.pathname));
     }),
   );
@@ -172,6 +219,9 @@ const provider = (answer: (method: string, url: string) => Response) => {
       ConfigProvider.fromUnknown({
         CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID,
         CLOUDFLARE_API_TOKEN: 'prune-test-token',
+        GH_TOKEN: 'prune-test-github-token',
+        GITHUB_API_URL: GITHUB_API,
+        GITHUB_REPOSITORY: 'TechsioCZ/ontos',
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_URL,
       }),
     ),
@@ -206,7 +256,8 @@ it.live('deletes each release backend first and keeps its assets Worker when the
         { createdOn: 0, workers: [backend('1'), assets('1')] },
         { createdOn: 1, workers: [backend('2'), assets('2')] },
       ],
-      { concurrency: 1, requestsPerSecond: 1000, timeBudget: Duration.minutes(1) },
+      { concurrency: 1, coordinationInterval: Duration.zero, requestsPerSecond: 1000, timeBudget: Duration.minutes(1) },
+      Effect.succeedNone,
     ).pipe(Effect.provide(fixture.layer));
 
     expect(outcome.deleted).toEqual([backend('1'), assets('1')]);
@@ -218,12 +269,119 @@ it.live('deletes each release backend first and keeps its assets Worker when the
 it.live('defers every release past the time budget to the next prune', () =>
   Effect.gen(function* exhaustedBudget() {
     const fixture = provider(() => new Response(null, { status: 404 }));
-    const outcome = yield* deleteReleases([{ createdOn: 0, workers: [backend('1'), assets('1')] }], {
-      concurrency: 4,
-      requestsPerSecond: 3,
-      timeBudget: Duration.zero,
-    }).pipe(Effect.provide(fixture.layer));
-    expect(outcome).toEqual({ deferred: 1, deleted: [], failed: [] });
+    const outcome = yield* deleteReleases(
+      [{ createdOn: 0, workers: [backend('1'), assets('1')] }],
+      { concurrency: 4, coordinationInterval: Duration.zero, requestsPerSecond: 3, timeBudget: Duration.zero },
+      Effect.succeedNone,
+    ).pipe(Effect.provide(fixture.layer));
+    expect(outcome).toEqual({ deferred: 1, deleted: [], failed: [], halted: Option.none() });
     expect(fixture.requests).toEqual([]);
+  }),
+);
+
+const threeReleases = [
+  { createdOn: 0, workers: [backend('1'), assets('1')] },
+  { createdOn: 1, workers: [backend('2'), assets('2')] },
+  { createdOn: 2, workers: [backend('3'), assets('3')] },
+];
+
+it.live('stops deleting before an aged release another stage writer reused is activated, and keeps it', () =>
+  Effect.gen(function* coordinatedDeletion() {
+    const fixture = provider(() => new Response(null, { status: 404 }));
+    // Release 2 is older than the grace window and unreferenced when planned; then a main deploy run reuses it and
+    // heads for its activation, which the next coordination check sees.
+    let checks = 0;
+    const coordination = Effect.sync(() => {
+      checks += 1;
+      return checks === 1 ? Option.none<string>() : Option.some('another stage writer is unfinished');
+    });
+    const outcome = yield* deleteReleases(
+      threeReleases,
+      {
+        concurrency: 1,
+        coordinationInterval: Duration.zero,
+        requestsPerSecond: 1000,
+        timeBudget: Duration.minutes(1),
+      },
+      coordination,
+    ).pipe(Effect.provide(fixture.layer));
+
+    expect(outcome.deleted).toEqual([backend('1'), assets('1')]);
+    expect(outcome.deferred).toBe(2);
+    expect(outcome.halted).toEqual(Option.some('another stage writer is unfinished'));
+    expect(fixture.requests.filter((request) => request.includes(hex('2')))).toEqual([]);
+    // Once stopped, it stays stopped: the third release asks nothing more.
+    expect(checks).toBe(2);
+  }),
+);
+
+it.live('shares one coordination answer across the deletions of its interval', () =>
+  Effect.gen(function* sharedCoordination() {
+    const fixture = provider(() => new Response(null, { status: 404 }));
+    let checks = 0;
+    const outcome = yield* deleteReleases(
+      threeReleases,
+      {
+        concurrency: 4,
+        coordinationInterval: Duration.minutes(1),
+        requestsPerSecond: 1000,
+        timeBudget: Duration.minutes(1),
+      },
+      Effect.sync(() => {
+        checks += 1;
+        return Option.none<string>();
+      }),
+    ).pipe(Effect.provide(fixture.layer));
+    expect(outcome.deleted).toHaveLength(6);
+    expect(checks).toBe(1);
+  }),
+);
+
+/** A GitHub and composition storage fixture: the listed workflows' runs, and the active composition answer. */
+const coordinationFixture = (runs: Readonly<Record<string, readonly string[]>>, composition: () => Response) =>
+  provider((_method, url) => {
+    const workflow = /\/actions\/workflows\/(?<name>[^/]+)\/runs$/u.exec(url)?.groups?.name;
+    if (workflow !== undefined) {
+      return Response.json({
+        workflow_runs: (runs[workflow] ?? []).map((status, index) => ({ id: index + 1, status })),
+      });
+    }
+    return composition();
+  });
+
+it.effect(
+  'stops deletion while a main deploy run or an initial cutover is unfinished, before reading anything else',
+  () =>
+    Effect.gen(function* unfinishedStageWriter() {
+      for (const workflow of ['ultramodern-workspace-gates.yml', 'initial-composition-cutover.yml']) {
+        const fixture = coordinationFixture({ [workflow]: ['completed', 'in_progress'] }, () => {
+          throw new Error('the composition is not read while a stage writer is unfinished');
+        });
+        const halt = yield* stageCoordination(new Set([backend('1')])).pipe(Effect.provide(fixture.layer));
+        expect(halt).toEqual(Option.some(`another stage writer is unfinished (${workflow} run 2)`));
+        // Main deploys stage from pushes and dispatches on main; a cutover from any branch.
+        expect(fixture.requests.toSorted()).toEqual([
+          'GET /repos/TechsioCZ/ontos/actions/workflows/initial-composition-cutover.yml/runs?per_page=20',
+          'GET /repos/TechsioCZ/ontos/actions/workflows/ultramodern-workspace-gates.yml/runs?branch=main&per_page=20',
+        ]);
+      }
+    }),
+);
+
+it.effect('stops deletion when the active composition can no longer be read or proven unchanged', () =>
+  Effect.gen(function* unprovenComposition() {
+    const fixture = coordinationFixture({ 'ultramodern-workspace-gates.yml': ['completed'] }, () =>
+      Response.json({ composition: { modules: [backend('2')] } }),
+    );
+    const halt = yield* stageCoordination(new Set([backend('1')])).pipe(Effect.provide(fixture.layer));
+    expect(Option.getOrThrow(halt)).toMatch(/^coordination could not be proven: /u);
+  }),
+);
+
+it.effect('stops deletion when the stage writer runs cannot be read', () =>
+  Effect.gen(function* unreadableRuns() {
+    const fixture = provider(() => new Response(null, { status: 502 }));
+    const halt = yield* stageCoordination(new Set()).pipe(Effect.provide(fixture.layer));
+    expect(Option.getOrThrow(halt)).toMatch(/^coordination could not be proven: GitHub answered 502/u);
   }),
 );

@@ -637,9 +637,9 @@ it.live('a deleted Worker, a missing Shell artifact or a missing host artifact s
         without([projectsReceipt.backend.workerName, projectsReceipt.plan.assetsScriptName]),
       );
       expect(pruned.units.find((unit) => unit.id === 'projects')?.mode).toBe('reupload');
-      // Half of the identity is still present: the release would refuse it, so the unit builds instead.
+      // Half of the identity is still present: the upload removes that unreferenced half and recreates the pair.
       const deleted = yield* plan(workspaceRoot, without([projectsReceipt.backend.workerName]));
-      expect(deleted.units.find((unit) => unit.id === 'projects')?.mode).toBe('build');
+      expect(deleted.units.find((unit) => unit.id === 'projects')?.mode).toBe('reupload');
       const shellArtifact = unitArtifactName(SHELL, digests(workspaceRoot)[SHELL]);
       const noShellBuild = yield* plan(workspaceRoot, {
         ...world,

@@ -92,7 +92,7 @@ jobs:
   # original owner's native recovery contract and never changes the published build identity.
   profile-recovery:
     name: Inspect or reconcile one admitted profile operation
-    if: github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none'
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none' && !inputs.prune_workers_only
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -925,12 +925,15 @@ jobs:
 
       # The account allows 500 Workers and every release adds immutable ones. When the account and this release's new
       # Workers would pass the safe ceiling, the oldest unreferenced releases are deleted first (the active composition,
-      # the carried ledger, service bindings and recent uploads stay); a release that still would not fit stops here,
-      # before any upload. Under the ceiling this is one account read.
+      # this plan's retained receipts and ledger, service bindings and recent uploads stay, and deletion stops while a
+      # main deploy run is unfinished); a release that still would not fit stops here, before any upload. Under the
+      # ceiling this is one account read.
       - name: Keep the account under its Worker limit
         if: ${{ !inputs.outbox_only }}
         timeout-minutes: 20
         working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           mise exec -- pnpm exec node scripts/ci/prune-immutable-workers.mts guard
           --plan "$PLAN_FILE" --ledger-file "$LEDGER_DIRECTORY/stage-release-ledger.json"
@@ -1361,8 +1364,10 @@ jobs:
           fi
 
   # Deletes every immutable Worker nothing references any more once stage is live: off the critical path, beside the
-  # verification. It only deletes unreferenced Workers, so a failure marks this job red and never rolls stage back. A
-  # prune_workers_only dispatch runs only this job, against the active composition and the trusted ledgers.
+  # verification. It only deletes unreferenced Workers, so a failure marks this job red and never rolls stage back.
+  # Runs of this workflow never overlap; deletion stops while a main deploy run or an initial cutover is unfinished
+  # (either may reuse an aged release and activate it) and when the active composition changes. A prune_workers_only
+  # dispatch runs only this job, against the active composition and the trusted ledgers.
   prune-workers:
     name: Prune unreferenced immutable Workers
     needs: [release]
@@ -1385,6 +1390,21 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PRUNE_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.prune_workers_only }}
     steps:
+      - name: Require an isolated prune request
+        if: env.PRUNE_ONLY == 'true'
+        env:
+          DEPLOY: ${{ inputs.deploy }}
+          FORCE_FULL: ${{ inputs.force_full }}
+          OUTBOX_ONLY: ${{ inputs.outbox_only }}
+          CONTINUE_MIGRATED: ${{ inputs.continue_migrated_publication }}
+          RECOVERY_MODE: ${{ inputs.profile_recovery_mode }}
+        run: |
+          if [[ "$DEPLOY" != false || "$FORCE_FULL" != false || "$OUTBOX_ONLY" != false ||
+                "$CONTINUE_MIGRATED" != false || "$RECOVERY_MODE" != none ]]; then
+            echo '::error::prune_workers_only runs only the prune: dispatch it with every other mode off' >&2
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

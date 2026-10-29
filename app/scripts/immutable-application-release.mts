@@ -47,6 +47,7 @@ import { decodeActiveApplicationCompositionSnapshot } from './active-application
 import {
   ApplicationCompositionPublicationCandidateSchema,
   assertRetainedReleaseArtifactPaths,
+  readPublishedSnapshot,
 } from './publish-active-application-composition.mts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
@@ -294,6 +295,46 @@ const removeHalfCreatedImmutableRelease = Effect.fn('ImmutableApplicationRelease
           Effect.as(scriptName),
         ),
       { concurrency: 1 },
+    );
+  },
+);
+
+export const PUBLISHED_HALF_RELEASE =
+  'a half present immutable release identity is named by the active Application Composition; publication must never overwrite it';
+
+/**
+ * An identity with exactly one of its two Workers (a prune or a removal stopped between them) cannot serve, and the
+ * same source revision always derives the same identity, so it can only be released again once the survivor is gone.
+ * The caller holds the identity lock, so no other upload creates or reads either Worker meanwhile. The survivor is
+ * removed only while the active Application Composition provably names neither Worker (a published identity is never
+ * replaced) and the provider deletes it (it refuses while another Worker's service binding references it).
+ */
+const removeUnreferencedHalfRelease = Effect.fn('ImmutableApplicationRelease.removeUnreferencedHalf')(
+  function* removeUnreferencedHalfReleaseEffect(
+    accountId: string,
+    token: Redacted.Redacted,
+    plan: ImmutableApplicationReleasePlan,
+    survivor: string,
+  ) {
+    const active = yield* readPublishedSnapshot.pipe(
+      Effect.mapError((cause) =>
+        fail(
+          `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`,
+          cause,
+        ),
+      ),
+    );
+    if (
+      Option.isSome(active) &&
+      [plan.backendScriptName, plan.assetsScriptName].some((name) => active.value.includes(name))
+    ) {
+      return yield* fail(PUBLISHED_HALF_RELEASE);
+    }
+    yield* Effect.logWarning(
+      `${survivor} is the only Worker of its immutable release identity and nothing active names it; removing it so the pair is uploaded whole`,
+    );
+    return yield* deleteImmutableWorker(accountId, token, survivor).pipe(
+      Effect.mapError((cause) => fail(`the unreferenced half release ${survivor} could not be removed`, cause)),
     );
   },
 );
@@ -1677,10 +1718,13 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     }
     // A failed-job rerun may find the complete release uploaded by its earlier attempt. Never
     // overwrite either identity: reuse only after the same full package and asset readback below.
-    // A half release (exactly one identity present) is never reused.
+    // A half release (exactly one identity present) is never reused: its unreferenced survivor is removed first.
     const reuseExisting = presence.every((current) => current === 'present');
-    if (!reuseExisting && presence.includes('present')) {
-      return yield* fail('an immutable release identity already exists; publication must never overwrite it');
+    const survivor = presence.includes('absent')
+      ? [plan.backendScriptName, plan.assetsScriptName].find((_, index) => presence[index] === 'present')
+      : undefined;
+    if (survivor !== undefined) {
+      yield* removeUnreferencedHalfRelease(accountId, apiToken, plan, survivor);
     }
     // The identity names the source revision, not the secrets, so a rotation at the same revision finds these
     // Workers too. Reuse only a backend version uploaded with exactly the secrets this release binds; the receipt

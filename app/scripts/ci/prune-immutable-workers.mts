@@ -3,13 +3,16 @@
 // ontos-<56 hex>/assets-<56 hex> pair, nothing else deletes one, and the account allows only 500 Workers. The pruner
 // keeps every Worker something may still serve or reuse and deletes the others:
 //   - every Worker the active Application Composition names (read from its provider storage, as publication does),
-//   - every Worker this run's composition candidate names,
-//   - every Worker of the receipts the release ledger carries forward (so a later plan can retain or reupload them),
+//   - every Worker this run's composition candidate or deploy plan names,
+//   - every Worker of this run's ledger, and of the receipts the trusted ledgers carry forward (so a later plan can
+//     retain or reupload them),
 //   - every service binding target of the account's other Workers (the Shell ingress binds approved releases),
 //   - both Workers of every release any of these names, and every release created within the grace window (an
 //     upload in flight has no receipt yet).
 // Nothing is deleted when the active composition cannot be read. Only names of exactly the immutable shape are ever
 // candidates, so the Shell ingress, the storefront and every other Worker are never touched.
+// The plan is a snapshot, so deleting it is coordinated with every other stage writer (see {@link stageCoordination}):
+// a main deploy run may reuse an aged unreferenced release and activate it, which no grace window covers.
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Clock,
@@ -289,14 +292,22 @@ const candidateWorkers = (file: string) =>
     return mentionedImmutableWorkers(text);
   }).pipe(Effect.mapError(fail(`the composition candidate ${file} could not be read; nothing is pruned`)));
 
-/** The Workers of every receipt a merge of these ledgers carries forward: exactly what a later plan may reuse. */
-export const ledgerWorkers = (ledgers: readonly ReleaseLedger[], now: Date): ReadonlySet<string> =>
-  new Set(
-    Object.values(carriedUnitRecords(ledgers, { digestVersion: DIGEST_VERSION, now })).flatMap(({ receipt }) => [
-      receipt.plan.backendScriptName,
-      receipt.plan.assetsScriptName,
-    ]),
-  );
+const receiptWorkers = (records: readonly ReleaseLedger['units'][string][]) =>
+  records.flatMap(({ receipt }) => [receipt.plan.backendScriptName, receipt.plan.assetsScriptName]);
+
+/**
+ * The Workers a later plan may reuse: every record of this run's own ledgers whole (its plan carries the receipts it
+ * retains even past the per-unit bound, and the next plan reads them), and every receipt a merge of the trusted
+ * earlier ledgers carries forward.
+ */
+export const ledgerWorkers = (
+  ledgers: { readonly current: readonly ReleaseLedger[]; readonly trusted: readonly ReleaseLedger[] },
+  now: Date,
+): ReadonlySet<string> =>
+  new Set([
+    ...receiptWorkers(ledgers.current.flatMap((ledger) => Object.values(ledger.units))),
+    ...receiptWorkers(Object.values(carriedUnitRecords(ledgers.trusted, { digestVersion: DIGEST_VERSION, now }))),
+  ]);
 
 const readLedgerFile = (file: string) =>
   Effect.gen(function* readLedgerFileEffect() {
@@ -307,9 +318,9 @@ const readLedgerFile = (file: string) =>
 
 const readLedgers = (files: readonly string[], trusted: boolean) =>
   Effect.gen(function* readLedgersEffect() {
-    const fromFiles = yield* Effect.forEach(files, readLedgerFile, { concurrency: 'unbounded' });
+    const current = yield* Effect.forEach(files, readLedgerFile, { concurrency: 'unbounded' });
     if (!trusted) {
-      return fromFiles;
+      return { current, trusted: [] };
     }
     const [repository, githubToken, apiUrl] = yield* Effect.all([
       Config.String('GITHUB_REPOSITORY'),
@@ -326,12 +337,14 @@ const readLedgers = (files: readonly string[], trusted: boolean) =>
       catch: fail('the trusted release ledgers could not be read; nothing is pruned'),
       try: async () => await readTrustedLedgers(client, LEDGER_LOOKBACK),
     });
-    return [...fromFiles, ...fromRuns];
+    return { current, trusted: fromRuns };
   });
 
 export interface KeepOptions {
   readonly candidateFile: Option.Option<string>;
   readonly ledgerFiles: readonly string[];
+  /** Workers this run's deploy plan selected (the receipts it retains), kept as candidate Workers. */
+  readonly planned?: ReadonlySet<string>;
   readonly trustedLedgers: boolean;
 }
 
@@ -351,10 +364,122 @@ const readKeepSources = (workers: readonly AccountWorker[], options: KeepOptions
       ],
       { concurrency: 'unbounded' },
     );
-    if (ledgers.length === 0) {
+    if (ledgers.current.length + ledgers.trusted.length === 0) {
       yield* Effect.logWarning('no release ledger was found: only the compositions, bindings and grace keep Workers');
     }
-    return { active, binding, candidate, ledger: ledgerWorkers(ledgers, now) } satisfies KeepSources;
+    return {
+      active,
+      binding,
+      candidate: new Set([...candidate, ...(options.planned ?? [])]),
+      ledger: ledgerWorkers(ledgers, now),
+    } satisfies KeepSources;
+  });
+
+/**
+ * Workflows that upload or publish stage releases besides the sales demo deploy, whose own runs never overlap (one
+ * concurrency group for the whole workflow). Mirrors the composition refresh's deploy guard: a push or dispatch on
+ * main deploys stage, and an initial cutover publishes a composition.
+ */
+export const FOREIGN_STAGE_WRITERS = [
+  { branch: 'main', workflow: 'ultramodern-workspace-gates.yml' },
+  { branch: null, workflow: 'initial-composition-cutover.yml' },
+] as const;
+
+/**
+ * How long one coordination check stands. A stage writer run that starts after a check needs far longer than this
+ * to reach an upload and a publication (runner start, plan, gates), so the next check sees it first.
+ */
+export const COORDINATION_INTERVAL = Duration.seconds(30);
+
+const WorkflowRunsSchema = Schema.Struct({
+  workflow_runs: Schema.Array(Schema.Struct({ id: Schema.Number, status: Schema.String })),
+});
+
+/** The unfinished runs of every {@link FOREIGN_STAGE_WRITERS} workflow. */
+export const unfinishedForeignStageWriters = Effect.gen(function* unfinishedForeignStageWritersEffect() {
+  const [repository, githubToken, apiUrl] = yield* Effect.all([
+    Config.String('GITHUB_REPOSITORY'),
+    Config.Redacted('GH_TOKEN'),
+    Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
+  ]);
+  const client = yield* HttpClient.HttpClient;
+  const runs = yield* Effect.forEach(
+    FOREIGN_STAGE_WRITERS,
+    ({ branch, workflow }) =>
+      client
+        .execute(
+          HttpClientRequest.get(`${apiUrl}/repos/${repository}/actions/workflows/${workflow}/runs`).pipe(
+            HttpClientRequest.setUrlParams(branch === null ? { per_page: '20' } : { branch, per_page: '20' }),
+            HttpClientRequest.bearerToken(Redacted.value(githubToken)),
+            HttpClientRequest.setHeaders({
+              accept: 'application/vnd.github+json',
+              'x-github-api-version': '2022-11-28',
+            }),
+          ),
+        )
+        .pipe(
+          Effect.timeout(Duration.seconds(30)),
+          Effect.filterOrFail(
+            (response) => response.status === 200,
+            (response) => fail(`GitHub answered ${String(response.status)} for the runs of ${workflow}`)(),
+          ),
+          Effect.flatMap((response) => response.json),
+          Effect.flatMap(Schema.decodeUnknownEffect(WorkflowRunsSchema)),
+          Effect.map(({ workflow_runs: listed }) =>
+            listed.filter(({ status }) => status !== 'completed').map(({ id }) => `${workflow} run ${String(id)}`),
+          ),
+        ),
+    { concurrency: 'unbounded' },
+  );
+  return runs.flat();
+}).pipe(
+  Effect.mapError((cause) =>
+    Schema.is(PruneImmutableWorkersError)(cause) ? cause : fail('the stage writer runs could not be read')(cause),
+  ),
+);
+
+/**
+ * Why deleting must stop now, if it must: another stage writer run is unfinished (it may have reused an aged release
+ * this plan holds unreferenced and be about to activate it), or the active composition names a Worker the plan did
+ * not keep as active (something published since). Anything unreadable stops deleting too.
+ */
+export const stageCoordination = (activeAtPlan: ReadonlySet<string>) =>
+  Effect.gen(function* stageCoordinationEffect() {
+    const unfinished = yield* unfinishedForeignStageWriters;
+    if (unfinished.length > 0) {
+      return Option.some(`another stage writer is unfinished (${unfinished.join(', ')})`);
+    }
+    const active = yield* activeCompositionWorkers;
+    const published = [...active].filter((name) => !activeAtPlan.has(name));
+    return published.length === 0
+      ? Option.none<string>()
+      : Option.some(`the active Application Composition changed since the plan (now naming ${published.join(', ')})`);
+  }).pipe(
+    Effect.match({
+      onFailure: (failure) => Option.some(`coordination could not be proven: ${failure.message}`),
+      onSuccess: (halt) => halt,
+    }),
+  );
+
+/** One coordination answer shared by every concurrent deletion for an interval; once it says stop, it stays stopped. */
+const coordinationCheckpoint = <R,>(
+  check: Effect.Effect<Option.Option<string>, never, R>,
+  interval: Duration.Duration,
+) =>
+  Effect.gen(function* coordinationCheckpointEffect() {
+    const gate = yield* Semaphore.make(1);
+    let checkedAt = Number.NEGATIVE_INFINITY;
+    let halt = Option.none<string>();
+    return gate.withPermits(1)(
+      Effect.gen(function* checkCoordination() {
+        const now = yield* Clock.currentTimeMillis;
+        if (Option.isNone(halt) && now - checkedAt >= Duration.toMillis(interval)) {
+          halt = yield* check;
+          checkedAt = now;
+        }
+        return halt;
+      }),
+    );
   });
 
 /** Provider requests one proven deletion makes: the DELETE and the read that proves it. */
@@ -382,6 +507,8 @@ const deletionPacer = (requestsPerSecond: number) =>
 
 export interface DeletionSettings {
   readonly concurrency: number;
+  /** How long one coordination answer stands ({@link COORDINATION_INTERVAL}). */
+  readonly coordinationInterval: Duration.Duration;
   readonly requestsPerSecond: number;
   /** No release starts its deletion after this long; the next prune continues. */
   readonly timeBudget: Duration.Duration;
@@ -391,24 +518,39 @@ export interface DeletionOutcome {
   readonly deferred: number;
   readonly deleted: readonly string[];
   readonly failed: readonly { readonly message: string; readonly worker: string }[];
+  /** Why coordination stopped the deletion; every release not started by then is deferred. */
+  readonly halted: Option.Option<string>;
 }
 
 /**
  * Deletes each release's Workers, the backend first; a release whose backend stays keeps its assets Worker too, so a
  * failure never leaves a release half present when it can be avoided. Each deletion is proven (see
- * {@link deleteImmutableWorker}); a failed one is reported and the others continue.
+ * {@link deleteImmutableWorker}); a failed one is reported and the others continue. No release starts its deletion
+ * unless the coordination check (see {@link stageCoordination}) still allows it.
  */
-export const deleteReleases = (releases: readonly PruneRelease[], settings: DeletionSettings) =>
+export const deleteReleases = <R,>(
+  releases: readonly PruneRelease[],
+  settings: DeletionSettings,
+  coordination: Effect.Effect<Option.Option<string>, never, R>,
+) =>
   Effect.gen(function* deleteReleasesEffect() {
     const { accountId, token } = yield* provider;
     const pace = yield* deletionPacer(settings.requestsPerSecond);
+    const checkpoint = yield* coordinationCheckpoint(coordination, settings.coordinationInterval);
     const started = yield* Clock.currentTimeMillis;
     const deleted: string[] = [];
     const failed: { message: string; worker: string }[] = [];
     let deferred = 0;
+    let halted = Option.none<string>();
     const deleteRelease = (release: PruneRelease) =>
       Effect.gen(function* deleteReleaseEffect() {
         if ((yield* Clock.currentTimeMillis) - started >= Duration.toMillis(settings.timeBudget)) {
+          deferred += 1;
+          return;
+        }
+        const halt = yield* checkpoint;
+        if (Option.isSome(halt)) {
+          halted = halt;
           deferred += 1;
           return;
         }
@@ -424,7 +566,7 @@ export const deleteReleases = (releases: readonly PruneRelease[], settings: Dele
         }
       });
     yield* Effect.forEach(releases, deleteRelease, { concurrency: settings.concurrency, discard: true });
-    return { deferred, deleted, failed } satisfies DeletionOutcome;
+    return { deferred, deleted, failed, halted } satisfies DeletionOutcome;
   });
 
 const summarize = (plan: PrunePlan) => {
@@ -438,6 +580,9 @@ const reportDeletion = (outcome: DeletionOutcome) =>
     yield* Effect.logInfo(
       `deleted ${String(outcome.deleted.length)} Workers; ${String(outcome.failed.length)} failed; ${String(outcome.deferred)} releases left for the next prune`,
     );
+    if (Option.isSome(outcome.halted)) {
+      yield* Effect.logWarning(`deletion stopped: ${outcome.halted.value}`);
+    }
     if (outcome.failed.length > 0) {
       return yield* fail(
         `${String(outcome.failed.length)} immutable Workers could not be deleted: ${outcome.failed.map(({ worker }) => worker).join(', ')}`,
@@ -464,11 +609,12 @@ const deletionSettings = (flags: {
   readonly timeBudgetSeconds: number;
 }): DeletionSettings => ({
   concurrency: Math.max(1, flags.concurrency),
+  coordinationInterval: COORDINATION_INTERVAL,
   requestsPerSecond: Math.max(1, flags.requestsPerSecond),
   timeBudget: Duration.seconds(Math.max(0, flags.timeBudgetSeconds)),
 });
 
-/** Lists the account, reads every keep source and plans the prune. */
+/** Lists the account, reads every keep source and plans the prune; deleting it is coordinated against its keep. */
 const planAccountPrune = (flags: KeepOptions & { readonly graceMinutes: number }) =>
   Effect.gen(function* planAccountPruneEffect() {
     const workers = yield* listAccountWorkers;
@@ -480,7 +626,7 @@ const planAccountPrune = (flags: KeepOptions & { readonly graceMinutes: number }
       workers,
     });
     yield* Effect.logInfo(summarize(plan));
-    return plan;
+    return { coordination: stageCoordination(keep.active), plan };
   });
 
 const pruneCommand = Command.make(
@@ -488,24 +634,42 @@ const pruneCommand = Command.make(
   { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)), ...keepFlags, ...deletionFlags },
   (flags) =>
     Effect.gen(function* pruneImmutableWorkers() {
-      const plan = yield* planAccountPrune(flags);
+      const { coordination, plan } = yield* planAccountPrune(flags);
       if (!flags.apply) {
         for (const release of plan.releases) {
           yield* Effect.logInfo(`would delete ${release.workers.join(' ')}`);
         }
         return yield* Effect.logInfo('dry run: nothing was deleted (pass --apply to delete)');
       }
-      return yield* reportDeletion(yield* deleteReleases(plan.releases, deletionSettings(flags)));
+      return yield* reportDeletion(yield* deleteReleases(plan.releases, deletionSettings(flags), coordination));
     }),
 );
 
 const PlannedUnitsSchema = Schema.Struct({
-  units: Schema.Array(Schema.Struct({ mode: Schema.Literals(['build', 'retain', 'reupload']) })),
+  units: Schema.Array(
+    Schema.Struct({
+      mode: Schema.Literals(['build', 'retain', 'reupload']),
+      receipt: Schema.OptionFromNullOr(
+        Schema.Struct({ plan: Schema.Struct({ assetsScriptName: Schema.String, backendScriptName: Schema.String }) }),
+      ),
+    }),
+  ),
 });
+type PlannedUnits = typeof PlannedUnitsSchema.Type;
 
 /** At most two new Workers for every unit the release uploads (the Shell needs one). */
-export const plannedNewWorkers = (plan: typeof PlannedUnitsSchema.Type) =>
-  2 * plan.units.filter(({ mode }) => mode !== 'retain').length;
+export const plannedNewWorkers = (plan: PlannedUnits) => 2 * plan.units.filter(({ mode }) => mode !== 'retain').length;
+
+/** The Workers of every receipt the deploy plan retains, which its upload stream verifies and keeps. */
+export const plannedRetainedWorkers = (plan: PlannedUnits): ReadonlySet<string> =>
+  new Set(
+    plan.units.flatMap(({ receipt }) =>
+      Option.match(receipt, {
+        onNone: () => [],
+        onSome: ({ plan: names }) => [names.backendScriptName, names.assetsScriptName],
+      }),
+    ),
+  );
 
 const guardCommand = Command.make(
   'guard',
@@ -518,27 +682,31 @@ const guardCommand = Command.make(
   (flags) =>
     Effect.gen(function* guardWorkerCapacity() {
       const fileSystem = yield* FileSystem.FileSystem;
-      const planned = plannedNewWorkers(
-        yield* fileSystem
-          .readFileString(flags.plan)
-          .pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(PlannedUnitsSchema))),
-            Effect.mapError(fail(`the deploy plan ${flags.plan} could not be read`)),
-          ),
-      );
+      const deployPlan = yield* fileSystem
+        .readFileString(flags.plan)
+        .pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(PlannedUnitsSchema))),
+          Effect.mapError(fail(`the deploy plan ${flags.plan} could not be read`)),
+        );
+      const planned = plannedNewWorkers(deployPlan);
       const before = (yield* listAccountWorkers).length;
       if (before + planned <= flags.ceiling) {
         return yield* Effect.logInfo(
           `${String(before)} account Workers and up to ${String(planned)} new ones stay within ${String(flags.ceiling)}`,
         );
       }
-      const plan = yield* planAccountPrune(flags);
+      const { coordination, plan } = yield* planAccountPrune({ ...flags, planned: plannedRetainedWorkers(deployPlan) });
       const releases = oldestReleasesFreeing(plan.releases, before + planned - flags.ceiling);
-      yield* reportDeletion(yield* deleteReleases(releases, deletionSettings(flags)));
+      const outcome = yield* deleteReleases(releases, deletionSettings(flags), coordination);
+      yield* reportDeletion(outcome);
       const after = (yield* listAccountWorkers).length;
       if (after + planned > flags.ceiling) {
+        const stopped = Option.match(outcome.halted, {
+          onNone: () => '',
+          onSome: (reason) => `; pruning stopped: ${reason}`,
+        });
         return yield* fail(
-          `the account holds ${String(after)} Workers and this release needs up to ${String(planned)} more, above the safe ceiling of ${String(flags.ceiling)} (the provider stops at 500) even after pruning every unreferenced immutable release it could`,
+          `the account holds ${String(after)} Workers and this release needs up to ${String(planned)} more, above the safe ceiling of ${String(flags.ceiling)} (the provider stops at 500) even after pruning every unreferenced immutable release it could${stopped}`,
         )();
       }
       return yield* Effect.logInfo(

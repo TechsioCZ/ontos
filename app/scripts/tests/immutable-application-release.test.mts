@@ -38,6 +38,7 @@ import {
   IMMUTABLE_PROVIDER_WRITE_ATTEMPTS,
   ImmutableProviderWriteRetrySchedule,
   ImmutableUploadRetrySchedule,
+  PUBLISHED_HALF_RELEASE,
   STALE_RELEASE_SECRETS,
   deleteImmutableWorker,
   deployImmutableApplicationRelease,
@@ -52,7 +53,7 @@ import {
   verifyRetainedImmutableApplicationRelease,
   workersDevIsTheOnlyTrigger,
 } from '../immutable-application-release.mts';
-import type { ReleaseFile } from '../immutable-application-release.mts';
+import type { ImmutableApplicationReleasePlan, ReleaseFile } from '../immutable-application-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -973,7 +974,7 @@ const releaseLockDatabase = (timeline: string[]) =>
 
 const refusesExistingProviderRelease = (
   statuses: { readonly assets: number; readonly backend: number },
-  expectedMessage: string,
+  expectedMessage: (plan: ImmutableApplicationReleasePlan) => string,
 ) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
@@ -1056,7 +1057,7 @@ const refusesExistingProviderRelease = (
       }).pipe(Effect.provide(refusalLayer), Effect.flip);
 
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-      expect(failure.message).toBe(expectedMessage);
+      expect(failure.message).toBe(expectedMessage(plan));
       expect(commands).toEqual([]);
       // Both identities' presence checks run side by side and only read; a half release or an unknown answer refuses.
       expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
@@ -1083,18 +1084,22 @@ const refusesExistingProviderRelease = (
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
-const EXISTING_IDENTITY = 'an immutable release identity already exists; publication must never overwrite it';
+const unprovenSurvivor = (survivor: string) =>
+  `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`;
 
-it.effect('refuses an existing backend identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 404, backend: 200 }, EXISTING_IDENTITY),
+it.effect('refuses a half present backend identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 404, backend: 200 }, (plan) => unprovenSurvivor(plan.backendScriptName)),
 );
 
-it.effect('refuses an existing assets identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease({ assets: 204, backend: 404 }, EXISTING_IDENTITY),
+it.effect('refuses a half present assets identity it cannot prove unreferenced before any command or write', () =>
+  refusesExistingProviderRelease({ assets: 204, backend: 404 }, (plan) => unprovenSurvivor(plan.assetsScriptName)),
 );
 
 it.effect('refuses an unknown provider answer even when the other identity is present', () =>
-  refusesExistingProviderRelease({ assets: 403, backend: 200 }, 'provider release absence could not be established'),
+  refusesExistingProviderRelease(
+    { assets: 403, backend: 200 },
+    () => 'provider release absence could not be established',
+  ),
 );
 
 const SECRETS_FILE_ARGUMENT = '--secrets-file';
@@ -1168,9 +1173,14 @@ const workersDevRouteFailure = (command: OpsCommand, scriptName: string) =>
     transient: true,
   });
 
+/** The native KV value of the active Application Composition. */
+const ACTIVE_COMPOSITION_PATH = `/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'d'.repeat(32)}/values/active`;
+
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
     readonly accountSubdomain?: string;
+    /** What the active Application Composition storage answers: by default a composition naming another release. */
+    readonly activeComposition?: 'names-release' | 'unreadable';
     readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
     readonly assetHeaderReadiness?: {
@@ -1232,6 +1242,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
     readonly stallAssetBody?: boolean;
+    /** The one Worker of the release identity a prune or removal left present; the other is absent. */
+    readonly survivingHalf?: 'assets' | 'backend';
     readonly tamperWorkerAfterEnvelope?: boolean;
     readonly tamperWorkerDuringPackaging?: boolean;
     readonly unboundFile?: boolean;
@@ -1342,12 +1354,32 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   // Removing the assets Worker (the last removal) makes the next attempt observe both identities absent again.
   // A removed Worker reads back absent once, for the removal's own check.
   const removedScripts = new Set<string>();
+  const survivorPath = Match.value(options.survivingHalf).pipe(
+    Match.when('backend', () => `/workers/scripts/${plan.backendScriptName}`),
+    Match.when('assets', () => `/workers/scripts/${plan.assetsScriptName}`),
+    Match.orElse(() => null),
+  );
+  let survivorRemoved = false;
+  const isSurvivor = (destination: URL) => survivorPath !== null && destination.pathname.endsWith(survivorPath);
+  // The active composition names this release, or another one.
+  const activeCompositionAnswer = () =>
+    Match.value(options.activeComposition).pipe(
+      Match.when('unreadable', () => new Response(null, { status: 403 })),
+      Match.when('names-release', () =>
+        Response.json({ composition: { modules: [{ backend: { workerName: plan.backendScriptName } }] } }),
+      ),
+      Match.orElse(() =>
+        Response.json({ composition: { modules: [{ backend: { workerName: `ontos-${'9'.repeat(56)}` } }] } }),
+      ),
+    );
   const removeProviderScript = (destination: URL) => {
     const status = options.deleteStatus ?? 200;
     if (status === 200) {
       removedScripts.add(destination.pathname);
     }
-    if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
+    if (status === 200 && isSurvivor(destination)) {
+      survivorRemoved = true;
+    } else if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
       absentChecks = 0;
     }
     return Response.json({ success: status === 200 }, { status });
@@ -1434,6 +1466,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
               success: acknowledgement.success,
             });
           }),
+      ),
+      Match.when(
+        (path) => path === ACTIVE_COMPOSITION_PATH,
+        () => Effect.sync(activeCompositionAnswer),
       ),
       Match.when(
         (path) => path.endsWith(ACCOUNT_SUBDOMAIN_PATH),
@@ -1536,10 +1572,14 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           if (removedScripts.delete(destination.pathname)) {
             return new Response(null, { status: 404 });
           }
-          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
           const presentStatus = destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)
             ? (options.assetsPresenceStatus ?? 204)
             : 200;
+          if (isSurvivor(destination) && !survivorRemoved) {
+            absentChecks += 1;
+            return new Response(null, { status: presentStatus });
+          }
+          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
           const status = options.existingRelease !== true && absentChecks < 2 ? 404 : presentStatus;
           absentChecks += 1;
           return new Response(null, { status });
@@ -1777,6 +1817,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     ['ALL_RELEASE_SECRETS', rawSecrets],
     ['CLOUDFLARE_ACCOUNT_ID', 'a'.repeat(32)],
     ['CLOUDFLARE_API_TOKEN', 'immutable-release-test-token'],
+    ['ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL', `https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`],
     ['ONTOS_IMMUTABLE_RELEASE_SECRETS', JSON.stringify(options.ownerSecrets ?? {})],
   ]);
   if (fingerprintKey !== null) {
@@ -1978,6 +2019,60 @@ it.effect('stops retrying when a half release cannot be removed', () =>
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+for (const survivingHalf of ['backend', 'assets'] as const) {
+  it.effect(
+    `recreates a pruned-half release at its own revision after removing its unreferenced ${survivingHalf}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* recreatesHalfRelease() {
+          // The same source revision derives the same identity, so a rerun after a partial prune meets the survivor.
+          const deployment = yield* prepareDeployment({ survivingHalf });
+          const receipt = yield* deployment.deploy;
+          const survivor =
+            survivingHalf === 'backend' ? deployment.plan.backendScriptName : deployment.plan.assetsScriptName;
+          const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+          expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+          expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+          // Only the survivor is removed, once, and only after the active composition proved it unreferenced.
+          expect(deployment.providerWrites.filter(({ method }) => method === 'DELETE')).toEqual([
+            { method: 'DELETE', url: `${scripts}/${survivor}` },
+          ]);
+          const compositionRead = deployment.requests.indexOf(`https://api.cloudflare.com${ACTIVE_COMPOSITION_PATH}`);
+          expect(compositionRead).toBeGreaterThan(-1);
+          expect(compositionRead).toBeLessThan(deployment.requests.indexOf(`${scripts}/${survivor}`, compositionRead));
+          // The pair is uploaded whole again, the backend once, under the one identity lock.
+          expect(backendUploads(deployment)).toHaveLength(1);
+          expect(deployment.capturedConfigs.some(({ name }) => name === deployment.plan.assetsScriptName)).toBe(true);
+          expect(deployment.timeline.filter((entry) => entry.startsWith('pg_advisory_lock'))).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const [activeComposition, message] of [
+  ['names-release', () => PUBLISHED_HALF_RELEASE],
+  [
+    'unreadable',
+    (survivor: string) =>
+      `${survivor} is the only Worker of its immutable release identity, and without the active Application Composition it cannot be proven unreferenced`,
+  ],
+] as const) {
+  it.effect(`never replaces a half present release when the active composition is ${activeComposition}`, () =>
+    Effect.scoped(
+      Effect.gen(function* refusesPublishedHalfRelease() {
+        const deployment = yield* prepareDeployment({ activeComposition, survivingHalf: 'backend' });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(failure.message).toBe(message(deployment.plan.backendScriptName));
+        expect(deployment.providerWrites).toEqual([]);
+        expect(deployment.commands).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 const routeUrl = (scriptName: string) =>
   `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${scriptName}/subdomain`;
