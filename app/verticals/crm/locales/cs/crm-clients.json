@@ -1,1 +1,68 @@
-{ "clients": {} }
+{
+  "clients": {},
+  "clientFilters": {
+    "metrics": {
+      "activeClients": "Aktivní klienti",
+      "archivedClients": "Archivovaní klienti",
+      "unassignedClients": "Bez obchodníka",
+      "contacts": "Kontaktní osoby",
+      "contactedRecently": "Kontaktováno za 30 dní",
+      "linkedActive": "Propojeno s evidencí zákazníků",
+      "unlinkedActive": "Nepropojeno s evidencí zákazníků"
+    },
+    "entity": {
+      "client": "Klienti",
+      "contact": "Kontaktní osoby"
+    },
+    "filters": {
+      "search": "Hledat",
+      "searchPlaceholder": "Název, IČO, telefon, e-mail, kontaktní osoba",
+      "status": "Stav",
+      "statusActive": "Aktivní",
+      "statusArchived": "Archivovaní",
+      "statusAll": "Aktivní i archiv",
+      "owner": "Obchodník",
+      "ownerAll": "Všichni obchodníci",
+      "ownerNone": "Bez obchodníka",
+      "registry": "Evidence zákazníků",
+      "registryAll": "Propojení i nepropojení",
+      "registryLinked": "Propojení s registrem",
+      "registryUnlinked": "Čeká na propojení",
+      "recency": "Poslední kontakt",
+      "recencyAll": "Bez omezení",
+      "recency30": "Posledních 30 dní",
+      "segment": "Segment",
+      "segmentAll": "Všechny segmenty",
+      "reset": "Zrušit filtry"
+    },
+    "table": {
+      "client": "Klient",
+      "regNo": "IČO",
+      "contact": "Kontaktní osoba",
+      "phone": "Telefon",
+      "owner": "Obchodník",
+      "lastVisit": "Poslední kontakt",
+      "person": "Osoba",
+      "role": "Pracovní role",
+      "email": "E-mail",
+      "owningClient": "Klient osoby",
+      "primary": "Hlavní kontakt",
+      "noContact": "bez kontaktu",
+      "searchContacts": "Hledat kontaktní osoby…",
+      "emptyClients": "Žádný klient neodpovídá",
+      "emptyContacts": "Žádná kontaktní osoba neodpovídá",
+      "archived": "Archivovaný",
+      "adjustFilters": "Upravte hledání nebo filtry.",
+      "emptyManager": "Založte prvního klienta tlačítkem Nový klient.",
+      "emptyAssigned": "Zatím vám nebyl přidělen žádný klient."
+    },
+    "navigation": "Filtry klientů a kontaktních osob",
+    "assignedTitle": "Mí klienti",
+    "assignedDescription": "Klienti, které máte přidělené: kontakty, návštěvy a objednávky na jednom místě.",
+    "actions": {
+      "export": "Exportovat kontakty (CSV)",
+      "team": "Obchodníci",
+      "create": "Nový klient"
+    }
+  }
+}
