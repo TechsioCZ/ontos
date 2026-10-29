@@ -1,10 +1,15 @@
+import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Predicate, Redacted } from 'effect';
+import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Match, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
+import type { ActionTransportMetadata } from '../../src/actions/context.ts';
+import { ActionInvocationPersistenceError, ActionTransactionError } from '../../src/actions/errors.ts';
+import { makeActionRepository, recoverSqlTransactionError } from '../../src/actions/repository.ts';
 import { trustVerifiedGatewayPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
-import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
+import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
+import type { CoreDatabaseExecutor, CoreTransaction } from '../../src/db/types.ts';
 import { makeOperationalScopeRepository } from '../../src/operations/context.ts';
 import type { OperationContextUnavailable } from '../../src/operations/errors.ts';
 import type { ReadEvidencePersistenceError } from '../../src/reads/errors.ts';
@@ -125,6 +130,129 @@ for (const boundary of ['context', 'evidence'] as const) {
     }),
   );
 }
+
+const ActionSettlementBoundarySchema = Schema.Literals([
+  'create',
+  'resolve',
+  'permission-denial',
+  'policy-denial',
+  'recorded-rejection',
+]);
+
+it.layer(NodeCrypto.layer)('Action transaction settlement', (suite) => {
+  for (const boundary of ActionSettlementBoundarySchema.literals) {
+    for (const rollback of ['sql-failure', 'defect'] as const) {
+      suite.effect(
+        `Action ${boundary} with a query failure ${rollback === 'sql-failure' ? 'recovers SQL rollback failure' : 'preserves rollback defects'}`,
+        () =>
+          Effect.gen(function* classifyActionRollback() {
+            const sqlFailure = new SqlError({ reason: new ConnectionError({ cause: new Error('query failed') }) });
+            const rollbackFailure = new SqlError({
+              reason: new ConnectionError({ cause: new Error('rollback failed') }),
+            });
+            const defect = new Error('unexpected rollback defect');
+            const events: string[] = [];
+            const executor = yield* makeTestDatabase((statement) => {
+              events.push(statement);
+              if (statement === 'BEGIN') {
+                return Effect.succeed([]);
+              }
+              if (statement === 'ROLLBACK') {
+                return rollback === 'sql-failure' ? Effect.fail(rollbackFailure) : Effect.die(defect);
+              }
+              return Effect.fail(sqlFailure);
+            });
+            const repository = makeActionRepository(yield* Crypto.Crypto);
+            const transport: ActionTransportMetadata = { correlationId: 'settlement-test' };
+            const input = {
+              actionInvocationId: '30000000-0000-4000-8000-000000000001',
+              actionKey: 'test.settlement',
+              auditProfile: 'sensitive',
+              principal: scopedPrincipal,
+              transport,
+            } as const;
+            const loadRecordedRejection = (transaction: CoreTransaction) =>
+              repository.loadRecordedRejection(transaction, input.actionInvocationId);
+            const run = Match.value(boundary).pipe(
+              Match.when('create', () =>
+                repository.createOrResolveInvocation(executor, {
+                  ...input,
+                  idempotencyKey: transport.idempotencyKey,
+                  requestHash: 'a'.repeat(64),
+                }),
+              ),
+              Match.when('resolve', () =>
+                repository.resolveInvocation(executor, {
+                  invocationId: input.actionInvocationId,
+                  principal: scopedPrincipal,
+                }),
+              ),
+              Match.when('permission-denial', () => repository.rejectPermissionDenied(executor, input)),
+              Match.when('policy-denial', () =>
+                repository.finalizePolicyDenial(executor, {
+                  ...input,
+                  policy: { policyKey: 'test.policy.v1', scope: 'global' },
+                  reasonCode: 'test_denied',
+                }),
+              ),
+              Match.when('recorded-rejection', () =>
+                executor.transaction(loadRecordedRejection).pipe(recoverSqlTransactionError),
+              ),
+              Match.exhaustive,
+              Effect.asVoid,
+            );
+            if (rollback === 'sql-failure') {
+              const error = yield* Effect.flip(run);
+              if (boundary === 'recorded-rejection') {
+                expect(error).toBe(rollbackFailure);
+              } else {
+                expect(
+                  Schema.is(
+                    boundary === 'permission-denial' ? ActionTransactionError : ActionInvocationPersistenceError,
+                  )(error),
+                ).toBe(true);
+              }
+            } else {
+              const exit = yield* Effect.exit(run);
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect)).toBe(
+                  true,
+                );
+              }
+            }
+            expect(events).toContain('ROLLBACK');
+            expect(
+              events.some((statement) =>
+                statement.includes(
+                  boundary === 'recorded-rejection' ? '"core"."audit_events"' : '"core"."action_invocations"',
+                ),
+              ),
+            ).toBe(true);
+          }),
+      );
+    }
+  }
+});
+
+it.effect('scoped evidence recovers failed scope installation beside a failed rollback', () =>
+  Effect.gen(function* classifyScopeRollback() {
+    const failure = new SqlError({ reason: new ConnectionError({ cause: new Error('scope and rollback failed') }) });
+    const events: string[] = [];
+    const executor = yield* makeTestDatabase((statement) => {
+      events.push(statement);
+      return statement === 'BEGIN' ? Effect.succeed([]) : Effect.fail(failure);
+    });
+    const error = yield* Effect.flip(
+      executor
+        .transaction((transaction) => installOperationalScope(transaction, scopedPrincipal))
+        .pipe(recoverSqlTransactionError),
+    );
+    expect(error).toBe(failure);
+    expect(events).toContain('ROLLBACK');
+    expect(events.some((statement) => statement.includes('trust.establish_gateway_scope'))).toBe(true);
+  }),
+);
 
 const harness = Effect.fn(function* makeHarness(
   settle: (statement: string) => Effect.Effect<void, SqlError> = () => Effect.void,
