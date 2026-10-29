@@ -31,6 +31,7 @@ const effectTransforms = new Set([
   'catchTag',
   'delay',
   'ensuring',
+  'exit',
   'flip',
   'forkScoped',
   'map',
@@ -45,7 +46,7 @@ const effectTransforms = new Set([
   'timeout',
   'timeoutOrElse',
 ]);
-const directTransforms = new Set(['asVoid', 'flip', 'forkScoped', 'orDie', 'scoped']);
+const directTransforms = new Set(['asVoid', 'exit', 'flip', 'forkScoped', 'orDie', 'scoped']);
 const processModule = 'effect/process';
 const rootNamespace = 'EffectRoot';
 const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred', 'DateTime', 'Stream']);
