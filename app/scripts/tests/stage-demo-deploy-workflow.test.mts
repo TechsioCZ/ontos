@@ -1992,9 +1992,14 @@ it('blocks candidate publication on a required all-vertical projection check, in
   );
   expect(jobs.release.steps.some(({ run }) => run?.includes('release-stream.mts join') === true)).toBe(true);
   const build = readFileSync(new URL('../ci/build-edge-unit.sh', import.meta.url), 'utf-8');
-  expect(build).toContain('generate-shell-ui-candidates.mts --check --all');
   expect(build).toContain('generate-shell-ui-candidates.mts --check --vertical "$UNIT_ID"');
   expect(build.indexOf('generate-shell-ui-candidates.mts')).toBeLessThan(build.indexOf('typecheck --build'));
+  const shellBuild = Schema.decodeUnknownSync(
+    Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ 'cloudflare:build': Schema.String }) })),
+  )(readFileSync(new URL('../../apps/shell-super-app/package.json', import.meta.url), 'utf-8')).scripts[
+    'cloudflare:build'
+  ];
+  expect(shellBuild.startsWith('node ../../scripts/generate-shell-ui-candidates.mts --check --all && ')).toBe(true);
   const gates = readFileSync(
     new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
     'utf-8',

@@ -1032,12 +1032,19 @@ it.live(
   () =>
     withRepository((root) =>
       Effect.gen(function* manifestDigests() {
-        const workspaceRoot = path.join(root, 'app');
+        const workspaceRoot = yield* commit(root, {
+          'app/scripts/ci/database-preparation-inputs.json': json({
+            globs: ['database/**', 'verticals/*/package.json'],
+          }),
+        });
         const before = digests(workspaceRoot);
+        const database = computeDatabaseInputsDigest({ workspaceRoot }).digest;
         yield* commit(root, {
           'app/verticals/projects/package.json': manifest(PROJECT_PACKAGE, {}, { build: 'changed' }),
         });
         expect(changedUnits(before, digests(workspaceRoot))).toEqual(['projects']);
+        // The manifest projection narrows unit builds only; the database path still hashes whole manifests.
+        expect(computeDatabaseInputsDigest({ workspaceRoot }).digest).not.toBe(database);
         const local = digests(workspaceRoot);
         yield* commit(root, {
           'app/verticals/projects/package.json': manifest(PROJECT_PACKAGE, { external: '2' }, { build: 'changed' }),

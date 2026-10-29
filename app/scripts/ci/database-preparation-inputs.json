@@ -17,6 +17,7 @@
     "packages/*/drizzle*/**",
     "packages/*/drizzle*.config.ts",
     "packages/*/src/db/**",
+    "packages/party-registry-identity-contracts/src/**",
     "packages/core-runtime/src/install/spicedb-database-config.ts",
     "packages/core-runtime/scripts/*migration*.mts",
     "packages/core-runtime/scripts/verify-db-schema.mts",
@@ -31,7 +32,6 @@
     "verticals/*/scripts/*database*.mts",
     "verticals/*/scripts/*db-schema.mts",
     "verticals/*/scripts/*runtime-role.mts",
-    "verticals/*/shared/database-identities.ts",
     "verticals/*/src/portal-auth/persistence/**",
     "verticals/*/src/db/**"
   ],

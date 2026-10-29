@@ -248,6 +248,24 @@
       }
     },
     {
+      "id": "party-registry-identity-contracts",
+      "package": "@app/party-registry-identity-contracts",
+      "path": "packages/party-registry-identity-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/party-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
+        }
+      }
+    },
+    {
       "id": "party-registry",
       "package": "@app/party-registry",
       "path": "verticals/party-registry",

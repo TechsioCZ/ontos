@@ -99,6 +99,8 @@ it('documents mutable trust reconciliation and includes migration and database s
   expect(manifest.audit['db:bootstrap-runtime-role']).toContain('trust.gateway_audience_roles');
   expect(manifest.globs).toContain('verticals/*/drizzle*/**');
   expect(manifest.globs).toContain('database/**');
+  // Party's role and schema descriptor drives runtime-role bootstrap and grants.
+  expect(manifest.globs).toContain('packages/party-registry-identity-contracts/src/**');
 });
 for (const path of [
   'scripts/verify-core-db-schema.mts',
@@ -116,6 +118,8 @@ for (const path of [
   'scripts/migration-equivalence.mts',
   'scripts/postgres/runtime-role-grants.mts',
   'database/identity-enrollment.ts',
+  'packages/party-registry-identity-contracts/src/database-identity-data.ts',
+  'packages/party-registry-identity-contracts/src/database-identities.ts',
 ]) {
   it(`includes the migrator for ${path}`, () => expect(isMigrationChange(path)).toBe(true));
 }

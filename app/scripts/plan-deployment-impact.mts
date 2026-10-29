@@ -1245,6 +1245,7 @@ export const isMigrationChange = (changedPath: string): boolean =>
     changedPath,
   ) ||
   changedPath === 'database/identity-enrollment.ts' ||
+  changedPath.startsWith('packages/party-registry-identity-contracts/src/') ||
   changedPath === 'packages/core-runtime/src/environment/drizzle-config.ts' ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'packages/core-runtime/src/db/database-identities.ts' ||

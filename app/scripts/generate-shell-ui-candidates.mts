@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The Shell consumes this projection, never vertical implementation source. Every release checks ALL verticals,
 // including topology-only units, before candidate publication (not before earlier successful artifact uploads).
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -24,6 +25,29 @@ class CandidateProjectionError extends Schema.TaggedError<CandidateProjectionErr
 
 const compilerError = (cause: unknown) =>
   new CandidateProjectionError({ cause, message: 'Tailwind projection failed' });
+
+/** The projection is valid only with the exact compiler the Shell's @rsbuild/plugin-tailwindcss loads. */
+const requireBuildCompiler = Effect.fn('requireBuildCompiler')(function* requireCompiler(shellRoot: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const resolve = (from: string, specifier: string) =>
+    Effect.try({ catch: compilerError, try: () => createRequire(from).resolve(specifier) }).pipe(
+      Effect.flatMap((file) => fs.realPath(file).pipe(Effect.mapError(compilerError))),
+    );
+  const plugin = yield* resolve(path.join(shellRoot, 'package.json'), '@rsbuild/plugin-tailwindcss');
+  const loader = yield* resolve(plugin, '@tailwindcss/webpack');
+  const differing: string[] = [];
+  for (const specifier of ['@tailwindcss/node', '@tailwindcss/oxide']) {
+    if ((yield* resolve(loader, specifier)) !== (yield* resolve(import.meta.filename, specifier))) {
+      differing.push(specifier);
+    }
+  }
+  if (differing.length > 0) {
+    return yield* new CandidateProjectionError({
+      message: `${differing.join(', ')} differ from what the Shell's Tailwind loader uses`,
+    });
+  }
+  return loader;
+});
 
 /** Exactly @tailwindcss/webpack's compiler/automatic-root options for non-module production CSS. */
 const renderStylesheet = Effect.fn('renderStylesheet')(function* render(css: string, shellRoot: string) {
@@ -125,6 +149,7 @@ const generate = Effect.fn('generateShellUiCandidates')(function* generate(optio
   }
   const workspace = path.resolve(options.workspace);
   const shellRoot = path.join(workspace, SHELL);
+  yield* requireBuildCompiler(shellRoot);
   const cssFile = path.join(shellRoot, STYLESHEET);
   const css = yield* fs.readFileString(cssFile);
   if (!css.includes(PROJECTION_SOURCE)) {
