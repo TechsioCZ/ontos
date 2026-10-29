@@ -15,7 +15,6 @@ import { user } from '../../verticals/commerce-customer-context/src/portal-auth/
 import { DEFAULT_PASSWORD } from '../ops/stage-demo-verify.mjs';
 
 export const STAGE_CUSTOMER_EMAIL = 'delivery-checkout-20261026@ontos.demo';
-const STOREFRONT_ORIGIN = 'https://ontos-stage-akros.bleeding.dev';
 
 export class StageCustomerFixtureError extends Schema.TaggedError<StageCustomerFixtureError>()(
   'StageCustomerFixtureError',
@@ -48,14 +47,23 @@ export const prepareStageCustomer = Effect.fn('StageDemo.prepareCustomer')(funct
     }
     return account;
   });
+  // The storefront's public origin, which the deploy workflow derives from topology/stage-edge.json.
+  const storefrontOrigin = yield* Config.URL('STAGE_STOREFRONT_URL').pipe(
+    Effect.mapError(() => failed('storefront_origin_missing')),
+    Effect.filterOrFail(
+      (url) => url.protocol === 'https:' && url.pathname === '/' && url.search === '' && url.username === '',
+      () => failed('storefront_origin_invalid'),
+    ),
+    Effect.map((url) => url.origin),
+  );
   // A prior run may have created the native account before its operator update failed.
   const existing = yield* findRegistered;
   if (existing === null) {
     const client = yield* HttpClient.HttpClient;
     const registration = yield* client
       .execute(
-        HttpClientRequest.post(`${STOREFRONT_ORIGIN}/api/ontos/account`).pipe(
-          HttpClientRequest.setHeaders({ origin: STOREFRONT_ORIGIN }),
+        HttpClientRequest.post(`${storefrontOrigin}/api/ontos/account`).pipe(
+          HttpClientRequest.setHeaders({ origin: storefrontOrigin }),
           HttpClientRequest.bodyJsonUnsafe({
             email: STAGE_CUSTOMER_EMAIL,
             firstName: 'Ověření',

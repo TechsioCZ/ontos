@@ -74,7 +74,7 @@ const JobSchema = Schema.Struct({
   'timeout-minutes': Schema.Number,
 });
 const WorkflowSchema = Schema.Struct({
-  env: Schema.Record(Schema.String, Schema.String),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   jobs: Schema.Struct({
     build: JobSchema,
     'build-outbox-host': JobSchema,
@@ -210,6 +210,7 @@ const STOREFRONT_DEPLOY = 'Deploy the AKROS storefront';
 const CANDIDATE = 'Assemble the composition candidate';
 const workflowExpression = (body: string) => ['${{', body, '}}'].join(' ');
 const HOST_RELEASE_DIGEST = workflowExpression('steps.host-release.outputs.digest');
+const ACCOUNT_VARIABLE = workflowExpression('vars.CLOUDFLARE_ACCOUNT_ID');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
 const fullDatabaseCondition = [
   '${{',
@@ -410,8 +411,6 @@ it('routes each reviewed recovery transition to its own operator command and tes
 });
 
 it('keeps the original bundle only in preparation and gives every later release consumer the same private file', () => {
-  expect(readWorkflow().env.STAGE_ZONE).toBe('bleeding.dev');
-  expect(readWorkflow().env.STAGE_SHELL_URL).toBe('https://ontos-stage.bleeding.dev');
   const { steps } = readJobs().release;
   const prepare = steps.find(({ name }) => name === PREPARE_SECRETS);
   const cleanup = steps.find(({ name }) => name === CLEANUP_SECRETS);
@@ -1027,7 +1026,7 @@ it('hands the environment-scoped Cloudflare account to the builds, which run wit
   const { build, plan, release } = readJobs();
   const planner = plan.steps.find(({ id }) => id === 'plan');
   // Read in the env-less build job, vars.CLOUDFLARE_ACCOUNT_ID is empty and every unit digest differs from the plan's.
-  expect(planner?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(workflowExpression('vars.CLOUDFLARE_ACCOUNT_ID'));
+  expect(planner?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
   expect(release.env?.CLOUDFLARE_ACCOUNT_ID).toBe(planner?.env?.CLOUDFLARE_ACCOUNT_ID);
   expect(planner?.run).toContain(
     String.raw`printf 'cloudflare_account_id=%s\n' "$CLOUDFLARE_ACCOUNT_ID" >>"$GITHUB_OUTPUT"`,
@@ -1487,28 +1486,77 @@ for (const example of [
   );
 }
 
+/** The plan and the release export topology/stage-edge.json to their environment; the builds read the plan outputs. */
+const resolveStageEdgeReference = (value: string | undefined) =>
+  value
+    ?.replace(/^\$\{\{ env\.(?<key>[A-Z_]+) \}\}$/u, (_match, key: string) => `stage-edge:${key}`)
+    .replace(
+      /^\$\{\{ needs\.plan\.outputs\.(?<key>[a-z_]+) \}\}$/u,
+      (_match, key: string) => `stage-edge:${key.toUpperCase()}`,
+    );
+
 it('plans, rechecks, builds and deploys the storefront with the same build literals', () => {
   const {
-    env,
     jobs: { 'build-storefront': build, plan, release },
   } = readWorkflow();
-  const resolve = (value: string | undefined) =>
-    value?.replace(/^\$\{\{ env\.(?<key>[A-Z_]+) \}\}$/u, (_match, key: string) => env[key] ?? 'unset');
   const literals = [
     plan.steps.find(({ id }) => id === 'plan')?.env,
     release.steps.find(({ name }) => name === RECOMPUTE_PLAN)?.env,
     build.steps.find(({ name }) => name === 'Build the storefront Worker')?.env,
     release.steps.find(({ name }) => name === STOREFRONT_DEPLOY)?.env,
-  ].map((stepEnv) => Object.fromEntries(STOREFRONT_ENV_KEYS.map((key) => [key, resolve(stepEnv?.[key])])));
+  ].map((stepEnv) =>
+    Object.fromEntries(STOREFRONT_ENV_KEYS.map((key) => [key, resolveStageEdgeReference(stepEnv?.[key]) ?? 'unset'])),
+  );
   // Every literal is set, the explicitly empty image hosts included, so the plan may reuse a storefront build.
   for (const key of STOREFRONT_ENV_KEYS) {
-    expect(literals[0]?.[key]).toBeTypeOf('string');
     expect(literals[0]?.[key]).not.toBe('unset');
   }
-  expect(literals[0]?.STOREFRONT_IMAGE_HOSTS).toBe('');
+  expect(literals[0]).toEqual({
+    ONTOS_SHELL_URL: 'stage-edge:STAGE_SHELL_URL',
+    ONTOS_SHELL_WORKER_NAME: 'app-shell-super-app',
+    STOREFRONT_CATALOG_KV_ID: 'stage-edge:STAGE_STOREFRONT_CATALOG_KV_ID',
+    STOREFRONT_IMAGE_HOSTS: '',
+    STOREFRONT_URL: 'stage-edge:STAGE_STOREFRONT_URL',
+  });
   for (const stepLiterals of literals) {
     expect(stepLiterals).toEqual(literals[0]);
   }
+});
+
+it('takes the stage edge account, subdomain and hostnames only from topology/stage-edge.json', () => {
+  const workflow = readWorkflow();
+  const { build, plan, 'prune-workers': prune, release, verify } = workflow.jobs;
+  expect(workflow.env).toBeUndefined();
+  expect(readFileSync(STAGE_DEMO_WORKFLOW, 'utf-8')).not.toMatch(/bleeding\.dev|edution|techsio\.cz|\.workers\.dev/u);
+  const exportCommand = 'mise exec -- node scripts/ci/stage-edge.mts export';
+  const accountCheck = '--cloudflare-account-id "$CLOUDFLARE_ACCOUNT_ID"';
+  const edge = plan.steps.find(({ id }) => id === 'edge');
+  expect(edge?.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
+  expect(edge?.run).toContain(exportCommand);
+  expect(edge?.run).toContain(accountCheck);
+  expect(edge?.run).toContain('--github-env "$GITHUB_ENV" --github-output "$GITHUB_OUTPUT"');
+  expect(indexOf(plan.steps, edge?.name ?? '')).toBeLessThan(plan.steps.findIndex(({ id }) => id === 'plan'));
+  for (const output of [
+    'workers_dev_subdomain',
+    'stage_shell_url',
+    'stage_storefront_url',
+    'stage_storefront_catalog_kv_id',
+  ]) {
+    expect(plan.outputs?.[output]).toBe(workflowExpression(`steps.edge.outputs.${output}`));
+  }
+  expect(build.env?.WORKERS_DEV_SUBDOMAIN).toBe(workflowExpression('needs.plan.outputs.workers_dev_subdomain'));
+  // The release, which may run without the plan (outbox-only), and the prune check the account themselves.
+  for (const job of [release, prune]) {
+    expect(job.env?.CLOUDFLARE_ACCOUNT_ID).toBe(ACCOUNT_VARIABLE);
+    const check = job.steps.find(({ run }) => run?.includes(exportCommand) === true);
+    expect(check?.run).toContain(accountCheck);
+    expect(check?.if).toBeUndefined();
+  }
+  const releaseExport = release.steps.find(({ run }) => run?.includes(exportCommand) === true);
+  expect(releaseExport?.run).toContain('--github-env "$GITHUB_ENV"');
+  expect(indexOf(release.steps, releaseExport?.name ?? '')).toBeLessThan(indexOf(release.steps, PREPARE_SECRETS));
+  const verifyExport = verify.steps.find(({ run }) => run?.includes(exportCommand) === true);
+  expect(verifyExport?.run).toBe(`${exportCommand} --github-env "$GITHUB_ENV"`);
 });
 
 it('builds each unit reference graph before the native Cloudflare build on a fresh runner', () => {

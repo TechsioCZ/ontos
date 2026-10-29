@@ -51,7 +51,7 @@ VŠE PROŠLO / ALL PASS (19 kroků)
 
 Do aplikace se vkládá jen adresa MCP serveru OntOS. Nikdo nekopíruje klíč ani token: uživatel se přihlásí svým účtem OntOS a na české obrazovce **Připojit** zvolí firmu, za koho aplikace jedná (**Za mě** nebo **Za agenta**), k jakým modulům má přístup a jak bude zapisovat (**Jen čtení**, **Navrhovat změny ke schválení**, **Provádět změny přímo**). Potom klikne **Povolit přístup**.
 
-- Adresa MCP serveru (lokální demo): `http://localhost:3020/mcp` (cesta `/mcp` shellu, na stage `https://ontos-stage.bleeding.dev/mcp`). Najdete ji také v **Můj profil › Připojené aplikace › Jak připojit**.
+- Adresa MCP serveru (lokální demo): `http://localhost:3020/mcp` (cesta `/mcp` shellu, na stage `https://ontos-stage.techsio.cz/mcp`). Najdete ji také v **Můj profil › Připojené aplikace › Jak připojit**.
 - **Claude Code:** `claude mcp add --transport http ontos http://localhost:3020/mcp`, potom `/mcp` › Authenticate.
 - **VS Code, Cursor:** přidejte MCP server podle URL; přihlášení se otevře v prohlížeči.
 - **ChatGPT:** Nastavení › Aplikace a konektory › Přidat vlastní MCP server › URL › OAuth.

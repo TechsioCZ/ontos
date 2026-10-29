@@ -1309,11 +1309,21 @@ it.effect('surfaces Cloudflare API errors with their codes', () =>
 );
 
 // A vertical merged without its placement entry and public URL would pass review and then fail the
-// stage edge deploy after merge; this check runs on every pull request instead.
+// stage edge deploy after merge; this check runs on every pull request instead. The data-plane IDs are
+// provisioning's: until it writes them they stay empty, and the deploy fails closed on them.
 it.effect('places every topology unit with its public URL and the shared data-plane variables', () =>
   Effect.gen(function* placesEveryUnit() {
     const gaps = yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
-    expect(gaps).toStrictEqual([]);
+    const provisioned = new Set(
+      [
+        'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+        'ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID',
+        'ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID',
+        'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
+        'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
+      ].map((key) => `buildEnvironment.${key}`),
+    );
+    expect(gaps.filter((gap) => !provisioned.has(gap))).toStrictEqual([]);
   }),
 );
 

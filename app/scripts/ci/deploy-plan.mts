@@ -50,9 +50,10 @@ export const STOREFRONT_ENV_KEYS = Object.freeze([
   'ONTOS_SHELL_WORKER_NAME',
   'STOREFRONT_CATALOG_KV_ID',
   'STOREFRONT_IMAGE_HOSTS',
+  'STOREFRONT_URL',
 ]);
 const SHELL_ID = 'shell-super-app';
-/** The only unit whose release secrets are derived (from the Shell's) rather than stored. */
+/** The only unit with no stored release secrets: the preparer derives all of them from the Shell's. */
 const DERIVED_SECRETS_UNIT = 'projects';
 const STOREFRONT_PACKAGE = 'akros-storefront';
 /** Workspace-relative inputs every unit, the storefront and the host share. */
@@ -370,10 +371,9 @@ export const createDigestContext = (workspaceRoot: string, revision = 'HEAD'): D
         throw new ClosureInputError(`unknown unit ${unitId}`);
       }
       const closure = packageClosure(graph, [{ kind: 'dir', path: `${appPrefix}${unit.path}` }]);
-      const lines = [
-        ...blobLines(snapshot, closure.files),
-        ...(unitId === DERIVED_SECRETS_UNIT ? fileLines([], [SECRET_PREPARER_ENTRY]) : []),
-      ];
+      // The preparer derives every unit's host-bearing bindings (and Projects' whole set) from the stored secrets and
+      // topology/stage-edge.json, so what it uploads follows its code as well as the fingerprinted stored secrets.
+      const lines = [...blobLines(snapshot, closure.files), ...fileLines([], [SECRET_PREPARER_ENTRY])];
       unitBlobs.set(unitId, lines);
       return lines;
     },

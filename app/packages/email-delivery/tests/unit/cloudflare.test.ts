@@ -21,12 +21,12 @@ import { agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
 
 type BindingRequest = EmailMessage | EmailMessageBuilder;
 type BindingReceipt = Awaited<ReturnType<CloudflareEmailBinding['send']>>;
-const from = 'AKROS e-shop <noreply@ontos-stage.bleeding.dev>';
+const from = 'AKROS e-shop <noreply@ontos-stage.techsio.cz>';
 const message = {
   html: Redacted.make('<p>Text</p>'),
   subject: 'Objednávka',
   text: Redacted.make('Text'),
-  to: 'customer@bleeding.dev',
+  to: 'customer@techsio.cz',
 };
 const planned: PlannedEmail & { readonly from: string } = {
   dedupeKey: 'order:1',
@@ -255,7 +255,7 @@ describe('undeliverable recipients', () => {
       expect(isUndeliverableRecipient('tester@notdemo.cz')).toBe(false);
       expect(isUndeliverableRecipient('person@demo.ontos.attacker.dev')).toBe(false);
       expect(isUndeliverableRecipient('real@extra.company', '.extra.company')).toBe(true);
-      expect(isUndeliverableRecipient('real@bleeding.dev', '.extra.company')).toBe(false);
+      expect(isUndeliverableRecipient('real@techsio.cz', '.extra.company')).toBe(false);
     });
     test.effect(
       'sends documentation-domain recipients to the local SMTP capture, and real stage recipients to the binding',
@@ -268,17 +268,17 @@ it.effect('uses the single onboarded stage address even when company SMTP overri
   Effect.gen(function* stageSender() {
     const env = {
       AKROS_EMAIL_FROM: 'eshop@akros.demo',
-      ONTOS_EMAIL_FROM: 'noreply@ontos-stage.bleeding.dev',
+      ONTOS_EMAIL_FROM: 'noreply@ontos-stage.techsio.cz',
       SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@najempark.demo',
       SIAMPARK_EMAIL_FROM: 'finance@najempark.demo',
     };
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'cloudflare')).toBe(from);
     expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'cloudflare')).toBe(
-      'Nájempark – finanční oddělení <noreply@ontos-stage.bleeding.dev>',
+      'Nájempark – finanční oddělení <noreply@ontos-stage.techsio.cz>',
     );
     expect(
       yield* agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Nájempark' }, env, 'cloudflare'),
-    ).toBe('Nájempark – upozornění <noreply@ontos-stage.bleeding.dev>');
+    ).toBe('Nájempark – upozornění <noreply@ontos-stage.techsio.cz>');
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'smtp')).toBe('eshop@akros.demo');
     expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'smtp')).toBe(
       'finance@najempark.demo',

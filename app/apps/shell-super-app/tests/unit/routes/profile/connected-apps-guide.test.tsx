@@ -57,7 +57,7 @@ test.effect.each(['cs', 'en'])('renders translated current instructions for all 
     expect(screen.getByRole('region', { name: 'VS Code' }).textContent).toContain('MCP: Add Server');
     expect(screen.getByRole('region', { name: 'Cursor' }).textContent).toContain('~/.cursor/mcp.json');
     expect(screen.getByRole('region', { name: i18n.t('shell.connectedAppsGuide.title') }).textContent).not.toContain(
-      'https://ontos-stage.bleeding.dev',
+      'https://ontos-stage.techsio.cz',
     );
   }),
 );

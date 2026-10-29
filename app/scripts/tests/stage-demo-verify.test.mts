@@ -321,23 +321,41 @@ it.effect('reads CLI configuration and encodes the redacted credentials with the
   }),
 );
 
-it.effect('keeps CLI defaults and reports a typed failure after native cleanup fails', () =>
+it.effect('reports a typed failure after native cleanup fails', () =>
   Effect.gen(function* reportsFailedCommand() {
     const test = yield* fixture((url) =>
       pathOf(url) === SIGN_OUT ? Effect.succeed(response(503)) : defaultTransport(url),
     );
     const failure = yield* test.command.pipe(
-      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({ STAGE_SHELL_URL: shellUrl, STAGE_STOREFRONT_URL: storefrontUrl }),
+        ),
+      ),
       Effect.flip,
     );
 
     expect(failure).toBeInstanceOf(StageVerificationFailure);
     expect(failure.message).toBe('stage verification FAILED: sign-out answered 503');
-    expect(test.calls[0]?.url).toBe(`https://ontos-stage.bleeding.dev${OAUTH_AUTHORIZATION_SERVER}`);
-    expect(test.calls.find((call) => call.path === '/')?.url).toBe('https://ontos-stage-akros.bleeding.dev/');
+    expect(test.calls[0]?.url).toBe(`${shellUrl}${OAUTH_AUTHORIZATION_SERVER}`);
+    expect(test.calls.find((call) => call.path === '/')?.url).toBe(`${storefrontUrl}/`);
     expect(test.calls.at(-1)?.path).toBe(SIGN_OUT);
     expect(yield* test.output).not.toContain('stage verification PASS');
     expect(yield* test.errors).toEqual(['stage verification FAILED: sign-out answered 503']);
+  }),
+);
+
+it.effect('requires both stage origins instead of defaulting to any host', () =>
+  Effect.gen(function* requiresStageOrigins() {
+    for (const configured of [{ STAGE_SHELL_URL: shellUrl }, { STAGE_STOREFRONT_URL: storefrontUrl }, {}]) {
+      const test = yield* fixture();
+      const failure = yield* test.command.pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(configured))),
+        Effect.flip,
+      );
+      expect(failure).not.toBeInstanceOf(StageVerificationFailure);
+      expect(test.calls).toEqual([]);
+    }
   }),
 );
 

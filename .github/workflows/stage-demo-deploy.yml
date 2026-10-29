@@ -80,13 +80,9 @@ concurrency:
   group: stage-demo-deploy
   cancel-in-progress: false
 
-env:
-  WORKERS_DEV_SUBDOMAIN: edution
-  STAGE_SHELL_URL: https://ontos-stage.bleeding.dev
-  STAGE_ZONE: bleeding.dev
-  STAGE_STOREFRONT_CATALOG_KV_ID: 24a10598d6154b7aa788fd5b8fc449a7
-  STAGE_STOREFRONT_URL: https://ontos-stage-akros.bleeding.dev
-
+# The stage edge's account, workers.dev subdomain, zone, hostnames and storefront KV live in one reviewed file,
+# app/topology/stage-edge.json. The plan exports them (the builds, which have no environment, read its outputs) and
+# every other job that needs them exports them again; a stage-edge CLOUDFLARE_ACCOUNT_ID that differs fails the job.
 jobs:
   # An operator command, not a replacement release or a new worker artifact. It calls only the
   # original owner's native recovery contract and never changes the published build identity.
@@ -237,6 +233,11 @@ jobs:
       force_full: ${{ steps.plan.outputs.force_full }}
       # An environment variable: the builds run without the environment, so they take it from here.
       cloudflare_account_id: ${{ steps.plan.outputs.cloudflare_account_id }}
+      # topology/stage-edge.json, for the builds.
+      workers_dev_subdomain: ${{ steps.edge.outputs.workers_dev_subdomain }}
+      stage_shell_url: ${{ steps.edge.outputs.stage_shell_url }}
+      stage_storefront_url: ${{ steps.edge.outputs.stage_storefront_url }}
+      stage_storefront_catalog_kv_id: ${{ steps.edge.outputs.stage_storefront_catalog_kv_id }}
     steps:
       - name: Require a full manual deployment for migration continuation
         if: inputs.continue_migrated_publication
@@ -263,6 +264,15 @@ jobs:
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           working_directory: app
+
+      - name: Export the reviewed stage edge configuration
+        id: edge
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: >-
+          mise exec -- node scripts/ci/stage-edge.mts export --cloudflare-account-id "$CLOUDFLARE_ACCOUNT_ID"
+          --github-env "$GITHUB_ENV" --github-output "$GITHUB_OUTPUT"
 
       - name: Require one published UI kit version
         working-directory: app
@@ -300,6 +310,7 @@ jobs:
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
+          STOREFRONT_URL: ${{ env.STAGE_STOREFRONT_URL }}
           STAGE_DEMO_FORCE_FULL: ${{ vars.STAGE_DEMO_FORCE_FULL }}
           FORCE_FULL: ${{ inputs.force_full == true || (github.event_name == 'workflow_dispatch' && !inputs.deploy) }}
         run: |
@@ -348,6 +359,7 @@ jobs:
       DEPLOY_TARGET: cloudflare
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       ULTRAMODERN_DISABLE_BUILD_TS_CHECKER: '1'
+      WORKERS_DEV_SUBDOMAIN: ${{ needs.plan.outputs.workers_dev_subdomain }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -473,6 +485,7 @@ jobs:
           scripts/tests/materialize-zerops-environment.test.mts
           scripts/tests/rebrand-rental-demo.test.mts
           scripts/tests/prepare-stage-release-secrets.test.mts
+          scripts/tests/stage-edge.test.mts
           scripts/tests/stage-demo-migrate.test.mts
           scripts/tests/stage-deploy-diagnostics.test.mts
           scripts/tests/application-composition-authority-publication.test.mts
@@ -539,14 +552,15 @@ jobs:
         with:
           install-args: --trust-lockfile
 
-      # These four build literals are storefront digest inputs: the plan and the release plan check set the same values.
+      # These five build literals are storefront digest inputs: the plan and the release plan check set the same values.
       - name: Build the storefront Worker
         working-directory: app/akros-storefront
         env:
-          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_SHELL_URL: ${{ needs.plan.outputs.stage_shell_url }}
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
-          STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
+          STOREFRONT_CATALOG_KV_ID: ${{ needs.plan.outputs.stage_storefront_catalog_kv_id }}
           STOREFRONT_IMAGE_HOSTS: ''
+          STOREFRONT_URL: ${{ needs.plan.outputs.stage_storefront_url }}
         run: |
           mise exec -- pnpm run cloudflare:build
           tar --create --zstd --file "$RUNNER_TEMP/storefront.tar.zst" .open-next .wrangler.generated.json
@@ -644,7 +658,14 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # Only Projects may be added, from native shared bindings and derived public JWKS.
+      - name: Export the reviewed stage edge configuration
+        working-directory: app
+        run: >-
+          mise exec -- node scripts/ci/stage-edge.mts export --cloudflare-account-id "$CLOUDFLARE_ACCOUNT_ID"
+          --github-env "$GITHUB_ENV"
+
+      # Every host-bearing binding derives from topology/stage-edge.json, and Projects from native shared bindings and
+      # derived public JWKS.
       # The private directory transfers to the final cleanup step only after preparation succeeds.
       # Outbox-only retries need this too: native recovery check/apply always consume the file.
       - name: Prepare the runner-only immutable release secret bundle
@@ -791,6 +812,7 @@ jobs:
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
+          STOREFRONT_URL: ${{ env.STAGE_STOREFRONT_URL }}
         run: |
           mise exec -- node scripts/ci/deploy-plan.mts verify --plan "$PLAN_FILE"
           mkdir -p "$LEDGER_DIRECTORY"
@@ -1318,6 +1340,7 @@ jobs:
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
+          STOREFRONT_URL: ${{ env.STAGE_STOREFRONT_URL }}
         run: |
           tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
           mise exec -- pnpm run cloudflare:deploy
@@ -1485,6 +1508,11 @@ jobs:
         with:
           install-args: --trust-lockfile
 
+      # Deletion acts on the environment's account, which must be the reviewed stage edge account.
+      - name: Require the reviewed stage edge account
+        working-directory: app
+        run: mise exec -- node scripts/ci/stage-edge.mts export --cloudflare-account-id "$CLOUDFLARE_ACCOUNT_ID"
+
       - name: Download the final release ledger
         if: env.PRUNE_ONLY != 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1532,6 +1560,10 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           install-args: --trust-lockfile
+
+      - name: Export the reviewed stage edge configuration
+        working-directory: app
+        run: mise exec -- node scripts/ci/stage-edge.mts export --github-env "$GITHUB_ENV"
 
       - name: Install headless Chromium for the OAuth consent screens
         working-directory: app

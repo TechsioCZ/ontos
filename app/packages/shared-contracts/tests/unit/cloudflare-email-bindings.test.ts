@@ -12,16 +12,16 @@ it('omits the Email Service binding unless an onboarded sender build input is se
 it('emits only the allowed stage sender, without a wildcard binding', () => {
   expect(
     createCloudflareEmailBindings((key) =>
-      key === 'ULTRAMODERN_EMAIL_SENDER' ? 'noreply@ontos-stage.bleeding.dev' : undefined,
+      key === 'ULTRAMODERN_EMAIL_SENDER' ? 'noreply@ontos-stage.techsio.cz' : undefined,
     ),
   ).toEqual({
-    send_email: [{ allowed_sender_addresses: ['noreply@ontos-stage.bleeding.dev'], name: 'EMAIL' }],
+    send_email: [{ allowed_sender_addresses: ['noreply@ontos-stage.techsio.cz'], name: 'EMAIL' }],
   });
 });
 
 it('trims the configured sender before emitting the binding', () => {
-  expect(createCloudflareEmailBindings(() => '  noreply@ontos-stage.bleeding.dev \t')).toEqual({
-    send_email: [{ allowed_sender_addresses: ['noreply@ontos-stage.bleeding.dev'], name: 'EMAIL' }],
+  expect(createCloudflareEmailBindings(() => '  noreply@ontos-stage.techsio.cz \t')).toEqual({
+    send_email: [{ allowed_sender_addresses: ['noreply@ontos-stage.techsio.cz'], name: 'EMAIL' }],
   });
 });
 

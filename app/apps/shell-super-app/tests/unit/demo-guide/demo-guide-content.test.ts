@@ -7,7 +7,7 @@ it.effect('links to the configured stage storefront without localhost destinatio
   Effect.gen(function* stageStorefrontGuide() {
     yield* Effect.acquireRelease(
       Effect.sync(() => {
-        rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.bleeding.dev');
+        rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.techsio.cz');
         rs.resetModules();
       }),
       () =>
@@ -20,7 +20,7 @@ it.effect('links to the configured stage storefront without localhost destinatio
     for (const chapter of akrosGuide.chapters) {
       for (const step of chapter.steps) {
         if (step.target.kind === 'external') {
-          expect(step.target.url.startsWith('https://ontos-stage-akros.bleeding.dev/')).toBe(true);
+          expect(step.target.url.startsWith('https://ontos-stage-akros.techsio.cz/')).toBe(true);
         }
       }
     }

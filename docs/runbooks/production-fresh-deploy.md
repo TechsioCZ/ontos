@@ -22,7 +22,7 @@ the runtime containers stage had. Check Zerops pricing for 18 services before st
 | `zcli` logged in                    | an account allowed to create projects in the stage project's organization (BDA Platform)                       |
 | Production Zerops token             | Zerops → Settings → Access tokens. Keep it separate from stage's token                                         |
 | Production Shell origin             | a custom domain you control, e.g. `https://ontos.<domain>`. Decide it now: step 2 imports it as a secret       |
-| Cloudflare token + account ID       | only for the SpiceDB gateway certificate: "SSL and Certificates: Edit" on a zone you own (e.g. `bleeding.dev`) |
+| Cloudflare token + account ID       | only for the SpiceDB gateway certificate: "SSL and Certificates: Edit" on a zone you own (e.g. `techsio.cz`)   |
 | Production gateway signing key pair | generated below. Never reuse stage's                                                                           |
 
 Generate the gateway key pair and the secrets file. The secret names come from
@@ -80,7 +80,7 @@ doesn't know yet: add its value to the file by hand.
    ```sh
    export ZEROPS_TOKEN="$PRODUCTION_ZEROPS_TOKEN"
    node scripts/ops/production-environment.mts spicedb-tls \
-     --gateway-hostname ontos-production-spicedb.bleeding.dev --env-file ~/.cloudflare-ontos-stage-token --dry-run
+     --gateway-hostname ontos-production-spicedb.techsio.cz --env-file ~/.cloudflare-techsio-stage-token --dry-run
    # then the same command without --dry-run
    ```
 

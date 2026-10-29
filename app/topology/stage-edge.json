@@ -1,0 +1,10 @@
+{
+  "accountId": "384e8a94acf428ce447e7e73122d91d1",
+  "emailSender": "noreply@ontos-stage.techsio.cz",
+  "shellHostname": "ontos-stage.techsio.cz",
+  "spicedbHostname": "ontos-stage-spicedb.techsio.cz",
+  "storefrontCatalogKvId": "",
+  "storefrontHostname": "ontos-stage-akros.techsio.cz",
+  "workersDevSubdomain": "techsio",
+  "zone": "techsio.cz"
+}

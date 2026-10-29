@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Redacted } from "effect";
@@ -9,7 +9,11 @@ import { DEFAULT_PASSWORD } from "../../../scripts/ops/stage-demo-verify.mjs";
 
 // Only CI may exercise the existing operator-prepared stage customer.
 assert.equal(process.env.CI, "true", "Run this browser proof on the CI runner only");
-assert.equal(process.env.AKROS_TEST_BASE_URL, "https://ontos-stage-akros.bleeding.dev");
+// Only the reviewed stage storefront (app/topology/stage-edge.json) holds that customer.
+const stageEdge = JSON.parse(
+  await readFile(new URL("../../../topology/stage-edge.json", import.meta.url), "utf8"),
+);
+assert.equal(process.env.AKROS_TEST_BASE_URL, `https://${stageEdge.storefrontHostname}`);
 const base = new URL(process.env.AKROS_TEST_BASE_URL);
 assert.ok(process.env.RUNNER_TEMP, "The CI runner must own the screenshot directory");
 const runnerTemp = resolve(process.env.RUNNER_TEMP);

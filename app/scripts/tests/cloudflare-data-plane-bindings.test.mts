@@ -342,7 +342,7 @@ it('declares each unit Worker Hyperdrive from the database identities it serves'
   }
 });
 
-it('preserves every DEMO and upstream unit and reuses the verified dedicated Hyperdrive IDs', () => {
+it('places every DEMO and upstream unit with each dedicated Hyperdrive ID variable provisioning writes', () => {
   const placement = Schema.decodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -355,9 +355,10 @@ it('preserves every DEMO and upstream unit and reuses the verified dedicated Hyp
   expect(EffectArray.sort(placement.units, Order.String)).toEqual(
     EffectArray.sort([topology.shell.id, ...topology.verticals.map(({ id }) => id)], Order.String),
   );
-  expect(placement.buildEnvironment[HYPERDRIVE_ID]).toBe('372fc29c7f034f41b0e7844a69724069');
-  expect(placement.buildEnvironment[PARTY_REGISTRY_HYPERDRIVE_ID]).toBe('1acaeefc14c14bb79dbd646170cc1060');
-  expect(placement.buildEnvironment[GATEWAY_ISSUER_HYPERDRIVE_ID]).toBe('f414f6c64c0b43cc85af7b182ca249a4');
+  // Empty until cloudflare-stage-cutover.mts provision writes the account's IDs; a unit build then fails closed.
+  for (const variable of [HYPERDRIVE_ID, PARTY_REGISTRY_HYPERDRIVE_ID, GATEWAY_ISSUER_HYPERDRIVE_ID]) {
+    expect(placement.buildEnvironment[variable]).toMatch(/^(?:[a-f0-9]{32})?$/u);
+  }
 });
 
 // Exercise Modern's actual jiti dependency in a fresh process, outside Rstest's ESM bundler.

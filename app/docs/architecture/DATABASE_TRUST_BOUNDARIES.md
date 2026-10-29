@@ -539,7 +539,7 @@ Every case runs against real PostgreSQL in CI (job `service-integration`, `pnpm 
    - It creates the missing sensitive service secrets on `migrator`: `PARTY_REGISTRY_DB_PASSWORD`, `PARTY_REGISTRY_WORKER_DB_PASSWORD` and `SHELL_GATEWAY_ISSUER_DB_PASSWORD`, each 48 random bytes in base64url, never printed.
    - It creates or alters the three login roles with `LOGIN` and `CONNECT` only, through `scripts/postgres/database-login-roles.mts`. This step must come first because Hyperdrive tests the connection when a config is created. The roles are inert until the bootstrap grants them anything.
 2. Run `provision` (Hyperdrive step). It creates `ontos-stage-party-registry` (user `party_registry_runtime`, caching disabled, origin connection limit 10) and `ontos-stage-gateway-issuer` (user `shell_gateway_issuer`, caching disabled, limit 5). It reads the passwords through `readZeropsValue('migrator_<KEY>')` and writes both IDs into `topology/cloudflare-placement.json` `buildEnvironment` for a reviewed PR. `verify` checks drift on user, caching and limit.
-3. Merge. `edge-deploy-readiness` requires both new IDs, and every deploy job waits on it, so nothing changes before provisioning is complete.
+3. Merge. The demo deploy's stage edge export and every unit build require both new IDs, so nothing changes before provisioning is complete.
 
 Each pass of the migrator bootstrap (before the owner migrations and after them, and three times in `pnpm db:migrate`):
 

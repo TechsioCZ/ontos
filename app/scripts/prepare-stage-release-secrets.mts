@@ -16,6 +16,8 @@ import {
   workerSecretPlan,
 } from './ops/cloudflare-stage-cutover.mts';
 import type { StageOrigins, WorkerSecretSources } from './ops/cloudflare-stage-cutover.mts';
+import { readStageEdgeConfig, stageEdgeUrls } from './ci/stage-edge.mts';
+import type { StageEdgeConfig } from './ci/stage-edge.mts';
 import { readEdgeUnits } from './ops/stage-edge-units.mts';
 import type { EdgeUnit } from './ops/stage-edge-units.mts';
 
@@ -28,6 +30,7 @@ const OUTPUT_WRITE_FAILED = 'output-write-failed';
 const INVENTORY_INVALID = 'inventory-invalid';
 const ORIGIN_INVALID = 'origin-invalid';
 const PROJECTS_CONTRACT_CHANGED = 'projects-contract-changed';
+const CONFIGURATION_INVALID = 'configuration-invalid';
 const NativeSecretSchema = Schema.Record(Schema.String, Schema.String);
 const BundleSchema = Schema.Record(Schema.String, NativeSecretSchema);
 type SecretBundle = typeof BundleSchema.Type;
@@ -63,7 +66,7 @@ export class StageReleaseSecretPreparationError extends Schema.TaggedError<Stage
       'projects-conflict',
       OUTPUT_INVALID,
       OUTPUT_WRITE_FAILED,
-      'configuration-invalid',
+      CONFIGURATION_INVALID,
     ]),
   },
 ) {
@@ -90,11 +93,66 @@ const bindingFailure = (appId: EdgeUnit['id'], binding?: string) => {
 
 export interface StageReleaseSecretInput {
   readonly bundle: Redacted.Redacted;
+  /** topology/stage-edge.json: every host-bearing binding derives from it. */
+  readonly edge: StageEdgeConfig;
   readonly intent: ApplicationReleaseIntent;
-  readonly shellUrl: string;
-  readonly stageZone: string;
   readonly units: readonly EdgeUnit[];
 }
+
+/**
+ * The host-bearing bindings, derived from topology/stage-edge.json. They replace whatever the stored bundle holds, so
+ * the stored secret keeps only real secrets and a domain move needs no secret edit. Every unit's digest covers this
+ * preparer and the topology, so a change here re-uploads the Workers that bind them.
+ */
+export const DERIVED_HOST_BINDINGS = Object.freeze([
+  'AKROS_STOREFRONT_PUBLIC_URL',
+  'BETTER_AUTH_TRUSTED_ORIGINS',
+  'BETTER_AUTH_URL',
+  'COMMERCE_CORE_IDENTITY_BASE_URL',
+  'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS',
+  'COMMERCE_PORTAL_AUTH_URL',
+  'ONTOS_EMAIL_FROM',
+  'ONTOS_GATEWAY_ISSUER',
+  'ONTOS_OAUTH_ISSUER',
+  'ONTOS_PUBLIC_URL',
+  'ONTOS_SHELL_GATEWAY_BASE_URL',
+  'SPICEDB_ENDPOINT',
+] as const);
+export type HostBinding = (typeof DERIVED_HOST_BINDINGS)[number];
+const isHostBinding = Schema.is(Schema.Literals(DERIVED_HOST_BINDINGS));
+
+export const derivedHostBindings = (edge: StageEdgeConfig) => {
+  const urls = stageEdgeUrls(edge);
+  return {
+    AKROS_STOREFRONT_PUBLIC_URL: urls.storefrontUrl,
+    BETTER_AUTH_TRUSTED_ORIGINS: urls.shellUrl,
+    BETTER_AUTH_URL: urls.shellUrl,
+    COMMERCE_CORE_IDENTITY_BASE_URL: urls.shellApiBaseUrl,
+    COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: `${urls.shellUrl},${urls.storefrontUrl}`,
+    COMMERCE_PORTAL_AUTH_URL: urls.storefrontUrl,
+    ONTOS_EMAIL_FROM: edge.emailSender,
+    ONTOS_GATEWAY_ISSUER: urls.shellUrl,
+    ONTOS_OAUTH_ISSUER: urls.oauthIssuer,
+    ONTOS_PUBLIC_URL: urls.shellUrl,
+    ONTOS_SHELL_GATEWAY_BASE_URL: urls.shellApiBaseUrl,
+    SPICEDB_ENDPOINT: edge.spicedbHostname,
+  } satisfies Record<HostBinding, string>;
+};
+/** Every served owner binds these. */
+const FOUNDATION_HOST_BINDINGS: readonly HostBinding[] = ['ONTOS_GATEWAY_ISSUER', 'SPICEDB_ENDPOINT'];
+/** Owner runtime settings outside the native secret plan that these owners always receive. */
+const OWNER_HOST_BINDINGS: ReadonlyMap<string, readonly HostBinding[]> = new Map([
+  [
+    'commerce-customer-context',
+    [
+      'COMMERCE_CORE_IDENTITY_BASE_URL',
+      'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS',
+      'COMMERCE_PORTAL_AUTH_URL',
+      'ONTOS_EMAIL_FROM',
+    ],
+  ],
+  [SHELL, ['AKROS_STOREFRONT_PUBLIC_URL', 'ONTOS_EMAIL_FROM', 'ONTOS_OAUTH_ISSUER', 'ONTOS_PUBLIC_URL']],
+]);
 
 interface JsonObjectFrame {
   awaitingKey: boolean;
@@ -139,25 +197,23 @@ const opaqueValue = (value: string) =>
   !value.includes('${') &&
   !value.includes('\0');
 
-const stageOrigins = (shellUrl: string, stageZone: string) =>
+const HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
+const inZone = (hostname: string, zone: string) =>
+  HOSTNAME.test(hostname) && (hostname === zone || hostname.endsWith(`.${zone}`));
+
+/** The native origins, and the SpiceDB server name Workers VPC verifies, must be the config's. */
+const stageOrigins = (edge: StageEdgeConfig) =>
   Effect.gen(function* validateStageOrigins() {
-    const url = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(shellUrl).pipe(
-      Effect.mapError(() => failure(ORIGIN_INVALID)),
-    );
-    const hostname = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
+    const origins = { shellHostname: edge.shellHostname, stageZone: edge.zone } satisfies StageOrigins;
     if (
-      url.protocol !== 'https:' ||
-      url.origin !== shellUrl ||
-      url.username !== '' ||
-      url.password !== '' ||
-      url.port !== '' ||
-      !hostname.test(stageZone) ||
-      !hostname.test(url.hostname) ||
-      !(url.hostname === stageZone || url.hostname.endsWith(`.${stageZone}`))
+      !HOSTNAME.test(edge.zone) ||
+      !inZone(edge.shellHostname, edge.zone) ||
+      !inZone(edge.storefrontHostname, edge.zone) ||
+      edge.spicedbHostname !== spicedbGatewayHostname(origins)
     ) {
       return yield* failure(ORIGIN_INVALID);
     }
-    return { shellHostname: url.hostname, stageZone } satisfies StageOrigins;
+    return origins;
   });
 
 const SigningInput = Context.Service<Redacted.Redacted>('@app/scripts/stage-release-secrets/SigningInput');
@@ -221,16 +277,10 @@ const servedUnits = (input: StageReleaseSecretInput) =>
     return units;
   });
 
-const sourcesFromShell = (shell: typeof NativeSecretSchema.Type, origins: StageOrigins, shellUrl: string) =>
+const sourcesFromShell = (shell: typeof NativeSecretSchema.Type) =>
   Effect.gen(function* canonicalSharedSources() {
-    for (const [binding, expected] of [
-      ['ONTOS_GATEWAY_ISSUER', shellUrl],
-      ['SPICEDB_ENDPOINT', spicedbGatewayHostname(origins)],
-      ['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'stage'],
-    ]) {
-      if (shell[binding] !== expected) {
-        return yield* bindingFailure(SHELL, binding);
-      }
+    if (shell.ULTRAMODERN_DEPLOYMENT_ENVIRONMENT !== 'stage') {
+      return yield* bindingFailure(SHELL, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT');
     }
     if (!opaqueValue(shell.SPICEDB_PRESHARED_KEY ?? '')) {
       return yield* bindingFailure(SHELL, 'SPICEDB_PRESHARED_KEY');
@@ -250,6 +300,39 @@ const sourcesFromShell = (shell: typeof NativeSecretSchema.Type, origins: StageO
       spicedbPresharedKey: Redacted.make(shell.SPICEDB_PRESHARED_KEY),
     } satisfies WorkerSecretSources;
   });
+
+/**
+ * The bundle with every host-bearing binding derived: an owner's stored one is always replaced, a served owner gets
+ * the foundation and its owner bindings, and a gateway client the native plan requires gets its derived base URL.
+ */
+const deriveHostBindings = (
+  bundle: SecretBundle,
+  units: readonly EdgeUnit[],
+  plan: ReturnType<typeof workerSecretPlan>,
+  edge: StageEdgeConfig,
+) => {
+  const derived = derivedHostBindings(edge);
+  const served = new Map(units.map((unit) => [unit.id, unit]));
+  return Object.fromEntries(
+    Object.entries(bundle).map(([id, stored]) => {
+      const owner: Record<string, string> = Object.fromEntries(
+        Object.entries(stored).map(([key, value]) => [key, isHostBinding(key) ? derived[key] : value]),
+      );
+      const unit = served.get(id);
+      if (unit === undefined || id === PROJECTS) {
+        return [id, owner];
+      }
+      for (const binding of [...FOUNDATION_HOST_BINDINGS, ...(OWNER_HOST_BINDINGS.get(id) ?? [])]) {
+        owner[binding] = derived[binding];
+      }
+      const required = workerReleaseSecretNames(unit, plan.get(unit.workerName) ?? {}, owner);
+      for (const binding of required.filter(isHostBinding)) {
+        owner[binding] = derived[binding];
+      }
+      return [id, owner];
+    }),
+  ) satisfies SecretBundle;
+};
 
 const validateExistingOwners = (
   bundle: SecretBundle,
@@ -289,15 +372,17 @@ export const prepareStageReleaseSecrets = Effect.fn('StageReleaseSecrets.prepare
       Effect.mapError(() => failure(BUNDLE_INVALID)),
     );
     yield* rejectDuplicateKeys(text);
-    const origins = yield* stageOrigins(input.shellUrl, input.stageZone);
+    const origins = yield* stageOrigins(input.edge);
     const units = yield* servedUnits(input);
-    const shell = bundle[SHELL];
-    if (!Object.hasOwn(bundle, SHELL) || shell === undefined) {
+    const storedShell = bundle[SHELL];
+    if (!Object.hasOwn(bundle, SHELL) || storedShell === undefined) {
       return yield* bindingFailure(SHELL);
     }
-    const sources = yield* sourcesFromShell(shell, origins, input.shellUrl);
+    const sources = yield* sourcesFromShell(storedShell);
     const plan = workerSecretPlan(units, origins, sources);
-    yield* validateExistingOwners(bundle, units, plan);
+    const prepared = deriveHostBindings(bundle, units, plan, input.edge);
+    const shell = prepared[SHELL] ?? storedShell;
+    yield* validateExistingOwners(prepared, units, plan);
     const projectsUnit = units.find(({ id }) => id === PROJECTS);
     const desired = projectsUnit === undefined ? undefined : plan.get(projectsUnit.workerName);
     if (
@@ -320,29 +405,22 @@ export const prepareStageReleaseSecrets = Effect.fn('StageReleaseSecrets.prepare
     if (Object.entries(canonicalProjects).some(([key, value]) => Redacted.value(desired[key]) !== value)) {
       return yield* failure(PROJECTS_CONTRACT_CHANGED);
     }
-    if (Object.hasOwn(bundle, PROJECTS)) {
-      const existing = bundle[PROJECTS];
-      if (
-        existing === undefined ||
+    // A stored Projects entry must hold the derived secrets; its host bindings are derived like every owner's.
+    const existing = bundle[PROJECTS];
+    if (
+      Object.hasOwn(bundle, PROJECTS) &&
+      (existing === undefined ||
         Object.keys(existing).length !== PROJECTS_RELEASE_SECRET_KEYS.length ||
-        Object.entries(projects).some(([key, value]) => existing[key] !== value)
-      ) {
-        return yield* failure('projects-conflict');
-      }
-      return { bundle: input.bundle, repairedProjects: false };
+        PROJECTS_RELEASE_SECRET_KEYS.some((key) => !Object.hasOwn(existing, key)) ||
+        Object.entries(projects).some(([key, value]) => !isHostBinding(key) && existing[key] !== value))
+    ) {
+      return yield* failure('projects-conflict');
     }
-    // Insert only the new property into the original JSON. Existing owner objects, escapes,
-    // whitespace and string values remain byte-for-byte unchanged.
-    const close = text.lastIndexOf('}');
-    const addition = yield* Schema.encodeEffect(
-      Schema.fromJsonString(Schema.Struct({ projects: ProjectsSecretSchema })),
-    )({
-      projects,
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(BundleSchema))({
+      ...prepared,
+      [PROJECTS]: projects,
     }).pipe(Effect.mapError(() => failure(PROJECTS_CONTRACT_CHANGED)));
-    return {
-      bundle: Redacted.make(`${text.slice(0, close)},${addition.slice(1, -1)}${text.slice(close)}`),
-      repairedProjects: true,
-    };
+    return { bundle: Redacted.make(encoded), repairedProjects: !Object.hasOwn(bundle, PROJECTS) };
   },
 );
 
@@ -392,16 +470,15 @@ const prepareFile = (outputFile: string) =>
     const config = yield* Config.all({
       bundle: Config.Redacted('ALL_RELEASE_SECRETS'),
       runnerTemp: Config.String('RUNNER_TEMP'),
-      shellUrl: Config.String('STAGE_SHELL_URL'),
-      stageZone: Config.String('STAGE_ZONE'),
-    }).pipe(Effect.mapError(() => failure('configuration-invalid')));
+    }).pipe(Effect.mapError(() => failure(CONFIGURATION_INVALID)));
+    const edge = yield* Effect.try({ catch: () => failure(CONFIGURATION_INVALID), try: () => readStageEdgeConfig() });
     const fs = yield* FileSystem.FileSystem;
     const intent = yield* fs.readFileString('topology/application-release-intent.json').pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ApplicationReleaseIntentSchema))),
       Effect.catchCause(() => Effect.fail(failure(INVENTORY_INVALID))),
     );
     const units = yield* readEdgeUnits.pipe(Effect.catchCause(() => Effect.fail(failure(INVENTORY_INVALID))));
-    const prepared = yield* prepareStageReleaseSecrets({ ...config, intent, units });
+    const prepared = yield* prepareStageReleaseSecrets({ bundle: config.bundle, edge, intent, units });
     yield* writePreparedStageReleaseSecrets(outputFile, config.runnerTemp, prepared.bundle);
     yield* Console.log(
       prepared.repairedProjects

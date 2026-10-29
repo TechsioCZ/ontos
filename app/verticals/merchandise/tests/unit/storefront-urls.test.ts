@@ -11,10 +11,10 @@ afterEach(() => {
 
 it.effect('uses the stage AKROS URL and leaves the undeployed cafe storefront absent', () =>
   Effect.gen(function* stageUrls() {
-    rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.bleeding.dev');
+    rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.techsio.cz');
     rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_ESHOP_STOREFRONT', '');
     const urls = yield* load();
-    expect(urls.AKROS_STOREFRONT_ORIGIN).toBe('https://ontos-stage-akros.bleeding.dev');
+    expect(urls.AKROS_STOREFRONT_ORIGIN).toBe('https://ontos-stage-akros.techsio.cz');
     expect(urls.STOREFRONT_ORIGIN).toBeUndefined();
   }),
 );
