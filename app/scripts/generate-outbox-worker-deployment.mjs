@@ -296,7 +296,8 @@ const renderHostService = (services, serviceIds, rootPackageName, delivery) =>
     );
     if (delivery.id === OUTBOX_WORKER_HOST.id) {
       service.delete('build');
-      service.setIn(['deploy', 'readinessCheck', 'retryPeriod'], '3s');
+      // Zerops rejects a readiness retryPeriod below its 10s minimum with a deploy-time validation error.
+      service.setIn(['deploy', 'readinessCheck', 'retryPeriod'], '10s');
     }
     return service;
   });

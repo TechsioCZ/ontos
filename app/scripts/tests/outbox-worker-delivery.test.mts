@@ -282,7 +282,7 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     // CI builds the host artifact and Zerops only deploys it, so the host setup has no Zerops build.
     expect(host).not.toContain('build:');
     expect(host).not.toContain('zerops:materialize');
-    expect(host).toContain('retryPeriod: 3s');
+    expect(host).toContain('retryPeriod: 10s');
     expect(host).toContain("OUTBOX_WORKER_HEALTH_PORT: '4100'");
     expect(host).toContain('ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host');
     expect(host).toContain(SHARED_DATABASE_URL_PREFIX);
