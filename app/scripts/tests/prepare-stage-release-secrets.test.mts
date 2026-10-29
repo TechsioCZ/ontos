@@ -25,6 +25,7 @@ const CONFLICTING_VALUE = 'conflicting-value';
 const WORKLOAD_KEY = 'synthetic-private-workload-key-never-copy';
 const SHELL_URL = 'https://ontos-stage.example.test';
 const STAGE_ZONE = 'example.test';
+const SPICEDB_HOSTNAME = 'custom-spicedb.example.test';
 const privateKey = JSON.stringify({
   ...generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' }),
   alg: 'EdDSA',
@@ -44,7 +45,11 @@ const fixture = Effect.gen(function* canonicalBundleFixture() {
   const publicJwks = yield* gatewayPublicJwksFor(Redacted.make(privateKey));
   const plan = workerSecretPlan(
     units,
-    { shellHostname: 'ontos-stage.example.test', stageZone: STAGE_ZONE },
+    {
+      shellHostname: 'ontos-stage.example.test',
+      spicedbHostname: SPICEDB_HOSTNAME,
+      stageZone: STAGE_ZONE,
+    },
     {
       betterAuthSecret: Redacted.make(PRIVATE_AUTH),
       commerceCustomerContextGatewayApiKey: Redacted.make(WORKLOAD_KEY),
@@ -75,6 +80,7 @@ const fixture = Effect.gen(function* canonicalBundleFixture() {
     bundle: Redacted.make(raw),
     intent,
     shellUrl: SHELL_URL,
+    spicedbHostname: SPICEDB_HOSTNAME,
     stageZone: STAGE_ZONE,
     units,
   };
@@ -267,7 +273,7 @@ it.effect('adds only the exact five native Projects bindings while retaining eve
     expect(decoded.projects).toEqual({
       ONTOS_GATEWAY_ISSUER: SHELL_URL,
       ONTOS_GATEWAY_PUBLIC_JWKS: Redacted.value(publicJwks),
-      SPICEDB_ENDPOINT: 'ontos-stage-spicedb.example.test',
+      SPICEDB_ENDPOINT: SPICEDB_HOSTNAME,
       SPICEDB_PRESHARED_KEY: SHARED_KEY,
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
     });

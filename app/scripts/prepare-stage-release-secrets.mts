@@ -9,14 +9,10 @@ import { Command, Flag } from 'effect/cli';
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
 import { ApplicationReleaseIntentSchema } from './application-release-intent.mts';
 import type { ApplicationReleaseIntent } from './application-release-intent.mts';
-import {
-  gatewayPublicJwksFor,
-  spicedbGatewayHostname,
-  workerReleaseSecretNames,
-  workerSecretPlan,
-} from './ops/cloudflare-stage-cutover.mts';
+import { gatewayPublicJwksFor, workerReleaseSecretNames, workerSecretPlan } from './ops/cloudflare-stage-cutover.mts';
 import type { StageOrigins, WorkerSecretSources } from './ops/cloudflare-stage-cutover.mts';
 import { readEdgeUnits } from './ops/stage-edge-units.mts';
+import { readStageEdgeTopology } from './ops/stage-edge-topology.mts';
 import type { EdgeUnit } from './ops/stage-edge-units.mts';
 
 const PROJECTS = 'projects';
@@ -92,6 +88,7 @@ export interface StageReleaseSecretInput {
   readonly bundle: Redacted.Redacted;
   readonly intent: ApplicationReleaseIntent;
   readonly shellUrl: string;
+  readonly spicedbHostname: string;
   readonly stageZone: string;
   readonly units: readonly EdgeUnit[];
 }
@@ -139,7 +136,7 @@ const opaqueValue = (value: string) =>
   !value.includes('${') &&
   !value.includes('\0');
 
-const stageOrigins = (shellUrl: string, stageZone: string) =>
+const stageOrigins = (shellUrl: string, stageZone: string, spicedbHostname: string) =>
   Effect.gen(function* validateStageOrigins() {
     const url = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(shellUrl).pipe(
       Effect.mapError(() => failure(ORIGIN_INVALID)),
@@ -152,12 +149,14 @@ const stageOrigins = (shellUrl: string, stageZone: string) =>
       url.password !== '' ||
       url.port !== '' ||
       !hostname.test(stageZone) ||
+      !hostname.test(spicedbHostname) ||
+      !spicedbHostname.endsWith(`.${stageZone}`) ||
       !hostname.test(url.hostname) ||
       !(url.hostname === stageZone || url.hostname.endsWith(`.${stageZone}`))
     ) {
       return yield* failure(ORIGIN_INVALID);
     }
-    return { shellHostname: url.hostname, stageZone } satisfies StageOrigins;
+    return { shellHostname: url.hostname, spicedbHostname, stageZone } satisfies StageOrigins;
   });
 
 const SigningInput = Context.Service<Redacted.Redacted>('@app/scripts/stage-release-secrets/SigningInput');
@@ -225,7 +224,7 @@ const sourcesFromShell = (shell: typeof NativeSecretSchema.Type, origins: StageO
   Effect.gen(function* canonicalSharedSources() {
     for (const [binding, expected] of [
       ['ONTOS_GATEWAY_ISSUER', shellUrl],
-      ['SPICEDB_ENDPOINT', spicedbGatewayHostname(origins)],
+      ['SPICEDB_ENDPOINT', origins.spicedbHostname],
       ['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT', 'stage'],
     ]) {
       if (shell[binding] !== expected) {
@@ -289,7 +288,7 @@ export const prepareStageReleaseSecrets = Effect.fn('StageReleaseSecrets.prepare
       Effect.mapError(() => failure(BUNDLE_INVALID)),
     );
     yield* rejectDuplicateKeys(text);
-    const origins = yield* stageOrigins(input.shellUrl, input.stageZone);
+    const origins = yield* stageOrigins(input.shellUrl, input.stageZone, input.spicedbHostname);
     const units = yield* servedUnits(input);
     const shell = bundle[SHELL];
     if (!Object.hasOwn(bundle, SHELL) || shell === undefined) {
@@ -401,7 +400,12 @@ const prepareFile = (outputFile: string) =>
       Effect.catchCause(() => Effect.fail(failure(INVENTORY_INVALID))),
     );
     const units = yield* readEdgeUnits.pipe(Effect.catchCause(() => Effect.fail(failure(INVENTORY_INVALID))));
-    const prepared = yield* prepareStageReleaseSecrets({ ...config, intent, units });
+    const prepared = yield* prepareStageReleaseSecrets({
+      ...config,
+      intent,
+      spicedbHostname: (yield* readStageEdgeTopology).spicedbHostname,
+      units,
+    });
     yield* writePreparedStageReleaseSecrets(outputFile, config.runnerTemp, prepared.bundle);
     yield* Console.log(
       prepared.repairedProjects

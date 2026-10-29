@@ -77,7 +77,11 @@ const findCompositionNamespace = (credentials: Omit<CompositionKvCredentials, 'n
   );
 
 /** Copies the original bytes, not a decoded/re-encoded projection. No token or snapshot is logged. */
-export const copyCompositionSnapshot = (source: CompositionKvCredentials, target: CompositionKvCredentials) =>
+export const copyCompositionSnapshot = (
+  source: CompositionKvCredentials,
+  target: CompositionKvCredentials,
+  dryRun: boolean,
+) =>
   Effect.gen(function* copyCompositionSnapshotEffect() {
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
     const response = yield* client.execute(
@@ -87,6 +91,11 @@ export const copyCompositionSnapshot = (source: CompositionKvCredentials, target
     );
     const bytes = new Uint8Array(yield* response.arrayBuffer);
     yield* validateSeedSnapshot(bytes);
+    if (dryRun) {
+      return yield* Console.log(
+        `DRY RUN: copy the verified unexpired active snapshot byte-for-byte from account ${source.accountId} into account ${target.accountId}, namespace ${target.namespaceId}`,
+      );
+    }
     const written = yield* client.execute(
       HttpClientRequest.put(compositionKvUrl(target)).pipe(
         HttpClientRequest.bearerToken(Redacted.value(target.apiToken)),
@@ -116,11 +125,6 @@ export const seedComposition = ({
 }) =>
   Effect.gen(function* seedCompositionEffect() {
     const topology = yield* readStageEdgeTopology;
-    if (dryRun) {
-      return yield* Console.log(
-        `DRY RUN seed-composition: read the old account active value; validate its expiry; PUT the identical bytes into account ${topology.accountId}. No external reads or writes.`,
-      );
-    }
     const source = yield* seedCredentials(oldEnvFile);
     const target = yield* seedCredentials(envFile);
     if (target.accountId !== topology.accountId || source.accountId === target.accountId) {
@@ -143,5 +147,9 @@ export const seedComposition = ({
         message: `${PLACEMENT_LABEL} composition namespace ID does not match the new account; run provision first`,
       });
     }
-    return yield* copyCompositionSnapshot({ ...source, namespaceId: sourceNamespaceId }, { ...target, namespaceId });
+    return yield* copyCompositionSnapshot(
+      { ...source, namespaceId: sourceNamespaceId },
+      { ...target, namespaceId },
+      dryRun,
+    );
   });

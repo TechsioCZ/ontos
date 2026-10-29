@@ -1,4 +1,4 @@
-import { DateTime, Duration, Effect, Layer, Match, Option, Redacted } from 'effect';
+import { DateTime, Duration, Effect, Match, Option, Redacted } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -80,7 +80,7 @@ it.effect('copies an unexpired active snapshot byte-for-byte using separate acco
         ),
       );
     });
-    yield* copyCompositionSnapshot(source, target).pipe(Effect.provideService(HttpClient.HttpClient, client));
+    yield* copyCompositionSnapshot(source, target, false).pipe(Effect.provideService(HttpClient.HttpClient, client));
     expect(requests.map(({ method, token, url }) => [method, token, url])).toEqual([
       [
         'GET',
@@ -97,21 +97,23 @@ it.effect('copies an unexpired active snapshot byte-for-byte using separate acco
   }),
 );
 
-it.effect('refuses an expired snapshot without writing to the new account', () =>
-  Effect.gen(function* refusesExpiredSnapshot() {
-    const bytes = yield* snapshotBytes(true);
-    const methods: string[] = [];
-    const client = HttpClient.make((request) => {
-      methods.push(request.method);
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(bytes)));
-    });
-    yield* copyCompositionSnapshot(source, target).pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
-      Effect.flip,
-    );
-    expect(methods).toEqual(['GET']);
-  }),
-);
+for (const dryRun of [false, true]) {
+  it.effect(`refuses an expired snapshot without writing to the new account (dryRun=${dryRun})`, () =>
+    Effect.gen(function* refusesExpiredSnapshot() {
+      const bytes = yield* snapshotBytes(true);
+      const methods: string[] = [];
+      const client = HttpClient.make((request) => {
+        methods.push(request.method);
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(bytes)));
+      });
+      yield* copyCompositionSnapshot(source, target, dryRun).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.flip,
+      );
+      expect(methods).toEqual(['GET']);
+    }),
+  );
+}
 
 it.effect('rejects invalid UTF-8 and malformed snapshots as typed failures', () =>
   Effect.gen(function* refusesInvalidSnapshot() {
@@ -119,22 +121,6 @@ it.effect('rejects invalid UTF-8 and malformed snapshots as typed failures', () 
       const error = yield* validateSeedSnapshot(bytes).pipe(Effect.flip);
       expect(error.message).toContain('invalid or expired');
     }
-  }),
-);
-
-it.effect('seed dry run needs no credential files or network and never writes', () =>
-  Effect.gen(function* dryRunSeed() {
-    const files = fakeFiles();
-    yield* seedComposition({ dryRun: true, envFile: '/missing/new', oldEnvFile: '/missing/old' }).pipe(
-      Effect.provide(files.layer),
-      Effect.provide(
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die('unexpected network')),
-        ),
-      ),
-    );
-    expect(files.writes.size).toBe(0);
   }),
 );
 
@@ -163,43 +149,52 @@ const seedOptions = {
   oldEnvFile: `${APP_DIRECTORY}/old-credentials`,
 };
 
-it.effect('seeds through explicit old/new credential files after discovering namespaces in each account', () =>
-  Effect.gen(function* seedsFromFiles() {
-    const bytes = yield* snapshotBytes(false);
-    const files = seedFiles();
-    const methods: string[] = [];
-    const tokens: string[] = [];
-    const client = HttpClient.make((request, url) => {
-      methods.push(request.method);
-      tokens.push(request.headers.authorization ?? '');
-      if (url.searchParams.has('page')) {
-        const namespace = url.pathname.includes(source.accountId) ? source : target;
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              result: [{ id: namespace.namespaceId, title: 'ontos-stage-active-application-composition' }],
-              success: true,
-            }),
-          ),
+for (const dryRun of [false, true]) {
+  it.effect(
+    `seeds through explicit old/new credential files after discovering namespaces in each account (dryRun=${dryRun})`,
+    () =>
+      Effect.gen(function* seedsFromFiles() {
+        const bytes = yield* snapshotBytes(false);
+        const files = seedFiles();
+        const methods: string[] = [];
+        const tokens: string[] = [];
+        const client = HttpClient.make((request, url) => {
+          methods.push(request.method);
+          tokens.push(request.headers.authorization ?? '');
+          if (url.searchParams.has('page')) {
+            const namespace = url.pathname.includes(source.accountId) ? source : target;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  result: [{ id: namespace.namespaceId, title: 'ontos-stage-active-application-composition' }],
+                  success: true,
+                }),
+              ),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.method === 'GET' ? bytes : JSON.stringify({ success: true })),
+            ),
+          );
+        });
+        yield* seedComposition({ ...seedOptions, dryRun }).pipe(
+          Effect.provide(files.layer),
+          Effect.provideService(HttpClient.HttpClient, client),
         );
-      }
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(request.method === 'GET' ? bytes : JSON.stringify({ success: true })),
-        ),
-      );
-    });
-    yield* seedComposition(seedOptions).pipe(
-      Effect.provide(files.layer),
-      Effect.provideService(HttpClient.HttpClient, client),
-    );
-    expect(methods).toEqual(['GET', 'GET', 'GET', 'PUT']);
-    expect(tokens).toEqual([SOURCE_AUTHORIZATION, TARGET_AUTHORIZATION, SOURCE_AUTHORIZATION, TARGET_AUTHORIZATION]);
-    expect(files.writes.size).toBe(0);
-  }),
-);
+        expect(methods).toEqual(dryRun ? ['GET', 'GET', 'GET'] : ['GET', 'GET', 'GET', 'PUT']);
+        expect(tokens).toEqual([
+          SOURCE_AUTHORIZATION,
+          TARGET_AUTHORIZATION,
+          SOURCE_AUTHORIZATION,
+          ...(dryRun ? [] : [TARGET_AUTHORIZATION]),
+        ]);
+        expect(files.writes.size).toBe(0);
+      }),
+  );
+}
 
 it.effect('refuses missing composition IDs and mismatched new-account credentials before any HTTP request', () =>
   Effect.gen(function* rejectsUnsafeSeedInputs() {

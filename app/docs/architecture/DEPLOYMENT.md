@@ -502,87 +502,85 @@ first: it needs no secrets, so it also runs for forks. In the same pull request 
 2. Add its id to `units` in `topology/cloudflare-placement.json`, and add its service-binding
    targets to `unitServiceBindings` when it calls other placed units.
 3. Set `buildEnvironment.ULTRAMODERN_PUBLIC_URL_<UNIT>` to its stage origin,
-   `https://ontos-stage-<unit>.<STAGE_ZONE>`.
+   `https://ontos-stage-<unit>.<zone>` using the zone in `stage-edge.json`.
 
-Before the merge, an operator runs `node scripts/ops/cloudflare-stage-cutover.mts worker-secrets`
-from the pull request's checkout, so the new Worker holds its runtime secrets when the stage deploy
-ships it, and runs `verify` after that deploy. A vertical needs no new GitHub variables or secrets.
+The immutable release receives its runtime secrets through `prepare-stage-release-secrets.mts`;
+provisioning never writes secrets to legacy `app-<unit>` Workers. Run `verify` after the demo deploy.
+A vertical needs no new GitHub variables or secrets.
 
 ## Stage cut-over and Zerops service retirement
 
-Two operator scripts own the one-time account and service changes around the Cloudflare stage. Run
-them from `app/` on a clean `main`. Both read before they write, so a re-run after a partial failure
-converges, and `--dry-run` performs every read and prints each mutation instead of running it. Zerops
-is reached through the locally authenticated `zcli` and GitHub through `gh`. Secret values stay in
-memory: they reach Cloudflare in request bodies, Wrangler and `zcli` on standard input, and never
-appear in a command line or in the output.
-
-`node scripts/ops/cloudflare-stage-cutover.mts <step> [--dry-run] [--env-file <path>]` reads
-`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `STAGE_ZONE` and `STAGE_SHELL_HOSTNAME` from the
-environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The optional
-`CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives. Without it, CI receives
-`CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
-service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
-Certificates: Edit" for the Origin CA.
-`provision` creates the composition KV namespace, and CI writes its `active` key with the
-`stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
-
-The same file holds the Shell's two secrets, because the Zerops Shell they used to live on is
-retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
-`shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK` (the Shell's Ed25519 gateway signing key as a private JWK,
-in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the file also serves
-`stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
-sensitive project variable only masked, and every service would inherit it. The Worker secrets step
-and `verify` fail when either is missing. A new value takes effect only after `worker-secrets`, which
-gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
-them:
+Run the operator scripts from `app/` on the reviewed `demo/sales-crm` revision. Stage is deployed
+by `stage-demo-deploy.yml`, not the main-branch gates workflow. Provisioning is read-before-write:
+re-runs reuse matching objects and stop on incompatible VPC, Hyperdrive or TLS configuration.
+`--dry-run` still reads live state and validates prerequisites, but prints each planned mutation
+instead of performing it. It requires valid credentials and network access; `verify --dry-run`
+checks the same prerequisites as `verify`, and `activate --dry-run` verifies before reporting the
+`DEPLOY_TARGET=cloudflare` and `OUTBOX_WORKER_MODE=host` changes. Zerops uses authenticated `zcli`
+and GitHub uses `gh`; secret values never appear in arguments or logs.
 
 ```sh
-node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519').privateKey.export({format:'jwk'});const kid=c.createHash('sha256').update(JSON.stringify({crv:k.crv,kty:k.kty,x:k.x})).digest('base64url');console.log('shellsuperapp_BETTER_AUTH_SECRET='+c.randomBytes(48).toString('base64url'));console.log(\"shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK='\"+JSON.stringify({alg:'EdDSA',crv:k.crv,d:k.d,kid,kty:k.kty,use:'sig',x:k.x})+\"'\")" >> ~/.cloudflare-ontos-stage-token
+node scripts/ops/cloudflare-stage-cutover.mts <step> --env-file <credentials-path> [--dry-run]
+node scripts/ops/cloudflare-stage-cutover.mts seed-composition \
+  --old-env-file <old-account-credentials> --env-file <new-account-credentials> [--dry-run]
 ```
 
-- `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
-  and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
-  self-signed certificate for `spicedb`, `localhost` and `127.0.0.1` that Node clients pin. The HTTP
-  gateway pair `SPICEDB_HTTP_TLS_CERT`/`SPICEDB_HTTP_TLS_KEY` is a Cloudflare Origin CA certificate
-  for `ontos-stage-spicedb.<STAGE_ZONE>`, the server name Workers VPC verifies; it needs no DNS record.
-  A pair that exists and holds is kept. A partial pair, a wrong name, a mismatched key or a
-  certificate expiring within 30 days fails with the pair to remove, instead of rotating silently.
-- `provision` runs every step in dependency order. It creates or reuses the remotely managed Tunnel
-  `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
-  as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
-  stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
-  the Workers VPC services `ontos-stage-db18` (tcp `db18.zerops:5432`, certificate verification
-  `disabled`, because Zerops Postgres serves a self-signed certificate and the hop stays inside the
-  Tunnel and the project network) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, certificate
-  verification `verify_full`). cloudflared resolves fully qualified names, and Zerops answers only a
-  service's `<hostname>.zerops` name that way. Then it creates Hyperdrive `ontos-stage-runtime`: role
-  `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
-  `db18_password`. Service values such as that password come from the service's data through the
-  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
-  The db18 hop is encrypted but not certificate-checked; see "Why db18 TLS is not CA-verified" below.
-  It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
-  first publication. It writes the IDs
-  and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
-  `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
-  placed Worker's secrets with `wrangler secret bulk`: the Shell's secrets from the settings file, the
-  SpiceDB preshared key from Zerops, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
-  reaches the Worker's runtime. A Worker's `SPICEDB_ENDPOINT` is the gateway name
-  `ontos-stage-spicedb.<STAGE_ZONE>`, which the VPC service verifies. An existing object that differs from the runbook fails the step instead of being reused.
-- `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`
-  settings (see [Stage cost guards](#stage-cost-guards)).
-- `resume` turns the cost kill switch off again.
-- `worker-secrets` repeats only the Worker secrets step.
-- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
-  SpiceDB TLS pairs must exist and hold. Both VPC
-  services and Hyperdrive must match the runbook, the composition KV namespace must exist, and the
-  reviewed `buildEnvironment` must name them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
-  `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets
-  Cloudflare, the composition KV namespace must also hold key `active`, which the stage deploy's
-  composition sync writes. Before activation `verify` only reports that check as waiting, so run it again after
-  `activate` and the full deploy, and move DNS only when it passes.
-- `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
-  `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
+`--env-file` is required, with no inferred personal-token path. File values take precedence over
+ambient environment variables. It contains `CLOUDFLARE_API_TOKEN`, `ZEROPS_TOKEN`,
+`STAGE_ACCESS_EMAILS` (comma-separated notification emails), and `DATABASE_ADMIN_URL` when creating
+database login roles from a host on the Zerops VPN. `STAGE_ACCESS_ENFORCE` defaults to `false`.
+Optional `CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives; otherwise CI receives
+the provisioning token. An optional `CLOUDFLARE_ACCOUNT_ID` must equal the reviewed topology.
+Shell signing/authentication secrets belong to the immutable release bundle, not this settings file.
+
+`topology/stage-edge.json` is the public topology source: `accountId`, `workersDevSubdomain`, `zone`,
+`shellHostname`, `storefrontHostname`, `spicedbHostname`, `emailSender`, `storefrontCatalogKvId`.
+Provision and verify read the account's actual workers.dev subdomain and fail if it differs from
+`workersDevSubdomain`; resolve the provisional value before bootstrap. Hostnames, TLS names and
+email are not credential-file overrides. Provisioning fills `storefrontCatalogKvId`, preserving
+other fields. The reviewed placement starts with empty account-specific KV/Hyperdrive/VPC IDs;
+readiness and builds reject them until provisioning writes the new account's IDs.
+
+- `spicedb-tls` ensures sensitive gRPC and HTTP TLS pairs on Zerops `spicedb`; provision runs it
+  before creating the tunnel. gRPC uses `spicedb`, `localhost`, `127.0.0.1`; the HTTP Origin CA
+  certificate uses exactly `stage-edge.json` `spicedbHostname`, also the Workers' `SPICEDB_ENDPOINT`.
+  It needs no DNS record. Valid pairs are kept; partial, mismatched, wrong-name or nearly expired
+  pairs fail instead of being silently rotated. Origin CA needs Zone SSL and Certificates Edit.
+- `database-identities` creates missing dedicated passwords on `migrator` and ensures their login
+  roles. Provision runs it before creating Hyperdrive configurations.
+- `provision` first validates workers.dev and the CI token's Zone Read permission. It creates or
+  reuses remotely managed Tunnel `ontos-stage`, imports missing `cloudflared` and `outboxworkerhost`
+  services, and records their `ZEROPS_*_SERVICE_ID` stage variables. An existing connector receives
+  this account's `TUNNEL_TOKEN` when different. It deploys only after token replacement, when the
+  service is `READY_TO_DEPLOY`, or to recover a down/inactive tunnel; a connected,
+  converged connector is not restarted. It waits for tunnel health before continuing.
+  It ensures VPC services `ontos-stage-db18` (TCP `db18.zerops:5432`, certificate verification
+  disabled inside the tunnel) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, `verify_full`).
+  Hyperdrive caching is disabled: runtime role `ontos_runtime` has origin connection limit **60**,
+  Party Registry **10**, gateway issuer **5**. Current origin credentials are reapplied on re-runs.
+  It ensures composition KV `ontos-stage-active-application-composition` and the initially empty,
+  price-free storefront cache `ontos-stage-akros-storefront-catalog`. It writes KV/Hyperdrive/VPC
+  IDs, public URLs and email sender into `cloudflare-placement.json`, and the storefront KV ID into
+  `stage-edge.json`. Commit both reviewed topology files before building a release.
+  It configures `stage-edge` variables `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_DEV_SUBDOMAIN`,
+  `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, and secret `CLOUDFLARE_API_TOKEN`, then cost guards.
+  It never runs `wrangler secret bulk` on legacy Workers.
+- `seed-composition` requires both explicit credential files, each containing `CLOUDFLARE_ACCOUNT_ID`
+  and `CLOUDFLARE_API_TOKEN`; it ignores ambient credentials. The accounts must differ and the new
+  account must match topology. It discovers composition namespaces and checks the new namespace ID
+  against placement, then validates the old `active` snapshot and copies its original bytes without
+  re-encoding. Expired or invalid snapshots fail before PUT. Dry run performs the same reads and
+  validation but never PUTs. Refresh the source snapshot immediately before copying; never seed the
+  storefront catalog cache. Both provisioning and CI need Workers KV Storage Edit.
+- `cost-guards` converges Access, usage notification and the disabled kill switch, including the
+  storefront hostname. `resume --env-file <credentials-path>` turns the switch off after investigation.
+- `verify` changes nothing. It checks tunnel/TLS/VPC/Hyperdrive state, composition KV, storefront KV
+  and its nonempty reviewed ID, placement IDs/URLs/email, the derived stage-edge variables, cost
+  guards and the latest successful stage-edge deployment for the checked-out revision. Uncommitted
+  placement or stage-edge topology changes fail. It does not inspect legacy Worker names or secrets.
+  Once stage targets Cloudflare it also requires composition KV key `active`; before activation it
+  reports that check as pending. Verify again after the full demo deploy, before moving DNS.
+- `activate` verifies first, then sets stage `OUTBOX_WORKER_MODE=host` and `DEPLOY_TARGET=cloudflare`.
 
 ### Why db18 TLS is not CA-verified
 
@@ -672,7 +670,7 @@ To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete the three applicatio
 dashboard; `cost-guards` never deletes them.
 
 To resume after the kill switch trips, find out why, then run
-`node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
+`node scripts/ops/cloudflare-stage-cutover.mts resume --env-file <credentials-path>` (the check trips it again within the hour if
 usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
 guards, delete the kill switch rule and the notification in the dashboard and remove the Access
 applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
@@ -681,7 +679,9 @@ The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Wor
 Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit, Access: Service Tokens
 Edit, Notifications Edit, Account Analytics Read and Account Settings Read. Zone: Zone Read, DNS
 Edit, Workers Routes Edit and Zone WAF Edit. The narrower `stage-edge` token additionally needs
-Account Analytics Read and Zone WAF Edit for the hourly check.
+Account Analytics Read, **Zone Read**, and Zone WAF Edit for the hourly check. Provision and verify
+exercise Zone Read using that narrower token, not just the provisioning token. Workers Scripts Read
+(or Edit) permits validating the actual workers.dev subdomain.
 
 ### Zerops service retirement
 

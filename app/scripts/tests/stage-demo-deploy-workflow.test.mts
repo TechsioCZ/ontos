@@ -26,6 +26,7 @@ import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts'
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { gatewayPublicJwksFor, workerSecretPlan } from '../ops/cloudflare-stage-cutover.mts';
 import { readEdgeUnits } from '../ops/stage-edge-units.mts';
+import { StageEdgeTopologySchema } from '../ops/stage-edge-topology.mts';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -225,8 +226,11 @@ const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
 const indexOf = (steps: readonly { readonly name: string }[], name: string) =>
   steps.findIndex((step) => step.name === name);
-const TEST_STAGE_URL = 'https://stage.example.test';
-const TEST_STAGE_ZONE = 'example.test';
+const TEST_STAGE_TOPOLOGY = Schema.decodeUnknownSync(StageEdgeTopologySchema)(
+  readFileSync(new URL('../../topology/stage-edge.json', import.meta.url), 'utf-8'),
+);
+const TEST_STAGE_URL = `https://${TEST_STAGE_TOPOLOGY.shellHostname}`;
+const TEST_STAGE_ZONE = TEST_STAGE_TOPOLOGY.zone;
 const RUNNER_TEMP_CONTEXT = 'runner.temp';
 const SECRET_CLEANUP_CONDITION = "always() && steps.release-secrets.outputs.directory != ''";
 const OUTBOX_ONLY_SUCCESS = 'outbox-only-success';
@@ -482,7 +486,11 @@ const runnerBundleFixture = Effect.gen(function* validRunnerBundleFixture() {
   const secret = Redacted.make('synthetic-runner-shared-service-secret');
   const plan = workerSecretPlan(
     units,
-    { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+    {
+      shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+      spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+      stageZone: TEST_STAGE_ZONE,
+    },
     {
       betterAuthSecret: secret,
       commerceCustomerContextGatewayApiKey: secret,
@@ -875,7 +883,11 @@ for (const example of secretInventoryExamples) {
         const secret = Redacted.make(SYNTHETIC_SECRET);
         const plan = workerSecretPlan(
           units,
-          { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+          {
+            shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+            spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+            stageZone: TEST_STAGE_ZONE,
+          },
           {
             betterAuthSecret: secret,
             commerceCustomerContextGatewayApiKey: secret,

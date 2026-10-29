@@ -689,6 +689,7 @@ jobs:
           import { ApplicationReleaseIntentSchema } from './scripts/application-release-intent.mts';
           import { workerReleaseSecretNames, workerSecretPlan } from './scripts/ops/cloudflare-stage-cutover.mts';
           import { readEdgeUnits } from './scripts/ops/stage-edge-units.mts';
+          import { readStageEdgeTopology } from './scripts/ops/stage-edge-topology.mts';
 
           const failures = [];
           const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -714,7 +715,8 @@ jobs:
             // Values are unused: only the native planner's binding names are inspected.
             const nameOnly = Redacted.make('name-projection-only');
             const hostname = new URL(process.env.STAGE_SHELL_URL).hostname;
-            const plan = workerSecretPlan(served, { shellHostname: hostname, stageZone: process.env.STAGE_ZONE }, {
+            const { spicedbHostname } = await Effect.runPromise(readStageEdgeTopology.pipe(Effect.provide(NodeServices.layer)));
+            const plan = workerSecretPlan(served, { shellHostname: hostname, spicedbHostname, stageZone: process.env.STAGE_ZONE }, {
               betterAuthSecret: nameOnly,
               commerceCustomerContextGatewayApiKey: nameOnly,
               commerceMarketCatalogGatewayApiKey: nameOnly,
