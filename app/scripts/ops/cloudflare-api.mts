@@ -73,8 +73,6 @@ const OriginCertificateSchema = Schema.Struct({
 });
 export type CloudflareOriginCertificate = typeof OriginCertificateSchema.Type;
 
-const WorkerScriptSchema = Schema.Struct({ id: Schema.String });
-
 const ZoneSchema = Schema.Struct({ id: Schema.NonEmptyString, name: Schema.String });
 
 const RulesetSummarySchema = Schema.Struct({ id: Schema.NonEmptyString, kind: Schema.String, phase: Schema.String });
@@ -226,7 +224,6 @@ const WORKERS_USAGE_QUERY = `query WorkersUsage($accountTag: string!, $since: Ti
     }
   }
 }`;
-const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
 const KvNamespaceSchema = Schema.Struct({ id: Schema.NonEmptyString, title: Schema.String });
 export type CloudflareKvNamespace = typeof KvNamespaceSchema.Type;
@@ -438,9 +435,8 @@ export interface CloudflareApiService {
     rule: RulesetRuleSpec,
   ) => Effect.Effect<CloudflareRuleset, CloudflareApiError>;
   readonly vpcServices: Effect.Effect<readonly CloudflareVpcService[], CloudflareApiError>;
-  readonly workerScriptNames: Effect.Effect<ReadonlySet<string>, CloudflareApiError>;
-  /** The names, never the values, of a Worker's secrets. */
-  readonly workerSecretNames: (scriptName: string) => Effect.Effect<ReadonlySet<string>, CloudflareApiError>;
+  /** The account's assigned workers.dev subdomain (requires Workers Scripts Read). */
+  readonly workersDevSubdomain: Effect.Effect<string, CloudflareApiError>;
   /** The whole account's Workers invocations and CPU time from `since` to `until` (at most a month), per script. */
   readonly workersUsage: (since: DateTime.Utc, until: DateTime.Utc) => Effect.Effect<WorkersUsage, CloudflareApiError>;
   /** The zone rulesets; a phase entrypoint has kind `zone`. */
@@ -466,8 +462,8 @@ const describeErrors = (errors: Option.Option<readonly { readonly code: number; 
     .join('; ');
 
 const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
-  const client = yield* HttpClient.HttpClient;
   const { accountId, apiToken } = yield* CloudflareCredentials;
+  const client = yield* HttpClient.HttpClient;
   const accountUrl = (path: string) => new URL(`${CLOUDFLARE_API_URL}/accounts/${accountId}${path}`);
   const zoneUrl = (zoneId: string, path: string) => new URL(`${CLOUDFLARE_API_URL}/zones/${zoneId}${path}`);
   const authorize = (request: HttpClientRequest.HttpClientRequest) =>
@@ -694,17 +690,11 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
         `ruleset rule ${spec.ref} update`,
       ),
     vpcServices: list('/connectivity/directory/services', VpcServiceSchema, 'Workers VPC service list'),
-    workerScriptNames: call(
-      HttpClientRequest.get(accountUrl('/workers/scripts')),
-      Schema.Array(WorkerScriptSchema),
-      'Worker script list',
-    ).pipe(Effect.map((scripts) => new Set(scripts.map(({ id }) => id)))),
-    workerSecretNames: (scriptName) =>
-      call(
-        HttpClientRequest.get(accountUrl(`/workers/scripts/${encodeURIComponent(scriptName)}/secrets`)),
-        Schema.Array(WorkerSecretSchema),
-        `Worker ${scriptName} secret list`,
-      ).pipe(Effect.map((secrets) => new Set(secrets.map(({ name }) => name)))),
+    workersDevSubdomain: call(
+      HttpClientRequest.get(accountUrl('/workers/subdomain')),
+      Schema.Struct({ subdomain: Schema.NonEmptyString }),
+      'workers.dev subdomain read',
+    ).pipe(Effect.map(({ subdomain }) => subdomain)),
     workersUsage,
     zoneRulesets: (zoneId) =>
       call(HttpClientRequest.get(zoneUrl(zoneId, '/rulesets')), Schema.Array(RulesetSummarySchema), 'ruleset list'),
@@ -712,3 +702,9 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
 });
 
 export const CloudflareApiLive = Layer.effect(CloudflareApi, makeCloudflareApi);
+
+/** Independently scoped Zone Read probe for a narrower token, without reusing the account API Layer. */
+export const CloudflareZoneApi = Context.Service<Pick<CloudflareApiService, 'findZoneId'>>(
+  '@app/scripts/ops/cloudflare-api/CloudflareZoneApi',
+);
+export const CloudflareZoneApiLive = Layer.effect(CloudflareZoneApi, makeCloudflareApi);

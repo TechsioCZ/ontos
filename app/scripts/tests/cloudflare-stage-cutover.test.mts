@@ -1,20 +1,34 @@
 import { readFileSync } from 'node:fs';
 
-import { Array as Arr, ConfigProvider, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+
+import { Array as Arr, Config, ConfigProvider, Console, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
+import { Command } from 'effect/cli';
 import { expect, it, rs } from 'effect-rstest';
 
 import { CloudflareApiError } from '../ops/cloudflare-api-error.mts';
-import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
+import {
+  CloudflareApi,
+  CloudflareApiLive,
+  CloudflareCredentials,
+  CloudflareZoneApiLive,
+} from '../ops/cloudflare-api.mts';
 import type { CloudflareVpcService } from '../ops/cloudflare-api.mts';
 import {
   CutoverConfiguration,
   STAGE_HYPERDRIVES,
+  STAGE_TUNNEL_NAME,
   ensureHyperdrives,
+  ensureTunnel,
+  ensureZeropsDataLayer,
+  loadCutoverSettings,
+  stepCommand,
+  verifyStageEdgeZoneAccess,
+  ensureStorefrontCatalogKv,
   ensureStageDatabaseIdentities,
   activate,
   provision,
-  spicedbGatewayHostname,
   publicOrigin,
   STAGE_VPC_SERVICES,
   stageBuildEnvironment,
@@ -24,6 +38,7 @@ import {
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
+import { parseStageEdgeConfig } from '../ci/stage-edge.mts';
 import { DatabaseLoginRoles } from '../ops/database-identities.mts';
 import { DATABASE_IDENTITY_SECRETS, migratorSecretReference } from '../ops/database-identity-secrets.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
@@ -46,7 +61,8 @@ import {
   APP_DIRECTORY,
   FAKE_REVISION,
   fakeCloudflareAccount,
-  fakeFiles,
+  fakeFiles as fixtureFiles,
+  fakeKvNamespaceId,
   fakeStage,
   fakeZeropsApi,
   mutatingCommands,
@@ -57,6 +73,10 @@ import type { FakeCloudflareAccount, FakeFiles, FakeStage, FakeZeropsApi } from 
 const SHELL_ORIGIN = 'https://app.stage.example.com';
 const SHELL_GATEWAY_BASE = `${SHELL_ORIGIN}/shell-super-app-api`;
 const CI_TOKEN = 'ci-token-secret';
+const TUNNEL_TOKEN = 'tunnel-connector-token';
+const EXISTING_CONNECTOR_ID = 'existing-connector';
+const EXISTING_HOST_ID = 'existing-host';
+const SERVICE_IMPORT = 'service-import';
 const DATABASE_CREDENTIAL = 'db-password-secret';
 const AUTH_SECRET = 'better-auth-secret';
 const PRIVATE_JWK = JSON.stringify({
@@ -81,7 +101,14 @@ const PUBLIC_JWKS = JSON.stringify({
   ],
 });
 const COMPOSITION_KV = 'ontos-stage-active-application-composition';
-const COMPOSITION_KV_ID = 'kv-1';
+const COMPOSITION_KV_ID = fakeKvNamespaceId(1);
+const STOREFRONT_KV_ID = 'f'.repeat(32);
+const UNREVIEWED_KV_ID = 'e'.repeat(32);
+// The reviewed ID whose namespace was deleted afterwards.
+const DELETED_KV_ID = STOREFRONT_KV_ID;
+const ACCOUNT_ID = 'a'.repeat(32);
+const STOREFRONT_KV = 'ontos-stage-akros-storefront-catalog';
+const TUNNEL_PATH = '/cfd_tunnel';
 const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
 const CRM_WORKER = 'app-crm';
 const MARKET_WORKER = 'app-commerce-market-catalog';
@@ -115,15 +142,34 @@ const STAGE_EDGE = 'stage-edge';
 
 const settings: CutoverSettings = {
   accessEmails: ['ops@example.com'],
-  accountId: 'account-1',
+  accountId: ACCOUNT_ID,
   apiToken: Redacted.make('lead-token-secret'),
+  emailSender: 'noreply@app.stage.example.com',
   enforceAccess: false,
   projectId: STAGE_ZEROPS_PROJECT_ID,
   repository: 'TechsioCZ/ontos',
   shellHostname: 'app.stage.example.com',
+  spicedbHostname: 'ontos-stage-spicedb.stage.example.com',
   stageEdgeApiToken: Redacted.make(CI_TOKEN),
   stageZone: 'stage.example.com',
+  storefrontHostname: 'ontos-stage-akros.stage.example.com',
+  workersDevSubdomain: 'stage-example',
 };
+
+const fakeFiles = (overrides: Readonly<Record<string, string>> = {}) =>
+  fixtureFiles({
+    'topology/stage-edge.json': JSON.stringify({
+      accountId: settings.accountId,
+      emailSender: settings.emailSender,
+      shellHostname: settings.shellHostname,
+      spicedbHostname: settings.spicedbHostname,
+      storefrontCatalogKvId: '',
+      storefrontHostname: settings.storefrontHostname,
+      workersDevSubdomain: settings.workersDevSubdomain,
+      zone: settings.stageZone,
+    }),
+    ...overrides,
+  });
 
 const VERTICAL_HOSTS = [
   'assortment',
@@ -173,7 +219,7 @@ const SECRETS = [
   CRM_PARTY_INTAKE_API_KEY,
   MARKET_GATEWAY_API_KEY,
   PRICING_GATEWAY_API_KEY,
-  'tunnel-connector-token',
+  TUNNEL_TOKEN,
   'service-token-secret',
   ...Object.values(IDENTITY_PASSWORDS),
 ];
@@ -183,18 +229,23 @@ const GATEWAY_HOSTNAME = 'ontos-stage-spicedb.stage.example.com';
 const SPICEDB_TLS = spicedbTlsSecrets({ gatewayHostname: GATEWAY_HOSTNAME });
 
 const PLACEMENT = `${APP_DIRECTORY}/topology/cloudflare-placement.json`;
-const ACCOUNT_PATH = '/client/v4/accounts/account-1';
+const ACCOUNT_PATH = `/client/v4/accounts/${ACCOUNT_ID}`;
 const DATA_PLANE_PATH = /^\/(?:cfd_tunnel|connectivity|hyperdrive|storage)/u;
 const JsonRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 const PlacementJson = Schema.fromJsonString(
   Schema.Struct({ buildEnvironment: Schema.Record(Schema.String, Schema.String), units: Schema.Array(Schema.String) }),
 );
-const StringRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 
 /** stage-edge as the cost guards leave it: the zone ID and the Access service token credentials. */
 const GUARDED_STAGE_EDGE = {
   secrets: { [STAGE_EDGE]: ['CLOUDFLARE_ACCESS_CLIENT_ID', 'CLOUDFLARE_ACCESS_CLIENT_SECRET'] },
-  variables: { [STAGE_EDGE]: { CLOUDFLARE_STAGE_ZONE_ID: 'zone-1' } },
+  variables: {
+    [STAGE_EDGE]: {
+      CLOUDFLARE_ACCOUNT_ID: settings.accountId,
+      CLOUDFLARE_STAGE_ZONE_ID: 'zone-1',
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `https://api.cloudflare.com/client/v4/accounts/${settings.accountId}/storage/kv/namespaces/${COMPOSITION_KV_ID}/values/active`,
+    },
+  },
 };
 
 /**
@@ -268,9 +319,19 @@ const run = <A, E, R>(
           ),
           Layer.provide(fakes.account.layer),
         ),
+        CloudflareZoneApiLive.pipe(
+          Layer.provide(
+            Layer.succeed(CloudflareCredentials, {
+              accountId: settings.accountId,
+              apiToken: settings.stageEdgeApiToken,
+            }),
+          ),
+          Layer.provide(fakes.account.layer),
+        ),
         Layer.succeed(CutoverConfiguration, settings),
         Layer.succeed(OpsMode, { dryRun: fakes.dryRun ?? false }),
         fakes.stage.layer,
+        fakes.account.layer,
         (fakes.zerops ?? fakeZeropsApi(fakes.stage)).layer,
         fakes.files.layer,
         (fakes.roles ?? fakeLoginRoles()).layer,
@@ -325,7 +386,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     expect(
       posts.map(({ body, url }) => [url.pathname.replace(ACCOUNT_PATH, ''), Option.getOrNull(body)]),
     ).toStrictEqual([
-      ['/cfd_tunnel', { config_src: 'cloudflare', name: 'ontos-stage' }],
+      [TUNNEL_PATH, { config_src: 'cloudflare', name: STAGE_TUNNEL_NAME }],
       [
         '/connectivity/directory/services',
         {
@@ -359,7 +420,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
             service_id: 'vpc-1',
             user: 'ontos_runtime',
           },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
       ],
       [
@@ -393,6 +454,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
         },
       ],
       ['/storage/kv/namespaces', { title: COMPOSITION_KV }],
+      ['/storage/kv/namespaces', { title: STOREFRONT_KV }],
     ]);
     for (const request of account.requests) {
       expect(request.url.origin).toBe('https://api.cloudflare.com');
@@ -441,25 +503,24 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     });
     expect(placement.units).toHaveLength(expectedUnitCount);
     expect(stage.environments.has(STAGE_EDGE)).toBe(true);
-    expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe('account-1');
+    expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe(ACCOUNT_ID);
     expect(stage.inputs.find(({ command }) => command.startsWith('gh secret set CLOUDFLARE_API_TOKEN'))?.stdin).toBe(
       CI_TOKEN,
     );
 
-    // Every placed Worker receives its secrets through `wrangler secret bulk` on stdin.
-    const bulk = stage.inputs.filter(({ command }) => command.includes('wrangler secret bulk'));
-    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(expectedUnitCount);
-    const shell = bulk.find(({ command }) => command.endsWith('--name app-shell-super-app'));
-    expect(Schema.decodeUnknownSync(StringRecord)(shell?.stdin)).toStrictEqual({
-      BETTER_AUTH_SECRET: AUTH_SECRET,
-      BETTER_AUTH_TRUSTED_ORIGINS: SHELL_ORIGIN,
-      BETTER_AUTH_URL: SHELL_ORIGIN,
-      [DEPLOYMENT_ENVIRONMENT]: 'stage',
-      ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN,
-      ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
-      SPICEDB_ENDPOINT: GATEWAY_HOSTNAME,
-      SPICEDB_PRESHARED_KEY: SPICEDB_KEY,
-    });
+    expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
+    // The workers.dev subdomain lives only in topology/stage-edge.json; it is checked, never copied into a variable.
+    expect(stage.variables.get(STAGE_EDGE)?.has('CLOUDFLARE_WORKERS_DEV_SUBDOMAIN')).toBe(false);
+    expect(stage.variables.get(STAGE_EDGE)?.get('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL')).toBe(
+      `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${COMPOSITION_KV_ID}/values/active`,
+    );
+    expect(placement.buildEnvironment.ULTRAMODERN_EMAIL_SENDER).toBe(settings.emailSender);
+    expect(placement.buildEnvironment.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT).toBe(
+      `https://${settings.storefrontHostname}`,
+    );
+    expect(
+      parseStageEdgeConfig(files.writes.get(`${APP_DIRECTORY}/topology/stage-edge.json`) ?? '').storefrontCatalogKvId,
+    ).toBe(fakeKvNamespaceId(2));
     expectNoSecretInArguments(stage, account);
     const visible = [
       ...stage.commands.map(({ args, command }) => [command, ...args].join(' ')),
@@ -548,7 +609,7 @@ it.effect('refuses to reuse an identity Hyperdrive config with the shared limit 
           id: OLD_HYPERDRIVE_ID,
           name: PARTY_REGISTRY_HYPERDRIVE,
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
       ],
     });
@@ -558,7 +619,7 @@ it.effect('refuses to reuse an identity Hyperdrive config with the shared limit 
     const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
     expect(error.message).toContain(
-      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 40, user ontos_runtime',
+      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 60, user ontos_runtime',
     );
     expect(files.writes.size).toBe(0);
   }),
@@ -594,7 +655,7 @@ it.effect('creates the SpiceDB TLS secrets first on a stage without them', () =>
 
     yield* run(provision, { account, files, stage, zerops });
 
-    expect(spicedbGatewayHostname(settings)).toBe(GATEWAY_HOSTNAME);
+    expect(settings.spicedbHostname).toBe(GATEWAY_HOSTNAME);
     const originCertificate = account.requests.find(({ method }) => method === 'POST');
     expect(originCertificate?.url.href).toBe('https://api.cloudflare.com/client/v4/certificates');
     expect(originCertificate?.body.pipe(Option.getOrNull)).toMatchObject({
@@ -654,13 +715,13 @@ it.effect('reuses every existing object on a re-run and creates nothing twice', 
     const files = fakeFiles();
     yield* run(provision, { account, files, stage });
     const firstPosts = account.requests.filter(({ method }) => method === 'POST').length;
-    const firstImports = stage.commands.filter(({ args }) => args.includes('service-import')).length;
+    const firstImports = stage.commands.filter(({ args }) => args.includes(SERVICE_IMPORT)).length;
     const firstVariableSets = stage.commands.filter(({ args }) => args[0] === 'variable' && args[1] === 'set').length;
 
     yield* run(provision, { account, files, stage });
 
     expect(account.requests.filter(({ method }) => method === 'POST')).toHaveLength(firstPosts);
-    expect(stage.commands.filter(({ args }) => args.includes('service-import'))).toHaveLength(firstImports);
+    expect(stage.commands.filter(({ args }) => args.includes(SERVICE_IMPORT))).toHaveLength(firstImports);
     expect(stage.commands.filter(({ args }) => args[0] === 'variable' && args[1] === 'set')).toHaveLength(
       firstVariableSets,
     );
@@ -816,7 +877,7 @@ it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
           id: OLD_HYPERDRIVE_ID,
           name: RUNTIME_HYPERDRIVE,
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
       ],
     });
@@ -844,7 +905,7 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
           id: OLD_HYPERDRIVE_ID,
           name: RUNTIME_HYPERDRIVE,
           origin: { database: 'postgres', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
       ],
     });
@@ -858,52 +919,12 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
   }),
 );
 
-it.effect('refuses a Shell gateway key that is not an Ed25519 private JWK', () =>
-  Effect.gen(function* refusesMalformedGatewayKey() {
+it.effect('provisions without any immutable release secrets or legacy Worker writes', () =>
+  Effect.gen(function* provisionsWithoutWorkerSecrets() {
     const account = fakeCloudflareAccount({});
     const stage = newStage();
-    const settingsFile = { ...SHELL_SETTINGS, shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: '{"kty":"OKP"}' };
-
-    const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
-
-    expect(error.message).toBe('the Shell ONTOS_GATEWAY_PRIVATE_JWK is not an Ed25519 private JWK');
+    yield* run(provision, { account, files: fakeFiles(), settingsFile: {}, stage });
     expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
-  }),
-);
-
-it.effect('fails before setting any Worker secret when the settings file lacks a Shell secret', () =>
-  Effect.gen(function* requiresShellSecrets() {
-    const account = fakeCloudflareAccount({});
-    const stage = newStage();
-    const settingsFile = { shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK };
-
-    const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
-
-    expect(error.message).toBe(
-      'the Shell secret shellsuperapp_BETTER_AUTH_SECRET is missing; set it in the settings file (see DEPLOYMENT.md, Stage cut-over)',
-    );
-    expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
-  }),
-);
-
-it.effect('requires every caller key before writing any Worker secret', () =>
-  Effect.gen(function* requiresCallerGatewayKeys() {
-    for (const missingKey of [
-      'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY',
-      'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
-      'ONTOS_CRM_PARTY_INTAKE_API_KEY',
-      'ONTOS_PRICING_GATEWAY_API_KEY',
-    ]) {
-      const account = fakeCloudflareAccount({});
-      const stage = newStage();
-      const settingsFile = Object.fromEntries(Object.entries(SHELL_SETTINGS).filter(([key]) => key !== missingKey));
-      const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
-      expect(error.message).toBe(
-        'the workload gateway API keys are missing; provide all four caller keys in the settings',
-      );
-      expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
-      expectNoSecretInArguments(stage, account);
-    }
   }),
 );
 
@@ -926,7 +947,7 @@ it.effect('fails before importing when zerops-import.yaml does not declare cloud
 
 const readRepositoryFile = (path: string) => readFileSync(`${APP_DIRECTORY}/${path}`, 'utf-8');
 
-/** Each placed Worker's planned runtime secret names, the ones `provision` sets and `verify` requires. */
+/** Native runtime secret names used by immutable release preparation. */
 const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
   const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
   const secret = Redacted.make('value');
@@ -985,7 +1006,10 @@ it.effect(
 /** Every cost guard as `provision` leaves it, with the kill switch off. */
 const guardedAccount = Effect.gen(function* guardedAccountEffect() {
   const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
-  const hostnames = units.map((unit) => new URL(publicOrigin(unit, settings)).hostname);
+  const hostnames = [
+    ...units.map((unit) => new URL(publicOrigin(unit, settings)).hostname),
+    settings.storefrontHostname,
+  ];
   return {
     accessPolicies: [
       { ...peoplePolicy, id: 'policy-1' },
@@ -1007,15 +1031,9 @@ const guardedAccount = Effect.gen(function* guardedAccountEffect() {
   };
 });
 
-/** An account `provision` completed; `extraSecrets` adds names to a Worker's planned ones. */
-const provisionedAccount = (
-  tunnelStatus: string,
-  extraSecrets: Readonly<Record<string, readonly string[]>> = {},
-  plannedOverride?: Readonly<Record<string, readonly string[]>>,
-  compositionKeys: readonly string[] = [],
-) =>
+/** A provisioned account, deliberately without any legacy placed Worker state. */
+const provisionedAccount = (tunnelStatus: string, compositionKeys: readonly string[] = []) =>
   Effect.gen(function* provisionedAccountEffect() {
-    const planned: Readonly<Record<string, readonly string[]>> = plannedOverride ?? (yield* plannedSecretNames);
     return fakeCloudflareAccount({
       ...(yield* guardedAccount),
       hyperdrives: [
@@ -1024,7 +1042,7 @@ const provisionedAccount = (
           id: HYPERDRIVE_ID,
           name: RUNTIME_HYPERDRIVE,
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
         {
           caching: { disabled: true },
@@ -1042,12 +1060,11 @@ const provisionedAccount = (
         },
       ],
       kvKeys: { [COMPOSITION_KV_ID]: compositionKeys },
-      kvNamespaces: [{ id: COMPOSITION_KV_ID, title: COMPOSITION_KV }],
-      scripts: Object.keys(planned),
-      secrets: Object.fromEntries(
-        Object.entries(planned).map(([worker, names]) => [worker, [...names, ...(extraSecrets[worker] ?? [])]]),
-      ),
-      tunnels: [{ id: 'tunnel-1', name: 'ontos-stage', status: tunnelStatus }],
+      kvNamespaces: [
+        { id: COMPOSITION_KV_ID, title: COMPOSITION_KV },
+        { id: STOREFRONT_KV_ID, title: STOREFRONT_KV },
+      ],
+      tunnels: [{ id: 'tunnel-1', name: STAGE_TUNNEL_NAME, status: tunnelStatus }],
       vpcServices: [
         {
           app_protocol: 'postgresql',
@@ -1083,17 +1100,30 @@ const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect
     spicedbVpcServiceId: 'vpc-2',
   });
   const placement = Schema.decodeUnknownSync(JsonRecord)(placementText);
-  return fakeFiles({
-    [PLACEMENT_FILE]: Schema.encodeUnknownSync(JsonRecord)({ ...placement, buildEnvironment }),
-  });
+  const files = fakeFiles();
+  files.writes.set(PLACEMENT, Schema.encodeUnknownSync(JsonRecord)({ ...placement, buildEnvironment }));
+  files.writes.set(
+    `${APP_DIRECTORY}/topology/stage-edge.json`,
+    JSON.stringify({
+      accountId: settings.accountId,
+      emailSender: settings.emailSender,
+      shellHostname: settings.shellHostname,
+      spicedbHostname: settings.spicedbHostname,
+      storefrontCatalogKvId: STOREFRONT_KV_ID,
+      storefrontHostname: settings.storefrontHostname,
+      workersDevSubdomain: settings.workersDevSubdomain,
+      zone: settings.stageZone,
+    }),
+  );
+  return files;
 });
 
-it.effect('reports the live shared limit of 60 without changing it or either dedicated Hyperdrive', () =>
+it.effect('refuses an old shared limit of 40 without changing either dedicated Hyperdrive', () =>
   Effect.gen(function* refusesSharedConnectionLimitDrift() {
     const account = yield* provisionedAccount('healthy');
     for (const [index, hyperdrive] of account.hyperdrives.entries()) {
       if (hyperdrive.name === RUNTIME_HYPERDRIVE) {
-        account.hyperdrives[index] = { ...hyperdrive, origin_connection_limit: 60 };
+        account.hyperdrives[index] = { ...hyperdrive, origin_connection_limit: 40 };
       }
     }
     const previous = [...account.hyperdrives];
@@ -1103,7 +1133,7 @@ it.effect('reports the live shared limit of 60 without changing it or either ded
       stage: newStage(),
     }).pipe(Effect.flip);
 
-    expect(error.message).toContain('origin connection limit 60');
+    expect(error.message).toContain('origin connection limit 40');
     expect(account.hyperdrives).toStrictEqual(previous);
     expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
   }),
@@ -1220,7 +1250,9 @@ it.effect('leaves DEPLOY_TARGET unset while the placement has uncommitted change
       stage,
     }).pipe(Effect.flip);
 
-    expect(error.message).toContain('topology/cloudflare-placement.json has uncommitted changes');
+    expect(error.message).toContain(
+      'topology/cloudflare-placement.json or topology/stage-edge.json has uncommitted changes',
+    );
     expect(stage.variables.get('stage')?.has('DEPLOY_TARGET')).not.toBe(true);
   }),
 );
@@ -1259,32 +1291,22 @@ it.effect('requires the composition snapshot in the composition KV namespace onc
     );
 
     yield* run(verifyCutover, {
-      account: yield* provisionedAccount('healthy', {}, undefined, ['active']),
+      account: yield* provisionedAccount('healthy', ['active']),
       files: yield* reviewedPlacementFiles,
       stage: activated(),
     });
   }),
 );
 
-it.effect('requires every planned runtime secret on each placed Worker', () =>
-  Effect.gen(function* requiresPlannedSecrets() {
-    const planned = yield* plannedSecretNames;
-    const partial = {
-      ...planned,
-      [CUSTOMER_CONTEXT_WORKER]: (planned[CUSTOMER_CONTEXT_WORKER] ?? []).filter(
-        (name) => name !== 'SPICEDB_PRESHARED_KEY' && name !== DEPLOYMENT_ENVIRONMENT,
-      ),
-    };
-
-    const error = yield* run(verifyCutover, {
-      account: yield* provisionedAccount('healthy', {}, partial),
+it.effect('verifies immutable releases without requiring any legacy placed Worker or its secrets', () =>
+  Effect.gen(function* verifiesWithoutLegacyWorkers() {
+    const account = yield* provisionedAccount('healthy');
+    yield* run(verifyCutover, {
+      account,
       files: yield* reviewedPlacementFiles,
       stage: newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] }),
-    }).pipe(Effect.flip);
-
-    expect(error.message).toContain(
-      `${CUSTOMER_CONTEXT_WORKER} lacks SPICEDB_PRESHARED_KEY, ${DEPLOYMENT_ENVIRONMENT}; run worker-secrets`,
-    );
+    });
+    expect(account.requests.some(({ url }) => url.pathname.includes('/workers/scripts'))).toBe(false);
   }),
 );
 
@@ -1297,7 +1319,7 @@ it.effect('surfaces Cloudflare API errors with their codes', () =>
     }).pipe(
       Effect.provide(
         CloudflareApiLive.pipe(
-          Layer.provide(Layer.succeed(CloudflareCredentials, { accountId: 'account-1', apiToken: settings.apiToken })),
+          Layer.provide(Layer.succeed(CloudflareCredentials, { accountId: ACCOUNT_ID, apiToken: settings.apiToken })),
           Layer.provide(account.layer),
         ),
       ),
@@ -1324,6 +1346,8 @@ it.effect('places every topology unit with its public URL and the shared data-pl
       ].map((key) => `buildEnvironment.${key}`),
     );
     expect(gaps.filter((gap) => !provisioned.has(gap))).toStrictEqual([]);
+    const files = yield* reviewedPlacementFiles;
+    expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), files.writes.get(PLACEMENT) ?? '')).toEqual([]);
   }),
 );
 
@@ -1513,7 +1537,7 @@ it.effect('refuses to reuse an identity Hyperdrive config with the shared limit 
           id: OLD_HYPERDRIVE_ID,
           name: PARTY_REGISTRY_HYPERDRIVE,
           origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-          origin_connection_limit: 40,
+          origin_connection_limit: 60,
         },
       ],
     });
@@ -1523,8 +1547,279 @@ it.effect('refuses to reuse an identity Hyperdrive config with the shared limit 
     const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
     expect(error.message).toContain(
-      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 40, user ontos_runtime',
+      'Hyperdrive ontos-stage-party-registry (hyperdrive-old) differs from the runbook: origin connection limit 60, user ontos_runtime',
     );
     expect(files.writes.size).toBe(0);
   }),
 );
+
+it.effect('replaces an existing Zerops connector token when bootstrapping a fresh account and redeploys it', () =>
+  Effect.gen(function* replacesOldConnectorToken() {
+    const stage = newStage({
+      projectValues: { cloudflared_TUNNEL_TOKEN: 'old-account-connector-token' },
+      services: [
+        { hostname: 'cloudflared', id: EXISTING_CONNECTOR_ID, status: 'ACTIVE' },
+        { hostname: 'outboxworkerhost', id: EXISTING_HOST_ID, status: 'ACTIVE' },
+      ],
+    });
+    const account = fakeCloudflareAccount({});
+    const zerops = fakeZeropsApi(stage);
+    const effect = Effect.gen(function* ensuresConnector() {
+      yield* ensureZeropsDataLayer(yield* ensureTunnel);
+    });
+    yield* run(effect, { account, files: fakeFiles(), stage, zerops });
+    expect(stage.projectValues.get('cloudflared_TUNNEL_TOKEN')).toBe(TUNNEL_TOKEN);
+    expect(zerops.serviceSecrets).toEqual([
+      { content: TUNNEL_TOKEN, key: 'TUNNEL_TOKEN', serviceId: EXISTING_CONNECTOR_ID },
+    ]);
+    expect(
+      stage.commands.some(
+        ({ args, command }) => command === 'zcli' && args[0] === 'push' && args.includes(EXISTING_CONNECTOR_ID),
+      ),
+    ).toBe(true);
+    expect(stage.commands.some(({ args }) => args.includes(SERVICE_IMPORT))).toBe(false);
+    // A converged re-run must not restart the only healthy connector.
+    const pushes = stage.commands.filter(({ args, command }) => command === 'zcli' && args[0] === 'push').length;
+    yield* run(effect, { account, files: fakeFiles(), stage, zerops });
+    expect(zerops.serviceSecrets).toHaveLength(1);
+    expect(stage.commands.filter(({ args, command }) => command === 'zcli' && args[0] === 'push')).toHaveLength(pushes);
+    expectNoSecretInArguments(stage, account);
+  }),
+);
+
+it.effect('loads public settings from reviewed topology and rejects an account override', () =>
+  Effect.gen(function* requiresReviewedAccount() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const secrets = { CLOUDFLARE_API_TOKEN: 'token', STAGE_ACCESS_EMAILS: 'ops@example.com' };
+    const loaded = yield* run(loadCutoverSettings, { account, files: fakeFiles(), settingsFile: secrets, stage });
+    expect(loaded).toMatchObject({
+      accountId: settings.accountId,
+      emailSender: settings.emailSender,
+      shellHostname: settings.shellHostname,
+      spicedbHostname: settings.spicedbHostname,
+      stageZone: settings.stageZone,
+      storefrontHostname: settings.storefrontHostname,
+      workersDevSubdomain: settings.workersDevSubdomain,
+    });
+    const error = yield* run(loadCutoverSettings, {
+      account,
+      files: fakeFiles(),
+      settingsFile: { ...secrets, CLOUDFLARE_ACCOUNT_ID: 'wrong-account' },
+      stage,
+    }).pipe(Effect.flip);
+    expect(error.message).toContain('differs from topology/stage-edge.json accountId');
+    expect(account.requests).toEqual([]);
+    expect(mutatingCommands(stage.commands)).toEqual([]);
+  }),
+);
+
+it.effect('the actual CLI dry run executes its step, reads file credentials first, and reports mutations', () =>
+  Effect.gen(function* cliDryRunReadsState() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles({
+      'cutover.env': [
+        'CLOUDFLARE_API_TOKEN=file-token',
+        'CLOUDFLARE_STAGE_EDGE_API_TOKEN=file-ci-token',
+        'ZEROPS_TOKEN=file-zerops-token',
+        'DATABASE_ADMIN_URL=file-database',
+        'STAGE_ACCESS_EMAILS=ops@example.com',
+      ].join('\n'),
+    });
+    let executed = false;
+    const step = Effect.gen(function* cliStep() {
+      executed = true;
+      const config = yield* CutoverConfiguration;
+      expect(Redacted.value(config.apiToken)).toBe('file-token');
+      expect(Redacted.value(config.stageEdgeApiToken)).toBe('file-ci-token');
+      expect(yield* Config.String('ZEROPS_TOKEN')).toBe('file-zerops-token');
+      expect(yield* Config.String('DATABASE_ADMIN_URL')).toBe('file-database');
+      expect((yield* OpsMode).dryRun).toBe(true);
+      yield* ensureTunnel;
+    });
+    yield* run(
+      Command.runWith(stepCommand('activate', 'test', step), { renderErrors: false, version: '1' })([
+        '--dry-run',
+        '--env-file',
+        `${APP_DIRECTORY}/cutover.env`,
+      ]),
+      {
+        account,
+        files,
+        settingsFile: {
+          CLOUDFLARE_API_TOKEN: 'ambient-old-token',
+          CLOUDFLARE_STAGE_EDGE_API_TOKEN: 'ambient-old-ci-token',
+          DATABASE_ADMIN_URL: 'ambient-old-database',
+          ZEROPS_TOKEN: 'ambient-old-zerops-token',
+        },
+        stage,
+      },
+    ).pipe(Effect.provide(NodeServices.layer), Effect.provide(account.layer));
+    expect(executed).toBe(true);
+    expect(account.requests.some(({ url }) => url.pathname.endsWith(TUNNEL_PATH))).toBe(true);
+    expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
+    expect(mutatingCommands(stage.commands)).toEqual([]);
+    expect(files.writes.size).toBe(0);
+  }),
+);
+
+for (const field of ['ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL']) {
+  it.effect(`activation refuses stale stage-edge variable ${field}`, () =>
+    Effect.gen(function* staleStageVariable() {
+      const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
+      stage.variables.get(STAGE_EDGE)?.set(field, 'stale');
+      const error = yield* run(activate, {
+        account: yield* provisionedAccount('healthy'),
+        files: yield* reviewedPlacementFiles,
+        stage,
+      }).pipe(Effect.flip);
+      expect(error.message).toContain(`${field} is stale`);
+      expect(mutatingCommands(stage.commands)).toEqual([]);
+    }),
+  );
+}
+for (const field of ['ULTRAMODERN_EMAIL_SENDER', 'ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT']) {
+  it.effect(`activation refuses stale placement ${field}`, () =>
+    Effect.gen(function* stalePlacementOrigin() {
+      const files = yield* reviewedPlacementFiles;
+      const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
+      files.writes.set(
+        PLACEMENT,
+        JSON.stringify({ ...placement, buildEnvironment: { ...placement.buildEnvironment, [field]: 'stale' } }),
+      );
+      const stage = newStage();
+      const error = yield* run(activate, { account: yield* provisionedAccount('healthy'), files, stage }).pipe(
+        Effect.flip,
+      );
+      expect(error.message).toContain(`${field} is stale`);
+      expect(mutatingCommands(stage.commands)).toEqual([]);
+    }),
+  );
+}
+for (const id of ['', UNREVIEWED_KV_ID, DELETED_KV_ID]) {
+  it.effect(`activation refuses missing or unreviewed storefront catalog KV: ${id}`, () =>
+    Effect.gen(function* invalidStorefrontKv() {
+      const account = yield* provisionedAccount('healthy');
+      const files = yield* reviewedPlacementFiles;
+      const path = `${APP_DIRECTORY}/topology/stage-edge.json`;
+      const topology = parseStageEdgeConfig(files.writes.get(path) ?? '');
+      files.writes.set(path, JSON.stringify({ ...topology, storefrontCatalogKvId: id }));
+      if (id === DELETED_KV_ID) {
+        account.kvNamespaces.splice(1);
+      }
+      const stage = newStage();
+      const error = yield* run(activate, { account, files, stage }).pipe(Effect.flip);
+      expect(error.message).toContain('matches topology/stage-edge.json storefrontCatalogKvId');
+      expect(mutatingCommands(stage.commands)).toEqual([]);
+    }),
+  );
+}
+for (const step of [provision, verifyCutover]) {
+  it.effect('rejects an unverified workers.dev subdomain before any mutation', () =>
+    Effect.gen(function* wrongSubdomain() {
+      const account = fakeCloudflareAccount({ workersDevSubdomain: 'actual-company' });
+      const stage = newStage();
+      const files = fakeFiles();
+      const error = yield* run(step, { account, files, stage }).pipe(Effect.flip);
+      expect(error.message).toContain('differs from topology/stage-edge.json workersDevSubdomain');
+      expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
+      expect(mutatingCommands(stage.commands)).toEqual([]);
+      expect(files.writes.size).toBe(0);
+    }),
+  );
+}
+it.effect('checks Zone Read with the stage-edge token rather than the broader provisioning token', () =>
+  Effect.gen(function* narrowTokenZoneAccess() {
+    const account = fakeCloudflareAccount({ zoneReadDeniedForToken: CI_TOKEN });
+    const error = yield* run(verifyStageEdgeZoneAccess, { account, files: fakeFiles(), stage: newStage() }).pipe(
+      Effect.flip,
+    );
+    expect(error.message).toContain('Zone Read denied');
+  }),
+);
+it.effect('recovers a token-written-but-not-deployed connector only when its tunnel is unhealthy', () =>
+  Effect.gen(function* interruptedConnectorDeployment() {
+    const stage = newStage({
+      projectValues: { cloudflared_TUNNEL_TOKEN: TUNNEL_TOKEN },
+      services: [
+        { hostname: 'cloudflared', id: EXISTING_CONNECTOR_ID, status: 'ACTIVE' },
+        { hostname: 'outboxworkerhost', id: EXISTING_HOST_ID, status: 'ACTIVE' },
+      ],
+    });
+    const account = fakeCloudflareAccount({ tunnels: [{ id: 'tunnel-1', name: STAGE_TUNNEL_NAME, status: 'down' }] });
+    const zerops = fakeZeropsApi(stage);
+    yield* run(ensureZeropsDataLayer({ exists: true, id: 'tunnel-1' }), { account, files: fakeFiles(), stage, zerops });
+    expect(zerops.serviceSecrets).toHaveLength(0);
+    expect(stage.commands.filter(({ args, command }) => command === 'zcli' && args[0] === 'push')).toHaveLength(1);
+  }),
+);
+it.effect('writes only the storefront KV field while preserving topology key order', () =>
+  Effect.gen(function* preservesTopologyDocument() {
+    const topology = Object.fromEntries<string>([
+      ['accountId', settings.accountId],
+      ['workersDevSubdomain', settings.workersDevSubdomain],
+      ['zone', settings.stageZone],
+      ['shellHostname', settings.shellHostname],
+      ['storefrontHostname', settings.storefrontHostname],
+      ['spicedbHostname', settings.spicedbHostname],
+      ['emailSender', settings.emailSender],
+      ['storefrontCatalogKvId', ''],
+    ]);
+    const files = fakeFiles({ 'topology/stage-edge.json': JSON.stringify(topology, null, 2) });
+    yield* run(ensureStorefrontCatalogKv, { account: fakeCloudflareAccount({}), files, stage: newStage() });
+    expect(files.writes.get(`${APP_DIRECTORY}/topology/stage-edge.json`)).toBe(
+      `${JSON.stringify({ ...topology, storefrontCatalogKvId: fakeKvNamespaceId(1) }, null, 2)}\n`,
+    );
+  }),
+);
+
+it.effect('activation dry run verifies live state and reports the deploy-target switch without applying it', () =>
+  Effect.gen(function* plansActivationOnlyAfterVerification() {
+    const account = yield* provisionedAccount('healthy');
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
+    const messages: string[] = [];
+    const consoleService = yield* Console.Console;
+    const log = rs.spyOn(consoleService, 'log').mockImplementation((...args: unknown[]) => {
+      messages.push(...args.map(String));
+    });
+    yield* run(activate, { account, dryRun: true, files: yield* reviewedPlacementFiles, stage }).pipe(
+      Effect.ensuring(Effect.sync(() => log.mockRestore())),
+    );
+    expect(messages.join('\n')).toContain('DEPLOY_TARGET=cloudflare');
+    expect(messages.join('\n')).toContain('OUTBOX_WORKER_MODE=host');
+    expect(account.requests.some(({ url }) => url.pathname.endsWith('/workers/subdomain'))).toBe(true);
+    expect(mutatingCommands(stage.commands)).toEqual([]);
+    expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
+  }),
+);
+it.effect('activation refuses uncommitted storefront topology changes', () =>
+  Effect.gen(function* dirtyStageTopology() {
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
+    stage.dirtyPaths.add('app/topology/stage-edge.json');
+    const error = yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+    expect(error.message).toContain('topology/stage-edge.json has uncommitted changes');
+    expect(mutatingCommands(stage.commands)).toEqual([]);
+  }),
+);
+
+for (const status of ['healthy', 'degraded']) {
+  it.effect(`keeps a converged ${status} connector running`, () =>
+    Effect.gen(function* keepsConnectedTunnel() {
+      const stage = newStage({
+        projectValues: { cloudflared_TUNNEL_TOKEN: TUNNEL_TOKEN },
+        services: [
+          { hostname: 'cloudflared', id: EXISTING_CONNECTOR_ID, status: 'ACTIVE' },
+          { hostname: 'outboxworkerhost', id: EXISTING_HOST_ID, status: 'ACTIVE' },
+        ],
+      });
+      const account = fakeCloudflareAccount({ tunnels: [{ id: 'tunnel-1', name: STAGE_TUNNEL_NAME, status }] });
+      yield* run(ensureZeropsDataLayer({ exists: true, id: 'tunnel-1' }), { account, files: fakeFiles(), stage });
+      expect(stage.commands.filter(({ args, command }) => command === 'zcli' && args[0] === 'push')).toHaveLength(0);
+    }),
+  );
+}

@@ -122,7 +122,6 @@ export const stageEdgeWorkflowVariables = (config: StageEdgeConfig): Readonly<Re
     STAGE_SHELL_URL: urls.shellUrl,
     STAGE_STOREFRONT_CATALOG_KV_ID: config.storefrontCatalogKvId,
     STAGE_STOREFRONT_URL: urls.storefrontUrl,
-    STAGE_ZONE: config.zone,
     WORKERS_DEV_SUBDOMAIN: config.workersDevSubdomain,
   });
 };

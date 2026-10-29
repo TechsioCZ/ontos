@@ -29,7 +29,8 @@ const WORKLOAD_KEY = 'synthetic-private-workload-key-never-copy';
 const SHELL_URL = 'https://ontos-stage.example.test';
 const STAGE_ZONE = 'example.test';
 const SHELL_API = `${SHELL_URL}/shell-super-app-api`;
-const SPICEDB_HOST = 'ontos-stage-spicedb.example.test';
+// Not the zone's conventional name: the preparer must use the topology's SpiceDB hostname verbatim.
+const SPICEDB_HOST = 'custom-spicedb.example.test';
 const STOREFRONT_URL = 'https://ontos-stage-akros.example.test';
 const SENDER = 'noreply@ontos-stage.example.test';
 const EDGE: StageEdgeConfig = {
@@ -78,7 +79,11 @@ const fixture = Effect.gen(function* canonicalBundleFixture() {
   const publicJwks = yield* gatewayPublicJwksFor(Redacted.make(privateKey));
   const plan = workerSecretPlan(
     units,
-    { shellHostname: 'ontos-stage.example.test', stageZone: STAGE_ZONE },
+    {
+      shellHostname: 'ontos-stage.example.test',
+      spicedbHostname: SPICEDB_HOST,
+      stageZone: STAGE_ZONE,
+    },
     {
       betterAuthSecret: Redacted.make(PRIVATE_AUTH),
       commerceCustomerContextGatewayApiKey: Redacted.make(WORKLOAD_KEY),
@@ -512,7 +517,7 @@ for (const edge of [
   { ...EDGE, zone: 'foreign.test' },
   { ...EDGE, shellHostname: 'ontos-stage.foreign.test' },
   { ...EDGE, storefrontHostname: 'ontos-stage-akros.foreign.test' },
-  { ...EDGE, spicedbHostname: 'spicedb.example.test' },
+  { ...EDGE, spicedbHostname: 'ontos-stage-spicedb.foreign.test' },
 ]) {
   it.effect(`requires declared native stage origins: ${JSON.stringify(edge)}`, () =>
     Effect.gen(function* rejectsInvalidOrigins() {

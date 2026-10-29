@@ -9,12 +9,7 @@ import { Command, Flag } from 'effect/cli';
 import { OntosDeploymentAppIdSchema } from '../packages/core-runtime/src/modules/manifest.ts';
 import { ApplicationReleaseIntentSchema } from './application-release-intent.mts';
 import type { ApplicationReleaseIntent } from './application-release-intent.mts';
-import {
-  gatewayPublicJwksFor,
-  spicedbGatewayHostname,
-  workerReleaseSecretNames,
-  workerSecretPlan,
-} from './ops/cloudflare-stage-cutover.mts';
+import { gatewayPublicJwksFor, workerReleaseSecretNames, workerSecretPlan } from './ops/cloudflare-stage-cutover.mts';
 import type { StageOrigins, WorkerSecretSources } from './ops/cloudflare-stage-cutover.mts';
 import { readStageEdgeConfig, stageEdgeUrls } from './ci/stage-edge.mts';
 import type { StageEdgeConfig } from './ci/stage-edge.mts';
@@ -201,19 +196,22 @@ const HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
 const inZone = (hostname: string, zone: string) =>
   HOSTNAME.test(hostname) && (hostname === zone || hostname.endsWith(`.${zone}`));
 
-/** The native origins, and the SpiceDB server name Workers VPC verifies, must be the config's. */
+/** The native origins, including the SpiceDB server name Workers VPC verifies, are the config's. */
 const stageOrigins = (edge: StageEdgeConfig) =>
   Effect.gen(function* validateStageOrigins() {
-    const origins = { shellHostname: edge.shellHostname, stageZone: edge.zone } satisfies StageOrigins;
     if (
       !HOSTNAME.test(edge.zone) ||
       !inZone(edge.shellHostname, edge.zone) ||
       !inZone(edge.storefrontHostname, edge.zone) ||
-      edge.spicedbHostname !== spicedbGatewayHostname(origins)
+      !inZone(edge.spicedbHostname, edge.zone)
     ) {
       return yield* failure(ORIGIN_INVALID);
     }
-    return origins;
+    return {
+      shellHostname: edge.shellHostname,
+      spicedbHostname: edge.spicedbHostname,
+      stageZone: edge.zone,
+    } satisfies StageOrigins;
   });
 
 const SigningInput = Context.Service<Redacted.Redacted>('@app/scripts/stage-release-secrets/SigningInput');

@@ -22,6 +22,7 @@ import { ApplicationReleaseIntentSchema } from '../application-release-intent.mt
 import { STOREFRONT_ENV_KEYS } from '../ci/deploy-plan.mts';
 import { emptyLedger, parseLedger, serializeLedger } from '../ci/release-ledger.mts';
 import { HOST_BUILD_JOB, STOREFRONT_BUILD_JOB } from '../ci/release-stream.mts';
+import { readStageEdgeConfig } from '../ci/stage-edge.mts';
 import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts';
 import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { gatewayPublicJwksFor, workerSecretPlan } from '../ops/cloudflare-stage-cutover.mts';
@@ -226,8 +227,9 @@ const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
 const indexOf = (steps: readonly { readonly name: string }[], name: string) =>
   steps.findIndex((step) => step.name === name);
-const TEST_STAGE_URL = 'https://stage.example.test';
-const TEST_STAGE_ZONE = 'example.test';
+const TEST_STAGE_TOPOLOGY = readStageEdgeConfig();
+const TEST_STAGE_URL = `https://${TEST_STAGE_TOPOLOGY.shellHostname}`;
+const TEST_STAGE_ZONE = TEST_STAGE_TOPOLOGY.zone;
 const RUNNER_TEMP_CONTEXT = 'runner.temp';
 const SECRET_CLEANUP_CONDITION = "always() && steps.release-secrets.outputs.directory != ''";
 const OUTBOX_ONLY_SUCCESS = 'outbox-only-success';
@@ -481,7 +483,11 @@ const runnerBundleFixture = Effect.gen(function* validRunnerBundleFixture() {
   const secret = Redacted.make('synthetic-runner-shared-service-secret');
   const plan = workerSecretPlan(
     units,
-    { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+    {
+      shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+      spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+      stageZone: TEST_STAGE_ZONE,
+    },
     {
       betterAuthSecret: secret,
       commerceCustomerContextGatewayApiKey: secret,
@@ -568,7 +574,6 @@ for (const mode of [
             GITHUB_OUTPUT: Redacted.make(mode === 'registration-failure' ? `${root}/missing/step-output` : output),
             RUNNER_TEMP: Redacted.make(root),
             STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
             UNITS_JSON: Redacted.make(''),
           },
           stdin: Redacted.make(program ?? ''),
@@ -612,7 +617,6 @@ for (const mode of [
             env: {
               ALL_RELEASE_SECRETS_FILE: Redacted.make(file),
               STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-              STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
               UNITS_JSON: Redacted.make(
                 JSON.stringify([{ id: 'shell-super-app' }, ...intent.modules.map(({ appId }) => ({ id: appId }))]),
               ),
@@ -874,7 +878,11 @@ for (const example of secretInventoryExamples) {
         const secret = Redacted.make(SYNTHETIC_SECRET);
         const plan = workerSecretPlan(
           units,
-          { shellHostname: 'stage.example.test', stageZone: TEST_STAGE_ZONE },
+          {
+            shellHostname: TEST_STAGE_TOPOLOGY.shellHostname,
+            spicedbHostname: TEST_STAGE_TOPOLOGY.spicedbHostname,
+            stageZone: TEST_STAGE_ZONE,
+          },
           {
             betterAuthSecret: secret,
             commerceCustomerContextGatewayApiKey: secret,
@@ -912,7 +920,6 @@ for (const example of secretInventoryExamples) {
             ALL_RELEASE_SECRETS_FILE: Redacted.make(bundleFile),
             GITHUB_STEP_SUMMARY: Redacted.make(summary),
             STAGE_SHELL_URL: Redacted.make(TEST_STAGE_URL),
-            STAGE_ZONE: Redacted.make(TEST_STAGE_ZONE),
             UNITS_JSON: Redacted.make(JSON.stringify(example.select?.(planned) ?? planned)),
           },
           stdin: Redacted.make(program ?? ''),

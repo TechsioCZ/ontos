@@ -1,4 +1,4 @@
-import { DateTime, Effect, Layer, Option, Redacted } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Option, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
@@ -8,6 +8,7 @@ import {
   checkUsage,
   costGuardChecks,
   killSwitchRule,
+  loadUsageLimits,
   machineEndpointsRule,
   UsageConfiguration,
   usageReport,
@@ -24,7 +25,8 @@ const LEAD_EMAIL = 'lead@example.com';
 const PEOPLE = [OPS_EMAIL, LEAD_EMAIL];
 const SHELL_HOSTNAME = 'app.stage.example.com';
 const ZONE_PATH = '/client/v4/zones/zone-1';
-const ACCOUNT_PATH = '/client/v4/accounts/account-1';
+const ACCOUNT_ID = 'a'.repeat(32);
+const ACCOUNT_PATH = `/client/v4/accounts/${ACCOUNT_ID}`;
 const CUSTOM_PHASE = 'http_request_firewall_custom';
 const KILL_SWITCH = 'ontos_stage_kill_switch';
 const CLIENT_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_SECRET';
@@ -34,14 +36,18 @@ const SHELL_WORKER = 'ontos-shell-super-app';
 
 const settings: CutoverSettings = {
   accessEmails: PEOPLE,
-  accountId: 'account-1',
+  accountId: ACCOUNT_ID,
   apiToken: Redacted.make('lead-token-secret'),
+  emailSender: 'noreply@app.stage.example.com',
   enforceAccess: false,
   projectId: STAGE_ZEROPS_PROJECT_ID,
   repository: 'TechsioCZ/ontos',
   shellHostname: SHELL_HOSTNAME,
+  spicedbHostname: 'ontos-stage-spicedb.stage.example.com',
   stageEdgeApiToken: Redacted.make('ci-token-secret'),
   stageZone: 'stage.example.com',
+  storefrontHostname: 'ontos-stage-akros.stage.example.com',
+  workersDevSubdomain: 'stage-example',
 };
 
 /** Every placed unit's public hostname, in placement order (the Shell deploys last). */
@@ -74,6 +80,7 @@ const HOSTNAMES = [
   'ontos-stage-facility-operations.stage.example.com',
   'ontos-stage-projects.stage.example.com',
   SHELL_HOSTNAME,
+  settings.storefrontHostname,
 ];
 
 const apiLayer = (account: FakeCloudflareAccount) =>
@@ -473,7 +480,7 @@ it.effect('leaves the stage hostnames open while this billing cycle stays under 
     expect(writes(account).map(({ method, path }) => `${method} ${path}`)).toStrictEqual(['POST /client/v4/graphql']);
     const [query] = writes(account);
     expect(query?.body).toMatchObject({
-      variables: { accountTag: 'account-1', since: '2026-09-01T00:00:00.000Z', until: '2026-09-29T10:00:00.000Z' },
+      variables: { accountTag: ACCOUNT_ID, since: '2026-09-01T00:00:00.000Z', until: '2026-09-29T10:00:00.000Z' },
     });
     // The whole account bills, so the query never filters by script.
     expect(JSON.stringify(query?.body)).not.toContain('scriptName_in');
@@ -544,3 +551,33 @@ it('starts the billing cycle on its day of the current or the previous month', (
   expect(cycleStart(NOW, 28)).toBe('2026-09-28T00:00:00.000Z');
   expect(cycleStart(DateTime.makeUnsafe('2026-01-10T00:00:00Z'), 15)).toBe('2025-12-15T00:00:00.000Z');
 });
+
+it.effect('resolves the cost guard zone from stage-edge topology and rejects a stale zone variable', () =>
+  Effect.gen(function* requiresReviewedZone() {
+    const topology = JSON.stringify({
+      accountId: settings.accountId,
+      emailSender: settings.emailSender,
+      shellHostname: settings.shellHostname,
+      spicedbHostname: settings.spicedbHostname,
+      storefrontCatalogKvId: '',
+      storefrontHostname: settings.storefrontHostname,
+      workersDevSubdomain: settings.workersDevSubdomain,
+      zone: settings.stageZone,
+    });
+    const account = fakeCloudflareAccount({});
+    const effect = loadUsageLimits.pipe(
+      Effect.provide(apiLayer(account)),
+      Effect.provide(fakeFiles({ 'topology/stage-edge.json': topology }).layer),
+    );
+    const limits = yield* effect.pipe(
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ CLOUDFLARE_STAGE_ZONE_ID: 'zone-1' }))),
+    );
+    expect(limits.zoneId).toBe('zone-1');
+    const error = yield* effect.pipe(
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ CLOUDFLARE_STAGE_ZONE_ID: 'unrelated-zone' }))),
+      Effect.flip,
+    );
+    expect(error.message).toContain('does not match topology/stage-edge.json zone');
+    expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
+  }),
+);

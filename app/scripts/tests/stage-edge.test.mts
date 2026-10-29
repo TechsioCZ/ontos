@@ -78,7 +78,6 @@ it('derives every stage URL and workflow variable from the one config', () => {
     STAGE_SHELL_URL: 'https://ontos-stage.example.test',
     STAGE_STOREFRONT_CATALOG_KV_ID: 'b'.repeat(32),
     STAGE_STOREFRONT_URL: 'https://ontos-stage-akros.example.test',
-    STAGE_ZONE: 'example.test',
     WORKERS_DEV_SUBDOMAIN: 'example',
   });
 });
@@ -164,7 +163,11 @@ it.effect('places every unit, the Shell origin, the storefront and the sender on
     const placement = Schema.decodeUnknownSync(
       Schema.fromJsonString(Schema.Struct({ buildEnvironment: Schema.Record(Schema.String, Schema.String) })),
     )(readFileSync(path.join(APP_ROOT, 'topology/cloudflare-placement.json'), 'utf-8'));
-    const origins = { shellHostname: config.shellHostname, stageZone: config.zone };
+    const origins = {
+      shellHostname: config.shellHostname,
+      spicedbHostname: config.spicedbHostname,
+      stageZone: config.zone,
+    };
     const units = yield* readEdgeUnits;
     const expected = new Map<string, string>([
       ['ULTRAMODERN_EMAIL_SENDER', config.emailSender],
@@ -175,6 +178,5 @@ it.effect('places every unit, the Shell origin, the storefront and the sender on
     for (const [key, value] of expected) {
       expect(placement.buildEnvironment[key], key).toBe(value);
     }
-    expect(config.spicedbHostname).toBe(`ontos-stage-spicedb.${config.zone}`);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
