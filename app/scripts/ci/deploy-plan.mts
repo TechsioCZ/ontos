@@ -83,7 +83,7 @@ const HOST_OWNER_IMPORT = /from '(?<packageName>@[\w.-]+\/[\w.-]+)\/outbox-worke
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const RELEASE_INTENT_FILE = 'topology/application-release-intent.json';
 /** How many of the newest trusted ledgers the plan merges. */
-const LEDGER_LOOKBACK = 5;
+export const LEDGER_LOOKBACK = 5;
 /** How many trusted artifacts of one name the plan weighs when it needs the one built at a given revision. */
 const ARTIFACT_CANDIDATES = 10;
 const LOOKUP_CONCURRENCY = 8;
@@ -482,9 +482,10 @@ const mapBounded = async <T, R>(items: readonly T[], work: (item: T) => Promise<
 
 export interface CloudflareReader {
   /**
-   * The single version serving 100% of a Worker, or undefined when the Worker or such a deployment does not exist.
+   * The single version serving 100% of a Worker; undefined when the Worker has no such deployment, null when the
+   * Worker does not exist (it was pruned, for example).
    */
-  readonly activeVersion: (scriptName: string) => Promise<string | undefined>;
+  readonly activeVersion: (scriptName: string) => Promise<string | null | undefined>;
 }
 
 /** The version id of a deployments answer whose newest deployment serves exactly one version at 100%. */
@@ -519,11 +520,13 @@ const createCloudflareReader = ({
       { headers: { authorization: `Bearer ${token}` } },
     );
     // A deleted Worker answers 404: nothing of it is live.
-    if (!response.ok && response.status !== 404) {
+    if (response.status === 404) {
+      return null;
+    }
+    if (!response.ok) {
       throw new DeployPlanError(`Cloudflare answered ${String(response.status)} for ${scriptName}`);
     }
-    const body: unknown = response.ok ? await response.json() : null;
-    return soleActiveVersion(body);
+    return soleActiveVersion(await response.json());
   },
 });
 
@@ -749,10 +752,46 @@ const createUnitSelector = ({
 }): UnitSelector => {
   const artifacts = new Map<string, Promise<ArtifactRef[]>>();
   const live = new Map<string, Promise<boolean>>();
+  const versions = new Map<string, Promise<string | null | undefined>>();
   const artifactsNamed = async (name: string): Promise<ArtifactRef[]> => {
     const cached = artifacts.get(name) ?? lookups.artifacts(name);
     artifacts.set(name, cached);
     return await cached;
+  };
+  const cloudflare: CloudflareReader = {
+    activeVersion: async (scriptName) => {
+      const cached = versions.get(scriptName) ?? lookups.cloudflare.activeVersion(scriptName);
+      versions.set(scriptName, cached);
+      return await cached;
+    },
+  };
+  /**
+   * Whether a record's identity holds exactly one of its two Workers (the pruner or an interrupted removal left the
+   * other gone). Its revision cannot be uploaded again: the release refuses an identity that is half present.
+   */
+  const halfPresent = async ({ receipt }: UnitRecord): Promise<boolean> => {
+    if (receipt.backend === undefined) {
+      return false;
+    }
+    const [assets, backend] = await Promise.all([
+      cloudflare.activeVersion(receipt.plan.assetsScriptName),
+      cloudflare.activeVersion(receipt.backend.workerName),
+    ]);
+    return (assets === null) !== (backend === null);
+  };
+  /** The newest build whose revision's identity is not half present, which a reupload recreates whole. */
+  const reuploadable = async (
+    built: readonly ArtifactRef[],
+    records: readonly UnitRecord[],
+  ): Promise<ArtifactRef | undefined> => {
+    const [artifact, ...rest] = built;
+    if (artifact === undefined) {
+      return undefined;
+    }
+    const occupied = await Promise.all(
+      records.filter((record) => record.sourceRevision === artifact.sourceRevision).map(halfPresent),
+    );
+    return occupied.includes(true) ? await reuploadable(rest, records) : artifact;
   };
   const isLive = async (receipt: ReleaseReceipt): Promise<boolean> => {
     const key = [
@@ -761,7 +800,7 @@ const createUnitSelector = ({
       receipt.backend?.workerName,
       receipt.backend?.versionId,
     ].join('\0');
-    const cached = live.get(key) ?? receiptIsLive(lookups.cloudflare, receipt, workersDevSubdomain);
+    const cached = live.get(key) ?? receiptIsLive(cloudflare, receipt, workersDevSubdomain);
     live.set(key, cached);
     return await cached;
   };
@@ -792,7 +831,7 @@ const createUnitSelector = ({
     if (kept !== undefined) {
       return kept;
     }
-    const [newest] = built;
+    const newest = await reuploadable(built, records);
     return newest === undefined ? undefined : { artifact: newest, mode: 'reupload', record: null };
   };
 };

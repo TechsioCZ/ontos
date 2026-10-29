@@ -16,7 +16,11 @@ export const LEDGER_ARTIFACT_NAME = 'stage-release-ledger';
 export const LEDGER_FILE = 'stage-release-ledger.json';
 /** Immutable Workers outlive build artifacts; a receipt older than this is not trusted to still be live. */
 export const RECEIPT_RETENTION_DAYS = 90;
-const RECEIPTS_PER_UNIT = 20;
+/**
+ * The pruner keeps exactly the Workers of the carried receipts, so this bound sizes the account: about 27 units with
+ * two Workers each per receipt must stay far under the provider's Worker limit (500).
+ */
+export const RECEIPTS_PER_UNIT = 3;
 const DAY_MS = 86_400_000;
 /** Only these producer runs may supply ledgers or reusable artifacts. */
 export const TRUSTED_PRODUCER = Object.freeze({
@@ -274,26 +278,33 @@ export const unitRecordHistory = (
 };
 
 /**
- * Carries the still-valid records of earlier ledgers (newest first) into a ledger for this run: unit records of the
- * same digest scheme within the retention window, newest per digest, at most a bounded number per unit; and the
- * newest host and database records.
+ * The unit records a merge carries forward from earlier ledgers (newest first): records of the same digest scheme
+ * within the retention window, newest per digest, at most {@link RECEIPTS_PER_UNIT} per unit.
  */
-export const mergeLedgers = (ledgers: readonly ReleaseLedger[], run: RunIdentity): ReleaseLedger => {
-  const compatible = ledgers.filter((ledger) => ledger.digestVersion === run.digestVersion);
+export const carriedUnitRecords = (
+  ledgers: readonly ReleaseLedger[],
+  run: Pick<RunIdentity, 'digestVersion' | 'now'>,
+): ReleaseLedger['units'] => {
   const units: Record<string, UnitRecord> = {};
   const perUnit = new Map<string, number>();
-  for (const record of unitRecordHistory(compatible, run)) {
+  for (const record of unitRecordHistory(ledgers, run)) {
     const count = perUnit.get(record.unitId) ?? 0;
     if (units[record.digest] === undefined && count < RECEIPTS_PER_UNIT) {
       units[record.digest] = record;
       perUnit.set(record.unitId, count + 1);
     }
   }
+  return units;
+};
+
+/** Carries the still-valid unit records (see {@link carriedUnitRecords}) and the newest host and database records. */
+export const mergeLedgers = (ledgers: readonly ReleaseLedger[], run: RunIdentity): ReleaseLedger => {
+  const compatible = ledgers.filter((ledger) => ledger.digestVersion === run.digestVersion);
   return {
     ...emptyLedger(run),
     database: compatible.find((ledger) => ledger.database !== null)?.database ?? null,
     host: compatible.find((ledger) => ledger.host !== null)?.host ?? null,
-    units,
+    units: carriedUnitRecords(compatible, run),
   };
 };
 

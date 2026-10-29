@@ -78,6 +78,7 @@ const WorkflowSchema = Schema.Struct({
     'build-storefront': JobSchema,
     plan: JobSchema,
     'profile-recovery': Schema.Struct({ if: Schema.String, steps: Schema.Array(StepSchema) }),
+    'prune-workers': JobSchema,
     release: JobSchema,
     'release-script-tests': Schema.Struct({
       environment: EnvironmentSchema,
@@ -85,13 +86,15 @@ const WorkflowSchema = Schema.Struct({
       needs: Schema.optionalKey(Schema.Array(Schema.String)),
       steps: Schema.Array(StepSchema),
     }),
-    verify: Schema.Struct({ steps: Schema.Array(StepSchema), 'timeout-minutes': Schema.Number }),
+    verify: Schema.Struct({
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(StepSchema),
+      'timeout-minutes': Schema.Number,
+    }),
   }),
 });
-const readWorkflow = () =>
-  Schema.decodeUnknownSync(WorkflowSchema)(
-    parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
-  );
+const STAGE_DEMO_WORKFLOW = new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url);
+const readWorkflow = () => Schema.decodeUnknownSync(WorkflowSchema)(parse(readFileSync(STAGE_DEMO_WORKFLOW, 'utf-8')));
 const readJobs = () => readWorkflow().jobs;
 const SHELL_INGRESS = 'Activate the Shell ingress';
 const fullPublicationCondition = ['${{', '!inputs.outbox_only', '}}'].join(' ');
@@ -182,6 +185,7 @@ const DATABASE_RECORD = 'Record the prepared database fingerprint';
 const INSTALL_APP_STEP = 'Install the app workspace';
 const UNIT_BUILD_STEP = 'Build and verify the unit for Cloudflare';
 const RELEASE_TESTS_BARRIER = 'Wait for the release script tests';
+const WORKER_GUARD = 'Keep the account under its Worker limit';
 const HOST_DEPLOY_START = 'Start the outbox worker host deploy';
 const HOST_DEPLOY_JOIN = 'Push the outbox worker host';
 const HOST_ADMISSION = 'Require the new host to admit the published composition';
@@ -355,9 +359,7 @@ it('routes each reviewed recovery transition to its own operator command and tes
       }),
     }),
   });
-  const { on } = Schema.decodeUnknownSync(RecoveryInputsSchema)(
-    parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
-  );
+  const { on } = Schema.decodeUnknownSync(RecoveryInputsSchema)(parse(readFileSync(STAGE_DEMO_WORKFLOW, 'utf-8')));
   expect(on.workflow_dispatch.inputs.profile_recovery_transition).toEqual({
     default: PROFILE_TRANSITION,
     options: [PROFILE_TRANSITION, DIRECTORY_TRANSITION],
@@ -914,8 +916,9 @@ it('streams the uploads in the background beside the database preparation and jo
   expect(upload?.env?.ALL_RELEASE_SECRETS_FILE).toBe(preparedFileReference);
   expect(upload?.run).toContain('scripts/ci/release-stream.mts stream');
   expect(upload?.run).toContain('--parallelism 8');
-  // The stream starts right after barrier B1, before the first database change of either path.
-  expect(indexOf(steps, STREAM_START)).toBe(indexOf(steps, RELEASE_TESTS_BARRIER) + 1);
+  // The stream starts right after barrier B1 and the Worker limit guard, before the first database change of either path.
+  expect(indexOf(steps, WORKER_GUARD)).toBe(indexOf(steps, RELEASE_TESTS_BARRIER) + 1);
+  expect(indexOf(steps, STREAM_START)).toBe(indexOf(steps, WORKER_GUARD) + 1);
   expect(indexOf(steps, STREAM_START)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
   expect(upload?.run).toContain('--start-file "$STREAM_DIRECTORY/start"');
   // The background status file is the only path from the stream's outcome to the job's.
@@ -1977,4 +1980,101 @@ it('publishes the cold-start composition before the sales reset discovers live A
   expect(worker).toBeGreaterThan(sales);
   expect(script.lastIndexOf('step demo-reset-sales')).toBe(sales);
   expect(script.slice(ready, sales)).toContain(['[ "$', '{DEMO_RESET:-1}" != 0 ]'].join(''));
+});
+
+const PRUNE_STEP = 'Delete every unreferenced immutable Worker';
+const PRUNER = 'scripts/ci/prune-immutable-workers.mts';
+
+it('guards the account Worker limit after the release script tests and before any upload', () => {
+  const { steps } = readJobs().release;
+  const guard = steps.find(({ name }) => name === WORKER_GUARD);
+  expect(guard?.if).toBe(fullPublicationCondition);
+  expect(guard?.['continue-on-error']).toBeUndefined();
+  expect(guard?.['working-directory']).toBe('app');
+  expect(guard?.run).toBe(
+    `mise exec -- pnpm exec node ${PRUNER} guard --plan "$PLAN_FILE" --ledger-file "$LEDGER_DIRECTORY/stage-release-ledger.json"`,
+  );
+  expect(indexOf(steps, RELEASE_TESTS_BARRIER)).toBeLessThan(indexOf(steps, WORKER_GUARD));
+  expect(indexOf(steps, 'Recompute the deploy plan at the clean checkout')).toBeLessThan(indexOf(steps, WORKER_GUARD));
+  expect(indexOf(steps, WORKER_GUARD)).toBeLessThan(indexOf(steps, STREAM_START));
+});
+
+it('prunes unreferenced Workers only after a successful release, off the critical path and never rolling stage back', () => {
+  const jobs = readJobs();
+  const prune = jobs['prune-workers'];
+  expect(prune.needs).toEqual(['release']);
+  const condition = prune.if?.replaceAll(/\s+/gu, ' ');
+  expect(condition).toBe(
+    "always() && !cancelled() && ((github.event_name == 'workflow_dispatch' && inputs.prune_workers_only) || (needs.release.result == 'success' && !inputs.outbox_only))",
+  );
+  // The environment of the release script tests: its secrets, without a deployment record.
+  expect(prune.environment).toEqual(jobs['release-script-tests'].environment);
+  expect(prune.permissions).toEqual({ actions: 'read', contents: 'read' });
+  expect(prune.env?.CLOUDFLARE_API_TOKEN).toBe(secretReference('CLOUDFLARE_API_TOKEN'));
+  expect(prune.env?.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL).toBe(
+    workflowExpression('vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL'),
+  );
+  // Nothing in the release or its verification waits for the prune.
+  expect(jobs.verify.needs).toEqual(['release']);
+  expect(Object.values(jobs).some((job) => 'needs' in job && job.needs?.includes('prune-workers') === true)).toBe(
+    false,
+  );
+  const command = prune.steps.find(({ name }) => name === PRUNE_STEP);
+  expect(command?.['continue-on-error']).toBeUndefined();
+  expect(command?.run).toContain('args=(prune --apply --trusted-ledgers)');
+  expect(command?.run).toContain('--ledger-file "$RUNNER_TEMP/stage-release-ledger/stage-release-ledger.json"');
+  expect(command?.run).toContain(
+    '--candidate-file "$RUNNER_TEMP/stage-demo-release/composition-candidate/active-application-composition-candidate.json"',
+  );
+  expect(command?.run).toContain(`mise exec -- pnpm exec node ${PRUNER} "\${args[@]}"`);
+  // It downloads exactly what the release archives: its final ledger and its candidate.
+  const archived = new Set(
+    jobs.release.steps.flatMap(({ uses, with: inputs }) =>
+      uses?.startsWith('actions/upload-artifact@') === true && inputs?.name !== undefined ? [inputs.name] : [],
+    ),
+  );
+  const downloads = prune.steps.filter(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+  expect(downloads).toHaveLength(2);
+  for (const download of downloads) {
+    expect(archived.has(download.with?.name ?? '')).toBe(true);
+    expect(download.if).toBe("env.PRUNE_ONLY != 'true'");
+    expect(indexOf(prune.steps, download.name)).toBeLessThan(indexOf(prune.steps, PRUNE_STEP));
+  }
+});
+
+it('runs only the prune on a prune_workers_only dispatch', () => {
+  const InputsSchema = Schema.Struct({
+    on: Schema.Struct({
+      workflow_dispatch: Schema.Struct({
+        inputs: Schema.Struct({
+          prune_workers_only: Schema.Struct({ default: Schema.Boolean, type: Schema.String }),
+        }),
+      }),
+    }),
+  });
+  const { on } = Schema.decodeUnknownSync(InputsSchema)(parse(readFileSync(STAGE_DEMO_WORKFLOW, 'utf-8')));
+  expect(on.workflow_dispatch.inputs.prune_workers_only).toMatchObject({ default: false, type: 'boolean' });
+  const jobs = readJobs();
+  for (const entry of [jobs.plan.if, jobs['release-script-tests'].if]) {
+    expect(entry).toContain(
+      "github.event_name == 'workflow_dispatch' && !inputs.outbox_only && !inputs.prune_workers_only && inputs.profile_recovery_mode == 'none'",
+    );
+  }
+  // The release otherwise only runs on its plan or an outbox-only retry, and the builds only on the plan.
+  expect(jobs.release.if).toContain(
+    "inputs.outbox_only && inputs.profile_recovery_mode == 'none' && !inputs.prune_workers_only",
+  );
+  expect(jobs.release.needs).toEqual(['plan']);
+  expect(jobs['prune-workers'].env?.PRUNE_ONLY).toBe(
+    workflowExpression("github.event_name == 'workflow_dispatch' && inputs.prune_workers_only"),
+  );
+  expect(jobs['prune-workers'].steps.find(({ name }) => name === PRUNE_STEP)?.run).toContain(
+    '--time-budget-seconds 5400',
+  );
+});
+
+it('tests the pruner and the provider failure parser with the release scripts', () => {
+  const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
+  expect(tests?.run).toContain('scripts/tests/prune-immutable-workers.test.mts');
+  expect(tests?.run).toContain('scripts/tests/ops-shell.test.mts');
 });
