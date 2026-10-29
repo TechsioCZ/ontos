@@ -193,6 +193,11 @@ export const DATABASE_CATALOG_QUERIES = {
     where n.nspname !~ '^pg_' and n.nspname <> 'information_schema'`,
 } satisfies Readonly<Record<string, string>>;
 
+/** Keep each tagged projection unchanged while eliminating serial catalog round trips. */
+export const DATABASE_CATALOG_EVIDENCE_QUERY = Object.entries(DATABASE_CATALOG_QUERIES)
+  .map(([name, sql]) => `select '${name}'::text as name, to_jsonb(evidence) as row from (${sql}) evidence`)
+  .join('\nunion all\n');
+
 /** One repeatable, read-only snapshot; journal rows are the only non-catalog rows hashed. */
 export const readDatabaseStateLines = (client: PgClient.PgClient) =>
   client
@@ -200,24 +205,29 @@ export const readDatabaseStateLines = (client: PgClient.PgClient) =>
       Effect.gen(function* readDatabaseState() {
         yield* client.unsafe('set transaction isolation level repeatable read read only');
         yield* client.unsafe('set local search_path = pg_catalog');
-        const lines: string[] = [];
-        for (const [name, sql] of Object.entries(DATABASE_CATALOG_QUERIES)) {
-          const rows = yield* client.unsafe(`select to_jsonb(evidence) as row from (${sql}) evidence`).pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ row: Schema.Json })))),
-            Effect.mapError(
-              () => new DatabaseStateFingerprintError({ reason: `Catalog fingerprint unavailable: ${name}` }),
-            ),
-          );
-          lines.push(...rows.map(({ row }) => `${name} ${canonicalDatabaseValue(row)}`));
-        }
-        const journals = yield* client.unsafe<{ name: string }>(`select c.relname as name from pg_catalog.pg_class c
-        join pg_catalog.pg_namespace n on n.oid=c.relnamespace
-        where n.nspname='drizzle' and c.relkind in ('r','p') order by c.relname`);
-        for (const { name } of journals) {
-          const rows = yield* client
+        const rows = yield* client.unsafe(DATABASE_CATALOG_EVIDENCE_QUERY).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ name: Schema.String, row: Schema.Json }))),
+          ),
+          Effect.mapError(() => new DatabaseStateFingerprintError({ reason: 'Catalog fingerprint unavailable' })),
+        );
+        const lines = rows.map(({ name, row }) => `${name} ${canonicalDatabaseValue(row)}`);
+        const relations = yield* Schema.decodeUnknownEffect(
+          Schema.Array(
+            Schema.Struct({
+              nspname: Schema.String,
+              relkind: Schema.String,
+              relname: Schema.String,
+            }),
+          ),
+        )(rows.filter(({ name }) => name === 'relations').map(({ row }) => row));
+        for (const { relname: name } of relations.filter(
+          ({ nspname, relkind }) => nspname === 'drizzle' && ['r', 'p'].includes(relkind),
+        )) {
+          const journalRows = yield* client
             .unsafe(`select to_jsonb(j) as row from drizzle.${quoteIdentifier(name)} j`)
             .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ row: Schema.Json })))));
-          lines.push(...rows.map(({ row }) => `journal ${name} ${canonicalDatabaseValue(row)}`));
+          lines.push(...journalRows.map(({ row }) => `journal ${name} ${canonicalDatabaseValue(row)}`));
         }
         return lines;
       }),
@@ -299,7 +309,9 @@ export const observeDatabasePreparation = Effect.gen(function* observePreparatio
           .digest('hex')
       : null;
   const logins = yield* Effect.forEach([...targets.values()], authenticateLogin, { concurrency: 4 });
-  const databases = yield* Effect.forEach([...admins], ([name, target]) => readDatabaseEvidence(name, target));
+  const databases = yield* Effect.forEach([...admins], ([name, target]) => readDatabaseEvidence(name, target), {
+    concurrency: 2,
+  });
   return {
     authorityPhase: databases[0].authorityPhase,
     identityFp,

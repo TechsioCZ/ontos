@@ -263,6 +263,16 @@ const secretStepRuns = (condition: string | undefined, outboxOnly: boolean, prec
   if (expression === 'always()') {
     return true;
   }
+  // Over-approximate both database modes and continuation: either conditional consumer can run.
+  if (workflowExpression(expression) === ownerVerifyCondition) {
+    return precedingSuccess && !outboxOnly;
+  }
+  if (
+    expression ===
+    "inputs.outbox_only || (!inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full')"
+  ) {
+    return precedingSuccess;
+  }
   expect(expression).toBe('success()');
   return precedingSuccess;
 };
@@ -410,6 +420,7 @@ it('keeps the original bundle only in preparation and gives every later release 
     OUTBOX_PLAN,
     RECOVERY_CONFIG_CHECK,
     STREAM_START,
+    POST_MIGRATION_BOOTSTRAP,
     SERVICE_GRANTS,
     RECOVERY_CONFIG_APPLY,
     SHELL_INGRESS,
@@ -1449,7 +1460,9 @@ it('runs every owner migration through the native lifecycle on the private netwo
   expect(connect).toBeGreaterThanOrEqual(0);
   expect(indexOf(steps, READINESS)).toBeGreaterThan(connect);
   expect(indexOf(steps, READINESS)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
-  expect(steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP)?.run).toBe('mise exec -- pnpm db:verify');
+  expect(steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP)?.run).toContain(
+    'scripts/demo/reconcile-stage-service-grants.mts --zerops --apply --verify-database',
+  );
   expect(indexOf(steps, MIGRATE)).toBeGreaterThan(connect);
   for (const later of [IMMUTABLE_UPLOAD, PUBLICATION, SHELL_INGRESS, 'Deploy the AKROS storefront']) {
     expect(indexOf(steps, later)).toBeGreaterThan(indexOf(steps, MIGRATE));
@@ -1522,7 +1535,7 @@ it('migrates the Commerce portal realm with the runtime and administrator databa
     RESUME_MIGRATED_REVISION: ['${{', 'steps.migration-readiness.outputs.resume-migrated-revision', '}}'].join(' '),
   });
   const verify = readJobs().release.steps.find(({ name }) => name === POST_MIGRATION_BOOTSTRAP);
-  expect(verify?.env).toEqual({
+  expect(verify?.env).toMatchObject({
     COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: secretReference('DATABASE_ADMIN_URL'),
     COMMERCE_PORTAL_AUTH_DATABASE_URL: secretReference('DATABASE_URL'),
   });
@@ -1935,7 +1948,16 @@ it('reconciles service grants and the isolated verification context after migrat
   // The uploads stream beside the grants; nothing publishes before both finished.
   expect(indexOf(steps, name)).toBeLessThan(indexOf(steps, UPLOAD_JOIN));
   expect(indexOf(steps, name)).toBeLessThan(indexOf(steps, PUBLICATION));
-  expect(reconcile?.if).toBeUndefined();
+  expect(reconcile?.if).toBe(
+    workflowExpression(
+      "inputs.outbox_only || (!inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full')",
+    ),
+  );
+  const concurrent = steps.find((step) => step.name === POST_MIGRATION_BOOTSTRAP);
+  expect(concurrent?.if).toBe(ownerVerifyCondition);
+  expect(concurrent?.run).toContain('--apply --verify-database');
+  expect(concurrent?.['continue-on-error']).toBeUndefined();
+  expect(indexOf(steps, POST_MIGRATION_BOOTSTRAP)).toBeLessThan(indexOf(steps, PUBLICATION));
   expect(reconcile?.['continue-on-error']).toBeUndefined();
   expect(reconcile?.env?.ZEROPS_TOKEN).toBe(secretReference('ZEROPS_TOKEN'));
   expect(reconcile?.env?.ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN).toBe(secretReference('CLOUDFLARE_API_TOKEN'));
@@ -1948,6 +1970,9 @@ it('reconciles service grants and the isolated verification context after migrat
   const verification = script.indexOf('yield* ensureStageVerification(configuration)', apply);
   expect(native).toBeGreaterThan(apply);
   expect(verification).toBeGreaterThan(native);
+  expect(script.indexOf('verifyDatabaseAndReconcileServiceGrants(rpc, grants, verifyStageDatabase)')).toBeGreaterThan(
+    verification,
+  );
   expect(script.indexOf('yield* reconcileStagePermissionSchema(rpc, mode)')).toBeLessThan(apply);
   expect(script).toContain("SPICEDB_ENDPOINT: 'spicedb:50051'");
   expect(script).toContain('...verificationGrants');
