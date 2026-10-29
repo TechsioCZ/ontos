@@ -471,9 +471,8 @@ it.effect('re-imports the retired services with their secrets, re-points the var
     }
     expect(stage.variables.get('stage')?.get('DEPLOY_TARGET')).toBe('zerops');
     const rendered = stage.commands.slice(commandsBefore).map(({ args, command }) => [command, ...args].join(' '));
-    expect(rendered.at(-1)).toBe(
-      'gh workflow run ultramodern-workspace-gates.yml --repo TechsioCZ/ontos --ref main -f full=true',
-    );
+    // Main deploys only production: a restore never dispatches a deploy.
+    expect(rendered.join('\n')).not.toContain('gh workflow run');
     expect(rendered.join('\n')).not.toContain('private-jwk-secret');
     expect(rendered.join('\n')).not.toContain(AUTH_SECRET);
   }),

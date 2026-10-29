@@ -16,7 +16,6 @@ export const STAGE_ZEROPS_PROJECT_ID = 't1ljmn3DRDafgi8AuPvhdQ';
 export const ONTOS_REPOSITORY = 'TechsioCZ/ontos';
 export const STAGE_ENVIRONMENT = 'stage';
 export const STAGE_EDGE_ENVIRONMENT = 'stage-edge';
-export const DEPLOY_WORKFLOW = 'ultramodern-workspace-gates.yml';
 export const DEPLOY_TARGET_VARIABLE = 'DEPLOY_TARGET';
 /** `dedicated` or `host`: how an environment runs its Outbox Workers, whatever its deploy target. */
 export const OUTBOX_WORKER_MODE_VARIABLE = 'OUTBOX_WORKER_MODE';
@@ -288,9 +287,3 @@ export const listGithubVariables = (repository: string, environment: string) =>
   );
 
 export const githubApi = (args: readonly string[]) => runCommand({ args: ['api', ...args], command: GH });
-
-export const dispatchFullDeploy = (repository: string) =>
-  runCommand({
-    args: ['workflow', 'run', DEPLOY_WORKFLOW, REPOSITORY_FLAG, repository, '--ref', 'main', '-f', 'full=true'],
-    command: GH,
-  });

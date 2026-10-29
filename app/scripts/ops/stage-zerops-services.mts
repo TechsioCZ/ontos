@@ -31,7 +31,6 @@ import {
   appFile,
   decodeInput,
   deleteZeropsService,
-  dispatchFullDeploy,
   importZeropsServices,
   listGithubVariables,
   listZeropsProjectUserKeys,
@@ -480,7 +479,7 @@ export const restore = (options: { readonly secretsFile: Option.Option<string> }
         setGithubVariable(repository, STAGE_ENVIRONMENT, DEPLOY_TARGET_VARIABLE, 'zerops'),
       );
     }
-    yield* perform('dispatch the full Zerops stage deploy from main', dispatchFullDeploy(repository));
+    // Main deploys only production, so nothing here dispatches a deploy: a restored Zerops stage needs its own one.
     return yield* Effect.void;
   });
 

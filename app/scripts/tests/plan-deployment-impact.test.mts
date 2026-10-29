@@ -1748,7 +1748,9 @@ it.live('names the missing seed when no successful stage deployment exists', () 
       ),
     );
     expect(failure).toContain('no successful "stage" deployment exists outside run 2');
-    expect(failure).toContain('gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true');
+    expect(failure).toContain(
+      'gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true',
+    );
   }),
 );
 

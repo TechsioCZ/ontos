@@ -20,9 +20,9 @@ jobs:
   # in the middle of a deploy. GitHub keeps one pending job per concurrency group and cancels the older
   # pending one when another queues, so a refresh that queued behind a running deploy would cancel the
   # deploy job pending after it. A deploy re-publishes the composition anyway, and validity outlasts
-  # three refresh intervals, so a refresh that finds a deploy run in flight yields to it: a main deploy run,
-  # or a sales demo deploy run, whose release job takes the stage lock right after its plan. This job
-  # sits outside the lock so it never queues there itself.
+  # three refresh intervals, so a refresh that finds a deploy run in flight yields to it: a sales demo deploy
+  # run, whose release job takes the stage lock right after its plan, or a dispatched main run, which deploys
+  # production. This job sits outside the lock so it never queues there itself.
   deploy-guard:
     name: Yield the refresh to a deploy in flight
     runs-on: ubuntu-latest
@@ -43,24 +43,23 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        # A push to main deploys stage; a dispatch deploys stage or production. Every sales demo deploy run
-        # (push or dispatch, profile recovery included) takes the stage lock only.
+        # Only the sales demo deploy (push or dispatch, profile recovery included) deploys stage; a push to
+        # main deploys nothing, and a dispatch on main deploys production only.
         run: |
           unfinished() {
             gh run list "$@" --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length'
           }
-          pushes="$(unfinished --workflow ultramodern-workspace-gates.yml --branch main --event push)"
           dispatches="$(unfinished --workflow ultramodern-workspace-gates.yml --branch main --event workflow_dispatch)"
           demo="$(unfinished --workflow stage-demo-deploy.yml --branch demo/sales-crm)"
           stage=false
           production=false
-          if (( pushes + dispatches + demo > 0 )); then
+          if (( demo > 0 )); then
             stage=true
             echo "::notice title=Stage refresh skipped::A stage deploy run is unfinished; a deploying run re-publishes the stage composition."
           fi
           if (( dispatches > 0 )); then
             production=true
-            echo "::notice title=Production refresh skipped::A dispatched deploy run is unfinished and may target production; it re-publishes the composition."
+            echo "::notice title=Production refresh skipped::A dispatched production deploy run is unfinished; it re-publishes the composition."
           fi
           echo "stage=$stage" >>"$GITHUB_OUTPUT"
           echo "production=$production" >>"$GITHUB_OUTPUT"

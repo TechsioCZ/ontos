@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -574,6 +577,39 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
   // The guard queues outside every deploy lock: a refresh pending in the lock would cancel a pending deploy.
   expect(guard?.concurrency).toBeUndefined();
   expect(guard?.steps.map(({ run }) => run ?? '').join('\n')).toContain('--workflow ultramodern-workspace-gates.yml');
+  // Only a sales demo deploy run holds stage; main deploys nothing on a push and only production on a dispatch.
+  const script = guard?.steps.find(({ run }) => run?.includes('unfinished()') === true)?.run ?? 'exit 1';
+  const active = (counts: { readonly demo: number; readonly dispatch: number; readonly push: number }) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'refresh-deploy-guard-'));
+    try {
+      const gh = path.join(directory, 'gh');
+      writeFileSync(
+        gh,
+        [
+          '#!/bin/sh',
+          'case "$*" in',
+          `  *stage-demo-deploy.yml*) echo ${counts.demo} ;;`,
+          `  *workflow_dispatch*) echo ${counts.dispatch} ;;`,
+          `  *push*) echo ${counts.push} ;;`,
+          '  *) exit 1 ;;',
+          'esac',
+          '',
+        ].join('\n'),
+      );
+      chmodSync(gh, 0o700);
+      const output = path.join(directory, 'output');
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
+        env: { GITHUB_OUTPUT: output, PATH: `${directory}:/usr/bin:/bin` },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return readFileSync(output, 'utf-8');
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  };
+  expect(active({ demo: 0, dispatch: 0, push: 3 })).toBe('stage=false\nproduction=false\n');
+  expect(active({ demo: 1, dispatch: 0, push: 0 })).toBe('stage=true\nproduction=false\n');
+  expect(active({ demo: 0, dispatch: 1, push: 0 })).toBe('stage=false\nproduction=true\n');
   for (const [name, environment] of [
     ['refresh-stage', 'stage'],
     ['refresh-production', 'production'],

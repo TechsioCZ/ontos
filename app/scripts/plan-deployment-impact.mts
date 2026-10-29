@@ -1132,7 +1132,7 @@ const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => 
 };
 
 export const FULL_PLAN_SEED_INSTRUCTION =
-  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Main-to-Stage Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true)';
+  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Production Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true)';
 
 const gitSucceeds = (rootDirectory: string, args: readonly string[]) =>
   Effect.gen(function* gitSucceedsEffect() {

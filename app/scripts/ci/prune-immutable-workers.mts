@@ -41,7 +41,7 @@ import {
 } from '../publish-active-application-composition.mts';
 import { DIGEST_VERSION, LEDGER_LOOKBACK } from './deploy-plan.mts';
 import { carriedUnitRecords, createGitHubClient, parseLedger, readTrustedLedgers } from './release-ledger.mts';
-import type { GitHubClient, ReleaseLedger, TrustedProducer } from './release-ledger.mts';
+import type { GitHubClient, ReleaseLedger } from './release-ledger.mts';
 
 export class PruneImmutableWorkersError extends Schema.TaggedError<PruneImmutableWorkersError>()(
   'PruneImmutableWorkersError',
@@ -342,59 +342,6 @@ const readLedgers = (client: GitHubClient, files: readonly string[], trusted: bo
     return { current, trusted: fromRuns };
   });
 
-/**
- * The main deploy workflow, which uploads into the same account (both deploy through the stage-edge environment). It
- * archives the complete candidate it uploaded before publishing it, and a rerun of its failed publication publishes
- * that archive without uploading again.
- */
-export const MAIN_STAGE_PRODUCER: TrustedProducer = Object.freeze({
-  branch: 'main',
-  events: Object.freeze(['push', 'workflow_dispatch']),
-  workflowPath: '.github/workflows/ultramodern-workspace-gates.yml',
-});
-export const MAIN_CANDIDATE_ARTIFACT = 'approved-application-composition-candidate';
-export const MAIN_CANDIDATE_FILE = 'active-application-composition-candidate.json';
-/** How long the main deploy workflow retains its candidate archive (its upload's `retention-days`). */
-export const MAIN_CANDIDATE_RETENTION = Duration.days(7);
-
-/** One main deploy candidate archive's document, which must be JSON. */
-const readMainCandidate = (client: GitHubClient, artifactId: number) =>
-  Effect.gen(function* readMainCandidateEffect() {
-    const unreadable = fail(`the main deploy candidate ${String(artifactId)} could not be read; nothing is pruned`);
-    const files = yield* Effect.tryPromise({
-      catch: unreadable,
-      try: async () => await client.downloadArtifact(artifactId),
-    });
-    const entry = files.get(MAIN_CANDIDATE_FILE);
-    if (entry === undefined) {
-      return yield* unreadable();
-    }
-    const text = entry.toString('utf-8');
-    yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(Effect.mapError(unreadable));
-    return text;
-  });
-
-/**
- * Every Worker a main deploy candidate names while its archive is retained, so a publication rerun never finds its
- * Workers deleted. The candidates are only read for names (a main candidate may be of a newer shape than this branch
- * decodes), and every one must be read: a missing or unreadable archive fails the whole read.
- */
-export const retainedMainCandidateWorkers = (client: GitHubClient, now: number) =>
-  Effect.gen(function* retainedMainCandidateWorkersEffect() {
-    const archives = yield* Effect.tryPromise({
-      catch: fail('the retained main deploy candidates could not be listed; nothing is pruned'),
-      try: async () =>
-        await client.trustedArtifacts(MAIN_CANDIDATE_ARTIFACT, Number.POSITIVE_INFINITY, {
-          createdAfter: now - Duration.toMillis(MAIN_CANDIDATE_RETENTION) - Duration.toMillis(Duration.days(1)),
-          producer: MAIN_STAGE_PRODUCER,
-        }),
-    });
-    const documents = yield* Effect.forEach(archives, ({ artifact }) => readMainCandidate(client, artifact.id), {
-      concurrency: 4,
-    });
-    return new Set(documents.flatMap((text) => [...mentionedImmutableWorkers(text)])) satisfies ReadonlySet<string>;
-  });
-
 export interface KeepOptions {
   readonly candidateFile: Option.Option<string>;
   readonly ledgerFiles: readonly string[];
@@ -408,14 +355,13 @@ const readKeepSources = (workers: readonly AccountWorker[], options: KeepOptions
   Effect.gen(function* readKeepSourcesEffect() {
     const now = yield* DateTime.nowAsDate;
     const client = yield* githubClient;
-    const [active, candidate, mainCandidates, ledgers, binding] = yield* Effect.all(
+    const [active, candidate, ledgers, binding] = yield* Effect.all(
       [
         activeCompositionWorkers,
         Option.match(options.candidateFile, {
           onNone: () => Effect.succeed<ReadonlySet<string>>(new Set()),
           onSome: candidateWorkers,
         }),
-        retainedMainCandidateWorkers(client, now.getTime()),
         readLedgers(client, options.ledgerFiles, options.trustedLedgers),
         serviceBindingTargets(workers),
       ],
@@ -427,20 +373,16 @@ const readKeepSources = (workers: readonly AccountWorker[], options: KeepOptions
     return {
       active,
       binding,
-      candidate: new Set([...candidate, ...mainCandidates, ...(options.planned ?? [])]),
+      candidate: new Set([...candidate, ...(options.planned ?? [])]),
       ledger: ledgerWorkers(ledgers, now),
     } satisfies KeepSources;
   });
 
 /**
- * Workflows that upload or publish stage releases besides the sales demo deploy, whose own runs never overlap (one
- * concurrency group for the whole workflow). Mirrors the composition refresh's deploy guard: a push or dispatch on
- * main deploys stage, and an initial cutover publishes a composition.
+ * Workflows that publish stage releases besides the sales demo deploy, whose own runs never overlap (one concurrency
+ * group for the whole workflow): an initial cutover publishes a composition. Main deploys only production.
  */
-export const FOREIGN_STAGE_WRITERS = [
-  { branch: 'main', workflow: 'ultramodern-workspace-gates.yml' },
-  { branch: null, workflow: 'initial-composition-cutover.yml' },
-] as const;
+export const FOREIGN_STAGE_WRITERS = [{ branch: null, workflow: 'initial-composition-cutover.yml' }] as const;
 
 /**
  * How long one coordination check stands. A stage writer run that starts after a check needs far longer than this
