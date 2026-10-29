@@ -26,7 +26,7 @@ on:
         type: boolean
         default: false
       environment:
-        description: GitHub deployment environment to deploy. Its DEPLOY_TARGET variable selects Zerops or Cloudflare; pushes to main deploy stage.
+        description: GitHub deployment environment to deploy. Its DEPLOY_TARGET variable selects Zerops or Cloudflare. Main deploys only while the MAIN_DEPLOY_ENABLED repository variable is 'true'.
         type: choice
         options:
           - stage
@@ -1031,13 +1031,16 @@ jobs:
   # deploy-cloudflare. Its OUTBOX_WORKER_MODE variable, required and independent of the target, chooses
   # how the Outbox Workers run on Zerops: `dedicated` (one service per owner, highly available) or `host`
   # (every owner in the one outbox-worker-host process, cheap). There is no default, so an environment
-  # never inherits another's mode. Pushes to main deploy stage; production deploys only on an explicit dispatch.
+  # never inherits another's mode. Stage is deployed from the demo/sales-crm branch by stage-demo-deploy.yml,
+  # so main does not deploy: the whole deploy chain below hangs off this job, which runs only when the
+  # repository variable MAIN_DEPLOY_ENABLED is 'true'. It is unset, so pushes and dispatches on main run the
+  # gates and nothing else. When enabled, pushes deploy stage and production deploys only on an explicit dispatch.
   # Environment variables and secrets are unreadable in a job-level `if`, so this job reads them
   # without creating a deployment (`deployment: false`). An environment without its Zerops project
   # and token deploys nothing and records nothing.
   deploy-target:
     name: Resolve the deploy target of the deployment environment
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: vars.MAIN_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
