@@ -52,8 +52,9 @@ export default defineConfig({
       }),
       include: ['tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
       name: 'unit',
+      // The .14 TanStack runtime has async SSR dependencies that require ESM test output.
       output: {
-        module: false,
+        module: true,
       },
       plugins: [
         {
