@@ -1,5 +1,6 @@
 import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
 import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
+import type { HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 
@@ -114,6 +115,20 @@ interface ProjectSearchBody {
 }
 
 const failure = (message: string) => (cause: unknown) => new ZeropsApiError({ cause, message });
+
+/** Zerops answers a rejected request with a machine error code; it never carries a token, URL or secret value. */
+const ZeropsErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
+
+const rejection = (
+  response: HttpClientResponse.HttpClientResponse,
+  message: string,
+): Effect.Effect<never, ZeropsApiError> =>
+  response.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ZeropsErrorBodySchema)),
+    Effect.map(({ error }) => `: HTTP ${String(response.status)} ${error.code}`),
+    Effect.orElseSucceed(() => `: HTTP ${String(response.status)}`),
+    Effect.flatMap((detail) => Effect.fail(new ZeropsApiError({ message: `${message}${detail}` }))),
+  );
 
 const terminalProcessStatuses: ReadonlySet<string> = new Set(['CANCELED', 'FAILED', 'FINISHED']);
 
@@ -305,10 +320,16 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   const client = authorizedClient.pipe(HttpClient.filterStatusOk);
 
   const send = <A, I>(request: HttpClientRequest.HttpClientRequest, schema: Schema.Codec<A, I>, label: string) =>
-    client.execute(request).pipe(
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+    authorizedClient.execute(request).pipe(
       Effect.mapError(failure(`Zerops ${label} failed`)),
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? response.json.pipe(Effect.mapError(failure(`Zerops ${label} failed`)))
+          : rejection(response, `Zerops ${label} failed`),
+      ),
+      Effect.flatMap((body) =>
+        Schema.decodeUnknownEffect(schema)(body).pipe(Effect.mapError(failure(`Zerops ${label} failed`))),
+      ),
       Effect.timeoutOrElse({
         duration: REQUEST_TIMEOUT,
         orElse: () => Effect.fail(new ZeropsApiError({ message: `Zerops ${label} timed out` })),
