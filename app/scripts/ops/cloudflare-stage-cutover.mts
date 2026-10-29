@@ -25,6 +25,7 @@ import {
   SHARED_RUNTIME_IDENTITY,
   SHELL_GATEWAY_ISSUER_IDENTITY,
 } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { selectZeropsSetup } from '../materialize-zerops-environment.mts';
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import {
@@ -682,31 +683,48 @@ const missingDataLayerImports = (tunnel: StageTunnel, present: ReadonlySet<strin
     return imports;
   });
 
+/** Zerops rejects a build file over 50 kB, so the push sends only the cloudflared setup. */
+const cloudflaredZeropsYaml = Effect.gen(function* cloudflaredZeropsYamlEffect() {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* selectZeropsSetup(
+    yield* fs.readFileString(yield* appFile('zerops.yaml')),
+    CLOUDFLARED_SERVICE.setup,
+  );
+  const path = yield* fs.makeTempFileScoped({ suffix: '.zerops.yaml' });
+  yield* fs.writeFileString(path, text);
+  return path;
+});
+
 const pushCloudflared = (service: ZeropsService) =>
   Effect.gen(function* pushCloudflaredEffect() {
     const { projectId } = yield* CutoverConfiguration;
     yield* perform(
       `deploy the ${CLOUDFLARED_SERVICE.setup} setup to Zerops service ${service.id}`,
-      runCommand({
-        args: [
-          'push',
-          '--working-dir',
-          '.',
-          '--zerops-yaml-path',
-          'app/zerops.yaml',
-          // Like CI: deploy the committed revision, never local edits (A2 writes the placement file).
-          '--workspace-state',
-          'clean',
-          '--project-id',
-          projectId,
-          '--service-id',
-          service.id,
-          '--setup',
-          CLOUDFLARED_SERVICE.setup,
-        ],
-        command: 'zcli',
-        cwd: yield* repositoryDirectory,
-      }),
+      Effect.scoped(
+        Effect.gen(function* deployCloudflared() {
+          const zeropsYamlPath = yield* cloudflaredZeropsYaml;
+          return yield* runCommand({
+            args: [
+              'push',
+              '--working-dir',
+              '.',
+              '--zerops-yaml-path',
+              zeropsYamlPath,
+              // Like CI: deploy the committed revision, never local edits (A2 writes the placement file).
+              '--workspace-state',
+              'clean',
+              '--project-id',
+              projectId,
+              '--service-id',
+              service.id,
+              '--setup',
+              CLOUDFLARED_SERVICE.setup,
+            ],
+            command: 'zcli',
+            cwd: yield* repositoryDirectory,
+          });
+        }),
+      ),
     );
   });
 

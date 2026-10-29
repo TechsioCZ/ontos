@@ -33,9 +33,10 @@ const variablePaths = (document: ReturnType<typeof parseDocument>, setupCount: n
     PHASES.map((phase) => ['zerops', index, phase, 'envVariables', variable]).filter((path) => document.hasIn(path)),
   );
 
-/** Configure `target`, optionally retaining exactly one setup within Zerops' 50 kB build-file limit. */
-export const materializeZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnvironmentTarget, setup?: string) =>
-  Effect.gen(function* materializeZeropsEnvironmentEffect() {
+const ZEROPS_BUILD_FILE_LIMIT_BYTES = 50_000;
+
+const parseSetups = (zeropsYamlText: string, setup: string | undefined) =>
+  Effect.gen(function* parseSetupsEffect() {
     const document = parseDocument(zeropsYamlText);
     const setups = document.get('zerops');
     if (document.errors.length > 0 || !isSeq(setups)) {
@@ -50,7 +51,28 @@ export const materializeZeropsEnvironment = (zeropsYamlText: string, target: Zer
       }
       setups.items = matches;
     }
-    const setupCount = setups.items.length;
+    return { document, setupCount: setups.items.length };
+  });
+
+const withinBuildFileLimit = (text: string, setup: string) =>
+  new TextEncoder().encode(text).byteLength < ZEROPS_BUILD_FILE_LIMIT_BYTES
+    ? Effect.succeed(text)
+    : Effect.fail(
+        new ZeropsEnvironmentMaterializationError({
+          message: `zerops.yaml setup "${setup}" must be smaller than ${String(ZEROPS_BUILD_FILE_LIMIT_BYTES)} bytes`,
+        }),
+      );
+
+/** Retains exactly one setup unchanged, within Zerops' 50 kB build-file limit, for a setup that names no environment. */
+export const selectZeropsSetup = (zeropsYamlText: string, setup: string) =>
+  parseSetups(zeropsYamlText, setup).pipe(
+    Effect.flatMap(({ document }) => withinBuildFileLimit(document.toString({ lineWidth: 0 }), setup)),
+  );
+
+/** Configure `target`, optionally retaining exactly one setup within Zerops' 50 kB build-file limit. */
+export const materializeZeropsEnvironment = (zeropsYamlText: string, target: ZeropsEnvironmentTarget, setup?: string) =>
+  Effect.gen(function* materializeZeropsEnvironmentEffect() {
+    const { document, setupCount } = yield* parseSetups(zeropsYamlText, setup);
     const environmentPaths = variablePaths(document, setupCount, DEPLOYMENT_ENVIRONMENT_VARIABLE);
     if (environmentPaths.length === 0) {
       return yield* new ZeropsEnvironmentMaterializationError({
@@ -77,12 +99,7 @@ export const materializeZeropsEnvironment = (zeropsYamlText: string, target: Zer
       }
     }
     const text = document.toString({ lineWidth: 0 });
-    if (setup !== undefined && new TextEncoder().encode(text).byteLength >= 50_000) {
-      return yield* new ZeropsEnvironmentMaterializationError({
-        message: `zerops.yaml setup "${setup}" must be smaller than 50000 bytes`,
-      });
-    }
-    return text;
+    return setup === undefined ? text : yield* withinBuildFileLimit(text, setup);
   });
 
 const commandTarget = (environment: DeploymentEnvironment, spiceDbEndpoint: Option.Option<string>) =>
