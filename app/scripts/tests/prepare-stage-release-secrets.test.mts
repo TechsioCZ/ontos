@@ -29,13 +29,14 @@ const WORKLOAD_KEY = 'synthetic-private-workload-key-never-copy';
 const SHELL_URL = 'https://ontos-stage.example.test';
 const STAGE_ZONE = 'example.test';
 const SHELL_API = `${SHELL_URL}/shell-super-app-api`;
+const SPICEDB_HOST = 'ontos-stage-spicedb.example.test';
 const STOREFRONT_URL = 'https://ontos-stage-akros.example.test';
 const SENDER = 'noreply@ontos-stage.example.test';
 const EDGE: StageEdgeConfig = {
   accountId: 'a'.repeat(32),
   emailSender: SENDER,
   shellHostname: 'ontos-stage.example.test',
-  spicedbHostname: 'ontos-stage-spicedb.example.test',
+  spicedbHostname: SPICEDB_HOST,
   storefrontCatalogKvId: '',
   storefrontHostname: 'ontos-stage-akros.example.test',
   workersDevSubdomain: 'example',
@@ -318,7 +319,7 @@ it.effect('adds the exact five native Projects bindings and the derived hosts wh
     expect(decoded.projects).toEqual({
       ONTOS_GATEWAY_ISSUER: SHELL_URL,
       ONTOS_GATEWAY_PUBLIC_JWKS: Redacted.value(publicJwks),
-      SPICEDB_ENDPOINT: 'ontos-stage-spicedb.example.test',
+      SPICEDB_ENDPOINT: SPICEDB_HOST,
       SPICEDB_PRESHARED_KEY: SHARED_KEY,
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
     });
@@ -392,6 +393,39 @@ for (const binding of PROJECTS_RELEASE_SECRET_KEYS.filter((key) => !isDerivedHos
       expect(error.reason).toBe('projects-conflict');
       expect(JSON.stringify(error)).not.toContain(CONFLICTING_VALUE);
       expect(Redacted.value(input.bundle)).not.toContain(CONFLICTING_VALUE);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect(
+  'accepts a stored Projects entry that omits its derived hosts and fills them from the stage edge config',
+  () =>
+    Effect.gen(function* acceptsHostFreeProjects() {
+      const { bundle, input } = yield* fixture;
+      const hostFree = Object.fromEntries(
+        Object.entries(bundle[PROJECTS] ?? {}).filter(([key]) => !isDerivedHostBinding(key)),
+      );
+      expect(Object.keys(hostFree)).toHaveLength(3);
+      const result = yield* prepareStageReleaseSecrets({
+        ...input,
+        bundle: Redacted.make(JSON.stringify({ ...bundle, [PROJECTS]: hostFree })),
+      });
+      expect(result.repairedProjects).toBe(false);
+      expect(decodeBundle(Redacted.value(result.bundle))[PROJECTS]).toEqual({
+        ...hostFree,
+        ONTOS_GATEWAY_ISSUER: SHELL_URL,
+        SPICEDB_ENDPOINT: SPICEDB_HOST,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const binding of PROJECTS_RELEASE_SECRET_KEYS.filter((key) => !isDerivedHostBinding(key))) {
+  it.effect(`rejects a stored Projects entry missing its ${binding}`, () =>
+    Effect.gen(function* rejectsIncompleteProjects() {
+      const { bundle, input } = yield* fixture;
+      const raw = JSON.stringify({ ...bundle, [PROJECTS]: withoutKey(bundle[PROJECTS] ?? {}, binding) });
+      const error = yield* prepareStageReleaseSecrets({ ...input, bundle: Redacted.make(raw) }).pipe(Effect.flip);
+      expect(error.reason).toBe('projects-conflict');
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 }

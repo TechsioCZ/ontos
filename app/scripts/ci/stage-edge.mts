@@ -170,8 +170,10 @@ export const deployableStageEdge = ({
   return config;
 };
 
-const USAGE =
-  'usage: stage-edge.mts export [--cloudflare-account-id <id>] [--github-env <file>] [--github-output <file>]';
+const USAGE = [
+  'usage: stage-edge.mts export [--cloudflare-account-id <id>] [--github-env <file>] [--github-output <file>]',
+  '       stage-edge.mts shell-gateway-url',
+].join('\n');
 
 const main = (argv: readonly string[]) => {
   const [command, ...rest] = argv;
@@ -184,6 +186,12 @@ const main = (argv: readonly string[]) => {
     },
     strict: true,
   });
+  // The Shell gateway base URL alone, for operator jobs that call the Shell but deploy nothing: it needs no
+  // provisioned storefront KV or placement IDs.
+  if (command === 'shell-gateway-url' && Object.keys(values).length === 0) {
+    console.log(stageEdgeUrls(readStageEdgeConfig()).shellApiBaseUrl);
+    return;
+  }
   if (command !== 'export') {
     throw new StageEdgeConfigError(USAGE);
   }

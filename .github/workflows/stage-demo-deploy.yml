@@ -174,7 +174,8 @@ jobs:
           ONTOS_STAGE_PROFILE_RECOVERY_SOURCE_REVISION: ${{ github.sha }}
           RECOVERY_TRANSITION: ${{ inputs.profile_recovery_transition }}
         run: |
-          ONTOS_SHELL_GATEWAY_BASE_URL="$(jq -er '."commerce-customer-context".ONTOS_SHELL_GATEWAY_BASE_URL | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
+          # The gateway URL derives from topology/stage-edge.json, as the release derives it; the bundle holds only the key.
+          ONTOS_SHELL_GATEWAY_BASE_URL="$(mise exec -- node scripts/ci/stage-edge.mts shell-gateway-url)"
           ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY="$(jq -er '."commerce-customer-context".ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY | select(type == "string" and length > 0)' <<<"$ALL_RELEASE_SECRETS")"
           unset ALL_RELEASE_SECRETS
           masked_key="${ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY//%/%25}"

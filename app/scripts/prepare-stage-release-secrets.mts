@@ -405,14 +405,16 @@ export const prepareStageReleaseSecrets = Effect.fn('StageReleaseSecrets.prepare
     if (Object.entries(canonicalProjects).some(([key, value]) => Redacted.value(desired[key]) !== value)) {
       return yield* failure(PROJECTS_CONTRACT_CHANGED);
     }
-    // A stored Projects entry must hold the derived secrets; its host bindings are derived like every owner's.
+    // A stored Projects entry must hold the derived secrets and nothing else. Its host bindings are derived like
+    // every owner's, so it may omit them; the prepared entry always carries all five.
     const existing = bundle[PROJECTS];
     if (
       Object.hasOwn(bundle, PROJECTS) &&
       (existing === undefined ||
-        Object.keys(existing).length !== PROJECTS_RELEASE_SECRET_KEYS.length ||
-        PROJECTS_RELEASE_SECRET_KEYS.some((key) => !Object.hasOwn(existing, key)) ||
-        Object.entries(projects).some(([key, value]) => !isHostBinding(key) && existing[key] !== value))
+        Object.keys(existing).some((key) => !PROJECTS_RELEASE_SECRET_KEYS.includes(key)) ||
+        Object.entries(projects).some(
+          ([key, value]) => !isHostBinding(key) && (!Object.hasOwn(existing, key) || existing[key] !== value),
+        ))
     ) {
       return yield* failure('projects-conflict');
     }

@@ -45,7 +45,9 @@ Codesmith or another approved generator must update these surfaces atomically. U
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*` cannot be mapped to known delivery units. An unknown new vertical must never produce a no-op deploy.
 
-The stage plan diffs from the commit of the last successful `stage` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`.
+Stage deploys only from `demo/sales-crm` through `.github/workflows/stage-demo-deploy.yml`. Its plan hashes every unit's inputs, including `topology/stage-edge.json`, and rebuilds only units whose digest has no live receipt in the stage release ledger. Rebuild and redeploy every unit with `gh workflow run stage-demo-deploy.yml --ref demo/sales-crm -f deploy=true -f force_full=true`.
+
+The production plan diffs from the commit of the last successful `production` deployment, not from the previous push, so a failed or cancelled deploy stays in the next plan. Planning stops when no successful deployment exists or its commit is not an ancestor of `main`; seed it once with `gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true`.
 
 ### Change-impact rules
 
