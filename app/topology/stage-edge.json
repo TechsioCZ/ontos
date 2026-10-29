@@ -1,10 +1,10 @@
 {
   "accountId": "384e8a94acf428ce447e7e73122d91d1",
-  "workersDevSubdomain": "techsio",
-  "zone": "techsio.cz",
-  "shellHostname": "ontos-stage.techsio.cz",
-  "storefrontHostname": "ontos-stage-akros.techsio.cz",
-  "spicedbHostname": "ontos-stage-spicedb.techsio.cz",
-  "emailSender": "noreply@ontos-stage.techsio.cz",
+  "workersDevSubdomain": "naucmeit",
+  "zone": "web-revolution.cz",
+  "shellHostname": "ontos-stage.web-revolution.cz",
+  "storefrontHostname": "ontos-stage-akros.web-revolution.cz",
+  "spicedbHostname": "ontos-stage-spicedb.web-revolution.cz",
+  "emailSender": "noreply@ontos-stage.web-revolution.cz",
   "storefrontCatalogKvId": ""
 }

@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { GET } from "@/app/commerce-customer-context-api/api/portal-auth/verify-email/route";
 
-it.each(["http://localhost:3070", "https://ontos-stage-akros.techsio.cz"])(
+it.each(["http://localhost:3070", "https://ontos-stage-akros.web-revolution.cz"])(
   "rejects malformed mail links at %s without calling the owner or following a callback",
   async (origin) => {
     for (const query of ["", "token=", "token=a&token=b", `token=${"a".repeat(2049)}`]) {

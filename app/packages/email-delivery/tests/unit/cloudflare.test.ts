@@ -21,7 +21,7 @@ import { agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
 
 type BindingRequest = EmailMessage | EmailMessageBuilder;
 type BindingReceipt = Awaited<ReturnType<CloudflareEmailBinding['send']>>;
-const from = 'AKROS e-shop <noreply@ontos-stage.techsio.cz>';
+const from = 'AKROS e-shop <noreply@ontos-stage.web-revolution.cz>';
 const message = {
   html: Redacted.make('<p>Text</p>'),
   subject: 'Objednávka',
@@ -268,17 +268,17 @@ it.effect('uses the single onboarded stage address even when company SMTP overri
   Effect.gen(function* stageSender() {
     const env = {
       AKROS_EMAIL_FROM: 'eshop@akros.demo',
-      ONTOS_EMAIL_FROM: 'noreply@ontos-stage.techsio.cz',
+      ONTOS_EMAIL_FROM: 'noreply@ontos-stage.web-revolution.cz',
       SIAMPARK_AGENDA_EMAIL_FROM: 'provoz@najempark.demo',
       SIAMPARK_EMAIL_FROM: 'finance@najempark.demo',
     };
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'cloudflare')).toBe(from);
     expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'cloudflare')).toBe(
-      'Nájempark – finanční oddělení <noreply@ontos-stage.techsio.cz>',
+      'Nájempark – finanční oddělení <noreply@ontos-stage.web-revolution.cz>',
     );
     expect(
       yield* agendaSenderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID, legalName: 'Nájempark' }, env, 'cloudflare'),
-    ).toBe('Nájempark – upozornění <noreply@ontos-stage.techsio.cz>');
+    ).toBe('Nájempark – upozornění <noreply@ontos-stage.web-revolution.cz>');
     expect(yield* senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env, 'smtp')).toBe('eshop@akros.demo');
     expect(yield* senderFor({ legalEntityId: SIAMPARK_LEGAL_ENTITY_ID }, 'Nájempark', env, 'smtp')).toBe(
       'finance@najempark.demo',
