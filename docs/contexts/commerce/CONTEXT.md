@@ -66,6 +66,8 @@ operation and is not a durable profile or authorization grant. Client-supplied i
 requests to resolve context, never trusted authority. Storefront may be present for routing,
 presentation, audit, security, or Market resolution, but it is not a Pricing monetary selector.
 
+The **Inventory-qualified Commerce Purchasing Context** is the narrower owner-verified view required by a particular Inventory operation, as defined in the [Inventory context](../inventory/CONTEXT.md). It does not replace the full Commerce Purchasing Context or turn Stock Sharing Eligibility into the acting Principal's Permission or a Reservation guarantee.
+
 ## Delivery and applications
 
 **Commerce Application Composition** — Shared dependency-closed set of Commerce modules used by
