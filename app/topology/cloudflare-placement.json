@@ -1,11 +1,11 @@
 {
   "buildEnvironment": {
-    "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID": "",
-    "ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID": "",
-    "ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID": "",
-    "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID": "",
+    "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID": "c953b6de6487427a9856bdaef2848a6b",
+    "ULTRAMODERN_CLOUDFLARE_GATEWAY_ISSUER_HYPERDRIVE_ID": "54886036bc0941089c005b9eccd76352",
+    "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID": "5c2415c0886241db8a74b7f95f5cc486",
+    "ULTRAMODERN_CLOUDFLARE_PARTY_REGISTRY_HYPERDRIVE_ID": "8766af8ddb234753bcf3e5c32f5684d8",
     "ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST": "proxy.app-prg1.zerops.io:443",
-    "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID": "",
+    "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID": "01a18941-dd00-78e0-a852-49a9ed07ac2e",
     "ULTRAMODERN_EMAIL_SENDER": "noreply@ontos-stage.web-revolution.cz",
     "ULTRAMODERN_MF_DEV_ORIGIN": "https://ontos-stage.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT": "https://ontos-stage-akros.web-revolution.cz",
@@ -26,6 +26,7 @@
     "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG": "https://ontos-stage-price-group-catalog.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_PRICING": "https://ontos-stage-pricing.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_PRIVACY": "https://ontos-stage-privacy.web-revolution.cz",
+    "ULTRAMODERN_PUBLIC_URL_PROJECTS": "https://ontos-stage-projects.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING": "https://ontos-stage-property-leasing.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO": "https://ontos-stage-property-portfolio.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_SALES_INSIGHTS": "https://ontos-stage-sales-insights.web-revolution.cz",
@@ -35,8 +36,7 @@
     "ULTRAMODERN_PUBLIC_URL_TAGGING": "https://ontos-stage-tagging.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_TAX": "https://ontos-stage-tax.web-revolution.cz",
     "ULTRAMODERN_PUBLIC_URL_WORKFORCE": "https://ontos-stage-workforce.web-revolution.cz",
-    "ULTRAMODERN_PUBLIC_URL_WORK_TASKS": "https://ontos-stage-work-tasks.web-revolution.cz",
-    "ULTRAMODERN_PUBLIC_URL_PROJECTS": "https://ontos-stage-projects.web-revolution.cz"
+    "ULTRAMODERN_PUBLIC_URL_WORK_TASKS": "https://ontos-stage-work-tasks.web-revolution.cz"
   },
   "retiredWorkers": [],
   "schemaVersion": 1,
