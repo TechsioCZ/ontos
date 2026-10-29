@@ -2,7 +2,7 @@ import { ConfigProvider, Effect, Fiber, Layer, Match, Option, Schema } from 'eff
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import type { HttpClientRequest } from 'effect/http';
-import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from '../zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from '../zerops-public-api.mts';
@@ -379,14 +379,22 @@ const HOST_SERVICE = 'host-service';
 /** Answers the application version calls; the storage endpoint answers `uploadStatus`. */
 const appVersionGateway = (uploadStatus: number, createdOn = HOST_SERVICE) => {
   const requests: string[] = [];
-  const storageAuthorization: (string | undefined)[] = [];
+  const storageAuthorization: (string | null)[] = [];
+  const storageContentType: (string | null)[] = [];
+  // The signed upload bypasses the Zerops client, so the storage endpoint answers through the fetch it uses.
+  const storageFetch: typeof globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    requests.push(`${request.method} ${url.host}${url.pathname}`);
+    storageAuthorization.push(request.headers.get('authorization'));
+    storageContentType.push(request.headers.get('content-type'));
+    return Promise.resolve(new Response(null, { status: uploadStatus }));
+  };
+
   const client = HttpClient.make((request, url) => {
     requests.push(`${request.method} ${url.host}${url.pathname}`);
     let response = Response.json({});
-    if (url.host === 'storage.example.test') {
-      storageAuthorization.push(request.headers.authorization);
-      response = new Response(null, { status: uploadStatus });
-    } else if (url.pathname.endsWith('/app-version')) {
+    if (url.pathname.endsWith('/app-version')) {
       response = Response.json({ id: 'version-1', serviceStackId: createdOn, uploadUrl: SIGNED_UPLOAD });
     } else if (url.pathname.endsWith('/deploy')) {
       response = Response.json({ id: 'deploy-process', status: 'PENDING' });
@@ -395,16 +403,17 @@ const appVersionGateway = (uploadStatus: number, createdOn = HOST_SERVICE) => {
     }
     return Effect.succeed(HttpClientResponse.fromWeb(request, response));
   });
-  const layer = Layer.merge(
+  const layer = Layer.mergeAll(
     ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+    Layer.succeed(FetchHttpClient.Fetch, storageFetch),
     ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
   );
-  return { layer, requests, storageAuthorization };
+  return { layer, requests, storageAuthorization, storageContentType };
 };
 
 it.effect('stages, deploys and deletes an application version without sending the token to its signed URL', () =>
   Effect.gen(function* stagesApplicationVersion() {
-    const { layer, requests, storageAuthorization } = appVersionGateway(200);
+    const { layer, requests, storageAuthorization, storageContentType } = appVersionGateway(200);
     yield* Effect.gen(function* stageAndDeploy() {
       const api = yield* ZeropsPublicApi;
       const created = yield* api.createAppVersion(HOST_SERVICE, 'revision');
@@ -414,7 +423,9 @@ it.effect('stages, deploys and deletes an application version without sending th
       yield* api.deployAppVersion(created.id, 'zerops: []\n', 'outbox-worker-host');
       yield* api.deleteAppVersion(created.id);
     }).pipe(Effect.provide(layer));
-    expect(storageAuthorization).toEqual([undefined]);
+    expect(storageAuthorization).toEqual([null]);
+    // Zerops fails the deploy with "failed to identify artifact file format" when the upload declares a type.
+    expect(storageContentType).toEqual([null]);
     expect(requests).toEqual([
       'POST api.app-prg1.zerops.io/api/rest/public/service-stack/host-service/app-version',
       'PUT storage.example.test/upload',

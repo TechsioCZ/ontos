@@ -1,5 +1,5 @@
 import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
-import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
@@ -482,24 +482,37 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     uploadUrl: Redacted.Redacted,
     archive: Uint8Array,
   ) {
-    // The signed URL authorizes the upload itself; the bearer token must not travel to the storage endpoint.
-    const response = yield* baseClient
-      .execute(
-        HttpClientRequest.put(Redacted.value(uploadUrl)).pipe(
-          HttpClientRequest.bodyUint8Array(archive, 'application/gzip'),
-        ),
-      )
-      .pipe(
-        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version upload failed' })),
-        Effect.timeoutOrElse({
-          duration: UPLOAD_TIMEOUT,
-          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version upload timed out' })),
-        }),
-      );
-    yield* response.stream.pipe(Stream.runDrain, Effect.ignore);
-    if (response.status < 200 || response.status >= 300) {
+    // Like zcli, the PUT carries no Content-Type: Zerops identifies the gzip tar from its bytes and fails the deploy
+    // with "failed to identify artifact file format" when the upload declared one. The signed URL authorizes the
+    // upload itself, so the bearer token never travels to the storage endpoint.
+    const fetch = yield* FetchHttpClient.Fetch;
+    const status = yield* Effect.scoped(
+      Effect.gen(function* putPackage() {
+        const signal = yield* Effect.abortSignal;
+        const response = yield* Effect.tryPromise(
+          fetch.bind(undefined, Redacted.value(uploadUrl), {
+            body: new Uint8Array(archive),
+            method: 'PUT',
+            redirect: 'error',
+            signal,
+          }),
+        );
+        if (response.body !== null) {
+          const { body } = response;
+          yield* Effect.tryPromise(body.cancel.bind(body)).pipe(Effect.ignore);
+        }
+        return response.status;
+      }),
+    ).pipe(
+      Effect.mapError(() => new ZeropsApiError({ message: 'Zerops application version upload failed' })),
+      Effect.timeoutOrElse({
+        duration: UPLOAD_TIMEOUT,
+        orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops application version upload timed out' })),
+      }),
+    );
+    if (status < 200 || status >= 300) {
       return yield* new ZeropsApiError({
-        message: `Zerops application version upload failed with HTTP ${String(response.status)}`,
+        message: `Zerops application version upload failed with HTTP ${String(status)}`,
       });
     }
     return yield* Effect.void;
