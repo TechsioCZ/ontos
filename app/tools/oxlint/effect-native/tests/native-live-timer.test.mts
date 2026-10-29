@@ -2501,3 +2501,216 @@ it.live('cannot prove a mutable exit alias', () => exit(Effect.gen(function* tim
     },
   ]);
 });
+
+const nativeFinalizerMethod = 'Effect.addFinalizer';
+const nativeGetYield = 'yield* client.get';
+const nativeBodyYield = 'yield* response.arrayBuffer';
+const nativeHttpImports = `${liveImports}\nimport { HttpClient } from 'effect/http';`;
+const nativeRequest = `${nativeHttpImports}
+it.live('native request', () => Effect.gen(function* request() {
+  const client = yield* HttpClient.HttpClient;
+  yield* client.get('http://localhost/contract').pipe(Effect.timeout('1 second'));
+}));`;
+const nativeBody = `${nativeHttpImports}
+it.live('native body', () => Effect.gen(function* body() {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* client.get('http://localhost/contract');
+  yield* response.arrayBuffer.pipe(Effect.timeout('1 second'));
+}));`;
+const nativeCurriedHelper = `${liveImports}
+const cleanup = Effect.fn('cleanup')(function* cleanup() {
+  yield* Effect.void.pipe(Effect.timeout('1 second'));
+});
+it.live('native helper', () => cleanup());`;
+const nativeFinalizer = `${liveImports}
+it.live('native finalizer', () => Effect.gen(function* resource() {
+  yield* Effect.addFinalizer(() => Effect.void.pipe(Effect.timeout('1 second')));
+}));`;
+const nativeCombined = `${nativeHttpImports}
+it.live('native resources', () => Effect.gen(function* resources() {
+  yield* Effect.exit(Effect.scoped(Effect.gen(function* owners() {
+    const cleanup = Effect.fn('cleanup')(function* cleanup() { yield* Effect.void; });
+    yield* Effect.addFinalizer(() => cleanup().pipe(Effect.scoped, Effect.timeout('1 second'), Effect.orDie));
+    const client = yield* HttpClient.HttpClient;
+    const observe = Effect.fn('observe')(function* observe(url) {
+      const response = yield* client.get(url).pipe(Effect.timeout('1 second'));
+      return new Uint8Array(yield* response.arrayBuffer.pipe(Effect.timeout('1 second')));
+    });
+    yield* observe('http://localhost/contract');
+  })));
+}));`;
+
+it('allows genuine consumed Effect.fn, scoped finalizers and deferred native HTTP observations', () => {
+  expectTimerFixtures([
+    { expected: 0, name: 'named-curried-effect-generator', source: nativeCurriedHelper },
+    { expected: 0, name: 'consumed-native-finalizer', source: nativeFinalizer },
+    { expected: 0, name: 'imported-native-http-client', source: nativeRequest },
+    { expected: 0, name: 'deferred-native-http-body', source: nativeBody },
+    { expected: 0, name: 'combined-real-native-resource-shape', source: nativeCombined },
+    {
+      expected: 0,
+      name: 'aliased-http-and-effect-imports',
+      source: nativeCombined
+        .replaceAll('Effect', 'E')
+        .replace('import { E }', 'import { Effect as E }')
+        .replaceAll('HttpClient', 'Client')
+        .replace('import { Client }', 'import { HttpClient as Client }')
+        .replace('Client.Client', 'Client.HttpClient'),
+    },
+  ]);
+});
+
+it('rejects foreign, mutable, escaped and unconsumed versions of native resource observations', () => {
+  expectTimerFixtures([
+    {
+      expected: 1,
+      name: 'foreign-effect-fn-wrapper',
+      source: nativeCurriedHelper.replace(
+        'const cleanup = Effect.fn',
+        "import { Effect as Foreign } from 'foreign-effect';\nconst cleanup = Foreign.fn",
+      ),
+    },
+    {
+      expected: 1,
+      name: 'shadowed-effect-fn-wrapper',
+      source: nativeCurriedHelper.replace(
+        'const cleanup = Effect.fn',
+        'const Wrapper = { fn: opaque };\nconst cleanup = Wrapper.fn',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'mutable-effect-fn-helper',
+      source: nativeCurriedHelper.replace('const cleanup =', 'let cleanup ='),
+    },
+    {
+      expected: 1,
+      name: 'exported-effect-fn-helper',
+      source: nativeCurriedHelper.replace('const cleanup =', 'export const cleanup ='),
+    },
+    { expected: 1, name: 'escaped-effect-fn-helper', source: `${nativeCurriedHelper}\nopaque(cleanup);` },
+    {
+      expected: 1,
+      name: 'mixed-live-effect-fn-helper',
+      source: `${nativeCurriedHelper}\nit.effect('virtual caller', () => cleanup());`,
+    },
+    {
+      expected: 1,
+      name: 'unconsumed-effect-fn-call',
+      source: nativeCurriedHelper.replace(
+        '() => cleanup());',
+        '() => Effect.gen(function* caller() { cleanup(); yield* Effect.void; }));',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'foreign-finalizer-registration',
+      source: nativeFinalizer.replace(nativeFinalizerMethod, 'Foreign.addFinalizer'),
+    },
+    {
+      expected: 1,
+      name: 'unconsumed-finalizer-registration',
+      source: nativeFinalizer.replace('yield* Effect.addFinalizer', 'Effect.addFinalizer'),
+    },
+    {
+      expected: 1,
+      name: 'opaque-finalizer-effect',
+      source: nativeFinalizer.replace('() => Effect.void.pipe', '() => opaque().pipe'),
+    },
+    {
+      expected: 1,
+      name: 'ignored-finalizer-effect',
+      source: nativeFinalizer.replace(
+        "() => Effect.void.pipe(Effect.timeout('1 second'))",
+        "() => { Effect.void.pipe(Effect.timeout('1 second')); return Effect.void; }",
+      ),
+    },
+    {
+      expected: 1,
+      name: 'foreign-http-import',
+      source: nativeRequest.replace("from 'effect/http'", "from 'foreign-http'"),
+    },
+    {
+      expected: 1,
+      name: 'shadowed-http-import',
+      source: nativeRequest.replace('function* request()', 'function* request(HttpClient)'),
+    },
+    {
+      expected: 1,
+      name: 'lookalike-http-service',
+      source: nativeRequest.replace('yield* HttpClient.HttpClient', 'yield* Effect.succeed({ get: opaque })'),
+    },
+    {
+      expected: 1,
+      name: 'foreign-get-replacement',
+      source: nativeRequest.replace(nativeGetYield, '  client.get = opaque;\n  yield* client.get'),
+    },
+    {
+      expected: 1,
+      name: 'escaped-http-service',
+      source: nativeRequest.replace(nativeGetYield, '  opaque(client);\n  yield* client.get'),
+    },
+    { expected: 1, name: 'mutable-http-service', source: nativeRequest.replace('const client =', 'let client =') },
+    {
+      expected: 1,
+      name: 'lookalike-deferred-body',
+      source: nativeBody.replace(
+        "yield* client.get('http://localhost/contract')",
+        'yield* Effect.succeed({ arrayBuffer: opaque() })',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'mapped-foreign-response',
+      source: nativeBody.replace(
+        "yield* client.get('http://localhost/contract')",
+        "yield* client.get('http://localhost/contract').pipe(Effect.map(() => ({ arrayBuffer: opaque() })))",
+      ),
+    },
+    {
+      expected: 1,
+      name: 'mutated-response-body',
+      source: nativeBody.replace(
+        nativeBodyYield,
+        '  response.arrayBuffer = Effect.void;\n  yield* response.arrayBuffer',
+      ),
+    },
+    {
+      expected: 1,
+      name: 'escaped-response-body',
+      source: nativeBody.replace(nativeBodyYield, '  opaque(response);\n  yield* response.arrayBuffer'),
+    },
+    { expected: 1, name: 'mutable-response-body', source: nativeBody.replace('const response =', 'let response =') },
+    {
+      expected: 2,
+      name: 'combined-foreign-http-origin',
+      source: nativeCombined.replace("from 'effect/http'", "from 'foreign-http'"),
+    },
+    {
+      expected: 3,
+      name: 'combined-unconsumed-live-program',
+      source: nativeCombined.replace('yield* Effect.exit', 'Effect.exit'),
+    },
+    {
+      expected: 1,
+      name: 'unconsumed-native-http-request',
+      source: nativeRequest.replace(nativeGetYield, 'client.get'),
+    },
+    {
+      expected: 1,
+      name: 'unconsumed-native-http-body',
+      source: nativeBody.replace(nativeBodyYield, 'response.arrayBuffer'),
+    },
+    {
+      expected: 1,
+      name: 'combined-foreign-finalizer',
+      source: nativeCombined.replace(nativeFinalizerMethod, 'Foreign.addFinalizer'),
+    },
+    {
+      expected: 2,
+      name: 'combined-foreign-observer-wrapper',
+      source: nativeCombined.replace('const observe = Effect.fn', 'const observe = Foreign.fn'),
+    },
+    { expected: 3, name: 'combined-virtual-clock-owner', source: nativeCombined.replace('it.live', 'it.effect') },
+  ]);
+});

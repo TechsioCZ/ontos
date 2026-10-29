@@ -48,6 +48,7 @@ const effectTransforms = new Set([
 ]);
 const directTransforms = new Set(['asVoid', 'exit', 'flip', 'forkScoped', 'orDie', 'scoped']);
 const processModule = 'effect/process';
+const httpModule = 'effect/http';
 const rootNamespace = 'EffectRoot';
 const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred', 'DateTime', 'Stream']);
 const moduleBases = new Map<string, readonly string[]>([
@@ -77,6 +78,12 @@ const immutableDeclaration = (variable: Variable): ESTree.VariableDeclarator | n
     : null;
 };
 
+const httpImportPath = (specifier: Definition['node']): readonly string[] | null =>
+  specifier.type === 'ImportSpecifier' &&
+  (specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value) === 'HttpClient'
+    ? ['HttpClient']
+    : null;
+
 const importPath = (definition: Definition): readonly string[] | null => {
   const declaration = definition.parent;
   const specifier = definition.node;
@@ -89,6 +96,9 @@ const importPath = (definition: Definition): readonly string[] | null => {
     return null;
   }
   const source = declaration.source.value;
+  if (source === httpModule) {
+    return httpImportPath(specifier);
+  }
   const base = moduleBases.get(source);
   if (base === undefined) {
     return null;
@@ -103,6 +113,9 @@ const importPath = (definition: Definition): readonly string[] | null => {
   // ChildProcess is a runtime export of the process module, not the root Effect module.
   if (source === processModule) {
     return imported === 'ChildProcess' ? ['ChildProcess'] : null;
+  }
+  if (imported === 'HttpClient') {
+    return null;
   }
   if (imported === 'ChildProcess' && source !== processModule) {
     return null;
@@ -363,6 +376,116 @@ const childProcessHandle = (context: Context, input: ESTree.Node): boolean => {
   );
 };
 
+const immutableYield = (context: Context, input: ESTree.Node): ESTree.Node | null => {
+  const node = unwrapNode(input);
+  const variable = node.type === 'Identifier' ? lookupVariable(context, node) : null;
+  const declaration = variable ? immutableDeclaration(variable) : null;
+  if (!declaration?.init || declaration.id.type !== 'Identifier') {
+    return null;
+  }
+  const initial = unwrapNode(declaration.init);
+  const fn = nearestFunction(initial);
+  return initial.type === 'YieldExpression' &&
+    initial.delegate &&
+    initial.argument &&
+    fn &&
+    isFunction(fn) &&
+    (generatorCall(context, fn) !== null || nativeEffectFunctionBinding(context, fn) !== null)
+    ? unwrapNode(initial.argument)
+    : null;
+};
+
+const readonlyResponseMember = (member: ESTree.MemberExpression): boolean => {
+  let held = skipWrappers(member);
+  while (held.parent?.type === 'MemberExpression' && held.parent.object === held.node) {
+    held = skipWrappers(held.parent);
+  }
+  return (
+    held.parent?.type !== 'AssignmentExpression' &&
+    held.parent?.type !== 'UpdateExpression' &&
+    !(held.parent?.type === 'UnaryExpression' && held.parent.operator === 'delete')
+  );
+};
+
+/** Refuse mutation/escaping of the service or response object used as deferred Effect provenance. */
+const stableHttpHandle = (context: Context, input: ESTree.Node, service: boolean): boolean => {
+  const node = unwrapNode(input);
+  const variable = node.type === 'Identifier' ? lookupVariable(context, node) : null;
+  return (
+    variable !== null &&
+    variable.references.every((reference) => {
+      if (reference.init || isInErasedTypePosition(reference.identifier)) {
+        return true;
+      }
+      let held = skipWrappers(reference.identifier);
+      if (held.parent?.type !== 'MemberExpression' || held.parent.object !== held.node) {
+        return false;
+      }
+      const member = held.parent;
+      if (service && !['get', 'post'].includes(memberName(member) ?? '')) {
+        return false;
+      }
+      held = skipWrappers(member);
+      if (service) {
+        return held.parent?.type === 'CallExpression' && held.parent.callee === held.node;
+      }
+      return readonlyResponseMember(member);
+    })
+  );
+};
+
+const nativeHttpClient = (context: Context, input: ESTree.Node): boolean => {
+  const initial = immutableYield(context, input);
+  return (
+    initial !== null &&
+    nativeMethod(context, initial, 'HttpClient') === 'HttpClient' &&
+    stableHttpHandle(context, input, true)
+  );
+};
+
+const nativeHttpRequest = (context: Context, input: ESTree.Node): boolean => {
+  const node = unwrapNode(input);
+  const callee = node.type === 'CallExpression' ? unwrapNode(node.callee) : null;
+  return (
+    node.type === 'CallExpression' &&
+    (node.arguments.length === 1 || node.arguments.length === 2) &&
+    !node.arguments.some((argument) => argument.type === 'SpreadElement') &&
+    callee?.type === 'MemberExpression' &&
+    memberName(callee) === 'get' &&
+    nativeHttpClient(context, callee.object)
+  );
+};
+
+const responseRequest = (context: Context, input: ESTree.Node): boolean => {
+  if (nativeHttpRequest(context, input)) {
+    return true;
+  }
+  const node = unwrapNode(input);
+  const callee = node.type === 'CallExpression' ? unwrapNode(node.callee) : null;
+  return (
+    node.type === 'CallExpression' &&
+    callee?.type === 'MemberExpression' &&
+    memberName(callee) === 'pipe' &&
+    responseRequest(context, callee.object) &&
+    node.arguments.every(
+      (argument) =>
+        argument.type === 'CallExpression' &&
+        nativeMethod(context, argument.callee, 'Effect') === 'timeout' &&
+        argument.arguments.length === 1 &&
+        argument.arguments[0]?.type !== 'SpreadElement',
+    )
+  );
+};
+
+const deferredHttpBody = (context: Context, input: ESTree.Node): boolean => {
+  const node = unwrapNode(input);
+  if (node.type !== 'MemberExpression' || memberName(node) !== 'arrayBuffer') {
+    return false;
+  }
+  const request = immutableYield(context, node.object);
+  return request !== null && responseRequest(context, request) && stableHttpHandle(context, node.object, false);
+};
+
 const effectProof = {
   flatMapCallback: (context: Context, call: ESTree.CallExpression, seen: Set<FunctionNode>): boolean => {
     const index = call.arguments.length === 1 ? 0 : 1;
@@ -434,6 +557,7 @@ const effectProof = {
     if (node.type !== 'CallExpression') {
       const method = nativeMethod(context, node, 'Effect');
       return (
+        deferredHttpBody(context, node) ||
         (method !== null && effectValues.has(method)) ||
         nativeMethod(context, node, 'Clock') === 'currentTimeMillis' ||
         isNativeEffectValue(context, node) ||
@@ -442,6 +566,9 @@ const effectProof = {
     }
     if (node.arguments.some((argument) => argument.type === 'SpreadElement')) {
       return false;
+    }
+    if (nativeHttpRequest(context, node)) {
+      return true;
     }
     if (effectProof.nativeEffectMethod(context, node, seen)) {
       return true;
@@ -481,6 +608,9 @@ const effectProof = {
     const method = nativeMethod(context, node.callee, 'Effect');
     if (method === 'gen') {
       return node.arguments.length === 1 && generatorCall(context, unwrapNode(first)) === node;
+    }
+    if (method === 'addFinalizer') {
+      return node.arguments.length === 1 && effectProof.flatMapCallback(context, node, seen);
     }
     if (method === 'flatMap') {
       return (
@@ -581,6 +711,16 @@ const forEachCall = (context: Context, fn: FunctionNode): ESTree.CallExpression 
 };
 
 const returnedBoundary = (context: Context, fn: FunctionNode): ESTree.Node | null => {
+  const held = skipWrappers(fn);
+  if (
+    held.parent?.type === 'CallExpression' &&
+    nativeMethod(context, held.parent.callee, 'Effect') === 'addFinalizer' &&
+    held.parent.arguments.length === 1 &&
+    held.parent.arguments[0] === held.node &&
+    effectProof.nativeEffect(context, held.parent, new Set())
+  ) {
+    return held.parent;
+  }
   if (fn.generator || fn.async) {
     return null;
   }
