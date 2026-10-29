@@ -13,6 +13,7 @@ import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { useHydrated } from '../../use-hydrated.ts';
 
 interface LoginValidation {
   loginMissing: boolean;
@@ -51,6 +52,7 @@ const LoginPage = () => {
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
   const [submitting, setSubmitting] = useState(false);
+  const hydrated = useHydrated();
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -143,7 +145,12 @@ const LoginPage = () => {
           </Link>
           <div className="shell:mt-6">
             <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
-            <form action={handleSubmit} className="shell:mt-4 shell:flex shell:flex-col shell:gap-4" noValidate>
+            <form
+              action={handleSubmit}
+              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              data-hydrated={hydrated || undefined}
+              noValidate
+            >
               <FormInput
                 aria-invalid={validation.loginMissing || undefined}
                 autoComplete="username"
