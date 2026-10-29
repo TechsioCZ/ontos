@@ -367,7 +367,13 @@ it.effect(
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: expression('secrets.DATABASE_ADMIN_URL'),
           COMMERCE_PORTAL_AUTH_DATABASE_URL: expression('secrets.DATABASE_URL'),
         },
-        run: 'mise exec -- pnpm db:verify',
+        run: [
+          'BETTER_AUTH_SECRET="$(jq -er \'."shell-super-app".BETTER_AUTH_SECRET\' "$ALL_RELEASE_SECRETS_FILE")"',
+          'echo "::add-mask::$BETTER_AUTH_SECRET"',
+          'export BETTER_AUTH_SECRET',
+          'mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply --verify-database',
+          '',
+        ].join('\n'),
       });
       expect(step(CONTINUATION_STEP)?.if).toBe('inputs.continue_migrated_publication && !inputs.outbox_only');
       expect(step(CONTINUATION_STEP)?.run).toBe(
@@ -388,8 +394,13 @@ it.effect(
         expect(step(name)?.if).toBe(expression('!inputs.outbox_only'));
         expect(index(name)).toBeGreaterThan(index(CONTINUATION_STEP));
       }
+      // A continuation reconciles the grants inside the verification step, so the standalone step skips it.
       const reconcile = step('Reconcile storefront, Commerce and Privacy service grants');
-      expect(reconcile?.if).toBeUndefined();
+      expect(reconcile?.if).toBe(
+        expression(
+          "inputs.outbox_only || (!inputs.continue_migrated_publication && steps.database-path.outputs.mode == 'full')",
+        ),
+      );
       // One --apply reads every grant, writes only what is missing and reads the result back.
       expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual(['--zerops --apply']);
       for (const name of [PROVENANCE_STEP, CONTINUATION_STEP, POST_VERIFICATION_STEP]) {

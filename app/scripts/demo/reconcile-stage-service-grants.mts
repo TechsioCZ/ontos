@@ -403,10 +403,25 @@ export const verifyDatabaseAndReconcileServiceGrants = <E, R>(
   verify: Effect.Effect<void, E, R>,
 ) => Effect.all([verify, reconcileServiceGrants(rpc, desired, 'apply')], { concurrency: 2, discard: true });
 
+/**
+ * Deploy credentials the grant reconciliation reads; the owner verifiers it fans out to never need them, so the child
+ * inherits the environment without them (Node omits undefined variables).
+ */
+const VERIFY_WITHHELD_ENVIRONMENT = Object.fromEntries(
+  [
+    'ALL_RELEASE_SECRETS_FILE',
+    'BETTER_AUTH_SECRET',
+    'ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN',
+    'ZEROPS_TOKEN',
+  ].map((name) => [name, undefined]),
+);
+
 const verifyStageDatabase = Effect.gen(function* verifyStageDatabaseEffect() {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const code = yield* spawner.exitCode(
     ChildProcess.make(process.execPath, [new URL('../verify-application-db-schema.mts', import.meta.url).pathname], {
+      env: VERIFY_WITHHELD_ENVIRONMENT,
+      extendEnv: true,
       stderr: 'inherit',
       stdout: 'inherit',
     }),

@@ -69,7 +69,10 @@ it('makes recovery an explicit manual choice with no build dependency or acciden
     type: 'choice',
   });
   expect(workflow.on.workflow_dispatch.inputs.profile_recovery_approval_sha256.default).toBe('');
-  expect(recovery.if).toBe("github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none'");
+  // A Worker-prune-only dispatch never reconciles profiles, whatever else it names.
+  expect(recovery.if).toBe(
+    "github.event_name == 'workflow_dispatch' && inputs.profile_recovery_mode != 'none' && !inputs.prune_workers_only",
+  );
   expect(recovery.needs).toBeUndefined();
   expect(recovery.environment).toEqual({ deployment: false, name: 'stage-edge' });
   expect(recovery.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
