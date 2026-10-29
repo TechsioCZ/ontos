@@ -488,6 +488,8 @@ export const fakeZeropsApi = (
   const layer = Layer.succeed(
     ZeropsPublicApi,
     ZeropsPublicApi.of({
+      appVersion: notFaked('appVersion'),
+      createAppVersion: notFaked('createAppVersion'),
       createServiceSecret: (serviceId, key, content) =>
         Effect.sync(() => {
           serviceSecrets.push({ content, key, serviceId });
@@ -496,6 +498,7 @@ export const fakeZeropsApi = (
           stage.projectValues.set(`${hostname}_${key}`, content);
           stage.sensitiveKeys.add(`${hostname}_${key}`);
         }),
+      deleteAppVersion: notFaked('deleteAppVersion'),
       deleteService: (serviceId) =>
         Effect.gen(function* deleteFakeService() {
           if (!stage.services.some(({ id }) => id === serviceId)) {
@@ -504,6 +507,7 @@ export const fakeZeropsApi = (
           stage.services = stage.services.filter(({ id }) => id !== serviceId);
         }),
       deleteServiceSecret: notFaked('deleteServiceSecret'),
+      deployAppVersion: notFaked('deployAppVersion'),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       findServiceStack: notFaked('findServiceStack'),
       findServiceStackIdentity: (serviceId) =>
@@ -532,7 +536,9 @@ export const fakeZeropsApi = (
           );
         }),
       serviceStack: notFaked('serviceStack'),
+      serviceUserData: notFaked('serviceUserData'),
       stopService: notFaked('stopService'),
+      uploadAppVersionPackage: notFaked('uploadAppVersionPackage'),
       upsertProjectEnv: notFaked('upsertProjectEnv'),
     }),
   );

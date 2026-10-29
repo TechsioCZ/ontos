@@ -5,12 +5,14 @@
 #   docker run --rm -v "$PWD":/src -w /src alpine:3.23 sh app/scripts/ci/build-outbox-host.sh
 #
 # Environment: ONTOS_OUTBOX_HOST_DIGEST (the plan's host digest, compiled into the bundle and served on /status),
-# ULTRAMODERN_SOURCE_REVISION (the clean Git HEAD every hosted owner identity must carry) and RUNNER_TEMP, where it
-# writes outbox-host.tar.zst. The archive holds app/.zerops/runtime/outbox-worker-host/ (worker.mjs,
+# ONTOS_OUTBOX_HOST_OWNER_REVISIONS (the plan's JSON object of every hosted owner's identity revision: HEAD for an
+# owner this run builds, its kept release's revision otherwise), ULTRAMODERN_SOURCE_REVISION (the clean Git HEAD the
+# host is built from) and RUNNER_TEMP, where it writes outbox-host.tar.zst. The archive holds app/.zerops/runtime/outbox-worker-host/ (worker.mjs,
 # worker-artifact.json and node/bin/node), which scripts/push-zerops-units.sh deploys without a Zerops build.
 set -eu
 
 : "${ONTOS_OUTBOX_HOST_DIGEST:?ONTOS_OUTBOX_HOST_DIGEST (the plan host digest) is required}"
+: "${ONTOS_OUTBOX_HOST_OWNER_REVISIONS:?ONTOS_OUTBOX_HOST_OWNER_REVISIONS (the plan owner identities) is required}"
 : "${ULTRAMODERN_SOURCE_REVISION:?ULTRAMODERN_SOURCE_REVISION (the clean Git HEAD) is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP (where outbox-host.tar.zst is written) is required}"
 if [ "${#ONTOS_OUTBOX_HOST_DIGEST}" -ne 64 ] || [ -n "$(printf '%s' "$ONTOS_OUTBOX_HOST_DIGEST" | tr -d '0-9a-f')" ]; then
@@ -53,12 +55,16 @@ export CI PATH pnpm_config_store_dir
 (cd app && node scripts/verify-zerops-workspace-install.mts)
 (cd app && pnpm run zerops:materialize --app "$setup" --package 'app' --package-dir '.' --worker)
 
-# No silent downgrade: a dirty tree resolves the `workspace` identity, which no published owner marker matches.
-if ! jq -e --arg digest "$ONTOS_OUTBOX_HOST_DIGEST" --arg revision "$head" --arg setup "$setup" '
+# No silent downgrade: a dirty tree resolves the `workspace` identity, which no published owner marker matches. Every
+# hosted owner carries exactly its planned revision, and the host itself names the HEAD it was built from.
+if ! jq -e --arg digest "$ONTOS_OUTBOX_HOST_DIGEST" --arg revision "$head" --arg setup "$setup" \
+    --argjson owners "$ONTOS_OUTBOX_HOST_OWNER_REVISIONS" '
     .schemaVersion == 3 and .serviceId == $setup and .artifactDigest == $digest and .sourceRevision == $revision
-    and (.ownerBuildIdentities | length > 0 and all(.sourceRevision == $revision))' \
+    and (.ownerBuildIdentities | length > 0
+      and ([.[].appId] | sort) == ($owners | keys)
+      and all(.sourceRevision == $owners[.appId]))' \
     "$runtime/worker-artifact.json" >/dev/null; then
-  echo "The materialized host does not carry digest $ONTOS_OUTBOX_HOST_DIGEST and every owner at $head" >&2
+  echo "The materialized host does not carry digest $ONTOS_OUTBOX_HOST_DIGEST and every planned owner identity" >&2
   jq '{schemaVersion, serviceId, artifactDigest, sourceRevision, ownerBuildIdentities}' "$runtime/worker-artifact.json" >&2
   exit 1
 fi

@@ -666,6 +666,9 @@ it("deploys the main pipeline's planned Outbox Worker host from the artifact bui
   expect(build.steps.find((step) => step.id === 'digest')?.run).toContain('scripts/ci/deploy-plan.mts host-digest');
   const recipe = build.steps.find((step) => step.run?.includes('app/scripts/ci/build-outbox-host.sh') === true);
   expect(recipe?.env?.ONTOS_OUTBOX_HOST_DIGEST).toBe(`\${{ steps.digest.outputs.digest }}`);
+  // Main builds every hosted owner at HEAD; the planner's host inputs name each owner's identity revision.
+  expect(recipe?.env?.ONTOS_OUTBOX_HOST_OWNER_REVISIONS).toBe(`\${{ steps.digest.outputs.owner_revisions }}`);
+  expect(recipe?.run).toContain('--env ONTOS_OUTBOX_HOST_OWNER_REVISIONS');
   const upload = build.steps.find((step) => step.name === 'Upload the host artifact');
   expect(upload?.with?.name).toBe(`outbox-host-\${{ steps.digest.outputs.digest }}`);
   expect(upload?.with?.path).toBe(`${RUNNER_TEMP_EXPRESSION}/outbox-host.tar.zst`);

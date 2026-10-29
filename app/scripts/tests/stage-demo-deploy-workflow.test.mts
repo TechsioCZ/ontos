@@ -1,6 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { NodeServices } from '@effect/platform-node';
 import {
@@ -193,7 +196,12 @@ const CONTINUE_PUBLICATION = 'Continue publication of the completed owner migrat
 const UPLOAD_ARTIFACT = 'actions/upload-artifact@';
 const INSTALL_APP = './.github/actions/install-app';
 const LEDGER_UNITS = 'Record the uploaded units in the release ledger';
-const HOST_FETCH = 'Fetch the outbox host build output';
+const HOST_STAGE = 'Start staging the outbox host upload';
+const HOST_STAGE_JOIN = 'Wait for the staged outbox host upload';
+const HOST_OWNER_CHECK = 'Require the staged outbox host to carry every published owner build';
+const HOST_DISCARD = 'Discard the undeployed staged outbox host';
+const HOST_STAGE_DIRECTORY = '"$RUNNER_TEMP/outbox-host-stage"';
+const HOST_DEPLOY_DIRECTORY = '"$RUNNER_TEMP/outbox-host-deploy"';
 const STOREFRONT_FETCH = 'Fetch the storefront build output';
 const HOST_MATERIALIZE = 'Materialize the stage outbox host zerops.yaml';
 const HOST_RELEASE = 'Name the outbox host release';
@@ -201,6 +209,7 @@ const STOP_UPLOADS = 'Stop the unit uploads after a failed release step';
 const STOREFRONT_DEPLOY = 'Deploy the AKROS storefront';
 const CANDIDATE = 'Assemble the composition candidate';
 const workflowExpression = (body: string) => ['${{', body, '}}'].join(' ');
+const HOST_RELEASE_DIGEST = workflowExpression('steps.host-release.outputs.digest');
 const freshMigrationCondition = ['${{', '!inputs.outbox_only && !inputs.continue_migrated_publication', '}}'].join(' ');
 const fullDatabaseCondition = [
   '${{',
@@ -433,8 +442,9 @@ it('keeps the original bundle only in preparation and gives every later release 
       rawReaders.has(step.name) ? rawFileReference : preparedFileReference,
     );
     expect(step.env?.ALL_RELEASE_SECRETS).toBeUndefined();
+    // The outbox-only host plan reads it through the planner it runs.
     expect(step.run).toMatch(
-      /ALL_RELEASE_SECRETS_FILE|PREPARED_SECRETS_FILE|scripts\/ci\/deploy-plan\.mts|release-stream\.mts stream/u,
+      /ALL_RELEASE_SECRETS_FILE|PREPARED_SECRETS_FILE|scripts\/ci\/deploy-plan\.mts|release-stream\.mts (?:stream|host-plan)/u,
     );
     expect(indexOf(steps, step.name)).toBeGreaterThan(indexOf(steps, PREPARE_SECRETS));
   }
@@ -942,7 +952,14 @@ it('streams the uploads in the background beside the database preparation and jo
   // A cancelled run stops the stream too, or its unpacked units would hold the stage lock until the deadline.
   expect(stop?.if).toBe("(failure() || cancelled()) && steps.uploads.outcome == 'success'");
   // Every step before publication runs while the stream may still upload, so its failure stops the stream.
-  for (const prepared of [DATABASE_RECORD, HOST_FETCH, STOREFRONT_FETCH, HOST_MATERIALIZE, HOST_RELEASE]) {
+  for (const prepared of [
+    DATABASE_RECORD,
+    HOST_STAGE_JOIN,
+    STOREFRONT_FETCH,
+    HOST_MATERIALIZE,
+    HOST_RELEASE,
+    HOST_STAGE,
+  ]) {
     expect(indexOf(steps, prepared)).toBeGreaterThan(indexOf(steps, STREAM_START));
     expect(indexOf(steps, prepared)).toBeLessThan(indexOf(steps, STOP_UPLOADS));
   }
@@ -972,6 +989,7 @@ it('plans from input digests in the protected environment without a deployment a
     'build_count',
     'host_mode',
     'host_digest',
+    'host_owner_revisions',
     'storefront_mode',
     'storefront_digest',
     'db_inputs_digest',
@@ -1044,9 +1062,14 @@ it('builds only the changed units, trusts the lockfile there and names every out
     expect(upload?.overwrite).toBe(true);
     expect(upload?.['retention-days']).toBe(30);
   }
-  expect(host.steps.find(({ name }) => name === 'Build the host in Alpine')?.run).toContain(
-    'alpine:3.23 sh app/scripts/ci/build-outbox-host.sh',
+  const hostBuild = host.steps.find(({ name }) => name === 'Build the host in Alpine');
+  expect(hostBuild?.run).toContain('alpine:3.23 sh app/scripts/ci/build-outbox-host.sh');
+  // Each hosted owner keeps its kept release's identity: the plan names every owner's revision, and the container
+  // gets them.
+  expect(hostBuild?.env?.ONTOS_OUTBOX_HOST_OWNER_REVISIONS).toBe(
+    workflowExpression('needs.plan.outputs.host_owner_revisions'),
   );
+  expect(hostBuild?.run).toContain('--env ONTOS_OUTBOX_HOST_OWNER_REVISIONS');
   const tests = readJobs()['release-script-tests'].steps.find(({ uses }) => uses === INSTALL_APP);
   // This run's one full supply-chain policy install, which also saves the branch's pnpm store.
   expect(tests?.with).toEqual({ 'save-store': 'true' });
@@ -1108,19 +1131,38 @@ it('keeps the identity bootstrap and the owner verification on the database ligh
   expect(indexOf(steps, POST_MIGRATION_BOOTSTRAP)).toBeLessThan(indexOf(steps, DATABASE_RECORD));
 });
 
-it('prepares everything the outbox host deploy needs before publication', () => {
+it('prepares everything the outbox host deploy needs before publication, uploading it beside the builds', () => {
   const { steps } = readJobs().release;
-  // Everything that does not need the publication happens before it: fetching the host artifact (barrier B2 when
-  // this run builds it), its configuration file and the release it names. Only apply and push come after.
-  for (const prepared of [HOST_FETCH, HOST_MATERIALIZE, HOST_RELEASE]) {
+  // Everything that does not need the publication happens before it: the release it names, fetching the host
+  // artifact (barrier B2 when this run builds it) and uploading it as an inactive version, its configuration file
+  // and the check of its owner builds. Only the apply and the deploy come after.
+  for (const prepared of [HOST_RELEASE, HOST_STAGE, HOST_STAGE_JOIN, HOST_MATERIALIZE]) {
     const step = steps.find(({ name }) => name === prepared);
     expect(step?.if).toBeUndefined();
     expect(step?.['continue-on-error']).toBeUndefined();
     expect(indexOf(steps, prepared)).toBeLessThan(indexOf(steps, CANDIDATE));
   }
-  const fetch = steps.find(({ name }) => name === HOST_FETCH);
-  expect(fetch?.run).toContain('release-stream.mts fetch --plan "$PLAN_FILE" --artifact outbox-host');
-  expect(fetch?.run).toContain('--output "$RUNNER_TEMP/outbox-host"');
+  // The upload starts right after barrier B1 and the unit stream, beside the database preparation.
+  expect(indexOf(steps, HOST_RELEASE)).toBe(indexOf(steps, STREAM_START) + 1);
+  expect(indexOf(steps, HOST_STAGE)).toBe(indexOf(steps, HOST_RELEASE) + 1);
+  expect(indexOf(steps, HOST_STAGE)).toBeLessThan(indexOf(steps, INITIAL_BOOTSTRAP));
+  const stage = steps.find(({ name }) => name === HOST_STAGE);
+  expect(stage?.id).toBe('host-stage');
+  expect(stage?.env?.HOST_DIGEST).toBe(HOST_RELEASE_DIGEST);
+  expect(stage?.run).toContain('release-stream.mts fetch');
+  expect(stage?.run).toContain('--plan "$PLAN_FILE" --artifact outbox-host --output "$RUNNER_TEMP/outbox-host"');
+  expect(stage?.run).toContain(`stage-outbox-host.mts upload --directory "$directory"`);
+  expect(stage?.run).toContain('--artifact "$RUNNER_TEMP/outbox-host/outbox-host.tar.zst" --digest "$HOST_DIGEST"');
+  expect(stage?.run).toContain(String.raw`printf '%s\n' "$status" >"$directory/exit-code"`);
+  expect(stage?.run).toContain(') </dev/null >/dev/null 2>&1 &');
+  const join = steps.find(({ name }) => name === HOST_STAGE_JOIN);
+  expect(join?.run).toContain(`release-stream.mts join --directory ${HOST_STAGE_DIRECTORY}`);
+  const owners = steps.find(({ name }) => name === HOST_OWNER_CHECK);
+  expect(owners?.if).toBe(fullPublicationCondition);
+  expect(owners?.run).toContain(`stage-outbox-host.mts check-owners --directory ${HOST_STAGE_DIRECTORY}`);
+  expect(owners?.run).toContain('--receipts "$RECEIPTS"');
+  expect(indexOf(steps, HOST_OWNER_CHECK)).toBe(indexOf(steps, CANDIDATE) + 1);
+  expect(indexOf(steps, HOST_OWNER_CHECK)).toBeLessThan(indexOf(steps, PUBLICATION));
   const release = steps.find(({ name }) => name === HOST_RELEASE);
   expect(release?.id).toBe('host-release');
   expect(release?.run).toBe(
@@ -1153,15 +1195,27 @@ it('deploys the prebuilt outbox host beside the Shell tail after publication and
   expect(steps.some(({ name }) => name === 'Install Zerops CLI')).toBe(false);
   expect(steps.some(({ run }) => run?.includes('sleep 60') === true)).toBe(false);
   const start = steps.find(({ name }) => name === HOST_DEPLOY_START);
-  expect(start?.env?.ZCLI_PATH).toBe(['${{', 'steps.composition-vpn.outputs.cli-path', '}}'].join(' '));
-  // The artifact the push deploys is the one fetched before publication.
+  // The deploy activates the version staged before publication; it neither fetches nor uploads the artifact.
   expect(start?.run).not.toContain('release-stream.mts fetch');
-  expect(start?.env?.OUTBOX_HOST_ARTIFACT).toBe(
-    `${workflowExpression(RUNNER_TEMP_CONTEXT)}/outbox-host/outbox-host.tar.zst`,
+  expect(start?.run).not.toContain('push-zerops-units.sh');
+  expect(start?.run).toContain(`stage-outbox-host.mts deploy`);
+  expect(start?.run).toContain(
+    `--directory ${HOST_STAGE_DIRECTORY} --digest "$HOST_DIGEST" --zerops-yaml "$ZEROPS_YAML_PATH"`,
   );
-  expect(start?.run).toContain('app/scripts/push-zerops-units.sh');
   expect(start?.id).toBe('host-start');
-  expect(start?.env?.OUTBOX_HOST_DIGEST).toBe(workflowExpression('steps.host-release.outputs.digest'));
+  expect(start?.run).toContain(`mkdir -p ${HOST_DEPLOY_DIRECTORY}`);
+  expect(start?.env?.HOST_DIGEST).toBe(HOST_RELEASE_DIGEST);
+  expect(start?.env?.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID).toBe(
+    workflowExpression('vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID'),
+  );
+  // A release that stopped before the deploy deletes only its own never-deployed staged version, also when the
+  // launcher succeeded but the background deploy failed before it started: the discard waits for that deploy.
+  const discard = steps.find(({ name }) => name === HOST_DISCARD);
+  expect(discard?.if).toBe("always() && steps.host-stage.outcome == 'success'");
+  expect(discard?.run).toContain(
+    `stage-outbox-host.mts discard --directory ${HOST_STAGE_DIRECTORY} --deploy-directory ${HOST_DEPLOY_DIRECTORY}`,
+  );
+  expect(indexOf(steps, HOST_DISCARD)).toBe(indexOf(steps, HOST_DEPLOY_JOIN) + 1);
   // Joined even after a failed tail step, so the host deploy is never cut off halfway.
   expect(steps.find(({ name }) => name === HOST_DEPLOY_JOIN)?.if).toBe(
     "always() && steps.host-start.outcome == 'success'",
@@ -1225,6 +1279,26 @@ const APP_DIRECTORY = new URL('../..', import.meta.url).pathname.replace(/\/$/u,
 const workflowServices = OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer));
 const sha256 = (seed: string) => createHash('sha256').update(seed).digest('hex');
 /** A release step's own script, run from app/ with only these environment additions. */
+/**
+ * A release step that starts a background process, run like the runner runs it: the step's shell exits while its
+ * background child keeps running (a scoped child would be stopped with the step). Returns the step's exit status.
+ */
+const startBackgroundStep = (name: string, env: Readonly<Record<string, string>>) =>
+  Effect.gen(function* startBackground() {
+    const step = readJobs().release.steps.find((candidate) => candidate.name === name);
+    expect(step?.['working-directory']).toBe('app');
+    // Only what the toolchain needs from the runner environment, beside the step's own variables.
+    const [home, temporary] = yield* Effect.all([
+      Config.String('HOME'),
+      Config.String('TMPDIR').pipe(Config.withDefault(os.tmpdir())),
+    ]);
+    return spawnSync('/bin/bash', ['-euo', 'pipefail', '-c', step?.run ?? 'exit 1'], {
+      cwd: APP_DIRECTORY,
+      env: { HOME: home, TMPDIR: temporary, ...env },
+      stdio: 'ignore',
+    }).status;
+  });
+
 const runReleaseStep = (name: string, env: Readonly<Record<string, string>>) => {
   const step = readJobs().release.steps.find((candidate) => candidate.name === name);
   expect(step?.['working-directory']).toBe('app');
@@ -1320,12 +1394,12 @@ it('publishes no replacement composition before the outbox host and storefront b
   // The fetch steps find the build jobs by the names the workflow gives them.
   expect(jobs['build-outbox-host'].name).toBe(HOST_BUILD_JOB);
   expect(jobs['build-storefront'].name).toBe(STOREFRONT_BUILD_JOB);
-  const host = steps.find(({ name }) => name === HOST_FETCH);
+  const host = steps.find(({ name }) => name === HOST_STAGE_JOIN);
   const storefront = steps.find(({ name }) => name === STOREFRONT_FETCH);
   expect(host?.if).toBeUndefined();
   expect(storefront?.if).toBe(fullPublicationCondition);
   expect(storefront?.run).toContain('release-stream.mts fetch --plan "$PLAN_FILE" --artifact akros-storefront');
-  for (const fetch of [HOST_FETCH, STOREFRONT_FETCH]) {
+  for (const fetch of [HOST_STAGE, HOST_STAGE_JOIN, STOREFRONT_FETCH]) {
     expect(steps.find(({ name }) => name === fetch)?.['continue-on-error']).toBeUndefined();
     expect(indexOf(steps, fetch)).toBeLessThan(indexOf(steps, CANDIDATE));
   }
@@ -1333,15 +1407,29 @@ it('publishes no replacement composition before the outbox host and storefront b
 });
 
 const buildJob = (name: string, conclusion: string) => ({ conclusion, name, status: 'completed' });
+
+/** Waits, in real time, for a background step's exit-code file. */
+const backgroundExit = (file: string, attempts = 600): Effect.Effect<string> => {
+  if (existsSync(file)) {
+    return Effect.sync(() => readFileSync(file, 'utf-8').trim());
+  }
+  if (attempts === 0) {
+    return Effect.die(new Error(`${file} never appeared`));
+  }
+  return Effect.promise(async () => await sleep(200)).pipe(
+    Effect.andThen(Effect.suspend(() => backgroundExit(file, attempts - 1))),
+  );
+};
+
 for (const example of [
-  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'build', ok: false },
-  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'success')], mode: 'build', ok: true },
+  { fetch: HOST_STAGE, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'build', ok: false },
+  { fetch: HOST_STAGE, jobs: [buildJob(HOST_BUILD_JOB, 'success')], mode: 'build', ok: true },
   { fetch: STOREFRONT_FETCH, jobs: [buildJob(STOREFRONT_BUILD_JOB, 'cancelled')], mode: 'build', ok: false },
   { fetch: STOREFRONT_FETCH, jobs: [buildJob(STOREFRONT_BUILD_JOB, 'success')], mode: 'build', ok: true },
-  { fetch: HOST_FETCH, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'kept', ok: true },
+  { fetch: HOST_STAGE, jobs: [buildJob(HOST_BUILD_JOB, 'failure')], mode: 'kept', ok: true },
 ]) {
   it.effect(
-    `the actual ${example.fetch === HOST_FETCH ? 'host' : 'storefront'} fetch ${example.ok ? 'passes' : 'stops'} a ${example.mode} artifact after a ${example.jobs.map(({ conclusion }) => conclusion).join(', ')} build`,
+    `the actual ${example.fetch === HOST_STAGE ? 'host' : 'storefront'} fetch ${example.ok ? 'passes' : 'stops'} a ${example.mode} artifact after a ${example.jobs.map(({ conclusion }) => conclusion).join(', ')} build`,
     () =>
       Effect.scoped(
         Effect.gen(function* awaitsWorkflowBuilds() {
@@ -1367,18 +1455,29 @@ for (const example of [
               units: [],
             }),
           );
-          const exit = yield* Effect.exit(
-            runReleaseStep(example.fetch, {
-              GITHUB_REPOSITORY: 'example/ontos',
-              GITHUB_RUN_ID: '42',
-              PATH: `${path.join(temp, 'bin')}:${inherited}`,
-              PLAN_FILE: planFile,
-              RUNNER_TEMP: temp,
-              SHIM_JOBS_FILE: path.join(temp, 'jobs.json'),
-              SHIM_LOG_FILE: path.join(temp, 'gh.log'),
-            }),
-          );
-          expect(Exit.isSuccess(exit)).toBe(example.ok);
+          const stepEnv = {
+            GITHUB_REPOSITORY: 'example/ontos',
+            GITHUB_RUN_ID: '42',
+            HOST_DIGEST: sha256('host'),
+            PATH: `${path.join(temp, 'bin')}:${inherited}`,
+            PLAN_FILE: planFile,
+            RUNNER_TEMP: temp,
+            SHIM_JOBS_FILE: path.join(temp, 'jobs.json'),
+            SHIM_LOG_FILE: path.join(temp, 'gh.log'),
+          };
+          if (example.fetch === HOST_STAGE) {
+            // The step only starts the staging; its background outcome is what the pre-publication join reads.
+            expect(yield* startBackgroundStep(example.fetch, stepEnv)).toBe(0);
+            const directory = path.join(temp, 'outbox-host-stage');
+            expect(yield* backgroundExit(path.join(directory, 'exit-code'))).not.toBe('0');
+            const log = readFileSync(path.join(directory, 'stream.log'), 'utf-8');
+            expect(log.includes('fetched outbox-host')).toBe(example.ok);
+            // The fixture download is no host archive: the upload refuses it before any provider call.
+            expect(log.includes('is not a zstd tar archive')).toBe(example.ok);
+          } else {
+            const exit = yield* Effect.exit(runReleaseStep(example.fetch, stepEnv));
+            expect(Exit.isSuccess(exit)).toBe(example.ok);
+          }
           const routes = readFileSync(path.join(temp, 'gh.log'), 'utf-8');
           // A failed build is never downloaded; a kept artifact needs no build job of this run.
           expect(routes.includes('/zip')).toBe(example.ok);

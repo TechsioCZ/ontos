@@ -29,6 +29,7 @@ import {
   packageClosure,
   parseJsonObject,
   readRepositorySnapshot,
+  resolvePackageRequest,
   rootBuildInputs,
 } from './unit-closure.mts';
 import type { ClosureGraph, RepositorySnapshot } from './unit-closure.mts';
@@ -88,6 +89,7 @@ export const LEDGER_LOOKBACK = 5;
 const ARTIFACT_CANDIDATES = 10;
 const LOOKUP_CONCURRENCY = 8;
 const UNAVAILABLE = 'unavailable';
+const HOST_INPUTS_UNREADABLE = 'host-inputs-unreadable';
 
 export class DeployPlanError extends Error {
   public constructor(message: string) {
@@ -374,29 +376,77 @@ export interface HostDigestResult extends DigestResult {
   readonly owners: readonly string[];
 }
 
+/**
+ * The source revision each hosted owner's compiled build identity names, by owner unit id. An owner's build marker
+ * hashes its unit, generation marker and revision, so the host carries exactly the markers its owners' live Workers
+ * carry: a kept owner keeps its receipt's revision even though the host compiles its byte-equal sources at HEAD.
+ */
+export type OwnerRevisions = Readonly<Record<string, string>>;
+
+/** The host's own build inputs: the generated host entry's import closure and the listed host recipe files. */
+const hostInputLines = (context: DigestContext): string[] =>
+  context.fileLines(inputGlobs(context, HOST_INPUTS_FILE), [HOST_INPUTS_FILE, HOST_ENTRY]);
+
 const hostDigestFromContext = (
   context: DigestContext,
   env: Environment,
   secretFingerprints: SecretFingerprints | undefined,
+  ownerRevisions: OwnerRevisions,
 ): HostDigestResult => {
   const owners = context.hostOwners();
   const lines = sortedLines([
     `digest-version ${DIGEST_VERSION}`,
-    ...owners.map(
-      (owner) => `host-owner ${owner} ${unitDigestFromContext(context, owner, env, secretFingerprints).digest}`,
-    ),
-    ...context.fileLines(inputGlobs(context, HOST_INPUTS_FILE), [HOST_INPUTS_FILE, HOST_ENTRY]),
+    ...owners.map((owner) => {
+      const revision = ownerRevisions[owner];
+      if (revision === undefined) {
+        throw new DeployPlanError(`the host owner identities name no revision for ${owner}`);
+      }
+      return `host-owner ${owner} ${unitDigestFromContext(context, owner, env, secretFingerprints).digest} ${revision}`;
+    }),
+    ...hostInputLines(context),
   ]);
   return { digest: digestLines(lines), lines, owners };
 };
 
-/** The outbox host digest: its owners' unit digests plus the host's own build inputs. */
+/** Every hosted owner at one revision: the identities of a host that builds every owner at HEAD. */
+export const ownerRevisionsAt = (owners: readonly string[], revision: string): OwnerRevisions =>
+  Object.fromEntries(owners.map((owner) => [owner, revision]));
+
+/** The outbox host digest: its owners' unit digests and identity revisions plus the host's own build inputs. */
 export const computeHostDigest = ({
   env,
+  ownerRevisions,
   secretFingerprints,
   workspaceRoot,
-}: Omit<UnitDigestInput, 'unitId'>): HostDigestResult =>
-  hostDigestFromContext(createDigestContext(workspaceRoot), env, secretFingerprints);
+}: Omit<UnitDigestInput, 'unitId'> & { readonly ownerRevisions: OwnerRevisions }): HostDigestResult =>
+  hostDigestFromContext(createDigestContext(workspaceRoot), env, secretFingerprints, ownerRevisions);
+
+/**
+ * Whether the host may compile an owner under the identity of an earlier revision: the import closure of its
+ * `outbox-worker-host` entry must lie inside the inputs its unit digest covers. Only then does an unchanged unit
+ * digest prove the hosted code byte-equal to the kept release's; otherwise the owner builds at HEAD.
+ */
+const hostedCodeCovered = (context: DigestContext, owner: string): boolean => {
+  const unit = context.units.get(owner);
+  const workspacePackage = unit === undefined ? undefined : context.graph.packages.get(unit.package);
+  if (unit === undefined || workspacePackage === undefined) {
+    return false;
+  }
+  const entries = resolvePackageRequest(context.graph, workspacePackage, './outbox-worker-host');
+  if (entries === undefined) {
+    return false;
+  }
+  const covered = new Set(
+    [...context.globalLines(), ...context.unitBlobLines(owner)].map((line) =>
+      line.startsWith('absent ') ? line.slice('absent '.length) : line.slice('blob '.length, line.lastIndexOf(' ')),
+    ),
+  );
+  return [...importClosure(context.graph, entries).files].every((file) => covered.has(file));
+};
+
+/** Host owners whose hosted code their unit digest does not cover: they always build at HEAD. */
+const uncoveredHostOwners = (context: DigestContext): readonly string[] =>
+  context.hostOwners().filter((owner) => !hostedCodeCovered(context, owner));
 
 const storefrontDigestFromContext = (context: DigestContext, env: Environment): DigestResult => {
   const storefront = context.graph.packages.get(STOREFRONT_PACKAGE);
@@ -589,6 +639,8 @@ export interface DeployPlan {
     readonly artifact: ArtifactRef | null;
     readonly digest: string | null;
     readonly mode: 'build' | 'retain';
+    /** The identity revision of every owner, which the host build compiles in and the digest covers. */
+    readonly ownerRevisions: OwnerRevisions;
     readonly owners: readonly string[];
   };
   /** Records carried forward into this run's ledger. */
@@ -729,8 +781,8 @@ interface UnitSelection {
   readonly record: UnitRecord | null;
 }
 
-/** How a unit can avoid a build, optionally only from one source revision; undefined when it must build. */
-type UnitSelector = (unitId: string, digest: string, revision?: string) => Promise<UnitSelection | undefined>;
+/** How a unit can avoid a build; undefined when it must build. */
+type UnitSelector = (unitId: string, digest: string) => Promise<UnitSelection | undefined>;
 
 /**
  * A unit's Workers are named by its build marker, a hash of unit, content and source revision. A receipt and a build
@@ -765,7 +817,7 @@ const createUnitSelector = ({
     live.set(key, cached);
     return await cached;
   };
-  /** The first record of this digest (and revision) whose Workers are live and whose Shell has its own build. */
+  /** The first record of this digest whose Workers are live and whose Shell has its own build. */
   const retained = async (
     records: readonly UnitRecord[],
     built: readonly ArtifactRef[],
@@ -781,13 +833,9 @@ const createUnitSelector = ({
     }
     return await retained(rest, built, unitId);
   };
-  return async (unitId, digest, revision) => {
-    const allowed = (sourceRevision: string | undefined) => revision === undefined || sourceRevision === revision;
-    const named = await artifactsNamed(unitArtifactName(unitId, digest));
-    const built = named.filter((artifact) => allowed(artifact.sourceRevision));
-    const records = history.filter(
-      (record) => record.unitId === unitId && record.digest === digest && allowed(record.sourceRevision),
-    );
+  return async (unitId, digest) => {
+    const built = await artifactsNamed(unitArtifactName(unitId, digest));
+    const records = history.filter((record) => record.unitId === unitId && record.digest === digest);
     const kept = await retained(records, built, unitId);
     if (kept !== undefined) {
       return kept;
@@ -797,80 +845,30 @@ const createUnitSelector = ({
   };
 };
 
-interface HostGroup {
-  readonly artifact: ArtifactRef;
-  readonly selections: readonly (readonly [string, UnitSelection])[];
-}
-
-/**
- * The host compiles every owner at one revision, so it is kept only as a whole group from one revision R: a trusted
- * ledger recorded this exact host deployed at R, the host artifact built at R exists, and every served owner is kept
- * or re-uploaded from R as well. The host the ledger last recorded goes first, so an unchanged host needs no deploy.
- * Undefined when the host and every owner must build at HEAD.
- */
-const selectHostGroup = async ({
-  hostDigest,
-  ledger,
-  lookups,
-  owners,
-  select,
-}: {
-  readonly hostDigest: string;
-  readonly ledger: ReleaseLedger;
-  readonly lookups: Lookups;
-  readonly owners: readonly PlannedUnit[];
-  readonly select: UnitSelector;
-}): Promise<HostGroup | undefined> => {
-  const recorded = new Set(
-    lookups.ledgers
-      .filter((candidate) => candidate.digestVersion === DIGEST_VERSION && candidate.host?.digest === hostDigest)
-      .map((candidate) => candidate.host?.sourceRevision),
-  );
-  const current = ledger.host?.digest === hostDigest ? ledger.host.sourceRevision : undefined;
-  const hostArtifacts = await lookups.artifacts(hostArtifactName(hostDigest));
-  const candidates = hostArtifacts
-    .filter((artifact) => artifact.sourceRevision !== undefined && recorded.has(artifact.sourceRevision))
-    .toSorted((left, right) => Number(right.sourceRevision === current) - Number(left.sourceRevision === current))
-    .filter(
-      (artifact, index, all) =>
-        all.findIndex((candidate) => candidate.sourceRevision === artifact.sourceRevision) === index,
-    );
-  const tryRevision = async (remaining: readonly ArtifactRef[]): Promise<HostGroup | undefined> => {
-    const [artifact, ...rest] = remaining;
-    if (artifact === undefined) {
-      return undefined;
-    }
-    const selections = await Promise.all(
-      owners.map(async (owner) => [owner.id, await select(owner.id, owner.digest, artifact.sourceRevision)] as const),
-    );
-    const complete = selections.flatMap(([id, selection]) =>
-      selection === undefined ? [] : [[id, selection] as const],
-    );
-    return complete.length === selections.length ? { artifact, selections: complete } : await tryRevision(rest);
-  };
-  return await tryRevision(candidates);
-};
-
 interface PlannedDigestSet {
   readonly database: DigestResult | undefined;
   readonly fingerprints: Record<string, string> | undefined;
-  readonly host: HostDigestResult | undefined;
+  /** Whether the host's own inputs are readable; its digest follows the owners' selected identities. */
+  readonly hostInputs: boolean;
   readonly hostOwners: readonly string[];
   readonly storefront: DigestResult;
+  /** Host owners that build at HEAD whatever their digest. */
+  readonly uncoveredOwners: readonly string[];
   readonly units: readonly PlannedUnit[];
 }
 
 /** Every digest of this checkout; an unreadable input or missing secret material records its force-full reason. */
 const plannedDigests = (context: DigestContext, env: Environment, reasons: string[]): PlannedDigestSet => {
-  const hostOwners = optionalDigest(() => context.hostOwners(), 'host-inputs-unreadable', reasons) ?? [];
+  const hostOwners = optionalDigest(() => context.hostOwners(), HOST_INPUTS_UNREADABLE, reasons) ?? [];
   const fingerprintUnits = [...new Set([...context.served.map((unit) => unit.id), ...hostOwners])];
   const fingerprints = secretFingerprintsFromEnvironment(env, fingerprintUnits, reasons);
   return {
     database: optionalDigest(() => databaseDigestFromContext(context), 'database-inputs-unreadable', reasons),
     fingerprints,
-    host: optionalDigest(() => hostDigestFromContext(context, env, fingerprints), 'host-inputs-unreadable', reasons),
+    hostInputs: optionalDigest(() => hostInputLines(context), HOST_INPUTS_UNREADABLE, reasons) !== undefined,
     hostOwners,
     storefront: storefrontDigestFromContext(context, env),
+    uncoveredOwners: optionalDigest(() => uncoveredHostOwners(context), HOST_INPUTS_UNREADABLE, reasons) ?? [],
     units: context.served.map((unit) => ({
       artifact: null,
       digest: unitDigestFromContext(context, unit.id, env, fingerprints).digest,
@@ -887,44 +885,45 @@ const plannedDigests = (context: DigestContext, env: Environment, reasons: strin
 interface ReuseSelection {
   /** The merged ledger's unit records plus the receipts this composition actually keeps. */
   readonly carried: Readonly<Record<string, UnitRecord>>;
-  readonly hostArtifact: ArtifactRef | null;
   readonly units: readonly PlannedUnit[];
 }
 
-/** What each unit and the host group reuse from trusted earlier runs and live Workers. */
+/**
+ * What each unit reuses from trusted earlier runs and live Workers. A host owner is selected like any unit: the host
+ * compiles it under the identity of whatever it keeps. It builds only when its hosted code escapes its unit digest
+ * or its kept build names no revision.
+ */
 const selectReuse = async ({
   env,
-  host,
-  hostOwners,
   ledger,
   lookups,
   planned,
   run,
+  uncoveredOwners,
 }: {
   readonly env: Environment;
-  readonly host: HostDigestResult;
-  readonly hostOwners: readonly string[];
   readonly ledger: ReleaseLedger;
   readonly lookups: Lookups;
   readonly planned: readonly PlannedUnit[];
   readonly run: Pick<RunIdentity, 'digestVersion' | 'now'>;
+  readonly uncoveredOwners: readonly string[];
 }): Promise<ReuseSelection> => {
   const select = createUnitSelector({
     history: unitRecordHistory(lookups.ledgers, run),
     lookups,
     workersDevSubdomain: env.WORKERS_DEV_SUBDOMAIN,
   });
-  const owners = planned.filter((unit) => hostOwners.includes(unit.id));
-  const group = await selectHostGroup({ hostDigest: host.digest, ledger, lookups, owners, select });
-  const others = planned.filter((unit) => !hostOwners.includes(unit.id));
-  const selections = new Map<string, UnitSelection | undefined>([
-    ...(group?.selections ?? []),
-    ...(await mapBounded(others, async (unit) => [unit.id, await select(unit.id, unit.digest)] as const)),
-  ]);
+  const selectable = planned.filter((unit) => !uncoveredOwners.includes(unit.id));
+  const selections = new Map(
+    await mapBounded(selectable, async (unit) => [unit.id, await select(unit.id, unit.digest)] as const),
+  );
   const carried = { ...ledger.units };
   const units = planned.map((unit) => {
     const selection = selections.get(unit.id);
-    if (selection === undefined) {
+    if (
+      selection === undefined ||
+      (selection.mode === 'reupload' && selection.artifact?.sourceRevision === undefined)
+    ) {
       return unit;
     }
     if (selection.record !== null) {
@@ -933,7 +932,78 @@ const selectReuse = async ({
     }
     return { ...unit, artifact: selection.artifact, mode: selection.mode, receipt: selection.record?.receipt ?? null };
   });
-  return { carried, hostArtifact: group?.artifact ?? null, units };
+  return { carried, units };
+};
+
+/** The newest trusted host build of this digest; none when lookups fail, so the host builds. */
+const reusableHost = async (lookups: Lookups, digest: string): Promise<ArtifactRef | null> => {
+  const artifacts = await lookups.artifacts(hostArtifactName(digest)).catch((): ArtifactRef[] => []);
+  return artifacts.find((artifact) => artifact.sourceRevision !== undefined) ?? null;
+};
+
+/** The parts of a planned unit the release re-checks: its digest and the revision its mode keeps. */
+export interface PlannedUnitIdentity {
+  readonly artifact: Pick<ArtifactRef, 'sourceRevision'> | null;
+  readonly digest: string;
+  readonly id: string;
+  readonly mode: PlannedUnit['mode'];
+  readonly receipt: { readonly plan: Pick<ReleaseReceipt['plan'], 'sourceRevision'> } | null;
+}
+
+/** The revision a planned unit's Workers carry: HEAD for a build, else its kept receipt's or re-uploaded build's. */
+const keptRevision = (unit: PlannedUnitIdentity | undefined, head: string): string | undefined => {
+  if (unit === undefined || unit.mode === 'build') {
+    return head;
+  }
+  return unit.mode === 'retain' ? unit.receipt?.plan.sourceRevision : unit.artifact?.sourceRevision;
+};
+
+/**
+ * Each host owner's identity revision under a plan's unit modes: a kept receipt's, a re-uploaded build's, or HEAD
+ * for a build and for a hosted owner that is no served unit.
+ */
+export const hostOwnerRevisions = (
+  owners: readonly string[],
+  units: readonly PlannedUnitIdentity[],
+  head: string,
+): OwnerRevisions =>
+  Object.fromEntries(
+    owners.map((owner) => {
+      const unit = units.find((candidate) => candidate.id === owner);
+      const revision = keptRevision(unit, head);
+      if (revision === undefined) {
+        throw new DeployPlanError(`the ${unit?.mode ?? 'build'} host owner ${owner} names no source revision`);
+      }
+      return [owner, revision];
+    }),
+  );
+
+/** The host under the plan's owner identities, and its newest trusted build when the plan may reuse one. */
+const plannedHost = async ({
+  context,
+  digests,
+  env,
+  reuse,
+  units,
+}: {
+  readonly context: DigestContext;
+  readonly digests: PlannedDigestSet;
+  readonly env: Environment;
+  readonly reuse: Lookups | undefined;
+  readonly units: readonly PlannedUnit[];
+}): Promise<DeployPlan['host']> => {
+  const ownerRevisions = hostOwnerRevisions(digests.hostOwners, units, context.snapshot.revision);
+  const host = digests.hostInputs
+    ? hostDigestFromContext(context, env, digests.fingerprints, ownerRevisions)
+    : undefined;
+  const artifact = reuse === undefined || host === undefined ? null : await reusableHost(reuse, host.digest);
+  return {
+    artifact,
+    digest: host?.digest ?? null,
+    mode: artifact === null ? 'build' : 'retain',
+    ownerRevisions,
+    owners: digests.hostOwners,
+  };
 };
 
 /** The newest trusted storefront build of this digest; none when its build literals are unknown or lookups fail. */
@@ -966,20 +1036,17 @@ const trustedLookups = async (options: PlanOptions, reasons: string[]): Promise<
   return lookups;
 };
 
-/** The units, host and ledger records the plan reuses; a failed lookup records `lookup-failed` and reuses nothing. */
+/** The units and ledger records the plan reuses; a failed lookup records `lookup-failed` and reuses nothing. */
 const reusedOrBuilt = async (
-  input: Omit<Parameters<typeof selectReuse>[0], 'host' | 'lookups'> & {
-    readonly host: HostDigestResult | undefined;
-    readonly lookups: Lookups | undefined;
-  },
+  input: Omit<Parameters<typeof selectReuse>[0], 'lookups'> & { readonly lookups: Lookups | undefined },
   reasons: string[],
 ): Promise<ReuseSelection> => {
-  const built: ReuseSelection = { carried: input.ledger.units, hostArtifact: null, units: input.planned };
-  const { host, lookups } = input;
-  if (lookups === undefined || host === undefined) {
+  const built: ReuseSelection = { carried: input.ledger.units, units: input.planned };
+  const { lookups } = input;
+  if (lookups === undefined) {
     return built;
   }
-  return await selectReuse({ ...input, host, lookups }).catch(() => {
+  return await selectReuse({ ...input, lookups }).catch(() => {
     reasons.push('lookup-failed');
     return built;
   });
@@ -1009,18 +1076,19 @@ export const planDeployment = async (options: PlanOptions): Promise<DeployPlan> 
   const selected = await reusedOrBuilt(
     {
       env,
-      host: digests.host,
-      hostOwners: digests.hostOwners,
       ledger: merged,
       lookups: reuse,
       planned: digests.units,
       run,
+      uncoveredOwners: digests.uncoveredOwners,
     },
     reasons,
   );
   const fullRebuild = reasons.length > 0;
+  const { units } = selected;
   const storefrontArtifact =
     reuse === undefined || fullRebuild ? null : await reusableStorefront(reuse, digests.storefront, env);
+  const host = await plannedHost({ context, digests, env, reuse: fullRebuild ? undefined : reuse, units });
   return {
     database: {
       inputsDigest: digests.database?.digest ?? null,
@@ -1031,12 +1099,7 @@ export const planDeployment = async (options: PlanOptions): Promise<DeployPlan> 
     forceFull: fullRebuild,
     forceFullReasons: reasons,
     generatedAt: now.toISOString(),
-    host: {
-      artifact: selected.hostArtifact,
-      digest: digests.host?.digest ?? null,
-      mode: selected.hostArtifact === null ? 'build' : 'retain',
-      owners: digests.hostOwners,
-    },
+    host,
     ledger: { ...merged, units: selected.carried },
     offline: options.offline,
     sourceRevision: context.snapshot.revision,
@@ -1045,7 +1108,7 @@ export const planDeployment = async (options: PlanOptions): Promise<DeployPlan> 
       digest: digests.storefront.digest,
       mode: storefrontArtifact === null ? 'build' : 'reuse',
     },
-    units: selected.units,
+    units,
   };
 };
 
@@ -1068,6 +1131,7 @@ export const planOutputs = (plan: DeployPlan) => {
     force_full: String(plan.forceFull),
     host_digest: plan.host.digest ?? '',
     host_mode: plan.host.mode,
+    host_owner_revisions: JSON.stringify(plan.host.ownerRevisions),
     storefront_digest: plan.storefront.digest,
     storefront_mode: plan.storefront.mode,
     units: JSON.stringify(plan.units.map((unit) => ({ id: unit.id, package: unit.package, path: unit.path }))),
@@ -1078,16 +1142,18 @@ export const planOutputs = (plan: DeployPlan) => {
 export interface PlannedDigests {
   readonly database: Pick<DeployPlan['database'], 'inputsDigest'>;
   readonly digestVersion: string;
-  readonly host: Pick<DeployPlan['host'], 'digest' | 'owners'>;
+  readonly host: Pick<DeployPlan['host'], 'digest' | 'ownerRevisions' | 'owners'>;
   readonly sourceRevision: string;
   readonly storefront: Pick<DeployPlan['storefront'], 'digest'>;
-  readonly units: readonly Pick<PlannedUnit, 'digest' | 'id'>[];
+  readonly units: readonly PlannedUnitIdentity[];
 }
 
 /**
  * The release's check that a plan still holds at its own clean checkout: same revision and digest scheme, and every
  * unit, host, storefront and database digest recomputes to the planned value with the release's environment (build
- * env keys, storefront literals, secrets, fingerprint key). Returns the verified revision.
+ * env keys, storefront literals, secrets, fingerprint key). The host's owner identities must be exactly the ones the
+ * planned unit modes imply, and an owner whose hosted code escapes its unit digest must build. Returns the verified
+ * revision.
  */
 export const verifyPlan = ({
   env,
@@ -1110,8 +1176,17 @@ export const verifyPlan = ({
   const mismatched = plan.units
     .filter((unit) => unitDigestFromContext(context, unit.id, env, fingerprints).digest !== unit.digest)
     .map((unit) => unit.id);
-  if (plan.host.digest !== null && hostDigestFromContext(context, env, fingerprints).digest !== plan.host.digest) {
-    mismatched.push('outbox-host');
+  if (plan.host.digest !== null) {
+    const owners = context.hostOwners();
+    const implied = hostOwnerRevisions(owners, plan.units, context.snapshot.revision);
+    const uncovered = uncoveredHostOwners(context);
+    if (
+      canonicalJson(plan.host.ownerRevisions) !== canonicalJson(implied) ||
+      plan.units.some((unit) => uncovered.includes(unit.id) && unit.mode !== 'build') ||
+      hostDigestFromContext(context, env, fingerprints, implied).digest !== plan.host.digest
+    ) {
+      mismatched.push('outbox-host');
+    }
   }
   if (storefrontDigestFromContext(context, env).digest !== plan.storefront.digest) {
     mismatched.push('akros-storefront');
@@ -1128,6 +1203,31 @@ export const verifyPlan = ({
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
 
+const isStringRecord = (value: unknown): value is Record<string, string> =>
+  isJsonObject(value) && Object.values(value).every((item) => typeof item === 'string');
+
+const isUnitMode = (value: unknown): value is PlannedUnit['mode'] =>
+  value === 'build' || value === 'reupload' || value === 'retain';
+
+/** A planned unit's digest and kept revision, or undefined when the entry is malformed. */
+const plannedUnitIdentity = (unit: unknown): PlannedUnitIdentity | undefined => {
+  if (!isJsonObject(unit) || typeof unit.id !== 'string' || typeof unit.digest !== 'string' || !isUnitMode(unit.mode)) {
+    return undefined;
+  }
+  const artifactRevision = isJsonObject(unit.artifact) ? unit.artifact.sourceRevision : undefined;
+  const receiptPlan = isJsonObject(unit.receipt) ? unit.receipt.plan : undefined;
+  const receiptRevision = isJsonObject(receiptPlan) ? receiptPlan.sourceRevision : undefined;
+  return {
+    artifact: isJsonObject(unit.artifact)
+      ? { sourceRevision: typeof artifactRevision === 'string' ? artifactRevision : undefined }
+      : null,
+    digest: unit.digest,
+    id: unit.id,
+    mode: unit.mode,
+    receipt: typeof receiptRevision === 'string' ? { plan: { sourceRevision: receiptRevision } } : null,
+  };
+};
+
 const nullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
 
 /** The digests of a deploy plan file, validated. */
@@ -1135,11 +1235,10 @@ const parsePlannedDigests = (text: string): PlannedDigests => {
   const plan = parseJsonObject('the deploy plan', text);
   const { database, digestVersion, host, sourceRevision, storefront, units } = plan;
   const plannedUnits = Array.isArray(units)
-    ? units.flatMap((unit) =>
-        isJsonObject(unit) && typeof unit.id === 'string' && typeof unit.digest === 'string'
-          ? [{ digest: unit.digest, id: unit.id }]
-          : [],
-      )
+    ? units.flatMap((unit) => {
+        const identity = plannedUnitIdentity(unit);
+        return identity === undefined ? [] : [identity];
+      })
     : [];
   if (
     typeof digestVersion !== 'string' ||
@@ -1149,6 +1248,7 @@ const parsePlannedDigests = (text: string): PlannedDigests => {
     !isJsonObject(host) ||
     !nullableString(host.digest) ||
     !isStringArray(host.owners) ||
+    !isStringRecord(host.ownerRevisions) ||
     !isJsonObject(storefront) ||
     typeof storefront.digest !== 'string' ||
     !isJsonObject(database) ||
@@ -1159,7 +1259,7 @@ const parsePlannedDigests = (text: string): PlannedDigests => {
   return {
     database: { inputsDigest: database.inputsDigest },
     digestVersion,
-    host: { digest: host.digest, owners: host.owners },
+    host: { digest: host.digest, ownerRevisions: host.ownerRevisions, owners: host.owners },
     sourceRevision,
     storefront: { digest: storefront.digest },
     units: plannedUnits,
@@ -1169,7 +1269,7 @@ const parsePlannedDigests = (text: string): PlannedDigests => {
 const USAGE = `Usage:
   deploy-plan.mts plan --output <plan.json> [--offline] [--force-full]
   deploy-plan.mts unit-digest --unit <id> [--secret-fingerprint <hex>] [--expect-digest <d>] [--output <inputs.json>]
-  deploy-plan.mts host-digest [--output <host-inputs.json>]
+  deploy-plan.mts host-digest [--owner-revisions <json>] [--output <host-inputs.json>]
   deploy-plan.mts verify --plan <plan.json>`;
 
 const writeJson = (file: string, value: unknown) => {
@@ -1254,15 +1354,65 @@ const printUnitDigest = (
   console.log(result.digest);
 };
 
-const printHostDigest = (env: Environment, workspaceRoot: string, output: string | undefined) => {
+/**
+ * The host digest under the given owner identities at the workspace's clean HEAD, with the release secrets'
+ * fingerprints from the environment (`unavailable` without them), exactly as the plan computes it.
+ */
+const hostDigestFromEnvironment = ({
+  env,
+  ownerRevisions,
+  workspaceRoot,
+}: {
+  readonly env: Environment;
+  readonly ownerRevisions: OwnerRevisions;
+  readonly workspaceRoot: string;
+}): HostDigestResult => {
   const context = createDigestContext(workspaceRoot);
-  const result = computeHostDigest({
+  return hostDigestFromContext(
+    context,
     env,
-    secretFingerprints: secretFingerprintsFromEnvironment(env, context.hostOwners(), []),
-    workspaceRoot,
-  });
+    secretFingerprintsFromEnvironment(env, context.hostOwners(), []),
+    ownerRevisions,
+  );
+};
+
+/** The `--owner-revisions` JSON object, validated: owner id to source revision. */
+const parseOwnerRevisions = (text: string): OwnerRevisions => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new DeployPlanError('--owner-revisions must be a JSON object');
+  }
+  if (!isStringRecord(value)) {
+    throw new DeployPlanError('--owner-revisions must map owner ids to source revisions');
+  }
+  return value;
+};
+
+/**
+ * Prints the host digest under the given owner identities (every owner at HEAD without them, as a host that builds
+ * every owner), and writes its inputs and identities when asked.
+ */
+const printHostDigest = (
+  env: Environment,
+  workspaceRoot: string,
+  { output, ownerRevisions }: { output?: string | undefined; ownerRevisions?: string | undefined },
+) => {
+  const context = createDigestContext(workspaceRoot);
+  const revisions =
+    ownerRevisions === undefined
+      ? ownerRevisionsAt(context.hostOwners(), context.snapshot.revision)
+      : parseOwnerRevisions(ownerRevisions);
+  const result = hostDigestFromEnvironment({ env, ownerRevisions: revisions, workspaceRoot });
   if (output !== undefined) {
-    writeJson(output, { digest: result.digest, lines: result.lines, owners: result.owners, version: DIGEST_VERSION });
+    writeJson(output, {
+      digest: result.digest,
+      lines: result.lines,
+      ownerRevisions: revisions,
+      owners: result.owners,
+      version: DIGEST_VERSION,
+    });
   }
   console.log(result.digest);
 };
@@ -1276,6 +1426,7 @@ const main = async (argv: readonly string[], env: Environment): Promise<void> =>
       'force-full': { default: false, type: 'boolean' },
       offline: { default: false, type: 'boolean' },
       output: { type: 'string' },
+      'owner-revisions': { type: 'string' },
       plan: { type: 'string' },
       'secret-fingerprint': { type: 'string' },
       unit: { type: 'string' },
@@ -1292,7 +1443,7 @@ const main = async (argv: readonly string[], env: Environment): Promise<void> =>
       output: values.output,
     });
   } else if (command === 'host-digest') {
-    printHostDigest(env, workspaceRoot, values.output);
+    printHostDigest(env, workspaceRoot, { output: values.output, ownerRevisions: values['owner-revisions'] });
   } else if (command === 'verify' && values.plan !== undefined) {
     const plan = parsePlannedDigests(readFileSync(values.plan, 'utf-8'));
     console.log(`every planned digest matches ${verifyPlan({ env, plan, workspaceRoot })}`);

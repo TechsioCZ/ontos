@@ -255,8 +255,9 @@ export const emptyLedger = ({ digestVersion, now, runId, sourceRevision }: RunId
 
 /**
  * Every unit record of the given digest scheme within the retention window across earlier ledgers (newest first),
- * newest first, one per digest and source revision. A digest can have receipts from several revisions (an unchanged
- * owner is rebuilt with its host group); the plan needs them all to find a revision-coherent host group.
+ * newest first, one per digest and source revision. A digest can have receipts from several revisions (a forced
+ * rebuild re-uploads an unchanged unit); the plan keeps the newest live one, and an outbox-only retry finds the
+ * receipt of each published build marker among them.
  */
 export const unitRecordHistory = (
   ledgers: readonly ReleaseLedger[],

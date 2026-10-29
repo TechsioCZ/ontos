@@ -16,6 +16,7 @@ import {
   computeUnitDigest,
   DIGEST_VERSION,
   hostArtifactName,
+  ownerRevisionsAt,
   planDeployment,
   planOutputs,
   storefrontArtifactName,
@@ -206,6 +207,12 @@ type UnitDigests = ReturnType<typeof digests>;
 const changedUnits = (before: UnitDigests, after: UnitDigests) =>
   UNIT_IDS.filter((unitId) => before[unitId] !== after[unitId]);
 
+const HOST_OWNERS = [SHELL, 'alpha'] as const;
+
+/** The host digest with the given owner identity revisions (every owner at REV_A by default). */
+const hostDigest = (workspaceRoot: string, ownerRevisions = ownerRevisionsAt(HOST_OWNERS, REV_A)) =>
+  computeHostDigest({ env: BUILD_ENV, ownerRevisions, secretFingerprints: fingerprints(), workspaceRoot });
+
 it.live('unit digests are deterministic across checkouts and cover every closure line', () =>
   withRepository((root) =>
     Effect.gen(function* deterministicDigests() {
@@ -330,24 +337,24 @@ it.live('host, storefront and database digests follow only their own inputs', ()
   withRepository((root) =>
     Effect.gen(function* auxiliaryDigests() {
       const workspaceRoot = path.join(root, 'app');
-      const host = computeHostDigest({ env: BUILD_ENV, secretFingerprints: fingerprints(), workspaceRoot });
+      const host = hostDigest(workspaceRoot);
       expect(host.owners).toEqual([SHELL, 'alpha']);
+      expect(host.lines.filter((line) => line.startsWith('host-owner '))).toEqual(
+        (['alpha', SHELL] as const).map((owner) => `host-owner ${owner} ${digests(workspaceRoot)[owner]} ${REV_A}`),
+      );
+      // The owner identities are host inputs: another revision of a byte-equal owner is another host.
+      expect(hostDigest(workspaceRoot, { alpha: REV_A, [SHELL]: REV_B }).digest).not.toBe(host.digest);
+      expect(() => hostDigest(workspaceRoot, { [SHELL]: REV_A })).toThrow(/no revision for alpha/u);
       const storefront = computeStorefrontDigest({ env: BUILD_ENV, workspaceRoot });
       const database = computeDatabaseInputsDigest({ workspaceRoot });
       yield* commit(root, { 'app/scripts/migrate-helper.mts': 'export const migrate = 2;\n' });
       expect(computeDatabaseInputsDigest({ workspaceRoot }).digest).not.toBe(database.digest);
-      expect(computeHostDigest({ env: BUILD_ENV, secretFingerprints: fingerprints(), workspaceRoot }).digest).toBe(
-        host.digest,
-      );
+      expect(hostDigest(workspaceRoot).digest).toBe(host.digest);
       yield* commit(root, { 'app/verticals/gamma/src/index.ts': 'export const gamma = 2;\n' });
-      expect(computeHostDigest({ env: BUILD_ENV, secretFingerprints: fingerprints(), workspaceRoot }).digest).toBe(
-        host.digest,
-      );
+      expect(hostDigest(workspaceRoot).digest).toBe(host.digest);
       expect(computeStorefrontDigest({ env: BUILD_ENV, workspaceRoot }).digest).toBe(storefront.digest);
       yield* commit(root, { 'app/zerops.yaml': 'zerops: [changed]\n' });
-      expect(computeHostDigest({ env: BUILD_ENV, secretFingerprints: fingerprints(), workspaceRoot }).digest).not.toBe(
-        host.digest,
-      );
+      expect(hostDigest(workspaceRoot).digest).not.toBe(host.digest);
       expect(
         computeStorefrontDigest({ env: { ...BUILD_ENV, STOREFRONT_IMAGE_HOSTS: 'cdn.example' }, workspaceRoot }).digest,
       ).not.toBe(storefront.digest);
@@ -535,7 +542,7 @@ const moduleReceipt = (unitId: string, digest: string, sourceRevision: string = 
 /** A world where a trusted earlier run built, uploaded and recorded every unit at the current digests. */
 const deployedWorld = (workspaceRoot: string): FakeWorld & { readonly ledgerText: string } => {
   const unitDigests = digests(workspaceRoot);
-  const host = computeHostDigest({ env: BUILD_ENV, secretFingerprints: fingerprints(), workspaceRoot });
+  const host = hostDigest(workspaceRoot);
   let ledger = mergeLedgers([], {
     digestVersion: DIGEST_VERSION,
     now: NOW,
@@ -584,9 +591,9 @@ const plan = (workspaceRoot: string, world: FakeWorld, env: Readonly<Record<stri
     planDeployment({ env, fetch: fakeFetch(world), forceFull: false, now: NOW, offline: false, workspaceRoot }),
   );
 
-it.live('keeps live units and the host, and rebuilds the whole host group when one owner changes', () =>
+it.live('keeps live units and the host, and a changed owner rebuilds only itself and the host', () =>
   withRepository((root) =>
-    Effect.gen(function* hostGroup() {
+    Effect.gen(function* hostOwners() {
       const workspaceRoot = path.join(root, 'app');
       const world = deployedWorld(workspaceRoot);
       const kept = yield* plan(workspaceRoot, world);
@@ -594,18 +601,40 @@ it.live('keeps live units and the host, and rebuilds the whole host group when o
       expect(Object.fromEntries(kept.units.map((unit) => [unit.id, unit.mode]))).toEqual(
         Object.fromEntries(UNIT_IDS.map((unitId) => [unitId, 'retain'])),
       );
-      expect(kept.host.mode).toBe('retain');
+      expect(kept.host).toMatchObject({ mode: 'retain', ownerRevisions: { alpha: REV_A, [SHELL]: REV_A } });
       expect(kept.storefront.mode).toBe('reuse');
       expect(kept.database.mode).toBe('auto');
-      expect(planOutputs(kept)).toMatchObject({ build_count: '0', build_matrix: '[]', host_mode: 'retain' });
+      expect(planOutputs(kept)).toMatchObject({
+        build_count: '0',
+        build_matrix: '[]',
+        host_mode: 'retain',
+      });
+      expect(JSON.parse(planOutputs(kept).host_owner_revisions)).toEqual({ alpha: REV_A, [SHELL]: REV_A });
 
-      // gamma is outside the host group: only it rebuilds.
+      // gamma is no host owner: only it rebuilds.
       yield* commit(root, { 'app/verticals/gamma/src/index.ts': 'export const gamma = 2;\n' });
       const gamma = yield* plan(workspaceRoot, world);
       expect(gamma.units.filter((unit) => unit.mode === 'build').map((unit) => unit.id)).toEqual(['gamma']);
       expect(gamma.host.mode).toBe('retain');
 
-      // beta depends on alpha but is no host owner; alpha is: the host and every owner build at HEAD.
+      // The Shell changed and alpha did not: alpha keeps its live REV_A release, and the host rebuilds compiling
+      // alpha under REV_A and the Shell under HEAD.
+      const head = runGit(root, ['rev-parse', 'HEAD']);
+      yield* commit(root, { 'app/apps/shell-super-app/src/index.ts': 'export const shell = 2;\n' });
+      const shellHead = runGit(root, ['rev-parse', 'HEAD']);
+      expect(shellHead).not.toBe(head);
+      const shell = yield* plan(workspaceRoot, world);
+      expect(shell.units.filter((unit) => unit.mode === 'build').map((unit) => unit.id)).toEqual([SHELL, 'gamma']);
+      expect(shell.units.find((unit) => unit.id === 'alpha')?.mode).toBe('retain');
+      expect(shell.host).toMatchObject({
+        artifact: null,
+        mode: 'build',
+        ownerRevisions: { alpha: REV_A, [SHELL]: shellHead },
+      });
+      expect(shell.host.digest).toBe(hostDigest(workspaceRoot, { alpha: REV_A, [SHELL]: shellHead }).digest);
+      expect(verifyPlan({ env: ONLINE_ENV, plan: shell, workspaceRoot })).toBe(shellHead);
+
+      // alpha is a host owner the Shell depends on: both build, every other unit is kept.
       yield* commit(root, { 'app/verticals/alpha/src/index.ts': 'export const alpha = 2;\n' });
       const alpha = yield* plan(workspaceRoot, world);
       expect(alpha.host.mode).toBe('build');
@@ -617,6 +646,64 @@ it.live('keeps live units and the host, and rebuilds the whole host group when o
       ]);
       const matrix: unknown = JSON.parse(planOutputs(alpha).build_matrix);
       expect(matrix).toContainEqual(expect.objectContaining({ id: 'alpha', path: 'verticals/alpha' }));
+    }),
+  ),
+);
+
+it.live('verify rejects owner identities the planned unit modes do not imply', () =>
+  withRepository((root) =>
+    Effect.gen(function* ownerIdentities() {
+      const workspaceRoot = path.join(root, 'app');
+      const kept = yield* plan(workspaceRoot, deployedWorld(workspaceRoot));
+      expect(verifyPlan({ env: ONLINE_ENV, plan: kept, workspaceRoot })).toBe(kept.sourceRevision);
+      const relabeled = { ...kept.host, ownerRevisions: { ...kept.host.ownerRevisions, alpha: REV_B } };
+      expect(() => verifyPlan({ env: ONLINE_ENV, plan: { ...kept, host: relabeled }, workspaceRoot })).toThrow(
+        /for: outbox-host$/u,
+      );
+      const { alpha: _alpha, ...partial } = kept.host.ownerRevisions;
+      expect(() =>
+        verifyPlan({
+          env: ONLINE_ENV,
+          plan: { ...kept, host: { ...kept.host, ownerRevisions: partial } },
+          workspaceRoot,
+        }),
+      ).toThrow(/for: outbox-host$/u);
+    }),
+  ),
+);
+
+it.live('an owner whose hosted code escapes its unit digest always builds with the host', () =>
+  withRepository((root) =>
+    Effect.gen(function* uncoveredOwner() {
+      // The export map is no unit input: the hosted entry it names lies outside alpha's package closure.
+      const workspaceRoot = yield* commit(root, {
+        'app/scripts/alpha-host.mts': 'export const host = 1;\n',
+        'app/verticals/alpha/package.json': json({
+          dependencies: { '@app/core': WORKSPACE },
+          exports: { '.': './src/index.ts', './outbox-worker-host': '../../scripts/alpha-host.mts' },
+          name: '@app/alpha',
+        }),
+      });
+      const result = yield* plan(workspaceRoot, deployedWorld(workspaceRoot));
+      expect(Object.fromEntries(result.units.map((unit) => [unit.id, unit.mode]))).toMatchObject({
+        alpha: 'build',
+        beta: 'retain',
+        [SHELL]: 'retain',
+      });
+      expect(result.host.ownerRevisions).toEqual({ alpha: result.sourceRevision, [SHELL]: REV_A });
+      expect(() =>
+        verifyPlan({
+          env: ONLINE_ENV,
+          plan: {
+            ...result,
+            host: { ...result.host, ownerRevisions: { ...result.host.ownerRevisions, alpha: REV_A } },
+            units: result.units.map((unit) =>
+              unit.id === 'alpha' ? { ...unit, mode: 'retain', receipt: moduleReceipt('alpha', unit.digest) } : unit,
+            ),
+          },
+          workspaceRoot,
+        }),
+      ).toThrow(/outbox-host/u);
     }),
   ),
 );
@@ -647,12 +734,14 @@ it.live('a deleted Worker, a missing Shell artifact or a missing host artifact s
       });
       expect(noShellBuild.units.find((unit) => unit.id === SHELL)?.mode).toBe('build');
       expect(noShellBuild.host.mode).toBe('build');
+      expect(noShellBuild.units.find((unit) => unit.id === 'alpha')?.mode).toBe('retain');
+      // A missing host build rebuilds only the host, under the kept owners' identities.
       const noHost = yield* plan(workspaceRoot, {
         ...world,
         artifacts: world.artifacts.filter((artifact) => !artifact.name.startsWith('outbox-host-')),
       });
-      expect(noHost.host.mode).toBe('build');
-      expect(noHost.units.filter((unit) => unit.mode === 'build').map((unit) => unit.id)).toEqual([SHELL, 'alpha']);
+      expect(noHost.host).toMatchObject({ digest: hostDigest(workspaceRoot).digest, mode: 'build' });
+      expect(noHost.units.filter((unit) => unit.mode === 'build').map((unit) => unit.id)).toEqual([]);
     }),
   ),
 );
@@ -766,14 +855,10 @@ it.live('forces a full rebuild without the fingerprint key, on request, or when 
 const LATER = new Date(NOW.getTime() + 60_000);
 
 /**
- * Run 401 at REV_B changed alpha, so it rebuilt the whole host group: the Shell's digest stayed the same, but its
- * Workers and build output carry REV_B. HEAD then rolled alpha back to REV_A's content, the host digest of run 400.
+ * Run 401 at REV_B was a forced rebuild that also changed alpha: the Shell's digest stayed the same, but its Workers
+ * and build output carry REV_B. HEAD then rolled alpha back to REV_A's content, whose REV_A Workers are still live.
  */
-const rebuiltAtRevisionB = (
-  workspaceRoot: string,
-  world: FakeWorld & { readonly ledgerText: string },
-  { hostDeployed }: { readonly hostDeployed: boolean },
-) => {
+const rebuiltAtRevisionB = (workspaceRoot: string, world: FakeWorld & { readonly ledgerText: string }) => {
   const shellDigest = digests(workspaceRoot)[SHELL];
   const alphaB = 'c'.repeat(64);
   const shellB = shellReceipt(shellDigest, REV_B);
@@ -792,9 +877,7 @@ const rebuiltAtRevisionB = (
     runId: '401',
     unitId: 'alpha',
   });
-  if (hostDeployed) {
-    ledger = recordHost(ledger, { digest: 'd'.repeat(64), now: LATER, runId: '401', sourceRevision: REV_B });
-  }
+  ledger = recordHost(ledger, { digest: 'd'.repeat(64), now: LATER, runId: '401', sourceRevision: REV_B });
   return {
     artifacts: [
       ...world.artifacts,
@@ -816,61 +899,60 @@ const rebuiltAtRevisionB = (
 const modes = (result: Awaited<ReturnType<typeof planDeployment>>) =>
   Object.fromEntries(result.units.map((unit) => [unit.id, unit.mode]));
 
-it.live(
-  'keeps the host only with every owner from the host build revision, after a rollback or a partial release',
-  () =>
-    withRepository((root) =>
-      Effect.gen(function* hostRevision() {
-        const workspaceRoot = path.join(root, 'app');
-        const world = deployedWorld(workspaceRoot);
-        const shellDigest = digests(workspaceRoot)[SHELL];
-        const shellArtifactA = world.artifacts.find(
-          (artifact) => artifact.name === unitArtifactName(SHELL, shellDigest),
-        );
+it.live('the host carries each kept owner identity, after a rollback or a partial release', () =>
+  withRepository((root) =>
+    Effect.gen(function* hostRevision() {
+      const workspaceRoot = path.join(root, 'app');
+      const world = deployedWorld(workspaceRoot);
+      const shellDigest = digests(workspaceRoot)[SHELL];
+      const mixed = { alpha: REV_A, [SHELL]: REV_B };
 
-        // Rollback: REV_B's newer, live, content-equal Shell receipt and artifact must not join REV_A's host.
-        const rolledBack = yield* plan(workspaceRoot, rebuiltAtRevisionB(workspaceRoot, world, { hostDeployed: true }));
-        expect(rolledBack.forceFull).toBe(false);
-        expect(rolledBack.host).toMatchObject({ artifact: { id: 30, sourceRevision: REV_A }, mode: 'retain' });
-        const shell = rolledBack.units.find((unit) => unit.id === SHELL);
-        expect(shell).toMatchObject({ artifact: { id: shellArtifactA?.id, sourceRevision: REV_A }, mode: 'retain' });
-        expect(shell?.receipt?.plan.sourceRevision).toBe(REV_A);
-        expect(shell?.receipt?.plan.buildMarker).not.toBe(shellReceipt(shellDigest, REV_B).plan.buildMarker);
-        expect(rolledBack.units.find((unit) => unit.id === 'alpha')?.receipt?.plan.sourceRevision).toBe(REV_A);
-        // The ledger carries forward the receipt the composition keeps.
-        expect(rolledBack.ledger.units[shellDigest]?.sourceRevision).toBe(REV_A);
+      // Rollback: the newest live Shell receipt is REV_B's, alpha's live one REV_A's. Neither owner rebuilds; the
+      // host builds once under exactly those identities.
+      const rolledBackWorld = rebuiltAtRevisionB(workspaceRoot, world);
+      const rolledBack = yield* plan(workspaceRoot, rolledBackWorld);
+      expect(rolledBack.forceFull).toBe(false);
+      expect(modes(rolledBack)).toMatchObject({ alpha: 'retain', [SHELL]: 'retain' });
+      const shell = rolledBack.units.find((unit) => unit.id === SHELL);
+      expect(shell).toMatchObject({ artifact: { id: 41, sourceRevision: REV_B }, mode: 'retain' });
+      expect(shell?.receipt?.plan.buildMarker).toBe(shellReceipt(shellDigest, REV_B).plan.buildMarker);
+      expect(rolledBack.host).toMatchObject({
+        artifact: null,
+        digest: hostDigest(workspaceRoot, mixed).digest,
+        mode: 'build',
+        ownerRevisions: mixed,
+      });
+      // The ledger carries forward the receipt the composition keeps.
+      expect(rolledBack.ledger.units[shellDigest]?.sourceRevision).toBe(REV_B);
 
-        // Partial release: run 401 never deployed its host and run 400's ledger expired, so only REV_B's Shell receipt
-        // is known. The Shell re-uploads REV_A's build instead, and the host stays.
-        const partial = rebuiltAtRevisionB(workspaceRoot, world, { hostDeployed: false });
-        const withoutLedgerA = {
-          ...partial,
-          artifacts: partial.artifacts.filter((artifact) => artifact.id !== 10),
-        };
-        const reuploaded = yield* plan(workspaceRoot, withoutLedgerA);
-        expect(reuploaded.host.mode).toBe('retain');
-        expect(reuploaded.units.find((unit) => unit.id === SHELL)).toMatchObject({
-          artifact: { id: shellArtifactA?.id, sourceRevision: REV_A },
-          mode: 'reupload',
-          receipt: null,
-        });
+      // Once a run built that host, the next one keeps it.
+      const hostBuilt = {
+        ...rolledBackWorld,
+        artifacts: [
+          ...rolledBackWorld.artifacts,
+          { id: 44, name: hostArtifactName(hostDigest(workspaceRoot, mixed).digest), runId: 402 },
+        ],
+        runs: [...rolledBackWorld.runs, { headSha: 'e'.repeat(40), id: 402 }],
+      };
+      const kept = yield* plan(workspaceRoot, hostBuilt);
+      expect(kept.host).toMatchObject({ artifact: { id: 44, sourceRevision: 'e'.repeat(40) }, mode: 'retain' });
 
-        // Without REV_A's Shell build no owner group matches the host: the host and every owner build at HEAD, even
-        // though REV_B's Shell Workers are live.
-        const incoherent = yield* plan(workspaceRoot, {
-          ...withoutLedgerA,
-          artifacts: withoutLedgerA.artifacts.filter((artifact) => artifact.id !== shellArtifactA?.id),
-        });
-        expect(incoherent.host).toMatchObject({ artifact: null, mode: 'build' });
-        expect(modes(incoherent)).toEqual({
-          alpha: 'build',
-          beta: 'retain',
-          gamma: 'retain',
-          projects: 'retain',
-          [SHELL]: 'build',
-        });
-      }),
-    ),
+      // alpha's REV_A Workers were deleted: it re-uploads its REV_A build, so the host still compiles it under REV_A.
+      const alphaA = moduleReceipt('alpha', digests(workspaceRoot).alpha);
+      const reuploaded = yield* plan(workspaceRoot, {
+        ...hostBuilt,
+        versions: Object.fromEntries(
+          Object.entries(hostBuilt.versions).filter(([name]) => name !== alphaA.backend.workerName),
+        ),
+      });
+      expect(reuploaded.units.find((unit) => unit.id === 'alpha')).toMatchObject({
+        artifact: { id: 21, sourceRevision: REV_A },
+        mode: 'reupload',
+        receipt: null,
+      });
+      expect(reuploaded.host).toMatchObject({ mode: 'retain', ownerRevisions: mixed });
+    }),
+  ),
 );
 
 it.live('a build-only dispatch never pairs its newer Shell build with the older live Shell receipt', () =>
@@ -900,14 +982,18 @@ it.live('a build-only dispatch never pairs its newer Shell build with the older 
       expect(shell?.receipt?.plan.sourceRevision).toBe(REV_A);
       expect(kept.host.mode).toBe('retain');
 
-      // REV_A's Shell build expired: its live Workers cannot be kept without their own build output, and REV_B's
-      // build cannot join REV_A's host, so the host group builds.
+      // REV_A's Shell build expired: its live Workers cannot be kept without their own build output, so the Shell
+      // re-uploads REV_B's build and the host builds under that identity.
       const expired = yield* plan(workspaceRoot, {
         ...dispatched,
         artifacts: dispatched.artifacts.filter((artifact) => artifact.id !== shellArtifactA?.id),
       });
-      expect(expired.host.mode).toBe('build');
-      expect(expired.units.find((unit) => unit.id === SHELL)).toMatchObject({ artifact: null, mode: 'build' });
+      expect(expired.units.find((unit) => unit.id === SHELL)).toMatchObject({
+        artifact: { id: 50, sourceRevision: REV_B },
+        mode: 'reupload',
+        receipt: null,
+      });
+      expect(expired.host).toMatchObject({ mode: 'build', ownerRevisions: { alpha: REV_A, [SHELL]: REV_B } });
     }),
   ),
 );
