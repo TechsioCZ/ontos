@@ -901,12 +901,15 @@ const HOST = { OUTBOX_WORKER_MODE: 'host' } as const;
 it('selects each environment deploy target from its DEPLOY_TARGET variable, Zerops when unset', () => {
   const workflow = readTargetWorkflow();
   const { 'deploy-target': target } = workflow.jobs;
-  // Pushes deploy stage; production deploys only on an explicit dispatch.
+  // Stage deploys from demo/sales-crm, so main deploys nothing unless MAIN_DEPLOY_ENABLED turns it back on.
+  // When enabled, pushes deploy stage and production deploys only on an explicit dispatch.
   expect(workflow.on.workflow_dispatch.inputs.environment).toEqual({
     default: 'stage',
     options: ['stage', 'production'],
   });
-  expect(target.if).toContain("github.ref == 'refs/heads/main'");
+  expect(target.if).toBe(
+    "vars.MAIN_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
+  );
   // Reading the environment's variables must not add an entry to its deployment history.
   expect(target.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_EXPRESSION });
   const step = target.steps.find(({ id }) => id === 'target');
