@@ -3,12 +3,12 @@
 // @ontos-action-slug add-saved-address
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Crypto, Effect } from 'effect';
 import { AddSavedAddressPayloadSchema, AddSavedAddressResultSchema } from '../../shared/actions/add-saved-address.ts';
 import type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';
 import { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
 import { manageAddressPermissionTarget } from './address-action-support.ts';
-import { partyBackedAddressSourceValidator } from '../integrations/party-address-source.ts';
+import { partyBackedAddressSourceValidatorForScope } from '../integrations/party-address-source.ts';
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
 import {
   AddSavedAddressCommerceCustomerContextSavedAddressAddedV1OutboxPayloadSchema,
@@ -113,14 +113,16 @@ export const addSavedAddressAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction, scope) =>
-    Effect.succeed<Services>(
-      addressActionPersistenceForTransaction(
+  Effect.fn('AddSavedAddressAction.addSavedAddressAction')(
+    function* addressServices(transaction, scope): Effect.fn.Return<Services, never, Crypto.Crypto> {
+      const crypto = yield* Crypto.Crypto;
+      return addressActionPersistenceForTransaction(
         transaction,
         scope,
-        partyBackedAddressSourceValidator(scope.correlationId),
-      ),
-    ),
+        partyBackedAddressSourceValidatorForScope(scope, crypto),
+      );
+    },
+  ),
 );
 
 export type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';

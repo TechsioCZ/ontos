@@ -52,6 +52,7 @@ const effectNamespaces = new Set(['Effect', 'Layer', 'Deferred', 'DateTime', 'St
 const moduleBases = new Map<string, readonly string[]>([
   ['effect', []],
   ['effect/Effect', ['Effect']],
+  ['effect/Clock', ['Clock']],
   ['effect/Layer', ['Layer']],
   ['effect/Deferred', ['Deferred']],
   ['effect/DateTime', ['DateTime']],
@@ -433,6 +434,7 @@ const effectProof = {
       const method = nativeMethod(context, node, 'Effect');
       return (
         (method !== null && effectValues.has(method)) ||
+        nativeMethod(context, node, 'Clock') === 'currentTimeMillis' ||
         isNativeEffectValue(context, node) ||
         isNativeDeferredProgram(context, node)
       );

@@ -2167,3 +2167,147 @@ it.layer(Layer.empty, { excludeTestServices: true })((suite) => {
     },
   ]);
 });
+
+it('allows consumed imported Clock.currentTimeMillis only through genuine native live execution', () => {
+  expectTimerFixtures([
+    {
+      expected: 0,
+      name: 'live-scoped-clock-timestamp',
+      source: `import { Clock, Effect } from 'effect';
+import { it } from 'effect-rstest';
+it.live('creates database expiry data', () => Effect.scoped(Effect.gen(function* liveTimestamp() {
+  const now = yield* Clock.currentTimeMillis;
+  return now + 300_000;
+})));`,
+    },
+    {
+      expected: 0,
+      name: 'live-clock-import-alias',
+      source: `import { Clock as NativeClock, Effect } from 'effect';
+import { it } from 'effect-rstest';
+it.live('reads an aliased native timestamp', () => Effect.gen(function* liveTimestamp() {
+  return yield* NativeClock.currentTimeMillis;
+}));`,
+    },
+    {
+      expected: 0,
+      name: 'live-clock-submodule-namespace',
+      source: `${liveImports}
+import * as Clock from 'effect/Clock';
+it.live('reads the native Clock module', () => Effect.scoped(Effect.gen(function* liveTimestamp() {
+  return yield* Clock.currentTimeMillis;
+})));`,
+    },
+
+    {
+      expected: 0,
+      name: 'live-only-clock-helper',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+const readTimestamp = () => Clock.currentTimeMillis;
+it.live('first native timestamp', () => readTimestamp());
+it.live('second native timestamp', () => readTimestamp());`,
+    },
+  ]);
+});
+
+it('retains timestamp ownership, consumption, import provenance and exact API boundaries', () => {
+  expectTimerFixtures([
+    {
+      expected: 1,
+      name: 'nonlive-clock-timestamp',
+      source: `import { Clock, Effect } from 'effect';
+import { it } from 'effect-rstest';
+it.effect('uses a virtual runner', () => Effect.scoped(Effect.gen(function* timestamp() {
+  return yield* Clock.currentTimeMillis;
+})));`,
+    },
+    {
+      expected: 1,
+      name: 'ordinary-clock-timestamp',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+it('uses an ordinary callback', () => Clock.currentTimeMillis);`,
+    },
+    {
+      expected: 1,
+      name: 'unconsumed-live-clock-timestamp',
+      source: `import { Clock, Effect } from 'effect';
+import { it } from 'effect-rstest';
+it.live('does not execute the timestamp Effect', () => Effect.gen(function* timestamp() {
+  Clock.currentTimeMillis;
+  yield* Effect.void;
+}));`,
+    },
+    {
+      expected: 1,
+      name: 'foreign-clock-live-runner',
+      source: `import { Clock } from 'effect';
+import { it } from '@rstest/core';
+it.live('uses a foreign runner', () => Clock.currentTimeMillis);`,
+    },
+    {
+      expected: 1,
+      name: 'shadowed-clock-live-runner',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+function register(it: typeof import('effect-rstest').it) {
+  it.live('uses a shadowed runner', () => Clock.currentTimeMillis);
+}`,
+    },
+    {
+      expected: 1,
+      name: 'mixed-clock-helper-owners',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+const readTimestamp = () => Clock.currentTimeMillis;
+it.live('native timestamp', () => readTimestamp());
+it.effect('virtual timestamp', () => readTimestamp());`,
+    },
+    {
+      expected: 1,
+      name: 'foreign-clock-cannot-prove-live-effect-flow',
+      source: `${liveImports}
+import { Clock } from 'owned-clock';
+it.live('cannot prove the foreign receiver', () => Clock.currentTimeMillis.pipe(
+  Effect.flatMap(() => Effect.sleep('1 millis')),
+));`,
+    },
+    {
+      expected: 1,
+      name: 'shadowed-clock-cannot-prove-live-effect-flow',
+      source: `${liveImports}
+function register(Clock: { currentTimeMillis: unknown }) {
+  it.live('cannot prove the shadowed receiver', () => Clock.currentTimeMillis.pipe(
+    Effect.flatMap(() => Effect.sleep('1 millis')),
+  ));
+}`,
+    },
+    {
+      expected: 1,
+      name: 'mutable-clock-cannot-prove-live-effect-flow',
+      source: `import { Clock as NativeClock, Effect } from 'effect';
+import { it } from 'effect-rstest';
+let Clock = NativeClock;
+it.live('cannot prove the mutable receiver', () => Clock.currentTimeMillis.pipe(
+  Effect.flatMap(() => Effect.sleep('1 millis')),
+));`,
+    },
+    {
+      expected: 1,
+      name: 'opaque-clock-callback',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+const invoke = (callback: () => unknown) => callback();
+it.live('cannot prove the opaque callback', () => invoke(() => Clock.currentTimeMillis));`,
+    },
+    {
+      expected: 1,
+      name: 'exported-clock-helper',
+      source: `import { Clock } from 'effect';
+import { it } from 'effect-rstest';
+export const readTimestamp = () => Clock.currentTimeMillis;
+it.live('cannot prove exclusive live use', () => readTimestamp());`,
+    },
+  ]);
+});

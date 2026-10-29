@@ -1318,40 +1318,85 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
     }
   });
 
-const validateIssuerCredentials = () =>
-  Effect.gen(function* validateIssuerCredentialsEffect() {
-    const issuerCredentials = new Set(
-      gatewayContextAuthorizationEntrypoints.map(({ authorization }) => authorization.credential),
-    );
-    if (
-      gatewayContextAuthorizationEntrypoints.length !== 2 ||
-      !issuerCredentials.has('session') ||
-      !issuerCredentials.has('api_key')
-    ) {
+interface GatewayIssuerBinding {
+  readonly credential: 'session' | 'api_key';
+  readonly handler: string;
+  readonly path: string;
+}
+
+// These are the existing Shell issuer contracts, including the actor-preserving
+// relay authenticated by an API key. Credential kind alone cannot select a handler.
+const gatewayIssuerBinding = (entrypointKey: string): GatewayIssuerBinding | null =>
+  Match.value(entrypointKey).pipe(
+    Match.when('shell.gateway-context.issue.session', (): GatewayIssuerBinding => ({
+      credential: 'session',
+      handler: 'issueGatewayContext',
+      path: shellGatewayContextContract.issueGatewayContextPath,
+    })),
+    Match.when('shell.gateway-context.issue.api-key', (): GatewayIssuerBinding => ({
+      credential: 'api_key',
+      handler: 'issueApiKeyGatewayContext',
+      path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    })),
+    Match.when('shell.gateway-context.issue.relay', (): GatewayIssuerBinding => ({
+      credential: 'api_key',
+      handler: 'issueRelayedGatewayContext',
+      path: shellGatewayContextContract.issueRelayedGatewayContextPath,
+    })),
+    Match.orElse(() => null),
+  );
+
+type GatewayIssuerEntrypoint = Pick<
+  ProtectedEntrypointInventoryEntry,
+  'authorization' | 'deployment' | 'entrypointKey' | 'owner' | 'surface'
+> & { readonly path: string };
+
+export const validateGatewayIssuerEntrypoints = (issuers: readonly GatewayIssuerEntrypoint[]) =>
+  Effect.gen(function* validateGatewayIssuerEntrypointsEffect() {
+    const seen = new Set<string>();
+    const exactIssuers = issuers.every((issuer) => {
+      const binding = gatewayIssuerBinding(issuer.entrypointKey);
+      if (binding === null || seen.has(issuer.entrypointKey)) {
+        return false;
+      }
+      seen.add(issuer.entrypointKey);
+      return (
+        issuer.authorization.kind === 'capability_issuance' &&
+        issuer.authorization.credential === binding.credential &&
+        issuer.path === binding.path &&
+        issuer.owner === shellGatewayContextContract.ownerId &&
+        issuer.deployment === shellGatewayContextContract.ownerId &&
+        issuer.surface === 'capability_issuance'
+      );
+    });
+    if (issuers.length !== 3 || !exactIssuers) {
       yield* fail(
         'packages/shared-contracts/src/gateway-context.ts',
-        'gateway authorization contract must classify exactly the session and API-key issuers',
+        'gateway authorization contract must classify exactly the session, direct API-key, and actor-preserving relay issuers',
       );
     }
   });
 
-const hasIssuerHandler = (source: string, name: string): boolean =>
-  source.includes(`.handle('${name}'`) || containsIdentifier(source, new Set([name]));
+const hasIssuerHandler = (source: string, name: string): boolean => {
+  const argumentsPattern = new RegExp(`^\\s*(['"])${name}\\1\\s*,`, 'u');
+  for (const call of maskNonCode(source).matchAll(/\.handle\s*\(/gu)) {
+    if (argumentsPattern.test(source.slice(call.index + call[0].length))) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const validateGatewayRuntime = (shellApiContract: string, shellApiRuntime: string) =>
   Effect.gen(function* validateGatewayRuntimeEffect() {
-    const missingApiKeyHandler = !hasIssuerHandler(shellApiRuntime, 'issueApiKeyGatewayContext');
-    const missingSessionHandler = !hasIssuerHandler(shellApiRuntime, 'issueGatewayContext');
-    if (
-      !shellApiContract.includes('.add(GatewayContextApiGroup)') ||
-      shellGatewayContextContract.issueGatewayContextPath !== gatewayContextAuthorizationEntrypoints[0]?.path ||
-      shellGatewayContextContract.issueApiKeyGatewayContextPath !== gatewayContextAuthorizationEntrypoints[1]?.path ||
-      missingApiKeyHandler ||
-      missingSessionHandler
-    ) {
+    const allHandlersMounted = gatewayContextAuthorizationEntrypoints.every((issuer) => {
+      const binding = gatewayIssuerBinding(issuer.entrypointKey);
+      return binding !== null && binding.path === issuer.path && hasIssuerHandler(shellApiRuntime, binding.handler);
+    });
+    if (!shellApiContract.includes('.add(GatewayContextApiGroup)') || !allHandlersMounted) {
       yield* fail(
         'apps/shell-super-app/api/index.ts',
-        'both classified capability issuers must be mounted by the Shell API runtime',
+        'all three classified capability issuers must be mounted by the Shell API runtime',
       );
     }
   });
@@ -1372,7 +1417,11 @@ const hasMountedIssuerPath = (
   gatewaySource: string,
   issuer: (typeof gatewayContextAuthorizationEntrypoints)[number],
 ): boolean => {
-  const name = issuer.authorization.credential === 'session' ? 'issueGatewayContext' : 'issueApiKeyGatewayContext';
+  const binding = gatewayIssuerBinding(issuer.entrypointKey);
+  if (binding === null || binding.path !== issuer.path) {
+    return false;
+  }
+  const name = binding.handler;
   const endpointPath = issuer.path.slice(shellGatewayContextContract.apiPrefix.length);
   const group = gatewayDeclaration(gatewaySource, 'GatewayContextApiGroup');
   const shellApi = gatewayDeclaration(source, 'ShellAuthenticationApi');
@@ -1390,7 +1439,7 @@ const validateGatewayContract = (state: BoundaryCheckState) =>
     const gatewayContract = sourceOrEmpty(state.sourceMap, 'packages/shared-contracts/src/gateway-context.ts');
     const shellApiContract = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/shared/api.ts');
     const shellApiRuntime = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/api/index.ts');
-    yield* validateIssuerCredentials();
+    yield* validateGatewayIssuerEntrypoints(gatewayContextAuthorizationEntrypoints);
     for (const issuer of gatewayContextAuthorizationEntrypoints) {
       if (
         !gatewayContract.includes(`'${issuer.path}'`) ||
