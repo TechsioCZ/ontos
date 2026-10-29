@@ -932,9 +932,9 @@ jobs:
 
       # The account allows 500 Workers and every release adds immutable ones. When the account and this release's new
       # Workers would pass the safe ceiling, the oldest unreferenced releases are deleted first (the active composition,
-      # this plan's retained receipts and ledger, service bindings and recent uploads stay, and deletion stops while a
-      # main deploy run is unfinished); a release that still would not fit stops here, before any upload. Under the
-      # ceiling this is one account read.
+      # this plan's retained receipts and ledger, main deploy candidates still archived for a rerun, service bindings
+      # and recent uploads stay, and deletion stops while a main deploy run is unfinished); a release that still would
+      # not fit stops here, before any upload. Under the ceiling this is one account read.
       - name: Keep the account under its Worker limit
         if: ${{ !inputs.outbox_only }}
         timeout-minutes: 20

@@ -380,11 +380,11 @@ export const deployStagedHost = ({
     );
   });
 
-/** Waits up to `waitFor` for a background wrapper's `exit-code` in `directory`. */
+/** Waits up to `waitFor` for a background wrapper's `exit-code` in `directory`; whether it exited. */
 const awaitBackground = (directory: string, waitFor: Duration.Duration) =>
   Effect.gen(function* awaitBackgroundExit() {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.exists(stagingFiles(directory).exitCode).pipe(
+    return yield* fs.exists(stagingFiles(directory).exitCode).pipe(
       Effect.orElseSucceed(() => false),
       Effect.repeat({ schedule: Schedule.spaced(POLL_INTERVAL), until: (done) => done }),
       Effect.timeoutOrElse({ duration: waitFor, orElse: () => Effect.succeed(false) }),
@@ -393,8 +393,10 @@ const awaitBackground = (directory: string, waitFor: Duration.Duration) =>
 
 /**
  * After every release, once the deploy was joined: stops the staging and the deploy, waits for a version creation
- * and a deploy (launched when `deployDirectory` exists) still under way, then deletes the operation's own
- * undeployed version. A deploy that started is never undone.
+ * and a deploy (launched when `deployDirectory` exists) still under way, then deletes the operation's own version
+ * while the provider still reports it undeployed. An attempted deploy is no proof of a deployment (the provider may
+ * have rejected it), so once the deploy has finished the provider's status alone decides; a deploy still under way
+ * is left alone, and a deploy that took effect is never undone.
  */
 export const discardStagedHost = ({
   deployDirectory,
@@ -416,20 +418,22 @@ export const discardStagedHost = ({
       return yield* Console.log(NOTHING_STAGED);
     }
     yield* awaitBackground(directory, waitFor);
-    if (yield* fs.exists(deployDirectory)) {
-      yield* awaitBackground(deployDirectory, waitFor);
-    }
+    const deployFinished = (yield* fs.exists(deployDirectory))
+      ? yield* awaitBackground(deployDirectory, waitFor)
+      : true;
     if (!(yield* fs.exists(files.receipt))) {
       return yield* Console.log(NOTHING_STAGED);
     }
     const receipt = yield* readReceipt(files.receipt);
-    if (receipt.deployStarted) {
-      return yield* Console.log(`application version ${receipt.appVersionId} was deployed; nothing to discard`);
+    if (receipt.deployStarted && !deployFinished) {
+      return yield* Console.log(
+        `the deploy of application version ${receipt.appVersionId} is still under way; left as it is`,
+      );
     }
     const discarded = yield* discardVersion(receipt);
     return yield* Console.log(
       discarded
-        ? `discarded the undeployed application version ${receipt.appVersionId}`
+        ? `discarded the undeployed application version ${receipt.appVersionId}${receipt.deployStarted ? ' (its deploy was rejected)' : ''}`
         : `application version ${receipt.appVersionId} is no longer undeployed; left as it is`,
     );
   });

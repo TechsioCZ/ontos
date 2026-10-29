@@ -1,6 +1,9 @@
-import { ConfigProvider, Duration, Effect, Layer, Option, Schedule } from 'effect';
+import { readFileSync } from 'node:fs';
+
+import { ConfigProvider, Duration, Effect, Layer, Option, Schedule, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpClient, HttpClientResponse } from 'effect/http';
+import { parse } from 'yaml';
 
 import { DIGEST_VERSION } from '../ci/deploy-plan.mts';
 import {
@@ -10,15 +13,22 @@ import {
   deleteReleases,
   ledgerWorkers,
   mentionedImmutableWorkers,
+  MAIN_CANDIDATE_ARTIFACT,
+  MAIN_CANDIDATE_FILE,
+  MAIN_CANDIDATE_RETENTION,
+  MAIN_STAGE_PRODUCER,
+  UNFINISHED_RUN_STATUSES,
   oldestReleasesFreeing,
   planImmutableWorkerPrune,
   plannedNewWorkers,
   plannedRetainedWorkers,
+  retainedMainCandidateWorkers,
   stageCoordination,
+  unfinishedForeignStageWriters,
 } from '../ci/prune-immutable-workers.mts';
 import type { AccountWorker, KeepSources } from '../ci/prune-immutable-workers.mts';
-import { RECEIPTS_PER_UNIT, emptyLedger, recordUnitReceipt } from '../ci/release-ledger.mts';
-import type { ReleaseLedger } from '../ci/release-ledger.mts';
+import { RECEIPTS_PER_UNIT, createGitHubClient, emptyLedger, recordUnitReceipt } from '../ci/release-ledger.mts';
+import type { GitHubClient, ReleaseLedger } from '../ci/release-ledger.mts';
 import { ImmutableProviderWriteRetrySchedule } from '../immutable-application-release.mts';
 
 const ACCOUNT_ID = 'e'.repeat(32);
@@ -201,15 +211,18 @@ it('counts two new Workers for every unit the release builds or uploads again', 
 });
 
 const GITHUB_API = 'https://api.github.test';
+const REPOSITORY = 'TechsioCZ/ontos';
+const RUNS_ROUTE = '/actions/runs';
+const GATES = 'ultramodern-workspace-gates.yml';
 const COMPOSITION_URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${'d'.repeat(32)}/values/active`;
 
 /** A provider answering every request with one status and body, recording each request. */
-const provider = (answer: (method: string, url: string) => Response) => {
+const provider = (answer: (method: string, url: string, search: URLSearchParams) => Response) => {
   const requests: string[] = [];
   const client = HttpClient.make((request, url) =>
     Effect.sync(() => {
       requests.push(`${request.method} ${url.pathname}${url.search}`);
-      return HttpClientResponse.fromWeb(request, answer(request.method, url.pathname));
+      return HttpClientResponse.fromWeb(request, answer(request.method, url.pathname, url.searchParams));
     }),
   );
   const layer = Layer.mergeAll(
@@ -221,7 +234,7 @@ const provider = (answer: (method: string, url: string) => Response) => {
         CLOUDFLARE_API_TOKEN: 'prune-test-token',
         GH_TOKEN: 'prune-test-github-token',
         GITHUB_API_URL: GITHUB_API,
-        GITHUB_REPOSITORY: 'TechsioCZ/ontos',
+        GITHUB_REPOSITORY: REPOSITORY,
         ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_URL,
       }),
     ),
@@ -337,40 +350,67 @@ it.live('shares one coordination answer across the deletions of its interval', (
   }),
 );
 
-/** A GitHub and composition storage fixture: the listed workflows' runs, and the active composition answer. */
-const coordinationFixture = (runs: Readonly<Record<string, readonly string[]>>, composition: () => Response) =>
-  provider((_method, url) => {
-    const workflow = /\/actions\/workflows\/(?<name>[^/]+)\/runs$/u.exec(url)?.groups?.name;
-    if (workflow !== undefined) {
+interface ListedRun {
+  readonly branch?: string;
+  readonly id: number;
+  readonly status: string;
+  readonly workflow: string;
+}
+
+/**
+ * A GitHub and composition storage fixture: the repository's runs, listed by status a page at a time (newest first,
+ * as GitHub lists them), and the active composition answer.
+ */
+const coordinationFixture = (runs: readonly ListedRun[], composition: () => Response) =>
+  provider((_method, url, search) => {
+    if (url.endsWith(RUNS_ROUTE)) {
+      const perPage = Number(search.get('per_page'));
+      const page = Number(search.get('page'));
+      const listed = runs.filter(({ status }) => status === search.get('status'));
       return Response.json({
-        workflow_runs: (runs[workflow] ?? []).map((status, index) => ({ id: index + 1, status })),
+        total_count: listed.length,
+        workflow_runs: listed.slice((page - 1) * perPage, page * perPage).map(({ branch, id, status, workflow }) => ({
+          head_branch: branch ?? 'main',
+          id,
+          path: `.github/workflows/${workflow}`,
+          status,
+        })),
       });
     }
     return composition();
   });
 
+const STATUS_REQUESTS = UNFINISHED_RUN_STATUSES.map(
+  (status) => `GET /repos/TechsioCZ/ontos/actions/runs?page=1&per_page=100&status=${status}`,
+).toSorted();
+
 it.effect(
   'stops deletion while a main deploy run or an initial cutover is unfinished, before reading anything else',
   () =>
     Effect.gen(function* unfinishedStageWriter() {
-      for (const workflow of ['ultramodern-workspace-gates.yml', 'initial-composition-cutover.yml']) {
-        const fixture = coordinationFixture({ [workflow]: ['completed', 'in_progress'] }, () => {
-          throw new Error('the composition is not read while a stage writer is unfinished');
-        });
-        const halt = yield* stageCoordination(new Set([backend('1')])).pipe(Effect.provide(fixture.layer));
-        expect(halt).toEqual(Option.some(`another stage writer is unfinished (${workflow} run 2)`));
-        // Main deploys stage from pushes and dispatches on main; a cutover from any branch.
-        expect(fixture.requests.toSorted()).toEqual([
-          'GET /repos/TechsioCZ/ontos/actions/workflows/initial-composition-cutover.yml/runs?per_page=20',
-          'GET /repos/TechsioCZ/ontos/actions/workflows/ultramodern-workspace-gates.yml/runs?branch=main&per_page=20',
-        ]);
+      for (const workflow of [GATES, 'initial-composition-cutover.yml']) {
+        for (const status of UNFINISHED_RUN_STATUSES) {
+          const fixture = coordinationFixture(
+            [
+              { id: 1, status: 'completed', workflow },
+              { id: 2, status, workflow },
+              { id: 3, status, workflow: 'quality-audit.yml' },
+            ],
+            () => {
+              throw new Error('the composition is not read while a stage writer is unfinished');
+            },
+          );
+          const halt = yield* stageCoordination(new Set([backend('1')])).pipe(Effect.provide(fixture.layer));
+          expect(halt).toEqual(Option.some(`another stage writer is unfinished (${workflow} run 2)`));
+          expect(fixture.requests.toSorted()).toEqual(STATUS_REQUESTS);
+        }
       }
     }),
 );
 
 it.effect('stops deletion when the active composition can no longer be read or proven unchanged', () =>
   Effect.gen(function* unprovenComposition() {
-    const fixture = coordinationFixture({ 'ultramodern-workspace-gates.yml': ['completed'] }, () =>
+    const fixture = coordinationFixture([{ id: 1, status: 'completed', workflow: GATES }], () =>
       Response.json({ composition: { modules: [backend('2')] } }),
     );
     const halt = yield* stageCoordination(new Set([backend('1')])).pipe(Effect.provide(fixture.layer));
@@ -385,3 +425,249 @@ it.effect('stops deletion when the stage writer runs cannot be read', () =>
     expect(Option.getOrThrow(halt)).toMatch(/^coordination could not be proven: GitHub answered 502/u);
   }),
 );
+
+it.effect('finds an old rerun of a main deploy however many newer runs completed, past the first page', () =>
+  Effect.gen(function* oldRerunBeyondFirstPage() {
+    const others = Array.from({ length: 130 }, (_, index) => ({
+      id: 1000 - index,
+      status: 'in_progress',
+      workflow: 'quality-audit.yml',
+    }));
+    const completed = Array.from({ length: 40 }, (_, index) => ({
+      id: 900 - index,
+      status: 'completed',
+      workflow: GATES,
+    }));
+    const fixture = coordinationFixture(
+      [...completed, ...others, { id: 7, status: 'in_progress', workflow: GATES }],
+      () => {
+        throw new Error('not read');
+      },
+    );
+    const unfinished = yield* unfinishedForeignStageWriters.pipe(Effect.provide(fixture.layer));
+    expect(unfinished).toEqual(['ultramodern-workspace-gates.yml run 7']);
+    expect(fixture.requests).toContain(
+      'GET /repos/TechsioCZ/ontos/actions/runs?page=2&per_page=100&status=in_progress',
+    );
+  }),
+);
+
+it.effect('counts main deploy runs only on main, and a cutover from any branch', () =>
+  Effect.gen(function* writerBranches() {
+    const fixture = coordinationFixture(
+      [
+        { branch: 'feature', id: 1, status: 'queued', workflow: GATES },
+        { branch: 'feature', id: 2, status: 'waiting', workflow: 'initial-composition-cutover.yml' },
+      ],
+      () => {
+        throw new Error('not read');
+      },
+    );
+    const unfinished = yield* unfinishedForeignStageWriters.pipe(Effect.provide(fixture.layer));
+    expect(unfinished).toEqual(['initial-composition-cutover.yml run 2']);
+  }),
+);
+
+it.effect('proves nothing from a run listing that changed between its pages or that GitHub would truncate', () =>
+  Effect.gen(function* incompleteListing() {
+    // A run that completed between the pages shifts the next page by one: a run is skipped, and the count shows it.
+    let served = 0;
+    const shifting = provider((_method, url, search) => {
+      if (!url.endsWith(RUNS_ROUTE) || search.get('status') !== 'in_progress') {
+        return Response.json({ total_count: 0, workflow_runs: [] });
+      }
+      served += 1;
+      const page = Number(search.get('page'));
+      const total = served === 1 ? 150 : 149;
+      const ids = Array.from({ length: total }, (_, index) => index + 1).filter((id) => served === 1 || id !== 1);
+      return Response.json({
+        total_count: total,
+        workflow_runs: ids.slice((page - 1) * 100, page * 100).map((id) => ({
+          head_branch: 'main',
+          id,
+          path: '.github/workflows/quality-audit.yml',
+          status: 'in_progress',
+        })),
+      });
+    });
+    const shifted = yield* stageCoordination(new Set()).pipe(Effect.provide(shifting.layer));
+    expect(Option.getOrThrow(shifted)).toMatch(/the in_progress runs changed while they were listed/u);
+
+    const truncated = provider((_method, url) =>
+      url.endsWith(RUNS_ROUTE) ? Response.json({ total_count: 1001, workflow_runs: [] }) : Response.json({}),
+    );
+    const halt = yield* stageCoordination(new Set()).pipe(Effect.provide(truncated.layer));
+    expect(Option.getOrThrow(halt)).toMatch(/more than GitHub lists/u);
+  }),
+);
+
+const REPOSITORY_ID = 7;
+const MAIN_RUN = {
+  event: 'push',
+  head_branch: 'main',
+  head_repository: { full_name: REPOSITORY, id: REPOSITORY_ID },
+  head_sha: 'a'.repeat(40),
+  path: MAIN_STAGE_PRODUCER.workflowPath,
+  repository: { full_name: REPOSITORY, id: REPOSITORY_ID },
+};
+
+/** GitHub's artifact listing of main deploy candidates (`ageDays` old each), their producer runs and archives. */
+const candidateGitHub = (
+  artifacts: readonly {
+    readonly ageDays: number;
+    readonly expired?: boolean;
+    readonly id: number;
+    readonly run?: Partial<typeof MAIN_RUN>;
+  }[],
+) => {
+  const requests: string[] = [];
+  const fetchStub: typeof globalThis.fetch = (input) => {
+    const url = new URL(new Request(input).url);
+    requests.push(`${url.pathname}${url.search}`);
+    const runId = /\/actions\/runs\/(?<id>\d+)$/u.exec(url.pathname)?.groups?.id;
+    const produced = artifacts.find(({ id }) => String(id) === runId);
+    if (produced !== undefined) {
+      return Promise.resolve(Response.json({ ...MAIN_RUN, ...produced.run, id: produced.id }));
+    }
+    if (url.pathname.endsWith('/actions/artifacts')) {
+      const page = Number(url.searchParams.get('page'));
+      return Promise.resolve(
+        Response.json({
+          artifacts: artifacts.slice((page - 1) * 100, page * 100).map((artifact) => ({
+            created_at: new Date(NOW - artifact.ageDays * DAY).toISOString(),
+            expired: artifact.expired ?? false,
+            id: artifact.id,
+            name: url.searchParams.get('name'),
+            workflow_run: {
+              head_branch: artifact.run?.head_branch ?? 'main',
+              head_repository_id: REPOSITORY_ID,
+              head_sha: 'a'.repeat(40),
+              id: artifact.id,
+              repository_id: REPOSITORY_ID,
+            },
+          })),
+        }),
+      );
+    }
+    return Promise.resolve(new Response(null, { status: 404 }));
+  };
+  const client = createGitHubClient({
+    apiUrl: GITHUB_API,
+    fetch: fetchStub,
+    repository: REPOSITORY,
+    token: 'prune-test-github-token',
+  });
+  return { client, requests };
+};
+
+/** A client whose archives are the given candidate documents by artifact id. */
+const withArchives = (client: GitHubClient, documents: Readonly<Record<number, string | undefined>>): GitHubClient => ({
+  ...client,
+  downloadArtifact: (artifactId) => {
+    const document = documents[artifactId];
+    return Promise.resolve(new Map(document === undefined ? [] : [[MAIN_CANDIDATE_FILE, Buffer.from(document)]]));
+  },
+});
+
+it.effect('keeps every Worker a retained main deploy candidate names, so a publication rerun finds them', () =>
+  Effect.gen(function* retainedMainCandidates() {
+    const { client, requests } = candidateGitHub([
+      { ageDays: 1, id: 11 },
+      { ageDays: 3, id: 12 },
+      { ageDays: 5, expired: true, id: 13 },
+      { ageDays: 6, id: 14, run: { event: 'pull_request' } },
+      { ageDays: 6, id: 15, run: { head_branch: 'feature' } },
+      { ageDays: 6, id: 16, run: { path: '.github/workflows/quality-audit.yml' } },
+    ]);
+    const documents = {
+      11: JSON.stringify({ modules: [{ assets: assets('1'), backend: backend('1') }] }),
+      12: JSON.stringify({ shell: backend('2') }),
+      13: JSON.stringify({ shell: backend('3') }),
+      14: JSON.stringify({ shell: backend('4') }),
+      15: JSON.stringify({ shell: backend('5') }),
+      16: JSON.stringify({ shell: backend('6') }),
+    };
+    const kept = yield* retainedMainCandidateWorkers(withArchives(client, documents), NOW);
+    expect([...kept].toSorted()).toEqual([assets('1'), backend('1'), backend('2')].toSorted());
+    expect(requests[0]).toBe(
+      `/repos/TechsioCZ/ontos/actions/artifacts?name=${MAIN_CANDIDATE_ARTIFACT}&per_page=100&page=1`,
+    );
+  }),
+);
+
+it.effect('reads every retained main candidate page, and fails rather than keep a partial set', () =>
+  Effect.gen(function* everyMainCandidate() {
+    // Newest first: two full pages within retention, then a page reaching archives too old to be unexpired.
+    const recent = Array.from({ length: 250 }, (_, index) => ({ ageDays: 1, id: 100 + index }));
+    const aged = Array.from({ length: 150 }, (_, index) => ({ ageDays: 9, expired: true, id: 1000 + index }));
+    const pages = candidateGitHub([...recent, ...aged]);
+    const documents = Object.fromEntries(recent.map(({ id }) => [id, JSON.stringify({ shell: backend('1') })]));
+    const kept = yield* retainedMainCandidateWorkers(withArchives(pages.client, documents), NOW);
+    expect([...kept]).toEqual([backend('1')]);
+    expect(pages.requests.filter((request) => request.includes('/actions/artifacts?'))).toHaveLength(3);
+
+    // Every page full of candidates still within retention: GitHub lists more than can be read.
+    const endless = candidateGitHub(Array.from({ length: 1000 }, (_, index) => ({ ageDays: 1, id: 2000 + index })));
+    const partial = yield* Effect.flip(retainedMainCandidateWorkers(withArchives(endless.client, {}), NOW));
+    expect(partial.message).toBe('the retained main deploy candidates could not be listed; nothing is pruned');
+    expect(String(partial.cause)).toMatch(
+      /more approved-application-composition-candidate artifacts are listed than 10 pages hold/u,
+    );
+
+    // An archive without its candidate keeps nothing it should have named: the read fails.
+    const missing = candidateGitHub([{ ageDays: 1, id: 11 }]);
+    const absent = yield* Effect.flip(retainedMainCandidateWorkers(withArchives(missing.client, {}), NOW));
+    expect(absent.message).toBe('the main deploy candidate 11 could not be read; nothing is pruned');
+
+    // An archive whose candidate is not a JSON document fails the read too.
+    const garbled = yield* Effect.flip(
+      retainedMainCandidateWorkers(withArchives(missing.client, { 11: `{"shell":"${backend('1')}"` }), NOW),
+    );
+    expect(garbled.message).toBe('the main deploy candidate 11 could not be read; nothing is pruned');
+  }),
+);
+
+const GatesWorkflowSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      if: Schema.optionalKey(Schema.String),
+      steps: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            with: Schema.optionalKey(
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.Unknown),
+                path: Schema.optionalKey(Schema.Unknown),
+                'retention-days': Schema.optionalKey(Schema.Unknown),
+              }),
+            ),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
+it('mirrors the main deploy workflow: its candidate archive, file, retention and producer runs', () => {
+  const { jobs } = Schema.decodeUnknownSync(GatesWorkflowSchema)(
+    parse(readFileSync(new URL(`../../../${MAIN_STAGE_PRODUCER.workflowPath}`, import.meta.url), 'utf-8')),
+  );
+  const archives = Object.values(jobs)
+    .flatMap(({ steps }) => steps ?? [])
+    .flatMap((step) =>
+      step.with?.name === MAIN_CANDIDATE_ARTIFACT && step.with['retention-days'] !== undefined ? [step.with] : [],
+    );
+  expect(archives).toEqual([
+    expect.objectContaining({
+      path: `\${{ runner.temp }}/${MAIN_CANDIDATE_FILE}`,
+      'retention-days': Duration.toDays(MAIN_CANDIDATE_RETENTION),
+    }),
+  ]);
+  // Only pushes and dispatches on main deploy.
+  const deploys = jobs['deploy-target']?.if ?? '';
+  for (const event of MAIN_STAGE_PRODUCER.events) {
+    expect(deploys).toContain(`github.event_name == '${event}'`);
+  }
+  expect(deploys).toContain(`github.ref == 'refs/heads/${MAIN_STAGE_PRODUCER.branch}'`);
+});

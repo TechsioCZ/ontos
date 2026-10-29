@@ -22,8 +22,15 @@ export const RECEIPT_RETENTION_DAYS = 90;
  */
 export const RECEIPTS_PER_UNIT = 3;
 const DAY_MS = 86_400_000;
+/** A workflow whose runs may supply trusted artifacts: its file, the branch and the events that run it. */
+export interface TrustedProducer {
+  readonly branch: string;
+  readonly events: readonly string[];
+  readonly workflowPath: string;
+}
+
 /** Only these producer runs may supply ledgers or reusable artifacts. */
-export const TRUSTED_PRODUCER = Object.freeze({
+export const TRUSTED_PRODUCER: TrustedProducer = Object.freeze({
   branch: 'demo/sales-crm',
   events: Object.freeze(['push', 'workflow_dispatch']),
   workflowPath: '.github/workflows/stage-demo-deploy.yml',
@@ -417,13 +424,17 @@ export interface ArtifactIdentity {
 }
 
 /**
- * A producer run counts only when it is this repository's stage deploy workflow, triggered by a push or dispatch on
- * the demo branch from this repository itself (never a fork).
+ * A producer run counts only when it is this repository's producer workflow (the stage deploy unless another is
+ * named), triggered by one of its events on its branch from this repository itself (never a fork).
  */
-export const isTrustedProducerRun = (run: WorkflowRunIdentity, { repository }: { readonly repository: string }) =>
-  run.path === TRUSTED_PRODUCER.workflowPath &&
-  TRUSTED_PRODUCER.events.includes(run.event ?? '') &&
-  run.head_branch === TRUSTED_PRODUCER.branch &&
+export const isTrustedProducerRun = (
+  run: WorkflowRunIdentity,
+  { repository }: { readonly repository: string },
+  producer: TrustedProducer = TRUSTED_PRODUCER,
+) =>
+  run.path === producer.workflowPath &&
+  producer.events.includes(run.event ?? '') &&
+  run.head_branch === producer.branch &&
   run.repository?.full_name === repository &&
   run.head_repository?.full_name === repository &&
   run.repository.id !== undefined &&
@@ -434,15 +445,16 @@ export const isTrustedArtifact = (
   artifact: ArtifactIdentity,
   run: WorkflowRunIdentity,
   expected: { readonly repository: string },
+  producer: TrustedProducer = TRUSTED_PRODUCER,
 ) =>
   !artifact.expired &&
   artifact.workflow_run?.id === run.id &&
-  artifact.workflow_run.head_branch === TRUSTED_PRODUCER.branch &&
+  artifact.workflow_run.head_branch === producer.branch &&
   artifact.workflow_run.repository_id !== undefined &&
   artifact.workflow_run.head_repository_id === artifact.workflow_run.repository_id &&
   artifact.workflow_run.repository_id === run.repository?.id &&
   (artifact.workflow_run.head_sha === undefined || artifact.workflow_run.head_sha === run.head_sha) &&
-  isTrustedProducerRun(run, expected);
+  isTrustedProducerRun(run, expected, producer);
 
 /** The entries of a zip archive (stored or deflated, no ZIP64), as GitHub's artifact download endpoint returns. */
 export const readZipEntries = (archive: Buffer): Map<string, Buffer> => {
@@ -490,14 +502,31 @@ export interface TrustedArtifact {
   readonly run: WorkflowRunIdentity;
 }
 
+export interface TrustedArtifactsOptions {
+  /**
+   * Epoch milliseconds before which no artifact can still be unexpired. The listing is then read in full back to it,
+   * and a listing too long to read that far fails instead of answering a partial list.
+   */
+  readonly createdAfter?: number;
+  /** The producer workflow, {@link TRUSTED_PRODUCER} unless named. */
+  readonly producer?: TrustedProducer;
+}
+
 export interface GitHubClient {
   /** Entries of one artifact. */
   readonly downloadArtifact: (artifactId: number) => Promise<Map<string, Buffer>>;
   /** `owner/name`. */
   readonly repository: string;
   /** Up to `limit` unexpired artifacts of that exact name from trusted producer runs, newest first. */
-  readonly trustedArtifacts: (name: string, limit: number) => Promise<TrustedArtifact[]>;
+  readonly trustedArtifacts: (
+    name: string,
+    limit: number,
+    options?: TrustedArtifactsOptions,
+  ) => Promise<TrustedArtifact[]>;
 }
+
+/** Artifact list pages read at most, 100 artifacts each. */
+const ARTIFACT_PAGES = 10;
 
 export interface GitHubClientOptions {
   readonly apiUrl: string;
@@ -560,35 +589,48 @@ export const createGitHubClient = ({ apiUrl, fetch, repository, token }: GitHubC
     candidates: readonly ArtifactIdentity[],
     trusted: readonly TrustedArtifact[],
     limit: number,
+    producer: TrustedProducer,
   ): Promise<TrustedArtifact[]> => {
     const [artifact, ...rest] = candidates;
     if (artifact === undefined || trusted.length >= limit) {
       return [...trusted];
     }
-    const producer = await run(artifact.workflow_run?.id ?? 0);
-    const found = isTrustedArtifact(artifact, producer, { repository })
-      ? [...trusted, { artifact, run: producer }]
+    const producerRun = await run(artifact.workflow_run?.id ?? 0);
+    const found = isTrustedArtifact(artifact, producerRun, { repository }, producer)
+      ? [...trusted, { artifact, run: producerRun }]
       : trusted;
-    return await trustedOfPage(rest, found, limit);
+    return await trustedOfPage(rest, found, limit, producer);
   };
-  // GitHub lists artifacts newest first; reading stops as soon as enough trusted ones are found.
+  // GitHub lists artifacts newest first; reading stops as soon as enough trusted ones are found, or, with
+  // `createdAfter`, once the listing reaches artifacts created before it.
   const trustedFromPage = async (
     name: string,
     limit: number,
     page: number,
     trusted: readonly TrustedArtifact[],
+    options: TrustedArtifactsOptions,
   ): Promise<TrustedArtifact[]> => {
-    if (page > 10 || trusted.length >= limit) {
-      return [...trusted];
-    }
+    const { createdAfter, producer = TRUSTED_PRODUCER } = options;
     const response = await get(`/actions/artifacts?name=${encodeURIComponent(name)}&per_page=100&page=${String(page)}`);
     const artifacts = artifactsPage(await response.json());
     const candidates = artifacts
       .filter((artifact) => artifact.name === name && !artifact.expired)
-      .filter((artifact) => artifact.workflow_run?.head_branch === TRUSTED_PRODUCER.branch)
+      .filter((artifact) => artifact.workflow_run?.head_branch === producer.branch)
       .toSorted((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-    const found = await trustedOfPage(candidates, trusted, limit);
-    return artifacts.length < 100 ? found : await trustedFromPage(name, limit, page + 1, found);
+    const found = await trustedOfPage(candidates, trusted, limit, producer);
+    const listed =
+      artifacts.length < 100 ||
+      (createdAfter !== undefined && artifacts.some((artifact) => Date.parse(artifact.created_at) < createdAfter));
+    if (listed || found.length >= limit) {
+      return found;
+    }
+    if (page < ARTIFACT_PAGES) {
+      return await trustedFromPage(name, limit, page + 1, found, options);
+    }
+    if (createdAfter !== undefined) {
+      throw new LedgerError(`more ${name} artifacts are listed than ${String(ARTIFACT_PAGES)} pages hold`);
+    }
+    return found;
   };
   return {
     downloadArtifact: async (artifactId) => {
@@ -596,7 +638,7 @@ export const createGitHubClient = ({ apiUrl, fetch, repository, token }: GitHubC
       return readZipEntries(Buffer.from(await response.arrayBuffer()));
     },
     repository,
-    trustedArtifacts: async (name, limit) => await trustedFromPage(name, limit, 1, []),
+    trustedArtifacts: async (name, limit, options = {}) => await trustedFromPage(name, limit, 1, [], options),
   };
 };
 

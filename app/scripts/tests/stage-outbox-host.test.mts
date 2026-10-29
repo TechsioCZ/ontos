@@ -43,6 +43,8 @@ interface FakeZerops {
   afterCreate?: () => void;
   readonly calls: string[];
   readonly deployed: { readonly id: string; readonly setup: string; readonly yaml: string }[];
+  /** The provider rejects every deploy request before any deploy starts. */
+  rejectDeploys?: boolean;
   readonly uploads: Uint8Array[];
   userData: ZeropsServiceUserData[];
   readonly versions: FakeVersion[];
@@ -90,11 +92,13 @@ const fakeZerops = (): FakeZerops & { readonly layer: Layer.Layer<ZeropsPublicAp
     deployAppVersion: (id, yaml, setup) =>
       versionOf(id).pipe(
         Effect.flatMap((version) =>
-          Effect.sync(() => {
-            state.calls.push(`deploy ${id}`);
-            state.deployed.push({ id, setup, yaml });
-            version.status = 'ACTIVE';
-          }),
+          state.rejectDeploys === true
+            ? Effect.fail(new ZeropsApiError({ message: 'Zerops application version deploy failed' }))
+            : Effect.sync(() => {
+                state.calls.push(`deploy ${id}`);
+                state.deployed.push({ id, setup, yaml });
+                version.status = 'ACTIVE';
+              }),
         ),
       ),
     enableSubdomainAccess: unused,
@@ -414,6 +418,35 @@ it.live('discards only the run attempt’s own never-deployed version', () =>
       yield* Fiber.join(discarding);
       expect(preflight.calls.at(-1)).toBe(FIRST_VERSION_DELETED);
       expect(preflight.deployed).toEqual([]);
+
+      // The provider rejected the deploy request: the attempt deployed nothing, and once the deploy has finished the
+      // provider's status proves the version undeployed, so it is discarded.
+      const rejected = fakeZerops();
+      rejected.rejectDeploys = true;
+      const refused = path.join(root, 'refused');
+      const refusedDeploy = path.join(root, 'refused-deploy');
+      yield* run(uploadStagedHost({ artifact: archive, digest: DIGEST, directory: refused }), rejected);
+      writeFileSync(stagingFiles(refused).exitCode, '0\n');
+      mkdirSync(refusedDeploy);
+      yield* Effect.flip(run(deployStagedHost({ digest: DIGEST, directory: refused, zeropsYaml: yamlFile }), rejected));
+      writeFileSync(stagingFiles(refusedDeploy).exitCode, '1\n');
+      yield* run(discard(refused, refusedDeploy), rejected);
+      expect(rejected.calls.at(-1)).toBe(FIRST_VERSION_DELETED);
+
+      // A started deploy that has not finished within the wait is uncertain: its version is left alone.
+      const inFlight = fakeZerops();
+      inFlight.rejectDeploys = true;
+      const running = path.join(root, 'running');
+      const runningDeploy = path.join(root, 'running-deploy');
+      yield* run(uploadStagedHost({ artifact: archive, digest: DIGEST, directory: running }), inFlight);
+      writeFileSync(stagingFiles(running).exitCode, '0\n');
+      mkdirSync(runningDeploy);
+      yield* Effect.flip(run(deployStagedHost({ digest: DIGEST, directory: running, zeropsYaml: yamlFile }), inFlight));
+      yield* run(
+        discardStagedHost({ deployDirectory: runningDeploy, directory: running, waitFor: Duration.millis(50) }),
+        inFlight,
+      );
+      expect(inFlight.calls.some((call) => call.startsWith('delete '))).toBe(false);
     }),
   ),
 );

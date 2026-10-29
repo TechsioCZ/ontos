@@ -3,7 +3,8 @@
 // ontos-<56 hex>/assets-<56 hex> pair, nothing else deletes one, and the account allows only 500 Workers. The pruner
 // keeps every Worker something may still serve or reuse and deletes the others:
 //   - every Worker the active Application Composition names (read from its provider storage, as publication does),
-//   - every Worker this run's composition candidate or deploy plan names,
+//   - every Worker this run's composition candidate or deploy plan names, and every Worker a main deploy's archived
+//     candidate names while that archive is retained (a failed publication is rerun from it without uploading again),
 //   - every Worker of this run's ledger, and of the receipts the trusted ledgers carry forward (so a later plan can
 //     retain or reupload them),
 //   - every service binding target of the account's other Workers (the Shell ingress binds approved releases),
@@ -40,7 +41,7 @@ import {
 } from '../publish-active-application-composition.mts';
 import { DIGEST_VERSION, LEDGER_LOOKBACK } from './deploy-plan.mts';
 import { carriedUnitRecords, createGitHubClient, parseLedger, readTrustedLedgers } from './release-ledger.mts';
-import type { ReleaseLedger } from './release-ledger.mts';
+import type { GitHubClient, ReleaseLedger, TrustedProducer } from './release-ledger.mts';
 
 export class PruneImmutableWorkersError extends Schema.TaggedError<PruneImmutableWorkersError>()(
   'PruneImmutableWorkersError',
@@ -81,7 +82,7 @@ export interface KeepSources {
   readonly active: ReadonlySet<string>;
   /** Service binding targets of the account's other Workers. */
   readonly binding: ReadonlySet<string>;
-  /** Named by this run's composition candidate. */
+  /** Named by this run's composition candidate or deploy plan, or by a retained main deploy candidate. */
   readonly candidate: ReadonlySet<string>;
   /** Named by a receipt the release ledger carries. */
   readonly ledger: ReadonlySet<string>;
@@ -316,28 +317,82 @@ const readLedgerFile = (file: string) =>
     return yield* Effect.try({ catch: (cause) => cause, try: () => parseLedger(text) });
   }).pipe(Effect.mapError(fail(`the release ledger ${file} could not be read; nothing is pruned`)));
 
-const readLedgers = (files: readonly string[], trusted: boolean) =>
+const githubConfig = Effect.all([
+  Config.String('GITHUB_REPOSITORY'),
+  Config.Redacted('GH_TOKEN'),
+  Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
+]);
+
+const githubClient = githubConfig.pipe(
+  Effect.map(([repository, githubToken, apiUrl]) =>
+    createGitHubClient({ apiUrl, fetch: fetch.bind(globalThis), repository, token: Redacted.value(githubToken) }),
+  ),
+);
+
+const readLedgers = (client: GitHubClient, files: readonly string[], trusted: boolean) =>
   Effect.gen(function* readLedgersEffect() {
     const current = yield* Effect.forEach(files, readLedgerFile, { concurrency: 'unbounded' });
     if (!trusted) {
       return { current, trusted: [] };
     }
-    const [repository, githubToken, apiUrl] = yield* Effect.all([
-      Config.String('GITHUB_REPOSITORY'),
-      Config.Redacted('GH_TOKEN'),
-      Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
-    ]);
-    const client = createGitHubClient({
-      apiUrl,
-      fetch: fetch.bind(globalThis),
-      repository,
-      token: Redacted.value(githubToken),
-    });
     const fromRuns = yield* Effect.tryPromise({
       catch: fail('the trusted release ledgers could not be read; nothing is pruned'),
       try: async () => await readTrustedLedgers(client, LEDGER_LOOKBACK),
     });
     return { current, trusted: fromRuns };
+  });
+
+/**
+ * The main deploy workflow, which uploads into the same account (both deploy through the stage-edge environment). It
+ * archives the complete candidate it uploaded before publishing it, and a rerun of its failed publication publishes
+ * that archive without uploading again.
+ */
+export const MAIN_STAGE_PRODUCER: TrustedProducer = Object.freeze({
+  branch: 'main',
+  events: Object.freeze(['push', 'workflow_dispatch']),
+  workflowPath: '.github/workflows/ultramodern-workspace-gates.yml',
+});
+export const MAIN_CANDIDATE_ARTIFACT = 'approved-application-composition-candidate';
+export const MAIN_CANDIDATE_FILE = 'active-application-composition-candidate.json';
+/** How long the main deploy workflow retains its candidate archive (its upload's `retention-days`). */
+export const MAIN_CANDIDATE_RETENTION = Duration.days(7);
+
+/** One main deploy candidate archive's document, which must be JSON. */
+const readMainCandidate = (client: GitHubClient, artifactId: number) =>
+  Effect.gen(function* readMainCandidateEffect() {
+    const unreadable = fail(`the main deploy candidate ${String(artifactId)} could not be read; nothing is pruned`);
+    const files = yield* Effect.tryPromise({
+      catch: unreadable,
+      try: async () => await client.downloadArtifact(artifactId),
+    });
+    const entry = files.get(MAIN_CANDIDATE_FILE);
+    if (entry === undefined) {
+      return yield* unreadable();
+    }
+    const text = entry.toString('utf-8');
+    yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(Effect.mapError(unreadable));
+    return text;
+  });
+
+/**
+ * Every Worker a main deploy candidate names while its archive is retained, so a publication rerun never finds its
+ * Workers deleted. The candidates are only read for names (a main candidate may be of a newer shape than this branch
+ * decodes), and every one must be read: a missing or unreadable archive fails the whole read.
+ */
+export const retainedMainCandidateWorkers = (client: GitHubClient, now: number) =>
+  Effect.gen(function* retainedMainCandidateWorkersEffect() {
+    const archives = yield* Effect.tryPromise({
+      catch: fail('the retained main deploy candidates could not be listed; nothing is pruned'),
+      try: async () =>
+        await client.trustedArtifacts(MAIN_CANDIDATE_ARTIFACT, Number.POSITIVE_INFINITY, {
+          createdAfter: now - Duration.toMillis(MAIN_CANDIDATE_RETENTION) - Duration.toMillis(Duration.days(1)),
+          producer: MAIN_STAGE_PRODUCER,
+        }),
+    });
+    const documents = yield* Effect.forEach(archives, ({ artifact }) => readMainCandidate(client, artifact.id), {
+      concurrency: 4,
+    });
+    return new Set(documents.flatMap((text) => [...mentionedImmutableWorkers(text)])) satisfies ReadonlySet<string>;
   });
 
 export interface KeepOptions {
@@ -352,14 +407,16 @@ export interface KeepOptions {
 const readKeepSources = (workers: readonly AccountWorker[], options: KeepOptions) =>
   Effect.gen(function* readKeepSourcesEffect() {
     const now = yield* DateTime.nowAsDate;
-    const [active, candidate, ledgers, binding] = yield* Effect.all(
+    const client = yield* githubClient;
+    const [active, candidate, mainCandidates, ledgers, binding] = yield* Effect.all(
       [
         activeCompositionWorkers,
         Option.match(options.candidateFile, {
           onNone: () => Effect.succeed<ReadonlySet<string>>(new Set()),
           onSome: candidateWorkers,
         }),
-        readLedgers(options.ledgerFiles, options.trustedLedgers),
+        retainedMainCandidateWorkers(client, now.getTime()),
+        readLedgers(client, options.ledgerFiles, options.trustedLedgers),
         serviceBindingTargets(workers),
       ],
       { concurrency: 'unbounded' },
@@ -370,7 +427,7 @@ const readKeepSources = (workers: readonly AccountWorker[], options: KeepOptions
     return {
       active,
       binding,
-      candidate: new Set([...candidate, ...(options.planned ?? [])]),
+      candidate: new Set([...candidate, ...mainCandidates, ...(options.planned ?? [])]),
       ledger: ledgerWorkers(ledgers, now),
     } satisfies KeepSources;
   });
@@ -391,47 +448,90 @@ export const FOREIGN_STAGE_WRITERS = [
  */
 export const COORDINATION_INTERVAL = Duration.seconds(30);
 
-const WorkflowRunsSchema = Schema.Struct({
-  workflow_runs: Schema.Array(Schema.Struct({ id: Schema.Number, status: Schema.String })),
-});
+/** Every status of a workflow run that has not completed; a rerun of an old run takes them again. */
+export const UNFINISHED_RUN_STATUSES = ['requested', 'queued', 'pending', 'waiting', 'in_progress'] as const;
+const RUNS_PER_PAGE = 100;
+/** GitHub lists at most this many runs of a status-filtered query. */
+const FILTERED_RUNS_LISTED = 1000;
 
-/** The unfinished runs of every {@link FOREIGN_STAGE_WRITERS} workflow. */
-export const unfinishedForeignStageWriters = Effect.gen(function* unfinishedForeignStageWritersEffect() {
-  const [repository, githubToken, apiUrl] = yield* Effect.all([
-    Config.String('GITHUB_REPOSITORY'),
-    Config.Redacted('GH_TOKEN'),
-    Config.String('GITHUB_API_URL').pipe(Config.withDefault('https://api.github.com')),
-  ]);
-  const client = yield* HttpClient.HttpClient;
-  const runs = yield* Effect.forEach(
-    FOREIGN_STAGE_WRITERS,
+const WorkflowRunsSchema = Schema.Struct({
+  total_count: Schema.Number,
+  workflow_runs: Schema.Array(
+    Schema.Struct({
+      head_branch: Schema.OptionFromNullOr(Schema.String),
+      id: Schema.Number,
+      path: Schema.String,
+      status: Schema.String,
+    }),
+  ),
+});
+type ListedRun = (typeof WorkflowRunsSchema.Type)['workflow_runs'][number];
+
+/** The stage writer a run belongs to, if any; a run's path may carry an `@ref` suffix. */
+const stageWriterOf = (run: ListedRun) =>
+  FOREIGN_STAGE_WRITERS.find(
     ({ branch, workflow }) =>
-      client
-        .execute(
-          HttpClientRequest.get(`${apiUrl}/repos/${repository}/actions/workflows/${workflow}/runs`).pipe(
-            HttpClientRequest.setUrlParams(branch === null ? { per_page: '20' } : { branch, per_page: '20' }),
-            HttpClientRequest.bearerToken(Redacted.value(githubToken)),
-            HttpClientRequest.setHeaders({
-              accept: 'application/vnd.github+json',
-              'x-github-api-version': '2022-11-28',
-            }),
-          ),
-        )
-        .pipe(
-          Effect.timeout(Duration.seconds(30)),
-          Effect.filterOrFail(
-            (response) => response.status === 200,
-            (response) => fail(`GitHub answered ${String(response.status)} for the runs of ${workflow}`)(),
-          ),
-          Effect.flatMap((response) => response.json),
-          Effect.flatMap(Schema.decodeUnknownEffect(WorkflowRunsSchema)),
-          Effect.map(({ workflow_runs: listed }) =>
-            listed.filter(({ status }) => status !== 'completed').map(({ id }) => `${workflow} run ${String(id)}`),
-          ),
-        ),
-    { concurrency: 'unbounded' },
+      run.path.split('@')[0] === `.github/workflows/${workflow}` &&
+      (branch === null || Option.contains(run.head_branch, branch)),
   );
-  return runs.flat();
+
+/**
+ * The unfinished runs of every {@link FOREIGN_STAGE_WRITERS} workflow. Runs are listed by status, not by recency: a
+ * rerun of an old run is unfinished however many newer runs completed since. Every page of every status is read,
+ * and a listing that changed between its pages, or that GitHub would truncate, proves nothing.
+ */
+export const unfinishedForeignStageWriters = Effect.gen(function* unfinishedForeignStageWritersEffect() {
+  const [repository, githubToken, apiUrl] = yield* githubConfig;
+  const client = yield* HttpClient.HttpClient;
+  const runsPage = (status: string, page: number) =>
+    client
+      .execute(
+        HttpClientRequest.get(`${apiUrl}/repos/${repository}/actions/runs`).pipe(
+          HttpClientRequest.setUrlParams({ page: String(page), per_page: String(RUNS_PER_PAGE), status }),
+          HttpClientRequest.bearerToken(Redacted.value(githubToken)),
+          HttpClientRequest.setHeaders({
+            accept: 'application/vnd.github+json',
+            'x-github-api-version': '2022-11-28',
+          }),
+        ),
+      )
+      .pipe(
+        Effect.timeout(Duration.seconds(30)),
+        Effect.filterOrFail(
+          (response) => response.status === 200,
+          (response) => fail(`GitHub answered ${String(response.status)} for the ${status} runs`)(),
+        ),
+        Effect.flatMap((response) => response.json),
+        Effect.flatMap(Schema.decodeUnknownEffect(WorkflowRunsSchema)),
+      );
+  const runsWithStatus = (status: string) =>
+    Effect.gen(function* runsWithStatusEffect() {
+      const listed = new Map<number, ListedRun>();
+      const totals = new Set<number>();
+      for (let page = 1; ; page += 1) {
+        const { total_count: total, workflow_runs: runs } = yield* runsPage(status, page);
+        if (total > FILTERED_RUNS_LISTED) {
+          return yield* fail(`${String(total)} ${status} runs are more than GitHub lists`)();
+        }
+        totals.add(total);
+        for (const run of runs) {
+          listed.set(run.id, run);
+        }
+        if (runs.length < RUNS_PER_PAGE || page * RUNS_PER_PAGE >= total) {
+          break;
+        }
+      }
+      if (totals.size !== 1 || !totals.has(listed.size)) {
+        return yield* fail(`the ${status} runs changed while they were listed`)();
+      }
+      return [...listed.values()];
+    });
+  const runs = yield* Effect.forEach(UNFINISHED_RUN_STATUSES, runsWithStatus, { concurrency: 'unbounded' });
+  const writers = runs.flat().flatMap((run) => {
+    const writer = stageWriterOf(run);
+    return writer === undefined || run.status === 'completed' ? [] : [`${writer.workflow} run ${String(run.id)}`];
+  });
+  return [...new Set(writers)];
 }).pipe(
   Effect.mapError((cause) =>
     Schema.is(PruneImmutableWorkersError)(cause) ? cause : fail('the stage writer runs could not be read')(cause),
