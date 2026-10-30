@@ -473,6 +473,96 @@ it.effect('sanitizes unexpected defects at the complete governed handler boundar
   }),
 );
 
+it.effect('logs only fixed classifications for internal Core read failures', () =>
+  Effect.gen(function* logInternalReadFailures() {
+    const secretReason = 'PRIVATE_REASON_CANARY sql-input jwt-claims result-data';
+    const secretCause = 'PRIVATE_CAUSE_CANARY database-connection';
+    const failures = [
+      {
+        failure: new ReadEvidenceValidationError({ code: 'read_evidence_invalid', reason: secretReason }),
+        failureCategory: 'evidence_validation',
+        reasonCode: 'read_evidence_invalid',
+      },
+      {
+        failure: new ReadHandlerExecutionError({ code: 'read_handler_execution_failed', reason: secretReason }),
+        failureCategory: 'core_execution',
+        reasonCode: 'read_handler_execution_failed',
+      },
+      {
+        failure: new ReadResultValidationError({ code: 'read_result_invalid', reason: secretReason }),
+        failureCategory: 'result_validation',
+        reasonCode: 'read_result_invalid',
+      },
+    ];
+    for (const { failure, failureCategory, reasonCode } of failures) {
+      Object.defineProperty(failure, 'cause', { enumerable: false, value: new Error(secretCause) });
+      const failingRuntime: ReadRuntimeService = { ...readRuntime, runRead: () => Effect.fail(failure) };
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      const logEntries: string[] = [];
+      const exit = yield* handler({
+        payload: { query: 'PRIVATE_PAYLOAD_CANARY' },
+        request: { headers: Headers.fromInput({ 'x-correlation-id': 'internal-read-failure' }) },
+      }).pipe(
+        Effect.exit,
+        Effect.provideService(ReadRuntime, failingRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.provide(capturedLoggerLayer(logEntries)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toEqual(problems.internal());
+      }
+      expect(logEntries).toHaveLength(1);
+      const captured = Schema.decodeUnknownSync(
+        Schema.fromJsonString(
+          Schema.Struct({
+            annotations: Schema.Record(Schema.String, Schema.String),
+            message: Schema.String,
+          }),
+        ),
+      )(logEntries[0]);
+      expect(captured.annotations).toEqual({ failureCategory, reasonCode });
+      expect(captured.message).toBe('Governed-read HTTP Core failure');
+      expect(logEntries.join('\n')).not.toMatch(/PRIVATE_|lastStage|reason"|cause"|readKey|principalId/u);
+    }
+  }),
+);
+
+it.effect('does not add logs for denied or unavailable Core read failures', () =>
+  Effect.gen(function* preserveExpectedReadFailures() {
+    for (const [failure, expected] of coreFailures) {
+      if (expected.kind !== 'forbidden' && expected.kind !== 'unavailable') {
+        continue;
+      }
+      const failingRuntime: ReadRuntimeService = { ...readRuntime, runRead: () => Effect.fail(failure) };
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      const logEntries: string[] = [];
+      const exit = yield* handler({
+        payload: { query: 'fixture' },
+        request: { headers: Headers.fromInput({ 'x-correlation-id': 'expected-read-failure' }) },
+      }).pipe(
+        Effect.exit,
+        Effect.provideService(ReadRuntime, failingRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.provide(capturedLoggerLayer(logEntries)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toEqual(expected);
+      }
+      expect(logEntries).toEqual([]);
+    }
+  }),
+);
+
 it.effect('maps only schema-declared owner failures to concrete public Problems', () =>
   Effect.gen(function* mapsDeclaredOwnerFailure() {
     class DeclaredHttpDomainFailure extends Schema.TaggedError<DeclaredHttpDomainFailure>()(
