@@ -85,7 +85,9 @@ jobs:
             [ "$unit" = shell-super-app ] && dirs="$dirs apps/shell-super-app/dist" || dirs="$dirs verticals/$unit/dist"
           done
           # shellcheck disable=SC2086
-          tar --create --zstd --file "$RUNNER_TEMP/units.tar.zst" --exclude='*.map' --exclude='@mf-types.zip' $dirs
+          # Source maps, type bundles and precompressed copies never serve at runtime; they only slow the Zerops push.
+          tar --create --zstd --file "$RUNNER_TEMP/units.tar.zst" --exclude='*.map' --exclude='@mf-types*' \
+            --exclude='*.br' --exclude='*.gz' $dirs
 
       - name: Save the shard's unit builds
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
