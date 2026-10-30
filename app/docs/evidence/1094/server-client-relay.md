@@ -21,8 +21,8 @@ compromised enrolled source could request another operation subject to original 
 permissions and receiving single-use enforcement. The exchange ledger proves replay control, not
 independent execution of the source operation. The issuer retains source-capped validity and carrier
 provenance. Its [ledger](../../../apps/shell-super-app/api/auth/gateway-relay-exchanges.service.ts)
-atomically refuses duplicate source-JTI/exchange-ID use, including changed fingerprints; actual HTTP
-rejection coverage remains part of Step 13.
+atomically refuses duplicate source-JTI/exchange-ID use, including changed fingerprints; bounded
+actual HTTP rejection results appear in Step 13 below.
 
 Canonical, executed, linked-access and receiving-owner evidence ties the exercised paths to original
 `P`, its personal API-key binding/reference and the observed `R`. Legal Entity scope follows each
@@ -86,7 +86,7 @@ truthfully remained received where no terminal domain result existed.
 Physical Party shutdown separately established branch independence: the Catalog LEGAL_ENTITY Set
 and exact Current readback succeeded through Core with unchanged Party audit IDs and no source
 exchange; CCC COMMERCE_ONLY Add/List likewise succeeded with no Party read/exchange. These local
-branches do not establish the still-required Party-dependent outage negative. Completed phases
+branches are separate from the Party-dependent outage negative recorded in Step 13 below. Completed phases
 checked owned queue count zero, revoked fixture grants and stopped child processes; the worker
 phases additionally checked graceful shutdown.
 
@@ -127,18 +127,28 @@ the separate replay suite does not imply that observation.
 At source `9bfcca2a8eea229f64bd1b9943a5eb917cea191e`, the initial official `pnpm check`
 failed after policy typecheck and **303 policy tests passed**. Core Action units recorded
 **129 passed / 1 failed**: one environment-path expectation did not honor the explicit
-`APP_ENV_PATH=/dev/null` override. Downstream quality/boundary checks and the complete owner unit
-suite were not reached; this is not a full gate pass. All 36 accepted package artifact hashes remained
-unchanged.
+`APP_ENV_PATH=/dev/null` override. Downstream checks were not reached in that historical run. The Core
+expectation fix is now reviewed and committed; focused reruns passed **9 and 7 tests**. All 36 accepted
+package artifact hashes remained unchanged in the initial run.
 
-Mandatory actual-relay rejection/outage coverage is being added: malformed/tampered proofs, wrong
-issuer/key and expired/future validity; live API-key/session/support, binding/reference and actor/context
-changes; source enrollment/build/`R` and destination/operation mismatches; unavailable
-issuer/current identity/composition catalog/module/ledger; HTTP replay,
-changed exchange and source credential revocation; and one Party-required invocation during physical
-Party outage with typed unavailability and unchanged effects. Final executed security matrix and
-independent #1284 review remain pending. Missing executed coverage is not itself a demonstrated
-missing production guard.
+| Check                                                                                                                                                                                          | Executed result and scope                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing named security suites                                                                                                                                                                 | **348 passed / 26 files** against the current .16 cohort.                                                                                                                                                 |
+| New [issuer](../../../apps/shell-super-app/tests/unit/gateway-relay-issuer.test.ts) and [authentication](../../../apps/shell-super-app/tests/unit/gateway-relay-authentication.test.ts) matrix | **66 passed (42 + 24)**, executed and reviewed. Real cryptography, Drizzle and authentication functions; Current/module/ledger dependencies are controlled. **UNIT_ONLY**, not live outage/role evidence. |
+| Actual Manufacturer security native case                                                                                                                                                       | **1 passed**, approximately **23 seconds**; actual packaged HTTP owners, original actor and real Party-dependent outage.                                                                                  |
+| Remaining gates                                                                                                                                                                                | Isolated storage/role checks, final official `pnpm check`, final security-matrix consolidation and independent #1284 review **pending**. No full gate or issue-completion claim.                          |
+
+The native case observed **11 exact denials**: four HTTP 401 crypto/audience cases and seven HTTP 403
+policy/scope/replay/revocation cases. Two legitimate independent exchanges from the same enrolled
+source succeeded; replay and changed-tuple requests were denied. Some changed-scope JWT copies reuse
+the source JTI with fresh exchange IDs, so this does not establish a separate fresh-JTI rejection for
+every changed field.
+
+A genuinely Party-required invocation during physical Party outage returned typed 503: its canonical
+record remained received and no executed result appeared. Restoring the same Party artifact preserved
+the public relation at revision 1. Original `P`'s key was revoked last, preserving the independence of
+earlier controls. Owned queue count and remaining process count were both zero. These native results
+do not turn controlled unit dependencies into live storage or database-role failure proof.
 
 ## Reproduction
 
