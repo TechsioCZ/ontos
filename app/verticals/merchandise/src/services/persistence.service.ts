@@ -186,6 +186,9 @@ const conflict = (reason: string) =>
  * Brands an id the server produced. A value that fails its schema is a server defect, not a client error,
  * so it dies instead of joining the typed error channel.
  */
+/** The party of a storefront order placed without a customer account. */
+const STOREFRONT_GUEST_PARTY_ID = 'storefront-guest';
+
 const mintId = <S extends Schema.Codec<string>>(schema: S, value: string) =>
   Schema.decodeEffect(schema)(value).pipe(Effect.orDie);
 
@@ -1019,8 +1022,8 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     };
     return { entityIds: [], state, storefrontOrder };
   }
-  if (value.contact === undefined || value.deliveryAddress === undefined || value.partyId === undefined) {
-    return yield* conflict('Order contact, delivery address and customer party are required');
+  if (value.contact === undefined || value.deliveryAddress === undefined) {
+    return yield* conflict('Order contact and delivery address are required');
   }
   const id = yield* mintId(OrderIdSchema, input.resourceId);
   if (state.orders.some((entry) => entry.id === id)) {
@@ -1044,7 +1047,8 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     id,
     lines,
     number,
-    partyId: value.partyId,
+    // A guest order belongs to no enrolled customer; staff can later convert it to a customer.
+    partyId: value.partyId ?? (yield* mintId(PartyIdSchema, STOREFRONT_GUEST_PARTY_ID)),
     pricesIncludeVat: true,
     shipping,
     status: 'NEW',

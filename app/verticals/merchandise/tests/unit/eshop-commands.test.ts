@@ -67,9 +67,9 @@ const seeded = Effect.gen(function* seedCoffee() {
   return stocked.state;
 });
 
-const guestOrder = (
-  overrides: Partial<Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>> = {},
-): CommandInput => ({
+type PlaceStorefrontOrderInput = Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>;
+
+const guestOrder = (overrides: Partial<PlaceStorefrontOrderInput> = {}): PlaceStorefrontOrderInput => ({
   _tag: 'PlaceStorefrontOrder',
   clientRequestId: 'client-request-0001',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
@@ -112,6 +112,19 @@ it.effect('PlaceStorefrontOrder saves once and replays the same order for the sa
     expect(again.storefrontOrder?.orderNumber).toBe('OBJ-2026-0001');
     expect(again.state).toBe(first.state);
     expect(again.state.orders).toHaveLength(1);
+  }),
+);
+
+it.effect('PlaceStorefrontOrder stores a guest order without a customer account under the guest party', () =>
+  Effect.gen(function* guestWithoutAccount() {
+    const state = yield* seeded;
+    const { partyId: _customerParty, ...withoutParty } = guestOrder();
+    const placed = yield* apply(state, withoutParty, 'inv-guest');
+    expect(placed.storefrontOrder?.outcome).toBe('PLACED');
+    const [order] = placed.state.orders;
+    expect(order?.partyId).toBe('storefront-guest');
+    expect(order?.customerAccountId).toBeUndefined();
+    expect(order?.contact?.email).toBe('tereza@example.cz');
   }),
 );
 

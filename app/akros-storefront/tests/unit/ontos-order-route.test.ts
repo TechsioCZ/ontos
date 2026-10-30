@@ -153,10 +153,28 @@ describe("real order boundary", () => {
       expect(callAction).not.toHaveBeenCalled();
     },
   );
-  it("requires authentication before reading prices or writing an order", async () => {
+  it("places a guest order without a session: no customer account or Party, contact e-mail from the draft", async () => {
     vi.mocked(readAccount).mockResolvedValue(null);
-    expect((await submit()).status).toBe(401);
-    expect(readRecords).not.toHaveBeenCalled();
+    expect((await submit("", "PPL", { email: " guest@example.test " })).status).toBe(200);
+    const payload = vi.mocked(callAction).mock.calls[0][2] as { command: Record<string, unknown> };
+    expect(payload).toMatchObject({
+      expectedRevision: 7,
+      command: {
+        _tag: "PlaceStorefrontOrder",
+        clientRequestId,
+        contact: { name: "Customer Test", email: "guest@example.test", phone: "+420777123456" },
+        deliveryAddress: { city: "Brno", country: "CZ", postalCode: "60200", street: "Test 1" },
+        shippingMethod: "PPL",
+        expectedShippingPriceMinor: 12900,
+      },
+    });
+    expect(payload.command).not.toHaveProperty("customerAccountId");
+    expect(payload.command).not.toHaveProperty("partyId");
+    expect(JSON.stringify(payload)).not.toMatch(/attacker/);
+  });
+  it("rejects a guest order without a valid contact e-mail", async () => {
+    vi.mocked(readAccount).mockResolvedValue(null);
+    expect((await submit("Company", "PPL", { email: "" })).status).toBe(400);
     expect(callAction).not.toHaveBeenCalled();
   });
   it("rejects a delivery method absent from the current owner configuration", async () => {

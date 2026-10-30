@@ -12,7 +12,7 @@ import { validateAddresses } from "@/features/checkout/checkout-state";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function AddressStep() {
-  const { draft, updateDraft } = useCheckout();
+  const { draft, updateDraft, accountEmail } = useCheckout();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(true);
@@ -65,8 +65,9 @@ export function AddressStep() {
             Dodací údaje
           </h1>
           <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
-            Vyplňte skutečné dodací údaje. Kontakt objednávky bude spojen s přihlášeným zákaznickým
-            účtem.
+            {accountEmail
+              ? "Vyplňte skutečné dodací údaje. Kontakt objednávky bude spojen s přihlášeným zákaznickým účtem."
+              : "Vyplňte skutečné kontaktní a dodací údaje. Objednáváte bez registrace, potvrzení a změny stavu objednávky pošleme na zadaný e-mail."}
           </p>
           {editing ? (
             <div className="grid gap-4 sm:grid-cols-2">

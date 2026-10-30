@@ -17,9 +17,9 @@ export const akrosGuide: DemoGuide = {
   boundaries: {
     live: [
       'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu AKROS čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
-      'Objednávka se skutečně uloží do OntOS, sníží sklad varianty a vidí ji správce i expedice; zákazník sleduje stav ve svém účtu.',
+      'Objednávka se skutečně uloží do OntOS, sníží sklad varianty a vidí ji správce i expedice; přihlášený zákazník sleduje stav ve svém účtu, host v e-mailech.',
       'E-shop načítá aktuální ceny a dostupnost z OntOS při otevření stránky i při odeslání objednávky.',
-      'Přihlášení a registrace používají zákaznický účet napojený na OntOS. Pokladna vyžaduje přihlášení před zadáním dopravy a adresy.',
+      'Přihlášení a registrace používají zákaznický účet napojený na OntOS. Pokladna nabízí objednávku bez registrace, přihlášení nebo vytvoření účtu; volí zákazník.',
     ],
     operations: [
       'Volba PPL nebo České pošty se s aktuální cenou uloží do objednávky; sama nezarezervuje přepravu ani nevytvoří štítek.',
@@ -40,7 +40,7 @@ export const akrosGuide: DemoGuide = {
       steps: [
         {
           click:
-            'Tlačítko otevře e-shop v nové kartě. Katalog je veřejný; objednání vyžaduje zákaznický účet e-shopu, nikoli účet správce OntOS.',
+            'Tlačítko otevře e-shop v nové kartě. Katalog je veřejný; objednat lze bez registrace, nebo se zákaznickým účtem e-shopu (nikoli účtem správce OntOS).',
           id: 'akros-katalog',
           persona: null,
           say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
@@ -65,10 +65,10 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click:
-            'V košíku se nejprve přihlaste zákaznickým účtem e-shopu. Vyberte PPL nebo Českou poštu → Dodací údaje → Souhrn objednávky → jednou Odeslat objednávku → opište číslo objednávky.',
+            'V košíku zvolte Objednat bez registrace (nebo se přihlaste či vytvořte účet). Vyberte PPL nebo Českou poštu → Dodací údaje včetně e-mailu a telefonu → Souhrn objednávky → jednou Odeslat objednávku → opište číslo objednávky.',
           id: 'akros-objednavka',
           persona: null,
-          say: 'Objednávka se skutečně uloží a dostane číslo. Její stav je v zákaznickém účtu; odesláním neproběhne online platba ani objednání přepravy.',
+          say: 'Objednávka se skutečně uloží a dostane číslo. Host vidí stav na potvrzení a v e-mailech, registrovaný zákazník i ve svém účtu; odesláním neproběhne online platba ani objednání přepravy.',
           target: { kind: 'external', label: 'pokladnu', url: `${storefront}/kosik` },
           title: 'Dokončení objednávky',
         },

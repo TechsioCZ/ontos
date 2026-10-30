@@ -144,11 +144,6 @@ export function ReviewStep() {
           >
             Objednávka bude uložena do OntOS. Platba se zde neprovádí.
           </p>
-          {!accountEmail && (
-            <StoreLink className="underline" href="/prihlaseni">
-              Před objednáním se přihlaste
-            </StoreLink>
-          )}
           <Button
             type="submit"
             data-akros-checkout-action
@@ -156,7 +151,7 @@ export function ReviewStep() {
             variant="primary"
             size="sm"
             uppercase
-            disabled={sending || submitted || !cart.lines.length || blocked || !accountEmail}
+            disabled={sending || submitted || !cart.lines.length || blocked}
             aria-describedby={blocked ? "review-blocked" : undefined}
           >
             {sending ? "Odesílám do OntOS…" : "Odeslat objednávku"}
@@ -167,7 +162,9 @@ export function ReviewStep() {
             </p>
           )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
-            Stav objednávky můžete sledovat ve svém účtu.
+            {accountEmail
+              ? "Stav objednávky můžete sledovat ve svém účtu."
+              : `Objednáváte bez registrace. Potvrzení a změny stavu pošleme na ${draft.email}.`}
           </p>
         </div>
       </div>

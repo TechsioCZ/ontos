@@ -24,6 +24,7 @@ import {
   getDeliveryAddress,
   parseCheckoutDraft,
 } from "@/features/checkout/checkout-state";
+import { guestOrderKey } from "./guest-order-confirmation";
 
 const isError = (value: unknown): value is Error =>
   value !== null && value !== undefined && Error.prototype.isPrototypeOf(value);
@@ -36,6 +37,7 @@ interface PlacedOrder {
 }
 
 const draftKey = "akros-checkout-v2";
+const guestCheckoutKey = "akros-checkout-guest";
 type DraftUpdate = (draft: CheckoutDraft) => CheckoutDraft;
 type CheckoutStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -45,6 +47,9 @@ interface CheckoutContextValue {
   methodsError: string;
   accountEmail: string | null;
   accountReady: boolean;
+  /** The customer chose to order without an account (no customer account or Party is sent). */
+  guestCheckout: boolean;
+  chooseGuestCheckout: () => void;
   ready: boolean;
   storageError: string;
   submitted: boolean;
@@ -182,6 +187,7 @@ function CheckoutCartProvider({
   const completed = useRef<PlacedOrder | null>(null);
   const submitting = useRef(false);
   const [hasUnconfirmedOrder, setHasUnconfirmedOrder] = useState(false);
+  const [guestCheckout, setGuestCheckout] = useState(false);
 
   useEffect(() => {
     try {
@@ -190,6 +196,7 @@ function CheckoutCartProvider({
         JSON.parse(storageRef.current.getItem(`akros-ontos-pending:${activeCartId}`) ?? "null")
           ?.sent === true,
       );
+      setGuestCheckout(storageRef.current.getItem(guestCheckoutKey) === "true");
       checkoutDispatch({
         type: "hydrate",
         draft: parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
@@ -222,13 +229,6 @@ function CheckoutCartProvider({
     if (submitting.current) return null;
     checkoutDispatch({ type: "submit-error", error: "" });
     if (!hydrated || !cartReady) return null;
-    if (!accountEmail) {
-      checkoutDispatch({
-        type: "submit-error",
-        error: "Před objednáním se přihlaste ke svému účtu.",
-      });
-      return null;
-    }
 
     let order: PlacedOrder;
     submitting.current = true;
@@ -243,7 +243,7 @@ function CheckoutCartProvider({
           quantity: line.quantity,
           priceMinor: line.priceMinor,
         })),
-        accountEmail,
+        email: accountEmail ?? draft.email.trim(),
         deliveryId: draft.deliveryId,
         billing: draft.billing,
         delivery: getDeliveryAddress(draft),
@@ -317,6 +317,16 @@ function CheckoutCartProvider({
       });
       order = { id: result.orderNumber, orderId: result.orderId };
       storageRef.current.setItem(key, "null");
+      if (!accountEmail)
+        storageRef.current.setItem(
+          guestOrderKey,
+          JSON.stringify({
+            orderId: result.orderId,
+            orderNumber: result.orderNumber,
+            clientRequestId: pending.clientRequestId,
+            email: draft.email.trim(),
+          }),
+        );
       setHasUnconfirmedOrder(false);
     } catch (error) {
       checkoutDispatch({
@@ -347,6 +357,15 @@ function CheckoutCartProvider({
         methodsError,
         accountEmail,
         accountReady,
+        guestCheckout,
+        chooseGuestCheckout: () => {
+          setGuestCheckout(true);
+          try {
+            storageRef.current?.setItem(guestCheckoutKey, "true");
+          } catch {
+            /* The choice still holds for this page; storage errors are reported with the draft. */
+          }
+        },
         ready: hydrated && cartReady,
         submitted,
         hasUnconfirmedOrder,

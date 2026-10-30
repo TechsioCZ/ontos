@@ -14,7 +14,7 @@ import { useCartQuote } from "@/ontos/cart-revalidation";
 import { CheckoutSummary } from "./checkout-summary";
 
 function UnconfirmedOrder() {
-  const { completeOrder, accountEmail, storageError } = useCheckout();
+  const { completeOrder, storageError } = useCheckout();
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
@@ -33,14 +33,9 @@ function UnconfirmedOrder() {
           {storageError}
         </p>
       )}
-      {!accountEmail && (
-        <StoreLink href="/prihlaseni" className="underline">
-          Před ověřením se přihlaste
-        </StoreLink>
-      )}
       <Button
         type="button"
-        disabled={sending || !accountEmail}
+        disabled={sending}
         onClick={async () => {
           if (sendingRef.current) return;
           sendingRef.current = true;
@@ -81,19 +76,24 @@ export function CheckoutLayout({
     submitted,
     accountEmail,
     accountReady,
+    guestCheckout,
+    chooseGuestCheckout,
     hasUnconfirmedOrder,
   } = useCheckout();
-  const signedIn = accountEmail !== null;
+  const canCheckout = accountEmail !== null || guestCheckout;
+  const cartBlocked = quote ? !quote.canContinue : false;
   const step = Math.max(
     0,
     checkoutSteps.findIndex((item) => item.href === pathname),
   );
-  const reachable = signedIn ? getReachableStep(step, cart, draft, methods) : 0;
+  const reachable = canCheckout ? getReachableStep(step, cart, draft, methods) : 0;
   const steps = useSteps({
     count: 4,
     step,
     onStepChange: ({ step: next }) => {
-      router.push(checkoutSteps[signedIn ? getReachableStep(next, cart, draft, methods) : 0].href);
+      router.push(
+        checkoutSteps[canCheckout ? getReachableStep(next, cart, draft, methods) : 0].href,
+      );
     },
   });
   useEffect(() => {
@@ -120,7 +120,7 @@ export function CheckoutLayout({
                   <Steps.Trigger
                     disabled={
                       !ready ||
-                      (!signedIn && index > 0) ||
+                      (!canCheckout && index > 0) ||
                       getReachableStep(index, cart, draft, methods) !== index
                     }
                     className="relative z-1 w-full flex-col justify-center text-center"
@@ -162,21 +162,36 @@ export function CheckoutLayout({
               step === 0 &&
               (!accountReady ? (
                 <output>Ověřuji přihlášení…</output>
-              ) : signedIn ? (
+              ) : canCheckout ? (
                 <CartNavigation />
               ) : (
                 <section
                   className="order-3 mt-6 grid gap-3 rounded-sm bg-(--color-base) p-6"
-                  aria-labelledby="checkout-sign-in"
+                  aria-labelledby="checkout-choice"
                 >
-                  <h2 id="checkout-sign-in" className="font-bold">
-                    Nejdřív se přihlaste nebo vytvořte účet
+                  <h2 id="checkout-choice" className="font-bold">
+                    Jak chcete objednat?
                   </h2>
                   <p>
-                    Pro objednání potřebujete zákaznický účet. Poté vyberete dopravu a vyplníte
-                    dodací údaje. Košík i rozpracované údaje zůstanou zachované.
+                    Objednat můžete bez registrace, kontaktní a dodací údaje vyplníte v dalších
+                    krocích. Se zákaznickým účtem uvidíte historii a stav svých objednávek. Košík i
+                    rozpracované údaje zůstanou zachované.
                   </p>
-                  <div className="flex flex-wrap gap-4">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      uppercase
+                      disabled={cartBlocked}
+                      aria-describedby={cartBlocked ? "checkout-choice-blocked" : undefined}
+                      onClick={() => {
+                        chooseGuestCheckout();
+                        router.push(checkoutSteps[1].href);
+                      }}
+                    >
+                      Objednat bez registrace
+                    </Button>
                     <StoreLink href="/prihlaseni?returnTo=%2Fkosik" className="underline">
                       Přihlásit se
                     </StoreLink>
@@ -184,6 +199,11 @@ export function CheckoutLayout({
                       Vytvořit účet
                     </StoreLink>
                   </div>
+                  {cartBlocked && (
+                    <p id="checkout-choice-blocked" className="text-xs text-(--color-fg-secondary)">
+                      {quote?.blockedReason}
+                    </p>
+                  )}
                 </section>
               ))}
             {ready && !hasUnconfirmedOrder && cart.lines.length > 0 && step < 3 && (
