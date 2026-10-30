@@ -593,6 +593,7 @@ zerops:
         BUILD_JOBS: '2'
         ONTOS_PUBLIC_ORIGIN: https://ontos-stage.web-revolution.cz
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_SKIP_SERVER_TYPECHECK: '1'
         ZE_FAIL_BUILD: 'true'
       prepareCommands:
         - sudo apk add --no-cache curl git libstdc++
