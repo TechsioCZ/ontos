@@ -69,7 +69,7 @@ unit_digest() {
   inputs="$(unit_inputs "$1")"
   {
     printf '%s\n' "$ONTOS_PUBLIC_ORIGIN"
-    for input in $inputs packages scripts/zerops scripts/generate-ontos-module-contract.mts topology \
+    for input in $inputs packages scripts/zerops/owner-entry.mts scripts/generate-ontos-module-contract.mts topology \
       package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json module-federation.shared.ts; do
       printf '%s %s\n' "$input" "$(git rev-parse "HEAD:app/$input")"
     done
