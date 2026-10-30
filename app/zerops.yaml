@@ -93,8 +93,9 @@ zerops:
         - sudo apk add --no-cache curl git libstdc++ zstd
         - sh /build/source/app/scripts/install-zerops-node.sh 26.12.0 12.11.2
       buildCommands:
-        # Zerops restores the build cache as root; the build user must own the directories it recreated.
-        - sudo chown -R "$(id -u):$(id -g)" app
+        # Zerops restores the build cache (and unpacks a pushed package) as root; the build user must own the tree, and Git
+        # must trust it, or every release identity reads as `workspace`.
+        - sudo chown -R "$(id -u):$(id -g)" . && git config --global --add safe.directory /build/source
         # Units the CI prebuilt arrive as one archive (zerops-stage.yml); build-app.sh keeps each unit whose digest matches.
         - if [ -f app/.zerops-prebuilt.tar.zst ]; then zstd -dc app/.zerops-prebuilt.tar.zst | tar -x -C app && rm app/.zerops-prebuilt.tar.zst; fi
         - cd app && PATH="$HOME/.local/node-26.12.0/bin:$PATH" pnpm install --frozen-lockfile
