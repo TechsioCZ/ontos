@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { customerConsentInput, isCustomerNewsletterConsent } from "@/ontos/consent-model";
-import { POST } from "@/app/api/ontos/account/consent/route";
+import { GET, POST } from "@/app/api/ontos/account/consent/route";
+import { ownerRequest } from "@/ontos/gateway";
+
+vi.mock("@/ontos/gateway", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/ontos/gateway")>()),
+  ownerRequest: vi.fn<typeof ownerRequest>(),
+}));
+beforeEach(() => vi.resetAllMocks());
 
 const input = {
   decision: "GRANTED",
@@ -96,5 +103,39 @@ describe("customer newsletter consent boundary", () => {
       expect(response.status).toBe(origin === "http://localhost:3070" ? 400 : 403);
       expect(response.headers.get("cache-control")).toBe("no-store");
     }
+    expect(ownerRequest).not.toHaveBeenCalled();
+  });
+
+  it("reads the current choice again after a transient owner outage", async () => {
+    vi.mocked(ownerRequest)
+      .mockResolvedValueOnce(Response.json({}, { status: 503 }))
+      .mockResolvedValueOnce(Response.json(projection));
+    const response = await GET(
+      new Request("http://localhost:3070/api/ontos/account/consent", {
+        headers: { cookie: "commerce-portal.session_token=customer" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ consent: projection });
+    expect(vi.mocked(ownerRequest).mock.calls.map(([, path, init]) => [path, init.method])).toEqual(
+      [
+        ["/api/portal-auth/customer-consent", "GET"],
+        ["/api/portal-auth/customer-consent", "GET"],
+      ],
+    );
+  });
+
+  it("never repeats a choice after an owner outage", async () => {
+    vi.mocked(ownerRequest).mockResolvedValue(Response.json({}, { status: 503 }));
+    const origin = "http://localhost:3070";
+    const response = await POST(
+      new Request(`${origin}/api/ontos/account/consent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify(input),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(ownerRequest).toHaveBeenCalledOnce();
   });
 });

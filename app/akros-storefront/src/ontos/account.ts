@@ -54,7 +54,10 @@ export const portalRequest = async (
   // A transient admission read must not strand a verified login. Only these reads are safe:
   // email verification also uses GET, but consumes a one-time token and must never be replayed.
   const readOnly =
-    body === undefined && (path === "/customer-account" || path === "/enrollment/current");
+    body === undefined &&
+    (path === "/customer-account" ||
+      path === "/enrollment/current" ||
+      path === "/customer-consent");
   for (let attempt = 0; ; attempt++) {
     try {
       const response = await ownerRequest(owner, `${base}${path}`, init);
