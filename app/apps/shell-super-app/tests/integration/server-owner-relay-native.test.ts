@@ -874,6 +874,207 @@ const grantNativeManufacturerReadPermissions = Effect.fn('ServerOwnerRelayNative
   },
 );
 
+const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNative.legalEntityWithPartyStopped')(
+  function* legalEntityWithPartyStopped(input: {
+    readonly catalog: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+    readonly database: NativeCoreDatabase;
+    readonly fixture: NativeShellUserFixture;
+    readonly gateway: Omit<
+      Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0],
+      'audience' | 'buildMarker' | 'legalEntityId' | 'principalId'
+    >;
+    readonly party: Effect.Success<ReturnType<typeof startPackagedApplication>>;
+  }) {
+    const { catalog, database, fixture, party } = input;
+    const client = yield* HttpClient.HttpClient;
+    const crypto = yield* Crypto.Crypto;
+    const legalEntityRef = {
+      moduleId: 'core.identity',
+      resourceId: fixture.core.legalEntityId,
+      resourceType: 'core.identity.legal-entity',
+      tenantId: fixture.core.tenantId,
+    };
+    const entity = yield* database.query.legalEntities.findFirst({
+      columns: { legalEntityId: true, status: true, tenantId: true },
+      where: { legalEntityId: legalEntityRef.resourceId, tenantId: legalEntityRef.tenantId },
+    });
+    expect(
+      Schema.is(
+        Schema.Struct({
+          legalEntityId: Schema.Literal(legalEntityRef.resourceId),
+          status: Schema.Literal('active'),
+          tenantId: Schema.Literal(legalEntityRef.tenantId),
+        }),
+      )(entity),
+    ).toBe(true);
+    const entityObjectId = toLegalEntityAccessObjectId(fixture.core.tenantId, fixture.core.legalEntityId);
+    if (entityObjectId === undefined) {
+      return yield* new PackagedOwnerStartupError({ reason: 'Actual Core Legal Entity permission scope missing' });
+    }
+    const permissions = yield* openNativeSpiceClient();
+    const entityAccess = yield* Effect.tryPromise({
+      catch: () => new PackagedOwnerStartupError({ reason: 'Actual Core Legal Entity permission check failed' }),
+      try: () =>
+        permissions.promises.checkPermission(
+          v1.CheckPermissionRequest.create({
+            consistency: v1.Consistency.create({
+              requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' },
+            }),
+            permission: 'access',
+            resource: { objectId: entityObjectId, objectType: 'legal_entity' },
+            subject: { object: { objectId: fixture.core.manager.principalId, objectType: 'principal' } },
+          }),
+        ),
+    });
+    expect(entityAccess.permissionship).toBe(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION);
+    const before = yield* fixture.core.evidence(database);
+    const previousPartyReads = new Set(
+      before.accesses.filter((row) => row.servingModuleKey === PARTY_MODULE_KEY).map((row) => row.dataAccessEventId),
+    );
+    const previousCoreReads = new Set(before.accesses.map((row) => row.dataAccessEventId));
+    expect(yield* party.child.isRunning).toBe(true);
+    yield* party.child.kill({ forceKillAfter: '3 seconds', killSignal: 'SIGTERM' });
+    expect(yield* party.child.isRunning).toBe(false);
+    const unavailableParty = yield* Effect.exit(client.get(`${party.origin}${ONTOS_MODULE_CONTRACT_PATH}`));
+    expect(Exit.isFailure(unavailableParty)).toBe(true);
+    const gateway: Parameters<typeof issueNativeApiKeyGatewayAuthorization>[0] = {
+      ...input.gateway,
+      audience: 'catalog',
+      buildMarker: catalog.compiled.buildMarker,
+      principalId: fixture.core.manager.principalId,
+    };
+    const createAuthorization = yield* issueNativeApiKeyGatewayAuthorization(gateway);
+    const created = yield* client.post(`${catalog.origin}${catalog.apiPrefix}/catalog/actions/create-product`, {
+      body: yield* HttpBody.json({
+        classification: { kind: 'INDEPENDENT_PRODUCT' },
+        reason: 'Native Core manufacturer',
+      }),
+      headers: {
+        authorization: Redacted.value(createAuthorization.authorization),
+        'idempotency-key': yield* crypto.randomUUIDv4(),
+        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'x-ontos-composition-revision': input.gateway.revision,
+      },
+    });
+    if (created.status !== 200) {
+      yield* logCatalogActionProblem(created, catalog.diagnostics, 'create-product');
+    }
+    expect(created.status).toBe(200);
+    const product = yield* created.json.pipe(
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(
+          Schema.Struct({ product: Schema.Struct({ productRef: CoreSearchResourceRefSchema }) }),
+        ),
+      ),
+    );
+    const { productRef } = product.product;
+    expect(productRef.moduleId).toBe('commerce.catalog');
+    expect(productRef.resourceType).toBe('commerce.catalog.product');
+    expect(productRef.tenantId).toBe(fixture.core.tenantId);
+    yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'reader');
+    const relationId = yield* crypto.randomUUIDv4();
+    const correlationId = yield* crypto.randomUUIDv4();
+    const setAuthorization = yield* issueNativeApiKeyGatewayAuthorization(gateway);
+    const set = yield* client.post(`${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`, {
+      body: yield* HttpBody.json({
+        effectivePeriod: {},
+        evidenceRefs: ['native/legal-entity-manufacturer'],
+        reason: 'Current Core identity while Party receiver is stopped',
+        relationId,
+        subject: productRef,
+        target: { kind: 'LEGAL_ENTITY', legalEntityRef },
+      }),
+      headers: {
+        authorization: Redacted.value(setAuthorization.authorization),
+        'idempotency-key': yield* crypto.randomUUIDv4(),
+        'x-correlation-id': correlationId,
+        'x-ontos-composition-revision': input.gateway.revision,
+      },
+    });
+    yield* Effect.logInfo('Native Legal Entity Manufacturer with Party stopped HTTP outcome', { status: set.status });
+    if (set.status !== 200) {
+      yield* logCatalogActionProblem(set, catalog.diagnostics, 'set-product-manufacturer');
+    }
+    expect(set.status).toBe(200);
+    expect(yield* set.json).toMatchObject({ relationId, revision: 1, subject: productRef });
+    const readAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
+      ...gateway,
+      legalEntityId: fixture.core.legalEntityId,
+    });
+    const current = yield* client.post(`${catalog.origin}${catalog.apiPrefix}/reads/manufacturer-relation-current`, {
+      body: yield* HttpBody.json({ subject: productRef }),
+      headers: {
+        authorization: Redacted.value(readAuthorization.authorization),
+        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'x-ontos-composition-revision': input.gateway.revision,
+      },
+    });
+    if (current.status !== 200) {
+      yield* logCatalogActionProblem(current, catalog.diagnostics, 'manufacturer-relation-current');
+    }
+    expect(current.status).toBe(200);
+    expect(yield* current.json).toMatchObject({
+      claim: {
+        evidenceRefs: ['native/legal-entity-manufacturer'],
+        relationId,
+        revision: 1,
+        subject: productRef,
+        target: { kind: 'LEGAL_ENTITY', legalEntityRef },
+      },
+      owner: { canonicalTarget: { kind: 'LEGAL_ENTITY', legalEntityRef }, kind: 'LEGAL_ENTITY', state: 'CURRENT' },
+    });
+    yield* assertNativeManufacturerMutationAudit(fixture.core, database, {
+      authBindingId: input.gateway.authBindingId,
+      authContextRef: input.gateway.authContextRef,
+      correlationId,
+      principalId: fixture.core.manager.principalId,
+      productRef,
+      tenantId: fixture.core.tenantId,
+    });
+    for (const authorization of [setAuthorization, readAuthorization]) {
+      const exchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
+        where: { sourceJti: authorization.sourceJti },
+      });
+      expect(exchange).toBeUndefined();
+    }
+    const after = yield* fixture.core.evidence(database);
+    expect(
+      after.accesses
+        .filter((row) => row.servingModuleKey === PARTY_MODULE_KEY)
+        .every((row) => previousPartyReads.has(row.dataAccessEventId)),
+    ).toBe(true);
+    const coreReads = after.accesses.filter(
+      (row) =>
+        !previousCoreReads.has(row.dataAccessEventId) &&
+        row.servingModuleKey === 'core.identity' &&
+        row.outcome === 'allowed' &&
+        row.outcomeCode === 'read_allowed',
+    );
+    expect(coreReads.length).toBeGreaterThanOrEqual(2);
+    expect(coreReads.some((row) => row.legalEntityId === null)).toBe(true);
+    expect(coreReads.some((row) => row.legalEntityId === fixture.core.legalEntityId)).toBe(true);
+    expect(
+      coreReads.every(
+        (row) =>
+          row.principalId === fixture.core.manager.principalId &&
+          row.authBindingId === input.gateway.authBindingId &&
+          row.authContextRef === Redacted.value(input.gateway.authContextRef) &&
+          row.authMethod === 'api_key',
+      ),
+    ).toBe(true);
+    expect(yield* party.child.isRunning).toBe(false);
+    yield* Effect.logInfo('Native Legal Entity Manufacturer independent of stopped Party verified', {
+      actualCoreReadAudits: coreReads.length,
+      compositionRevision: input.gateway.revision,
+      originalActorAndReferencePreserved: true,
+      partyProcessStoppedAndUnreachable: true,
+      partyProviderAuditRowsUnchangedForThisBranch: true,
+      sourceJwtRelayExchangeAbsentForWriteAndReadback: true,
+    });
+    return yield* Effect.void;
+  },
+);
+
 const issueNativeOriginalHumanKey = Effect.fn('ServerOwnerRelayNative.issueOriginalHumanKey')(
   function* issueNativeOriginalHumanKey(
     fixture: NativeShellUserFixture,
@@ -2751,6 +2952,21 @@ it.live(
               actualBroaderServiceReadSucceeded: true,
               independentTenantReadAndModuleAccessGatesDeniedOriginalActor: true,
               savedRelationAndRevisionUnchangedAfterRestoringOriginalGrants: true,
+            });
+
+            yield* assertNativeLegalEntityWithPartyStopped({
+              catalog: enrolledCatalog,
+              database,
+              fixture,
+              gateway: {
+                apiKey: personalKey.secret,
+                authBindingId: personalKey.authBindingId,
+                authContextRef: personalAuthContextRef,
+                origin: fixture.origin,
+                publicKey: signingKeyPair.publicKey,
+                revision: approved.composition.revision,
+              },
+              party,
             });
 
             return yield* Effect.void;
