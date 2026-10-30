@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import {
   classifyPriceGroupReadDiagnostic,
   classifyPriceGroupReadResultDiagnostic,
@@ -2469,4 +2470,72 @@ it.layer(temporalArtifactsLayer, { excludeTestServices: true, memoMap: temporalA
       );
     });
   },
+);
+
+it.live('executes public Price Group process modes without receiver database startup', () =>
+  Effect.scoped(
+    Effect.gen(function* processModeControls() {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = fileURLToPath(new URL('../../', import.meta.url));
+      const entry = createRequire(new URL('../../package.json', import.meta.url)).resolve(
+        '@app/commerce-customer-context/testing/price-group-current-receiver',
+      );
+      const cache = path.join(directory, '.cache');
+      yield* fs.makeDirectory(cache, { recursive: true });
+      const temporary = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: 'price-group-mode-' });
+      const artifact = path.join(temporary, 'receiver.mjs');
+      const bundle = yield* ChildProcess.make(
+        '../../node_modules/esbuild/bin/esbuild',
+        [entry, '--bundle', '--platform=node', '--format=esm', '--packages=external', `--outfile=${artifact}`],
+        {
+          cwd: directory,
+          env: { APP_ENV_PATH: '/dev/null' },
+          extendEnv: false,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        },
+      );
+      const [bundleCode] = yield* Effect.all(
+        [bundle.exitCode, Stream.runDrain(bundle.stdout), Stream.runDrain(bundle.stderr)],
+        { concurrency: 3 },
+      );
+      expect(bundleCode).toBe(0);
+      const execute = Effect.fn('PriceGroupTemporal.modeControl')(function* modeControl(args: readonly string[]) {
+        const child = yield* ChildProcess.make(process.execPath, [artifact, ...args], {
+          cwd: directory,
+          env: { APP_ENV_PATH: '/dev/null' },
+          extendEnv: false,
+          stderr: 'pipe',
+          stdin: 'ignore',
+          stdout: 'pipe',
+        });
+        const [code, stdout, stderr] = yield* Effect.all(
+          [
+            child.exitCode,
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          ],
+          { concurrency: 3 },
+        );
+        return { code, stderr, stdout };
+      });
+      const described = yield* execute(['--describe-price-group-current']);
+      expect(described.code).toBe(0);
+      yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            appId: Schema.Literal('commerce-customer-context'),
+            type: Schema.Literal('description'),
+            version: Schema.Literal(priceGroupTemporalProtocol),
+          }),
+        ),
+      )(described.stdout.trim());
+      const conflict = yield* execute(['--describe-price-group-current', '--serve-price-group-current']);
+      expect(conflict.code).not.toBe(0);
+      expect(conflict.stderr).toContain('PRICE_GROUP_FIXTURE_MODE_CONFLICT\n');
+      expect(conflict.stdout).not.toContain('"type":"description"');
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
